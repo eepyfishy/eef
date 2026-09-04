@@ -1,0 +1,12 @@
+# Merge these entries into default_identity.yaml only for plugins you trust.
+python:
+  plugins:
+    - python/plugins/system_clock.py
+    # - python/plugins/keyboard.py
+    # - python/plugins/screen_capture.py
+
+capability_policy:
+  keyboard:
+    allow: false
+  screen_capture:
+    allow: false

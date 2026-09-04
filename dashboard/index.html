@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EEF dashboard</title>
+  <style>
+    :root{color-scheme:dark;--bg:#101418;--panel:#192127;--text:#eef5f7;--muted:#a9bac2;--accent:#55d6be;--warn:#ffd166;--bad:#ff6b6b}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:1rem}
+    header{display:flex;gap:1rem;align-items:center;justify-content:space-between;flex-wrap:wrap}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1rem}
+    section{background:var(--panel);border:1px solid #33434b;border-radius:.7rem;padding:1rem;margin:1rem 0}h1,h2{line-height:1.2}h2{font-size:1.15rem;margin-top:0}
+    button,input,select,textarea{font:inherit;color:inherit;background:#0d1215;border:1px solid #5d717a;border-radius:.35rem;padding:.6rem}button{cursor:pointer;background:#24463f;border-color:var(--accent)}button:hover,button:focus{outline:3px solid #ffffff44}label{display:block;margin:.55rem 0}.row{display:flex;gap:.6rem;flex-wrap:wrap}.row>*{flex:1}
+    textarea{width:100%;min-height:24rem;font:14px/1.4 ui-monospace,monospace;tab-size:2}.pill{display:inline-block;padding:.2rem .55rem;border-radius:1rem;background:#32424a}.ok{color:var(--accent)}.warn{color:var(--warn)}pre{white-space:pre-wrap;overflow-wrap:anywhere}small{color:var(--muted)}
+  </style>
+</head>
+<body><main>
+  <header><div><h1>EEF network dashboard</h1><p>Coordinator, nodes, models, capabilities, and updates.</p></div><button id="refresh">Refresh</button></header>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <div class="grid">
+    <section><h2>Coordinator</h2><div id="status">Loading…</div></section>
+    <section><h2>Connected nodes</h2><div id="nodes">Loading…</div></section>
+    <section><h2>Updates and startup</h2><div id="updates">Loading…</div><div class="row"><button data-update="check">Check</button><button data-update="apply">Install verified update</button></div><p><button id="startup">Loading startup state…</button></p></section>
+  </div>
+  <section><h2>Coordinator configuration</h2><p><small>This editor covers every coordinator setting. Saving creates a backup and applies after restart. Secrets should use environment variables.</small></p><textarea id="config" aria-label="Coordinator configuration JSON"></textarea><div class="row"><button id="saveConfig">Save for restart</button><button id="reloadConfig">Discard edits</button></div></section>
+  <section><h2>Node configuration builder</h2><p><small>A node can exist without EEF, but orchestration requires at least one EEF. Give coordinators different priorities; the highest reachable one is tried first. No model is selected by default.</small></p><textarea id="nodeConfig" aria-label="Node configuration JSON"></textarea><button id="downloadNode">Download node config</button></section>
+  <section><h2>Administrative message</h2><label>Message<input id="message" autocomplete="off"></label><button id="send">Send through EEF</button><pre id="reply"></pre></section>
+</main>
+<script>
+const $=id=>document.getElementById(id), api=async(path,options={})=>{const r=await fetch(path,{headers:{'content-type':'application/json'},...options});const j=await r.json();if(!r.ok)throw Error(j.error||r.statusText);return j};
+const say=(text,bad=false)=>{$('notice').textContent=text;$('notice').className=bad?'warn':'ok'};
+let startupEnabled=false;async function load(){try{const [s,n,u,c,a]=await Promise.all([api('/api/status'),api('/api/node/status'),api('/api/update/status'),api('/api/config'),api('/api/startup')]);$('status').innerHTML=`<p><span class="pill ${s.operational?'ok':'warn'}">${s.coordinator.state}</span></p><p>ID: ${esc(s.coordinator.id)}<br>Priority: ${s.coordinator.priority}<br>Models: ${s.models.length}</p>`;$('nodes').innerHTML=Object.keys(n.nodes).length?`<pre>${esc(JSON.stringify(n.nodes,null,2))}</pre>`:'<p class="warn">No EEFN connected. EEF is waiting for a node.</p>';$('updates').innerHTML=`<p>Policy: ${esc(u.policy)}<br>Configured: ${u.enabled?'yes':'no'}<br>Available: ${u.update_available?'yes':'no'}</p>`;$('config').value=JSON.stringify(c.config,null,2);startupEnabled=a.enabled;$('startup').textContent=startupEnabled?'Disable startup app':'Enable startup app';say('Dashboard refreshed.')}catch(e){say(e.message,true)}}
+function esc(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+$('nodeConfig').value=JSON.stringify({node_id:'choose-a-unique-node-id',name:'My node',psk:'USE_EEF_NODE_PSK_ENVIRONMENT_VARIABLE',endpoints:[{address:'127.0.0.1:51335',priority:100}],heartbeat_seconds:3,allow_write:false,allowed_roots:[],python_plugins:[],dashboard:{enabled:true,host:'127.0.0.1',port:51336},update:{manifest_url:'',policy:'prompt',check_interval_seconds:21600},models:{provider:'auto',ollama:{base_url:'http://127.0.0.1:11434',selected:[]},llamacpp:{binary:'tools/llama-server.exe',slots:[]}}},null,2);
+$('refresh').onclick=load;$('reloadConfig').onclick=load;$('saveConfig').onclick=async()=>{try{JSON.parse($('config').value);await api('/api/config',{method:'PUT',body:JSON.stringify({config:JSON.parse($('config').value)})});say('Configuration saved. Restart EEF to apply it.')}catch(e){say(e.message,true)}};
+$('startup').onclick=async()=>{try{const s=await api('/api/startup',{method:'PUT',body:JSON.stringify({enabled:!startupEnabled})});startupEnabled=s.enabled;$('startup').textContent=startupEnabled?'Disable startup app':'Enable startup app';say(startupEnabled?'EEF startup enabled.':'EEF startup disabled.')}catch(e){say(e.message,true)}};
+document.querySelectorAll('[data-update]').forEach(b=>b.onclick=async()=>{try{const j=await api('/api/update/'+b.dataset.update,{method:'POST',body:'{}'});say(JSON.stringify(j))}catch(e){say(e.message,true)}});
+$('send').onclick=async()=>{try{$('reply').textContent=JSON.stringify(await api('/api/chat',{method:'POST',body:JSON.stringify({message:$('message').value})}),null,2)}catch(e){say(e.message,true)}};
+$('downloadNode').onclick=()=>{try{JSON.parse($('nodeConfig').value);const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$ ('nodeConfig').value],{type:'application/json'}));a.download='config.json';a.click();URL.revokeObjectURL(a.href)}catch(e){say(e.message,true)}};load();
+</script></body></html>

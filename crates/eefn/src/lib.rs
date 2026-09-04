@@ -1,0 +1,31 @@
+//! EEF node library.
+//!
+//! The wire format is byte-compatible with the Python 0.1 implementation:
+//! newline-framed JSON encrypted with AES-256-GCM and the same HKDF inputs.
+
+pub mod client;
+pub mod crypto;
+pub mod dashboard;
+pub mod engine;
+pub mod firmware;
+pub mod model_server;
+pub mod protocol;
+pub mod python;
+pub mod server;
+pub mod startup;
+pub mod updater;
+
+pub use client::{
+    CoordinatorEndpoint, NodeClient, NodeClientConfig, SelectedModel, current_load,
+    discover_models, installed_ollama_models, system_specs,
+};
+pub use crypto::{CryptoError, NodeCrypto, derive_key};
+pub use dashboard::NodeDashboard;
+pub use engine::{CAPABILITIES, NodeEngine};
+pub use model_server::{ModelServer, ModelSlot};
+pub use protocol::PROTOCOL_VERSION;
+pub use python::{PythonPlugin, PythonRuntime};
+pub use server::{DEFAULT_PORT, NodeEvent, NodeOfflineError, NodeServer};
+pub use startup::{StartupStatus, set_startup, startup_status};
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -1,0 +1,84 @@
+# Native EEF defaults. Secrets are deliberately not stored here.
+identity:
+  name: EEF
+  creator: EEF contributors
+  version: 0.2.0
+  description: A continuously running, local-first, distributed personal AI agent.
+
+behavior_rules:
+  - Never reveal internal system architecture unless explicitly asked.
+  - Always prioritize privacy and local-first operation.
+  - Think before responding.
+  - Route work through capabilities; never hardcode where a capability lives.
+  - Maintain consistency across sessions.
+  - Never overwrite identity with learned information.
+
+web:
+  host: 127.0.0.1
+  port: 51334
+
+coordinator:
+  # Keep IDs unique. Higher priority coordinators are listed first by nodes.
+  id: ""
+  priority: 100
+
+node:
+  host: 0.0.0.0
+  port: 51335
+  # Set EEF_NODE_PSK in the environment. It must be at least 12 characters.
+
+models:
+  # The coordinator has no local model. Node owners choose and advertise models.
+  tiers: {}
+
+brain:
+  tick_ms: 2000
+
+memory:
+  max_conversation: 200
+  max_working_items: 100
+
+logging:
+  history: 500
+
+adapters: {}
+
+# Sensitive capabilities are denied unless explicitly enabled.
+capability_policy:
+  filesystem:
+    allow: false
+  system.shell:
+    allow: false
+  keyboard:
+    allow: false
+  screen_capture:
+    allow: false
+  gpio:
+    allow: false
+  servo:
+    allow: false
+  motor:
+    allow: false
+  relay:
+    allow: false
+  led:
+    allow: false
+
+python:
+  executable: ""
+  plugins: []
+
+assistant:
+  rules: []
+
+firmware:
+  repository: data/firmware
+  host: 127.0.0.1
+  ssid: ""
+  wifi_pass: ""
+
+update:
+  # Editable in the dashboard; forks may replace this with their own feed.
+  manifest_url: https://raw.githubusercontent.com/eepyfishy/eef/main/update/eef.json
+  policy: prompt
+  check_interval_seconds: 21600

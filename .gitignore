@@ -1,0 +1,12 @@
+/target/
+/.tooling/
+/bundle/
+/release/
+/.package/
+/.gh-auth/
+*.db
+*.log
+config.json
+.env
+.update_staging/
+.previous/

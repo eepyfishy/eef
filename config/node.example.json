@@ -1,0 +1,33 @@
+{
+  "node_id": "node-example",
+  "name": "Example node",
+  "psk": "REPLACE_WITH_A_LONG_RANDOM_SECRET",
+  "endpoints": [
+    {"address": "127.0.0.1:51335", "priority": 100}
+  ],
+  "heartbeat_seconds": 3.0,
+  "allow_write": false,
+  "allowed_roots": [],
+  "python_plugins": [],
+  "dashboard": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 51336
+  },
+  "update": {
+    "manifest_url": "https://raw.githubusercontent.com/eepyfishy/eef/main/update/eefn.json",
+    "policy": "prompt",
+    "check_interval_seconds": 21600
+  },
+  "models": {
+    "provider": "auto",
+    "ollama": {
+      "base_url": "http://127.0.0.1:11434",
+      "selected": []
+    },
+    "llamacpp": {
+      "binary": "tools/llama-server.exe",
+      "slots": []
+    }
+  }
+}
