@@ -155,16 +155,46 @@ impl TaskPlanner {
             goal.template.clone()
         };
         let steps: Vec<(&str, &str, &[&str])> = match template.as_str() {
-            "launch_application" => vec![("launch_application", "launch", &["name", "args"])],
+            "launch_application" => {
+                vec![("application.control", "launch", &["application", "args"])]
+            }
             "read_sensor" => vec![("sensor", "read", &["name"])],
             "write_file" => vec![("filesystem", "write", &["path", "content"])],
             "read_file" => vec![("filesystem", "read", &["path"])],
             "list_directory" => vec![("filesystem", "list", &["path"])],
-            "type_text" => vec![("keyboard", "type", &["text"])],
-            "press_key" => vec![("keyboard", "press", &["key"])],
-            "capture_screen" => vec![("screen_capture", "capture", &[])],
+            "type_text" => vec![("input.control", "type", &["text", "interval"])],
+            "press_key" => vec![("input.control", "press", &["key"])],
+            "capture_screen" => vec![("screen.capture", "capture", &[])],
+            "capture_camera" => vec![(
+                "camera.capture",
+                "capture",
+                &["device", "width", "height", "quality"],
+            )],
+            "record_audio" => vec![(
+                "audio.capture",
+                "record",
+                &["device", "duration_seconds", "sample_rate", "channels"],
+            )],
+            "play_audio" => vec![("audio.play", "play", &["data_base64"])],
+            "speak_text" => vec![("tts.speak", "speak", &["text", "voice", "rate", "volume"])],
+            "transcribe_audio" => vec![(
+                "stt.transcribe",
+                "transcribe",
+                &["audio_base64", "audio_path", "filename"],
+            )],
+            "execute_process" => vec![(
+                "process.exec",
+                "run",
+                &["program", "args", "cwd", "timeout_seconds"],
+            )],
+            "http_request" => vec![(
+                "http.request",
+                "send",
+                &["url", "method", "headers", "body", "timeout_seconds"],
+            )],
+            "wake_computer" => vec![("network.wol", "wake", &["mac", "broadcast", "port"])],
             "observe_room" => vec![
-                ("camera", "capture", &["node"]),
+                ("camera.capture", "capture", &["device"]),
                 ("vlm.analyze", "analyze", &["prompt"]),
             ],
             _ => bail!("no template '{template}'"),

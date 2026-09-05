@@ -1,8 +1,7 @@
 EEF coordinator for Windows
 
-Run install.ps1. It asks for a dedicated installation directory and whether
-EEF should start when you sign in. Do not treat the download/extraction folder
-as the installation directory.
+This directory was created by eef-installer.exe. Run eef.exe here; do not move
+it back into Downloads. The installer and dashboard can make EEF a startup app.
 
 EEF is a coordinator, not a node. It waits for at least one EEFN node before it
 becomes operational. Set EEF_NODE_PSK to the shared network secret and open

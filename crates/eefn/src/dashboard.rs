@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
+use crate::NodePolicy;
+
 const SECRET_PLACEHOLDER: &str = "__KEEP_EXISTING_SECRET__";
 
 #[derive(Clone)]
@@ -74,7 +76,9 @@ impl NodeDashboard {
         if !self.config_path.is_file() {
             return Ok(json!({
                 "node_id": self.node_id,
+                "psk": "",
                 "endpoints": [],
+                "permissions": NodePolicy::default(),
                 "models": {
                     "provider": "auto",
                     "ollama": {"base_url": "http://127.0.0.1:11434", "selected": []},
@@ -133,10 +137,24 @@ fn validate_config(value: &Value) -> Result<()> {
     {
         bail!("endpoints must be an array")
     }
-    if let Some(provider) = value.pointer("/models/provider").and_then(Value::as_str) {
-        if !matches!(provider, "auto" | "ollama" | "llamacpp") {
-            bail!("models.provider must be auto, ollama, or llamacpp")
-        }
+    if value
+        .get("endpoints")
+        .and_then(Value::as_array)
+        .is_some_and(|endpoints| !endpoints.is_empty())
+        && value
+            .get("psk")
+            .and_then(Value::as_str)
+            .is_none_or(|secret| secret.len() < 12)
+    {
+        bail!("a networked node requires a PSK of at least 12 characters")
+    }
+    if let Some(provider) = value.pointer("/models/provider").and_then(Value::as_str)
+        && !matches!(provider, "auto" | "ollama" | "llamacpp")
+    {
+        bail!("models.provider must be auto, ollama, or llamacpp")
+    }
+    if let Some(permissions) = value.get("permissions") {
+        serde_json::from_value::<NodePolicy>(permissions.clone())?.validate()?;
     }
     Ok(())
 }
@@ -160,7 +178,11 @@ async fn config_get(
     State(state): State<Arc<NodeDashboard>>,
 ) -> Result<Json<Value>, DashboardError> {
     let mut config = state.read_config()?;
-    if config.get("psk").and_then(Value::as_str).is_some() {
+    if config
+        .get("psk")
+        .and_then(Value::as_str)
+        .is_some_and(|secret| !secret.is_empty())
+    {
         config["psk"] = Value::String(SECRET_PLACEHOLDER.into());
     }
     Ok(Json(json!({

@@ -28,9 +28,10 @@ The coordinator is not implicitly a node. It starts its dashboard and gateway
 in `waiting_for_node` state and becomes operational only after at least one EEFN
 connects. Device actions and model inference therefore always come from nodes.
 
-`eefn` owns authenticated failover/reconnect, live load/spec reporting, native
-filesystem and launch capabilities, model serving, encrypted framing, OTA
-streaming, versioned updates, and optional Python node plugins.
+`eefn` owns authenticated failover/reconnect, live load/spec reporting, scoped
+filesystem and process/network/application capabilities, model and configurable
+STT provider access, encrypted framing, OTA streaming, versioned updates, and
+opt-in Python media adapters using the bundled interpreter.
 
 Coordinator endpoints have an owner-configured integer priority. EEFN sorts
 them highest-first on every connection attempt, so loss of the preferred EEF

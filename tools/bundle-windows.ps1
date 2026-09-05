@@ -1,12 +1,42 @@
 [CmdletBinding()]
 param(
-    [string]$BundleDir = "bundle\eef-windows-x86_64",
+    [string]$BundleDir = "bundle\eef-windows-x86_64-v0.3.0",
     [string]$ReleaseDir = "release",
     [switch]$SkipTests,
     [switch]$SkipOptionalPythonPackages,
     [switch]$KeepBuildArtifacts,
     [switch]$KeepToolchain
 )
+
+function New-SelfExtractingInstaller {
+    param(
+        [Parameter(Mandatory)][string]$Stub,
+        [Parameter(Mandatory)][string]$Payload,
+        [Parameter(Mandatory)][string]$Output
+    )
+    Copy-Item -LiteralPath $Stub -Destination $Output
+    $payloadLength = (Get-Item -LiteralPath $Payload).Length
+    $outputStream = [IO.File]::Open($Output, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $payloadStream = [IO.File]::OpenRead($Payload)
+        try { $payloadStream.CopyTo($outputStream) } finally { $payloadStream.Dispose() }
+        $lengthBytes = [BitConverter]::GetBytes([uint64]$payloadLength)
+        $outputStream.Write($lengthBytes, 0, $lengthBytes.Length)
+        $magic = [Text.Encoding]::ASCII.GetBytes("EEFINST1")
+        $outputStream.Write($magic, 0, $magic.Length)
+        $outputStream.Flush($true)
+    } finally {
+        $outputStream.Dispose()
+    }
+}
+
+function Write-Utf8NoBom {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Content
+    )
+    [IO.File]::WriteAllText($Path, $Content, [Text.UTF8Encoding]::new($false))
+}
 
 $ErrorActionPreference = "Stop"
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
@@ -36,10 +66,10 @@ $release = if ([IO.Path]::IsPathRooted($ReleaseDir)) {
 if (-not ($release.TrimEnd('\') + '\').StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw "ReleaseDir must be inside $workspace"
 }
-$eefRelease = Join-Path $release "eef-windows-x86_64.zip"
-$eefnRelease = Join-Path $release "eefn-windows-x86_64.zip"
-foreach ($archive in @($eefRelease, $eefnRelease)) {
-    if (Test-Path -LiteralPath $archive) { throw "Release archive already exists: $archive" }
+$eefRelease = Join-Path $release "eef-installer.exe"
+$eefnRelease = Join-Path $release "eefn-installer.exe"
+foreach ($installer in @($eefRelease, $eefnRelease)) {
+    if (Test-Path -LiteralPath $installer) { throw "Release installer already exists: $installer" }
 }
 $packageRoot = Join-Path $workspace ".package"
 if (Test-Path -LiteralPath $packageRoot) { throw "Package staging directory already exists: $packageRoot" }
@@ -88,6 +118,14 @@ try {
         }
         & $cargo build --workspace --release
         if ($LASTEXITCODE -ne 0) { throw "Rust release build failed" }
+        $savedRustFlags = $env:RUSTFLAGS
+        try {
+            $env:RUSTFLAGS = (($savedRustFlags, "-A linker-messages -C target-feature=+crt-static") -join " ").Trim()
+            & $cargo build --release -p eef-installer-stub
+            if ($LASTEXITCODE -ne 0) { throw "Static installer stub build failed" }
+        } finally {
+            $env:RUSTFLAGS = $savedRustFlags
+        }
     } finally {
         Pop-Location
     }
@@ -146,16 +184,20 @@ try {
 
     $manifest = [ordered]@{
         name = "EEF"
-        version = "0.2.0"
+        version = "0.3.0"
         architecture = "x86_64-windows"
         core_runtime = "rust"
         python = "3.11.9-embedded"
         built_at_utc = [DateTime]::UtcNow.ToString("o")
     }
-    $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $bundle "bundle.json") -Encoding UTF8
+    Write-Utf8NoBom -Path (Join-Path $bundle "bundle.json") -Content ($manifest | ConvertTo-Json)
     & (Join-Path $bundle "eef.exe") --version
     & (Join-Path $bundle "eefn.exe") --version
     & (Join-Path $bundle "python\python.exe") -I -c "import sys; print(sys.version)"
+    if (-not $SkipOptionalPythonPackages) {
+        & (Join-Path $bundle "python\python.exe") -I -c "import PIL, pyautogui, sounddevice, soundfile, cv2, pyttsx3; print('optional media packages: ok')"
+        if ($LASTEXITCODE -ne 0) { throw "Bundled Python media package import failed" }
+    }
 
     $eefPackage = Join-Path $packageRoot "eef"
     $eefnPackage = Join-Path $packageRoot "eefn"
@@ -169,24 +211,36 @@ try {
         }
     }
 
+    $eefSitePackages = Join-Path $eefPackage "python\Lib\site-packages"
+    if (Test-Path -LiteralPath $eefSitePackages) {
+        $resolvedSitePackages = (Resolve-Path -LiteralPath $eefSitePackages).Path
+        if (-not $resolvedSitePackages.StartsWith((Resolve-Path -LiteralPath $eefPackage).Path + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unsafe EEF package site-packages path"
+        }
+        Remove-Item -LiteralPath $resolvedSitePackages -Recurse
+    }
+
     Copy-Item -LiteralPath (Join-Path $bundle "eef.exe") -Destination $eefPackage
-    Copy-Item -LiteralPath (Join-Path $workspace "tools\install-eef.ps1") -Destination (Join-Path $eefPackage "install.ps1")
     Copy-Item -LiteralPath (Join-Path $workspace "tools\README-EEF.txt") -Destination (Join-Path $eefPackage "README.txt")
     New-Item -ItemType Directory -Path (Join-Path $eefPackage "config") | Out-Null
     Copy-Item -LiteralPath (Join-Path $workspace "config\default_identity.yaml") -Destination (Join-Path $eefPackage "config")
-    ([ordered]@{name="eef";version="0.2.0";architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded"}) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $eefPackage "bundle.json") -Encoding UTF8
+    Write-Utf8NoBom -Path (Join-Path $eefPackage "bundle.json") -Content (([ordered]@{name="eef";version="0.3.0";architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded"}) | ConvertTo-Json)
 
     Copy-Item -LiteralPath (Join-Path $bundle "eefn.exe") -Destination $eefnPackage
-    Copy-Item -LiteralPath (Join-Path $workspace "tools\install-eefn.ps1") -Destination (Join-Path $eefnPackage "install.ps1")
     Copy-Item -LiteralPath (Join-Path $workspace "tools\README-EEFN.txt") -Destination (Join-Path $eefnPackage "README.txt")
     Copy-Item -LiteralPath (Join-Path $workspace "config\node.example.json") -Destination (Join-Path $eefnPackage "config.json")
     Copy-Item -LiteralPath (Join-Path $bundle "tools") -Destination $eefnPackage -Recurse
-    ([ordered]@{name="eefn";version="0.2.0";architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded";llamacpp="b10621";models_included=$false}) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $eefnPackage "bundle.json") -Encoding UTF8
+    Write-Utf8NoBom -Path (Join-Path $eefnPackage "bundle.json") -Content (([ordered]@{name="eefn";version="0.3.0";architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded";llamacpp="b10621";models_included=$false}) | ConvertTo-Json)
 
     New-Item -ItemType Directory -Path $release -Force | Out-Null
-    Compress-Archive -Path (Join-Path $eefPackage "*") -DestinationPath $eefRelease -CompressionLevel Optimal
-    Compress-Archive -Path (Join-Path $eefnPackage "*") -DestinationPath $eefnRelease -CompressionLevel Optimal
-    Write-Host "Release archives created at $release"
+    $eefPayload = Join-Path $packageRoot "eef-payload.zip"
+    $eefnPayload = Join-Path $packageRoot "eefn-payload.zip"
+    Compress-Archive -Path (Join-Path $eefPackage "*") -DestinationPath $eefPayload -CompressionLevel Optimal
+    Compress-Archive -Path (Join-Path $eefnPackage "*") -DestinationPath $eefnPayload -CompressionLevel Optimal
+    $installerStub = Join-Path $workspace "target\release\eef-installer-stub.exe"
+    New-SelfExtractingInstaller -Stub $installerStub -Payload $eefPayload -Output $eefRelease
+    New-SelfExtractingInstaller -Stub $installerStub -Payload $eefnPayload -Output $eefnRelease
+    Write-Host "Release installers created at $release"
     $freeBytes = (Get-PSDrive -Name $driveName).Free
     if ($freeBytes -lt $safetyFloor) {
         throw "Bundle creation crossed the 5 GB free-space floor"
@@ -217,11 +271,11 @@ try {
         }
     }
     if (-not $buildSucceeded) {
-        foreach ($archive in @($eefRelease, $eefnRelease)) {
-            if (Test-Path -LiteralPath $archive) {
-                $resolvedArchive = (Resolve-Path -LiteralPath $archive).Path
-                if ($resolvedArchive.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase)) {
-                    Remove-Item -LiteralPath $resolvedArchive
+        foreach ($installer in @($eefRelease, $eefnRelease)) {
+            if (Test-Path -LiteralPath $installer) {
+                $resolvedInstaller = (Resolve-Path -LiteralPath $installer).Path
+                if ($resolvedInstaller.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                    Remove-Item -LiteralPath $resolvedInstaller
                 }
             }
         }

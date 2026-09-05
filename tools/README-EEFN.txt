@@ -1,8 +1,8 @@
 EEFN node for Windows
 
-Run install.ps1. It asks for a dedicated installation directory and whether
-EEFN should start when you sign in. Do not treat the download/extraction folder
-as the installation directory.
+This directory was created by eefn-installer.exe. Run eefn.exe here; do not
+move it back into Downloads. The installer and dashboard can make EEFN a
+startup app.
 
 Open http://127.0.0.1:51336/ to configure coordinator endpoints, priorities,
 permissions, update policy, and models. EEFN remains a node without a connected

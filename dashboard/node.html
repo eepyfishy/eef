@@ -1,5 +1,72 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EEFN node dashboard</title>
-<style>:root{color-scheme:dark;--bg:#101418;--panel:#192127;--text:#eef5f7;--accent:#55d6be;--warn:#ffd166}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}main{max-width:900px;margin:auto;padding:1rem}section{background:var(--panel);border:1px solid #3a4b53;border-radius:.7rem;padding:1rem;margin:1rem 0}textarea{width:100%;min-height:34rem;background:#0d1215;color:inherit;border:1px solid #71858e;border-radius:.4rem;padding:.7rem;font:14px/1.4 ui-monospace,monospace}button{font:inherit;padding:.65rem 1rem;color:inherit;background:#24463f;border:1px solid var(--accent);border-radius:.4rem;cursor:pointer}button:focus{outline:3px solid #ffffff55}.ok{color:var(--accent)}.warn{color:var(--warn)}</style></head>
-<body><main><h1>EEFN node dashboard</h1><div id="notice" role="status" aria-live="polite"></div><section><h2>Node status</h2><div id="status">Loading…</div><button id="startup">Loading startup state…</button></section><section><h2>Complete node configuration</h2><p>Coordinator endpoints are tried by highest priority. Provider <code>auto</code> uses Ollama when reachable and otherwise uses bundled llama.cpp. Models are never selected or downloaded automatically.</p><textarea id="config" aria-label="Node configuration JSON"></textarea><p><button id="save">Save for restart</button> <button id="reload">Discard edits</button></p></section></main>
-<script>const $=x=>document.getElementById(x),api=async(p,o={})=>{const r=await fetch(p,{headers:{'content-type':'application/json'},...o}),j=await r.json();if(!r.ok)throw Error(j.error||r.statusText);return j},say=(m,b=false)=>{$('notice').textContent=m;$('notice').className=b?'warn':'ok'};let startupEnabled=false;async function load(){try{const[s,c,a]=await Promise.all([api('/api/status'),api('/api/config'),api('/api/startup')]);$('status').innerHTML=`<p class="ok">${s.node_id} is running as a node.</p><p>EEF is not required for this node process. At least one EEF is required for coordinated network tasks.</p>`;$('config').value=JSON.stringify(c.config,null,2);startupEnabled=a.enabled;$('startup').textContent=startupEnabled?'Disable startup app':'Enable startup app';say('Configuration loaded.')}catch(e){say(e.message,true)}}$('save').onclick=async()=>{try{const c=JSON.parse($('config').value);await api('/api/config',{method:'PUT',body:JSON.stringify({config:c})});say('Saved. Restart EEFN to apply.')}catch(e){say(e.message,true)}};$('startup').onclick=async()=>{try{const a=await api('/api/startup',{method:'PUT',body:JSON.stringify({enabled:!startupEnabled})});startupEnabled=a.enabled;$('startup').textContent=startupEnabled?'Disable startup app':'Enable startup app';say(startupEnabled?'EEFN startup enabled.':'EEFN startup disabled.')}catch(e){say(e.message,true)}};$('reload').onclick=load;load();</script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EEFN node dashboard</title>
+  <style>
+    :root{color-scheme:dark;--bg:#101418;--panel:#192127;--text:#eef5f7;--accent:#55d6be;--warn:#ffd166}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}
+    main{max-width:960px;margin:auto;padding:1rem}section{background:var(--panel);border:1px solid #3a4b53;border-radius:.7rem;padding:1rem;margin:1rem 0}
+    textarea{width:100%;min-height:34rem;background:#0d1215;color:inherit;border:1px solid #71858e;border-radius:.4rem;padding:.7rem;font:14px/1.4 ui-monospace,monospace}
+    button{font:inherit;padding:.65rem 1rem;color:inherit;background:#24463f;border:1px solid var(--accent);border-radius:.4rem;cursor:pointer}
+    button:focus,input:focus,textarea:focus{outline:3px solid #ffffff55}.ok{color:var(--accent)}.warn{color:var(--warn)}
+    fieldset{border:1px solid #52666f;border-radius:.5rem;margin:.8rem 0;padding:.8rem}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.5rem}
+    label{display:block;padding:.25rem}code{overflow-wrap:anywhere}
+  </style>
+</head>
+<body>
+<main>
+  <h1>EEFN node dashboard</h1>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <section>
+    <h2>Node status</h2>
+    <p id="status">Loading…</p>
+    <p>EEFN can run before it joins a network. At least one EEF coordinator is required for coordinated network tasks.</p>
+    <button id="startup">Loading startup state…</button>
+  </section>
+  <section>
+    <h2>Capability permissions</h2>
+    <p>Privileged capabilities are off by default. Enabling a box only enables its adapter; configure narrow roots, executable paths, app names, hosts, or STT provider settings in the JSON below.</p>
+    <fieldset><legend>Local data and processes</legend><div class="grid">
+      <label><input type="checkbox" data-policy="filesystem.read"> Filesystem read</label>
+      <label><input type="checkbox" data-policy="filesystem.write"> Filesystem write</label>
+      <label><input type="checkbox" data-policy="process.enabled"> Safe process execution</label>
+      <label><input type="checkbox" data-policy="applications.enabled"> Application control</label>
+      <label><input type="checkbox" data-policy="http.enabled"> HTTP requests</label>
+      <label><input type="checkbox" data-policy="stt.enabled"> STT transcription provider</label>
+      <label><input type="checkbox" data-policy="wake_on_lan.enabled"> Wake-on-LAN</label>
+    </div></fieldset>
+    <fieldset><legend>Media and input</legend><div class="grid">
+      <label><input type="checkbox" data-policy="media.microphone"> Microphone capture</label>
+      <label><input type="checkbox" data-policy="media.audio_output"> Audio output</label>
+      <label><input type="checkbox" data-policy="media.tts"> Text-to-speech</label>
+      <label><input type="checkbox" data-policy="media.camera"> Camera capture</label>
+      <label><input type="checkbox" data-policy="media.screen_capture"> Screen capture</label>
+      <label><input type="checkbox" data-policy="media.input_control"> Keyboard and mouse control</label>
+    </div></fieldset>
+  </section>
+  <section>
+    <h2>Complete node configuration</h2>
+    <p>Coordinator endpoints are tried by highest priority. Provider <code>auto</code> uses an existing Ollama service when reachable and otherwise uses bundled llama.cpp. Models are never selected or downloaded automatically.</p>
+    <textarea id="config" aria-label="Node configuration JSON" spellcheck="false"></textarea>
+    <p><button id="save">Save for restart</button> <button id="reload">Discard edits</button></p>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const api=async(path,options={})=>{const response=await fetch(path,{headers:{'content-type':'application/json'},...options});const value=await response.json();if(!response.ok)throw Error(value.error||response.statusText);return value};
+const say=(message,bad=false)=>{$('notice').textContent=message;$('notice').className=bad?'warn':'ok'};
+const checks=[...document.querySelectorAll('[data-policy]')];let startupEnabled=false;
+function parseConfig(){return JSON.parse($('config').value)}
+function setPath(object,path,value){const parts=path.split('.');let current=object.permissions??={};for(const part of parts.slice(0,-1))current=current[part]??={};current[parts.at(-1)]=value}
+function syncChecks(){try{const config=parseConfig();for(const box of checks){let value=config.permissions;for(const part of box.dataset.policy.split('.'))value=value?.[part];box.checked=value===true}}catch{}}
+for(const box of checks)box.addEventListener('change',()=>{try{const config=parseConfig();setPath(config,box.dataset.policy,box.checked);$('config').value=JSON.stringify(config,null,2);say('Permission changed locally. Save and restart EEFN to apply.')}catch(error){box.checked=!box.checked;say(`Fix the JSON before changing permissions: ${error.message}`,true)}});
+$('config').addEventListener('input',syncChecks);
+async function load(){try{const[status,config,startup]=await Promise.all([api('/api/status'),api('/api/config'),api('/api/startup')]);$('status').textContent=`${status.node_id} is running as a Rust node (version ${status.version}).`;$('config').value=JSON.stringify(config.config,null,2);syncChecks();startupEnabled=startup.enabled;$('startup').textContent=startupEnabled?'Disable startup app':'Enable startup app';say('Configuration loaded.')}catch(error){say(error.message,true)}}
+$('save').onclick=async()=>{try{const config=parseConfig();await api('/api/config',{method:'PUT',body:JSON.stringify({config})});say('Saved. Restart EEFN to apply.')}catch(error){say(error.message,true)}};
+$('startup').onclick=async()=>{try{const startup=await api('/api/startup',{method:'PUT',body:JSON.stringify({enabled:!startupEnabled})});startupEnabled=startup.enabled;$('startup').textContent=startupEnabled?'Disable startup app':'Enable startup app';say(startupEnabled?'EEFN startup enabled.':'EEFN startup disabled.')}catch(error){say(error.message,true)}};
+$('reload').onclick=load;load();
+</script>
+</body>
+</html>

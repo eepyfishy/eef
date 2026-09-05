@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use eefn::{
     CoordinatorEndpoint, ModelServer, ModelSlot, NodeClient, NodeClientConfig, NodeDashboard,
-    NodeEngine, PythonRuntime, SelectedModel,
+    NodeEngine, NodePolicy, PythonRuntime, SelectedModel,
 };
 use serde::Deserialize;
 use tracing::{info, warn};
@@ -79,6 +79,8 @@ struct FileConfig {
     models: Option<ModelsConfig>,
     #[serde(default)]
     dashboard: Option<DashboardConfig>,
+    #[serde(default)]
+    permissions: NodePolicy,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -304,26 +306,47 @@ async fn main() -> Result<()> {
     } else {
         Vec::new()
     };
-    let mut engine = NodeEngine::new(
-        file.allow_write,
-        file.allowed_roots.clone(),
-        install_dir.clone(),
-    )?
-    .with_update_manifest(manifest)
-    .with_ollama(
-        ollama_url.clone(),
-        active_ollama_models
-            .iter()
-            .map(|model| (model.model_id.clone(), model.modality.clone())),
-    );
+    let mut permissions = file.permissions.clone();
+    if !file.allowed_roots.is_empty() {
+        permissions.filesystem.roots = file.allowed_roots.clone();
+        permissions.filesystem.read = true;
+    }
+    if file.allow_write {
+        permissions.filesystem.write = true;
+    }
+    let media = permissions.media.clone();
+    let mut engine = NodeEngine::new(false, vec![], install_dir.clone())?
+        .with_policy(permissions)?
+        .with_update_manifest(manifest)
+        .with_ollama(
+            ollama_url.clone(),
+            active_ollama_models
+                .iter()
+                .map(|model| (model.model_id.clone(), model.modality.clone())),
+        );
     if let Some(server) = &model_server {
         engine = engine.with_model_server(server.clone())
     }
-    if !file.python_plugins.is_empty() {
+    let builtin_plugins = [
+        (media.microphone, "microphone.py"),
+        (media.audio_output, "audio_output.py"),
+        (media.tts, "tts.py"),
+        (media.camera, "camera.py"),
+        (media.screen_capture, "screen_capture.py"),
+        (media.input_control, "input_control.py"),
+    ];
+    if !file.python_plugins.is_empty() || builtin_plugins.iter().any(|(enabled, _)| *enabled) {
         let runtime = Arc::new(
             PythonRuntime::discover(file.python.clone()).context("Python runtime unavailable")?,
         );
         info!(python = %runtime.executable().display(), "Python plugin runtime enabled");
+        for (_, filename) in builtin_plugins.iter().filter(|(enabled, _)| *enabled) {
+            let path = resolve_builtin_plugin(&install_dir, filename)?;
+            engine
+                .add_python_plugin(runtime.clone(), path.clone())
+                .await
+                .with_context(|| format!("load enabled built-in plugin {}", path.display()))?;
+        }
         for plugin in &file.python_plugins {
             let path = resolve_relative(&args.config, plugin);
             if let Err(error) = engine
@@ -520,6 +543,19 @@ fn resolve_binary(config: &Path, install_dir: &Path, value: &Path) -> PathBuf {
     } else {
         install_dir.join(value)
     }
+}
+
+fn resolve_builtin_plugin(install_dir: &Path, filename: &str) -> Result<PathBuf> {
+    let candidates = [
+        install_dir.join("python/plugins").join(filename),
+        std::env::current_dir()?
+            .join("python/plugins")
+            .join(filename),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .with_context(|| format!("enabled built-in plugin '{filename}' is missing"))
 }
 
 fn parse_selected_model(value: &str) -> Result<SelectedModel> {

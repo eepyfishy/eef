@@ -9,9 +9,19 @@
   coordinator and nodes, and do not commit it.
 - Authentication rejects stale timestamps, replayed nonces, mismatched node
   IDs, unsupported protocol versions, and duplicate live node IDs.
-- Filesystem roots constrain path access lexically. Filesystem mutation,
-  keyboard, screen capture, shell, and physical-control capabilities are
-  default-deny. Enable the smallest required capability only.
+- Filesystem access requires explicit existing roots. Roots and existing path
+  ancestors are canonicalized so NTFS junction/symlink escapes are rejected.
+- Process execution is not a shell: it accepts only exact existing absolute
+  executables from the node allowlist, passes arguments directly, limits
+  runtime and output, and kills timed-out children.
+- HTTP requests require explicit hosts and methods. Redirects are disabled;
+  unless private networking is explicitly enabled, DNS answers are rejected
+  if any resolve to a private/non-routable address and the accepted address is
+  pinned for the request.
+- Filesystem, process, application, HTTP/STT, Wake-on-LAN, microphone,
+  audio/TTS, camera, screen, and keyboard/mouse abilities are default-deny.
+  Wake-on-LAN additionally requires exact MAC, IPv4 broadcast, and port
+  allowlists. Enable the smallest required capability only.
 - Python plugins are arbitrary native user code despite running in short-lived
   subprocesses. Treat a plugin as trusted software; isolated mode is not a
   security sandbox.
@@ -20,3 +30,8 @@
   control of the manifest host; signing is a future hardening item.
 - Firmware source contains Wi-Fi and node secrets. Generated firmware belongs
   in the ignored `data/firmware` directory and should not be published.
+- The release executables are not code-signed yet. Windows may warn before the
+  first installer launch; verify the release SHA-256 when authenticity matters.
+- The installer embeds `requestedExecutionLevel=asInvoker`, installs below the
+  current user's local application-data directory, and creates only a per-user
+  Startup entry. It neither requests nor bypasses administrator access.

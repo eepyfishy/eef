@@ -35,4 +35,7 @@ Errors use a uniform JSON object with `success: false`, `error`, and
 
 Each EEFN also exposes a local configuration dashboard on
 `http://127.0.0.1:51336` by default. It remains available without a coordinator;
-saved changes apply after EEFN restarts.
+saved changes apply after EEFN restarts. EEF can route any capability advertised
+by a connected EEFN through `/api/assistant/execute` or
+`/api/node/{id}/invoke`; see [`CAPABILITIES.md`](CAPABILITIES.md) for actions and
+parameters.

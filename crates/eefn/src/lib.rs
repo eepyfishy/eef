@@ -21,7 +21,7 @@ pub use client::{
 };
 pub use crypto::{CryptoError, NodeCrypto, derive_key};
 pub use dashboard::NodeDashboard;
-pub use engine::{CAPABILITIES, NodeEngine};
+pub use engine::{CAPABILITIES, NodeEngine, NodePolicy};
 pub use model_server::{ModelServer, ModelSlot};
 pub use protocol::PROTOCOL_VERSION;
 pub use python::{PythonPlugin, PythonRuntime};

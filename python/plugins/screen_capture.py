@@ -3,7 +3,7 @@
 import base64
 import io
 
-CAPABILITY = "screen_capture"
+CAPABILITY = "screen.capture"
 ACTIONS = ["capture"]
 PARAMS_SCHEMA = {
     "format": {"type": "string", "required": False, "enum": ["png", "jpeg"]},
@@ -25,9 +25,11 @@ def handle(action, params):
     else:
         image.save(output, format="PNG", optimize=True)
         mime = "image/png"
+    if output.tell() > 25 * 1024 * 1024:
+        raise RuntimeError("encoded screen capture exceeds 25 MB")
     return {
-        "image": base64.b64encode(output.getvalue()).decode("ascii"),
-        "mime": mime,
+        "data_base64": base64.b64encode(output.getvalue()).decode("ascii"),
+        "mime_type": mime,
         "width": image.width,
         "height": image.height,
     }

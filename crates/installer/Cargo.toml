@@ -1,0 +1,21 @@
+[package]
+name = "eef-installer-stub"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Self-extracting per-user installer for EEF releases"
+
+[dependencies]
+anyhow.workspace = true
+fs2.workspace = true
+hex.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+windows-sys.workspace = true
+zip.workspace = true
+
+[build-dependencies]
+winresource = { version = "0.1.31", default-features = false }

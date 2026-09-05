@@ -3,7 +3,7 @@
 This file distinguishes working behavior from planned architecture. It prevents
 the open-source project from presenting an unsafe approximation as complete.
 
-## Implemented in 0.2.0
+## Implemented in 0.3.0
 
 - Rust coordinator and PC node executables in one workspace.
 - Normal `node -> EEF -> selected node(s) -> EEF -> originating node` requests.
@@ -14,13 +14,21 @@ the open-source project from presenting an unsafe approximation as complete.
 - Dependency-aware task plans, concurrent ready subtasks, timeouts, retries,
   cancellation state, structured results, and node reassignment on retry.
 - Structured identity, mutable, working, event, conversation, and task state.
-- Default-deny sensitive adapters and explicit filesystem roots.
+- Default-deny node policies for scoped filesystem access, exact allowlisted
+  process execution, application control, host/method-limited HTTP, configured
+  STT providers, Wake-on-LAN, microphone, audio, TTS, camera, screen, and input
+  control.
+- Filesystem roots are canonicalized and junction/symlink escapes are rejected;
+  public HTTP destinations are DNS-checked and pinned with redirects disabled.
 - Owner-selected Ollama and llama.cpp models; no coordinator model and no model
   in the node bundle.
 - Optional isolated Python plugin sidecars using the bundled CPython runtime.
 - Configurable `off`, `prompt`, and `auto` verified updates for both programs,
   with version handoff and rollback.
-- Local EEF and EEFN dashboards for full configuration and optional startup.
+- Local EEF and EEFN dashboards for full configuration, capability permission
+  switches, and optional startup.
+- Two self-extracting Windows installers with per-user defaults, config
+  preservation, generated coordinator secret, and a 5 GB storage floor.
 - Standalone EEFN operation with zero coordinators; EEF only becomes
   operational when at least one node connects.
 

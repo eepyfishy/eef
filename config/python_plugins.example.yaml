@@ -8,5 +8,5 @@ python:
 capability_policy:
   keyboard:
     allow: false
-  screen_capture:
+  screen.capture:
     allow: false

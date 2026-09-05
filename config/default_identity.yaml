@@ -2,7 +2,7 @@
 identity:
   name: EEF
   creator: EEF contributors
-  version: 0.2.0
+  version: 0.3.0
   description: A continuously running, local-first, distributed personal AI agent.
 
 behavior_rules:
@@ -51,7 +51,7 @@ capability_policy:
     allow: false
   keyboard:
     allow: false
-  screen_capture:
+  screen.capture:
     allow: false
   gpio:
     allow: false

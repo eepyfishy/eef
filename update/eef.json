@@ -1,5 +1,5 @@
 {
-  "version": "0.2.0",
-  "url": "https://github.com/eepyfishy/eef/releases/download/v0.2.0/eef-windows-x86_64.zip",
-  "sha256": "9799250042a22fe904dee0c61bf0057a0cce81141779ae80c500b701e72f5422"
+  "version": "0.3.0",
+  "url": "https://github.com/eepyfishy/eef/releases/download/v0.3.0/eef-installer.exe",
+  "sha256": "41ed685bb3eae2d6f49e71910aabedc8bcd870d1b50b97841714e31c25b44332"
 }

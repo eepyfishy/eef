@@ -8,14 +8,15 @@ replace the feed or disable it from the dashboard.
 ```json
 {
   "version": "0.3.0",
-  "url": "https://releases.example.org/eef-0.3.0-windows.zip",
+  "url": "https://releases.example.org/eef-installer.exe",
   "sha256": "64-lowercase-or-uppercase-hex-characters"
 }
 ```
 
-The archive may contain a bundle directory, but it must contain the executable
-being updated. Downloads are rejected if the SHA-256 does not match. Files are
-extracted with traversal-safe ZIP paths into `versions/<version>`, and
+The distribution may be a ZIP or an official self-extracting EEF installer; its
+payload must contain the executable being updated. Downloads are rejected if
+the SHA-256 does not match. Files are extracted with traversal-safe ZIP paths
+into `versions/<version>`, and
 `current.txt` is switched only after validation. On the next launch, the stable
 root executable hands off to the selected version. `previous.txt` supports
 rollback.

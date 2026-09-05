@@ -13,6 +13,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+const INSTALLER_FOOTER_MAGIC: &[u8; 8] = b"EEFINST1";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UpdateManifest {
     pub version: String,
@@ -238,7 +240,7 @@ fn validate_version(version: &str) -> Result<()> {
 }
 
 fn extract_zip(bytes: &[u8], destination: &Path) -> Result<()> {
-    let cursor = io::Cursor::new(bytes);
+    let cursor = io::Cursor::new(update_payload(bytes)?);
     let mut archive = zip::ZipArchive::new(cursor)?;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index)?;
@@ -258,6 +260,31 @@ fn extract_zip(bytes: &[u8], destination: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn update_payload(bytes: &[u8]) -> Result<&[u8]> {
+    if bytes.starts_with(b"PK\x03\x04") {
+        return Ok(bytes);
+    }
+    if bytes.len() < 16 || &bytes[bytes.len() - 8..] != INSTALLER_FOOTER_MAGIC {
+        bail!("update distribution is neither a ZIP nor an EEF installer")
+    }
+    let length = u64::from_le_bytes(
+        bytes[bytes.len() - 16..bytes.len() - 8]
+            .try_into()
+            .expect("installer footer length"),
+    );
+    let length = usize::try_from(length)?;
+    let start = bytes
+        .len()
+        .checked_sub(16)
+        .and_then(|footer| footer.checked_sub(length))
+        .context("invalid EEF installer payload length")?;
+    let payload = &bytes[start..start + length];
+    if !payload.starts_with(b"PK\x03\x04") {
+        bail!("EEF installer payload is not a ZIP archive")
+    }
+    Ok(payload)
 }
 
 fn validate_program(program: &str) -> Result<()> {
@@ -322,5 +349,17 @@ mod tests {
     fn versions_compare_numerically() {
         assert!(is_newer("0.10.0", "0.9.9"));
         assert!(!is_newer("1.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn installer_update_payload_is_recovered() {
+        let zip = b"PK\x03\x04payload";
+        let mut installer = b"stub".to_vec();
+        installer.extend_from_slice(zip);
+        installer.extend_from_slice(&(zip.len() as u64).to_le_bytes());
+        installer.extend_from_slice(INSTALLER_FOOTER_MAGIC);
+        assert_eq!(update_payload(&installer).unwrap(), zip);
+        assert_eq!(update_payload(zip).unwrap(), zip);
+        assert!(update_payload(b"not an update").is_err());
     }
 }
