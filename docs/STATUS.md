@@ -3,6 +3,19 @@
 This file distinguishes working behavior from planned architecture. It prevents
 the open-source project from presenting an unsafe approximation as complete.
 
+## Maintenance changes in 0.3.1
+
+- Hash-locked Windows Python runtime dependencies and retained vendor checksums.
+- Component and installer Defender scan gates, dependency provenance, and
+  per-file bundle inventories; see [ANTIVIRUS.md](ANTIVIRUS.md) for the
+  original detection and the limits of the new passing scans.
+- Fewer bundled llama.cpp executables, explicit installer launch consent,
+  quiet-upgrade startup preservation, and clearer Windows version metadata.
+- Isolated installation/upgrade regression coverage for both installers.
+
+This maintenance release does not implement the proposed 0.4 architecture
+roadmap or establish that the 0.3.0 detection was a false positive.
+
 ## Implemented in 0.3.0
 
 - Rust coordinator and PC node executables in one workspace.

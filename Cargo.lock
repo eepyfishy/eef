@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "eef"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "eef-installer-stub"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "fs2",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "eefn"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "aes-gcm",
  "anyhow",

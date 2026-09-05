@@ -8,6 +8,10 @@ honest conformance matrix in [`docs/STATUS.md`](docs/STATUS.md).
 
 ## Windows releases
 
+The v0.3.0 node installer has a reported Microsoft Defender detection. Keep
+that artifact quarantined; see [the investigation](docs/ANTIVIRUS.md) for the
+maintenance build's validation and limitations.
+
 The build creates exactly two self-extracting per-user installers:
 
 - `eef-installer.exe` — coordinator, dashboard, and bundled CPython.
@@ -21,7 +25,8 @@ Ollama when reachable and otherwise uses llama.cpp.
 
 Double-click an installer. It uses `%LOCALAPPDATA%\EEF` or
 `%LOCALAPPDATA%\EEFN`, offers startup as an opt-in choice, and launches the
-local dashboard. `--install-dir` supports another dedicated location. The
+local dashboard after an explicit launch choice. `--install-dir` supports
+another dedicated location. The
 installer refuses to use its download directory and preserves existing config
 on upgrade. These open-source builds are currently unsigned, so Windows may
 show a SmartScreen warning.

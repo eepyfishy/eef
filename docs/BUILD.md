@@ -16,12 +16,31 @@ cd path\to\eef-rust
 .\tools\bundle-windows.ps1
 ```
 
-The script downloads LLVM-MinGW 22.1.8 into the ignored `.tooling` directory
+Install the `stable-x86_64-pc-windows-gnullvm` Rust toolchain and `rustfmt` first.
+The script uses the installed toolchain without silently upgrading it. It
+downloads LLVM-MinGW 22.1.8 into the ignored `.tooling` directory
 when needed, validates its SHA-256, runs `cargo test --workspace --all-targets`,
 builds EEF, EEFN, and the shared installer stub, then deletes Cargo output by
 default. It obtains
 CPython 3.11.9 from python.org and verifies the SHA-256 published in Python's
-Windows release manifest.
+Windows release manifest. Rust dependency resolution uses `--locked`; Python
+runtime dependencies use `python/requirements-windows.lock` with
+`--require-hashes` and the explicit PyPI index. A CPython 3.11 x64 build host
+is required for those Windows wheel hashes.
+
+Microsoft Defender must be enabled. The build scans the runtime
+archives, Rust binaries, unpacked bundle, and final installers before reporting
+success. Reports are retained in ignored `.validation/v<version>/`. Every
+installer also includes dependency provenance and a per-file hash inventory.
+See [ANTIVIRUS.md](ANTIVIRUS.md) for the detection investigation and scan limits.
+
+After building, run the installer regression checks in an isolated test
+directory. They use a temporary `APPDATA`, leaving personal startup entries
+alone:
+
+```powershell
+.\tools\test-windows-installers.ps1 -ReleaseDir .\release\v0.3.1
+```
 
 Useful switches:
 
@@ -30,16 +49,35 @@ Useful switches:
   packages while retaining CPython and standard-library plugins.
 - `-KeepBuildArtifacts` — retain `target` for development; this uses much more
   storage.
+- `-KeepBundle` retains the unpacked staging bundle for diagnostics.
 - `-KeepToolchain` — retain a compiler downloaded by the script.
 
-The bundler requires 8 GB free at startup so its temporary build use cannot
-cross the 5 GB safety floor. It checks the floor again before and after bundle
+The bundler requires 8 GB free at startup, allowing a 3 GB temporary-build
+budget above the 5 GB safety floor. Actual compiler usage can vary; monitor
+free space on constrained machines. It checks the floor before and after bundle
 assembly, removes a partial output after failure, and refuses to overwrite an
 existing output directory. The release directory contains exactly two
 self-extracting installers: one for EEF and one for EEFN. A combined ignored
-staging bundle is retained only for local diagnostics.
+staging bundle is removed by default; use `-KeepBundle` for local diagnostics.
 
-## Validation performed for 0.3.0
+## Validation performed for 0.3.1
+
+```text
+cargo test --workspace --all-targets --locked   31 passed, 0 failed
+cargo fmt --all -- --check                     pass
+PowerShell script syntax                      pass
+component, runtime, and final Defender scans   pass (definitions 1.459.63.0)
+isolated install and upgrade regression        pass (EEF and EEFN)
+installed file inventory checks                pass
+bundled Python media imports                   pass
+minimal llama.cpp server --version             pass (build 10621)
+```
+
+See [ANTIVIRUS.md](ANTIVIRUS.md) for exact artifact hashes and remaining
+browser-download/Microsoft-review limitations. The two-PC live failover test
+below was performed for 0.3.0, not repeated for this maintenance build.
+
+## Historical validation performed for 0.3.0
 
 ```text
 cargo check --workspace --all-targets  pass

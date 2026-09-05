@@ -4,6 +4,7 @@
 /release/
 /.package/
 /.gh-auth/
+/.validation/
 *.db
 *.log
 config.json

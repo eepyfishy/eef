@@ -23,7 +23,7 @@ struct BundleManifest {
 struct Options {
     install_dir: Option<PathBuf>,
     startup: Option<bool>,
-    launch: bool,
+    launch: Option<bool>,
     quiet: bool,
 }
 
@@ -71,7 +71,7 @@ fn run() -> Result<()> {
 
     let startup = options.startup.unwrap_or_else(|| {
         if options.quiet {
-            false
+            startup_path(product).is_ok_and(|path| path.is_file())
         } else {
             ask_yes_no(
                 "Startup application",
@@ -82,7 +82,17 @@ fn run() -> Result<()> {
     set_startup(&install_dir, product, startup)?;
 
     let installed_executable = install_dir.join(product.executable);
-    if options.launch {
+    let launch = options.launch.unwrap_or_else(|| {
+        !options.quiet
+            && ask_yes_no(
+                "Launch application",
+                &format!(
+                    "Installation finished. Start {} and open its dashboard now?",
+                    product.display
+                ),
+            )
+    });
+    if launch {
         launch_installed(&installed_executable, &install_dir.join(product.config))?;
         let _ = Command::new("explorer.exe").arg(product.dashboard).spawn();
     }
@@ -100,10 +110,7 @@ fn run() -> Result<()> {
 }
 
 fn parse_options() -> Result<Options> {
-    let mut options = Options {
-        launch: true,
-        ..Options::default()
-    };
+    let mut options = Options::default();
     let mut args = std::env::args_os().skip(1);
     while let Some(argument) = args.next() {
         match argument.to_string_lossy().as_ref() {
@@ -114,11 +121,12 @@ fn parse_options() -> Result<Options> {
             }
             "--startup" => options.startup = Some(true),
             "--no-startup" => options.startup = Some(false),
-            "--no-launch" => options.launch = false,
+            "--launch" => options.launch = Some(true),
+            "--no-launch" => options.launch = Some(false),
             "--quiet" => options.quiet = true,
             "--help" | "-h" => {
                 show_info(
-                    "Options:\n  --install-dir PATH\n  --startup | --no-startup\n  --no-launch\n  --quiet",
+                    "Options:\n  --install-dir PATH\n  --startup | --no-startup\n  --launch | --no-launch\n  --quiet (does not launch; preserves startup unless explicitly changed)",
                 );
                 std::process::exit(0);
             }
@@ -285,9 +293,7 @@ fn ensure_coordinator_secret(path: &Path) -> Result<()> {
 }
 
 fn set_startup(install_dir: &Path, product: &Product, enabled: bool) -> Result<()> {
-    let startup = PathBuf::from(std::env::var_os("APPDATA").context("APPDATA is unavailable")?)
-        .join("Microsoft/Windows/Start Menu/Programs/Startup")
-        .join(format!("{}.cmd", product.startup_name));
+    let startup = startup_path(product)?;
     if enabled {
         fs::create_dir_all(startup.parent().expect("startup parent"))?;
         let executable = install_dir.join(product.executable);
@@ -306,6 +312,14 @@ fn set_startup(install_dir: &Path, product: &Product, enabled: bool) -> Result<(
         fs::remove_file(startup)?;
     }
     Ok(())
+}
+
+fn startup_path(product: &Product) -> Result<PathBuf> {
+    Ok(
+        PathBuf::from(std::env::var_os("APPDATA").context("APPDATA is unavailable")?)
+            .join("Microsoft/Windows/Start Menu/Programs/Startup")
+            .join(format!("{}.cmd", product.startup_name)),
+    )
 }
 
 fn launch_installed(executable: &Path, config: &Path) -> Result<()> {
@@ -376,7 +390,7 @@ fn normalize(path: &Path) -> Result<PathBuf> {
 }
 
 fn reject_cmd_text(value: &str) -> Result<()> {
-    if value.contains(['\r', '\n', '"', '&', '|', '<', '>', '^']) {
+    if value.contains(['\r', '\n', '"', '&', '|', '<', '>', '^', '%', '!']) {
         bail!("installation path contains unsupported command characters")
     }
     Ok(())
@@ -465,5 +479,7 @@ mod tests {
     fn command_file_rejects_metacharacters() {
         assert!(reject_cmd_text("C:\\Program Files\\EEF").is_ok());
         assert!(reject_cmd_text("C:\\bad&path").is_err());
+        assert!(reject_cmd_text("C:\\%TEMP%\\EEF").is_err());
+        assert!(reject_cmd_text("C:\\!variable!\\EEF").is_err());
     }
 }

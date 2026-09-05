@@ -1,11 +1,12 @@
 [CmdletBinding()]
 param(
-    [string]$BundleDir = "bundle\eef-windows-x86_64-v0.3.0",
+    [string]$BundleDir,
     [string]$ReleaseDir = "release",
     [switch]$SkipTests,
     [switch]$SkipOptionalPythonPackages,
     [switch]$KeepBuildArtifacts,
-    [switch]$KeepToolchain
+    [switch]$KeepToolchain,
+    [switch]$KeepBundle
 )
 
 function New-SelfExtractingInstaller {
@@ -40,10 +41,16 @@ function Write-Utf8NoBom {
 
 $ErrorActionPreference = "Stop"
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$versionMatch = Select-String -LiteralPath (Join-Path $workspace 'Cargo.toml') -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+)"$'
+if ($versionMatch.Count -ne 1) { throw 'Workspace must declare one semantic release version' }
+$version = $versionMatch.Matches[0].Groups[1].Value
+if (-not $BundleDir) { $BundleDir = "bundle\eef-windows-x86_64-v$version" }
+$validation = Join-Path $workspace ".validation\v$version"
+$scanScript = Join-Path $PSScriptRoot 'scan-windows.ps1'
+$sourceCommit = (& git -C $workspace rev-parse HEAD).Trim()
+$sourceDirty = -not [string]::IsNullOrWhiteSpace((& git -C $workspace status --porcelain | Out-String))
 $rustup = Join-Path $env:USERPROFILE ".cargo\bin\rustup.exe"
 if (-not (Test-Path -LiteralPath $rustup)) { throw "rustup.exe was not found; install Rust with rustup first" }
-& $rustup toolchain install stable-x86_64-pc-windows-gnullvm --profile minimal --component rustfmt
-if ($LASTEXITCODE -ne 0) { throw "the Rust gnullvm toolchain could not be installed" }
 $cargo = (& $rustup which --toolchain stable-x86_64-pc-windows-gnullvm cargo).Trim()
 if (-not (Test-Path -LiteralPath $cargo)) { throw "cargo.exe was not found in the gnullvm toolchain" }
 $bundle = if ([IO.Path]::IsPathRooted($BundleDir)) {
@@ -113,21 +120,24 @@ try {
     Push-Location $workspace
     try {
         if (-not $SkipTests) {
-            & $cargo test --workspace --all-targets
+            & $cargo test --workspace --all-targets --locked
             if ($LASTEXITCODE -ne 0) { throw "Rust tests failed" }
         }
-        & $cargo build --workspace --release
+        & $cargo build --workspace --release --locked
         if ($LASTEXITCODE -ne 0) { throw "Rust release build failed" }
         $savedRustFlags = $env:RUSTFLAGS
         try {
             $env:RUSTFLAGS = (($savedRustFlags, "-A linker-messages -C target-feature=+crt-static") -join " ").Trim()
-            & $cargo build --release -p eef-installer-stub
+            & $cargo build --release -p eef-installer-stub --locked
             if ($LASTEXITCODE -ne 0) { throw "Static installer stub build failed" }
         } finally {
             $env:RUSTFLAGS = $savedRustFlags
         }
     } finally {
         Pop-Location
+    }
+    foreach ($binary in @('eef.exe', 'eefn.exe', 'eef-installer-stub.exe')) {
+        & $scanScript -Path (Join-Path $workspace "target\release\$binary") -ReportPath (Join-Path $validation "$binary.scan.json")
     }
 
     $freeBytes = (Get-PSDrive -Name $driveName).Free
@@ -159,6 +169,7 @@ try {
     Invoke-WebRequest -Uri $pythonUrl -OutFile $pythonZip -UseBasicParsing
     $actual = (Get-FileHash -LiteralPath $pythonZip -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $pythonSha256) { throw "CPython checksum mismatch" }
+    & $scanScript -Path $pythonZip -ReportPath (Join-Path $validation 'cpython-scan.json')
     Expand-Archive -LiteralPath $pythonZip -DestinationPath (Join-Path $bundle "python")
     Remove-Item -LiteralPath $pythonZip
 
@@ -167,8 +178,12 @@ try {
     if (-not $SkipOptionalPythonPackages) {
         $systemPython = (Get-Command python.exe -ErrorAction Stop).Source
         $sitePackages = Join-Path $bundle "python\Lib\site-packages"
-        & $systemPython -m pip install --disable-pip-version-check --no-cache-dir --no-compile --target $sitePackages -r (Join-Path $workspace "python\requirements-windows.txt")
+        $pythonReport = Join-Path $validation 'python-install-report.json'
+        & $systemPython -m pip --isolated install --disable-pip-version-check --no-cache-dir --no-compile --index-url https://pypi.org/simple --require-hashes --report $pythonReport --target $sitePackages -r (Join-Path $workspace 'python\requirements-windows.lock')
         if ($LASTEXITCODE -ne 0) { throw "Python package installation failed" }
+        $pythonPackages = @((Get-Content -Raw -LiteralPath $pythonReport | ConvertFrom-Json).install | ForEach-Object {
+            [ordered]@{name=$_.metadata.name;version=$_.metadata.version;source=$_.download_info.url;sha256=$_.download_info.archive_info.hashes.sha256}
+        })
     }
 
     $llamaZip = Join-Path $tooling "llama-b10621-bin-win-cpu-x64.zip"
@@ -178,19 +193,21 @@ try {
     Invoke-WebRequest -Uri $llamaUrl -OutFile $llamaZip -UseBasicParsing
     $actual = (Get-FileHash -LiteralPath $llamaZip -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $llamaSha256) { throw "llama.cpp checksum mismatch" }
+    & $scanScript -Path $llamaZip -ReportPath (Join-Path $validation 'llamacpp-scan.json')
     Expand-Archive -LiteralPath $llamaZip -DestinationPath $llamaTools
     Remove-Item -LiteralPath $llamaZip
     Copy-Item -LiteralPath (Join-Path $workspace "licenses\llama.cpp-LICENSE") -Destination (Join-Path $llamaTools "LICENSE-llama.cpp")
 
     $manifest = [ordered]@{
         name = "EEF"
-        version = "0.3.0"
+        version = $version
         architecture = "x86_64-windows"
         core_runtime = "rust"
         python = "3.11.9-embedded"
         built_at_utc = [DateTime]::UtcNow.ToString("o")
     }
     Write-Utf8NoBom -Path (Join-Path $bundle "bundle.json") -Content ($manifest | ConvertTo-Json)
+    & $scanScript -Path $bundle -ReportPath (Join-Path $validation 'unpacked-bundle-scan.json')
     & (Join-Path $bundle "eef.exe") --version
     & (Join-Path $bundle "eefn.exe") --version
     & (Join-Path $bundle "python\python.exe") -I -c "import sys; print(sys.version)"
@@ -224,13 +241,41 @@ try {
     Copy-Item -LiteralPath (Join-Path $workspace "tools\README-EEF.txt") -Destination (Join-Path $eefPackage "README.txt")
     New-Item -ItemType Directory -Path (Join-Path $eefPackage "config") | Out-Null
     Copy-Item -LiteralPath (Join-Path $workspace "config\default_identity.yaml") -Destination (Join-Path $eefPackage "config")
-    Write-Utf8NoBom -Path (Join-Path $eefPackage "bundle.json") -Content (([ordered]@{name="eef";version="0.3.0";architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded"}) | ConvertTo-Json)
+    Write-Utf8NoBom -Path (Join-Path $eefPackage "bundle.json") -Content (([ordered]@{name="eef";version=$version;architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded"}) | ConvertTo-Json)
 
     Copy-Item -LiteralPath (Join-Path $bundle "eefn.exe") -Destination $eefnPackage
     Copy-Item -LiteralPath (Join-Path $workspace "tools\README-EEFN.txt") -Destination (Join-Path $eefnPackage "README.txt")
     Copy-Item -LiteralPath (Join-Path $workspace "config\node.example.json") -Destination (Join-Path $eefnPackage "config.json")
-    Copy-Item -LiteralPath (Join-Path $bundle "tools") -Destination $eefnPackage -Recurse
-    Write-Utf8NoBom -Path (Join-Path $eefnPackage "bundle.json") -Content (([ordered]@{name="eefn";version="0.3.0";architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded";llamacpp="b10621";models_included=$false}) | ConvertTo-Json)
+    $nodeTools = Join-Path $eefnPackage 'tools'
+    New-Item -ItemType Directory -Path $nodeTools | Out-Null
+    # Only the inference server and its libraries are used by EEFN. Do not ship
+    # unrelated upstream benchmark, conversion, training, or command-line tools.
+    Get-ChildItem -LiteralPath $llamaTools -File | Where-Object { $_.Name -eq 'llama-server.exe' -or $_.Extension -eq '.dll' -or $_.Name -like 'LICENSE*' } | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $nodeTools
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $nodeTools 'llama-server.exe'))) { throw 'llama-server.exe is missing from the verified runtime' }
+    Write-Utf8NoBom -Path (Join-Path $eefnPackage "bundle.json") -Content (([ordered]@{name="eefn";version=$version;architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded";llamacpp="b10621";models_included=$false}) | ConvertTo-Json)
+
+    foreach ($package in @($eefPackage, $eefnPackage)) {
+        $provenance = [ordered]@{
+            version=$version; source_commit=$sourceCommit; source_dirty=$sourceDirty
+            rust_version=((& $rustup run stable-x86_64-pc-windows-gnullvm rustc --version) | Out-String).Trim()
+            sources=@(
+                [ordered]@{name='CPython';url=$pythonUrl;sha256=$pythonSha256},
+                [ordered]@{name='LLVM-MinGW';url=$llvmUrl;sha256=$llvmSha256}
+            )
+            python_packages=@()
+        }
+        if ($package -eq $eefnPackage) {
+            $provenance.sources += [ordered]@{name='llama.cpp';url=$llamaUrl;sha256=$llamaSha256}
+            if (-not $SkipOptionalPythonPackages) { $provenance.python_packages=$pythonPackages }
+        }
+        Write-Utf8NoBom -Path (Join-Path $package 'provenance.json') -Content ($provenance | ConvertTo-Json -Depth 8)
+        $inventory = @(Get-ChildItem -LiteralPath $package -Recurse -File | Sort-Object FullName | ForEach-Object {
+            [ordered]@{path=$_.FullName.Substring($package.Length+1).Replace('\','/');bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
+        })
+        Write-Utf8NoBom -Path (Join-Path $package 'files.sha256.json') -Content (ConvertTo-Json -InputObject $inventory -Depth 4)
+    }
 
     New-Item -ItemType Directory -Path $release -Force | Out-Null
     $eefPayload = Join-Path $packageRoot "eef-payload.zip"
@@ -240,6 +285,9 @@ try {
     $installerStub = Join-Path $workspace "target\release\eef-installer-stub.exe"
     New-SelfExtractingInstaller -Stub $installerStub -Payload $eefPayload -Output $eefRelease
     New-SelfExtractingInstaller -Stub $installerStub -Payload $eefnPayload -Output $eefnRelease
+    foreach ($installer in @($eefRelease, $eefnRelease)) {
+        & $scanScript -Path $installer -ReportPath (Join-Path $validation ((Split-Path -Leaf $installer) + '.scan.json'))
+    }
     Write-Host "Release installers created at $release"
     $freeBytes = (Get-PSDrive -Name $driveName).Free
     if ($freeBytes -lt $safetyFloor) {
@@ -264,11 +312,13 @@ try {
             Remove-Item -LiteralPath $resolved -Recurse
         }
     }
-    if (-not $buildSucceeded -and $bundleCreated -and (Test-Path -LiteralPath $bundle)) {
+    if (($buildSucceeded -and -not $KeepBundle) -or (-not $buildSucceeded -and $bundleCreated)) {
+      if (Test-Path -LiteralPath $bundle) {
         $resolvedBundle = (Resolve-Path -LiteralPath $bundle).Path
         if ($resolvedBundle.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase)) {
             Remove-Item -LiteralPath $resolvedBundle -Recurse
         }
+      }
     }
     if (-not $buildSucceeded) {
         foreach ($installer in @($eefRelease, $eefnRelease)) {

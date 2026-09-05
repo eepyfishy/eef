@@ -1,5 +1,9 @@
 # Security model
 
+The v0.3.0 EEFN installer has a known Defender detection. Keep it quarantined;
+see [ANTIVIRUS.md](ANTIVIRUS.md). New maintenance builds require component and
+artifact scans; a clean scan does not constitute a malware-free guarantee.
+
 - The REST API binds to `127.0.0.1` by default. Add authentication and TLS at a
   trusted reverse proxy before exposing it to another network.
 - The node gateway binds to `0.0.0.0:51335` so remote nodes can connect. Every
