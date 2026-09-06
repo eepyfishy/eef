@@ -8,10 +8,12 @@ pub mod crypto;
 pub mod dashboard;
 pub mod engine;
 pub mod firmware;
+pub mod model_manager;
 pub mod model_server;
 pub mod protocol;
 pub mod python;
 pub mod server;
+pub mod setup;
 pub mod startup;
 pub mod updater;
 

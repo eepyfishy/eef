@@ -1,3 +1,4 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,6 +15,8 @@ use tracing::{info, warn};
 #[derive(Debug, Parser)]
 #[command(name = "eefn", version, about = "Native EEF node")]
 struct Args {
+    #[arg(long)]
+    open_dashboard: bool,
     #[arg(long, default_value = "config.json")]
     config: PathBuf,
     #[arg(long = "connect")]
@@ -173,7 +176,126 @@ async fn main() -> Result<()> {
     if eefn::updater::handoff_if_selected(&install_dir, eefn::VERSION, "eefn")? {
         return Ok(());
     }
-    let args = Args::parse();
+    let mut args = Args::parse();
+    if args.config == PathBuf::from("config.json") && install_dir.join("config.json").is_file() {
+        args.config = install_dir.join("config.json");
+    }
+    let _instance =
+        if args.ask.is_none() && !args.check_update && !args.rollback && !args.list_ollama_models {
+            match eefn::setup::instance_lock(&args.config)? {
+                Some(lock) => Some(lock),
+                None => {
+                    let config = load_file(&args.config)?.dashboard.unwrap_or_default();
+                    if args.open_dashboard {
+                        eefn::setup::open_dashboard(&config.host, config.port);
+                    }
+                    return Ok(());
+                }
+            }
+        } else {
+            None
+        };
+    let initial = eefn::setup::initialize_identity(&args.config)?;
+    let _ = eefn::setup::pair_local(&args.config)?;
+    let file = load_file(&args.config)?;
+    let mut dashboard_config = file.dashboard.unwrap_or_default();
+    let dashboard = NodeDashboard::new(
+        args.config.clone(),
+        initial["node_id"].as_str().unwrap().into(),
+    );
+    let interactive =
+        args.ask.is_none() && !args.check_update && !args.rollback && !args.list_ollama_models;
+    let mut dashboard_task = if dashboard_config.enabled && interactive {
+        Some(
+            dashboard
+                .start(&dashboard_config.host, dashboard_config.port)
+                .await?,
+        )
+    } else {
+        None
+    };
+    if args.open_dashboard && dashboard_task.is_some() {
+        eefn::setup::open_dashboard(&dashboard_config.host, dashboard_config.port);
+    }
+    let discovery = if interactive {
+        let dashboard = dashboard.clone();
+        let path = args.config.clone();
+        Some(tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                if let Err(error) = dashboard.discover_local(&path) {
+                    warn!(%error,"local discovery");
+                }
+            }
+        }))
+    } else {
+        None
+    };
+    let mut handoff = false;
+    loop {
+        if let Ok(file) = load_file(&args.config) {
+            let next = file.dashboard.unwrap_or_default();
+            if interactive
+                && (next.host != dashboard_config.host
+                    || next.port != dashboard_config.port
+                    || next.enabled != dashboard_config.enabled)
+            {
+                let replacement = if next.enabled {
+                    Some(dashboard.start(&next.host, next.port).await?)
+                } else {
+                    None
+                };
+                if let Some(task) = dashboard_task.take() {
+                    task.abort();
+                }
+                dashboard_task = replacement;
+                dashboard_config = next;
+            }
+        }
+        {
+            let mut status = dashboard.live.lock().unwrap();
+            status["connection"] = serde_json::json!({"state":"starting"});
+        }
+        tokio::select! {
+            result = run_node(&args, install_dir.clone(), dashboard.clone()) => {
+                if !interactive { return result; }
+                if let Err(error)=result {
+                    warn!(%error,"device needs attention");
+                    dashboard.live.lock().unwrap()["connection"]=serde_json::json!({"state":"error","last_error":format!("{error:#}")});
+                }
+                tokio::select! { _=dashboard.restart.notified()=>{}, _=tokio::signal::ctrl_c()=>break }
+            }
+            _ = dashboard.restart.notified() => {},
+            _ = tokio::signal::ctrl_c() => break,
+        }
+        if std::fs::read_to_string(install_dir.join("current.txt"))
+            .is_ok_and(|v| !v.trim().is_empty() && v.trim() != eefn::VERSION)
+        {
+            handoff = true;
+            break;
+        }
+    }
+    if let Some(task) = dashboard_task {
+        task.abort();
+    }
+    if let Some(task) = discovery {
+        task.abort();
+    }
+    drop(_instance);
+    if handoff {
+        eefn::updater::handoff_if_selected(&install_dir, eefn::VERSION, "eefn")?;
+    }
+    Ok(())
+}
+
+struct AbortTask(tokio::task::JoinHandle<()>);
+impl Drop for AbortTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeDashboard>) -> Result<()> {
     let mut file = load_file(&args.config)?;
     merge_args(&mut file, &args);
 
@@ -232,18 +354,6 @@ async fn main() -> Result<()> {
     } else {
         warn!("no EEF coordinator configured; node remains available through its local dashboard");
     }
-
-    let dashboard_config = file.dashboard.clone().unwrap_or_default();
-    let dashboard = NodeDashboard::new(args.config.clone(), file.node_id.clone());
-    let dashboard_task = if dashboard_config.enabled && args.ask.is_none() {
-        Some(
-            dashboard
-                .start(&dashboard_config.host, dashboard_config.port)
-                .await?,
-        )
-    } else {
-        None
-    };
 
     let ollama_models = if args.selected_models.is_empty() {
         file.models
@@ -316,6 +426,7 @@ async fn main() -> Result<()> {
     }
     let media = permissions.media.clone();
     let mut engine = NodeEngine::new(false, vec![], install_dir.clone())?
+        .with_dashboard(dashboard.clone())
         .with_policy(permissions)?
         .with_update_manifest(manifest)
         .with_ollama(
@@ -327,11 +438,17 @@ async fn main() -> Result<()> {
     if let Some(server) = &model_server {
         engine = engine.with_model_server(server.clone())
     }
+    let hardware = eefn::setup::hardware().await;
+    let camera_detected = hardware["inventory_available"].as_bool() != Some(true)
+        || hardware["devices"].as_array().is_some_and(|list| {
+            list.iter()
+                .any(|device| matches!(device["PNPClass"].as_str(), Some("Camera" | "Image")))
+        });
     let builtin_plugins = [
         (media.microphone, "microphone.py"),
         (media.audio_output, "audio_output.py"),
         (media.tts, "tts.py"),
-        (media.camera, "camera.py"),
+        (media.camera && camera_detected, "camera.py"),
         (media.screen_capture, "screen_capture.py"),
         (media.input_control, "input_control.py"),
     ];
@@ -358,29 +475,42 @@ async fn main() -> Result<()> {
         }
     }
     let engine = Arc::new(engine);
+    {
+        let mut status = dashboard.live.lock().unwrap();
+        status["hardware"] = hardware;
+        status["name"] = serde_json::json!(file.name);
+        status["permissions"] = serde_json::json!(file.permissions);
+        status["pending_restart"] = serde_json::json!(false);
+        status["models"] = serde_json::json!([]);
+        status["capabilities"] = serde_json::json!(engine.capabilities());
+        status["connection"] = serde_json::json!({"state":"waiting"});
+    }
     let client = if file.endpoints.is_empty() {
         None
     } else {
-        Some(NodeClient::new(
-            NodeClientConfig {
-                endpoints: file.endpoints,
-                node_id: file.node_id,
-                name: file.name,
-                psk: file.psk,
-                heartbeat_seconds: file.heartbeat_seconds.unwrap_or(3.0),
-                allow_write: file.allow_write,
-                allowed_roots: file.allowed_roots,
-                python: file.python,
-                python_plugins: file.python_plugins,
-                update_manifest: file
-                    .update
-                    .as_ref()
-                    .and_then(|update| update.manifest_url.clone()),
-                ollama_url,
-                ollama_models: active_ollama_models,
-            },
-            engine,
-        )?)
+        Some(
+            NodeClient::new(
+                NodeClientConfig {
+                    endpoints: file.endpoints,
+                    node_id: file.node_id,
+                    name: file.name,
+                    psk: file.psk,
+                    heartbeat_seconds: file.heartbeat_seconds.unwrap_or(3.0),
+                    allow_write: file.allow_write,
+                    allowed_roots: file.allowed_roots,
+                    python: file.python,
+                    python_plugins: file.python_plugins,
+                    update_manifest: file
+                        .update
+                        .as_ref()
+                        .and_then(|update| update.manifest_url.clone()),
+                    ollama_url,
+                    ollama_models: active_ollama_models,
+                },
+                engine,
+            )?
+            .with_status(dashboard.live.clone()),
+        )
     };
     if let Some(message) = &args.ask {
         let result = client
@@ -392,12 +522,11 @@ async fn main() -> Result<()> {
         if let Some(server) = &model_server {
             server.stop().await
         }
-        if let Some(task) = dashboard_task {
-            task.abort();
-        }
         return Ok(());
     }
-    let update_task = start_update_monitor(file.update.as_ref(), install_dir.clone())?;
+    let update_task =
+        start_update_monitor(file.update.as_ref(), install_dir.clone(), dashboard.clone())?
+            .map(AbortTask);
     if let Some(client) = &client {
         tokio::select! {
             result = client.run() => result?,
@@ -410,18 +539,14 @@ async fn main() -> Result<()> {
     if let Some(server) = &model_server {
         server.stop().await
     }
-    if let Some(task) = update_task {
-        task.abort();
-    }
-    if let Some(task) = dashboard_task {
-        task.abort();
-    }
+    drop(update_task);
     Ok(())
 }
 
 fn start_update_monitor(
     config: Option<&UpdateConfig>,
     install_dir: PathBuf,
+    dashboard: Arc<eefn::dashboard::NodeDashboard>,
 ) -> Result<Option<tokio::task::JoinHandle<()>>> {
     let Some(config) = config else {
         return Ok(None);
@@ -448,6 +573,7 @@ fn start_update_monitor(
         loop {
             match eefn::updater::check(&url, eefn::VERSION, Duration::from_secs(30)).await {
                 Ok(check) if check.update_available => {
+                    dashboard.live.lock().unwrap()["update"] = serde_json::json!(check);
                     info!(current = %check.current_version, latest = %check.latest_version, %policy, "EEF node update available");
                     if matches!(policy.as_str(), "auto" | "automatic") {
                         match eefn::updater::apply_for(
@@ -459,7 +585,10 @@ fn start_update_monitor(
                         .await
                         {
                             Ok(applied) => {
-                                warn!(version = %applied.new_version, "EEF node update installed; restart required")
+                                dashboard.live.lock().unwrap()["pending_restart"] =
+                                    serde_json::json!(true);
+                                warn!(version = %applied.new_version, "EEF node update installed; restart required");
+                                return;
                             }
                             Err(error) => warn!(%error, "EEF node automatic update failed"),
                         }
@@ -495,7 +624,7 @@ fn merge_args(file: &mut FileConfig, args: &Args) {
     if let Some(value) = &args.name {
         file.name = value.clone()
     }
-    if let Some(value) = &args.psk {
+    if let Some(value) = args.psk.as_ref().filter(|value| !value.is_empty()) {
         file.psk = value.clone()
     }
     if args.allow_write {

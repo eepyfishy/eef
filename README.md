@@ -18,18 +18,26 @@ The build creates exactly two self-extracting per-user installers:
 - `eefn-installer.exe` — standalone node, dashboard, bundled CPython, optional
   media adapters, and the llama.cpp server runtime.
 
-Neither installer contains or downloads a model. Each node owner selects an
-already-installed Ollama model or supplies a local GGUF file as described in
+Neither installer contains or downloads a model. Each node owner uses Models
+to explicitly install a model, select an already-installed Ollama model, or
+choose a local GGUF file as described in
 [`docs/NODE_MODELS.md`](docs/NODE_MODELS.md). Automatic provider selection uses
 Ollama when reachable and otherwise uses llama.cpp.
 
-Double-click an installer. It uses `%LOCALAPPDATA%\EEF` or
-`%LOCALAPPDATA%\EEFN`, offers startup as an opt-in choice, and launches the
-local dashboard after an explicit launch choice. `--install-dir` supports
+Double-click an installer. The graphical setup lets you choose a dedicated
+folder (default `%LOCALAPPDATA%\EEF` or `%LOCALAPPDATA%\EEFN`), opt into startup,
+and choose whether to open the app when installation finishes. `--install-dir` supports
 another dedicated location. The
 installer refuses to use its download directory and preserves existing config
 on upgrade. These open-source builds are currently unsigned, so Windows may
-show a SmartScreen warning.
+show a SmartScreen warning. Do not bypass an antivirus detection.
+
+For a first installation, follow [the getting-started guide](docs/FIRST_RUN.md).
+Install and launch **both apps on the same PC**: the device app automatically
+finds local EEF under your Windows account. No connection code, JSON, or port
+number is needed. Devices keep their identity when renamed or restarted.
+EEF's Devices page can request configuration changes; the device owner must
+approve them locally or explicitly allow remote management.
 
 For development, start the coordinator from PowerShell:
 
@@ -64,8 +72,9 @@ creates the two installer executables, and removes build output afterward:
 .\tools\bundle-windows.ps1
 ```
 
-It refuses to overwrite existing outputs, requires 8 GB free at startup, and
-preserves a 5 GB safety floor. Development details are in
+It refuses to overwrite existing outputs. There is no reserved 5 GB floor;
+installers and model downloads check the space needed for their payloads.
+Development details are in
 [`docs/BUILD.md`](docs/BUILD.md).
 
 Update behavior is configurable as `off`, `prompt` (default), or `auto`; see

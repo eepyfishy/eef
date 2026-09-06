@@ -215,6 +215,7 @@ pub struct NodeEngine {
     http: reqwest::Client,
     ollama_url: String,
     ollama_models: HashMap<String, String>,
+    dashboard: Option<Arc<crate::NodeDashboard>>,
 }
 
 impl NodeEngine {
@@ -250,12 +251,17 @@ impl NodeEngine {
                 .build()?,
             ollama_url: String::new(),
             ollama_models: HashMap::new(),
+            dashboard: None,
         })
     }
 
     pub fn with_policy(mut self, policy: NodePolicy) -> Result<Self> {
         self.policy = normalize_policy(policy)?;
         Ok(self)
+    }
+    pub fn with_dashboard(mut self, dashboard: Arc<crate::NodeDashboard>) -> Self {
+        self.dashboard = Some(dashboard);
+        self
     }
 
     pub fn with_model_server(mut self, server: Arc<ModelServer>) -> Self {
@@ -285,6 +291,7 @@ impl NodeEngine {
     ) -> Result<()> {
         let plugin = runtime.inspect(path).await?;
         if self.plugins.contains_key(&plugin.capability)
+            || plugin.capability == "node.configure"
             || CAPABILITIES.contains(&plugin.capability.as_str())
             || MODEL_CAPABILITIES.contains(&plugin.capability.as_str())
             || POLICY_CAPABILITIES.contains(&plugin.capability.as_str())
@@ -301,6 +308,9 @@ impl NodeEngine {
             .iter()
             .map(|value| (*value).to_owned())
             .collect::<Vec<_>>();
+        if self.dashboard.is_some() {
+            values.push("node.configure".into());
+        }
         if self.policy.filesystem.read || self.policy.filesystem.write {
             values.push("filesystem".into());
         }
@@ -347,6 +357,13 @@ impl NodeEngine {
 
     pub async fn execute(&self, capability: &str, action: &str, params: Value) -> Result<Value> {
         match capability {
+            "node.configure" => {
+                self.dashboard
+                    .as_ref()
+                    .context("Device management is unavailable")?
+                    .remote(action, params)
+                    .await
+            }
             "system.ping" => Ok(json!({
                 "pong": true,
                 "time": SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64(),

@@ -97,6 +97,9 @@ impl UpdateService {
     }
 
     pub async fn apply(&self) -> Result<eefn::updater::UpdateApplied> {
+        if !self.check().await?.update_available {
+            bail!("You are already up to date")
+        }
         let url = self
             .manifest_url
             .as_deref()
@@ -123,7 +126,7 @@ impl UpdateService {
                         bus.publish("update.available", serde_json::json!({"program": "eef", "current": check.current_version, "latest": check.latest_version, "policy": service.state.read().await.policy})).await;
                         if service.policy == UpdatePolicy::Auto {
                             match service.apply().await {
-                                Ok(applied) => bus.publish("update.installed", serde_json::json!({"program": "eef", "version": applied.new_version, "restart_required": true})).await,
+                                Ok(applied) => {bus.publish("update.installed", serde_json::json!({"program": "eef", "version": applied.new_version, "restart_required": true})).await; return;},
                                 Err(error) => bus.publish("update.failed", serde_json::json!({"program": "eef", "error": error.to_string()})).await,
                             }
                         }

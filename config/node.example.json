@@ -1,6 +1,7 @@
 {
-  "node_id": "node-example",
-  "name": "Example node",
+  "node_id": "",
+  "name": "",
+  "auto_local": true,
   "psk": "",
   "endpoints": [],
   "heartbeat_seconds": 3.0,

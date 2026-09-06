@@ -3,6 +3,34 @@
 This file distinguishes working behavior from planned architecture. It prevents
 the open-source project from presenting an unsafe approximation as complete.
 
+## UX/UI changes in 0.3.2
+
+- Graphical per-user installer with folder picker, startup/launch choices,
+  extraction progress, and a completion screen. No administrator bypass.
+- Home, Devices, Models, Permissions, Network, Settings, and Advanced pages;
+  form-based common settings, explicit save/apply/restart, and mobile layout.
+- Persistent generated device ID, detected hostname, single-instance launch,
+  and same-account local EEF pairing in either app launch order.
+- Live connection/retry/error states and applied permissions; Windows hardware
+  metadata is detected without opening the camera or recording audio.
+- Owner-requested model downloads, progress/cancel, hash-verified GGUF catalog,
+  and Ollama-first selection. No model is included or downloaded on installation.
+- Device configuration through EEF's authenticated node transport. Owners
+  approve proposals locally unless they explicitly allow remote management;
+  remote requests cannot grant themselves that permission or replace device ID.
+- Restart controls for both roles; optional automatic restart after saving
+  device settings. An installed update is handed off when Restart is used.
+- Local dashboards reject cross-site browser requests and non-loopback Host
+  headers. They are local controls, not remotely exposed management servers.
+- The old fixed 5 GB floor is removed. Payload space checks remain.
+
+This is not completion of the entire proposed UX/architecture roadmap.
+Automatic LAN discovery, per-camera/microphone selection, richer voice/provider
+forms, persistent offline-device history, and a larger curated model catalog
+remain future work. Offline history currently lasts for the EEF session.
+Detection is not proof a media permission or driver works; live recording,
+vision inference, Wake-on-LAN, and two-PC failover require device-specific tests.
+
 ## Maintenance changes in 0.3.1
 
 - Hash-locked Windows Python runtime dependencies and retained vendor checksums.

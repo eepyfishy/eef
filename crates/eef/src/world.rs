@@ -70,12 +70,14 @@ impl WorldState {
                     state.nodes.insert(id.into(), json!({
                     "node_id": id, "name": event.data.get("name").and_then(Value::as_str).unwrap_or(id),
                     "capabilities": event.data.get("capabilities").cloned().unwrap_or_else(|| json!([])), "connected": true,
+                    "last_seen_ms":eefn::protocol::now_ms(),"specs":event.data.get("specs"),"models":event.data.get("models"),
                 }));
                 }
             }
             "node.updated" => {
                 if let Some(id) = event.data.get("node_id").and_then(Value::as_str) {
                     if let Some(node) = state.nodes.get_mut(id) {
+                        node["last_seen_ms"] = json!(eefn::protocol::now_ms());
                         if let Some(load) = event.data.get("load") {
                             node["load"] = load.clone();
                         }
@@ -166,6 +168,7 @@ impl WorldState {
         json!({
             "running_applications": state.applications.values().filter(|app| app.get("running").and_then(Value::as_bool) == Some(true)).collect::<Vec<_>>(),
             "connected_nodes": state.nodes.values().filter(|node| node.get("connected").and_then(Value::as_bool) == Some(true)).collect::<Vec<_>>(),
+            "devices":state.nodes.values().collect::<Vec<_>>(),
             "active_tasks": state.tasks.values().collect::<Vec<_>>(),
             "sensors": state.sensors,
             "gpio_states": state.gpio,

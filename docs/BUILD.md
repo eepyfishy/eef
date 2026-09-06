@@ -39,7 +39,7 @@ directory. They use a temporary `APPDATA`, leaving personal startup entries
 alone:
 
 ```powershell
-.\tools\test-windows-installers.ps1 -ReleaseDir .\release\v0.3.1
+.\tools\test-windows-installers.ps1 -ReleaseDir .\release\v0.3.2
 ```
 
 Useful switches:
@@ -52,15 +52,30 @@ Useful switches:
 - `-KeepBundle` retains the unpacked staging bundle for diagnostics.
 - `-KeepToolchain` — retain a compiler downloaded by the script.
 
-The bundler requires 8 GB free at startup, allowing a 3 GB temporary-build
-budget above the 5 GB safety floor. Actual compiler usage can vary; monitor
-free space on constrained machines. It checks the floor before and after bundle
-assembly, removes a partial output after failure, and refuses to overwrite an
+There is no reserved free-space floor in 0.3.2. Actual compiler usage can vary;
+monitor free space on constrained machines. Installers and model downloads
+check their payload's required space. The bundler removes a partial output
+after failure and refuses to overwrite an
 existing output directory. The release directory contains exactly two
 self-extracting installers: one for EEF and one for EEFN. A combined ignored
 staging bundle is removed by default; use `-KeepBundle` for local diagnostics.
 
-## Validation performed for 0.3.1
+## First-run browser regression (0.3.2)
+
+`tools/test-first-run.mjs` launches isolated EEF and EEFN processes, with random
+ports and temporary configuration/discovery/startup directories. It tests
+stable identity, same-account pairing, local approval before remote changes,
+both restart paths, browser forms, and a narrow-screen layout. A mock Ollama
+service covers explicit install/select/registration and stalled-download
+cancellation; it does not prove real inference or touch personal Ollama models.
+
+Build debug binaries first. Install the test-only dependency with
+`npm install --prefix .tooling/ui-tests --ignore-scripts --save-exact playwright@1.63.0`,
+then run `node tools/test-first-run.mjs`. It uses installed Chrome, or the
+browser path in `EEF_TEST_BROWSER`; no browser is downloaded.
+Reports and screenshots stay in ignored `.validation/first-run-*` directories.
+
+## Historical validation performed for 0.3.1
 
 ```text
 cargo test --workspace --all-targets --locked   31 passed, 0 failed

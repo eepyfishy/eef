@@ -83,12 +83,7 @@ if (Test-Path -LiteralPath $packageRoot) { throw "Package staging directory alre
 
 $driveName = [IO.Path]::GetPathRoot($bundle).TrimEnd('\').TrimEnd(':')
 $freeBytes = (Get-PSDrive -Name $driveName).Free
-$safetyFloor = 5GB
-$temporaryBuildBudget = 3GB
-$requiredAtStart = $safetyFloor + $temporaryBuildBudget
-if ($freeBytes -lt $requiredAtStart) {
-    throw "At least 8 GB free is required to preserve the 5 GB safety floor during the build; only $([math]::Round($freeBytes / 1GB, 2)) GB is available"
-}
+Write-Host "Free disk space: $([math]::Round($freeBytes / 1GB, 2)) GB. No reserved free-space floor."
 
 $tooling = Join-Path $workspace ".tooling"
 $llvmName = "llvm-mingw-20260616-ucrt-x86_64"
@@ -141,9 +136,6 @@ try {
     }
 
     $freeBytes = (Get-PSDrive -Name $driveName).Free
-    if ($freeBytes -lt $safetyFloor) {
-        throw "Build stopped to preserve the 5 GB free-space floor"
-    }
 
     New-Item -ItemType Directory -Path $bundle | Out-Null
     $bundleCreated = $true
@@ -290,9 +282,6 @@ try {
     }
     Write-Host "Release installers created at $release"
     $freeBytes = (Get-PSDrive -Name $driveName).Free
-    if ($freeBytes -lt $safetyFloor) {
-        throw "Bundle creation crossed the 5 GB free-space floor"
-    }
     $buildSucceeded = $true
     Write-Host "Bundle created at $bundle"
 } finally {

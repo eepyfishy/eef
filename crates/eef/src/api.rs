@@ -99,6 +99,13 @@ struct LogsQuery {
 pub fn router(runtime: Arc<Runtime>) -> Router {
     Router::new()
         .route("/", get(root))
+        .route("/app.js", get(ui_script))
+        .route("/app.css", get(ui_style))
+        .route("/advanced/legacy", get(legacy))
+        .route("/api/ui", get(ui_info))
+        .route("/api/restart", post(restart))
+        .route("/api/network/invite", post(invite))
+        .route("/api/devices/{node_id}/manage", post(device_manage))
         .route("/api/status", get(status))
         .route("/api/config", get(config_get).put(config_save))
         .route("/api/startup", get(startup_get).put(startup_set))
@@ -123,19 +130,66 @@ pub fn router(runtime: Arc<Runtime>) -> Router {
         .route("/api/update/check", post(update_check))
         .route("/api/update/apply", post(update_apply))
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn(eefn::setup::local_ui_guard))
         .with_state(runtime)
 }
 
 async fn root() -> Html<&'static str> {
+    Html(include_str!("../../../dashboard/app.html"))
+}
+async fn legacy() -> Html<&'static str> {
     Html(include_str!("../../../dashboard/index.html"))
+}
+async fn ui_script() -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/javascript; charset=utf-8",
+        )],
+        include_str!("../../../dashboard/app.js"),
+    )
+}
+async fn ui_style() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        include_str!("../../../dashboard/app.css"),
+    )
+}
+async fn ui_info(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
+    Json(
+        json!({"role":"eef","peer_url":runtime.config.string("web.device_dashboard_url","http://127.0.0.1:51336/")}),
+    )
+}
+
+async fn restart(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        runtime.restart.notify_one();
+    });
+    Json(json!({"restarting":true}))
+}
+async fn invite(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
+    use base64::Engine;
+    let secret = std::env::var("EEF_NODE_PSK")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| runtime.config.string("node.psk", ""));
+    let value = json!({"name":format!("EEF on {}",eefn::setup::hostname()),"address":format!("{}:{}",eefn::setup::hostname(),runtime.node_server.port()),"psk":secret});
+    Json(
+        json!({"code":base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&value).unwrap())}),
+    )
 }
 async fn status(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
     Json(runtime.summary().await)
 }
 
 async fn config_get(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
+    let mut value = runtime.config.as_value();
+    if value.pointer("/node/psk").is_some() {
+        value["node"]["psk"] = json!("__KEEP_EXISTING_SECRET__");
+    }
     Json(json!({
-        "config": runtime.config.as_value(),
+        "config": value,
         "path": runtime.config.source().map(|path| path.display().to_string()),
         "note": "Changes are validated and applied on restart"
     }))
@@ -145,8 +199,14 @@ async fn config_save(
     State(runtime): State<Arc<Runtime>>,
     Json(value): Json<Value>,
 ) -> ApiResult<Value> {
-    let config = value.get("config").unwrap_or(&value);
-    runtime.config.save_for_restart(config)?;
+    let mut config = value.get("config").unwrap_or(&value).clone();
+    if config.pointer("/node/psk").and_then(Value::as_str) == Some("__KEEP_EXISTING_SECRET__") {
+        config["node"]["psk"] = runtime.config.as_value()["node"]["psk"].clone();
+    }
+    runtime.config.save_for_restart(&config)?;
+    runtime
+        .pending_restart
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     runtime
         .bus
         .publish("config.saved", json!({"restart_required": true}))
@@ -323,6 +383,36 @@ async fn node_invoke(
         )
         .await?;
     Ok(Json(response))
+}
+
+async fn device_manage(
+    State(runtime): State<Arc<Runtime>>,
+    Path(node_id): Path<String>,
+    Json(request): Json<Value>,
+) -> ApiResult<Value> {
+    let action = request["action"]
+        .as_str()
+        .context("Choose a device action")?;
+    let response = runtime
+        .node_server
+        .invoke_remote(
+            &node_id,
+            "node.configure",
+            action,
+            request.get("params").cloned().unwrap_or(json!({})),
+            Duration::from_secs(30),
+        )
+        .await?;
+    if response["success"].as_bool() == Some(false) {
+        return Err(anyhow::anyhow!(
+            "{}",
+            response["error"]
+                .as_str()
+                .unwrap_or("The device could not apply this request")
+        )
+        .into());
+    }
+    Ok(Json(response.get("data").cloned().unwrap_or(response)))
 }
 
 async fn update_status(State(runtime): State<Arc<Runtime>>) -> Json<Value> {

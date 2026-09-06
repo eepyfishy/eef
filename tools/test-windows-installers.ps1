@@ -5,9 +5,6 @@ $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $release = (Resolve-Path -LiteralPath $ReleaseDir).Path
 $scratch = Join-Path $workspace ('.validation\install-test-' + [guid]::NewGuid().ToString('N'))
-if ((Get-PSDrive -Name ([IO.Path]::GetPathRoot($workspace).Substring(0,1))).Free -lt 6GB) {
-    throw 'Installer test requires 6 GB free to preserve the 5 GB floor'
-}
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $savedAppData = $env:APPDATA
 $savedErrorLog = $env:EEF_INSTALLER_ERROR_LOG

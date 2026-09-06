@@ -90,6 +90,23 @@ impl Config {
         if !value.is_object() {
             bail!("configuration must be a JSON/YAML object")
         }
+        for section in ["web", "node", "models", "update", "python", "identity"] {
+            if value.get(section).is_some_and(|v| !v.is_object()) {
+                bail!("{section} settings must be an object")
+            }
+        }
+        for section in ["web", "node"] {
+            if let Some(port) = value.pointer(&format!("/{section}/port")) {
+                if !port.as_u64().is_some_and(|p| p > 0 && p <= 65535) {
+                    bail!("{section} port must be between 1 and 65535")
+                }
+            }
+        }
+        if let Some(policy) = value.pointer("/update/policy") {
+            crate::update::UpdatePolicy::parse(
+                policy.as_str().context("Update preference must be text")?,
+            )?;
+        }
         let path = self
             .source()
             .context("no configuration path was supplied at startup")?;

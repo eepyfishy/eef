@@ -91,6 +91,8 @@ impl ModelServer {
                 );
             }
             let mut command = Command::new(&self.binary);
+            #[cfg(windows)]
+            command.creation_flags(0x0800_0000);
             command
                 .arg("--model")
                 .arg(&slot.model_path)

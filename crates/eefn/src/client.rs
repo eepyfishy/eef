@@ -108,6 +108,14 @@ pub struct NodeClient {
     crypto: NodeCrypto,
     engine: Arc<NodeEngine>,
     http: reqwest::Client,
+    status: Arc<std::sync::Mutex<Value>>,
+}
+
+struct AbortTask(tokio::task::JoinHandle<()>);
+impl Drop for AbortTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 impl NodeClient {
@@ -147,7 +155,19 @@ impl NodeClient {
             config,
             engine,
             http: reqwest::Client::new(),
+            status: Arc::new(std::sync::Mutex::new(json!({}))),
         })
+    }
+
+    pub fn with_status(mut self, status: Arc<std::sync::Mutex<Value>>) -> Self {
+        self.status = status;
+        self
+    }
+
+    fn connection_status(&self, state: &str, address: &str, error: Option<String>, retry: f64) {
+        let mut status = self.status.lock().expect("connection status");
+        status["connection"] =
+            json!({"state":state,"address":address,"last_error":error,"retry_seconds":retry});
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -157,6 +177,11 @@ impl NodeClient {
                 Ok(()) => backoff = 1.0,
                 Err(error) => {
                     warn!(%error, backoff, "node disconnected");
+                    {
+                        let mut state = self.status.lock().expect("connection status");
+                        state["connection"]["state"] = json!("retrying");
+                        state["connection"]["retry_seconds"] = json!(backoff);
+                    }
                     sleep(Duration::from_secs_f64(backoff)).await;
                     backoff = (backoff * 2.0).min(30.0) + rand::random::<f64>();
                 }
@@ -167,9 +192,16 @@ impl NodeClient {
     pub async fn connect_once(&self) -> Result<()> {
         let mut last = None;
         for endpoint in &self.config.endpoints {
+            self.connection_status("connecting", &endpoint.address, None, 0.0);
             match self.serve_endpoint(endpoint).await {
                 Ok(()) => return Ok(()),
                 Err(error) => {
+                    self.connection_status(
+                        "disconnected",
+                        &endpoint.address,
+                        Some(format!("{error:#}")),
+                        0.0,
+                    );
                     warn!(endpoint = %endpoint.address, priority = endpoint.priority, %error, "node endpoint failed");
                     last = Some(error);
                 }
@@ -301,9 +333,13 @@ impl NodeClient {
 
     async fn serve_endpoint(&self, endpoint: &CoordinatorEndpoint) -> Result<()> {
         let (host, port) = parse_endpoint(&endpoint.address)?;
-        let stream = TcpStream::connect((host.as_str(), port))
-            .await
-            .with_context(|| format!("connect to {host}:{port}"))?;
+        let stream = timeout(
+            Duration::from_secs(5),
+            TcpStream::connect((host.as_str(), port)),
+        )
+        .await
+        .context("EEF did not answer within five seconds")?
+        .with_context(|| format!("connect to {host}:{port}"))?;
         let (reader, writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
         let writer = Arc::new(Mutex::new(writer));
@@ -317,9 +353,13 @@ impl NodeClient {
             )
             .await?;
         }
-        let reply = read_message(&self.crypto, &mut reader)
-            .await?
-            .context("coordinator closed during auth")?;
+        let reply = timeout(
+            Duration::from_secs(10),
+            read_message(&self.crypto, &mut reader),
+        )
+        .await
+        .context("EEF did not finish signing this device in")??
+        .context("coordinator closed during auth")?;
         if reply.get("type").and_then(Value::as_str) != Some("ok") {
             bail!("coordinator denied auth: {reply}");
         }
@@ -355,12 +395,18 @@ impl NodeClient {
             .await?;
         }
         info!(host, port, node_id = %self.config.node_id, "node authenticated and registered");
+        self.connection_status("connected", &endpoint.address, None, 0.0);
+        {
+            let mut status = self.status.lock().expect("status");
+            status["models"] = json!(models);
+            status["capabilities"] = json!(capabilities);
+        }
 
         let heartbeat_writer = writer.clone();
         let heartbeat_crypto = self.crypto.clone();
         let heartbeat_id = self.config.node_id.clone();
         let heartbeat_interval = Duration::from_secs_f64(self.config.heartbeat_seconds.max(0.2));
-        let heartbeat = tokio::spawn(async move {
+        let heartbeat = AbortTask(tokio::spawn(async move {
             loop {
                 let started = Instant::now();
                 let load = current_load().await;
@@ -378,9 +424,11 @@ impl NodeClient {
                 }
                 sleep(heartbeat_interval).await;
             }
-        });
+        }));
 
+        let mut tasks = tokio::task::JoinSet::new();
         while let Some(message) = read_message(&self.crypto, &mut reader).await? {
+            while tasks.try_join_next().is_some() {}
             if message.get("type").and_then(Value::as_str) != Some("request") {
                 continue;
             }
@@ -403,7 +451,12 @@ impl NodeClient {
             let engine = self.engine.clone();
             let writer = writer.clone();
             let crypto = self.crypto.clone();
-            tokio::spawn(async move {
+            let status = self.status.clone();
+            tasks.spawn(async move {
+                {
+                    let mut s = status.lock().expect("status");
+                    s["last_activity"] = json!(capability);
+                }
                 let response = match engine.execute(&capability, &action, params).await {
                     Ok(data) => success_response(&request_id, data),
                     Err(error) => error_response(&request_id, error),
@@ -411,8 +464,8 @@ impl NodeClient {
                 let _ = write_message(&crypto, &mut *writer.lock().await, &response).await;
             });
         }
-        heartbeat.abort();
-        Ok(())
+        drop(heartbeat);
+        bail!("EEF closed the connection. Reconnecting automatically.")
     }
 }
 
@@ -439,6 +492,8 @@ pub fn system_specs() -> Value {
         .map(|disk| disk.available_space())
         .sum::<u64>();
     json!({
+        "hostname": System::host_name(),
+        "cpu_name": system.cpus().first().map(|cpu| cpu.brand()).unwrap_or("Unknown CPU"),
         "cpu_cores": system.cpus().len(),
         "cpu_freq_mhz": system.cpus().first().map(|cpu| cpu.frequency()).unwrap_or(0),
         "ram_mb": system.total_memory() / 1024 / 1024,

@@ -45,6 +45,8 @@ pub struct Runtime {
     pub update: Arc<UpdateService>,
     pub coordinator_id: String,
     pub coordinator_priority: i32,
+    pub restart: Arc<tokio::sync::Notify>,
+    pub pending_restart: AtomicBool,
     initialized: AtomicBool,
     background: AsyncMutex<Vec<JoinHandle<()>>>,
 }
@@ -173,6 +175,8 @@ impl Runtime {
             update,
             coordinator_id,
             coordinator_priority,
+            restart: Arc::new(tokio::sync::Notify::new()),
+            pending_restart: AtomicBool::new(false),
             initialized: AtomicBool::new(false),
             background: AsyncMutex::new(Vec::new()),
         });
@@ -275,7 +279,7 @@ impl Runtime {
         self.bus
             .publish(
                 "node.connected",
-                json!({"node_id": node_id, "name": name, "capabilities": capabilities}),
+                json!({"node_id": node_id, "name": name, "capabilities": capabilities,"specs":message.get("specs"),"models":message.get("models")}),
             )
             .await;
     }
@@ -372,8 +376,11 @@ impl Runtime {
 
     pub async fn summary(&self) -> Value {
         let connected_nodes = self.node_server.connected_nodes().await.len();
+        let update = self.update.state().await;
         json!({
-            "name": self.identity.name(), "version": self.identity.version(),
+            "pending_restart": self.pending_restart.load(Ordering::Relaxed) || update.restart_required,
+            "update": update,
+            "name": self.identity.name(), "version": crate::VERSION,
             "runtime": "rust", "python_plugins": self.config.strings("python.plugins"),
             "initialized": self.initialized.load(Ordering::Relaxed), "brain_alive": self.brain.alive(),
             "adapters": self.adapters.capabilities(), "capabilities": self.registry.all_capabilities(),

@@ -9,9 +9,11 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use zip::ZipArchive;
+#[cfg(windows)]
+mod wizard;
+type Progress = Option<std::sync::Arc<dyn Fn(u32, &str) + Send + Sync>>;
 
 const FOOTER_MAGIC: &[u8; 8] = b"EEFINST1";
-const SAFETY_FLOOR: u64 = 5 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 struct BundleManifest {
@@ -33,7 +35,6 @@ struct Product {
     executable: &'static str,
     config: &'static str,
     startup_name: &'static str,
-    dashboard: &'static str,
 }
 
 fn main() {
@@ -51,6 +52,17 @@ fn main() {
 
 fn run() -> Result<()> {
     let options = parse_options()?;
+    #[cfg(windows)]
+    if !options.quiet {
+        return wizard::run(options);
+    }
+    install(options, None)
+}
+
+fn install(options: Options, progress: Progress) -> Result<()> {
+    if let Some(report) = &progress {
+        report(2, "Checking the installer and destination…");
+    }
     let executable = std::env::current_exe()?.canonicalize()?;
     let payload = read_payload(&executable)?;
     let manifest = read_manifest(&payload)?;
@@ -63,8 +75,8 @@ fn run() -> Result<()> {
         }
     };
     reject_download_directory(&executable, &install_dir)?;
-    enforce_storage_floor(&install_dir, unpacked_size(&payload)?)?;
-    extract_payload(&payload, &install_dir, &manifest.name)?;
+    check_install_space(&install_dir, unpacked_size(&payload)?)?;
+    extract_payload(&payload, &install_dir, &manifest.name, &progress)?;
     if manifest.name == "eef" {
         ensure_coordinator_secret(&install_dir.join(product.config))?;
     }
@@ -80,6 +92,10 @@ fn run() -> Result<()> {
         }
     });
     set_startup(&install_dir, product, startup)?;
+    if let Some(report) = &progress {
+        report(95, "Creating your Start menu entry…");
+    }
+    create_app_shortcut(&install_dir, product)?;
 
     let installed_executable = install_dir.join(product.executable);
     let launch = options.launch.unwrap_or_else(|| {
@@ -94,17 +110,18 @@ fn run() -> Result<()> {
     });
     if launch {
         launch_installed(&installed_executable, &install_dir.join(product.config))?;
-        let _ = Command::new("explorer.exe").arg(product.dashboard).spawn();
     }
     if !options.quiet {
         show_info(&format!(
-            "{} {} was installed in:\n{}\n\nStartup: {}\nDashboard: {}",
+            "{} {} was installed in:\n{}\n\nStartup: {}\nOpen it again from the EEF folder in your Start menu.",
             product.display,
             manifest.version,
             install_dir.display(),
             if startup { "enabled" } else { "disabled" },
-            product.dashboard
         ));
+    }
+    if let Some(report) = &progress {
+        report(100, "Installation complete");
     }
     Ok(())
 }
@@ -197,7 +214,6 @@ fn product(name: &str) -> Result<&'static Product> {
         executable: "eef.exe",
         config: "config/default_identity.yaml",
         startup_name: "EEF Coordinator",
-        dashboard: "http://127.0.0.1:51334/",
     };
     static EEFN: Product = Product {
         display: "EEFN node",
@@ -205,7 +221,6 @@ fn product(name: &str) -> Result<&'static Product> {
         executable: "eefn.exe",
         config: "config.json",
         startup_name: "EEF Node",
-        dashboard: "http://127.0.0.1:51336/",
     };
     match name {
         "eef" => Ok(&EEF),
@@ -214,10 +229,22 @@ fn product(name: &str) -> Result<&'static Product> {
     }
 }
 
-fn extract_payload(payload: &[u8], destination: &Path, product: &str) -> Result<()> {
+fn extract_payload(
+    payload: &[u8],
+    destination: &Path,
+    product: &str,
+    progress: &Progress,
+) -> Result<()> {
     fs::create_dir_all(destination)?;
     let mut archive = ZipArchive::new(Cursor::new(payload))?;
-    for index in 0..archive.len() {
+    let entries = archive.len();
+    for index in 0..entries {
+        if let Some(report) = progress {
+            report(
+                10 + (80 * index / entries.max(1)) as u32,
+                "Installing application files…",
+            );
+        }
         let mut entry = archive.by_index(index)?;
         let relative = entry
             .enclosed_name()
@@ -324,11 +351,15 @@ fn startup_path(product: &Product) -> Result<PathBuf> {
 
 fn launch_installed(executable: &Path, config: &Path) -> Result<()> {
     let mut command = Command::new(executable);
-    command.arg("--config").arg(config).current_dir(
-        executable
-            .parent()
-            .context("installed executable has no directory")?,
-    );
+    command
+        .arg("--config")
+        .arg(config)
+        .arg("--open-dashboard")
+        .current_dir(
+            executable
+                .parent()
+                .context("installed executable has no directory")?,
+        );
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -350,7 +381,7 @@ fn reject_download_directory(executable: &Path, destination: &Path) -> Result<()
     Ok(())
 }
 
-fn enforce_storage_floor(destination: &Path, payload_bytes: u64) -> Result<()> {
+fn check_install_space(destination: &Path, payload_bytes: u64) -> Result<()> {
     let mut probe = destination;
     while !probe.exists() {
         probe = probe
@@ -358,9 +389,30 @@ fn enforce_storage_floor(destination: &Path, payload_bytes: u64) -> Result<()> {
             .context("installation path has no existing parent")?;
     }
     let available = fs2::available_space(probe)?;
-    if available.saturating_sub(payload_bytes) < SAFETY_FLOOR {
-        bail!("installation would cross the 5 GB free-space safety floor")
+    if available < payload_bytes {
+        bail!(
+            "There is not enough free space for the installed files. Choose another drive or free some space."
+        )
     }
+    Ok(())
+}
+
+fn create_app_shortcut(directory: &Path, product: &Product) -> Result<()> {
+    let menu = PathBuf::from(std::env::var_os("APPDATA").context("APPDATA is unavailable")?)
+        .join("Microsoft/Windows/Start Menu/Programs/EEF");
+    fs::create_dir_all(&menu)?;
+    let executable = directory.join(product.executable);
+    let config = directory.join(product.config);
+    reject_cmd_text(&executable.to_string_lossy())?;
+    reject_cmd_text(&config.to_string_lossy())?;
+    fs::write(
+        menu.join(format!("{}.cmd", product.display)),
+        format!(
+            "@echo off\r\nstart \"\" /min \"{}\" --config \"{}\" --open-dashboard\r\n",
+            executable.display(),
+            config.display()
+        ),
+    )?;
     Ok(())
 }
 
