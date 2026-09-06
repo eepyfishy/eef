@@ -8,6 +8,7 @@ import {request as httpRequest,createServer as httpServer} from 'node:http';
 import {randomBytes} from 'node:crypto';
 import {chromium} from '../.tooling/ui-tests/node_modules/playwright/index.mjs';
 const root=resolve(import.meta.dirname,'..'),scratch=await mkdtemp(join(root,'.validation','first-run-'));
+const binaryDirectory=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const children=[],errors=[];let browser,modelServer;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function port(){const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const p=server.address().port;await new Promise(r=>server.close(r));return p;}
@@ -15,7 +16,7 @@ const webPort=await port(),devicePort=await port(),nodePort=await port();
 const eef=`http://127.0.0.1:${webPort}`,node=`http://127.0.0.1:${devicePort}`;
 async function json(url,body,method){const r=await fetch(url,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await r.json();assert(r.ok,JSON.stringify(data));return data;}
 async function until(fn,label,timeout=30000){const end=Date.now()+timeout;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch{}await sleep(250);}throw Error('Timed out: '+label);}
-function launch(name,args,extra={}){const child=spawn(join(root,'target/debug',name+'.exe'),args,{cwd:root,windowsHide:true,env:{...process.env,PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH,APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),EEF_NODE_PSK:'',...extra},stdio:['ignore','pipe','pipe']});child.stdout.on('data',()=>{});child.stderr.on('data',b=>errors.push(name+': '+b.toString()));children.push(child);return child;}
+function launch(name,args,extra={}){const child=spawn(join(binaryDirectory,name+'.exe'),args,{cwd:root,windowsHide:true,env:{...process.env,PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH,APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),EEF_NODE_PSK:'',...extra},stdio:['ignore','pipe','pipe']});child.stdout.on('data',()=>{});child.stderr.on('data',b=>errors.push(name+': '+b.toString()));children.push(child);return child;}
 const configPath=join(scratch,'node.json');
 try{
  let installed=false,stallPull=false,pulls=0;

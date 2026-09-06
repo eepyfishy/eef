@@ -75,6 +75,17 @@ then run `node tools/test-first-run.mjs`. It uses installed Chrome, or the
 browser path in `EEF_TEST_BROWSER`; no browser is downloaded.
 Reports and screenshots stay in ignored `.validation/first-run-*` directories.
 
+`tools/test-installer-ui.ps1 -ReleaseDir .\release\v0.3.2` exercises each
+native setup window with isolated startup settings, folder choice, Install,
+and Finish. It retains welcome/completion screenshots and scan reports.
+
+For an **explicit real-model download test**, retain the unpacked bundle and
+run `node tools/test-real-model.mjs bundle/eef-windows-x86_64-v0.3.2`.
+This downloads the catalog's approximately 491 MB starter model into a unique
+ignored validation directory, selects it, waits for the bundled CPU runtime,
+and invokes inference through EEF. It does not use personal model storage.
+Remove that exact generated test directory afterward if space is limited.
+
 ## Historical validation performed for 0.3.1
 
 ```text

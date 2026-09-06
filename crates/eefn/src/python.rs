@@ -96,7 +96,10 @@ impl PythonRuntime {
         if !plugin_path.is_file() {
             bail!("Python plugin '{}' does not exist", plugin_path.display());
         }
-        let mut child = Command::new(&self.executable)
+        let mut command = Command::new(&self.executable);
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000);
+        let mut child = command
             .arg("-I")
             .arg("-c")
             .arg(PLUGIN_HOST)

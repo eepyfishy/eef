@@ -38,7 +38,9 @@ function Save-WizardImage([IntPtr]$Window,[string]$Path) {
     $bitmap = New-Object Drawing.Bitmap(($bounds.Right-$bounds.Left),($bounds.Bottom-$bounds.Top))
     $graphics = [Drawing.Graphics]::FromImage($bitmap)
     $dc = $graphics.GetHdc()
-    try { [void][EEFWizardTest]::PrintWindow($Window,$dc,0) } finally { $graphics.ReleaseHdc($dc); $graphics.Dispose() }
+    # WM_PRINT with CHILDREN/CLIENT/ERASEBKGND/NONCLIENT, without CHECKVISIBLE,
+    # renders the hidden test window rather than taking a desktop screenshot.
+    try { [void][EEFWizardTest]::SendMessage($Window,0x317,$dc,[IntPtr]0x1E) } finally { $graphics.ReleaseHdc($dc); $graphics.Dispose() }
     try { $bitmap.Save($Path,[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
 }
 try {

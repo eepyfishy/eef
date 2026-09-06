@@ -30,7 +30,11 @@ Policies:
   is required.
 
 EEF reports update events and exposes `/api/update/status`, `/check`, and
-`/apply`. EEFN logs prompt/automatic results and still supports
+`/apply`. Both 0.3.2 dashboards offer Check for updates, Install update, and
+Restart now; EEFN exposes `/api/update/check` and `/api/update/apply` too.
+Restart hands off to the selected installed version, without needing a user
+to find and terminate a process. Automatic updates install but do not interrupt
+running work by forcing a restart. EEFN also supports
 `--check-update`, `--rollback`, and the permission-controlled `node.update`
 capability.
 
