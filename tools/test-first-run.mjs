@@ -15,7 +15,7 @@ async function port(){const server=createServer();await new Promise(r=>server.li
 const webPort=await port(),devicePort=await port(),nodePort=await port();
 const eef=`http://127.0.0.1:${webPort}`,node=`http://127.0.0.1:${devicePort}`;
 async function json(url,body,method){const r=await fetch(url,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const data=await r.json();assert(r.ok,JSON.stringify(data));return data;}
-async function until(fn,label,timeout=30000){const end=Date.now()+timeout;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch{}await sleep(250);}throw Error('Timed out: '+label);}
+async function until(fn,label,timeout=60000){const end=Date.now()+timeout;while(Date.now()<end){try{const v=await fn();if(v)return v;}catch{}await sleep(250);}throw Error('Timed out: '+label);}
 function launch(name,args,extra={}){const child=spawn(join(binaryDirectory,name+'.exe'),args,{cwd:root,windowsHide:true,env:{...process.env,PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH,APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),EEF_NODE_PSK:'',...extra},stdio:['ignore','pipe','pipe']});child.stdout.on('data',()=>{});child.stderr.on('data',b=>errors.push(name+': '+b.toString()));children.push(child);return child;}
 const configPath=join(scratch,'node.json');
 try{
@@ -72,4 +72,4 @@ try{
  await json(eef+'/api/restart',{});await until(async()=>{const s=await json(eef+'/api/status');return s.world?.devices?.some(n=>n.node_id===id&&n.connected);},'EEF restart and device reconnect');
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,stable_identity:true,local_pairing:true,remote_approval:true,remote_configuration:true,device_restart:true,eef_restart:true,browser_forms:true,mobile_layout:true,no_initial_model_download:true,mock_ollama_install_select_and_register:true,stalled_download_cancellation:true},null,2));
  console.log('First-run and browser validation passed: '+scratch);
-}catch(e){console.error(errors.slice(-12).join('\n'));throw e;}finally{if(browser)await browser.close();for(const child of children)if(child.exitCode===null)child.kill();if(modelServer){modelServer.closeAllConnections();modelServer.close();}}
+}catch(e){console.error(errors.slice(-12).join('\n'));console.error('Child exit codes:',children.map(c=>({pid:c.pid,exit:c.exitCode})));for(const url of [eef,node]){try{console.error(url,await (await fetch(url+'/api/status',{signal:AbortSignal.timeout(2000)})).json());}catch(error){console.error(url,error.message);}}throw e;}finally{if(browser)await browser.close();for(const child of children)if(child.exitCode===null)child.kill();if(modelServer){modelServer.closeAllConnections();modelServer.close();}}

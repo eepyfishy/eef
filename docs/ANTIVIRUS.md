@@ -96,3 +96,29 @@ Normal browser downloads on the two test PCs still need validation. No
 Microsoft false-positive verdict has been received for the original v0.3.0
 artifact. These results do not identify its detection trigger or prove it was
 incorrectly classified.
+
+## v0.3.2 validation
+
+The UX/UI release's final installers passed local Defender checks on
+2026-09-06 with engine `1.1.26080.3`, definitions `1.459.77.0`, real-time
+protection enabled, and both files still present. Build component/runtime
+scan gates also passed (definitions `1.459.72.0` during the build).
+
+```text
+eef-installer.exe (17,403,586 bytes)
+dd1f4ba70c0cb1c0a8e8ac2eb2395719635ab850488cc4da1c029b50c46cbec1
+
+eefn-installer.exe (109,176,861 bytes)
+882c5729de69727ac8a43fed6c588fc028e4cae16db6931b7490e718eb27212d
+```
+
+Embedded provenance identifies clean application source commit
+`3105cc9ec162a033885849fc2eb4fd42e1e5ca2b`; the release tag also contains
+subsequent test/report and update-feed changes. This is not a bit-for-bit
+reproducibility claim. 35 Rust tests, final-binary browser tests, real CPU
+inference/restart, native installer controls, and install/upgrade/file-inventory
+checks passed. See [the release notes](RELEASE-0.3.2.md) for exact scope.
+
+The original v0.3.0 Microsoft submission remains unresolved. These local
+checks do not prove a false positive or establish SmartScreen/browser download
+reputation. Testing the published download on both PCs remains necessary.

@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$ReleaseDir)
+param([Parameter(Mandatory)][string]$ReleaseDir,[switch]$LayoutOnly)
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $release = (Resolve-Path -LiteralPath $ReleaseDir).Path
@@ -33,14 +33,16 @@ public static class EEFWizardTest {
 }
 '@
 function Save-WizardImage([IntPtr]$Window,[string]$Path) {
+    # Native themed controls need a visible window to render correctly.
+    # Show without activation only for this explicit interactive layout check.
+    [void][EEFWizardTest]::ShowWindow($Window,4)
+    Start-Sleep -Milliseconds 250
     $bounds = New-Object EEFWizardTest+Rect
     [void][EEFWizardTest]::GetWindowRect($Window,[ref]$bounds)
     $bitmap = New-Object Drawing.Bitmap(($bounds.Right-$bounds.Left),($bounds.Bottom-$bounds.Top))
     $graphics = [Drawing.Graphics]::FromImage($bitmap)
     $dc = $graphics.GetHdc()
-    # WM_PRINT with CHILDREN/CLIENT/ERASEBKGND/NONCLIENT, without CHECKVISIBLE,
-    # renders the hidden test window rather than taking a desktop screenshot.
-    try { [void][EEFWizardTest]::SendMessage($Window,0x317,$dc,[IntPtr]0x1E) } finally { $graphics.ReleaseHdc($dc); $graphics.Dispose() }
+    try { [void][EEFWizardTest]::PrintWindow($Window,$dc,2) } finally { $graphics.ReleaseHdc($dc); $graphics.Dispose(); [void][EEFWizardTest]::ShowWindow($Window,0) }
     try { $bitmap.Save($Path,[Drawing.Imaging.ImageFormat]::Png) } finally { $bitmap.Dispose() }
 }
 try {
@@ -63,6 +65,12 @@ try {
             if ([EEFWizardTest]::SendMessage([EEFWizardTest]::GetDlgItem($window,$id),0xF0,[IntPtr]::Zero,[IntPtr]::Zero) -ne [IntPtr]::Zero) { throw 'Unexpected startup or launch opt-in' }
         }
         Save-WizardImage $window (Join-Path $scratch "$name-welcome.png")
+        if ($LayoutOnly) {
+            [void][EEFWizardTest]::SendMessage($window,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
+            if (-not $child.WaitForExit(10000)) { throw 'Layout check did not close setup' }
+            $child=$null
+            continue
+        }
         [void][EEFWizardTest]::SendMessage([EEFWizardTest]::GetDlgItem($window,105),0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
         $deadline = [DateTime]::UtcNow.AddSeconds(180)
         while ([EEFWizardTest]::Text($window,106) -ne 'Finish' -and [DateTime]::UtcNow -lt $deadline) {
@@ -79,7 +87,8 @@ try {
         if ($child.ExitCode -ne 0) { throw 'Wizard returned an error' }
         $child = $null
     }
-    [IO.File]::WriteAllText((Join-Path $scratch 'results.json'),'{"passed":true,"products":["eef","eefn"],"native_wizard":true,"isolated_startup":true}',[Text.UTF8Encoding]::new($false))
+    $result=@{passed=$true;products=@('eef','eefn');native_wizard=$true;isolated_startup=$true;layout_only=[bool]$LayoutOnly}|ConvertTo-Json
+    [IO.File]::WriteAllText((Join-Path $scratch 'results.json'),$result,[Text.UTF8Encoding]::new($false))
     Write-Host "Native installer UI validation passed. Evidence: $scratch"
 } finally {
     if ($child -and -not $child.HasExited) { $child.Kill() }

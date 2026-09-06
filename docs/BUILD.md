@@ -88,6 +88,8 @@ Remove that exact generated test directory afterward if space is limited.
 
 ## Historical validation performed for 0.3.1
 
+For current results, see [v0.3.2 release validation](RELEASE-0.3.2.md).
+
 ```text
 cargo test --workspace --all-targets --locked   31 passed, 0 failed
 cargo fmt --all -- --check                     pass
