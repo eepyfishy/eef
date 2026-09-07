@@ -6,7 +6,12 @@ param(
     [switch]$SkipOptionalPythonPackages,
     [switch]$KeepBuildArtifacts,
     [switch]$KeepToolchain,
-    [switch]$KeepBundle
+    [switch]$KeepBundle,
+    [switch]$RequireSigning,
+    [switch]$AllowPrerelease,
+    [string]$SignToolPath,
+    [string]$CertificateThumbprint,
+    [string]$TimestampUrl
 )
 
 function New-SelfExtractingInstaller {
@@ -41,12 +46,22 @@ function Write-Utf8NoBom {
 
 $ErrorActionPreference = "Stop"
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$versionMatch = Select-String -LiteralPath (Join-Path $workspace 'Cargo.toml') -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+)"$'
+$versionMatch = Select-String -LiteralPath (Join-Path $workspace 'Cargo.toml') -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?)"$'
 if ($versionMatch.Count -ne 1) { throw 'Workspace must declare one semantic release version' }
 $version = $versionMatch.Matches[0].Groups[1].Value
+if ($version.Contains('-') -and -not $AllowPrerelease) { throw 'Use -AllowPrerelease explicitly to package an alpha, beta or release candidate' }
 if (-not $BundleDir) { $BundleDir = "bundle\eef-windows-x86_64-v$version" }
 $validation = Join-Path $workspace ".validation\v$version"
 $scanScript = Join-Path $PSScriptRoot 'scan-windows.ps1'
+$signScript = Join-Path $PSScriptRoot 'sign-windows.ps1'
+$signing = [bool]($CertificateThumbprint -or $SignToolPath -or $TimestampUrl)
+if ($RequireSigning -and -not $signing) { throw 'Signing is required but no credential was explicitly selected' }
+if ($signing) {
+    if (-not $CertificateThumbprint -or -not $SignToolPath -or -not $TimestampUrl) {
+        throw 'Signing requires SignToolPath, CertificateThumbprint and TimestampUrl together'
+    }
+    & $signScript -SignToolPath $SignToolPath -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -ValidateOnly
+}
 $sourceCommit = (& git -C $workspace rev-parse HEAD).Trim()
 $sourceDirty = -not [string]::IsNullOrWhiteSpace((& git -C $workspace status --porcelain | Out-String))
 $rustup = Join-Path $env:USERPROFILE ".cargo\bin\rustup.exe"
@@ -130,6 +145,11 @@ try {
         }
     } finally {
         Pop-Location
+    }
+    if ($signing) {
+        & $signScript -SignToolPath $SignToolPath -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -Path @(
+            (Join-Path $workspace 'target\release\eef.exe'), (Join-Path $workspace 'target\release\eefn.exe')
+        )
     }
     foreach ($binary in @('eef.exe', 'eefn.exe', 'eef-installer-stub.exe')) {
         & $scanScript -Path (Join-Path $workspace "target\release\$binary") -ReportPath (Join-Path $validation "$binary.scan.json")
@@ -277,6 +297,9 @@ try {
     $installerStub = Join-Path $workspace "target\release\eef-installer-stub.exe"
     New-SelfExtractingInstaller -Stub $installerStub -Payload $eefPayload -Output $eefRelease
     New-SelfExtractingInstaller -Stub $installerStub -Payload $eefnPayload -Output $eefnRelease
+    if ($signing) {
+        & $signScript -SignToolPath $SignToolPath -CertificateThumbprint $CertificateThumbprint -TimestampUrl $TimestampUrl -Path @($eefRelease, $eefnRelease)
+    }
     foreach ($installer in @($eefRelease, $eefnRelease)) {
         & $scanScript -Path $installer -ReportPath (Join-Path $validation ((Split-Path -Leaf $installer) + '.scan.json'))
     }

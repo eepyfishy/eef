@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -22,6 +22,7 @@ pub struct NodeDashboard {
     node_id: String,
     pub live: Arc<std::sync::Mutex<Value>>,
     pub restart: Arc<tokio::sync::Notify>,
+    pub submissions: Arc<crate::submission::SubmissionMailbox>,
     config_lock: Arc<std::sync::Mutex<()>>,
 }
 
@@ -57,6 +58,7 @@ impl NodeDashboard {
                 json!({"connection":{"state":"starting"},"pending_restart":false,"download":{"state":"idle"}}),
             )),
             restart: Arc::new(tokio::sync::Notify::new()),
+            submissions: Arc::new(crate::submission::SubmissionMailbox::default()),
             config_lock: Arc::new(std::sync::Mutex::new(())),
         })
     }
@@ -76,11 +78,17 @@ impl NodeDashboard {
             .route("/api/config", get(config_get).put(config_save))
             .route("/api/startup", get(startup_get).put(startup_set))
             .route("/api/restart", post(restart))
+            .route("/api/chat", post(chat))
+            .route("/api/jobs", get(jobs_list).post(jobs_create))
+            .route("/api/jobs/{id}", get(jobs_get).delete(jobs_remove))
+            .route("/api/jobs/{id}/{action}", post(jobs_control))
             .route("/api/config/restore", post(restore))
             .route("/api/config/reset", post(reset))
             .route("/api/network/local", post(pair_local))
+            .route("/api/network/pause", post(pause_connection))
             .route("/api/models", get(models))
             .route("/api/models/install", post(model_install))
+            .route("/api/models/inspect", post(model_inspect))
             .route("/api/models/cancel", post(model_cancel))
             .route("/api/proposal", get(proposal).delete(proposal_discard))
             .route("/api/pick", post(pick))
@@ -189,15 +197,16 @@ impl NodeDashboard {
             "status" => {
                 let live = self.live.lock().unwrap().clone();
                 Ok(
-                    json!({"name":config["name"],"node_id":self.node_id,"version":crate::VERSION,"connection":live["connection"],"hardware":live["hardware"],"permissions":live["permissions"],"models":live["models"],"pending_restart":live["pending_restart"],"download":live["download"]}),
+                    json!({"name":config["name"],"node_id":self.node_id,"version":crate::VERSION,"connection":live["connection"],"hardware":live["hardware"],"permissions":live["permissions"],"models":live["models"],"pending_restart":live["pending_restart"],"download":live["download"],"metadata":live["metadata"],"last_request_context":live["last_request_context"],"last_resource_id":live["last_resource_id"]}),
                 )
             }
             "models" => crate::model_manager::list(self).await,
+            "inspect" => crate::model_manager::inspect(self, params).await,
             "save" => {
                 let changes = params.get("config").unwrap_or(&params);
                 // Remote management cannot grant itself permission, replace identity,
                 // replace the network secret, or inject arbitrary Python plugins.
-                for key in ["name", "permissions", "models", "update"] {
+                for key in ["name", "permissions", "models", "update", "metadata"] {
                     if let Some(v) = changes.get(key) {
                         config[key] = v.clone();
                     }
@@ -230,8 +239,7 @@ impl NodeDashboard {
                 Ok(json!({"started":true}))
             }
             "cancel" if allowed => {
-                self.live.lock().unwrap()["download"]["cancel_requested"] = json!(true);
-                Ok(json!({"requested":true}))
+                Ok(json!({"requested":crate::model_manager::cancel(self, params["id"].as_str())?}))
             }
             _ => bail!(
                 "This device has not allowed remote management. Enable it in the device app’s Settings, or approve the proposed changes there."
@@ -241,6 +249,9 @@ impl NodeDashboard {
 }
 
 fn validate_config(value: &Value) -> Result<()> {
+    let metadata: crate::context::NodeMetadata =
+        serde_json::from_value(value.get("metadata").cloned().unwrap_or_else(|| json!({})))?;
+    metadata.validate()?;
     if let Some(dashboard) = value.get("dashboard") {
         if !dashboard.is_object() {
             bail!("Dashboard settings must be an object")
@@ -261,7 +272,16 @@ fn validate_config(value: &Value) -> Result<()> {
         }
     }
     if let Some(selected) = value.pointer("/models/ollama/selected") {
-        serde_json::from_value::<Vec<crate::SelectedModel>>(selected.clone())?;
+        let selected = serde_json::from_value::<Vec<crate::SelectedModel>>(selected.clone())?;
+        let mut ids = std::collections::HashSet::new();
+        for model in selected {
+            if model.model_id.trim().is_empty()
+                || !ids.insert(model.model_id)
+                || !matches!(model.modality.as_str(), "text" | "vlm")
+            {
+                bail!("Selected models need unique names and a text or vlm model type")
+            }
+        }
     }
     if let Some(slots) = value.pointer("/models/llamacpp/slots") {
         let slots = serde_json::from_value::<Vec<crate::ModelSlot>>(slots.clone())?;
@@ -336,9 +356,10 @@ async fn status(State(state): State<Arc<NodeDashboard>>) -> Json<Value> {
         "node_alive": true,
         "coordinator_required_for_node": false,
         "coordinator_required_for_orchestration": true,
-        "name":config["name"], "hostname":crate::setup::hostname(), "coordinator_name":config["coordinator_name"],
+        "name":config["name"], "hostname":crate::setup::hostname(), "coordinator_name":config["coordinator_name"], "metadata":live["metadata"],
         "connection":live["connection"], "hardware":live["hardware"], "permissions":live["permissions"],
         "models":live["models"], "capabilities":live["capabilities"], "last_activity":live["last_activity"],
+        "last_request_context":live["last_request_context"], "last_resource_id":live["last_resource_id"],
         "pending_restart":live["pending_restart"], "download":live["download"], "update":live["update"],
         "proposal_pending":state.config_path.with_extension("proposal.json").is_file(),
     }))
@@ -369,6 +390,76 @@ async fn config_save(
     state.save_config(value.get("config").unwrap_or(&value).clone())?;
     state.live.lock().unwrap()["pending_restart"] = json!(true);
     Ok(Json(json!({"saved": true, "restart_required": true})))
+}
+
+async fn jobs_list(State(state): State<Arc<NodeDashboard>>) -> Result<Json<Value>, DashboardError> {
+    Ok(Json(
+        state.submissions.request("jobs.list", json!({})).await?,
+    ))
+}
+async fn jobs_create(
+    State(state): State<Arc<NodeDashboard>>,
+    Json(value): Json<Value>,
+) -> Result<Json<Value>, DashboardError> {
+    Ok(Json(state.submissions.request("jobs.create", value).await?))
+}
+async fn jobs_get(
+    State(state): State<Arc<NodeDashboard>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, DashboardError> {
+    Ok(Json(
+        state
+            .submissions
+            .request("jobs.get", json!({"id":id}))
+            .await?,
+    ))
+}
+async fn jobs_remove(
+    State(state): State<Arc<NodeDashboard>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, DashboardError> {
+    Ok(Json(
+        state
+            .submissions
+            .request("jobs.remove", json!({"id":id}))
+            .await?,
+    ))
+}
+async fn jobs_control(
+    State(state): State<Arc<NodeDashboard>>,
+    Path((id, action)): Path<(String, String)>,
+) -> Result<Json<Value>, DashboardError> {
+    if !matches!(action.as_str(), "pause" | "resume" | "stop") {
+        return Err(anyhow::anyhow!("Unknown job control").into());
+    }
+    Ok(Json(
+        state
+            .submissions
+            .request(&format!("jobs.{action}"), json!({"id":id}))
+            .await?,
+    ))
+}
+
+async fn chat(
+    State(state): State<Arc<NodeDashboard>>,
+    Json(value): Json<Value>,
+) -> Result<Json<Value>, DashboardError> {
+    let text = value["message"].as_str().context("message is required")?;
+    Ok(Json(state.submissions.submit(text).await?))
+}
+
+async fn pause_connection(
+    State(state): State<Arc<NodeDashboard>>,
+    Json(value): Json<Value>,
+) -> Result<Json<Value>, DashboardError> {
+    let paused = value["paused"]
+        .as_bool()
+        .context("paused must be true or false")?;
+    let mut config = state.read_config()?;
+    config["connection_enabled"] = json!(!paused);
+    state.save_config(config)?;
+    state.restart.notify_one();
+    Ok(Json(json!({"paused":paused})))
 }
 
 async fn restart(State(state): State<Arc<NodeDashboard>>) -> Json<Value> {
@@ -417,9 +508,19 @@ async fn model_install(
     crate::model_manager::install(state, value).await?;
     Ok(Json(json!({"started":true})))
 }
-async fn model_cancel(State(state): State<Arc<NodeDashboard>>) -> Json<Value> {
-    state.live.lock().unwrap()["download"]["cancel_requested"] = json!(true);
-    Json(json!({"requested":true}))
+async fn model_inspect(
+    State(state): State<Arc<NodeDashboard>>,
+    Json(value): Json<Value>,
+) -> Result<Json<Value>, DashboardError> {
+    Ok(Json(crate::model_manager::inspect(&state, value).await?))
+}
+async fn model_cancel(
+    State(state): State<Arc<NodeDashboard>>,
+    value: Option<Json<Value>>,
+) -> Result<Json<Value>, DashboardError> {
+    Ok(Json(
+        json!({"requested":crate::model_manager::cancel(&state, value.as_ref().and_then(|value|value.0["id"].as_str()))?}),
+    ))
 }
 async fn proposal(State(state): State<Arc<NodeDashboard>>) -> Result<Json<Value>, DashboardError> {
     let value: Value = serde_json::from_slice(
@@ -556,12 +657,45 @@ mod tests {
         assert_eq!(saved["node_id"], "stable");
         assert_eq!(saved["psk"], "private-network-secret");
         assert_eq!(saved["management"]["allow_remote"], true);
+        let metadata = json!({"area":["Home","Study"],"resources":[{"id":"camera","capability":"camera.capture","parameters":{"device":1}}]});
+        dashboard
+            .remote("save", json!({"config":{"metadata":metadata}}))
+            .await
+            .unwrap();
+        assert_eq!(dashboard.read_config().unwrap()["metadata"], metadata);
+        assert!(
+            dashboard
+                .remote(
+                    "save",
+                    json!({"config":{"metadata":{"area":["invalid/path"]}}})
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(dashboard.read_config().unwrap()["metadata"], metadata);
+        let mut local = dashboard.read_config().unwrap();
+        local["management"]["allow_remote"] = json!(false);
+        dashboard.save_config(local).unwrap();
+        let proposed = json!({"area":["Changed"]});
+        assert_eq!(
+            dashboard
+                .remote("save", json!({"config":{"metadata":proposed}}))
+                .await
+                .unwrap()["approval_required"],
+            true
+        );
+        assert_eq!(dashboard.read_config().unwrap()["metadata"], metadata);
+        let proposal: Value =
+            serde_json::from_slice(&std::fs::read(path.with_extension("proposal.json")).unwrap())
+                .unwrap();
+        assert_eq!(proposal["metadata"], proposed);
     }
 
     #[test]
     fn rejects_unknown_model_provider() {
         assert!(validate_config(&json!({"models": {"provider": "magic"}})).is_err());
         assert!(validate_config(&json!({"models": {"provider": "auto"}})).is_ok());
+        assert!(validate_config(&json!({"models":{"ollama":{"selected":[{"model_id":"fixture","modality":"unknown"}]}}})).is_err());
     }
 
     #[test]

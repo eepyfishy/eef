@@ -3,7 +3,7 @@ EEFN node for Windows
 This directory was created by eefn-installer.exe. Open EEF Node from Start >
 EEF. Do not move the app into Downloads. Startup is optional in Settings.
 
-Launch EEF on this PC and the device connects automatically under your Windows
+Launch EEF on this PC and the node connects automatically under your Windows
 account. Home shows the real connection state. Use Permissions to choose what
 to share, Models to install and select a model, and Apply and restart to make
 saved settings active. EEFN remains a node without a connected
@@ -14,3 +14,8 @@ Ollama service first and otherwise uses the bundled llama.cpp server with an
 owner-selected GGUF file. Downloads only begin when you request them in Models.
 Network accepts a private connection code from another PC's EEF. Remote settings
 requests need local approval unless you explicitly allow management in Settings.
+
+Use Home to ask your network and Jobs to review saved planned actions. Stop does
+not undo completed actions; work already sent to a node may finish. This alpha
+does not provide live media relay, Wi-Fi/Bluetooth control, or a peer mesh.
+The builds are unsigned. Do not bypass a Defender detection to install them.

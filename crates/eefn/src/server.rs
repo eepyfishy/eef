@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -58,6 +58,23 @@ struct Inner {
     nonces: Mutex<HashMap<String, Instant>>,
     events: broadcast::Sender<NodeEvent>,
     accept_task: Mutex<Option<JoinHandle<()>>>,
+    active_ids: std::sync::Mutex<HashSet<String>>,
+}
+
+// Reserve identity atomically through authentication and connection cleanup.
+// Two concurrent handshakes must never replace each other's routing entry.
+struct IdentityLease {
+    inner: Arc<Inner>,
+    node_id: String,
+}
+impl Drop for IdentityLease {
+    fn drop(&mut self) {
+        self.inner
+            .active_ids
+            .lock()
+            .expect("active identities")
+            .remove(&self.node_id);
+    }
 }
 
 #[derive(Clone)]
@@ -85,6 +102,7 @@ impl NodeServer {
                 nonces: Mutex::new(HashMap::new()),
                 events,
                 accept_task: Mutex::new(None),
+                active_ids: std::sync::Mutex::new(HashSet::new()),
             }),
         })
     }
@@ -163,6 +181,19 @@ impl NodeServer {
         params: Value,
         wait: Duration,
     ) -> Result<Value> {
+        self.invoke_remote_with_context(node_id, capability, action, params, wait, None)
+            .await
+    }
+
+    pub async fn invoke_remote_with_context(
+        &self,
+        node_id: &str,
+        capability: &str,
+        action: &str,
+        params: Value,
+        wait: Duration,
+        context: Option<&crate::context::RequestContext>,
+    ) -> Result<Value> {
         let connection = self
             .inner
             .connections
@@ -182,7 +213,7 @@ impl NodeServer {
         );
         let message = json!({
             "type": "request", "id": request_id, "capability": capability,
-            "action": action, "params": params,
+            "action": action, "params": params, "request_context":context,
         });
         if connection.sender.send(message).await.is_err() {
             self.inner.pending.lock().await.remove(&request_id);
@@ -220,10 +251,31 @@ impl NodeServer {
     async fn handle_connection(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
-        let auth = timeout(AUTH_TIMEOUT, read_message(&self.inner.crypto, &mut reader))
+        let mut auth = timeout(AUTH_TIMEOUT, read_message(&self.inner.crypto, &mut reader))
             .await
             .context("auth timed out")??
             .context("connection closed before auth")?;
+        // A bounded, encrypted service probe does not register or replace a node.
+        if auth["type"] == "probe" {
+            let nonce = auth["nonce"]
+                .as_str()
+                .filter(|s| s.len() == 32)
+                .context("invalid probe challenge")?;
+            timeout(
+                Duration::from_secs(5),
+                write_message(
+                    &self.inner.crypto,
+                    &mut writer,
+                    &json!({"type":"pong","nonce":nonce,"protocol":PROTOCOL_VERSION}),
+                ),
+            )
+            .await
+            .context("probe reply timed out")??;
+            auth = timeout(AUTH_TIMEOUT, read_message(&self.inner.crypto, &mut reader))
+                .await
+                .context("auth after probe timed out")??
+                .context("connection closed after probe")?;
+        }
         let node_id = match self.verify_auth(&auth).await {
             Ok(node_id) => node_id,
             Err(error) => {
@@ -236,11 +288,21 @@ impl NodeServer {
                 return Err(error);
             }
         };
-        if self.inner.connections.read().await.contains_key(&node_id) {
+        let reserved = self
+            .inner
+            .active_ids
+            .lock()
+            .expect("active identities")
+            .insert(node_id.clone());
+        if !reserved {
             let denied = json!({"type": "denied", "error": "duplicate node id already connected"});
             write_message(&self.inner.crypto, &mut writer, &denied).await?;
             bail!("duplicate node id '{node_id}'");
         }
+        let _identity = IdentityLease {
+            inner: self.inner.clone(),
+            node_id: node_id.clone(),
+        };
         write_message(
             &self.inner.crypto,
             &mut writer,
@@ -286,10 +348,28 @@ impl NodeServer {
     where
         R: tokio::io::AsyncBufRead + Unpin,
     {
+        let mut metadata = crate::context::NodeMetadata::default();
+        let mut registered = false;
         while let Some(mut message) = read_message(&self.inner.crypto, reader).await? {
             match message.get("type").and_then(Value::as_str) {
                 Some("register") => {
                     require_node_id(&message, authenticated_id)?;
+                    metadata = serde_json::from_value(
+                        message
+                            .get("metadata")
+                            .cloned()
+                            .unwrap_or_else(|| json!({})),
+                    )?;
+                    metadata.validate()?;
+                    let capabilities: Vec<String> = serde_json::from_value(
+                        message
+                            .get("capabilities")
+                            .cloned()
+                            .unwrap_or_else(|| json!([])),
+                    )?;
+                    metadata = metadata.advertised(&capabilities);
+                    message["metadata"] = json!(metadata);
+                    registered = true;
                     message["node_id"] = Value::String(authenticated_id.into());
                     let _ = self.inner.events.send(NodeEvent::Registered(message));
                 }
@@ -300,13 +380,22 @@ impl NodeServer {
                 }
                 Some("submit") => {
                     require_node_id(&message, authenticated_id)?;
-                    if message.get("id").and_then(Value::as_str).is_none() {
-                        bail!("submission requires an id")
+                    if !registered {
+                        bail!("register before submitting work")
                     }
+                    let id = message["id"]
+                        .as_str()
+                        .context("submission requires an id")?;
+                    let origin = crate::context::RequestContext::new(
+                        id.into(),
+                        authenticated_id.into(),
+                        metadata.area.clone(),
+                    )?;
+                    message["request_context"] = json!(origin);
                     message["node_id"] = Value::String(authenticated_id.into());
                     let _ = self.inner.events.send(NodeEvent::Submission(message));
                 }
-                Some("response") => self.resolve_response(message).await,
+                Some("response") => self.resolve_response(authenticated_id, message).await,
                 Some("announce") => {}
                 Some(kind) => warn!(
                     node_id = authenticated_id,
@@ -357,11 +446,18 @@ impl NodeServer {
         Ok(node_id.into())
     }
 
-    async fn resolve_response(&self, message: Value) {
+    async fn resolve_response(&self, authenticated_id: &str, message: Value) {
         let Some(id) = message.get("id").and_then(Value::as_str).map(str::to_owned) else {
             return;
         };
-        if let Some(pending) = self.inner.pending.lock().await.remove(&id) {
+        let mut requests = self.inner.pending.lock().await;
+        if !requests
+            .get(&id)
+            .is_some_and(|pending| pending.node_id == authenticated_id)
+        {
+            return;
+        }
+        if let Some(pending) = requests.remove(&id) {
             let _ = pending.sender.send(message);
         }
     }
@@ -386,4 +482,90 @@ fn require_node_id(message: &Value, authenticated_id: &str) -> Result<()> {
         bail!("node id does not match authenticated connection")
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn gateway_stamps_origin_and_snapshots_area_without_leaking_bindings() {
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        let mut events = server.subscribe();
+        let messages = [
+            json!({"type":"register","node_id":"owner","capabilities":["camera.capture"],"metadata":{"area":["Home","Office"],"resources":[{"id":"camera","capability":"camera.capture","parameters":{"password":"private"}}]}}),
+            json!({"type":"submit","node_id":"owner","id":"one","request_context":{"origin_node":"forged","origin_area":["Other"]}}),
+            json!({"type":"register","node_id":"owner"}),
+            json!({"type":"submit","node_id":"owner","id":"two"}),
+        ];
+        let mut wire = Vec::new();
+        for message in messages {
+            write_message(&server.inner.crypto, &mut wire, &message)
+                .await
+                .unwrap();
+        }
+        server
+            .serve("owner", &mut BufReader::new(wire.as_slice()))
+            .await
+            .unwrap();
+        let NodeEvent::Registered(registration) = events.recv().await.unwrap() else {
+            panic!()
+        };
+        assert!(!registration.to_string().contains("private"));
+        let NodeEvent::Submission(first) = events.recv().await.unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            first["request_context"],
+            json!({"request_id":"one","origin_node":"owner","origin_area":["Home","Office"]})
+        );
+        let NodeEvent::Registered(legacy) = events.recv().await.unwrap() else {
+            panic!()
+        };
+        assert_eq!(legacy["metadata"]["area"], json!([]));
+        let NodeEvent::Submission(second) = events.recv().await.unwrap() else {
+            panic!()
+        };
+        assert_eq!(second["request_context"]["origin_area"], json!([]));
+        assert_eq!(
+            first["request_context"]["origin_area"],
+            json!(["Home", "Office"])
+        );
+        for invalid in [
+            json!({"type":"submit","node_id":"owner","id":"early"}),
+            json!({"type":"register","node_id":"forged"}),
+        ] {
+            let mut wire = Vec::new();
+            write_message(&server.inner.crypto, &mut wire, &invalid)
+                .await
+                .unwrap();
+            assert!(
+                server
+                    .serve("owner", &mut BufReader::new(wire.as_slice()))
+                    .await
+                    .is_err()
+            );
+        }
+    }
+    #[tokio::test]
+    async fn a_different_node_cannot_complete_another_nodes_request() {
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        let (sender, mut receiver) = oneshot::channel();
+        server.inner.pending.lock().await.insert(
+            "request".into(),
+            Pending {
+                node_id: "owner".into(),
+                sender,
+            },
+        );
+        let response = json!({"type":"response","id":"request","success":true});
+        server.resolve_response("other", response.clone()).await;
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        assert!(server.inner.pending.lock().await.contains_key("request"));
+        server.resolve_response("owner", response.clone()).await;
+        assert_eq!(receiver.await.unwrap(), response);
+    }
 }

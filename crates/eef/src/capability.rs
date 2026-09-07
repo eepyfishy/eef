@@ -172,15 +172,72 @@ impl CapabilityRegistry {
         action: &str,
         constraints: &Value,
     ) -> Option<CapabilityProvider> {
+        self.find_best_with_context(capability, action, constraints, None)
+    }
+
+    pub fn find_best_with_context(
+        &self,
+        capability: &str,
+        action: &str,
+        constraints: &Value,
+        context: Option<&eefn::context::RequestContext>,
+    ) -> Option<CapabilityProvider> {
         let mut candidates = self
             .find(capability, action)
             .into_iter()
+            .flat_map(|provider| {
+                let resources = provider
+                    .properties
+                    .get("resources")
+                    .and_then(Value::as_array)
+                    .map(|resources| {
+                        resources
+                            .iter()
+                            .filter(|r| r["capability"] == capability)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if resources.is_empty() {
+                    return vec![provider];
+                }
+                resources
+                    .into_iter()
+                    .filter(|resource| resource["available"] == true)
+                    .filter_map(|resource| {
+                        let id = resource["id"].as_str()?;
+                        let mut candidate = provider.clone();
+                        candidate.properties["selected_resource_id"] =
+                            json!(eefn::context::resource_id(&provider.node_id, id));
+                        candidate.properties["area"] = resource["area"].clone();
+                        Some(candidate)
+                    })
+                    .collect()
+            })
             .filter(|provider| !provider.at_capacity() && satisfies(provider, constraints))
             .collect::<Vec<_>>();
         candidates.sort_by(|left, right| {
-            score(right)
-                .total_cmp(&score(left))
-                .then_with(|| (left.node_id != "local").cmp(&(right.node_id != "local")))
+            let proximity = |provider: &CapabilityProvider| {
+                context.map(|context| {
+                    let area: Vec<String> =
+                        serde_json::from_value(provider.properties["area"].clone())
+                            .unwrap_or_default();
+                    eefn::context::locality(context, &provider.node_id, &area)
+                })
+            };
+            stale(left)
+                .cmp(&stale(right))
+                .then_with(|| proximity(left).cmp(&proximity(right)))
+                .then_with(|| {
+                    score(right)
+                        .total_cmp(&score(left))
+                        .then_with(|| (left.node_id != "local").cmp(&(right.node_id != "local")))
+                })
+                .then_with(|| left.node_id.cmp(&right.node_id))
+                .then_with(|| {
+                    left.properties["selected_resource_id"]
+                        .as_str()
+                        .cmp(&right.properties["selected_resource_id"].as_str())
+                })
         });
         candidates.into_iter().next()
     }
@@ -312,6 +369,10 @@ fn satisfies(provider: &CapabilityProvider, constraints: &Value) -> bool {
             }),
             "node_id" => value.as_str().is_none_or(|id| provider.node_id == id),
             "node_name" => value.as_str().is_none_or(|name| provider.node_name == name),
+            "resource_id" => {
+                value.is_string() && provider.properties.get("selected_resource_id") == Some(value)
+            }
+            "area" => value.is_array() && provider.properties.get("area") == Some(value),
             _ => true,
         };
         if !matches {
@@ -321,11 +382,18 @@ fn satisfies(provider: &CapabilityProvider, constraints: &Value) -> bool {
     true
 }
 
+fn stale(provider: &CapabilityProvider) -> bool {
+    provider.node_id != "local"
+        && eefn::protocol::now_ms().saturating_sub(provider.last_heartbeat_ms) > STALE_HEARTBEAT_MS
+}
+
 fn score(provider: &CapabilityProvider) -> f64 {
     let latency = 1.0 / (1.0 + provider.latency_ms / 100.0);
-    let stale = provider.node_id != "local"
-        && eefn::protocol::now_ms().saturating_sub(provider.last_heartbeat_ms) > STALE_HEARTBEAT_MS;
-    let load = if stale { 0.0 } else { 1.0 - provider.load };
+    let load = if stale(provider) {
+        0.0
+    } else {
+        1.0 - provider.load
+    };
     let power = provider.node_specs.hardware_power();
     let power = if power == 0.0 {
         0.0
@@ -355,6 +423,63 @@ fn type_matches(value: &Value, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn origin_resource_routing_respects_health_capacity_and_explicit_targets() {
+        let registry = CapabilityRegistry::default();
+        let context = eefn::context::RequestContext::new(
+            "req".into(),
+            "origin".into(),
+            vec!["Home".into(), "Office".into()],
+        )
+        .unwrap();
+        let mut origin = CapabilityProvider::local(
+            "camera.capture",
+            "*",
+            json!({"area":["Home","Office"],"resources":[{"id":"camera","capability":"camera.capture","area":["Home","Office"],"available":true}]}),
+        );
+        origin.node_id = "origin".into();
+        origin.load = 0.9;
+        origin.max_concurrent = 1;
+        let mut room = origin.clone();
+        room.node_id = "room".into();
+        room.load = 0.0;
+        let mut remote = room.clone();
+        remote.node_id = "remote".into();
+        remote.properties["resources"][0]["area"] = json!(["Elsewhere"]);
+        registry.register(origin.clone());
+        registry.register(room.clone());
+        registry.register(remote);
+        let best = |constraints: Value| {
+            registry.find_best_with_context(
+                "camera.capture",
+                "capture",
+                &constraints,
+                Some(&context),
+            )
+        };
+        assert_eq!(best(json!({})).unwrap().node_id, "origin");
+        registry.acquire(&origin);
+        assert_eq!(best(json!({})).unwrap().node_id, "room");
+        assert!(best(json!({"resource_id":"origin::camera"})).is_none());
+        registry.release(&origin);
+        origin.last_heartbeat_ms = 0;
+        registry.register(origin.clone());
+        assert_eq!(best(json!({})).unwrap().node_id, "room");
+        origin.healthy = false;
+        registry.register(origin);
+        room.properties["resources"][0]["available"] = json!(false);
+        registry.register(room);
+        assert_eq!(best(json!({})).unwrap().node_id, "remote");
+        assert!(best(json!({"resource_id":"room::camera"})).is_none());
+        assert!(best(json!({"area":["Home","Office"]})).is_none());
+        assert_eq!(
+            best(json!({"resource_id":"remote::camera"}))
+                .unwrap()
+                .properties["selected_resource_id"],
+            "remote::camera"
+        );
+    }
 
     #[test]
     fn real_load_capacity_constraints_and_validation() {

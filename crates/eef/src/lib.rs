@@ -8,6 +8,7 @@ pub mod capability;
 pub mod config;
 pub mod event;
 pub mod firmware;
+pub mod jobs;
 pub mod memory;
 pub mod model;
 pub mod runtime;

@@ -90,9 +90,19 @@ impl Config {
         if !value.is_object() {
             bail!("configuration must be a JSON/YAML object")
         }
-        for section in ["web", "node", "models", "update", "python", "identity"] {
+        for section in [
+            "web", "node", "models", "update", "python", "identity", "jobs",
+        ] {
             if value.get(section).is_some_and(|v| !v.is_object()) {
                 bail!("{section} settings must be an object")
+            }
+        }
+        for (key, minimum) in [("max_count", 1), ("max_bytes", 1024)] {
+            if value
+                .pointer(&format!("/jobs/{key}"))
+                .is_some_and(|v| !v.as_u64().is_some_and(|n| n >= minimum))
+            {
+                bail!("jobs.{key} must be a whole number of at least {minimum}")
             }
         }
         for section in ["web", "node"] {
@@ -156,5 +166,32 @@ mod tests {
         let config = Config::load(None).unwrap();
         assert_eq!(config.string("identity.name", ""), "EEF");
         assert_eq!(config.string("missing", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn saved_job_limits_are_validated_without_changing_applied_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eef.yaml");
+        let applied = Config::load(Some(&path)).unwrap();
+        let mut value = applied.as_value();
+        value["jobs"] = json!({"max_count":250,"max_bytes":32*1024*1024});
+        applied.save_for_restart(&value).unwrap();
+        assert_eq!(applied.u64("jobs.max_count", 0), 500);
+        assert_eq!(
+            Config::load(Some(&path)).unwrap().u64("jobs.max_count", 0),
+            250
+        );
+        let saved = std::fs::read(&path).unwrap();
+        for invalid in [
+            json!({"max_count":0}),
+            json!({"max_bytes":1023}),
+            json!({"max_count":2.5}),
+            json!({"max_bytes":"1048576"}),
+            Value::Null,
+        ] {
+            value["jobs"] = invalid;
+            assert!(applied.save_for_restart(&value).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), saved);
+        }
     }
 }

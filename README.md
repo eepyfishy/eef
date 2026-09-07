@@ -1,5 +1,12 @@
 # EEF
 
+**0.4.0a alpha** (`0.4.0-alpha.1` internally) is an opt-in testing release, not
+the complete v0.4.0 roadmap. See [alpha release notes](docs/RELEASE-0.4.0a.md) for
+what works and what is deferred. Stable update feeds remain on v0.3.2.
+The builds are unsigned. Both v0.3.2 installers have unresolved Defender reports
+on a second PC; see [the investigation](docs/ANTIVIRUS.md). A passing local scan
+is not a Microsoft false-positive verdict. Do not bypass antivirus detections.
+
 Native Rust implementation of the EEF coordinator and EEFN node, with bundled
 CPython for optional plugins. The transport, crypto, routing, memory, task
 engine, model routing, dashboard/API, firmware generation, and updates are
@@ -33,10 +40,10 @@ on upgrade. These open-source builds are currently unsigned, so Windows may
 show a SmartScreen warning. Do not bypass an antivirus detection.
 
 For a first installation, follow [the getting-started guide](docs/FIRST_RUN.md).
-Install and launch **both apps on the same PC**: the device app automatically
+Install and launch **both apps on the same PC**: the node app automatically
 finds local EEF under your Windows account. No connection code, JSON, or port
-number is needed. Devices keep their identity when renamed or restarted.
-EEF's Devices page can request configuration changes; the device owner must
+number is needed. Nodes keep their identity when renamed or restarted.
+EEF's Nodes page can request configuration changes; the node owner must
 approve them locally or explicitly allow remote management.
 
 For development, start the coordinator from PowerShell:

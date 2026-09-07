@@ -117,6 +117,9 @@ pub fn router(runtime: Arc<Runtime>) -> Router {
         .route("/api/memory", get(memory))
         .route("/api/memory/reset", post(memory_reset))
         .route("/api/tasks", get(tasks))
+        .route("/api/jobs", get(jobs_list).post(jobs_create))
+        .route("/api/jobs/{id}", get(jobs_get).delete(jobs_remove))
+        .route("/api/jobs/{id}/{action}", post(jobs_control))
         .route("/api/logs", get(logs))
         .route("/api/capabilities", get(capabilities))
         .route("/api/assistant/status", get(assistant_status))
@@ -162,9 +165,10 @@ async fn ui_info(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
 }
 
 async fn restart(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
+    let restart = runtime.restart.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(250)).await;
-        runtime.restart.notify_one();
+        restart.notify_one();
     });
     Json(json!({"restarting":true}))
 }
@@ -183,16 +187,18 @@ async fn status(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
     Json(runtime.summary().await)
 }
 
-async fn config_get(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
-    let mut value = runtime.config.as_value();
+async fn config_get(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
+    // Forms edit saved preferences. Runtime status continues to report the
+    // applied configuration until a restart, matching the node dashboard.
+    let mut value = crate::config::Config::load(runtime.config.source())?.as_value();
     if value.pointer("/node/psk").is_some() {
         value["node"]["psk"] = json!("__KEEP_EXISTING_SECRET__");
     }
-    Json(json!({
+    Ok(Json(json!({
         "config": value,
         "path": runtime.config.source().map(|path| path.display().to_string()),
         "note": "Changes are validated and applied on restart"
-    }))
+    })))
 }
 
 async fn config_save(
@@ -201,7 +207,8 @@ async fn config_save(
 ) -> ApiResult<Value> {
     let mut config = value.get("config").unwrap_or(&value).clone();
     if config.pointer("/node/psk").and_then(Value::as_str) == Some("__KEEP_EXISTING_SECRET__") {
-        config["node"]["psk"] = runtime.config.as_value()["node"]["psk"].clone();
+        config["node"]["psk"] =
+            crate::config::Config::load(runtime.config.source())?.as_value()["node"]["psk"].clone();
     }
     runtime.config.save_for_restart(&config)?;
     runtime
@@ -297,8 +304,56 @@ async fn memory_reset(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
     Ok(Json(json!({"reset": true, "identity_preserved": true})))
 }
 
-async fn tasks(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
-    Json(json!({"plans": runtime.engine.list_plans()}))
+async fn tasks(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
+    Ok(Json(json!({"plans": runtime.engine.list_plans()?})))
+}
+
+async fn jobs_list(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
+    Ok(Json(runtime.engine.job_request(
+        "jobs.list",
+        json!({}),
+        None,
+    )?))
+}
+async fn jobs_create(
+    State(runtime): State<Arc<Runtime>>,
+    Json(value): Json<Value>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.engine.job_request(
+        "jobs.create",
+        value,
+        None,
+    )?))
+}
+async fn jobs_get(State(runtime): State<Arc<Runtime>>, Path(id): Path<String>) -> ApiResult<Value> {
+    Ok(Json(runtime.engine.job_request(
+        "jobs.get",
+        json!({"id":id}),
+        None,
+    )?))
+}
+async fn jobs_remove(
+    State(runtime): State<Arc<Runtime>>,
+    Path(id): Path<String>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.engine.job_request(
+        "jobs.remove",
+        json!({"id":id}),
+        None,
+    )?))
+}
+async fn jobs_control(
+    State(runtime): State<Arc<Runtime>>,
+    Path((id, action)): Path<(String, String)>,
+) -> ApiResult<Value> {
+    if !matches!(action.as_str(), "pause" | "resume" | "stop") {
+        return Err(anyhow::anyhow!("Unknown job control").into());
+    }
+    Ok(Json(runtime.engine.job_request(
+        &format!("jobs.{action}"),
+        json!({"id":id}),
+        None,
+    )?))
 }
 
 async fn logs(State(runtime): State<Arc<Runtime>>, Query(query): Query<LogsQuery>) -> Json<Value> {

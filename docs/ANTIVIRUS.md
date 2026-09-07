@@ -1,5 +1,40 @@
 # Windows antivirus investigation
 
+## Unresolved v0.3.2 reports on a second PC
+
+On 2026-09-07, local scan-only rechecks of both retained v0.3.2 installers and
+both `0.4.0-dev.1` debug executables passed with definitions `1.459.81.0`, engine
+`1.1.26080.3`, and real-time protection enabled. The retained installer hashes
+still match the published hashes below. Reports are in `.validation/defender-0.4-dev-*.json`.
+These are first-laptop results only, not a Microsoft false-positive verdict.
+
+The owner supplied Windows Security history showing **download-time removal**
+of both installers on a second Windows laptop. The first laptop downloaded and
+installed them successfully. This discrepancy is not proof of a false positive.
+The detection descriptions alone do not establish that installer code executed.
+
+| Artifact | Reported detection | Published SHA-256 |
+| --- | --- | --- |
+| `eef-installer.exe` | `Trojan:Win32/Sabsik.FL.A!ml` | `dd1f4ba70c0cb1c0a8e8ac2eb2395719635ab850488cc4da1c029b50c46cbec1` |
+| `eefn-installer.exe` | `Trojan:Win32/Wacatac.B!ml` | `882c5729de69727ac8a43fed6c588fc028e4cae16db6931b7490e718eb27212d` |
+
+These identify the published v0.3.2 artifacts retained locally, not hashes
+extracted from the second laptop's screenshots. The screenshots identify the
+filenames and release download URLs; an exact second-PC hash was not provided.
+No Microsoft verdict has been received for these reports. Keep affected files
+quarantined; do not add exclusions, disable protection, or rename/repack files to
+evade detection. Submit each exact affected artifact and detection separately at
+[Microsoft's developer submission portal](https://www.microsoft.com/en-us/wdsi/filesubmission).
+
+Source review found a separate packaging defect: an Authenticode certificate
+appended to an installer would hide the custom payload footer from the old
+installer/updater reader. The development reader now handles PE certificate
+table framing, with synthetic framing tests. This **does not identify the
+Defender trigger**, validate a real signature, or clear either artifact.
+
+Signing identifies a publisher and protects integrity; it is not a malware
+clearance. See [SIGNING.md](SIGNING.md) for identity/privacy and migration limits.
+
 ## Reported v0.3.0 detection
 
 Microsoft Defender detected the published `eefn-installer.exe` as

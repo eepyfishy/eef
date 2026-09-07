@@ -4,6 +4,7 @@
 //! newline-framed JSON encrypted with AES-256-GCM and the same HKDF inputs.
 
 pub mod client;
+pub mod context;
 pub mod crypto;
 pub mod dashboard;
 pub mod engine;
@@ -15,6 +16,7 @@ pub mod python;
 pub mod server;
 pub mod setup;
 pub mod startup;
+pub mod submission;
 pub mod updater;
 
 pub use client::{

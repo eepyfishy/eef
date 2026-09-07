@@ -1,5 +1,24 @@
 # EEFN capability catalog
 
+## v0.4 development permission changes
+
+Permissions remain off by default. The normal node UI grants feature-wide access
+with one explicit switch, without requiring folder, program, website or wake-target
+allowlists. The grants are stored in `permissions.full_access`: `filesystem.read`,
+`filesystem.write`, `process.exec`, `application.control`, `http.request`, and
+`network.wol`. A grant never replaces the corresponding enabled flag.
+
+Old configurations retain an empty grant list and keep their scoped behavior.
+The UI labels those existing limitations; toggling off then on explicitly grants
+full feature access. Advanced JSON retains optional legacy scopes. These grants
+do not elevate Windows privileges. A program or input-control grant can affect
+files independently of the filesystem switches.
+
+Remote `node.update` installation now requires `permissions.remote_updates`;
+checking/installing through a remote request can use only the owner-configured
+feed, not a requester-supplied replacement. The catalog below describes legacy
+scoped restrictions where a full feature grant has not been made.
+
 An EEFN node advertises only capabilities that are available and permitted by
 its current configuration. Except for basic status and updates, permissions are
 default-deny. Changes made in the node dashboard apply after EEFN restarts.

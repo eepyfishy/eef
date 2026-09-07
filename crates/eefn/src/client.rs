@@ -72,6 +72,8 @@ fn text_modality() -> String {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeClientConfig {
+    #[serde(default)]
+    pub metadata: crate::context::NodeMetadata,
     pub endpoints: Vec<CoordinatorEndpoint>,
     pub node_id: String,
     #[serde(default)]
@@ -109,6 +111,7 @@ pub struct NodeClient {
     engine: Arc<NodeEngine>,
     http: reqwest::Client,
     status: Arc<std::sync::Mutex<Value>>,
+    submissions: Arc<crate::submission::SubmissionMailbox>,
 }
 
 struct AbortTask(tokio::task::JoinHandle<()>);
@@ -120,6 +123,7 @@ impl Drop for AbortTask {
 
 impl NodeClient {
     pub fn new(mut config: NodeClientConfig, engine: Arc<NodeEngine>) -> Result<Self> {
+        config.metadata.validate()?;
         if config.endpoints.is_empty() {
             bail!("at least one coordinator endpoint is required")
         }
@@ -156,11 +160,17 @@ impl NodeClient {
             engine,
             http: reqwest::Client::new(),
             status: Arc::new(std::sync::Mutex::new(json!({}))),
+            submissions: Arc::new(crate::submission::SubmissionMailbox::default()),
         })
     }
 
     pub fn with_status(mut self, status: Arc<std::sync::Mutex<Value>>) -> Self {
         self.status = status;
+        self
+    }
+
+    pub fn with_submissions(mut self, mailbox: Arc<crate::submission::SubmissionMailbox>) -> Self {
+        self.submissions = mailbox;
         self
     }
 
@@ -192,7 +202,7 @@ impl NodeClient {
     pub async fn connect_once(&self) -> Result<()> {
         let mut last = None;
         for endpoint in &self.config.endpoints {
-            self.connection_status("connecting", &endpoint.address, None, 0.0);
+            self.connection_status("checking", &endpoint.address, None, 0.0);
             match self.serve_endpoint(endpoint).await {
                 Ok(()) => return Ok(()),
                 Err(error) => {
@@ -210,14 +220,29 @@ impl NodeClient {
         Err(last.unwrap_or_else(|| anyhow::anyhow!("all coordinator endpoints failed")))
     }
 
+    fn registration(
+        &self,
+        node_id: &str,
+        name: &str,
+        version: &str,
+        capabilities: &[String],
+        specs: &Value,
+        models: &[Value],
+    ) -> Value {
+        let mut message = build_register(node_id, name, version, capabilities, specs, models);
+        message["metadata"] = json!(self.config.metadata.advertised(capabilities));
+        message
+    }
+
     pub async fn submit_message(&self, text: &str, wait: Duration) -> Result<Value> {
         if text.trim().is_empty() {
             bail!("message must not be empty")
         }
         let mut last = None;
         for endpoint in &self.config.endpoints {
-            match self.submit_to_endpoint(endpoint, text, wait).await {
-                Ok(value) => return Ok(value),
+            match self.probe_endpoint(endpoint).await {
+                Ok(stream) => return timeout(wait, self.submit_to_endpoint(stream, text, wait)).await
+                    .context("request timed out; delivery may have occurred and was not automatically retried")?,
                 Err(error) => {
                     warn!(endpoint = %endpoint.address, priority = endpoint.priority, %error, "message submission failed");
                     last = Some(error);
@@ -229,14 +254,10 @@ impl NodeClient {
 
     async fn submit_to_endpoint(
         &self,
-        endpoint: &CoordinatorEndpoint,
+        stream: TcpStream,
         text: &str,
         wait: Duration,
     ) -> Result<Value> {
-        let (host, port) = parse_endpoint(&endpoint.address)?;
-        let stream = TcpStream::connect((host.as_str(), port))
-            .await
-            .with_context(|| format!("connect to {host}:{port}"))?;
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
         write_message(
@@ -264,7 +285,7 @@ impl NodeClient {
         write_message(
             &self.crypto,
             &mut writer,
-            &build_register(
+            &self.registration(
                 &self.config.node_id,
                 if self.config.name.is_empty() {
                     &self.config.node_id
@@ -331,15 +352,49 @@ impl NodeClient {
         .context("coordinator did not return the message result in time")?
     }
 
+    /// Probe the encrypted EEF service before authenticating/registering this node.
+    /// Reuse the probed connection. ICMP reachability is neither required nor trusted.
+    async fn probe_endpoint(&self, endpoint: &CoordinatorEndpoint) -> Result<TcpStream> {
+        self.connection_status("checking", &endpoint.address, None, 0.0);
+        let (host, port) = parse_endpoint(&endpoint.address)?;
+        let stream = timeout(Duration::from_secs(5), async {
+            let stream = TcpStream::connect((host.as_str(), port)).await?;
+            let mut connection = BufReader::new(stream);
+            let nonce = Uuid::new_v4().simple().to_string();
+            write_message(
+                &self.crypto,
+                connection.get_mut(),
+                &json!({"type":"probe","nonce":nonce}),
+            )
+            .await?;
+            let reply = read_message(&self.crypto, &mut connection)
+                .await?
+                .context("EEF closed during the reachability check")?;
+            if reply["type"] == "pong"
+                && reply["nonce"] == nonce
+                && reply["protocol"] == crate::PROTOCOL_VERSION
+            {
+                return Ok(connection.into_inner());
+            }
+            // 0.3.x answers this encrypted probe with an auth denial and closes.
+            // This proves service reachability only. Normal authentication remains
+            // mandatory on a fresh socket; no registration was sent by the probe.
+            if reply["type"] == "denied" && reply["error"] == "auth failed" {
+                return TcpStream::connect((host.as_str(), port))
+                    .await
+                    .map_err(Into::into);
+            }
+            bail!("EEF returned an invalid reachability response")
+        })
+        .await
+        .context("EEF unavailable: reachability check timed out after five seconds")??;
+        self.connection_status("connecting", &endpoint.address, None, 0.0);
+        Ok(stream)
+    }
+
     async fn serve_endpoint(&self, endpoint: &CoordinatorEndpoint) -> Result<()> {
         let (host, port) = parse_endpoint(&endpoint.address)?;
-        let stream = timeout(
-            Duration::from_secs(5),
-            TcpStream::connect((host.as_str(), port)),
-        )
-        .await
-        .context("EEF did not answer within five seconds")?
-        .with_context(|| format!("connect to {host}:{port}"))?;
+        let stream = self.probe_endpoint(endpoint).await?;
         let (reader, writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
         let writer = Arc::new(Mutex::new(writer));
@@ -379,7 +434,7 @@ impl NodeClient {
             write_message(
                 &self.crypto,
                 &mut *output,
-                &build_register(
+                &self.registration(
                     &self.config.node_id,
                     if self.config.name.is_empty() {
                         &self.config.node_id
@@ -427,8 +482,55 @@ impl NodeClient {
         }));
 
         let mut tasks = tokio::task::JoinSet::new();
-        while let Some(message) = read_message(&self.crypto, &mut reader).await? {
+        let mut local = self.submissions.connect();
+        let mut replies: std::collections::HashMap<
+            String,
+            tokio::sync::oneshot::Sender<Result<Value>>,
+        > = std::collections::HashMap::new();
+        loop {
+            // Keep partial frame reads alive when local input arrives. Dropping a
+            // read_message future mid-frame would corrupt the next message.
+            let incoming = read_message(&self.crypto, &mut reader);
+            tokio::pin!(incoming);
+            let message = loop {
+                tokio::select! {
+                    message = &mut incoming => break message?,
+                    Some(command) = local.recv() => {
+                        replies.retain(|_, reply| !reply.is_closed());
+                        if command.reply.is_closed() { continue; }
+                        if replies.len() >= 8 {
+                            let _ = command.reply.send(Err(anyhow::anyhow!("Node is busy. This message was not sent.")));
+                            continue;
+                        }
+                        let value = json!({"type":"submit","id":command.id,"node_id":self.config.node_id,
+                            "kind":command.kind,"payload":command.payload});
+                        // Store before writing: a failed/partial write is unknown,
+                        // not permission to automatically execute the request twice.
+                        replies.insert(command.id, command.reply);
+                        timeout(Duration::from_secs(5), async {
+                            write_message(&self.crypto, &mut *writer.lock().await, &value).await
+                        }).await.context("message send timed out; delivery is unknown")??;
+                    }
+                }
+            };
+            let Some(message) = message else {
+                break;
+            };
             while tasks.try_join_next().is_some() {}
+            if message["type"] == "submission_result" {
+                if let Some(reply) = message["id"].as_str().and_then(|id| replies.remove(id)) {
+                    let result = if message["success"] == true {
+                        Ok(message["data"].clone())
+                    } else {
+                        Err(anyhow::anyhow!(
+                            "{}",
+                            message["error"].as_str().unwrap_or("Request failed")
+                        ))
+                    };
+                    let _ = reply.send(result);
+                }
+                continue;
+            }
             if message.get("type").and_then(Value::as_str) != Some("request") {
                 continue;
             }
@@ -448,6 +550,10 @@ impl NodeClient {
                 .unwrap_or("run")
                 .to_owned();
             let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
+            let context = message
+                .get("request_context")
+                .cloned()
+                .unwrap_or(Value::Null);
             let engine = self.engine.clone();
             let writer = writer.clone();
             let crypto = self.crypto.clone();
@@ -456,6 +562,9 @@ impl NodeClient {
                 {
                     let mut s = status.lock().expect("status");
                     s["last_activity"] = json!(capability);
+                    s["last_request_context"] = context;
+                    s["last_resource_id"] =
+                        params.get("resource_id").cloned().unwrap_or(Value::Null);
                 }
                 let response = match engine.execute(&capability, &action, params).await {
                     Ok(data) => success_response(&request_id, data),
@@ -546,7 +655,7 @@ pub async fn discover_models(
         .iter()
         .filter(|model| installed.contains(model.model_id.as_str()))
         .map(|model| {
-            json!({"model_id": model.model_id, "modality": model.modality, "backend": "ollama"})
+            json!({"model_id": model.model_id, "modality": model.modality, "backend": "ollama", "capabilities":if model.modality=="vlm" {vec!["llm.infer","vlm.analyze"]} else {vec!["llm.infer"]}})
         })
         .collect()
 }
@@ -558,7 +667,7 @@ pub async fn installed_ollama_models(http: &reqwest::Client, base: &str) -> Resu
         .send()
         .await?
         .error_for_status()?;
-    let data = response.json::<Value>().await?;
+    let data = crate::model_manager::bounded_json(response).await?;
     let mut installed = data
         .get("models")
         .and_then(Value::as_array)
@@ -578,10 +687,12 @@ fn advertised_capabilities(configured: &[String], models: &[Value]) -> Vec<Strin
         .filter(|capability| !matches!(capability.as_str(), "llm.infer" | "vlm.analyze"))
         .cloned()
         .collect::<Vec<_>>();
-    if models
-        .iter()
-        .any(|model| model.get("modality").and_then(Value::as_str) == Some("text"))
-    {
+    if models.iter().any(|model| {
+        matches!(
+            model.get("modality").and_then(Value::as_str),
+            Some("text" | "vlm")
+        )
+    }) {
         capabilities.push("llm.infer".into());
     }
     if models
@@ -598,6 +709,68 @@ fn advertised_capabilities(configured: &[String], models: &[Value]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn probe_client(endpoint: String) -> NodeClient {
+        let config: NodeClientConfig = serde_json::from_value(json!({
+            "endpoints":[endpoint],"node_id":"probe-test","psk":"test-secret"
+        }))
+        .unwrap();
+        NodeClient::new(
+            config,
+            Arc::new(NodeEngine::new(false, vec![], std::env::temp_dir()).unwrap()),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn probe_succeeds_without_registering_a_node() {
+        let server = crate::NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        server.start().await.unwrap();
+        let client = probe_client(format!("127.0.0.1:{}", server.port()));
+        let stream = client
+            .probe_endpoint(&client.config.endpoints[0])
+            .await
+            .unwrap();
+        assert!(server.connected_nodes().await.is_empty());
+        assert!(server.registered_nodes().await.is_empty());
+        drop(stream);
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn probe_rejects_wrong_challenge_and_closed_service() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let fake = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (input, mut output) = stream.into_split();
+            let mut input = BufReader::new(input);
+            let crypto = NodeCrypto::new("test-secret").unwrap();
+            let probe = read_message(&crypto, &mut input).await.unwrap().unwrap();
+            assert_eq!(probe["type"], "probe");
+            write_message(
+                &crypto,
+                &mut output,
+                &json!({"type":"pong","nonce":"wrong","protocol":crate::PROTOCOL_VERSION}),
+            )
+            .await
+            .unwrap();
+        });
+        let client = probe_client(address);
+        assert!(
+            client
+                .probe_endpoint(&client.config.endpoints[0])
+                .await
+                .is_err()
+        );
+        fake.await.unwrap();
+        assert!(
+            client
+                .probe_endpoint(&client.config.endpoints[0])
+                .await
+                .is_err()
+        );
+    }
 
     #[test]
     fn endpoints_default_and_explicit_ports() {
@@ -623,6 +796,7 @@ mod tests {
             Arc::new(NodeEngine::new(false, vec![], std::env::current_dir().unwrap()).unwrap());
         let client = NodeClient::new(
             NodeClientConfig {
+                metadata: Default::default(),
                 endpoints: parsed,
                 node_id: "node-test".into(),
                 name: String::new(),
@@ -658,6 +832,10 @@ mod tests {
         assert_eq!(
             advertised_capabilities(&configured, &[json!({"modality": "text"})]),
             vec!["llm.infer", "system.ping"]
+        );
+        assert_eq!(
+            advertised_capabilities(&configured, &[json!({"modality":"vlm"})]),
+            vec!["llm.infer", "system.ping", "vlm.analyze"]
         );
     }
 }

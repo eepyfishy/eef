@@ -31,5 +31,4 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 zip.workspace = true
 
-[dev-dependencies]
 tempfile.workspace = true

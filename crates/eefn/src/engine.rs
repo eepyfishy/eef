@@ -32,6 +32,11 @@ const POLICY_CAPABILITIES: &[&str] = &[
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NodePolicy {
+    /// Explicit feature-wide grants. Empty on upgrade: legacy scopes stay limited.
+    #[serde(default)]
+    pub full_access: Vec<String>,
+    #[serde(default)]
+    pub remote_updates: bool,
     #[serde(default)]
     pub filesystem: FilesystemPolicy,
     #[serde(default)]
@@ -175,6 +180,10 @@ pub struct MediaPolicy {
 }
 
 impl NodePolicy {
+    fn unrestricted(&self, feature: &str) -> bool {
+        self.full_access.iter().any(|grant| grant == feature)
+    }
+
     pub fn validate(self) -> Result<Self> {
         normalize_policy(self)
     }
@@ -216,6 +225,8 @@ pub struct NodeEngine {
     ollama_url: String,
     ollama_models: HashMap<String, String>,
     dashboard: Option<Arc<crate::NodeDashboard>>,
+    resource_owner: String,
+    resources: Vec<crate::context::Resource>,
 }
 
 impl NodeEngine {
@@ -252,11 +263,24 @@ impl NodeEngine {
             ollama_url: String::new(),
             ollama_models: HashMap::new(),
             dashboard: None,
+            resource_owner: String::new(),
+            resources: Vec::new(),
         })
     }
 
     pub fn with_policy(mut self, policy: NodePolicy) -> Result<Self> {
         self.policy = normalize_policy(policy)?;
+        Ok(self)
+    }
+
+    pub fn with_resources(
+        mut self,
+        owner: String,
+        metadata: crate::context::NodeMetadata,
+    ) -> Result<Self> {
+        metadata.validate()?;
+        self.resource_owner = owner;
+        self.resources = metadata.resources;
         Ok(self)
     }
     pub fn with_dashboard(mut self, dashboard: Arc<crate::NodeDashboard>) -> Self {
@@ -331,11 +355,14 @@ impl NodeEngine {
             values.push("network.wol".into());
         }
         values.extend(self.plugins.keys().cloned());
-        let has_text = self.ollama_models.values().any(|value| value == "text")
+        let has_text = self
+            .ollama_models
+            .values()
+            .any(|value| matches!(value.as_str(), "text" | "vlm"))
             || self
                 .model_server
                 .as_ref()
-                .is_some_and(|server| server.slots.iter().any(|slot| !slot.is_vlm()));
+                .is_some_and(|server| !server.slots.is_empty());
         let has_vlm = self.ollama_models.values().any(|value| value == "vlm")
             || self
                 .model_server
@@ -355,7 +382,31 @@ impl NodeEngine {
         self.plugins.values().collect()
     }
 
-    pub async fn execute(&self, capability: &str, action: &str, params: Value) -> Result<Value> {
+    pub async fn execute(
+        &self,
+        capability: &str,
+        action: &str,
+        mut params: Value,
+    ) -> Result<Value> {
+        if let Some(id) = params.get("resource_id") {
+            let id = id.as_str().context("resource_id must be a string")?;
+            let resource = self
+                .resources
+                .iter()
+                .find(|resource| {
+                    crate::context::resource_id(&self.resource_owner, &resource.id) == id
+                })
+                .context("resource does not belong to this node")?;
+            if !resource.available || resource.capability != capability {
+                bail!("resource is unavailable for this capability")
+            }
+            let object = params
+                .as_object_mut()
+                .context("resource parameters must be an object")?;
+            object.remove("resource_id");
+            // Local adapter bindings cannot be redirected by request parameters.
+            object.extend(resource.parameters.clone());
+        }
         match capability {
             "node.configure" => {
                 self.dashboard
@@ -400,7 +451,12 @@ impl NodeEngine {
         if raw.is_empty() {
             bail!("filesystem requires 'path'")
         }
-        let path = self.resolve(raw)?;
+        let feature = match action {
+            "read" | "list" => "filesystem.read",
+            "write" | "mkdir" => "filesystem.write",
+            _ => bail!("unknown filesystem action '{action}'"),
+        };
+        let path = self.resolve(raw, self.policy.unrestricted(feature))?;
         match action {
             "read" => {
                 if !self.policy.filesystem.read {
@@ -453,8 +509,11 @@ impl NodeEngine {
         }
     }
 
-    fn resolve(&self, raw: &str) -> Result<PathBuf> {
+    fn resolve(&self, raw: &str, full_access: bool) -> Result<PathBuf> {
         let path = normalize_path(Path::new(raw))?;
+        if full_access {
+            return Ok(path);
+        }
         if self.policy.filesystem.roots.is_empty() {
             bail!("filesystem access requires at least one allowed root")
         }
@@ -476,9 +535,9 @@ impl NodeEngine {
                 .filter_map(|(pid, process)| {
                     let name = process.name().to_string_lossy().into_owned();
                     let executable = process.exe()?.to_string_lossy().into_owned();
-                    is_allowed_program(&executable, &self.policy.applications.allowed).then(
-                        || json!({"pid": pid.as_u32(), "name": name, "executable": executable}),
-                    )
+                    (self.policy.unrestricted("application.control")
+                        || is_allowed_program(&executable, &self.policy.applications.allowed))
+                    .then(|| json!({"pid": pid.as_u32(), "name": name, "executable": executable}))
                 })
                 .collect::<Vec<_>>();
             processes.sort_by_key(|value| value["pid"].as_u64().unwrap_or(0));
@@ -492,7 +551,9 @@ impl NodeEngine {
         if application.is_empty() {
             bail!("application control requires 'application'")
         }
-        if !is_allowed_program(application, &self.policy.applications.allowed) {
+        if !self.policy.unrestricted("application.control")
+            && !is_allowed_program(application, &self.policy.applications.allowed)
+        {
             bail!("application '{application}' is not in the node allowlist")
         }
         if action == "terminate" {
@@ -548,7 +609,9 @@ impl NodeEngine {
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .context("process.exec requires 'program'")?;
-        if !is_allowed_program(program, &self.policy.process.allowed_executables) {
+        if !self.policy.unrestricted("process.exec")
+            && !is_allowed_program(program, &self.policy.process.allowed_executables)
+        {
             bail!("program '{program}' is not in the node allowlist")
         }
         let mut command = Command::new(program);
@@ -556,7 +619,7 @@ impl NodeEngine {
             command.args(validated_arguments(arguments)?);
         }
         if let Some(raw) = params.get("cwd").and_then(Value::as_str) {
-            command.current_dir(self.resolve(raw)?);
+            command.current_dir(self.resolve(raw, self.policy.unrestricted("process.exec"))?);
         }
         command
             .stdin(Stdio::null())
@@ -608,22 +671,28 @@ impl NodeEngine {
             bail!("only HTTP and HTTPS URLs are supported")
         }
         let host = url.host_str().context("URL has no host")?;
-        if !host_is_allowed(host, &self.policy.http.allowed_hosts) {
+        if !self.policy.unrestricted("http.request")
+            && !host_is_allowed(host, &self.policy.http.allowed_hosts)
+        {
             bail!("HTTP host '{host}' is not in the node allowlist")
         }
-        let request_client =
-            restricted_http_client(&url, self.policy.http.allow_private_networks).await?;
+        let request_client = restricted_http_client(
+            &url,
+            self.policy.http.allow_private_networks || self.policy.unrestricted("http.request"),
+        )
+        .await?;
         let method = params
             .get("method")
             .and_then(Value::as_str)
             .unwrap_or("GET")
             .to_ascii_uppercase();
-        if !self
-            .policy
-            .http
-            .methods
-            .iter()
-            .any(|allowed| allowed.eq_ignore_ascii_case(&method))
+        if !self.policy.unrestricted("http.request")
+            && !self
+                .policy
+                .http
+                .methods
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(&method))
         {
             bail!("HTTP method '{method}' is not in the node allowlist")
         }
@@ -685,7 +754,14 @@ impl NodeEngine {
         let audio = if let Some(encoded) = params.get("audio_base64").and_then(Value::as_str) {
             base64::engine::general_purpose::STANDARD.decode(encoded)?
         } else if let Some(path) = params.get("audio_path").and_then(Value::as_str) {
-            read_bounded_file(&self.resolve(path)?, 25 * 1024 * 1024).await?
+            if !self.policy.filesystem.read {
+                bail!("reading a speech audio file requires Read files permission")
+            }
+            read_bounded_file(
+                &self.resolve(path, self.policy.unrestricted("filesystem.read"))?,
+                25 * 1024 * 1024,
+            )
+            .await?
         } else {
             bail!("stt.transcribe requires audio_base64 or audio_path")
         };
@@ -741,7 +817,7 @@ impl NodeEngine {
             .iter()
             .filter_map(|value| parse_mac(value).ok())
             .any(|allowed| allowed == mac);
-        if !allowed_mac {
+        if !self.policy.unrestricted("network.wol") && !allowed_mac {
             bail!("MAC address is not in the Wake-on-LAN allowlist")
         }
         let broadcast = params
@@ -749,11 +825,12 @@ impl NodeEngine {
             .and_then(Value::as_str)
             .context("network.wol requires 'broadcast'")?
             .parse::<Ipv4Addr>()?;
-        if !self
-            .policy
-            .wake_on_lan
-            .broadcast_addresses
-            .contains(&broadcast)
+        if !self.policy.unrestricted("network.wol")
+            && !self
+                .policy
+                .wake_on_lan
+                .broadcast_addresses
+                .contains(&broadcast)
         {
             bail!("broadcast address is not in the Wake-on-LAN allowlist")
         }
@@ -762,7 +839,12 @@ impl NodeEngine {
             .and_then(Value::as_u64)
             .and_then(|value| u16::try_from(value).ok())
             .context("network.wol requires a valid 'port'")?;
-        if !self.policy.wake_on_lan.ports.contains(&port) {
+        if port == 0 {
+            bail!("Wake-on-LAN port zero is invalid")
+        }
+        if !self.policy.unrestricted("network.wol")
+            && !self.policy.wake_on_lan.ports.contains(&port)
+        {
             bail!("UDP port is not in the Wake-on-LAN allowlist")
         }
         let packet = wol_packet(mac);
@@ -787,6 +869,9 @@ impl NodeEngine {
         if let Some(server) = &self.model_server
             && server.slot(Some(model)).is_some()
         {
+            if capability == "vlm.analyze" && !server.slot(Some(model)).unwrap().is_vlm() {
+                bail!("This local model has no vision projector configured")
+            }
             return self.llamacpp(server, &params).await;
         }
         let modality = self
@@ -798,7 +883,7 @@ impl NodeEngine {
         } else {
             "text"
         };
-        if modality != expected {
+        if modality != expected && !(expected == "text" && modality == "vlm") {
             bail!("model '{model}' is selected as '{modality}', not '{expected}'")
         }
         self.ollama(&params).await
@@ -894,11 +979,19 @@ impl NodeEngine {
     }
 
     async fn node_update(&self, action: &str, params: Value) -> Result<Value> {
-        let manifest = params
+        if action == "apply" && !self.policy.remote_updates {
+            bail!("remote updates are not allowed; approve updates in the local node app")
+        }
+        let manifest = self
+            .update_manifest
+            .as_deref()
+            .context("no owner-selected update feed configured")?;
+        if params
             .get("manifest_url")
-            .and_then(Value::as_str)
-            .or(self.update_manifest.as_deref())
-            .context("no manifest_url configured")?;
+            .is_some_and(|value| value.as_str() != Some(manifest))
+        {
+            bail!("a remote request cannot replace the owner-selected update feed")
+        }
         match action {
             "check" => Ok(serde_json::to_value(
                 updater::check(manifest, &self.current_version, Duration::from_secs(30)).await?,
@@ -926,7 +1019,10 @@ fn normalize_policy(mut policy: NodePolicy) -> Result<NodePolicy> {
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    if (policy.filesystem.read || policy.filesystem.write) && policy.filesystem.roots.is_empty() {
+    if ((policy.filesystem.read && !policy.unrestricted("filesystem.read"))
+        || (policy.filesystem.write && !policy.unrestricted("filesystem.write")))
+        && policy.filesystem.roots.is_empty()
+    {
         bail!("filesystem permissions require at least one explicit root")
     }
     policy.filesystem.max_read_bytes = policy
@@ -938,7 +1034,10 @@ fn normalize_policy(mut policy: NodePolicy) -> Result<NodePolicy> {
         .max_write_bytes
         .clamp(1_024, 64 * 1024 * 1024);
     policy.filesystem.max_list_entries = policy.filesystem.max_list_entries.clamp(1, 100_000);
-    if policy.process.enabled && policy.process.allowed_executables.is_empty() {
+    if policy.process.enabled
+        && !policy.unrestricted("process.exec")
+        && policy.process.allowed_executables.is_empty()
+    {
         bail!("process execution requires a non-empty executable allowlist")
     }
     for executable in &policy.process.allowed_executables {
@@ -955,7 +1054,10 @@ fn normalize_policy(mut policy: NodePolicy) -> Result<NodePolicy> {
         .process
         .max_output_bytes
         .clamp(1_024, 16 * 1024 * 1024);
-    if policy.applications.enabled && policy.applications.allowed.is_empty() {
+    if policy.applications.enabled
+        && !policy.unrestricted("application.control")
+        && policy.applications.allowed.is_empty()
+    {
         bail!("application control requires a non-empty application allowlist")
     }
     for executable in &policy.applications.allowed {
@@ -967,7 +1069,10 @@ fn normalize_policy(mut policy: NodePolicy) -> Result<NodePolicy> {
             )
         }
     }
-    if policy.http.enabled && policy.http.allowed_hosts.is_empty() {
+    if policy.http.enabled
+        && !policy.unrestricted("http.request")
+        && policy.http.allowed_hosts.is_empty()
+    {
         bail!("HTTP requests require a non-empty host allowlist")
     }
     policy.http.max_response_bytes = policy
@@ -982,7 +1087,7 @@ fn normalize_policy(mut policy: NodePolicy) -> Result<NodePolicy> {
     {
         bail!("STT requires both an endpoint and an owner-selected model")
     }
-    if policy.wake_on_lan.enabled {
+    if policy.wake_on_lan.enabled && !policy.unrestricted("network.wol") {
         if policy.wake_on_lan.allowed_macs.is_empty()
             || policy.wake_on_lan.broadcast_addresses.is_empty()
             || policy.wake_on_lan.ports.is_empty()
@@ -1209,6 +1314,140 @@ fn normalize_path(path: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn resource_bindings_are_owner_selected_and_never_grant_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.txt");
+        std::fs::write(&path, "owner binding").unwrap();
+        let metadata:crate::context::NodeMetadata=serde_json::from_value(json!({"resources":[{"id":"file","capability":"filesystem","parameters":{"path":path}},{"id":"disabled","capability":"filesystem","available":false}]})).unwrap();
+        let engine = NodeEngine::new(true, vec![dir.path().into()], dir.path().into())
+            .unwrap()
+            .with_resources("owner".into(), metadata.clone())
+            .unwrap();
+        let result = engine
+            .execute(
+                "filesystem",
+                "read",
+                json!({"resource_id":"owner::file","path":"wrong"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["content"], "owner binding");
+        for id in ["other::file", "owner::disabled", "owner::missing"] {
+            assert!(
+                engine
+                    .execute("filesystem", "read", json!({"resource_id":id}))
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(
+            engine
+                .execute("system.info", "run", json!({"resource_id":"owner::file"}))
+                .await
+                .is_err()
+        );
+        let denied = NodeEngine::new(false, vec![dir.path().into()], dir.path().into())
+            .unwrap()
+            .with_policy(NodePolicy::default())
+            .unwrap()
+            .with_resources("owner".into(), metadata)
+            .unwrap();
+        assert!(
+            denied
+                .execute("filesystem", "read", json!({"resource_id":"owner::file"}))
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn feature_grants_are_explicit_and_legacy_policies_do_not_widen() {
+        let legacy: NodePolicy = serde_json::from_value(
+            json!({"http":{"enabled":true,"allowed_hosts":["example.com"]}}),
+        )
+        .unwrap();
+        assert!(!legacy.unrestricted("http.request"));
+        assert!(!legacy.remote_updates);
+        assert!(legacy.validate().is_ok());
+        let broad: NodePolicy = serde_json::from_value(json!({
+            "full_access":["filesystem.read","filesystem.write","process.exec","application.control","http.request","network.wol"],
+            "filesystem":{"read":true,"write":true},"process":{"enabled":true},
+            "applications":{"enabled":true},"http":{"enabled":true},"wake_on_lan":{"enabled":true}
+        })).unwrap();
+        assert!(broad.validate().is_ok());
+    }
+
+    #[tokio::test]
+    async fn full_file_read_never_grants_write_or_bypasses_disabled_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let path = outside.path().join("fixture.txt");
+        std::fs::write(&path, "fixture").unwrap();
+        let mut policy = NodePolicy::default();
+        policy.filesystem.roots = vec![dir.path().into()];
+        policy.filesystem.read = true;
+        policy.filesystem.write = true;
+        policy.full_access = vec!["filesystem.read".into()];
+        let engine = NodeEngine::new(false, vec![], dir.path().into())
+            .unwrap()
+            .with_policy(policy.clone())
+            .unwrap();
+        assert_eq!(
+            engine
+                .filesystem("read", json!({"path":path}))
+                .await
+                .unwrap()["content"],
+            "fixture"
+        );
+        assert!(
+            engine
+                .filesystem("write", json!({"path":path,"content":"changed"}))
+                .await
+                .is_err()
+        );
+        policy.filesystem.read = false;
+        let engine = NodeEngine::new(false, vec![], dir.path().into())
+            .unwrap()
+            .with_policy(policy)
+            .unwrap();
+        assert!(
+            engine
+                .filesystem("read", json!({"path":path}))
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "fixture");
+    }
+
+    #[tokio::test]
+    async fn remote_update_requires_grant_and_cannot_choose_feed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NodeEngine::new(false, vec![], dir.path().into())
+            .unwrap()
+            .with_update_manifest(Some("https://example.invalid/owner-feed.json".into()));
+        assert!(
+            engine
+                .node_update("apply", json!({}))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("not allowed")
+        );
+        engine.policy.remote_updates = true;
+        assert!(
+            engine
+                .node_update(
+                    "apply",
+                    json!({"manifest_url":"https://example.invalid/other.json"})
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("cannot replace")
+        );
+    }
 
     #[tokio::test]
     async fn filesystem_is_permission_gated_and_rooted() {

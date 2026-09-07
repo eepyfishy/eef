@@ -58,6 +58,19 @@ impl MutableMemory {
                 id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL
             );"
         )?;
+        // Compatible additive migration: retain existing conversation rows.
+        let has_context = connection
+            .prepare("PRAGMA table_info(conversation)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|name| name == "request_context");
+        if !has_context {
+            connection.execute(
+                "ALTER TABLE conversation ADD COLUMN request_context TEXT",
+                [],
+            )?;
+        }
         Ok(Arc::new(Self {
             connection: Mutex::new(connection),
             max_conversation,
@@ -106,23 +119,40 @@ impl MutableMemory {
     }
 
     pub fn add_conversation(&self, role: &str, content: &str) -> Result<()> {
-        let connection = self.connection.lock().expect("memory lock");
-        connection.execute(
-            "INSERT INTO conversation(ts,role,content) VALUES (?1,?2,?3)",
-            params![now(), role, content],
+        self.add_conversation_with_context(role, content, None)
+    }
+
+    pub fn add_conversation_with_context(
+        &self,
+        role: &str,
+        content: &str,
+        context: Option<&eefn::context::RequestContext>,
+    ) -> Result<()> {
+        let mut connection = self.connection.lock().expect("memory lock");
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO conversation(ts,role,content,request_context) VALUES (?1,?2,?3,?4)",
+            params![
+                now(),
+                role,
+                content,
+                context.map(serde_json::to_string).transpose()?
+            ],
         )?;
-        connection.execute(
+        transaction.execute(
             "DELETE FROM conversation WHERE id IN (SELECT id FROM conversation ORDER BY id DESC LIMIT -1 OFFSET ?1)",
             [self.max_conversation as i64],
         )?;
+        transaction.commit()?;
         Ok(())
     }
 
     pub fn recent_conversation(&self, limit: usize) -> Result<Vec<Value>> {
         let connection = self.connection.lock().expect("memory lock");
-        let mut statement = connection
-            .prepare("SELECT ts,role,content FROM conversation ORDER BY id DESC LIMIT ?1")?;
-        let mut rows = statement.query_map([limit as i64], |row| Ok(json!({"ts": row.get::<_, f64>(0)?, "role": row.get::<_, String>(1)?, "content": row.get::<_, String>(2)?})))?
+        let mut statement = connection.prepare(
+            "SELECT ts,role,content,request_context FROM conversation ORDER BY id DESC LIMIT ?1",
+        )?;
+        let mut rows = statement.query_map([limit as i64], |row| Ok(json!({"ts": row.get::<_, f64>(0)?, "role": row.get::<_, String>(1)?, "content": row.get::<_, String>(2)?, "request_context":row.get::<_, Option<String>>(3)?.and_then(|s|serde_json::from_str::<Value>(&s).ok())})))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.reverse();
         Ok(rows)
@@ -186,6 +216,42 @@ impl WorkingMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_history_migrates_and_origin_survives_reopen_with_bounded_retention() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.db");
+        let legacy = Connection::open(&path).unwrap();
+        legacy.execute_batch("CREATE TABLE conversation (id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL); INSERT INTO conversation(ts,role,content) VALUES (1,'user','legacy');").unwrap();
+        drop(legacy);
+        let context = eefn::context::RequestContext::new(
+            "request".into(),
+            "origin".into(),
+            vec!["Home".into()],
+        )
+        .unwrap();
+        let memory = MutableMemory::open(&path, 2).unwrap();
+        assert_eq!(
+            memory.recent_conversation(10).unwrap()[0]["content"],
+            "legacy"
+        );
+        memory
+            .add_conversation_with_context("user", "new", Some(&context))
+            .unwrap();
+        drop(memory);
+        let memory = MutableMemory::open(&path, 2).unwrap();
+        let history = memory.recent_conversation(10).unwrap();
+        assert!(history[0]["request_context"].is_null());
+        assert_eq!(history[1]["request_context"], json!(context));
+        memory
+            .add_conversation_with_context("assistant", "reply", Some(&context))
+            .unwrap();
+        let history = memory.recent_conversation(10).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0]["content"], "new");
+        memory.reset().unwrap();
+        assert!(memory.recent_conversation(10).unwrap().is_empty());
+    }
 
     #[test]
     fn mutable_reset_does_not_touch_identity() {

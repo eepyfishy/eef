@@ -208,7 +208,10 @@ impl ModelRegistry {
 }
 
 fn available(spec: &ModelSpec, request: &ModelRequest) -> bool {
-    if spec.status == ModelStatus::Unavailable || spec.modality != request.modality {
+    if spec.status == ModelStatus::Unavailable
+        || (spec.modality != request.modality
+            && !(spec.modality == Modality::Vlm && request.modality == Modality::Text))
+    {
         return false;
     }
     let Some(constraints) = request.constraints.as_object() else {
@@ -292,6 +295,9 @@ impl LlmService {
             .registry
             .route(&request, &self.tiers.read().expect("tiers lock"));
         if chain.is_empty() {
+            if options.journal.is_some() {
+                bail!("No selected model is available for this job")
+            }
             return Ok(format!(
                 "(model tier '{}' unavailable - connect a node with a selected model)",
                 options.tier
@@ -302,7 +308,7 @@ impl LlmService {
             let result = self.remote_chat(&spec, &messages, &options).await;
             match result {
                 Ok(content) if !content.is_empty() => {
-                    self.bus.publish("model.used", json!({"node_id": spec.node_id, "model_id": spec.model_id, "tier": options.tier})).await;
+                    self.bus.publish("model.used", json!({"node_id": spec.node_id, "model_id": spec.model_id, "tier": options.tier,"request_context":options.request_context})).await;
                     return Ok(content);
                 }
                 Ok(_) => last = Some(anyhow::anyhow!("empty model response")),
@@ -318,7 +324,13 @@ impl LlmService {
             }
         }
         if let Some(error) = last {
+            if options.journal.is_some() {
+                return Err(error);
+            }
             warn!(%error, "all model providers failed")
+        }
+        if options.journal.is_some() {
+            bail!("No connected node model completed this job")
         }
         Ok(format!(
             "(model tier '{}' unavailable - connect a node with a selected model)",
@@ -333,6 +345,9 @@ impl LlmService {
         options: &ChatOptions,
     ) -> Result<String> {
         let mut messages = messages.clone();
+        if let Some(journal) = &options.journal {
+            journal.assign(&spec.node_id, None, Some(&spec.model_id))?;
+        }
         if !options.system_prompt.is_empty() {
             messages
                 .as_array_mut()
@@ -342,9 +357,9 @@ impl LlmService {
                     json!({"role": "system", "content": options.system_prompt}),
                 );
         }
-        let response = self.node_server.invoke_remote(&spec.node_id, if spec.modality == Modality::Vlm { "vlm.analyze" } else { "llm.infer" }, "run", json!({
+        let response = self.node_server.invoke_remote_with_context(&spec.node_id, if spec.modality == Modality::Vlm { "vlm.analyze" } else { "llm.infer" }, "run", json!({
             "model": spec.model_id, "messages": messages, "images": options.images, "max_tokens": options.max_tokens, "temperature": options.temperature,
-        }), Duration::from_secs(60)).await?;
+        }), Duration::from_secs(60),options.request_context.as_ref()).await?;
         if response.get("success").and_then(Value::as_bool) != Some(true) {
             bail!(
                 "{}",
@@ -364,6 +379,8 @@ impl LlmService {
 
 #[derive(Clone, Debug)]
 pub struct ChatOptions {
+    pub journal: Option<crate::jobs::AttemptJournal>,
+    pub request_context: Option<eefn::context::RequestContext>,
     pub tier: String,
     pub model_id: Option<String>,
     pub modality: Option<Modality>,
@@ -377,6 +394,8 @@ pub struct ChatOptions {
 impl Default for ChatOptions {
     fn default() -> Self {
         Self {
+            journal: None,
+            request_context: None,
             tier: "fast".into(),
             model_id: None,
             modality: None,
@@ -422,5 +441,19 @@ mod tests {
             &BTreeMap::new(),
         );
         assert_eq!(route[0].node_id, "idle");
+        let mut vision = route[0].clone();
+        vision.modality = Modality::Vlm;
+        let text_request = ModelRequest {
+            modality: Modality::Text,
+            tier: None,
+            model_id: None,
+            constraints: json!({}),
+        };
+        assert!(available(&vision, &text_request));
+        let vision_request = ModelRequest {
+            modality: Modality::Vlm,
+            ..text_request
+        };
+        assert!(!available(&route[0], &vision_request));
     }
 }

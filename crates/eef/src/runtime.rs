@@ -45,10 +45,12 @@ pub struct Runtime {
     pub update: Arc<UpdateService>,
     pub coordinator_id: String,
     pub coordinator_priority: i32,
+    instance_id: String,
     pub restart: Arc<tokio::sync::Notify>,
     pub pending_restart: AtomicBool,
     initialized: AtomicBool,
     background: AsyncMutex<Vec<JoinHandle<()>>>,
+    submissions: AsyncMutex<tokio::task::JoinSet<()>>,
 }
 
 impl Runtime {
@@ -69,8 +71,10 @@ impl Runtime {
 
         let bus = EventBus::new(config.u64("logging.history", 500) as usize);
         let identity = IdentityMemory::new(config.clone());
-        let memory =
-            MutableMemory::open(db_path, config.u64("memory.max_conversation", 200) as usize)?;
+        let memory = MutableMemory::open(
+            db_path.as_ref(),
+            config.u64("memory.max_conversation", 200) as usize,
+        )?;
         let working = Arc::new(Mutex::new(WorkingMemory::new(
             config.u64("memory.max_working_items", 100) as usize,
         )));
@@ -95,7 +99,12 @@ impl Runtime {
             node_server.clone(),
             bus.clone(),
         );
-        let engine = TaskEngine::new(bus.clone());
+        let jobs = crate::jobs::JobStore::open(
+            db_path.as_ref(),
+            config.u64("jobs.max_count", 500) as usize,
+            config.u64("jobs.max_bytes", 64 * 1024 * 1024) as usize,
+        )?;
+        let engine = TaskEngine::with_store(bus.clone(), jobs);
         let dispatcher = Dispatcher::new(
             registry.clone(),
             adapters.clone(),
@@ -179,6 +188,8 @@ impl Runtime {
             pending_restart: AtomicBool::new(false),
             initialized: AtomicBool::new(false),
             background: AsyncMutex::new(Vec::new()),
+            instance_id: uuid::Uuid::new_v4().to_string(),
+            submissions: AsyncMutex::new(tokio::task::JoinSet::new()),
         });
         runtime.start(start_brain).await?;
         Ok(runtime)
@@ -217,8 +228,16 @@ impl Runtime {
                     Ok(NodeEvent::Registered(message)) => runtime.on_node_register(message).await,
                     Ok(NodeEvent::Heartbeat(message)) => runtime.on_node_heartbeat(message).await,
                     Ok(NodeEvent::Submission(message)) => {
-                        let runtime = runtime.clone();
-                        tokio::spawn(async move { runtime.on_node_submission(message).await });
+                        let mut submissions = runtime.submissions.lock().await;
+                        while submissions.try_join_next().is_some() {}
+                        if submissions.len() >= 128 {
+                            if let Some(node_id) = message["node_id"].as_str() {
+                                let _=runtime.node_server.send_to_node(node_id,json!({"type":"submission_result","id":message["id"],"success":false,"error":"Network is busy. This request was not started."})).await;
+                            }
+                            continue;
+                        }
+                        let worker = runtime.clone();
+                        submissions.spawn(async move { worker.on_node_submission(message).await });
                     }
                     Ok(NodeEvent::Down(node_id)) => runtime.on_node_down(&node_id).await,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
@@ -248,6 +267,7 @@ impl Runtime {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        self.registry.unregister_node(node_id);
         for value in &capabilities {
             let Some(capability) = value.as_str() else {
                 continue;
@@ -262,7 +282,7 @@ impl Runtime {
                     .and_then(Value::as_str)
                     .unwrap_or("1.0")
                     .into(),
-                properties: json!({}),
+                properties: json!({"area":message.pointer("/metadata/area"),"resources":message.pointer("/metadata/resources")}),
                 node_specs: specs.clone(),
                 load: 0.0,
                 latency_ms: 0.0,
@@ -279,7 +299,7 @@ impl Runtime {
         self.bus
             .publish(
                 "node.connected",
-                json!({"node_id": node_id, "name": name, "capabilities": capabilities,"specs":message.get("specs"),"models":message.get("models")}),
+                json!({"node_id": node_id, "name": name, "capabilities": capabilities,"specs":message.get("specs"),"models":message.get("models"),"metadata":message.get("metadata")}),
             )
             .await;
     }
@@ -334,10 +354,18 @@ impl Runtime {
         let Some(id) = message.get("id").and_then(Value::as_str).map(str::to_owned) else {
             return;
         };
+        let context: eefn::context::RequestContext =
+            match serde_json::from_value(message["request_context"].clone()) {
+                Ok(context) => context,
+                Err(error) => {
+                    warn!(%error,"submission missing authenticated origin");
+                    return;
+                }
+            };
         self.bus
             .publish(
                 "node.submission",
-                json!({"node_id": node_id, "id": id, "kind": message.get("kind")}),
+                json!({"node_id": node_id, "id": id, "kind": message.get("kind"),"request_context":context}),
             )
             .await;
         let result = match message
@@ -350,9 +378,14 @@ impl Runtime {
                     .pointer("/payload/text")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                self.handle_message(text)
+                self.brain
+                    .handle_message_with_context(text, Some(context.clone()))
                     .await
-                    .map(|reply| json!({"reply": reply}))
+                    .map(|reply| json!({"reply": reply,"request_context":context}))
+            }
+            kind if kind.starts_with("jobs.") => {
+                self.engine
+                    .job_request(kind, message["payload"].clone(), Some(context))
             }
             kind => Err(anyhow::anyhow!("unsupported submission kind '{kind}'")),
         };
@@ -381,7 +414,7 @@ impl Runtime {
             "pending_restart": self.pending_restart.load(Ordering::Relaxed) || update.restart_required,
             "update": update,
             "name": self.identity.name(), "version": crate::VERSION,
-            "runtime": "rust", "python_plugins": self.config.strings("python.plugins"),
+            "runtime": "rust", "runtime_id": self.instance_id, "python_plugins": self.config.strings("python.plugins"),
             "initialized": self.initialized.load(Ordering::Relaxed), "brain_alive": self.brain.alive(),
             "adapters": self.adapters.capabilities(), "capabilities": self.registry.all_capabilities(),
             "models": self.model_registry.list(), "tiers": model_tiers(&self.config), "world": self.world.summary().await,
@@ -401,10 +434,13 @@ impl Runtime {
         }
         self.brain.stop().await;
         self.node_server.stop().await;
-        self.adapters.shutdown().await;
         for task in self.background.lock().await.drain(..) {
             task.abort();
+            let _ = task.await;
         }
+        self.submissions.lock().await.shutdown().await;
+        self.engine.shutdown().await;
+        self.adapters.shutdown().await;
         self.bus.publish("runtime.stopped", json!({})).await;
     }
 }

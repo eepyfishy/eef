@@ -1,5 +1,96 @@
 # HTTP API
 
+## v0.4 development: local node input and connection controls
+
+EEFN's guarded loopback interface adds:
+
+- `POST /api/chat`, body `{"message":"..."}`: submit on the **running node's**
+  authenticated connection. Pending requests are bounded to eight and the local
+  wait is two minutes. Disconnection/timeouts do not cause automatic resubmission.
+  A successful response contains `reply`; an error means the outcome may be
+  unknown, not that all side effects were undone.
+- `POST /api/network/pause`, body `{"paused":true}`: persistently stop connecting
+  to EEF and restart node services; `false` resumes. Settings and models remain.
+  This is local management, not a coordinator-proxied remote endpoint.
+
+The browser's Stop waiting action aborts its wait only. It must not be presented
+as an acknowledgement that remote work was cancelled. Task retries for mutating
+or unknown actions require explicit `constraints.retry_safe: true`; setting it
+asserts the caller knows that repeating the action is safe.
+
+## Coordinator API
+
+### Model management and update bounds (0.4 development)
+
+- Node `GET /api/models` adds `storage` with `scope`, `free_bytes`, and a message.
+  For local GGUF files, free space is measured on the model directory's drive
+  (or existing parent before creation). For Ollama, `free_bytes` is null: neither
+  a loopback URL nor the caller's disk proves where that service stores models.
+- `POST /api/models/inspect`, body `{"id":"installed-model"}`, reads installed
+  model metadata without loading weights. EEF proxies this as management action
+  `inspect`. `capabilities_known`, normalized `capabilities`, and `modality` tell
+  the UI whether it may auto-select the type. Missing/older-service metadata is
+  unknown, not evidence of text support; an explicit owner choice remains possible.
+  Normalization uses Ollama's reported `completion` and `vision` capabilities,
+  not name heuristics. See the [Ollama API documentation](https://github.com/ollama/ollama/blob/main/docs/api.md#show-model-information).
+- Download status includes a stable operation `id`, `backend`, `phase`, progress
+  counters, and `state`: `downloading`, `installed`, `cancelled`, or `error`.
+  `POST /api/models/cancel` optionally accepts `{"id":"operation-id"}`; a stale
+  ID is rejected. Body-less legacy requests still target the active download.
+  No active download returns `requested: false` without affecting future work.
+  Cancellation closes this client's request; it does not promise deletion of
+  reusable Ollama layers or cancellation of another client's shared pull. See
+  [Ollama pull semantics](https://github.com/ollama/ollama/blob/main/docs/api.md#pull-a-model).
+- Ollama progress is accumulated by digest. Counts represent layers reported so
+  far, not a guaranteed full-model size known at the start. Unterminated progress
+  lines are bounded before accumulation, and final success is required.
+- Update feeds may add `size_bytes` for exact size verification. Older three-field
+  feeds remain compatible. Both products enforce a 1 MiB manifest and 512 MiB
+  artifact ceiling; declared size, when present, also limits the streamed body.
+  Hash/size failures leave current version selection unchanged. Existing target
+  versions are rejected before downloading and are never deleted to make room.
+
+### Request origin and resource metadata (0.4 development)
+
+Node configuration and registration accept optional `metadata` containing
+`area` (a path such as `["Home", "Upstairs", "Office"]`), `hardware_type`,
+`resources`, and an `extensions` object. Missing metadata remains compatible.
+Each resource has a node-local `id`, `capability`, optional `name` and `area`,
+`available` (default true), and optional public `properties`. Empty resource
+areas inherit the node area. Private `parameters` bind the local adapter and
+are removed from registration; keep credentials out of public properties.
+Availability also requires the node to advertise the corresponding capability.
+
+EEF stamps each registered node submission with immutable `request_context`:
+`request_id`, `origin_node`, and `origin_area`. Caller-supplied origin is ignored;
+the snapshot comes from the authenticated connection and its registration at
+submission time. Changing a node's area later does not change existing requests.
+This is connection binding under the current shared-network-key trust model,
+not a per-node certificate identity system.
+
+Goals, tasks, inference transport envelopes, assistant/task events, node replies
+and bounded SQLite conversation history retain that context. User input is
+stored before execution; old conversation rows migrate without losing content.
+History retention and explicit memory reset still apply. This does **not** make
+task execution durable or automatically resume interrupted jobs.
+
+Use `params.resource_id` or `constraints.resource_id` with the qualified identity
+`node-id::resource-id`; conflicting selections fail. `constraints.area` selects
+an exact area path. Suitability/capacity constraints are checked before routing;
+fresh heartbeat data ranks ahead of stale data, then origin node, exact area,
+nearest shared ancestor, and existing load/latency/hardware scoring. Missing
+areas do not imply proximity. Inference retains its existing model scheduler.
+An explicit unavailable resource never silently falls back to another resource.
+The executor checks ownership/capability/availability and applies owner bindings
+over caller parameters, without bypassing feature permissions.
+
+Node `/api/status` includes applied metadata, `last_request_context` and
+`last_resource_id` for execution diagnostics. These are last-started snapshots,
+not a durable execution log. Settings exposes location and resource forms,
+including through owner-approved remote configuration. Creating resources does
+not activate hardware; current forms cover existing webcam/audio/screen adapters,
+not RTSP or live relaying.
+
 The coordinator listens on `127.0.0.1:51334` by default.
 
 Opening that address in a browser displays the accessible dashboard. It edits
@@ -22,6 +113,11 @@ requiring source changes.
 | GET | `/api/memory` | Identity, facts, notes, and recent conversation |
 | POST | `/api/memory/reset` | Reset mutable/working memory only |
 | GET | `/api/tasks` | Plans and task results |
+| GET | `/api/jobs` | Latest 100 job summaries and total visible count |
+| POST | `/api/jobs` | Save and start a one-shot Goal using an existing planner template |
+| GET | `/api/jobs/{id}` | Job steps/history, excluding raw parameters and output contents |
+| POST | `/api/jobs/{id}/{action}` | `pause`, `resume`, or `stop` |
+| DELETE | `/api/jobs/{id}` | Explicitly remove completed, failed or stopped history |
 | GET | `/api/logs?limit=100` | Recent structured events |
 | POST | `/api/firmware/generate` | Resolve a description and store ESP source |
 | POST | `/api/firmware/push` | Stream stored/source firmware to a node |
@@ -39,3 +135,66 @@ saved changes apply after EEFN restarts. EEF can route any capability advertised
 by a connected EEFN through `/api/assistant/execute` or
 `/api/node/{id}/invoke`; see [`CAPABILITIES.md`](CAPABILITIES.md) for actions and
 parameters.
+
+## Durable one-shot jobs (v0.4.0 development)
+
+The `/api/jobs` routes above exist on both local dashboards. EEFN forwards them
+over its running authenticated EEF connection; they fail when disconnected and
+are never replayed automatically. The gateway stamps origin on creation, ignoring
+caller-supplied context. Nodes can list/read/control only jobs whose immutable
+origin node matches their authenticated identity, regardless of assigned executor.
+The loopback EEF owner API can manage all jobs; jobs created there have no claimed
+node origin. Existing `/api/tasks` remains an EEF-only full-results compatibility
+endpoint. Summaries list the latest 100 visible jobs; full journal data stays local.
+
+Creation accepts `description`, an existing `template` such as `read_file`,
+`params`, and optional `constraints`. It returns a saved job summary with `id`.
+Job IDs, task IDs and execution attempt/assignment records are separate. The
+current feature stores planned one-shot work; chat-only replies, direct capability
+calls and response-rule actions are not retroactively durable jobs.
+
+Lifecycle semantics:
+
+- Definitions, attempts and executor assignments checkpoint before dispatch;
+  results checkpoint before dependent steps. Saving failure stops advancement.
+- Startup changes unfinished running/queued work to `interrupted`, without
+  invoking an executor. Paused and terminal jobs retain their state.
+- `pause` allows the already-claimed batch to finish, then prevents later steps.
+  `stop` prevents later steps, but is not a remote cancellation acknowledgment
+  and does not undo effects. Interrupted remote effects may still be unknown.
+- `resume` requires paused/interrupted state and an explicit request. Completed
+  predecessors are retained. Interrupted tasks must be known read-only/inference
+  operations or explicitly marked `constraints.retry_safe`; uncertain mutations
+  otherwise refuse resume. A deliberate `retry_safe` assertion is a responsibility
+  of the caller, not automatic proof of idempotency.
+- Finished history can be removed explicitly. Failed/interrupted jobs are never
+  silently replaced, purged or automatically reassigned after startup.
+
+Configure `jobs.max_count` (default 500) and `jobs.max_bytes` (default 64 MiB) in
+EEF Settings using the Saved job storage form (Advanced also remains available).
+These limit serialized records plus logical recovery headroom, not total SQLite
+file size; transaction pages/free pages and other memory tables consume more disk.
+Each record including headroom is limited to 8 MiB, each graph to 128 tasks,
+lifecycle history to 128 entries, assignment history to 128 per task. Large media
+needs future bounded data paths rather than journal storage. Active jobs reserve
+4 KiB, pausing/stopping jobs 3 KiB, paused/interrupted jobs 1 KiB; terminal jobs
+release this reserve. Recovery/control transitions can consume that headroom.
+Lowering quotas never deletes records; size-reducing checkpoints and explicit
+terminal-history removal remain available above quota, while new work is rejected.
+Older development journals acquire recovery headroom during additive migration.
+An actually full disk or a corrupt journal can still prevent writes/startup;
+existing data is retained and failures stop dispatch, not reset the journal.
+`/api/jobs` includes aggregate network `storage` usage and effective limits on
+both roles without exposing other nodes' job contents or identities.
+Deleting terminal history frees logical quota and reusable SQLite pages, not
+necessarily filesystem bytes immediately. No automatic database vacuum is run.
+
+The database lock is single-host ownership, not leader election. No replicated
+jobs, exactly-once execution, recurring jobs, remote fencing or safe cross-EEF
+migration is claimed. `/api/status.runtime_id` changes on each EEF initialization
+and is diagnostic only; it is not a stable node identity or security credential.
+
+EEF `/api/config` returns **saved** preferences (with the network key redacted),
+including edits awaiting restart. `/api/status` and `/api/jobs.storage` report
+**applied** state. Saving a redacted key preserves the saved key, including a key
+change that has not yet been applied to the running service.

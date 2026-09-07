@@ -148,11 +148,20 @@ impl ResponseEngine {
     }
 
     pub async fn on_keyword(&self, input: &str) {
+        self.on_keyword_with_context(input, None).await;
+    }
+
+    pub async fn on_keyword_with_context(
+        &self,
+        input: &str,
+        context: Option<&eefn::context::RequestContext>,
+    ) {
         let lowered = input.to_lowercase();
         let rules = self.enabled("keyword");
         for rule in rules {
             if lowered.contains(&rule.trigger_value.to_lowercase()) {
-                self.maybe_fire(rule, json!({"text": input})).await;
+                self.maybe_fire(rule, json!({"text": input,"request_context":context}))
+                    .await;
             }
         }
     }
@@ -203,6 +212,12 @@ impl ResponseEngine {
     }
 
     async fn fire(&self, rule: &ResponseRule, context: Value) -> Result<()> {
+        let origin: Option<eefn::context::RequestContext> = context
+            .get("request_context")
+            .or_else(|| context.pointer("/data/request_context"))
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()?;
         let payload = match rule.response_kind.as_str() {
             "text" => {
                 json!({"content": rule.response.get("text").and_then(Value::as_str).unwrap_or(""), "rule_id": rule.id})
@@ -218,6 +233,7 @@ impl ResponseEngine {
                     .chat(
                         json!([{"role": "user", "content": prompt}]),
                         ChatOptions {
+                            request_context: origin.clone(),
                             tier: rule
                                 .response
                                 .get("tier")
@@ -248,7 +264,7 @@ impl ResponseEngine {
                     .unwrap_or_else(|| json!({}));
                 let data = self
                     .dispatcher
-                    .run_capability(capability, action, params, json!({}))
+                    .run_capability_with_context(capability, action, params, json!({}), origin)
                     .await?;
                 json!({"content": format!("[capability] {capability}"), "data": data, "rule_id": rule.id})
             }

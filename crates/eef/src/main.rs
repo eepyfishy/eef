@@ -102,9 +102,13 @@ async fn main() -> Result<()> {
         let restart_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let requested = restart_requested.clone();
         let restart = runtime.restart.clone();
+        let shutdown_runtime = runtime.clone();
         let result = axum::serve(listener, eef::api::router(runtime.clone()))
         .with_graceful_shutdown(async move {
             tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=restart.notified()=>{requested.store(true,std::sync::atomic::Ordering::Relaxed);} }
+            // Stop runners before graceful HTTP draining; an in-flight job must
+            // not keep a requested restart waiting for its entire timeout.
+            shutdown_runtime.shutdown().await;
         })
         .await;
         runtime.shutdown().await;

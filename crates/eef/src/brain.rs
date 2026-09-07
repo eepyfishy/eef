@@ -73,6 +73,7 @@ impl Brain {
         self.running.store(false, Ordering::SeqCst);
         if let Some(task) = self.loop_task.lock().await.take() {
             task.abort();
+            let _ = task.await;
         }
     }
 
@@ -111,15 +112,30 @@ impl Brain {
     }
 
     pub async fn handle_message(&self, text: &str) -> Result<String> {
+        self.handle_message_with_context(text, None).await
+    }
+
+    pub async fn handle_message_with_context(
+        &self,
+        text: &str,
+        context: Option<eefn::context::RequestContext>,
+    ) -> Result<String> {
         let text = text.trim();
         if text.is_empty() {
             bail!("message must not be empty")
         }
         let sequence = self.intents_handled.fetch_add(1, Ordering::Relaxed) + 1;
+        self.memory
+            .add_conversation_with_context("user", text, context.as_ref())?;
         self.bus
-            .publish("assistant.user_message", json!({"content": text}))
+            .publish(
+                "assistant.user_message",
+                json!({"content": text,"request_context":context}),
+            )
             .await;
-        self.assistant.on_keyword(text).await;
+        self.assistant
+            .on_keyword_with_context(text, context.as_ref())
+            .await;
         let reply = match understand(text) {
             Intent::Remember(fact) => {
                 self.memory.add_fact(
@@ -130,13 +146,19 @@ impl Brain {
                 )?;
                 format!("Remembered: {fact}")
             }
-            Intent::Goal(goal) => self.run_goal(goal).await,
-            Intent::Chat => self.chat_reply(text).await,
+            Intent::Goal(mut goal) => {
+                goal.request_context = context.clone();
+                self.run_goal(goal).await
+            }
+            Intent::Chat => self.chat_reply(text, context.clone()).await,
         };
-        self.memory.add_conversation("user", text)?;
-        self.memory.add_conversation("assistant", &reply)?;
+        self.memory
+            .add_conversation_with_context("assistant", &reply, context.as_ref())?;
         self.bus
-            .publish("assistant.response", json!({"content": reply}))
+            .publish(
+                "assistant.response",
+                json!({"content": reply,"request_context":context}),
+            )
             .await;
         Ok(reply)
     }
@@ -151,7 +173,7 @@ impl Brain {
         self.bus
             .publish(
                 "goal.created",
-                json!({"description": description, "template": template, "plan_id": plan.plan_id}),
+                json!({"description": description, "template": template, "plan_id": plan.plan_id,"request_context":plan.goal.request_context}),
             )
             .await;
         match self.engine.run_plan(plan).await {
@@ -182,7 +204,11 @@ impl Brain {
         }
     }
 
-    async fn chat_reply(&self, text: &str) -> String {
+    async fn chat_reply(
+        &self,
+        text: &str,
+        context: Option<eefn::context::RequestContext>,
+    ) -> String {
         let system_prompt = format!(
             "You are {}, a continuous personal AI agent. {} Keep replies short and useful.",
             self.identity.name(),
@@ -198,6 +224,7 @@ impl Brain {
             self.llm.chat(
                 json!([{"role": "user", "content": text}]),
                 ChatOptions {
+                    request_context: context,
                     system_prompt,
                     ..ChatOptions::default()
                 },
@@ -231,6 +258,7 @@ fn understand(text: &str) -> Intent {
             let name = parts.next().unwrap_or("");
             if !name.is_empty() {
                 return Intent::Goal(Goal {
+                    request_context: None,
                     description: text.into(),
                     template: "launch_application".into(),
                     params: json!({"name": name, "args": parts.collect::<Vec<_>>()}),
@@ -245,6 +273,7 @@ fn understand(text: &str) -> Intent {
         .filter(|value| !value.is_empty())
     {
         return Intent::Goal(Goal {
+            request_context: None,
             description: text.into(),
             template: "read_file".into(),
             params: json!({"path": path}),
@@ -257,6 +286,7 @@ fn understand(text: &str) -> Intent {
         .filter(|value| !value.is_empty())
     {
         return Intent::Goal(Goal {
+            request_context: None,
             description: text.into(),
             template: "list_directory".into(),
             params: json!({"path": path}),
@@ -265,6 +295,7 @@ fn understand(text: &str) -> Intent {
     }
     if lowered.contains("screenshot") || lowered == "capture screen" {
         return Intent::Goal(Goal {
+            request_context: None,
             description: text.into(),
             template: "capture_screen".into(),
             params: json!({}),

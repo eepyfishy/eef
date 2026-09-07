@@ -1,5 +1,89 @@
 # Architecture conformance status
 
+## v0.4.0a alpha scope
+
+The workspace is `0.4.0-alpha.1`, presented as **0.4.0a**. The owner approved
+shipping this reduced alpha scope and deferring the remaining features.
+See [RELEASE-0.4.0a.md](RELEASE-0.4.0a.md) and [ROADMAP-0.4.0.md](ROADMAP-0.4.0.md)
+for the owner-approved prerequisites and seven milestones. They are not all
+implemented; development now covers the reliability prerequisite and an
+origin/area/resource-routing, model management, and durable one-shot job
+implementations with automated acceptance checks.
+
+- Node-first browser and CLI input over the running node's authenticated
+  connection; bounded pending requests, no submission replay after disconnect.
+- Encrypted EEF reachability probe before authentication/registration, without
+  creating a node record. Older EEF's encrypted auth denial is accepted only as
+  service reachability; a fresh socket still requires normal authentication.
+- Persistent Stop/Resume connection controls. Stop waiting for a reply is
+  explicitly distinct from cancelling work already running on other nodes.
+- Mutating/unknown tasks no longer retry automatically unless their caller
+  explicitly sets `constraints.retry_safe`; read-only retry behavior remains.
+- Feature-wide permission switches, retaining default denial and old scoped
+  configurations. Remote update installation requires its own permission and
+  cannot replace the locally selected update feed.
+- Compact navy/blue dashboard, node terminology, stable DOM updates that preserve
+  selection and editing, and decorative icons excluded from accessible names.
+- Bounded inbound frame reads, random authentication nonces, atomic live identity
+  reservation, and response matching against the authenticated executor.
+- Update extraction checks unpacked size against free space, stages new files,
+  and refuses to delete an already installed version. No fixed 5 GB reserve.
+- Optional signing build hooks and certificate-aware payload framing. No public
+  certificate has been configured and no signed release has been produced.
+- Authenticated submission-origin snapshots retained through goals, tasks,
+  inference transport, events, replies and bounded SQLite conversation history.
+  Compatible metadata registration and additive history migration.
+- Hierarchical node/resource areas, node-qualified stable resource IDs, owner
+  adapter bindings and locality-aware routing after suitability/freshness checks.
+  Explicit unavailable resources fail without falling back to another resource.
+- Node location/resource forms, also available through EEF remote configuration.
+  Resource creation is independent of permission grants and hardware activation.
+- Remote-save now explicitly includes validated metadata; remote status returns
+  applied areas/resources and last-request diagnostics. Tests cover both proposal
+  approval and trusted remote management without changing identity or grants.
+- Model selection inspects Ollama's reported capabilities on demand. Unknown
+  capabilities require an explicit owner choice; embedding-only models are not
+  offered as text generation. Selected vision models can also serve text requests.
+- Model-service metadata is bounded to 4 MiB; progress lines to 64 KiB and 4096
+  layers. Progress retains layer counts during verification. Cancellation has its
+  own terminal state and optional job-ID matching; it is not an installation error.
+- GGUF downloads recheck remaining disk space during transfer, verify existing
+  files before reuse, and preserve damaged files/indexes instead of overwriting
+  them. The UI distinguishes node-drive free space from unknown Ollama storage.
+- Update manifests are capped at 1 MiB and artifacts at 512 MiB, with optional
+  exact `size_bytes`, hexadecimal checksums, and streamed bounds even without
+  Content-Length. Artifacts are still buffered in memory within that limit.
+
+- SQLite-backed one-shot job definitions, attempts, results, origin and executor
+  assignments. Checkpoints precede dispatch and dependent steps. A local database
+  ownership lock prevents two coordinators opening the same job journal.
+- Interrupted jobs do not execute on startup. Explicit resume retains completed
+  steps and refuses uncertain non-idempotent actions. Pause/Stop finish the current
+  claimed batch; they do not acknowledge remote cancellation or undo effects.
+- Jobs history, step details and Pause/Resume/Stop controls in the node app over
+  its existing authenticated connection. Nodes see/control only their own origin
+  jobs; the loopback EEF owner API can manage all jobs. Finished history removal
+  is explicit. UI responses omit raw parameters, file contents and media results.
+- Shutdown joins node submissions and interrupts active runners before reopening
+  the journal. Cancellation drops scheduler capacity guards. Runtime instance IDs
+  let integration checks distinguish the old instance from a completed restart.
+- State-dependent recovery headroom within the logical job budget keeps safe
+  interruption/stop/removal available even after lowering the quota. Older
+  development journals migrate additively, including partial migration recovery.
+  Dashboard forms configure history count and MiB budget; Jobs shows effective
+  network usage. Physical disk exhaustion and corruption still fail closed.
+- EEF configuration forms load saved preferences, not stale running settings,
+  while status keeps reporting applied settings until restart. Subsequent saves
+  preserve a redacted saved network key rather than reverting to the running key.
+
+Known remaining boundaries: real two-PC acceptance, remote-task cancellation
+acknowledgements, verified Ollama-server storage reporting,
+physical resource acceptance, recurring jobs and controlled migration,
+media relay/correlation, Wi-Fi and
+Bluetooth controls, mesh/ESP-NOW, distributed optimization, and coordinator
+consensus/replication/fencing are not completed by this slice. Defender reports
+against v0.3.2 remain unresolved; passing development tests do not clear them.
+
 This file distinguishes working behavior from planned architecture. It prevents
 the open-source project from presenting an unsafe approximation as complete.
 
@@ -82,8 +166,9 @@ roadmap or establish that the 0.3.0 detection was a false positive.
   coordinator is unavailable.
 - Transport plugins beyond TCP. The protocol is not coupled to a VPN vendor,
   but the pluggable transport interface is still future work.
-- Durable restoration of an in-flight task graph after coordinator process
-  failure.
+- Recurring jobs, data dependencies for ongoing media workflows, remote execution
+  fencing/deduplication, and controlled migration. One-shot interrupted graphs
+  are retained locally and require explicit safe resume.
 - Signed release manifests. Updates currently require HTTPS plus an exact
   artifact SHA-256.
 

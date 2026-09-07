@@ -1,6 +1,6 @@
 # Security model
 
-The v0.3.0 EEFN installer has a known Defender detection. Keep it quarantined;
+The v0.3.0 EEFN and both v0.3.2 installers have reported Defender detections. Keep affected files quarantined;
 see [ANTIVIRUS.md](ANTIVIRUS.md). New maintenance builds require component and
 artifact scans; a clean scan does not constitute a malware-free guarantee.
 
@@ -15,13 +15,27 @@ artifact scans; a clean scan does not constitute a malware-free guarantee.
   IDs, unsupported protocol versions, and duplicate live node IDs.
 - Filesystem access requires explicit existing roots. Roots and existing path
   ancestors are canonicalized so NTFS junction/symlink escapes are rejected.
+
+  **v0.4 development:** the node owner may explicitly grant full access for one
+  feature. `permissions.full_access` is empty by default and on old-config
+  deserialization. `filesystem.read` and `filesystem.write` grants are separate;
+  neither bypasses the corresponding enabled switch. Without a full-access
+  grant, the legacy roots and program/host/MAC allowlists remain enforced.
+  Full process/app/input access can affect files independently of file switches.
+  Grants confer only the current Windows account's rights, never elevation.
 - Process execution is not a shell: it accepts only exact existing absolute
   executables from the node allowlist, passes arguments directly, limits
   runtime and output, and kills timed-out children.
+  With an explicit full `process.exec` or `application.control` grant, the owner
+  authorizes arbitrary programs, including command interpreters, without an
+  allowlist. Arguments remain structured; this is not an OS sandbox.
 - HTTP requests require explicit hosts and methods. Redirects are disabled;
   unless private networking is explicitly enabled, DNS answers are rejected
   if any resolve to a private/non-routable address and the accepted address is
   pinned for the request.
+  Full `http.request` access includes private-network destinations and arbitrary
+  HTTP methods; it retains scheme validation, disabled redirects, and response
+  limits. Full `network.wol` removes target allowlists, not MAC/address validation.
 - Filesystem, process, application, HTTP/STT, Wake-on-LAN, microphone,
   audio/TTS, camera, screen, and keyboard/mouse abilities are default-deny.
   Wake-on-LAN additionally requires exact MAC, IPv4 broadcast, and port
@@ -32,6 +46,9 @@ artifact scans; a clean scan does not constitute a malware-free guarantee.
 - Updates verify the artifact SHA-256 from the manifest and use versioned
   directories with rollback. Manifest authenticity still depends on HTTPS and
   control of the manifest host; signing is a future hardening item.
+  In v0.4 development, remote installation additionally requires
+  `permissions.remote_updates`; the requester cannot choose another manifest.
+  Public signing remains unconfigured; see [SIGNING.md](SIGNING.md).
 - Firmware source contains Wi-Fi and node secrets. Generated firmware belongs
   in the ignored `data/firmware` directory and should not be published.
 - The release executables are not code-signed yet. Windows may warn before the

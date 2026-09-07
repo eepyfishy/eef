@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::NodeCrypto;
 
@@ -40,7 +40,11 @@ where
     R: AsyncBufRead + Unpin,
 {
     let mut line = Vec::new();
-    let count = reader.read_until(b'\n', &mut line).await?;
+    // Bound allocation before reading, including peers that never send a newline.
+    let count = reader
+        .take(MAX_WIRE_LINE as u64 + 1)
+        .read_until(b'\n', &mut line)
+        .await?;
     if count == 0 {
         return Ok(None);
     }
@@ -60,7 +64,7 @@ where
 }
 
 pub fn build_auth(crypto: &NodeCrypto, node_id: &str, version: &str) -> Value {
-    let nonce = now_ms().to_string();
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
     let timestamp = now_ms().to_string();
     let raw = format!("{nonce}|{node_id}|{version}|{timestamp}");
     json!({
@@ -122,5 +126,23 @@ mod tests {
         let line = encode_line(&crypto, &value).unwrap();
         assert_eq!(decode_line(&crypto, &line).unwrap(), value);
         assert!(!String::from_utf8_lossy(&line).contains("heartbeat"));
+    }
+
+    #[tokio::test]
+    async fn unterminated_frames_are_bounded_before_allocation() {
+        let crypto = NodeCrypto::new("secret").unwrap();
+        let bytes = vec![b'x'; MAX_WIRE_LINE + 2];
+        let mut input = bytes.as_slice();
+        assert!(read_message(&crypto, &mut input).await.is_err());
+        assert_eq!(input.len(), 1);
+    }
+
+    #[test]
+    fn authentication_challenges_do_not_collide_in_same_millisecond() {
+        let crypto = NodeCrypto::new("secret").unwrap();
+        let mut nonces = std::collections::HashSet::new();
+        for _ in 0..100 {
+            assert!(nonces.insert(build_auth(&crypto, "test", "0.4.0")["nonce"].to_string()));
+        }
     }
 }

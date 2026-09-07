@@ -9,11 +9,11 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use zip::ZipArchive;
+#[path = "../../../shared/installer_payload.rs"]
+mod installer_payload;
 #[cfg(windows)]
 mod wizard;
 type Progress = Option<std::sync::Arc<dyn Fn(u32, &str) + Send + Sync>>;
-
-const FOOTER_MAGIC: &[u8; 8] = b"EEFINST1";
 
 #[derive(Debug, Deserialize)]
 struct BundleManifest {
@@ -155,22 +155,9 @@ fn parse_options() -> Result<Options> {
 
 fn read_payload(executable: &Path) -> Result<Vec<u8>> {
     let mut file = File::open(executable)?;
-    let length = file.metadata()?.len();
-    if length < 16 {
-        bail!("installer payload footer is missing")
-    }
-    file.seek(SeekFrom::End(-16))?;
-    let mut footer = [0_u8; 16];
-    file.read_exact(&mut footer)?;
-    if &footer[8..] != FOOTER_MAGIC {
-        bail!("installer payload signature is invalid")
-    }
-    let payload_length = u64::from_le_bytes(footer[..8].try_into().expect("footer length"));
-    if payload_length == 0 || payload_length > length - 16 {
-        bail!("installer payload length is invalid")
-    }
-    file.seek(SeekFrom::Start(length - 16 - payload_length))?;
-    let mut payload = vec![0_u8; usize::try_from(payload_length)?];
+    let range = installer_payload::payload_range(&mut file)?;
+    file.seek(SeekFrom::Start(range.start))?;
+    let mut payload = vec![0_u8; usize::try_from(range.end - range.start)?];
     file.read_exact(&mut payload)?;
     if !payload.starts_with(b"PK\x03\x04") {
         bail!("installer payload is not a ZIP archive")

@@ -56,8 +56,10 @@ struct Args {
     ollama_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct FileConfig {
+    #[serde(default)]
+    metadata: eefn::context::NodeMetadata,
     #[serde(default)]
     endpoints: Vec<CoordinatorEndpoint>,
     #[serde(default)]
@@ -84,6 +86,14 @@ struct FileConfig {
     dashboard: Option<DashboardConfig>,
     #[serde(default)]
     permissions: NodePolicy,
+    #[serde(default = "enabled")]
+    connection_enabled: bool,
+}
+
+impl Default for FileConfig {
+    fn default() -> Self {
+        serde_json::from_value(serde_json::json!({})).expect("default node configuration")
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -180,6 +190,50 @@ async fn main() -> Result<()> {
     if args.config == PathBuf::from("config.json") && install_dir.join("config.json").is_file() {
         args.config = install_dir.join("config.json");
     }
+    // Submit through the already running node instead of registering its identity
+    // a second time. Hold the instance lock during standalone --ask as well.
+    let _ask_instance = if let Some(message) = &args.ask {
+        match eefn::setup::instance_lock(&args.config)? {
+            Some(lock) => Some(lock),
+            None => {
+                let dashboard = load_file(&args.config)?.dashboard.unwrap_or_default();
+                if !dashboard.enabled {
+                    bail!("the node is already running with its local interface disabled")
+                }
+                let address: std::net::IpAddr = dashboard
+                    .host
+                    .parse()
+                    .context("the running node interface must use a loopback address")?;
+                if !address.is_loopback() {
+                    bail!("node input requires a local loopback interface")
+                }
+                let url = format!(
+                    "http://{}/api/chat",
+                    std::net::SocketAddr::new(address, dashboard.port)
+                );
+                let response = reqwest::Client::new()
+                    .post(url)
+                    .timeout(Duration::from_secs(125))
+                    .json(&serde_json::json!({"message":message}))
+                    .send()
+                    .await?;
+                let success = response.status().is_success();
+                let value: serde_json::Value = response.json().await?;
+                if !success {
+                    bail!(
+                        "{}",
+                        value["error"]
+                            .as_str()
+                            .unwrap_or("running node rejected the message")
+                    )
+                }
+                println!("{}", serde_json::to_string_pretty(&value)?);
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
     let _instance =
         if args.ask.is_none() && !args.check_update && !args.rollback && !args.list_ollama_models {
             match eefn::setup::instance_lock(&args.config)? {
@@ -426,6 +480,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeDashboar
     }
     let media = permissions.media.clone();
     let mut engine = NodeEngine::new(false, vec![], install_dir.clone())?
+        .with_resources(file.node_id.clone(), file.metadata.clone())?
         .with_dashboard(dashboard.clone())
         .with_policy(permissions)?
         .with_update_manifest(manifest)
@@ -478,19 +533,22 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeDashboar
     {
         let mut status = dashboard.live.lock().unwrap();
         status["hardware"] = hardware;
+        status["metadata"] = serde_json::json!(file.metadata.advertised(&engine.capabilities()));
         status["name"] = serde_json::json!(file.name);
         status["permissions"] = serde_json::json!(file.permissions);
         status["pending_restart"] = serde_json::json!(false);
         status["models"] = serde_json::json!([]);
         status["capabilities"] = serde_json::json!(engine.capabilities());
-        status["connection"] = serde_json::json!({"state":"waiting"});
+        status["connection"] =
+            serde_json::json!({"state":if file.connection_enabled {"waiting"} else {"paused"}});
     }
-    let client = if file.endpoints.is_empty() {
+    let client = if file.endpoints.is_empty() || !file.connection_enabled {
         None
     } else {
         Some(
             NodeClient::new(
                 NodeClientConfig {
+                    metadata: file.metadata,
                     endpoints: file.endpoints,
                     node_id: file.node_id,
                     name: file.name,
@@ -509,7 +567,8 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeDashboar
                 },
                 engine,
             )?
-            .with_status(dashboard.live.clone()),
+            .with_status(dashboard.live.clone())
+            .with_submissions(dashboard.submissions.clone()),
         )
     };
     if let Some(message) = &args.ask {
