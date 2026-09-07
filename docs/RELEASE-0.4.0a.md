@@ -73,7 +73,40 @@ Do not disable Defender, add exclusions, or restore a detected file to test it.
 
 Release packaging requires locked Rust tests, verified third-party downloads,
 component/bundle/final-installer Defender scans, and per-file hash inventories.
-Final artifact hashes and completed installer/browser checks are recorded in the
-GitHub release notes after packaging. No AI models or personal credentials are
-included. See [ANTIVIRUS.md](ANTIVIRUS.md), [SIGNING.md](SIGNING.md), and the
-[full roadmap](ROADMAP-0.4.0.md).
+No AI models or personal credentials are included. See
+[antivirus guidance](https://github.com/eepyfishy/eef/blob/v0.4.0a/docs/ANTIVIRUS.md),
+[signing](https://github.com/eepyfishy/eef/blob/v0.4.0a/docs/SIGNING.md), and the
+[full roadmap](https://github.com/eepyfishy/eef/blob/v0.4.0a/docs/ROADMAP-0.4.0.md).
+
+### Build and test evidence (2026-09-07)
+
+Both installers were built from clean source commit
+`0a86da697ae1727c665957ab75f8867f85346770`, using locked dependencies and
+Rust 1.98.1. Each installation includes its build provenance and file inventory.
+The release-tag documentation commit records the evidence; it does not change
+the packaged application source.
+
+- All 84 Rust tests passed.
+- Both graphical installer wizards passed installation through Finish, with
+  isolated startup locations and launch disabled for the test.
+- Both final installers passed fresh/quiet upgrade tests: configuration and
+  startup choices preserved, explicit startup removal, old update selection
+  backed up, prior version files retained, installed inventory hashes verified,
+  and executable versions checked. Bundled node Python imports and llama.cpp
+  startup passed; the fresh node contains no selected model or endpoint.
+- Dashboard initialization and refresh/copy-stability regression passed.
+- First-run/browser integration passed against the optimized bundled binaries:
+  local pairing, stable identity, permissions, owner-approved remote management,
+  node and coordinator restarts, browser/CLI input, and mock model operations.
+- Durable job results survived a verified runtime restart; origin-scoped access,
+  copy/details preservation, and saved/applied storage limits passed.
+- Component, runtime archive, unpacked bundle, and both final installer scans
+  passed with Defender engine `1.1.26080.3`, definitions `1.459.93.0`, and real-time
+  protection enabled. These are local results, not cross-PC clearance.
+
+### Final downloads
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `eef-installer.exe` | 17,597,677 | `b50cfc8df0aaa488a4a0a6281d83286bec9f7f0e2020e8d1379370eee72f79ee` |
+| `eefn-installer.exe` | 109,361,434 | `9e33a16f9033666bcb0ee29ef377bd5032442cb636151079a26e3398cc3258f7` |
