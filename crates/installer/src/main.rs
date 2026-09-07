@@ -80,6 +80,7 @@ fn install(options: Options, progress: Progress) -> Result<()> {
     if manifest.name == "eef" {
         ensure_coordinator_secret(&install_dir.join(product.config))?;
     }
+    select_manual_install(&install_dir)?;
 
     let startup = options.startup.unwrap_or_else(|| {
         if options.quiet {
@@ -281,6 +282,29 @@ fn should_preserve_config(product: &str, relative: &Path) -> bool {
     let normalized = relative.to_string_lossy().replace('\\', "/");
     (product == "eef" && normalized.starts_with("config/"))
         || (product == "eefn" && normalized.eq_ignore_ascii_case("config.json"))
+}
+
+fn select_manual_install(destination: &Path) -> Result<()> {
+    // A manual installer writes the new root executable. An old updater's
+    // current.txt would otherwise hand off to an older versions/ executable.
+    // Preserve the selection for recovery; never remove prior version folders.
+    let selected = destination.join("current.txt");
+    match fs::symlink_metadata(&selected) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            bail!("current.txt must be a regular update-selection file")
+        }
+        Ok(_) => {}
+    }
+    let backup = destination.join(format!(
+        "current.before-manual-install-{}.txt",
+        hex::encode(rand::random::<[u8; 16]>())
+    ));
+    fs::rename(&selected, backup).context(
+        "Preserve the previous update selection before launching the manual installation",
+    )?;
+    Ok(())
 }
 
 fn ensure_coordinator_secret(path: &Path) -> Result<()> {
@@ -520,5 +544,35 @@ mod tests {
         assert!(reject_cmd_text("C:\\bad&path").is_err());
         assert!(reject_cmd_text("C:\\%TEMP%\\EEF").is_err());
         assert!(reject_cmd_text("C:\\!variable!\\EEF").is_err());
+    }
+
+    #[test]
+    fn manual_install_preserves_old_selection_without_launching_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("versions/0.3.2");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("preserve.txt"), "old version").unwrap();
+        select_manual_install(dir.path()).unwrap();
+        fs::write(dir.path().join("current.txt"), "0.3.2\n").unwrap();
+        select_manual_install(dir.path()).unwrap();
+        assert!(!dir.path().join("current.txt").exists());
+        let backups = fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("current.before-manual-install-")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(fs::read_to_string(backups[0].path()).unwrap(), "0.3.2\n");
+        assert_eq!(
+            fs::read_to_string(old.join("preserve.txt")).unwrap(),
+            "old version"
+        );
+        select_manual_install(dir.path()).unwrap();
+        fs::create_dir(dir.path().join("current.txt")).unwrap();
+        assert!(select_manual_install(dir.path()).is_err());
     }
 }

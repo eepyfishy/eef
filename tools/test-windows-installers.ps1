@@ -32,7 +32,17 @@ try {
         $startupName = if ($name -eq 'eef') { 'EEF Coordinator.cmd' } else { 'EEF Node.cmd' }
         $startup = Join-Path $env:APPDATA ('Microsoft\Windows\Start Menu\Programs\Startup\' + $startupName)
         if (-not (Test-Path -LiteralPath $startup)) { throw 'Opt-in startup entry was not created' }
+        # Simulate a previous in-app update before a manual installer upgrade.
+        $selection = Join-Path $destination 'current.txt'
+        [IO.File]::WriteAllText($selection, '0.0.1', [Text.UTF8Encoding]::new($false))
+        $retainedVersion = Join-Path $destination 'versions\0.0.1'
+        New-Item -ItemType Directory -Path $retainedVersion -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $retainedVersion 'preserve.txt'), 'existing version fixture')
         Invoke-Installer $installer $destination @()
+        if (Test-Path -LiteralPath $selection) { throw 'Manual upgrade retained a stale update selection; it could launch the old app' }
+        $savedSelections = @(Get-ChildItem -LiteralPath $destination -File -Filter 'current.before-manual-install-*.txt')
+        if (-not ($savedSelections | Where-Object { (Get-Content -Raw -LiteralPath $_.FullName).Trim() -eq '0.0.1' })) { throw 'Previous update selection was not backed up' }
+        if ((Get-Content -Raw -LiteralPath (Join-Path $retainedVersion 'preserve.txt')) -ne 'existing version fixture') { throw 'Manual upgrade removed an existing version' }
         if (-not (Test-Path -LiteralPath $startup)) { throw 'Quiet upgrade removed the existing startup choice' }
         if ((Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash -ne $before) { throw 'Upgrade changed user configuration' }
         Invoke-Installer $installer $destination @('--no-startup')
@@ -60,7 +70,7 @@ try {
             & (Join-Path $destination 'tools\llama-server.exe') --version
             if ($LASTEXITCODE -ne 0) { throw 'Minimal llama.cpp runtime failed to start' }
         }
-        $results += [ordered]@{product=$name;version=$version;inventory_files=$inventory.Count;quiet_launch_disabled=$true;startup_preserved=$true;config_preserved=$true}
+        $results += [ordered]@{product=$name;version=$version;inventory_files=$inventory.Count;quiet_launch_disabled=$true;startup_preserved=$true;config_preserved=$true;manual_upgrade_selects_new_root=$true;previous_update_selection_backed_up=$true}
     }
     [IO.File]::WriteAllText((Join-Path $scratch 'results.json'), (ConvertTo-Json -InputObject $results -Depth 4), [Text.UTF8Encoding]::new($false))
     Write-Host "Installer validation passed. Evidence: $scratch"

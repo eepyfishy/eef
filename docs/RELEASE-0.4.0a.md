@@ -26,6 +26,10 @@ database. Install into the existing dedicated app folders, not Downloads.
 The installers preserve configuration, but this alpha has additive database
 changes: rollback to an old application is not a tested database downgrade.
 Use a separate test installation or your backup if you need a clean rollback.
+Manual installation backs up an existing `current.txt` update selection as
+`current.before-manual-install-*.txt` and selects the newly installed root app.
+Existing version folders are retained; manual selection recovery is not an
+automatic database downgrade.
 Stable update feeds remain on v0.3.2; installing the alpha is an explicit choice.
 
 ## Included

@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$ReleaseDir,[switch]$LayoutOnly)
+param([Parameter(Mandatory)][string]$ReleaseDir,[switch]$LayoutOnly,[switch]$NoScreenshots)
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $release = (Resolve-Path -LiteralPath $ReleaseDir).Path
@@ -33,6 +33,7 @@ public static class EEFWizardTest {
 }
 '@
 function Save-WizardImage([IntPtr]$Window,[string]$Path) {
+    if ($NoScreenshots) { return }
     # Native themed controls need a visible window to render correctly.
     # Show without activation only for this explicit interactive layout check.
     [void][EEFWizardTest]::ShowWindow($Window,4)
