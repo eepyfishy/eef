@@ -45,6 +45,8 @@ try {
  assert.equal((await fetch(eef+'/api/commands/node/restart',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({node_id:'node-b'})})).status,403);
  assert.equal((await fetch(a+'/')).status,404);
  const self=await peers('node-a');assert.deepEqual(self.nodes.map(n=>n.node_id),['node-a']);assert.equal(self.direct_access_authorized,false);
+ const inventoryPage=await coordinator(['models','list','--limit','1']);assert.deepEqual(inventoryPage.nodes.map(n=>n.node_id),['node-a']);assert.equal(inventoryPage.next_after,'node-a');
+ const inventoryNext=await coordinator(['models','list','--limit','1','--after',inventoryPage.next_after]);assert.deepEqual(inventoryNext.nodes.map(n=>n.node_id),['node-b']);assert.equal(inventoryNext.next_after,null);
  const denied=await peers('node-a',['--node','node-b'],false);const absent=await peers('node-a',['--node','missing-node'],false);assert.equal(denied.error,absent.error);
  // Owner-configured disclosure is applied only after an actual EEF restart.
  async function policy(grants,freshness_seconds=30){const saved=(await json(eef+'/api/config')).config;saved.discovery={grants,freshness_seconds};await json(eef+'/api/config',{config:saved},'PUT');}
@@ -86,6 +88,7 @@ try {
  await until(async()=>(await json(eef+'/api/status')).world.devices.some(n=>n.node_id==='node-b'&&!n.connected),'node B disconnected');
  await peers('node-a',['--node','node-b'],false);
  assert.deepEqual((await peers('node-a')).nodes.map(n=>n.node_id),['node-a']);
+ await coordinator(['models','list','--node','node-b'],false);
  const report={passed:true,logical_nodes:2,physical_two_pc:false,no_ui_or_models:true,self_only_default:true,owner_scoped_directional_grants:true,owner_grant_revoke_commands:true,config_preserved:true,stale_runtime_and_origin_rejected:true,pagination:true,forged_origin_rejected:true,stale_endpoints_redacted:true,restart_applies_revocation:true,disconnect_removes_advertisement:true};
  await writeFile(join(scratch,'results.json'),JSON.stringify(report,null,2));console.log('Peer discovery validation passed: '+scratch);
 }finally{for(const child of children)if(child.exitCode===null)child.kill();await Promise.allSettled(children.map(c=>c.result));}

@@ -98,7 +98,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | --- | --- | --- | --- |
 | 1 | Identity + advertised address | Local coordinator connection and different advertised address coexist; rename/address change preserves identity; command config/readback; old configs migrate. | Implemented in development; one-PC command tests passed; physical acceptance pending |
 | 2 | Coordinator advertisements + network view | Authenticated, bounded, fresh node listings and coordinator hints; authorized peer lookup; no automatic trust or claimed cluster election. | Scoped pull discovery, registration metadata and freshness implemented; owner grant/revoke and restart CLI added in development; no direct peer transport claim |
-| 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Planned |
+| 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Read-only legacy inventory command added in development; general model configuration/registration and scheduling still planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | Planned |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Planned |
 | 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Planned |
@@ -339,10 +339,22 @@ Outbound queue waits are bounded; cancelled waiters release pending correlations
 temporary one-way discovery followed by revocation, automatic reconnection across
 two EEF restarts, and authenticated remote ping samples. The real node denied
 restart without its local management approval; approved restart was validated in
-isolated real-process tests, not yet on the second physical PC. No user permission
+isolated real-process tests at that checkpoint. After the owner enabled the local
+management switch, `.validation/live-discovery-QGI8x0` also confirmed actual
+second-PC restart with stable identity and a new runtime ID. No user permission
 was enabled remotely. The published coordinator executable was restored after the
 live development test. General model metadata remains the next ordered increment;
 full workloads, direct peer transfers and independent credentials are still pending.
+
+### Read-only model inventory foundation
+
+The next development slice adds `eef models list`: a bounded owner view of
+current registered models with node/backend/model identity, legacy capability
+and input/output modality normalization, filters, node pagination and freshness.
+Unknown roles, memory estimates and lifecycle remain unknown; model names do not
+infer capabilities. This does not change config, backend discovery, loading or
+scheduling, and does not complete step 3's general multi-capability contract.
+No model is downloaded or loaded by the command. See [command scope](COMMANDS.md).
 
 ## Installation direction: MSI
 

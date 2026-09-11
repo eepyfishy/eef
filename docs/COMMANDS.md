@@ -66,12 +66,48 @@ owner-selected local paths and the other node's stable ID. Use an idle test
 coordinator with no pending changes. It temporarily grants one-way visibility,
 restarts EEF, tests discovery/pings, revokes the grant and restarts again. It
 attempts grant cleanup on failure and records local evidence under `.validation`.
-It does not deploy binaries, update remote nodes, test media/models, upload data
+It does not deploy binaries, update remote nodes, run media/model workloads, upload data
 or infer physical device count from IDs alone. Do not run against production jobs.
 Set `EEF_LIVE_RESTART_NODE=1` additionally to request a remote node restart after
 grant cleanup. With local management approval it verifies the new runtime ID;
 without approval it verifies denial and sends no restart. This is opt-in because
 it can interrupt work on the other node.
+Set `EEF_LIVE_MODEL_INVENTORY=1` to also verify read-only model registration
+inventory on both nodes. This requires the development coordinator command below;
+it does not scan backends, download models or run inference.
+
+## Unreleased: registered model inventory
+
+```powershell
+.\eef.exe models list --json
+.\eef.exe models list --node NODE_B --json
+.\eef.exe models list --capability vlm.analyze --limit 8 --json
+.\eef.exe models list --after NODE_A --json
+```
+
+GET `/api/commands/models` is the same read-only owner operation; optional query
+fields are `node_id`, `capability`, `after` and `limit`. The node filter and cursor
+are mutually exclusive. Pages contain 1-32 nodes (default 8), each with its models,
+within 512 KiB. Follow `next_after`; pages are not a frozen network snapshot.
+Disconnected/unregistered target nodes fail rather than appearing as empty models.
+A connected, registered node with no selected/advertised models has `models:[]`.
+
+Each model instance uses the tuple `(node_id, backend, model_id)`, so the same
+model name on two backends/nodes remains distinct. Duplicate identities in a
+registration are rejected, not silently merged. Registration freshness is shown
+separately; stale metadata is not readiness or proof that inference will work.
+
+This first inventory slice normalizes **legacy** text/VLM registration hints to
+capability and input/output modality lists. Unrecognized modality supplies no
+capability hints. It does not inspect every installed file or backend, invent
+roles, measure residency/memory, or verify advertised capabilities. Unreported
+roles, lifecycle and resource estimates are `null`, not zero. Private paths,
+network addresses, configuration and credentials are not projected.
+
+No model is loaded/downloaded, no permission is granted and scheduling is unchanged.
+General multi-capability model configuration/registration, role bindings and
+capability-based scheduling remain later work. Published v0.4.0a2 installers do
+not include this new coordinator command; their nodes remain compatible.
 
 ## Node network commands (v0.4.0a2)
 

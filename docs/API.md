@@ -215,3 +215,8 @@ enable remote permission. `/api/restart` now acknowledges a coordinator restart
 request with its previous runtime ID; it does not claim restart has completed.
 See [commands, request schemas and result semantics](COMMANDS.md). Published
 v0.4.0a2 assets do not contain these coordinator command additions.
+
+The subsequent read-only GET `/api/commands/models` lists registered model
+metadata with node/capability filtering and bounded node pages. It does not scan
+backends, load/download models or change scheduling. Unreported model lifecycle,
+roles and resource estimates remain null; see the command reference for scope.

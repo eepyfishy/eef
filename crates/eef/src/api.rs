@@ -126,6 +126,7 @@ pub fn router(runtime: Arc<Runtime>) -> Router {
         .route("/api/status", get(status))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/diagnostics/probe", post(diagnostic_probe))
+        .route("/api/commands/models", get(model_inventory))
         .route("/api/commands/node/restart", post(node_restart))
         .route(
             "/api/commands/discovery",
@@ -240,6 +241,13 @@ async fn config_get(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
         "path": runtime.config.source().map(|path| path.display().to_string()),
         "note": "Changes are validated and applied on restart"
     })))
+}
+
+async fn model_inventory(
+    State(runtime): State<Arc<Runtime>>,
+    Query(query): Query<crate::model_inventory::InventoryQuery>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.model_inventory(query).await?))
 }
 
 async fn node_restart(

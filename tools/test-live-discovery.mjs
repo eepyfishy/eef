@@ -1,4 +1,5 @@
 // Explicit, owner-operated live-network test. Restarts EEF; never updates nodes.
+// Optional flags inspect registered models and restart the owner-approved node.
 // No fixed PC IDs/addresses, telemetry upload, media access or model download.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -48,6 +49,13 @@ async function restart(){
 try{
  localId=(await node(['network','diagnose'])).node_id;assert(localId&&localId!==remoteId,'Choose a different real node');
  const diagnostics=await eef(['diagnostics']);assert.equal(diagnostics.pending_restart,false,'Apply/review existing pending changes first');assert(diagnostics.connected_node_count>=2);
+ if(process.env.EEF_LIVE_MODEL_INVENTORY==='1'){
+  for(const id of [localId,remoteId]){
+   const inventory=await eef(['models','list','--node',id]);assert.equal(inventory.nodes.length,1);assert.equal(inventory.nodes[0].node_id,id);
+   for(const model of inventory.nodes[0].models){assert.equal(model.instance.node_id,id);assert.equal(model.lifecycle,null);assert.equal(model.resource_estimates.ram_mb,null);}
+   checks.push({check:'registered_model_inventory',passed:true,node_id:id,models:inventory.nodes[0].models});
+  }
+ }
  const initial=await eef(['discovery','show']);assert.equal(initial.restart_required,false);assert(!(initial.saved_policy.grants[localId]||[]).includes(remoteId),'Test requires no pre-existing grant for this pair');
  await visibility(false);checks.push({check:'initial_remote_discovery_denied',passed:true});
  // Cleanup is armed before mutation: loss of a reply is not proof it did not save.
@@ -75,7 +83,7 @@ finally{
   catch{checks.push({check:'cleanup_requires_owner_attention',passed:false});failure ||= Error('Could not verify test-grant cleanup');}
  }
  const sha=async path=>createHash('sha256').update(await readFile(path)).digest('hex');
- await writeFile(join(scratch,'results.json'),JSON.stringify({schema_version:1,passed:!failure,recorded_at_utc:new Date().toISOString(),scope:'Owner-designated real remote node; disclosure and authenticated ping only',local_node_id:localId,remote_node_id:remoteId,eef_sha256:await sha(eefBinary),eefn_sha256:await sha(nodeBinary),checks},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({schema_version:1,passed:!failure,recorded_at_utc:new Date().toISOString(),scope:'Owner-designated real remote node; disclosure, authenticated ping and coordinator restart',optional_checks:{registered_model_inventory:process.env.EEF_LIVE_MODEL_INVENTORY==='1',remote_node_restart:process.env.EEF_LIVE_RESTART_NODE==='1'},local_node_id:localId,remote_node_id:remoteId,eef_sha256:await sha(eefBinary),eefn_sha256:await sha(nodeBinary),checks},null,2));
  console.log('Live discovery evidence: '+scratch);
 }
 if(failure)throw failure;

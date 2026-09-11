@@ -198,6 +198,14 @@ impl Runtime {
         Ok(runtime)
     }
 
+    pub async fn model_inventory(
+        &self,
+        query: crate::model_inventory::InventoryQuery,
+    ) -> Result<Value> {
+        crate::model_inventory::list(&self.node_server, self.discovery.freshness_seconds, query)
+            .await
+    }
+
     pub fn request_restart(&self) -> Value {
         let restart = self.restart.clone();
         tokio::spawn(async move {

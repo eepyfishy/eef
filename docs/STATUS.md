@@ -1,5 +1,38 @@
 # Architecture conformance status
 
+## Unreleased model-inventory and approved restart checkpoint
+
+- After the owner enabled local remote management, the physical second-PC node
+  acknowledged restart and reconnected under the same stable ID with a new runtime
+  ID. Evidence: `.validation/live-discovery-QGI8x0/results.json`. This closes the
+  positive remote-restart gate left pending in the earlier checkpoint below.
+- Added `eef models list` and guarded GET `/api/commands/models`: bounded pages of
+  registered models, node/capability filters, distinct node/backend/model identity,
+  and registration freshness. Unknown roles, lifecycle and resource estimates are
+  null; paths, addresses and secrets are omitted. No backend scan/load/download.
+- This is a read-only legacy normalization slice. General multi-capability model
+  configuration and registration, role selection, and scheduling changes remain
+  pending; published v0.4.0a2 nodes remain compatible. No visual UI work.
+- 113 Rust tests passed, including model normalization, redaction, empty inventory,
+  identity conflicts, paging and response limits. Command, peer-discovery,
+  first-run and browser copying/focus regression checks passed.
+
+Final inventory checkpoint evidence (2026-09-12 local time):
+`.validation/node-commands-SzT9ir`, `.validation/peer-discovery-vsS9dj`,
+`.validation/first-run-VTll5F`, and
+`.validation/live-discovery-3S9iBX/results.json`. The live run used two physical
+PCs and published v0.4.0a2 nodes. Inventory reported two advertised models on the
+local node and an empty model list on the connected second-PC node. Discovery
+grant/revoke, two coordinator restarts, and approved remote node restart passed;
+all ten remote pings passed at 2.82-6.14 ms. No inference or model download ran.
+The development coordinator SHA-256 was
+`18a9a4189cc0711a5a60296448325e427ff398b9bc245baac500f96e9548aefc`.
+Its local Defender scan passed with engine `1.1.26080.3`, definitions
+`1.459.158.0`; this is not Microsoft clearance or a signing claim.
+The original discovery policy and published coordinator executable were restored
+(hash verified); both nodes reconnected with no pending coordinator restart.
+No release assets, feeds or remote node binaries were changed.
+
 ## Unreleased command/restart follow-up
 
 - Added coordinator-owner `discovery show/grant/revoke` and `restart` commands,
@@ -15,7 +48,7 @@
 - 109 Rust tests passed. Physical testing confirmed real two-node
   registration, grant/revoke behavior, reconnect after two coordinator restarts,
   and 10/10 remote pings. The remote node's restart permission was off: denial
-  passed, but positive physical remote-restart acceptance remains pending.
+  passed; positive physical remote restart was confirmed in the subsequent checkpoint above.
 - Published v0.4.0a2 installers/feeds are unchanged. No UI redesign, permission
   widening, model downloads or signing claim. See [commands](COMMANDS.md).
 

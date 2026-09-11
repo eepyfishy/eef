@@ -28,6 +28,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect models advertised by connected nodes without loading or downloading.
+    Models {
+        #[command(subcommand)]
+        command: ModelsCommand,
+    },
     /// Owner-approved control of a connected node.
     Node {
         #[command(subcommand)]
@@ -66,6 +71,21 @@ enum NodeCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum ModelsCommand {
+    List {
+        #[arg(long)]
+        node: Option<String>,
+        #[arg(long)]
+        capability: Option<String>,
+        #[arg(long)]
+        after: Option<String>,
+        /// Maximum nodes per page, not number of models (1-32).
+        #[arg(long, default_value_t = 8)]
+        limit: usize,
+    },
+}
+
 async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value> {
     use serde_json::json;
     let config = eef::config::Config::load(Some(&args.config))?;
@@ -84,6 +104,31 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::Models {
+            command:
+                ModelsCommand::List {
+                    node,
+                    capability,
+                    after,
+                    limit,
+                },
+        } => {
+            let mut query = vec![("limit", limit.to_string())];
+            for (key, value) in [
+                ("node_id", node),
+                ("capability", capability),
+                ("after", after),
+            ] {
+                if let Some(value) = value {
+                    query.push((key, value.clone()));
+                }
+            }
+            client
+                .get(format!("{base}/api/commands/models"))
+                .query(&query)
+                .send()
+                .await?
+        }
         Command::Node {
             command: NodeCommand::Restart { node, wait_seconds },
         } => {

@@ -52,6 +52,11 @@ try {
   assert.equal(nodeReport.node_id,id);assert(nodeReport.successful_connections>=1);
   const coordinatorCommand=async(args,expected=0)=>{const p=launch('eef',['--config',eefConfig,'--json',...args]);const t=setTimeout(()=>p.kill(),30000);try{const r=await p.result;assert.equal(r.code,expected,r.err);return JSON.parse(r.out);}finally{clearTimeout(t);}};
   const coreReport=await coordinatorCommand(['diagnostics']);assert.equal(coreReport.report_type,'coordinator_diagnostics');assert.equal(coreReport.connected_node_count,1);assert(!JSON.stringify(coreReport).includes(secret));
+  const inventory=await coordinatorCommand(['models','list']);assert.equal(inventory.scope,'connected_node_registrations');assert.equal(inventory.nodes.length,1);assert.equal(inventory.nodes[0].node_id,id);assert.deepEqual(inventory.nodes[0].models,[]);assert(!JSON.stringify(inventory).includes(secret));assert(!JSON.stringify(inventory).includes('26.1.2.3'));
+  assert.equal((await coordinatorCommand(['models','list','--node',id])).nodes.length,1);
+  await coordinatorCommand(['models','list','--node','missing-node'],1);
+  await coordinatorCommand(['models','list','--limit','33'],1);
+  await coordinatorCommand(['models','list','--node',id,'--after',id],1);
   const probe=await coordinatorCommand(['diagnostics','--node',id,'--samples','3']);assert.equal(probe.passed,3);assert.equal(probe.failed,0);assert(probe.samples.every(s=>s.matches_coordinator_version&&s.round_trip_ms>=0));
   await coordinatorCommand(['diagnostics','--node',id,'--samples','11'],1);
   await coordinatorCommand(['diagnostics','--node','missing-node'],1);
