@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value, json};
@@ -10,6 +10,7 @@ const DEFAULT_YAML: &str = include_str!("../../../config/default_identity.yaml")
 pub struct Config {
     value: Arc<Value>,
     source: Option<Arc<PathBuf>>,
+    edit_lock: Arc<Mutex<()>>,
 }
 
 impl Config {
@@ -35,6 +36,7 @@ impl Config {
         Ok(Self {
             value: Arc::new(value),
             source: source.map(Arc::new),
+            edit_lock: Arc::new(Mutex::new(())),
         })
     }
 
@@ -87,6 +89,37 @@ impl Config {
     }
 
     pub fn save_for_restart(&self, value: &Value) -> Result<()> {
+        let _guard = self
+            .edit_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("configuration lock unavailable"))?;
+        self.save_unlocked(value)
+    }
+
+    /// Serialize read/modify/save using saved settings, not the startup snapshot.
+    pub fn edit_for_restart<T>(
+        &self,
+        edit: impl FnOnce(&mut Value) -> Result<(T, bool)>,
+    ) -> Result<T> {
+        let _guard = self
+            .edit_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("configuration lock unavailable"))?;
+        let path = self
+            .source()
+            .context("no configuration path was supplied at startup")?;
+        if !path.is_file() {
+            bail!("saved configuration is missing; refusing to replace it with defaults")
+        }
+        let mut value = Self::load(Some(path))?.as_value();
+        let (result, changed) = edit(&mut value)?;
+        if changed {
+            self.save_unlocked(&value)?;
+        }
+        Ok(result)
+    }
+
+    fn save_unlocked(&self, value: &Value) -> Result<()> {
         if !value.is_object() {
             bail!("configuration must be a JSON/YAML object")
         }

@@ -1,5 +1,37 @@
 # Architecture conformance status
 
+## Unreleased command/restart follow-up
+
+- Added coordinator-owner `discovery show/grant/revoke` and `restart` commands,
+  backed by shared core services and guarded local APIs. Exact, directional
+  disclosure only; saved/applied policy and restart completion remain distinct.
+- Serialized saved-config edits preserve unrelated pending settings, reject
+  corrupt/missing configuration and keep no-op grants from rewriting files.
+- Added `eef node restart --node ID`, using the existing node-owner management
+  approval. Bounded completion checks require the same stable node ID and a new
+  runtime ID. Lost replies/timeouts are uncertain, not automatic restart retries.
+- Bounded outbound request queue waits and cleaned up cancelled response waits.
+  These changes are in the coordinator's shared transport; no new wire protocol.
+- 109 Rust tests passed. Physical testing confirmed real two-node
+  registration, grant/revoke behavior, reconnect after two coordinator restarts,
+  and 10/10 remote pings. The remote node's restart permission was off: denial
+  passed, but positive physical remote-restart acceptance remains pending.
+- Published v0.4.0a2 installers/feeds are unchanged. No UI redesign, permission
+  widening, model downloads or signing claim. See [commands](COMMANDS.md).
+
+Final follow-up evidence (2026-09-11): `.validation/peer-discovery-21turW`,
+`.validation/node-commands-BUeKRY`, `.validation/first-run-LrJf2O`, and
+`.validation/live-discovery-wIG53K/results.json`. The live run used two physical
+PCs with published v0.4.0a2 nodes and a locally built development coordinator
+(SHA-256 `8fadfbfd78a64be8e3f6d8658ed4b7a8aa9ac909abf4217919cb51abdd379eda`).
+Its local Defender scan passed with engine `1.1.26080.3`, definitions
+`1.459.158.0`; no Microsoft clearance is implied. The final ten remote ping
+samples passed at 3.00-5.78 ms. Reconnect/grant/revoke and denied remote restart
+passed; no actual second-PC node restart was sent without local approval.
+After restoration, both nodes reconnected, no pending restart remained, the
+original self-only discovery policy was applied, and the published executable's
+hash matched its backup. No release assets or test network secrets were published.
+
 ## v0.4.0a2 diagnostic alpha
 
 Workspace version `0.4.0-alpha.2` packages the command/service and scoped-discovery
@@ -7,8 +39,9 @@ increments below, plus minimal local diagnostics, authenticated ping/latency
 probes and explicit-address private pairing codes. See
 [release scope](RELEASE-0.4.0a2.md) and [two-PC testing](TWO_PC_TEST.md).
 98 Rust tests and final packaged command/discovery/first-run/browser and installer
-validation passed; hashes and scan details are in the release notes. Physical second-PC acceptance follows
-installation; MSI, default LM, independent peer credentials and leases are not
+validation passed; hashes and scan details are in the release notes. Physical
+connectivity was subsequently confirmed; full workload acceptance remains pending.
+MSI, default LM, independent peer credentials and leases are not
 claimed by this test release. Diagnostic reports are local, not automatic uploads.
 
 ## Active direction (2026-09-11)

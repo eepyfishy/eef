@@ -126,6 +126,11 @@ pub fn router(runtime: Arc<Runtime>) -> Router {
         .route("/api/status", get(status))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/diagnostics/probe", post(diagnostic_probe))
+        .route("/api/commands/node/restart", post(node_restart))
+        .route(
+            "/api/commands/discovery",
+            get(discovery_status).post(discovery_command),
+        )
         .route("/api/config", get(config_get).put(config_save))
         .route("/api/startup", get(startup_get).put(startup_set))
         .route("/api/world", get(world))
@@ -184,12 +189,7 @@ async fn ui_info(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
 }
 
 async fn restart(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
-    let restart = runtime.restart.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        restart.notify_one();
-    });
-    Json(json!({"restarting":true}))
+    Json(runtime.request_restart())
 }
 async fn invite(
     State(runtime): State<Arc<Runtime>>,
@@ -242,19 +242,31 @@ async fn config_get(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
     })))
 }
 
+async fn node_restart(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::node_control::RestartRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_control::restart(&runtime.node_server, request).await?,
+    ))
+}
+
+async fn discovery_status(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
+    Ok(Json(runtime.discovery_status()?))
+}
+
+async fn discovery_command(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::discovery::DiscoveryRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.discovery_command(request)?))
+}
+
 async fn config_save(
     State(runtime): State<Arc<Runtime>>,
     Json(value): Json<Value>,
 ) -> ApiResult<Value> {
-    let mut config = value.get("config").unwrap_or(&value).clone();
-    if config.pointer("/node/psk").and_then(Value::as_str) == Some("__KEEP_EXISTING_SECRET__") {
-        config["node"]["psk"] =
-            crate::config::Config::load(runtime.config.source())?.as_value()["node"]["psk"].clone();
-    }
-    runtime.config.save_for_restart(&config)?;
-    runtime
-        .pending_restart
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+    runtime.save_configuration(value.get("config").unwrap_or(&value).clone())?;
     runtime
         .bus
         .publish("config.saved", json!({"restart_required": true}))

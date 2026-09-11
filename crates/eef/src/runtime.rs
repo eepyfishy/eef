@@ -198,6 +198,54 @@ impl Runtime {
         Ok(runtime)
     }
 
+    pub fn request_restart(&self) -> Value {
+        let restart = self.restart.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            restart.notify_one();
+        });
+        json!({"schema_version":1,"success":true,"restarting":true,
+            "runtime_id":self.instance_id,"restart_requested":true,
+            "note":"Restart requested, not completion. Verify a new runtime ID and node reconnection."})
+    }
+
+    pub fn discovery_command(&self, request: crate::discovery::DiscoveryRequest) -> Result<Value> {
+        if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
+            bail!(
+                "command schema or coordinator runtime does not match; inspect current state and retry explicitly"
+            )
+        }
+        let mut result =
+            crate::discovery::command(&self.config, &self.discovery, &request.command)?;
+        if result["changed"] == true {
+            self.pending_restart.store(true, Ordering::Relaxed);
+        }
+        result["runtime_id"] = json!(self.instance_id);
+        Ok(result)
+    }
+
+    pub fn discovery_status(&self) -> Result<Value> {
+        self.discovery_command(crate::discovery::DiscoveryRequest {
+            schema_version: 1,
+            expected_runtime_id: self.instance_id.clone(),
+            command: crate::discovery::DiscoveryCommand::Show,
+        })
+    }
+
+    pub fn save_configuration(&self, mut value: Value) -> Result<()> {
+        self.config.edit_for_restart(|saved| {
+            if value.pointer("/node/psk").and_then(Value::as_str)
+                == Some("__KEEP_EXISTING_SECRET__")
+            {
+                value["node"]["psk"] = saved["node"]["psk"].clone();
+            }
+            *saved = value;
+            Ok(((), true))
+        })?;
+        self.pending_restart.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
     async fn start(self: &Arc<Self>, start_brain: bool) -> Result<()> {
         let mut background = self.background.lock().await;
         background.push(self.world.start(&self.bus));

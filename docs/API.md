@@ -204,3 +204,14 @@ EEF `/api/config` returns **saved** preferences (with the network key redacted),
 including edits awaiting restart. `/api/status` and `/api/jobs.storage` report
 **applied** state. Saving a redacted key preserves the saved key, including a key
 change that has not yet been applied to the running service.
+
+## Unreleased command controls
+
+The development coordinator adds GET/POST `/api/commands/discovery` for exact
+owner-managed visibility grants and POST `/api/commands/node/restart` for approved
+node restarts with bounded completion checks. These use the existing loopback,
+Origin and Host guards; neither adds a public management listener or a way to
+enable remote permission. `/api/restart` now acknowledges a coordinator restart
+request with its previous runtime ID; it does not claim restart has completed.
+See [commands, request schemas and result semantics](COMMANDS.md). Published
+v0.4.0a2 assets do not contain these coordinator command additions.

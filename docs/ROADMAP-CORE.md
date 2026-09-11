@@ -97,7 +97,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | Order | Increment | Acceptance boundary | State |
 | --- | --- | --- | --- |
 | 1 | Identity + advertised address | Local coordinator connection and different advertised address coexist; rename/address change preserves identity; command config/readback; old configs migrate. | Implemented in development; one-PC command tests passed; physical acceptance pending |
-| 2 | Coordinator advertisements + network view | Authenticated, bounded, fresh node listings and coordinator hints; authorized peer lookup; no automatic trust or claimed cluster election. | Scoped pull discovery, registration metadata and monotonic freshness implemented; physical reachability acceptance and owner grant CLI pending |
+| 2 | Coordinator advertisements + network view | Authenticated, bounded, fresh node listings and coordinator hints; authorized peer lookup; no automatic trust or claimed cluster election. | Scoped pull discovery, registration metadata and freshness implemented; owner grant/revoke and restart CLI added in development; no direct peer transport claim |
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | Planned |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Planned |
@@ -316,7 +316,7 @@ increments. Published v0.4.0a stays unchanged.
   endpoints. Monotonic heartbeat age removes stale addresses/model summaries;
   disconnect removes the record. Pages and policy/registration sizes are bounded.
 - Grants configure disclosure, never direct execution. Policy/revocation applies
-  on coordinator restart. General grant CLI and physical reachability tests remain.
+  on coordinator restart. The subsequent command checkpoint below adds owner controls.
 - 97 locked Rust tests passed; command integration passed in
   `.validation/peer-discovery-lXlWL2/` and `.validation/node-commands-VEVMDV/`.
   The former runs two logical nodes on one PC, not a physical two-PC test.
@@ -325,6 +325,24 @@ increments. Published v0.4.0a stays unchanged.
 - Authentication still inherits the shared-PSK trust boundary; exact-ID grants
   do not isolate mutually untrusted key holders. Independent peer/issuer
   credentials remain required before direct paths or execution leases.
+
+### Owner commands and real-network checkpoint
+
+Unreleased follow-up adds `eef discovery show/grant/revoke`, `eef restart` and
+owner-approved `eef node restart`. Configuration edits use the latest saved state
+under a shared lock, preserve unrelated settings, and expose saved/applied policy.
+Exact-ID disclosure still needs EEF restart to apply. Node restart reports request,
+acknowledgement and observed completion separately and does not replay uncertainty.
+Outbound queue waits are bounded; cancelled waiters release pending correlations.
+
+109 Rust tests passed. Live testing on the owner's two PCs confirmed registration,
+temporary one-way discovery followed by revocation, automatic reconnection across
+two EEF restarts, and authenticated remote ping samples. The real node denied
+restart without its local management approval; approved restart was validated in
+isolated real-process tests, not yet on the second physical PC. No user permission
+was enabled remotely. The published coordinator executable was restored after the
+live development test. General model metadata remains the next ordered increment;
+full workloads, direct peer transfers and independent credentials are still pending.
 
 ## Installation direction: MSI
 

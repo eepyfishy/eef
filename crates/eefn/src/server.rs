@@ -90,6 +90,28 @@ struct Pending {
     sender: oneshot::Sender<Value>,
 }
 
+// Command callers may stop waiting before the inner response timeout. Always
+// release their correlation entry, including cancellation during a queued send.
+struct PendingCleanup {
+    inner: Arc<Inner>,
+    request_id: String,
+}
+impl Drop for PendingCleanup {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.inner.pending.try_lock() {
+            pending.remove(&self.request_id);
+            return;
+        }
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let inner = self.inner.clone();
+            let id = self.request_id.clone();
+            runtime.spawn(async move {
+                inner.pending.lock().await.remove(&id);
+            });
+        }
+    }
+}
+
 impl NodeServer {
     pub fn new(psk: &str, host: impl Into<String>, port: u16) -> Result<Self> {
         let (events, _) = broadcast::channel(256);
@@ -235,19 +257,29 @@ impl NodeServer {
                 sender,
             },
         );
+        let _cleanup = PendingCleanup {
+            inner: self.inner.clone(),
+            request_id: request_id.clone(),
+        };
         let message = json!({
             "type": "request", "id": request_id, "capability": capability,
             "action": action, "params": params, "request_context":context,
         });
-        if connection.sender.send(message).await.is_err() {
-            self.inner.pending.lock().await.remove(&request_id);
-            return Err(NodeOfflineError(node_id.into()).into());
-        }
-        match timeout(wait, receiver).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => bail!("node '{node_id}' disconnected before responding"),
+        // The same budget covers a saturated outbound queue and the reply.
+        match timeout(wait, async {
+            connection
+                .sender
+                .send(message)
+                .await
+                .map_err(|_| NodeOfflineError(node_id.into()))?;
+            receiver
+                .await
+                .with_context(|| format!("node '{node_id}' disconnected before responding"))
+        })
+        .await
+        {
+            Ok(result) => result,
             Err(_) => {
-                self.inner.pending.lock().await.remove(&request_id);
                 bail!(
                     "node '{node_id}' did not answer within {}s",
                     wait.as_secs_f64()
@@ -718,5 +750,74 @@ mod tests {
         assert!(server.inner.pending.lock().await.contains_key("request"));
         server.resolve_response("owner", response.clone()).await;
         assert_eq!(receiver.await.unwrap(), response);
+    }
+
+    async fn queued_test_server() -> (NodeServer, mpsc::Receiver<Value>) {
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        let (sender, receiver) = mpsc::channel(1);
+        server.inner.connections.write().await.insert(
+            "owner".into(),
+            Connection {
+                info: ConnectionInfo {
+                    node_id: "owner".into(),
+                    source_ip: "127.0.0.1".into(),
+                    source_port: 1,
+                    connected_since_ms: 0,
+                },
+                sender,
+                advertisement: None,
+                last_seen: Instant::now(),
+            },
+        );
+        (server, receiver)
+    }
+
+    #[tokio::test]
+    async fn cancelled_remote_wait_removes_pending_correlation() {
+        let (server, mut receiver) = queued_test_server().await;
+        let caller = server.clone();
+        let task = tokio::spawn(async move {
+            caller
+                .invoke_remote(
+                    "owner",
+                    "system.ping",
+                    "run",
+                    json!({}),
+                    Duration::from_secs(30),
+                )
+                .await
+        });
+        receiver.recv().await.unwrap();
+        assert_eq!(server.inner.pending.lock().await.len(), 1);
+        task.abort();
+        let _ = task.await;
+        assert!(server.inner.pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn outbound_queue_wait_is_bounded_and_does_not_leave_pending_requests() {
+        let (server, _receiver) = queued_test_server().await;
+        server.inner.connections.read().await["owner"]
+            .sender
+            .send(json!({"queued":true}))
+            .await
+            .unwrap();
+        let result = timeout(
+            Duration::from_secs(1),
+            server.invoke_remote(
+                "owner",
+                "system.ping",
+                "run",
+                json!({}),
+                Duration::from_millis(20),
+            ),
+        )
+        .await;
+        assert!(
+            result
+                .expect("outbound queue must honor command deadline")
+                .is_err()
+        );
+        assert!(server.inner.pending.lock().await.is_empty());
     }
 }

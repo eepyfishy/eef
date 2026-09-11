@@ -28,6 +28,18 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Owner-approved control of a connected node.
+    Node {
+        #[command(subcommand)]
+        command: NodeCommand,
+    },
+    /// Request coordinator restart. Use diagnostics to verify completion.
+    Restart,
+    /// Manage exact, directional peer-discovery grants as the local EEF owner.
+    Discovery {
+        #[command(subcommand)]
+        command: eef::discovery::DiscoveryCommand,
+    },
     /// Export minimal diagnostics or explicitly ping a connected node.
     Diagnostics {
         #[arg(long)]
@@ -39,6 +51,18 @@ enum Command {
     Invite {
         #[arg(long)]
         address: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum NodeCommand {
+    /// Restart the node app, not Windows. Requires local node management approval.
+    Restart {
+        #[arg(long)]
+        node: String,
+        /// Wait for a new runtime ID (0 acknowledges only; maximum 60).
+        #[arg(long, default_value_t = 30)]
+        wait_seconds: u64,
     },
 }
 
@@ -60,6 +84,50 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::Node {
+            command: NodeCommand::Restart { node, wait_seconds },
+        } => {
+            eefn::network::validate_node_id(node)?;
+            if *wait_seconds > 60 {
+                bail!("wait_seconds must be 0-60")
+            }
+            client
+                .post(format!("{base}/api/commands/node/restart"))
+                .timeout(std::time::Duration::from_secs(wait_seconds + 15))
+                .json(&json!({"node_id":node,"wait_seconds":wait_seconds}))
+                .send()
+                .await?
+        }
+        Command::Restart => {
+            client
+                .post(format!("{base}/api/restart"))
+                .json(&json!({}))
+                .send()
+                .await?
+        }
+        Command::Discovery { command } => {
+            let response = client
+                .get(format!("{base}/api/commands/discovery"))
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                bail!("coordinator discovery commands unavailable")
+            }
+            let state = eefn::model_manager::bounded_json(response).await?;
+            if matches!(command, eef::discovery::DiscoveryCommand::Show) {
+                return Ok(state);
+            }
+            let runtime_id = state["runtime_id"]
+                .as_str()
+                .context("coordinator returned no runtime ID")?;
+            client
+                .post(format!("{base}/api/commands/discovery"))
+                .json(
+                    &json!({"schema_version":1,"expected_runtime_id":runtime_id,"command":command}),
+                )
+                .send()
+                .await?
+        }
         Command::Diagnostics {
             node: Some(node),
             samples,
@@ -135,7 +203,9 @@ async fn main() -> Result<()> {
                     }
                 );
                 if value["success"].as_bool() == Some(false) {
-                    bail!("one or more diagnostic probes failed")
+                    bail!(
+                        "command did not complete successfully; inspect the result before retrying"
+                    )
                 }
                 return Ok(());
             }

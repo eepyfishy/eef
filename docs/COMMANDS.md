@@ -4,6 +4,77 @@ This test release supports these commands without a browser or LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Unreleased: coordinator discovery controls and restart
+
+These additions are in the development tree, **not the published v0.4.0a2
+installers**. They work with existing v0.4.0a2 nodes; only EEF needs the new code.
+
+```powershell
+.\eef.exe discovery show --json
+.\eef.exe discovery grant --requester NODE_A --target NODE_B --json
+.\eef.exe discovery revoke --requester NODE_A --target NODE_B --json
+.\eef.exe restart --json
+.\eef.exe node restart --node NODE_B --json
+.\eef.exe node restart --node NODE_B --wait-seconds 60 --json
+```
+
+Use exact stable IDs. A grant lets A inspect B, not B inspect A, and never grants
+execution or direct peer access. Self visibility is implicit and cannot be
+revoked. Duplicate grants and absent revocations are no-ops. Bounds and secret
+redaction are unchanged. No node permissions or connection settings are modified.
+
+The running coordinator owns these commands. `show` distinguishes `saved_policy`
+and `applied_policy`; `restart_required` refers to discovery policy only. Saving
+a grant or revocation does not activate it. `restart` acknowledges the request,
+not completion: verify a new diagnostics `runtime_id` and node reconnection.
+Existing jobs are not automatically replayed. Plan restarts around active work.
+
+`node restart` restarts the **node app, not Windows**. The node owner must first
+enable Settings > Management from EEF > "Allow EEF to apply settings and restart
+this node." This existing permission also permits remote settings changes; the
+command cannot enable it itself. Denial returns `approval_required` with exit 1
+and sends no restart. Restarting can interrupt active work; use an idle node.
+
+The default wait is 30 seconds (0-60 supported). Results carry an operation ID,
+stable node ID, prior/new runtime IDs, `restart_requested`, `acknowledged`,
+`completed` and `outcome_unknown`. With a nonzero wait, success means a connected
+node with the same stable ID and a new runtime ID was observed. With zero wait,
+success means acknowledgement only, with `completed:false`. A timeout or lost
+reply does not prove failure to restart: inspect diagnostics before any retry.
+No restart is automatically resent, and these operation IDs are not durable
+deduplication keys. Completion does not verify recovered jobs or model readiness.
+POST `/api/commands/node/restart` accepts `{node_id,wait_seconds}` under the
+existing local owner/Origin/Host guard. The command works with v0.4.0a2 nodes'
+diagnostics and management protocol; no new remote listener is introduced.
+
+GET `/api/commands/discovery` returns this policy view and `runtime_id`. POST
+accepts `{schema_version:1,expected_runtime_id,command:{operation,requester,target}}`;
+the CLI reads the runtime ID automatically. `show` has no requester/target fields.
+Wrong schema/runtime IDs, unknown fields and untrusted origins are rejected.
+No automatic retry after a failed mutation. Read state before retrying explicitly.
+
+The core service serializes edits and reads the latest saved configuration before
+changing one grant, preserving unrelated pending settings. This protects concurrent
+commands within the running coordinator; it is not distributed configuration
+locking or a merge guarantee for external file editors/full-config replacements.
+Corrupt or missing saved config is rejected rather than recreated from defaults.
+
+`tools/test-live-discovery.mjs` is an explicit live-network acceptance test. Set
+`EEF_LIVE_TEST=1`, `EEF_LIVE_EEF_BINARY`, `EEF_LIVE_EEF_CONFIG`,
+`EEF_LIVE_NODE_BINARY`, `EEF_LIVE_NODE_CONFIG` and `EEF_LIVE_REMOTE_NODE` to
+owner-selected local paths and the other node's stable ID. Use an idle test
+coordinator with no pending changes. It temporarily grants one-way visibility,
+restarts EEF, tests discovery/pings, revokes the grant and restarts again. It
+attempts grant cleanup on failure and records local evidence under `.validation`.
+It does not deploy binaries, update remote nodes, test media/models, upload data
+or infer physical device count from IDs alone. Do not run against production jobs.
+Set `EEF_LIVE_RESTART_NODE=1` additionally to request a remote node restart after
+grant cleanup. With local management approval it verifies the new runtime ID;
+without approval it verifies denial and sends no restart. This is opt-in because
+it can interrupt work on the other node.
+
+## Node network commands (v0.4.0a2)
+
 ```powershell
 .\eefn.exe network show
 .\eefn.exe network set --name "Laptop" --advertise-address 26.1.2.3
@@ -119,7 +190,8 @@ query fields are `node_id` and `after` (mutually exclusive).
 
 By default a node can inspect **only itself**. EEF's owner can configure exact,
 directional disclosure grants in EEF configuration, using the existing owner
-config API or a config file. There is not yet a grant-management CLI. Example:
+config API or a config file. The development grant CLI is described above;
+published v0.4.0a2 does not have it. Example:
 
 ```yaml
 discovery:

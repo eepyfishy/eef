@@ -12,6 +12,7 @@ pub mod firmware;
 pub mod jobs;
 pub mod memory;
 pub mod model;
+pub mod node_control;
 pub mod runtime;
 pub mod task;
 pub mod update;
