@@ -1,5 +1,10 @@
 EEF coordinator for Windows
 
+v0.4.0a2 diagnostic alpha. TWO_PC_TEST.md describes private-network pairing and
+safe two-PC checks. Commands: eef.exe diagnostics --json; eef.exe diagnostics
+--node NODE_ID --samples 5 --json; eef.exe invite --address HOST:PORT --json.
+Connection codes are secret. Reports are local only; no automatic analytics upload.
+
 This directory was created by eef-installer.exe. Open EEF from Start > EEF.
 Do not move the app into Downloads. Startup is optional in Settings.
 

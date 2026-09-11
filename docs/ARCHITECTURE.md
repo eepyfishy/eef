@@ -1,5 +1,15 @@
 # Architecture
 
+This page describes the v0.4.0a baseline. The accepted next architecture and
+source-module mapping are in [Command-first core roadmap](ROADMAP-CORE.md).
+The target makes CLI, automation and UI clients of shared core commands; nodes
+interpret input and execute locally, while EEF plans/authorizes and controls
+scoped peer data paths. Visual UI work is paused. Execution leases, continuous
+pipelines, peer authorization and default-LM bootstrap remain pending. The first
+development slice now extracts `eefn::NodeService` and adds independent network
+advertisements plus [headless network commands](COMMANDS.md). Model management
+uses runtime-owned state instead of a dashboard-owned object.
+
 This implementation keeps the coordinator and node in one Rust workspace so
 their protocol types cannot silently diverge.
 

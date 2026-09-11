@@ -45,6 +45,7 @@ pub struct Runtime {
     pub update: Arc<UpdateService>,
     pub coordinator_id: String,
     pub coordinator_priority: i32,
+    discovery: crate::discovery::DiscoveryPolicy,
     instance_id: String,
     pub restart: Arc<tokio::sync::Notify>,
     pub pending_restart: AtomicBool,
@@ -59,6 +60,7 @@ impl Runtime {
         db_path: impl AsRef<Path>,
         start_brain: bool,
     ) -> Result<Arc<Self>> {
+        let discovery = crate::discovery::DiscoveryPolicy::parse(config.get("discovery"))?;
         let psk = std::env::var("EEF_NODE_PSK")
             .ok()
             .filter(|value| !value.is_empty())
@@ -184,6 +186,7 @@ impl Runtime {
             update,
             coordinator_id,
             coordinator_priority,
+            discovery,
             restart: Arc::new(tokio::sync::Notify::new()),
             pending_restart: AtomicBool::new(false),
             initialized: AtomicBool::new(false),
@@ -299,7 +302,7 @@ impl Runtime {
         self.bus
             .publish(
                 "node.connected",
-                json!({"node_id": node_id, "name": name, "capabilities": capabilities,"specs":message.get("specs"),"models":message.get("models"),"metadata":message.get("metadata")}),
+                json!({"node_id": node_id, "name": name, "capabilities": capabilities,"specs":message.get("specs"),"models":message.get("models"),"metadata":message.get("metadata"),"network":message.get("network")}),
             )
             .await;
     }
@@ -383,6 +386,15 @@ impl Runtime {
                     .await
                     .map(|reply| json!({"reply": reply,"request_context":context}))
             }
+            "network.peers" => {
+                self.discovery
+                    .view(
+                        context.origin_node(),
+                        message["payload"].clone(),
+                        &self.node_server,
+                    )
+                    .await
+            }
             kind if kind.starts_with("jobs.") => {
                 self.engine
                     .job_request(kind, message["payload"].clone(), Some(context))
@@ -405,6 +417,69 @@ impl Runtime {
 
     pub async fn handle_message(&self, message: &str) -> Result<String> {
         self.brain.handle_message(message).await
+    }
+
+    pub async fn diagnostics(&self) -> Value {
+        json!({"schema_version":1,"success":true,"report_type":"coordinator_diagnostics",
+            "version":crate::VERSION,"runtime_id":self.instance_id,
+            "os":std::env::consts::OS,"architecture":std::env::consts::ARCH,
+            "connected_node_count":self.node_server.connected_nodes().await.len(),
+            "model_count":self.model_registry.list().len(),
+            "initialized":self.initialized.load(Ordering::Relaxed),
+            "pending_restart":self.pending_restart.load(Ordering::Relaxed),
+            "privacy":"Runtime ID included for correlation; no automatic upload."})
+    }
+
+    /// Explicit owner-requested ping only. Never runs shell, models or device I/O.
+    pub async fn diagnostic_probe(&self, node_id: &str, samples: usize) -> Result<Value> {
+        eefn::network::validate_node_id(node_id)?;
+        if !(1..=10).contains(&samples) {
+            bail!("diagnostic samples must be 1-10")
+        }
+        if !self
+            .node_server
+            .connected_nodes()
+            .await
+            .contains_key(node_id)
+        {
+            bail!("node is not connected")
+        }
+        let mut results = Vec::new();
+        for _ in 0..samples {
+            let started = std::time::Instant::now();
+            let response = self
+                .node_server
+                .invoke_remote(
+                    node_id,
+                    "system.ping",
+                    "run",
+                    json!({}),
+                    Duration::from_secs(2),
+                )
+                .await;
+            let valid = response.as_ref().is_ok_and(|v| {
+                v["success"] == true && v.pointer("/data/pong") == Some(&json!(true))
+            });
+            let version = response
+                .as_ref()
+                .ok()
+                .and_then(|v| v.pointer("/data/version"))
+                .and_then(Value::as_str)
+                .filter(|s| {
+                    s.len() <= 64
+                        && s.bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b".-+".contains(&c))
+                });
+            results.push(json!({"success":valid,"round_trip_ms":started.elapsed().as_secs_f64()*1000.0,
+                "node_version":version,"matches_coordinator_version":version==Some(crate::VERSION)}));
+        }
+        let passed = results.iter().filter(|v| v["success"] == true).count();
+        Ok(
+            json!({"schema_version":1,"success":passed==samples,"report_type":"node_ping_probe",
+            "coordinator_version":crate::VERSION,"coordinator_runtime_id":self.instance_id,
+            "node_id":node_id,"samples":results,"passed":passed,"failed":samples-passed,
+            "scope":"Authenticated system.ping only; no inference or filesystem/device test."}),
+        )
     }
 
     pub async fn summary(&self) -> Value {

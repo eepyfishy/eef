@@ -224,7 +224,7 @@ pub struct NodeEngine {
     http: reqwest::Client,
     ollama_url: String,
     ollama_models: HashMap<String, String>,
-    dashboard: Option<Arc<crate::NodeDashboard>>,
+    service: Option<Arc<crate::NodeService>>,
     resource_owner: String,
     resources: Vec<crate::context::Resource>,
 }
@@ -262,7 +262,7 @@ impl NodeEngine {
                 .build()?,
             ollama_url: String::new(),
             ollama_models: HashMap::new(),
-            dashboard: None,
+            service: None,
             resource_owner: String::new(),
             resources: Vec::new(),
         })
@@ -283,9 +283,14 @@ impl NodeEngine {
         self.resources = metadata.resources;
         Ok(self)
     }
-    pub fn with_dashboard(mut self, dashboard: Arc<crate::NodeDashboard>) -> Self {
-        self.dashboard = Some(dashboard);
+    pub fn with_service(mut self, service: Arc<crate::NodeService>) -> Self {
+        self.service = Some(service);
         self
+    }
+
+    /// Compatibility alias; the owned object is a runtime service, not a UI.
+    pub fn with_dashboard(self, service: Arc<crate::NodeService>) -> Self {
+        self.with_service(service)
     }
 
     pub fn with_model_server(mut self, server: Arc<ModelServer>) -> Self {
@@ -332,7 +337,7 @@ impl NodeEngine {
             .iter()
             .map(|value| (*value).to_owned())
             .collect::<Vec<_>>();
-        if self.dashboard.is_some() {
+        if self.service.is_some() {
             values.push("node.configure".into());
         }
         if self.policy.filesystem.read || self.policy.filesystem.write {
@@ -409,7 +414,7 @@ impl NodeEngine {
         }
         match capability {
             "node.configure" => {
-                self.dashboard
+                self.service
                     .as_ref()
                     .context("Device management is unavailable")?
                     .remote(action, params)

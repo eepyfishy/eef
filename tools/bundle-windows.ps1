@@ -234,6 +234,7 @@ try {
         New-Item -ItemType Directory -Path $package -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $bundle "python") -Destination $package -Recurse
         Copy-Item -LiteralPath (Join-Path $workspace "LICENSE") -Destination $package
+        Copy-Item -LiteralPath (Join-Path $workspace "docs\TWO_PC_TEST.md") -Destination $package
         foreach ($runtimeDll in @("libunwind.dll", "libc++.dll", "libwinpthread-1.dll")) {
             $source = Join-Path $bundle $runtimeDll
             if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $package }

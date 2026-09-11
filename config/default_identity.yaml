@@ -2,7 +2,7 @@
 identity:
   name: EEF
   creator: EEF contributors
-  version: 0.4.0-alpha.1
+  version: 0.4.0-alpha.2
   description: A continuously running, local-first, distributed personal AI agent.
 
 behavior_rules:
@@ -75,6 +75,12 @@ python:
 
 assistant:
   rules: []
+
+# Owner-controlled metadata disclosure. Exact requester -> target IDs only.
+# Empty grants means each node can inspect only itself. Applies after restart.
+discovery:
+  grants: {}
+  freshness_seconds: 30
 
 firmware:
   repository: data/firmware

@@ -1,0 +1,178 @@
+# Commands in v0.4.0a2
+
+This test release supports these commands without a browser or LM. Run
+from the installation directory, or supply `--config` to select a node config.
+Older v0.4.0a installers do not contain them.
+
+```powershell
+.\eefn.exe network show
+.\eefn.exe network set --name "Laptop" --advertise-address 26.1.2.3
+.\eefn.exe network set --coordinator-id eef-laptop --coordinator-address 26.1.2.3:51335 --coordinator-state standby
+.\eefn.exe network show --json
+.\eefn.exe network set --clear-address --clear-coordinator
+.\eefn.exe --no-ui
+```
+
+## Diagnostics and private pairing
+
+```powershell
+.\eefn.exe network diagnose --json
+.\eef.exe diagnostics --json
+.\eef.exe diagnostics --node YOUR_NODE_ID --samples 5 --json
+.\eef.exe invite --address YOUR_COORDINATOR_ADDRESS:51335 --json
+```
+
+EEF commands contact its running loopback API; node diagnostics also work while
+stopped, with `running:false` and no live measurements. `--config` selects an
+explicit installation. Reports are printed locally, never automatically uploaded.
+They include stable node/runtime IDs, software version, basic state and numeric
+counters, excluding machine names/addresses/paths/secrets/raw errors. Counters
+last for the node-service process: `connection_checks` counts checking events,
+`successful_connections` counts connections, and `failed_connection_attempts`
+counts disconnected-error events, not unique networks or exhaustive packet loss.
+
+Explicit ping probes sample 1-10 `system.ping` calls with a two-second timeout
+per sample and report round-trip milliseconds, versions and failures. They do
+not test inference or perform device I/O. A failed sample makes CLI exit nonzero.
+GET `/api/diagnostics` exists on both local APIs; EEF additionally accepts POST
+`/api/diagnostics/probe` with `{node_id,samples}`. Reports contain pseudonymous IDs;
+review before sharing. Raw configs/logs are not support reports.
+
+The invite command accepts an explicit reachable host:port (IPv6 in brackets).
+POST `/api/network/invite` also accepts `{address}`; omission keeps the hostname
+fallback for existing clients. A pairing code contains the network secret and
+is deliberately NOT a diagnostic report. Share it privately only with the node
+owner; never publish it in logs, issues or release notes. Address selection does
+not configure firewall/overlay software or test reachability.
+
+Addresses are examples, not defaults. IPv6 endpoints use `[address]:port`.
+Coordinator advertisements require a port; node advertisements may be a host
+alone. Nothing opens a peer listener or configures an overlay. Active/standby
+state is owner-reported metadata, not verified leadership or new authority.
+
+`set` edits only supplied fields, preserving ID, connection endpoints, secret,
+models, permissions and other config. `show` omits PSKs/private resource bindings.
+Stopped-node commands hold the instance lock; an initial `set` creates ordinary
+persistent identity/config without starting models, discovery or listeners.
+`show` does not create identity. Offline edits apply at next start.
+
+Running-node commands use its guarded loopback API, reading the configured port
+automatically. They never register a second node or edit around its lock. Online
+edits report `restart_required` and distinguish saved `network` from
+`applied_network`. Restart applies advertisements without changing identity.
+If the API is explicitly disabled or an old release lacks the endpoint, commands
+fail rather than enabling it or bypassing the running process. Stop to edit offline.
+
+`--no-ui` omits HTML/JS/CSS/legacy pages and ignores `--open-dashboard`, while
+keeping local API guards. Existing `dashboard.enabled=false` still disables
+the entire API. Other lifecycle command families are not implemented yet;
+their existing APIs remain available without a browser.
+
+`--json` prints one result on stdout; logs go to stderr. Success exits 0. Command
+failures exit 1 with `schema_version:1`, `success:false`,
+`error_code:"command_failed"` and an error description. Clap syntax errors retain
+normal behavior (exit 2). Expected node ID is a wrong-instance check, not authentication.
+
+## API and registration
+
+`POST /api/commands/network` retains the existing loopback/Origin/Host guards:
+
+```json
+{
+  "schema_version": 1,
+  "expected_node_id": "your-persisted-node-id",
+  "command": {
+    "operation": "set",
+    "changes": {"advertised_address": "26.1.2.3"}
+  }
+}
+```
+
+Inspect with `"command":{"operation":"show"}`. Unknown fields, conflicting
+set/clear operations, malformed addresses and wrong targets are rejected. HTTP
+errors retain the existing API shape/status, not the CLI wrapper.
+
+Registration has additive `network:{advertised_address,coordinator}` metadata;
+coordinator fields are `coordinator_id`, `address`, `state`. Missing metadata means
+no advertisement; missing coordinator state means unknown. Gateway validation
+keeps it separate from observed source IP/port. EEF world/status entries expose
+it; disconnected entries stay marked offline. Node status reports applied values.
+Existing owner-approved remote configuration may also propose `network` changes.
+
+Metadata does not initiate connections, establish trust, authorize execution or
+implement failover. Scoped discovery is now available as described below.
+
+## Inspect the registered network
+
+```powershell
+.\eefn.exe network peers --json
+.\eefn.exe network peers --node node-b --json
+.\eefn.exe network peers --limit 1 --json
+.\eefn.exe network peers --after node-a --json
+```
+
+Requires a running node connected to EEF; offline commands do not start a new
+connection for discovery. Requests use the existing authenticated submission
+channel. EEF uses server-stamped origin, not a caller-supplied requester ID.
+The local API accepts `command:{operation:"peers",query:{limit:32}}`; optional
+query fields are `node_id` and `after` (mutually exclusive).
+
+By default a node can inspect **only itself**. EEF's owner can configure exact,
+directional disclosure grants in EEF configuration, using the existing owner
+config API or a config file. There is not yet a grant-management CLI. Example:
+
+```yaml
+discovery:
+  grants:
+    node-a: [node-b]
+  freshness_seconds: 30
+```
+
+This allows A to inspect B, not B to inspect A or A to inspect B's other peers.
+No wildcards or implicit transitive grants. Use actual persistent node IDs.
+Policy changes, including revocation, apply after **EEF restart**, not when
+saved. Invalid policies fail validation; no fallback to unrestricted discovery.
+Limits: 256 requesters, 256 targets each, 4096 total grants, 256 KiB policy and
+freshness of 1-300 seconds. Policy is local to this coordinator, not replicated.
+
+Results contain a bounded, sanitized registration projection: ID, display name,
+advertisement/coordinator hints, capabilities and model ID/backend/modality.
+They omit observed connection source IP/port, PSKs, private adapter bindings and
+arbitrary model fields. Registration limits are 128 capabilities (128 bytes
+each), 64 models (ID 256 bytes, backend/modality 64 bytes each), and 256-byte
+display names. Oversized/malformed registrations are rejected, not silently
+advertised as complete.
+
+Only currently registered connections are considered. Monotonic heartbeat age
+drives `online`/`stale` status; `online` means recent control-channel activity,
+not verified reachability from another node. Stale entries retain ID/name but
+lose addresses, coordinator hints, models and capabilities. Disconnected entries
+disappear rather than returning historical addresses. Use `remaining_fresh_ms`
+conservatively and re-query; discovery is not an authorization cache.
+
+Pages have at most 32 entries and a 512 KiB response budget. Continue with
+`next_after` until null; cursors are lexicographic IDs, not a snapshot or grant.
+Each page rechecks applied policy/current connections. Concurrent registrations
+may change results; start a new listing when a complete current view is needed.
+Missing and denied individual lookups use the same error to avoid leaking
+whether an unauthorized ID exists. `direct_access_authorized` is always false:
+knowing a peer address does not authorize a connection, transfer or workload.
+
+Trust boundary: this increment inherits v0.4.0a's shared-network-PSK identity
+authentication. It does not provide independent cryptographic identities for
+mutually untrusted key holders; a holder of that shared key can authenticate as
+an otherwise unused node ID. Exact-ID disclosure policy is not a substitute for
+that future security work. Do not use these grants as tenant isolation or expose
+an unauthenticated peer listener. Separate peer/issuer credentials remain a
+prerequisite for direct data paths and execution leases.
+
+`node tools/test-peer-discovery.mjs` verifies two logical nodes on one PC with
+no UI/models: self-only defaults, directional grants, pagination, forged query
+rejection, stale redaction, restart-applied revocation and disconnect removal.
+It does not establish physical multi-PC/overlay reachability or direct peer execution.
+
+`node tools/test-node-commands.mjs` validates real local processes/public commands
+with isolated config, no model and no browser: offline/headless operation, stable
+IDs, address separation, coordinator metadata, saved/applied state, permission
+preservation and invalid address/target/Origin rejection. It is not a physical
+second-PC or peer-connectivity test.

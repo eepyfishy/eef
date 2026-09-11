@@ -1,5 +1,5 @@
 //! Explicit, owner-requested model installation. Never called during setup.
-use crate::dashboard::NodeDashboard;
+use crate::service::NodeService;
 use anyhow::{Context, Result, bail};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
@@ -12,7 +12,7 @@ use tokio::io::AsyncWriteExt;
 const MAX_METADATA_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PROGRESS_LINE: usize = 64 * 1024;
 
-pub(crate) async fn bounded_json(mut response: reqwest::Response) -> Result<Value> {
+pub async fn bounded_json(mut response: reqwest::Response) -> Result<Value> {
     if response
         .content_length()
         .is_some_and(|size| size > MAX_METADATA_BYTES as u64)
@@ -82,7 +82,7 @@ async fn ollama_models(config: &Value) -> Result<Value> {
     )
     .await
 }
-pub async fn list(state: &NodeDashboard) -> Result<Value> {
+pub async fn list(state: &NodeService) -> Result<Value> {
     let config = state.read_config()?;
     let ollama = ollama_models(&config).await.ok();
     let provider = config
@@ -110,7 +110,7 @@ pub async fn list(state: &NodeDashboard) -> Result<Value> {
 
 /// Query metadata only when the owner inspects/selects an installed model.
 /// This does not load model weights or infer capabilities from model names.
-pub async fn inspect(state: &NodeDashboard, request: Value) -> Result<Value> {
+pub async fn inspect(state: &NodeService, request: Value) -> Result<Value> {
     let id = request["id"]
         .as_str()
         .filter(|id| !id.is_empty() && id.len() < 200)
@@ -157,7 +157,7 @@ fn normalize_capabilities(id: &str, details: &Value) -> Value {
     };
     json!({"id":id,"capabilities_known":reported.is_some(),"capabilities":capabilities,"modality":if vision {Some("vlm")} else if completion {Some("text")} else {None}})
 }
-pub async fn install(state: Arc<NodeDashboard>, request: Value) -> Result<()> {
+pub async fn install(state: Arc<NodeService>, request: Value) -> Result<()> {
     let config = state.read_config()?;
     let selected = request["id"]
         .as_str()
@@ -235,7 +235,7 @@ pub async fn install(state: Arc<NodeDashboard>, request: Value) -> Result<()> {
     });
     Ok(())
 }
-pub fn cancel(state: &NodeDashboard, id: Option<&str>) -> Result<bool> {
+pub fn cancel(state: &NodeService, id: Option<&str>) -> Result<bool> {
     let mut live = state.live.lock().unwrap();
     if live["download"]["state"] != "downloading" {
         return Ok(false);
@@ -326,7 +326,7 @@ impl PullProgress {
         Ok(())
     }
 }
-fn progress(state: &NodeDashboard, completed: u64, total: u64) -> Result<()> {
+fn progress(state: &NodeService, completed: u64, total: u64) -> Result<()> {
     let mut live = state.live.lock().unwrap();
     if live["download"]["cancel_requested"].as_bool() == Some(true) {
         bail!("Download cancelled. You can install the model again later.")
@@ -335,7 +335,7 @@ fn progress(state: &NodeDashboard, completed: u64, total: u64) -> Result<()> {
     live["download"]["total"] = json!(total);
     Ok(())
 }
-async fn pull(state: &NodeDashboard, config: &Value, entry: &Value) -> Result<()> {
+async fn pull(state: &NodeService, config: &Value, entry: &Value) -> Result<()> {
     let model = entry["ollama"]
         .as_str()
         .context("This catalog entry has no Ollama model")?;
@@ -365,7 +365,7 @@ impl Drop for PartialFile {
         let _ = std::fs::remove_file(&self.0);
     }
 }
-async fn download(state: &NodeDashboard, entry: &Value) -> Result<()> {
+async fn download(state: &NodeService, entry: &Value) -> Result<()> {
     let url = reqwest::Url::parse(
         entry["url"]
             .as_str()
@@ -461,7 +461,7 @@ mod tests {
     #[tokio::test]
     async fn existing_gguf_is_verified_reused_and_corruption_is_preserved() {
         let dir = tempfile::tempdir().unwrap();
-        let state = NodeDashboard::new(dir.path().join("node.json"), "node".into());
+        let state = NodeService::new(dir.path().join("node.json"), "node".into());
         let directory = state.model_directory();
         std::fs::create_dir(&directory).unwrap();
         let bytes = b"small verification fixture, not a real model";
@@ -548,7 +548,7 @@ mod tests {
     #[test]
     fn cancellation_is_active_job_scoped_and_does_not_poison_next_job() {
         let dir = tempfile::tempdir().unwrap();
-        let state = NodeDashboard::new(dir.path().join("node.json"), "node".into());
+        let state = NodeService::new(dir.path().join("node.json"), "node".into());
         assert!(!cancel(&state, None).unwrap());
         state.live.lock().unwrap()["download"] =
             json!({"state":"downloading","id":"current","cancel_requested":false});

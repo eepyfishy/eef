@@ -81,6 +81,8 @@ impl Drop for IdentityLease {
 struct Connection {
     info: ConnectionInfo,
     sender: mpsc::Sender<Value>,
+    advertisement: Option<crate::network::PeerRecord>,
+    last_seen: Instant,
 }
 
 struct Pending {
@@ -171,6 +173,28 @@ impl NodeServer {
 
     pub async fn registered_nodes(&self) -> HashMap<String, ConnectionInfo> {
         self.inner.routes.read().await.clone()
+    }
+
+    /// Returns only explicitly selected IDs; callers must authorize them first.
+    /// Uses live connections, never the unbounded historical route list.
+    pub async fn peer_records(
+        &self,
+        ids: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<(crate::network::PeerRecord, Duration)>> {
+        if ids.len() > 257 {
+            bail!("peer selection exceeds bounds")
+        }
+        let connections = self.inner.connections.read().await;
+        Ok(ids
+            .iter()
+            .filter_map(|id| {
+                let connection = connections.get(id)?;
+                Some((
+                    connection.advertisement.clone()?,
+                    connection.last_seen.elapsed(),
+                ))
+            })
+            .collect())
     }
 
     pub async fn invoke_remote(
@@ -330,11 +354,15 @@ impl NodeServer {
             .write()
             .await
             .insert(node_id.clone(), info.clone());
-        self.inner
-            .connections
-            .write()
-            .await
-            .insert(node_id.clone(), Connection { info, sender: send });
+        self.inner.connections.write().await.insert(
+            node_id.clone(),
+            Connection {
+                info,
+                sender: send,
+                advertisement: None,
+                last_seen: Instant::now(),
+            },
+        );
 
         let result = self.serve(&node_id, &mut reader).await;
         self.inner.connections.write().await.remove(&node_id);
@@ -361,6 +389,11 @@ impl NodeServer {
                             .unwrap_or_else(|| json!({})),
                     )?;
                     metadata.validate()?;
+                    let network: crate::network::NetworkAdvertisement = serde_json::from_value(
+                        message.get("network").cloned().unwrap_or_else(|| json!({})),
+                    )?;
+                    network.validate()?;
+                    message["network"] = json!(network);
                     let capabilities: Vec<String> = serde_json::from_value(
                         message
                             .get("capabilities")
@@ -369,12 +402,35 @@ impl NodeServer {
                     )?;
                     metadata = metadata.advertised(&capabilities);
                     message["metadata"] = json!(metadata);
+                    let advertisement = crate::network::PeerRecord::from_registration(&message)?;
+                    if let Some(connection) = self
+                        .inner
+                        .connections
+                        .write()
+                        .await
+                        .get_mut(authenticated_id)
+                    {
+                        connection.advertisement = Some(advertisement);
+                        connection.last_seen = Instant::now();
+                    }
                     registered = true;
                     message["node_id"] = Value::String(authenticated_id.into());
                     let _ = self.inner.events.send(NodeEvent::Registered(message));
                 }
                 Some("heartbeat") => {
                     require_node_id(&message, authenticated_id)?;
+                    if !registered {
+                        bail!("register before sending heartbeats")
+                    }
+                    if let Some(connection) = self
+                        .inner
+                        .connections
+                        .write()
+                        .await
+                        .get_mut(authenticated_id)
+                    {
+                        connection.last_seen = Instant::now();
+                    }
                     message["node_id"] = Value::String(authenticated_id.into());
                     let _ = self.inner.events.send(NodeEvent::Heartbeat(message));
                 }
@@ -487,6 +543,100 @@ fn require_node_id(message: &Value, authenticated_id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn peer_records_use_current_connections_and_monotonic_heartbeat_age() {
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        let (sender, _receiver) = mpsc::channel(1);
+        let info = ConnectionInfo {
+            node_id: "node-a".into(),
+            source_ip: "private-source".into(),
+            source_port: 50000,
+            connected_since_ms: 0,
+        };
+        server.inner.connections.write().await.insert(
+            "node-a".into(),
+            Connection {
+                info: info.clone(),
+                sender,
+                advertisement: None,
+                last_seen: Instant::now() - Duration::from_secs(90),
+            },
+        );
+        let ids = std::collections::BTreeSet::from(["node-a".into()]);
+        assert!(server.peer_records(&ids).await.unwrap().is_empty());
+        let mut wire = Vec::new();
+        write_message(&server.inner.crypto,&mut wire,&json!({"type":"register","node_id":"node-a","network":{"advertised_address":"26.1.2.3"}})).await.unwrap();
+        write_message(&server.inner.crypto,&mut wire,&json!({"type":"heartbeat","node_id":"node-a","network":{"advertised_address":"attacker"}})).await.unwrap();
+        server
+            .serve("node-a", &mut BufReader::new(wire.as_slice()))
+            .await
+            .unwrap();
+        let records = server.peer_records(&ids).await.unwrap();
+        assert_eq!(
+            records[0].0.network.advertised_address.as_deref(),
+            Some("26.1.2.3")
+        );
+        assert!(records[0].1 < Duration::from_secs(10));
+        server.inner.connections.write().await.remove("node-a");
+        server
+            .inner
+            .routes
+            .write()
+            .await
+            .insert("node-a".into(), info);
+        assert!(server.peer_records(&ids).await.unwrap().is_empty());
+        let mut wire = Vec::new();
+        write_message(
+            &server.inner.crypto,
+            &mut wire,
+            &json!({"type":"heartbeat","node_id":"node-a"}),
+        )
+        .await
+        .unwrap();
+        assert!(
+            server
+                .serve("node-a", &mut BufReader::new(wire.as_slice()))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn registration_keeps_advertisements_distinct_and_rejects_invalid_metadata() {
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        let mut events = server.subscribe();
+        for (network, accepted) in [
+            (
+                json!({"advertised_address":"26.1.2.3","coordinator":{"coordinator_id":"eef-owner","address":"26.1.2.3:51335","state":"standby"}}),
+                true,
+            ),
+            (json!({"advertised_address":"http://arbitrary/path"}), false),
+            (
+                json!({"coordinator":{"coordinator_id":"eef-owner","address":"26.1.2.3"}}),
+                false,
+            ),
+        ] {
+            let message =
+                json!({"type":"register","node_id":"stable","name":"Laptop","network":network});
+            let mut wire = Vec::new();
+            write_message(&server.inner.crypto, &mut wire, &message)
+                .await
+                .unwrap();
+            let result = server
+                .serve("stable", &mut BufReader::new(wire.as_slice()))
+                .await;
+            assert_eq!(result.is_ok(), accepted);
+            if accepted {
+                let NodeEvent::Registered(actual) = events.recv().await.unwrap() else {
+                    panic!()
+                };
+                assert_eq!(actual["network"], network);
+                assert_eq!(actual["node_id"], "stable");
+            } else {
+                assert!(events.try_recv().is_err());
+            }
+        }
+    }
 
     #[tokio::test]
     async fn gateway_stamps_origin_and_snapshots_area_without_leaking_bindings() {
@@ -523,6 +673,7 @@ mod tests {
             panic!()
         };
         assert_eq!(legacy["metadata"]["area"], json!([]));
+        assert!(legacy["network"]["advertised_address"].is_null());
         let NodeEvent::Submission(second) = events.recv().await.unwrap() else {
             panic!()
         };

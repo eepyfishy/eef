@@ -1,5 +1,11 @@
 # HTTP API
 
+Unreleased: [network commands](COMMANDS.md) document the shared node command
+service, `POST /api/commands/network`, API-only mode, and registration advertisements.
+The same command endpoint now accepts `operation:"peers"`; EEF enforces its
+applied `discovery` policy using authenticated origin, with self-only defaults.
+See the command guide for exact grants, freshness, pagination and limitations.
+
 ## v0.4 development: local node input and connection controls
 
 EEFN's guarded loopback interface adds:

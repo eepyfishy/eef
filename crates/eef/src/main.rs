@@ -1,16 +1,20 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
-use clap::Parser;
+use anyhow::{Context, Result, bail};
+use clap::{Parser, Subcommand};
 use tracing::info;
 
 #[derive(Debug, Parser)]
 #[command(name = "eef", version, about = "EEF native coordinator")]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Command>,
+    #[arg(long, global = true)]
+    json: bool,
     #[arg(long)]
     open_dashboard: bool,
-    #[arg(long, default_value = "config/default_identity.yaml")]
+    #[arg(long, global = true, default_value = "config/default_identity.yaml")]
     config: PathBuf,
     #[arg(long, default_value = "data/eef_memory.db")]
     database: PathBuf,
@@ -22,9 +26,82 @@ struct Args {
     no_brain: bool,
 }
 
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Export minimal diagnostics or explicitly ping a connected node.
+    Diagnostics {
+        #[arg(long)]
+        node: Option<String>,
+        #[arg(long, default_value_t = 3)]
+        samples: usize,
+    },
+    /// Create a PRIVATE pairing code using a reachable coordinator endpoint.
+    Invite {
+        #[arg(long)]
+        address: String,
+    },
+}
+
+async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let config = eef::config::Config::load(Some(&args.config))?;
+    let host: std::net::IpAddr = config
+        .string("web.host", "127.0.0.1")
+        .parse()
+        .context("command API requires a loopback IP")?;
+    if !host.is_loopback() {
+        bail!("command API must use a loopback address")
+    }
+    let port = u16::try_from(config.u64("web.port", 51334)).context("invalid local API port")?;
+    let base = format!("http://{}", std::net::SocketAddr::new(host, port));
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(25))
+        .build()?;
+    let response = match command {
+        Command::Diagnostics {
+            node: Some(node),
+            samples,
+        } => {
+            if !(1..=10).contains(samples) {
+                bail!("samples must be 1-10")
+            }
+            client
+                .post(format!("{base}/api/diagnostics/probe"))
+                .json(&json!({"node_id":node,"samples":samples}))
+                .send()
+                .await?
+        }
+        Command::Diagnostics { node: None, .. } => {
+            client.get(format!("{base}/api/diagnostics")).send().await?
+        }
+        Command::Invite { address } => {
+            eefn::network::validate_address(address, true)?;
+            client
+                .post(format!("{base}/api/network/invite"))
+                .json(&json!({"address":address}))
+                .send()
+                .await?
+        }
+    };
+    let ok = response.status().is_success();
+    let value = eefn::model_manager::bounded_json(response).await?;
+    if !ok {
+        bail!(
+            "{}",
+            value["error"]
+                .as_str()
+                .unwrap_or("coordinator command failed")
+        )
+    }
+    Ok(value)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "eef=info,eefn=info,tower_http=info".into()),
@@ -40,6 +117,38 @@ async fn main() -> Result<()> {
         && install_root.join(&args.config).is_file()
     {
         args.config = install_root.join(&args.config);
+    }
+    if let Some(command) = &args.command {
+        match run_command(&args, command).await {
+            Ok(value) => {
+                if matches!(command, Command::Invite { .. }) {
+                    eprintln!(
+                        "Private connection code: share only with the node owner, not in reports or issues."
+                    );
+                }
+                println!(
+                    "{}",
+                    if args.json {
+                        serde_json::to_string(&value)?
+                    } else {
+                        serde_json::to_string_pretty(&value)?
+                    }
+                );
+                if value["success"].as_bool() == Some(false) {
+                    bail!("one or more diagnostic probes failed")
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                if args.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"schema_version":1,"success":false,"error_code":"command_failed","error":error.to_string()})
+                    );
+                }
+                return Err(error);
+            }
+        }
     }
     if args.database == PathBuf::from("data/eef_memory.db") {
         args.database = args

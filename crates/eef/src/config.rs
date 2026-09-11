@@ -90,6 +90,7 @@ impl Config {
         if !value.is_object() {
             bail!("configuration must be a JSON/YAML object")
         }
+        crate::discovery::DiscoveryPolicy::parse(value.get("discovery"))?;
         for section in [
             "web", "node", "models", "update", "python", "identity", "jobs",
         ] {

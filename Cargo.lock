@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "eef"
-version = "0.4.0-alpha.1"
+version = "0.4.0-alpha.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -396,6 +396,7 @@ dependencies = [
  "futures-util",
  "indexmap",
  "regex",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -412,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "eef-installer-stub"
-version = "0.4.0-alpha.1"
+version = "0.4.0-alpha.2"
 dependencies = [
  "anyhow",
  "fs2",
@@ -429,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "eefn"
-version = "0.4.0-alpha.1"
+version = "0.4.0-alpha.2"
 dependencies = [
  "aes-gcm",
  "anyhow",

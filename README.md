@@ -1,8 +1,12 @@
 # EEF
 
-**0.4.0a alpha** (`0.4.0-alpha.1` internally) is an opt-in testing release, not
-the complete v0.4.0 roadmap. See [alpha release notes](docs/RELEASE-0.4.0a.md) for
+**0.4.0a2 alpha** (`0.4.0-alpha.2` internally) is an opt-in two-PC testing release, not
+the complete v0.4.0 roadmap. See [alpha release notes](docs/RELEASE-0.4.0a2.md) for
 what works and what is deferred. Stable update feeds remain on v0.3.2.
+The [active core roadmap](docs/ROADMAP-CORE.md) prioritizes command-based usability
+and automation; UI polish is paused. Planned default-node LM bootstrap and
+authorized local/peer workloads do not change the published alpha's behavior.
+This alpha adds [headless node commands and diagnostics](docs/COMMANDS.md).
 The builds are unsigned. Both v0.3.2 installers have unresolved Defender reports
 on a second PC; see [the investigation](docs/ANTIVIRUS.md). A passing local scan
 is not a Microsoft false-positive verdict. Do not bypass antivirus detections.

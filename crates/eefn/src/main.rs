@@ -4,10 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use eefn::{
-    CoordinatorEndpoint, ModelServer, ModelSlot, NodeClient, NodeClientConfig, NodeDashboard,
-    NodeEngine, NodePolicy, PythonRuntime, SelectedModel,
+    CoordinatorEndpoint, ModelServer, ModelSlot, NodeClient, NodeClientConfig, NodeEngine,
+    NodePolicy, NodeService, PythonRuntime, SelectedModel,
 };
 use serde::Deserialize;
 use tracing::{info, warn};
@@ -15,9 +15,18 @@ use tracing::{info, warn};
 #[derive(Debug, Parser)]
 #[command(name = "eefn", version, about = "Native EEF node")]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>,
+    #[arg(long, global = true, help = "Print command results as JSON")]
+    json: bool,
+    #[arg(
+        long,
+        help = "Run local command/API services without serving the browser UI"
+    )]
+    no_ui: bool,
     #[arg(long)]
     open_dashboard: bool,
-    #[arg(long, default_value = "config.json")]
+    #[arg(long, global = true, default_value = "config.json")]
     config: PathBuf,
     #[arg(long = "connect")]
     endpoints: Vec<String>,
@@ -56,8 +65,184 @@ struct Args {
     ollama_url: Option<String>,
 }
 
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Inspect or configure node identity and advertised network metadata.
+    Network {
+        #[command(subcommand)]
+        command: NetworkAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum NetworkAction {
+    Show,
+    /// Export a minimal connection report; does not upload anything.
+    Diagnose,
+    /// Inspect only peers disclosed by EEF's owner; does not authorize access.
+    Peers {
+        #[arg(long, conflicts_with = "after")]
+        node: Option<String>,
+        #[arg(long)]
+        after: Option<String>,
+        #[arg(long, default_value_t = 32)]
+        limit: usize,
+    },
+    Set {
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, conflicts_with = "clear_address")]
+        advertise_address: Option<String>,
+        #[arg(long)]
+        clear_address: bool,
+        #[arg(
+            long,
+            requires = "coordinator_address",
+            conflicts_with = "clear_coordinator"
+        )]
+        coordinator_id: Option<String>,
+        #[arg(
+            long,
+            requires = "coordinator_id",
+            conflicts_with = "clear_coordinator"
+        )]
+        coordinator_address: Option<String>,
+        #[arg(long, value_parser = ["active", "standby", "unknown"], requires = "coordinator_id")]
+        coordinator_state: Option<String>,
+        #[arg(long)]
+        clear_coordinator: bool,
+    },
+}
+
+async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    use eefn::network::{
+        CommandRequest, CoordinatorAdvertisement, CoordinatorState, NetworkChanges, NetworkCommand,
+    };
+    let Commands::Network { command } = command;
+    let command = match command {
+        NetworkAction::Show => NetworkCommand::Show,
+        NetworkAction::Diagnose => NetworkCommand::Diagnose,
+        NetworkAction::Peers { node, after, limit } => {
+            let query = eefn::network::PeerQuery {
+                node_id: node.clone(),
+                after: after.clone(),
+                limit: *limit,
+            };
+            query.validate()?;
+            NetworkCommand::Peers { query }
+        }
+        NetworkAction::Set {
+            name,
+            advertise_address,
+            clear_address,
+            coordinator_id,
+            coordinator_address,
+            coordinator_state,
+            clear_coordinator,
+        } => {
+            let coordinator = match (coordinator_id, coordinator_address) {
+                (Some(id), Some(address)) => Some(CoordinatorAdvertisement {
+                    coordinator_id: id.clone(),
+                    address: address.clone(),
+                    state: match coordinator_state.as_deref() {
+                        Some("active") => CoordinatorState::Active,
+                        Some("standby") => CoordinatorState::Standby,
+                        _ => CoordinatorState::Unknown,
+                    },
+                }),
+                (None, None) => None,
+                _ => bail!("coordinator ID and address are required together"),
+            };
+            let changes = NetworkChanges {
+                name: name.clone(),
+                advertised_address: advertise_address.clone(),
+                clear_advertised_address: *clear_address,
+                coordinator,
+                clear_coordinator: *clear_coordinator,
+            };
+            changes.apply(&mut serde_json::json!({}))?;
+            NetworkCommand::Set { changes }
+        }
+    };
+    let lock = eefn::setup::instance_lock(&args.config)?;
+    if lock.is_some() {
+        // Offline commands never start discovery, inference, plugins or a listener.
+        if matches!(command, NetworkCommand::Set { .. }) {
+            eefn::setup::initialize_identity(&args.config)?;
+        }
+        let file = load_file(&args.config)?;
+        if file.node_id.is_empty() {
+            bail!("No saved node identity; configure the node with network set first")
+        }
+        let service = eefn::NodeService::new(args.config.clone(), file.node_id.clone());
+        let mut result = service.network_command(CommandRequest {
+            schema_version: 1,
+            expected_node_id: file.node_id,
+            command,
+        })?;
+        result["running"] = serde_json::json!(false);
+        result["restart_required"] = serde_json::json!(false);
+        if result["report_type"] == "node_diagnostics" {
+            result["connection_state"] = serde_json::json!("stopped");
+            result["metrics_available"] = serde_json::json!(false);
+            for key in [
+                "service_uptime_ms",
+                "connection_checks",
+                "successful_connections",
+                "failed_connection_attempts",
+                "model_count",
+                "capability_count",
+            ] {
+                result[key] = serde_json::Value::Null;
+            }
+        }
+        return Ok(result);
+    }
+    // Ask the existing instance to mutate its config under its own lock.
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    if !local.enabled {
+        bail!("The running node's local API is disabled; stop it before editing offline")
+    }
+    let address: std::net::IpAddr = local
+        .host
+        .parse()
+        .context("local command address must be loopback")?;
+    if !address.is_loopback() {
+        bail!("commands require a loopback local API")
+    }
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
+        .post(format!(
+            "http://{}/api/commands/network",
+            std::net::SocketAddr::new(address, local.port)
+        ))
+        .timeout(Duration::from_secs(15))
+        .json(&CommandRequest {
+            schema_version: 1,
+            expected_node_id: file.node_id,
+            command,
+        })
+        .send()
+        .await?;
+    let ok = response.status().is_success();
+    let mut result: serde_json::Value = eefn::model_manager::bounded_json(response).await?;
+    if !ok {
+        bail!(
+            "{}",
+            result["error"].as_str().unwrap_or("local command failed")
+        )
+    }
+    result["running"] = serde_json::json!(true);
+    Ok(result)
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct FileConfig {
+    #[serde(default)]
+    network: eefn::network::NetworkAdvertisement,
     #[serde(default)]
     metadata: eefn::context::NodeMetadata,
     #[serde(default)]
@@ -176,6 +361,7 @@ fn default_llama_binary() -> PathBuf {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "eefn=info".into()),
@@ -189,6 +375,41 @@ async fn main() -> Result<()> {
     let mut args = Args::parse();
     if args.config == PathBuf::from("config.json") && install_dir.join("config.json").is_file() {
         args.config = install_dir.join("config.json");
+    }
+    if let Some(command) = &args.command {
+        match execute_command(&args, command).await {
+            Ok(value) => {
+                if args.json {
+                    println!("{}", serde_json::to_string(&value)?);
+                } else if value.get("nodes").is_some() || value.get("report_type").is_some() {
+                    println!("{}", serde_json::to_string_pretty(&value)?);
+                } else {
+                    println!(
+                        "Node: {} ({})",
+                        value["display_name"].as_str().unwrap_or(""),
+                        value["node_id"].as_str().unwrap_or("")
+                    );
+                    println!(
+                        "Advertised address: {}",
+                        value
+                            .pointer("/network/advertised_address")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("not configured")
+                    );
+                    println!("{}", serde_json::to_string_pretty(&value)?);
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                if args.json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"schema_version":1,"success":false,"error_code":"command_failed","error":error.to_string()})
+                    );
+                }
+                return Err(error);
+            }
+        }
     }
     // Submit through the already running node instead of registering its identity
     // a second time. Hold the instance lock during standalone --ask as well.
@@ -240,7 +461,7 @@ async fn main() -> Result<()> {
                 Some(lock) => Some(lock),
                 None => {
                     let config = load_file(&args.config)?.dashboard.unwrap_or_default();
-                    if args.open_dashboard {
+                    if args.open_dashboard && !args.no_ui {
                         eefn::setup::open_dashboard(&config.host, config.port);
                     }
                     return Ok(());
@@ -253,7 +474,7 @@ async fn main() -> Result<()> {
     let _ = eefn::setup::pair_local(&args.config)?;
     let file = load_file(&args.config)?;
     let mut dashboard_config = file.dashboard.unwrap_or_default();
-    let dashboard = NodeDashboard::new(
+    let dashboard = NodeService::new(
         args.config.clone(),
         initial["node_id"].as_str().unwrap().into(),
     );
@@ -262,13 +483,13 @@ async fn main() -> Result<()> {
     let mut dashboard_task = if dashboard_config.enabled && interactive {
         Some(
             dashboard
-                .start(&dashboard_config.host, dashboard_config.port)
+                .start_with_ui(&dashboard_config.host, dashboard_config.port, !args.no_ui)
                 .await?,
         )
     } else {
         None
     };
-    if args.open_dashboard && dashboard_task.is_some() {
+    if args.open_dashboard && !args.no_ui && dashboard_task.is_some() {
         eefn::setup::open_dashboard(&dashboard_config.host, dashboard_config.port);
     }
     let discovery = if interactive {
@@ -295,7 +516,11 @@ async fn main() -> Result<()> {
                     || next.enabled != dashboard_config.enabled)
             {
                 let replacement = if next.enabled {
-                    Some(dashboard.start(&next.host, next.port).await?)
+                    Some(
+                        dashboard
+                            .start_with_ui(&next.host, next.port, !args.no_ui)
+                            .await?,
+                    )
                 } else {
                     None
                 };
@@ -349,9 +574,10 @@ impl Drop for AbortTask {
     }
 }
 
-async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeDashboard>) -> Result<()> {
+async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>) -> Result<()> {
     let mut file = load_file(&args.config)?;
     merge_args(&mut file, &args);
+    file.network.validate()?;
 
     if args.rollback {
         let version = eefn::updater::rollback(&install_dir)?;
@@ -481,7 +707,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeDashboar
     let media = permissions.media.clone();
     let mut engine = NodeEngine::new(false, vec![], install_dir.clone())?
         .with_resources(file.node_id.clone(), file.metadata.clone())?
-        .with_dashboard(dashboard.clone())
+        .with_service(dashboard.clone())
         .with_policy(permissions)?
         .with_update_manifest(manifest)
         .with_ollama(
@@ -533,7 +759,9 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeDashboar
     {
         let mut status = dashboard.live.lock().unwrap();
         status["hardware"] = hardware;
+        status["runtime_id"] = serde_json::json!(uuid::Uuid::new_v4().to_string());
         status["metadata"] = serde_json::json!(file.metadata.advertised(&engine.capabilities()));
+        status["network"] = serde_json::json!(file.network);
         status["name"] = serde_json::json!(file.name);
         status["permissions"] = serde_json::json!(file.permissions);
         status["pending_restart"] = serde_json::json!(false);
@@ -548,6 +776,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeDashboar
         Some(
             NodeClient::new(
                 NodeClientConfig {
+                    network: file.network,
                     metadata: file.metadata,
                     endpoints: file.endpoints,
                     node_id: file.node_id,
@@ -605,7 +834,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeDashboar
 fn start_update_monitor(
     config: Option<&UpdateConfig>,
     install_dir: PathBuf,
-    dashboard: Arc<eefn::dashboard::NodeDashboard>,
+    dashboard: Arc<eefn::NodeService>,
 ) -> Result<Option<tokio::task::JoinHandle<()>>> {
     let Some(config) = config else {
         return Ok(None);
@@ -763,6 +992,34 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_commands_require_complete_coordinator_metadata() {
+        Args::try_parse_from([
+            "eefn",
+            "network",
+            "set",
+            "--advertise-address",
+            "26.1.2.3",
+            "--json",
+        ])
+        .unwrap();
+        Args::try_parse_from(["eefn", "--no-ui"]).unwrap();
+        assert!(
+            Args::try_parse_from(["eefn", "network", "set", "--coordinator-id", "eef-a"]).is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "network",
+                "set",
+                "--advertise-address",
+                "26.1.2.3",
+                "--clear-address"
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn explicit_model_selection_parses_without_model_assumptions() {

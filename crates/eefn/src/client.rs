@@ -73,6 +73,8 @@ fn text_modality() -> String {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeClientConfig {
     #[serde(default)]
+    pub network: crate::network::NetworkAdvertisement,
+    #[serde(default)]
     pub metadata: crate::context::NodeMetadata,
     pub endpoints: Vec<CoordinatorEndpoint>,
     pub node_id: String,
@@ -124,6 +126,7 @@ impl Drop for AbortTask {
 impl NodeClient {
     pub fn new(mut config: NodeClientConfig, engine: Arc<NodeEngine>) -> Result<Self> {
         config.metadata.validate()?;
+        config.network.validate()?;
         if config.endpoints.is_empty() {
             bail!("at least one coordinator endpoint is required")
         }
@@ -176,6 +179,15 @@ impl NodeClient {
 
     fn connection_status(&self, state: &str, address: &str, error: Option<String>, retry: f64) {
         let mut status = self.status.lock().expect("connection status");
+        let counter = match state {
+            "checking" => Some("connection_checks"),
+            "connected" => Some("successful_connections"),
+            "disconnected" => Some("failed_connection_attempts"),
+            _ => None,
+        };
+        if let Some(key) = counter {
+            status[key] = json!(status[key].as_u64().unwrap_or(0).saturating_add(1));
+        }
         status["connection"] =
             json!({"state":state,"address":address,"last_error":error,"retry_seconds":retry});
     }
@@ -231,6 +243,7 @@ impl NodeClient {
     ) -> Value {
         let mut message = build_register(node_id, name, version, capabilities, specs, models);
         message["metadata"] = json!(self.config.metadata.advertised(capabilities));
+        message["network"] = json!(self.config.network);
         message
     }
 
@@ -796,6 +809,7 @@ mod tests {
             Arc::new(NodeEngine::new(false, vec![], std::env::current_dir().unwrap()).unwrap());
         let client = NodeClient::new(
             NodeClientConfig {
+                network: Default::default(),
                 metadata: Default::default(),
                 endpoints: parsed,
                 node_id: "node-test".into(),
@@ -814,6 +828,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(client.config.endpoints[0].priority, 100);
+    }
+
+    #[test]
+    fn local_connection_does_not_replace_advertised_address() {
+        let mut client = probe_client("127.0.0.1:51335".parse().unwrap());
+        client.config.network.advertised_address = Some("26.1.2.3".into());
+        let message = client.registration("stable", "Laptop", "test", &[], &json!({}), &[]);
+        assert_eq!(message["network"]["advertised_address"], "26.1.2.3");
+        assert_eq!(client.config.endpoints[0].address, "127.0.0.1:51335");
+        assert_eq!(message["node_id"], "stable");
     }
 
     #[tokio::test]

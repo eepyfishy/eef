@@ -6,6 +6,7 @@ pub mod assistant;
 pub mod brain;
 pub mod capability;
 pub mod config;
+pub mod discovery;
 pub mod event;
 pub mod firmware;
 pub mod jobs;

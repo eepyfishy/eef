@@ -69,6 +69,7 @@ impl WorldState {
                 if let Some(id) = event.data.get("node_id").and_then(Value::as_str) {
                     state.nodes.insert(id.into(), json!({
                     "node_id": id, "name": event.data.get("name").and_then(Value::as_str).unwrap_or(id),
+                    "network":event.data.get("network"),
                     "capabilities": event.data.get("capabilities").cloned().unwrap_or_else(|| json!([])), "connected": true,
                     "last_seen_ms":eefn::protocol::now_ms(),"specs":event.data.get("specs"),"models":event.data.get("models"),"metadata":event.data.get("metadata"),
                 }));

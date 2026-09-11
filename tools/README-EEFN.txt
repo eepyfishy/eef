@@ -1,5 +1,9 @@
 EEFN node for Windows
 
+v0.4.0a2 diagnostic alpha. See TWO_PC_TEST.md. Use eefn.exe network diagnose
+--json for a minimal local report, or network show/set/peers for network commands.
+No reports upload automatically. Pairing codes and raw config must stay private.
+
 This directory was created by eefn-installer.exe. Open EEF Node from Start >
 EEF. Do not move the app into Downloads. Startup is optional in Settings.
 

@@ -41,6 +41,23 @@ struct StartupRequest {
     enabled: bool,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct InviteRequest {
+    address: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProbeRequest {
+    node_id: String,
+    #[serde(default = "probe_samples")]
+    samples: usize,
+}
+fn probe_samples() -> usize {
+    3
+}
+
 #[derive(Deserialize)]
 struct InvokeRequest {
     capability: String,
@@ -107,6 +124,8 @@ pub fn router(runtime: Arc<Runtime>) -> Router {
         .route("/api/network/invite", post(invite))
         .route("/api/devices/{node_id}/manage", post(device_manage))
         .route("/api/status", get(status))
+        .route("/api/diagnostics", get(diagnostics))
+        .route("/api/diagnostics/probe", post(diagnostic_probe))
         .route("/api/config", get(config_get).put(config_save))
         .route("/api/startup", get(startup_get).put(startup_set))
         .route("/api/world", get(world))
@@ -172,16 +191,38 @@ async fn restart(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
     });
     Json(json!({"restarting":true}))
 }
-async fn invite(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
+async fn invite(
+    State(runtime): State<Arc<Runtime>>,
+    request: Option<Json<InviteRequest>>,
+) -> ApiResult<Value> {
     use base64::Engine;
     let secret = std::env::var("EEF_NODE_PSK")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| runtime.config.string("node.psk", ""));
-    let value = json!({"name":format!("EEF on {}",eefn::setup::hostname()),"address":format!("{}:{}",eefn::setup::hostname(),runtime.node_server.port()),"psk":secret});
-    Json(
+    let address = request
+        .and_then(|r| r.0.address)
+        .unwrap_or_else(|| format!("{}:{}", eefn::setup::hostname(), runtime.node_server.port()));
+    eefn::network::validate_address(&address, true)?;
+    let value =
+        json!({"name":format!("EEF on {}",eefn::setup::hostname()),"address":address,"psk":secret});
+    Ok(Json(
         json!({"code":base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&value).unwrap())}),
-    )
+    ))
+}
+
+async fn diagnostics(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
+    Json(runtime.diagnostics().await)
+}
+async fn diagnostic_probe(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<ProbeRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        runtime
+            .diagnostic_probe(&request.node_id, request.samples)
+            .await?,
+    ))
 }
 async fn status(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
     Json(runtime.summary().await)

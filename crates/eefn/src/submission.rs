@@ -37,6 +37,7 @@ impl SubmissionMailbox {
         if !matches!(
             kind,
             "message"
+                | "network.peers"
                 | "jobs.list"
                 | "jobs.get"
                 | "jobs.create"

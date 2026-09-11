@@ -1,5 +1,18 @@
 # v0.4.0 implementation and acceptance tracker
 
+## Superseded planning order (2026-09-11)
+
+The active plan is now [Command-first core roadmap](ROADMAP-CORE.md), based on
+the owner's post-alpha architecture proposal. Visual UI work is paused; commands,
+automation and core services take priority. Future normal PC node setup will
+bootstrap a configurable lightweight LM, superseding this tracker's earlier
+no-initial-model policy. Published v0.4.0a behavior has not changed.
+
+The milestone table, requirements and dated checkpoints below are retained as
+historical evidence, not the current implementation order. See
+[release evidence](RELEASE-0.4.0a.md) for the final 84-test alpha validation;
+earlier checkpoint counts/version/no-release statements describe their own dates.
+
 Status: the owner approved a reduced **v0.4.0a alpha** release on 2026-09-07.
 The full roadmap remains in progress. Existing v0.3.2 artifacts and stable update
 feeds are preserved; the alpha is opt-in and does not claim deferred milestones.

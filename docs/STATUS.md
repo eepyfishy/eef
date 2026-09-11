@@ -1,11 +1,41 @@
 # Architecture conformance status
 
+## v0.4.0a2 diagnostic alpha
+
+Workspace version `0.4.0-alpha.2` packages the command/service and scoped-discovery
+increments below, plus minimal local diagnostics, authenticated ping/latency
+probes and explicit-address private pairing codes. See
+[release scope](RELEASE-0.4.0a2.md) and [two-PC testing](TWO_PC_TEST.md).
+98 Rust tests passed before packaging. Physical second-PC acceptance follows
+installation; MSI, default LM, independent peer credentials and leases are not
+claimed by this test release. Diagnostic reports are local, not automatic uploads.
+
+## Active direction (2026-09-11)
+
+[Command-first core roadmap](ROADMAP-CORE.md) supersedes the original milestone
+order. UI polish is paused. Shared command services, identity/address separation,
+coordinator advertisements, general model lists, a default lightweight node LM,
+structured interpretation, authorized workloads and local/peer execution are
+the next increments. Most are still planned extensions, not completed features.
+The published v0.4.0a implementation below remains the baseline; its installers
+still do not supply/download a model.
+
+Unreleased implementation: shared `NodeService` state/model operations, network
+show/set commands, API-only `--no-ui`, validated independent node/coordinator
+advertisements and EEF node-view propagation. 91 Rust tests and command/browser
+integration passed; see [commands and limitations](COMMANDS.md). Peer-address
+distribution is now implemented as exact owner-scoped pull discovery with
+monotonic freshness and bounded sanitized pages (`network peers`). Discovery
+does not authorize direct communication. Leases, general model metadata,
+default LM and MSI remain pending. The discovery follow-up passed 97 Rust tests
+and a two-logical-node command integration test; physical acceptance is pending.
+
 ## v0.4.0a alpha scope
 
 The workspace is `0.4.0-alpha.1`, presented as **0.4.0a**. The owner approved
 shipping this reduced alpha scope and deferring the remaining features.
 See [RELEASE-0.4.0a.md](RELEASE-0.4.0a.md) and [ROADMAP-0.4.0.md](ROADMAP-0.4.0.md)
-for the owner-approved prerequisites and seven milestones. They are not all
+for the historical prerequisites and seven milestones. They are not all
 implemented; development now covers the reliability prerequisite and an
 origin/area/resource-routing, model management, and durable one-shot job
 implementations with automated acceptance checks.
