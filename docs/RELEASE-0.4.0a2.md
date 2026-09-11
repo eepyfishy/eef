@@ -64,5 +64,36 @@ two-node tests on one PC do not prove physical two-PC/overlay connectivity; that
 acceptance takes place after both PCs install this build. A successful ping does
 not establish inference, media or stateful-job correctness.
 
-Final build provenance, hashes and validation evidence are recorded below after
-packaging. The prerelease has exactly two downloadable installers.
+## Build and validation evidence
+
+Built from clean source commit
+`ecbb9ec1758b3b385297b6e9211e1fe5bf6d498f` (`source_dirty: false`). The release
+tag includes a subsequent documentation-only evidence commit. Installed packages
+contain `provenance.json` and `files.sha256.json`; third-party download hashes
+were checked during packaging. The prerelease has exactly two installer assets.
+
+Validated on 2026-09-11:
+
+- 98 locked Rust workspace tests passed, followed by optimized Windows builds.
+- Final bundled binaries passed command/diagnostic/private-invite integration,
+  scoped discovery with two logical nodes, and first-run/browser integration.
+- Dashboard initialization and copy-stability regression passed.
+- Both installers passed isolated install/upgrade/config-preservation, startup
+  opt-in/out and stale-version-selection backup tests. Installed inventory hashes
+  and versions matched; bundled Python media imports and llama-server startup passed.
+- Both native installer wizards completed through Finish, with no preview opened.
+- Local Defender scans passed for first-party binaries, runtime archives, the
+  unpacked bundle and both final installers. Engine `1.1.26080.3`; packaging
+  definitions `1.459.151.0`; final installer retests `1.459.154.0`. Real-time
+  protection remained enabled. These are local scan results, not Microsoft review.
+
+Local evidence is retained under `.validation/`: `v0.4.0-alpha.2`,
+`node-commands-uqSQ9y`, `peer-discovery-Y4yl4B`, `first-run-Fizikl`,
+`install-test-e146c7f6b50c4ddd8611791ca6954491` and
+`wizard-test-e022d1a3897f4e628f8c30685c0ef3d8`. Fixtures and raw reports are not
+release assets. Physical two-PC acceptance is still pending.
+
+| Installer | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `eef-installer.exe` | 17,689,081 | `3d5c14c0a946ddc3fe02987acf254e16dd222cbfba0213d1f2f6f3702e11aa2a` |
+| `eefn-installer.exe` | 109,453,396 | `b66ed4d9a3d7d6ee4c6031a7d62bea18f7ee46eca954168dea37dbdd1fb6b3a5` |

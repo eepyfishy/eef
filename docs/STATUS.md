@@ -6,7 +6,8 @@ Workspace version `0.4.0-alpha.2` packages the command/service and scoped-discov
 increments below, plus minimal local diagnostics, authenticated ping/latency
 probes and explicit-address private pairing codes. See
 [release scope](RELEASE-0.4.0a2.md) and [two-PC testing](TWO_PC_TEST.md).
-98 Rust tests passed before packaging. Physical second-PC acceptance follows
+98 Rust tests and final packaged command/discovery/first-run/browser and installer
+validation passed; hashes and scan details are in the release notes. Physical second-PC acceptance follows
 installation; MSI, default LM, independent peer credentials and leases are not
 claimed by this test release. Diagnostic reports are local, not automatic uploads.
 
@@ -20,7 +21,7 @@ the next increments. Most are still planned extensions, not completed features.
 The published v0.4.0a implementation below remains the baseline; its installers
 still do not supply/download a model.
 
-Unreleased implementation: shared `NodeService` state/model operations, network
+Implementation packaged in v0.4.0a2: shared `NodeService` state/model operations, network
 show/set commands, API-only `--no-ui`, validated independent node/coordinator
 advertisements and EEF node-view propagation. 91 Rust tests and command/browser
 integration passed; see [commands and limitations](COMMANDS.md). Peer-address
@@ -32,7 +33,7 @@ and a two-logical-node command integration test; physical acceptance is pending.
 
 ## v0.4.0a alpha scope
 
-The workspace is `0.4.0-alpha.1`, presented as **0.4.0a**. The owner approved
+The earlier workspace was `0.4.0-alpha.1`, presented as **0.4.0a**. The owner approved
 shipping this reduced alpha scope and deferring the remaining features.
 See [RELEASE-0.4.0a.md](RELEASE-0.4.0a.md) and [ROADMAP-0.4.0.md](ROADMAP-0.4.0.md)
 for the historical prerequisites and seven milestones. They are not all
