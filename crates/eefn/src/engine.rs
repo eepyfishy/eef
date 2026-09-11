@@ -866,6 +866,15 @@ impl NodeEngine {
     }
 
     async fn infer(&self, capability: &str, params: Value) -> Result<Value> {
+        let backend = params
+            .get("backend")
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|backend| matches!(*backend, "ollama" | "llamacpp"))
+                    .context("backend must be ollama or llamacpp")
+            })
+            .transpose()?;
         let model = params
             .get("model")
             .and_then(Value::as_str)
@@ -873,11 +882,15 @@ impl NodeEngine {
             .context("model is required and must be selected in the node configuration")?;
         if let Some(server) = &self.model_server
             && server.slot(Some(model)).is_some()
+            && backend != Some("ollama")
         {
             if capability == "vlm.analyze" && !server.slot(Some(model)).unwrap().is_vlm() {
                 bail!("This local model has no vision projector configured")
             }
             return self.llamacpp(server, &params).await;
+        }
+        if backend == Some("llamacpp") {
+            bail!("model is not selected on the requested llama.cpp backend")
         }
         let modality = self
             .ollama_models
@@ -1494,6 +1507,24 @@ mod tests {
         );
         assert!(!allowed.capabilities().contains(&"llm.infer".to_owned()));
         assert!(!allowed.capabilities().contains(&"vlm.analyze".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn explicit_model_backend_cannot_silently_fall_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = NodeEngine::new(false, vec![], dir.path().into()).unwrap();
+        for backend in [json!("future"), json!(null), json!(1)] {
+            let error = engine
+                .infer("llm.infer", json!({"model":"m","backend":backend}))
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("backend must be"));
+        }
+        let error = engine
+            .infer("llm.infer", json!({"model":"m","backend":"llamacpp"}))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("requested llama.cpp backend"));
     }
 
     #[test]

@@ -1,5 +1,34 @@
 # Architecture conformance status
 
+## Unreleased versioned model metadata checkpoint
+
+- Added a shared, bounded `model_metadata` registration schema: multiple
+  capabilities/input/output modalities, optional roles, lifecycle, availability
+  and resource estimates. New Ollama/GGUF advertisements preserve legacy fields.
+  Unknown values remain unknown; model names never infer capabilities.
+- Registration validates the entire model snapshot before replacing it, including
+  empty snapshots. Other nodes and load metrics are preserved. Duplicate identities
+  and malformed/unsupported metadata are rejected, not silently downgraded.
+- Inventory and scoped peer discovery carry validated metadata. Existing text/vision
+  routing filters declared capabilities, input/output support and unavailable/error/
+  loading state. Backend-specific failures no longer poison another backend's model;
+  updated nodes enforce an explicitly requested backend without silent fallback.
+- General owner configuration for non-text/vision models, role-based planning,
+  default LM, resource-aware admission, lifecycle controllers and leases remain
+  pending. See [contract and compatibility](MODEL-METADATA.md). No UI changes.
+- 124 Rust tests passed. Isolated fake-backend protocol tests passed with both
+  development binaries (`.validation/model-metadata-wnlYlL`) and the published older
+  node (`.validation/model-metadata-G5SVAH`), using separate temporary configs.
+  They verify registration, CLI/inventory, stable identity, model-list clearing,
+  and new-node backend enforcement. These are not real inference or two-PC tests.
+- Command integration (`.validation/node-commands-uOMOCv`) and scoped discovery
+  (`.validation/peer-discovery-rxQzSI`), first-run/job persistence
+  (`.validation/first-run-OQ15vZ`), and dashboard copying/focus regressions passed.
+  Validation recorded on 2026-09-12. Published
+  installers/feeds and both real installed apps remain unchanged; no model was
+  downloaded. No signing or Microsoft clearance is claimed for this checkpoint.
+  Both real nodes remained connected; installed executable hashes were unchanged.
+
 ## Unreleased model-inventory and approved restart checkpoint
 
 - After the owner enabled local remote management, the physical second-PC node

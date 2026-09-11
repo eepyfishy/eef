@@ -15,6 +15,7 @@ use crate::event::EventBus;
 pub enum Modality {
     Text,
     Vlm,
+    Other,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -45,6 +46,8 @@ pub struct ModelSpec {
     pub status: ModelStatus,
     #[serde(default)]
     pub size_bytes: u64,
+    #[serde(default)]
+    pub model_metadata: Option<eefn::model_metadata::ModelMetadata>,
 }
 
 fn unknown() -> String {
@@ -82,22 +85,23 @@ impl ModelRegistry {
         values.push(spec);
     }
 
-    pub fn register_remote(&self, node_id: &str, models: &[Value]) {
-        for entry in models {
-            let Some(model_id) = entry
-                .get("model_id")
-                .and_then(Value::as_str)
-                .filter(|id| !id.is_empty())
-            else {
-                continue;
+    pub fn register_remote(&self, node_id: &str, models: &[Value]) -> Result<()> {
+        // Validate the complete snapshot before replacing any live entries.
+        let record = eefn::network::PeerRecord::from_registration(
+            &json!({"node_id":node_id,"models":models}),
+        )?;
+        let mut replacements = Vec::new();
+        for (advertised, entry) in record.models.into_iter().zip(models) {
+            let metadata = advertised.normalized_metadata();
+            let modality = if metadata.supports("vlm.analyze") {
+                Modality::Vlm
+            } else if metadata.supports("llm.infer") {
+                Modality::Text
+            } else {
+                Modality::Other
             };
-            let modality = match entry.get("modality").and_then(Value::as_str) {
-                Some("vlm") => Modality::Vlm,
-                Some("text") => Modality::Text,
-                _ => continue,
-            };
-            self.register(ModelSpec {
-                model_id: model_id.into(),
+            replacements.push(ModelSpec {
+                model_id: advertised.model_id,
                 modality,
                 family: entry
                     .get("family")
@@ -119,8 +123,22 @@ impl ModelRegistry {
                 node_id: node_id.into(),
                 status: ModelStatus::Unloaded,
                 size_bytes: 0,
+                model_metadata: Some(metadata),
             });
         }
+        let mut state = self.state.write().expect("model lock");
+        state.models.retain(|_, specs| {
+            specs.retain(|spec| spec.node_id != node_id);
+            !specs.is_empty()
+        });
+        for spec in replacements {
+            state
+                .models
+                .entry(spec.model_id.clone())
+                .or_default()
+                .push(spec);
+        }
+        Ok(())
     }
 
     pub fn remove_node(&self, node_id: &str) {
@@ -193,14 +211,18 @@ impl ModelRegistry {
         chain
     }
 
-    pub fn set_status(&self, model_id: &str, node_id: &str, status: ModelStatus) {
+    pub fn set_status(&self, model_id: &str, node_id: &str, backend: &str, status: ModelStatus) {
         if let Some(spec) = self
             .state
             .write()
             .expect("model lock")
             .models
             .get_mut(model_id)
-            .and_then(|values| values.iter_mut().find(|spec| spec.node_id == node_id))
+            .and_then(|values| {
+                values
+                    .iter_mut()
+                    .find(|spec| spec.node_id == node_id && spec.backend == backend)
+            })
         {
             spec.status = status;
         }
@@ -208,9 +230,25 @@ impl ModelRegistry {
 }
 
 fn available(spec: &ModelSpec, request: &ModelRequest) -> bool {
+    let capability = match request.modality {
+        Modality::Text => "llm.infer",
+        Modality::Vlm => "vlm.analyze",
+        Modality::Other => return false, // No generic executor is implemented yet.
+    };
+    let metadata = spec.model_metadata.clone().unwrap_or_else(|| {
+        eefn::model_metadata::ModelMetadata::from_legacy(Some(match spec.modality {
+            Modality::Text => "text",
+            Modality::Vlm => "vlm",
+            Modality::Other => "other",
+        }))
+    });
     if spec.status == ModelStatus::Unavailable
-        || (spec.modality != request.modality
-            && !(spec.modality == Modality::Vlm && request.modality == Modality::Text))
+        || !metadata.supports(capability)
+        || !metadata.routable()
+        || !metadata.input_modalities.iter().any(|m| m == "text")
+        || !metadata.output_modalities.iter().any(|m| m == "text")
+        || (request.modality == Modality::Vlm
+            && !metadata.input_modalities.iter().any(|m| m == "image"))
     {
         return false;
     }
@@ -305,7 +343,7 @@ impl LlmService {
         }
         let mut last = None;
         for spec in chain.into_iter().filter(|spec| spec.node_id != "local") {
-            let result = self.remote_chat(&spec, &messages, &options).await;
+            let result = self.remote_chat(&spec, modality, &messages, &options).await;
             match result {
                 Ok(content) if !content.is_empty() => {
                     self.bus.publish("model.used", json!({"node_id": spec.node_id, "model_id": spec.model_id, "tier": options.tier,"request_context":options.request_context})).await;
@@ -317,6 +355,7 @@ impl LlmService {
                     self.registry.set_status(
                         &spec.model_id,
                         &spec.node_id,
+                        &spec.backend,
                         ModelStatus::Unavailable,
                     );
                     last = Some(error);
@@ -341,6 +380,7 @@ impl LlmService {
     async fn remote_chat(
         &self,
         spec: &ModelSpec,
+        modality: Modality,
         messages: &Value,
         options: &ChatOptions,
     ) -> Result<String> {
@@ -357,8 +397,8 @@ impl LlmService {
                     json!({"role": "system", "content": options.system_prompt}),
                 );
         }
-        let response = self.node_server.invoke_remote_with_context(&spec.node_id, if spec.modality == Modality::Vlm { "vlm.analyze" } else { "llm.infer" }, "run", json!({
-            "model": spec.model_id, "messages": messages, "images": options.images, "max_tokens": options.max_tokens, "temperature": options.temperature,
+        let response = self.node_server.invoke_remote_with_context(&spec.node_id, if modality == Modality::Vlm { "vlm.analyze" } else { "llm.infer" }, "run", json!({
+            "model": spec.model_id, "backend":spec.backend, "messages": messages, "images": options.images, "max_tokens": options.max_tokens, "temperature": options.temperature,
         }), Duration::from_secs(60),options.request_context.as_ref()).await?;
         if response.get("success").and_then(Value::as_bool) != Some(true) {
             bail!(
@@ -412,6 +452,113 @@ impl Default for ChatOptions {
 mod tests {
     use super::*;
 
+    fn text_request() -> ModelRequest {
+        ModelRequest {
+            modality: Modality::Text,
+            tier: None,
+            model_id: None,
+            constraints: json!({}),
+        }
+    }
+
+    #[test]
+    fn explicit_capabilities_override_legacy_and_unknown_models_remain_visible() {
+        let registry = ModelRegistry::default();
+        let mut metadata = eefn::model_metadata::ModelMetadata::from_legacy(Some("vlm"));
+        metadata.capabilities = vec!["vlm.analyze".into(), "ocr".into()];
+        registry.register_remote("node", &[
+            json!({"model_id":"multi","backend":"ollama","modality":"text","model_metadata":metadata}),
+            json!({"model_id":"legacy","backend":"ollama","modality":"text"}),
+            json!({"model_id":"unknown","backend":"future"}),
+        ]).unwrap();
+        assert_eq!(registry.list().len(), 3);
+        assert_eq!(
+            registry
+                .route(&text_request(), &BTreeMap::new())
+                .iter()
+                .map(|s| s.model_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["legacy"]
+        );
+        let vision = ModelRequest {
+            modality: Modality::Vlm,
+            ..text_request()
+        };
+        assert_eq!(
+            registry.route(&vision, &BTreeMap::new())[0].model_id,
+            "multi"
+        );
+    }
+
+    #[test]
+    fn replacement_removes_stale_models_and_invalid_snapshot_is_atomic() {
+        let registry = ModelRegistry::default();
+        let m = json!({"model_id":"m","backend":"ollama","modality":"text"});
+        registry.register_remote("a", &[m.clone()]).unwrap();
+        registry.register_remote("b", &[m.clone()]).unwrap();
+        assert!(
+            registry
+                .register_remote("a", &[m.clone(), m.clone()])
+                .is_err()
+        );
+        assert_eq!(registry.list().len(), 2);
+        let mut invalid = m.clone();
+        invalid["model_metadata"] = json!({"schema_version":99});
+        assert!(registry.register_remote("a", &[invalid]).is_err());
+        assert_eq!(registry.list().len(), 2);
+        registry.register_remote("a", &[]).unwrap();
+        assert_eq!(registry.list().len(), 1);
+        assert_eq!(registry.list()[0].node_id, "b");
+    }
+
+    #[test]
+    fn unavailable_reports_and_backend_specific_failures_are_not_routed() {
+        let registry = ModelRegistry::default();
+        let mut metadata = eefn::model_metadata::ModelMetadata::from_legacy(Some("text"));
+        metadata.lifecycle = Some(eefn::model_metadata::ModelLifecycle::Error);
+        registry
+            .register_remote(
+                "a",
+                &[
+                    json!({"model_id":"m","backend":"ollama","modality":"text"}),
+                    json!({"model_id":"m","backend":"llamacpp","modality":"text"}),
+                    json!({"model_id":"broken","backend":"ollama","model_metadata":metadata}),
+                ],
+            )
+            .unwrap();
+        registry.set_status("m", "a", "ollama", ModelStatus::Unavailable);
+        let route = registry.route(&text_request(), &BTreeMap::new());
+        assert_eq!(route.len(), 1);
+        assert_eq!(route[0].backend, "llamacpp");
+    }
+
+    #[test]
+    fn declared_io_modalities_must_support_the_chat_contract() {
+        let registry = ModelRegistry::default();
+        let mut metadata = eefn::model_metadata::ModelMetadata::from_legacy(Some("vlm"));
+        metadata.input_modalities = vec!["text".into()];
+        registry
+            .register_remote("a", &[json!({"model_id":"m","model_metadata":metadata})])
+            .unwrap();
+        assert_eq!(registry.route(&text_request(), &BTreeMap::new()).len(), 1);
+        assert!(
+            registry
+                .route(
+                    &ModelRequest {
+                        modality: Modality::Vlm,
+                        ..text_request()
+                    },
+                    &BTreeMap::new()
+                )
+                .is_empty()
+        );
+        metadata.output_modalities = vec!["audio".into()];
+        registry
+            .register_remote("a", &[json!({"model_id":"m","model_metadata":metadata})])
+            .unwrap();
+        assert!(registry.route(&text_request(), &BTreeMap::new()).is_empty());
+    }
+
     #[test]
     fn load_routing_uses_live_node_metrics() {
         let registry = ModelRegistry::default();
@@ -427,6 +574,7 @@ mod tests {
                 node_id: node.into(),
                 status: ModelStatus::Unloaded,
                 size_bytes: 0,
+                model_metadata: None,
             });
         }
         registry.update_metrics("busy", 0.9, 0.0);

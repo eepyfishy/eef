@@ -429,7 +429,8 @@ mod tests {
                 eefn::network::PeerModel {
                     model_id: "m".repeat(256),
                     backend: Some("b".repeat(64)),
-                    modality: Some("v".repeat(64))
+                    modality: Some("v".repeat(64)),
+                    model_metadata: None,
                 };
                 64
             ];

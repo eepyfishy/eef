@@ -220,3 +220,8 @@ The subsequent read-only GET `/api/commands/models` lists registered model
 metadata with node/capability filtering and bounded node pages. It does not scan
 backends, load/download models or change scheduling. Unreported model lifecycle,
 roles and resource estimates remain null; see the command reference for scope.
+
+The development registration contract now also accepts bounded, versioned
+`model_metadata` per model. Inventory and peer projection preserve validated
+metadata; missing optional state remains null. See [schema, compatibility and
+route filtering](MODEL-METADATA.md). This does not grant execution access.

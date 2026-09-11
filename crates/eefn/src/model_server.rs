@@ -42,14 +42,39 @@ impl ModelSlot {
     }
 
     pub fn advertise(&self) -> Value {
+        let modality = if self.is_vlm() { "vlm" } else { "text" };
         json!({
             "model_id": self.model_id,
             "backend": "llamacpp",
             "hardware": if self.gpu_layers != 0 { "gpu" } else { "cpu" },
             "vram_mb": self.gpu_vram_mb,
             "port": self.port,
-            "modality": if self.is_vlm() { "vlm" } else { "text" },
+            "modality": modality,
+            "model_metadata": crate::model_metadata::ModelMetadata::from_legacy(Some(modality)),
         })
+    }
+}
+
+#[cfg(test)]
+mod advertisement_tests {
+    use super::*;
+    #[test]
+    fn gguf_advertises_compatible_metadata_without_private_paths_or_fake_state() {
+        let mut slot: ModelSlot =
+            serde_json::from_value(json!({"model_id":"fixture", "model_path":"PRIVATE"})).unwrap();
+        for vision in [false, true] {
+            slot.mmproj_path = vision.then(|| PathBuf::from("PRIVATE-PROJECTOR"));
+            let value = slot.advertise();
+            assert!(!value.to_string().contains("PRIVATE"));
+            let metadata: crate::model_metadata::ModelMetadata =
+                serde_json::from_value(value["model_metadata"].clone()).unwrap();
+            metadata.validate().unwrap();
+            assert!(metadata.supports("llm.infer"));
+            assert_eq!(metadata.supports("vlm.analyze"), vision);
+            assert!(metadata.lifecycle.is_none());
+            assert!(metadata.resource_estimates.vram_mb.is_none());
+            assert_eq!(value["modality"], if vision { "vlm" } else { "text" });
+        }
     }
 }
 

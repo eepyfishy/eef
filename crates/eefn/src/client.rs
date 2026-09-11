@@ -668,7 +668,8 @@ pub async fn discover_models(
         .iter()
         .filter(|model| installed.contains(model.model_id.as_str()))
         .map(|model| {
-            json!({"model_id": model.model_id, "modality": model.modality, "backend": "ollama", "capabilities":if model.modality=="vlm" {vec!["llm.infer","vlm.analyze"]} else {vec!["llm.infer"]}})
+            let metadata = crate::model_metadata::ModelMetadata::from_legacy(Some(&model.modality));
+            json!({"model_id": model.model_id, "modality": model.modality, "backend": "ollama", "capabilities":metadata.capabilities,"model_metadata":metadata})
         })
         .collect()
 }

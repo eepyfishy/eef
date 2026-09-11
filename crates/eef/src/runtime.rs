@@ -352,8 +352,13 @@ impl Runtime {
                 last_heartbeat_ms: eefn::protocol::now_ms(),
             });
         }
-        if let Some(models) = message.get("models").and_then(Value::as_array) {
-            self.model_registry.register_remote(node_id, models);
+        let models = message
+            .get("models")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if let Err(error) = self.model_registry.register_remote(node_id, models) {
+            warn!(%error, "invalid registered model snapshot");
         }
         self.bus
             .publish(

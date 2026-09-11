@@ -10,6 +10,7 @@ pub mod dashboard;
 pub mod engine;
 pub mod firmware;
 pub mod model_manager;
+pub mod model_metadata;
 pub mod model_server;
 pub mod network;
 pub mod protocol;

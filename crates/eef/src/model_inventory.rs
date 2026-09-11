@@ -44,20 +44,11 @@ impl InventoryQuery {
 }
 
 fn model(node_id: &str, entry: &PeerModel) -> Value {
-    // Legacy modality is a compatibility hint, not measured model functionality.
-    let (capabilities, inputs, outputs) = match entry.modality.as_deref() {
-        Some("text") => (vec!["llm.infer"], vec!["text"], vec!["text"]),
-        Some("vlm") => (
-            vec!["llm.infer", "vlm.analyze"],
-            vec!["text", "image"],
-            vec!["text"],
-        ),
-        _ => (vec![], vec![], vec![]),
-    };
+    let metadata = entry.normalized_metadata();
     json!({"instance":{"node_id":node_id,"backend":entry.backend,"model_id":entry.model_id},
-        "capabilities":capabilities,"input_modalities":inputs,"output_modalities":outputs,
-        "legacy_modality":entry.modality,"metadata_source":"legacy_registration",
-        "roles":null,"lifecycle":null,"resource_estimates":{"ram_mb":null,"vram_mb":null,"size_bytes":null}})
+        "capabilities":metadata.capabilities,"input_modalities":metadata.input_modalities,"output_modalities":metadata.output_modalities,
+        "legacy_modality":entry.modality,"metadata_source":if entry.model_metadata.is_some(){"model_metadata_v1"}else{"legacy_registration"},
+        "roles":metadata.roles,"lifecycle":metadata.lifecycle,"availability":metadata.availability,"resource_estimates":metadata.resource_estimates})
 }
 
 pub async fn list(
@@ -142,13 +133,34 @@ fn page(
     Ok(
         json!({"schema_version":1,"success":true,"nodes":nodes,"next_after":next_after,
         "freshness_seconds":freshness_seconds,"scope":"connected_node_registrations","direct_access_authorized":false,
-        "note":"Advertised models only, not all installed files. Legacy modality supplies compatibility hints; unreported roles, load state and resources remain unknown. No download, load or inference was performed."}),
+        "note":"Advertised models only, not all installed files. Versioned metadata or legacy modality hints are node-reported, not verified functionality; unreported state/resources remain unknown. No download, load or inference was performed."}),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_metadata_reaches_inventory_without_legacy_overrides() {
+        let mut r = record("a");
+        let mut metadata = eefn::model_metadata::ModelMetadata::from_legacy(None);
+        metadata.capabilities = vec!["ocr".into(), "embedding".into()];
+        metadata.roles = Some(vec!["search".into()]);
+        metadata.lifecycle = Some(eefn::model_metadata::ModelLifecycle::Ready);
+        metadata.resource_estimates.ram_mb = Some(512);
+        r.models[0].model_metadata = Some(metadata);
+        let mut q = query();
+        q.capability = Some("ocr".into());
+        let result = page(vec![(r, Duration::ZERO)], 30, &q).unwrap();
+        let models = result["nodes"][0]["models"].as_array().unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["metadata_source"], "model_metadata_v1");
+        assert_eq!(models[0]["lifecycle"], "ready");
+        assert_eq!(models[0]["resource_estimates"]["ram_mb"], 512);
+        assert!(models[0]["resource_estimates"]["vram_mb"].is_null());
+        assert_eq!(models[0]["roles"], json!(["search"]));
+        assert_eq!(models[0]["capabilities"], json!(["ocr", "embedding"]));
+    }
     fn query() -> InventoryQuery {
         serde_json::from_value(json!({})).unwrap()
     }
@@ -200,6 +212,7 @@ mod tests {
             model_id: "unknown".into(),
             backend: None,
             modality: None,
+            model_metadata: None,
         };
         assert_eq!(model("a", &unknown)["capabilities"], json!([]));
     }
@@ -227,6 +240,7 @@ mod tests {
                     model_id: format!("{j:03}{}", "x".repeat(250)),
                     backend: Some("b".repeat(64)),
                     modality: Some("vlm".into()),
+                    model_metadata: None,
                 })
                 .collect();
             records.push((r, Duration::ZERO));

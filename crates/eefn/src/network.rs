@@ -236,6 +236,16 @@ pub struct PeerModel {
     pub model_id: String,
     pub backend: Option<String>,
     pub modality: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_metadata: Option<crate::model_metadata::ModelMetadata>,
+}
+
+impl PeerModel {
+    pub fn normalized_metadata(&self) -> crate::model_metadata::ModelMetadata {
+        self.model_metadata.clone().unwrap_or_else(|| {
+            crate::model_metadata::ModelMetadata::from_legacy(self.modality.as_deref())
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -301,11 +311,27 @@ impl PeerRecord {
                 let model_id = field(model, "model_id", 256)?
                     .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow::anyhow!("registration model needs model_id"))?;
+                let model_metadata = model
+                    .get("model_metadata")
+                    .map(|raw| {
+                        let metadata: crate::model_metadata::ModelMetadata =
+                            serde_json::from_value(raw.clone())?;
+                        metadata.validate()?;
+                        Ok::<_, anyhow::Error>(metadata)
+                    })
+                    .transpose()?;
                 models.push(PeerModel {
                     model_id,
                     backend: field(model, "backend", 64)?,
                     modality: field(model, "modality", 64)?,
+                    model_metadata,
                 });
+            }
+        }
+        let mut identities = std::collections::BTreeSet::new();
+        for model in &models {
+            if !identities.insert((&model.backend, &model.model_id)) {
+                bail!("registration contains duplicate backend/model identities")
             }
         }
         Ok(Self {
@@ -329,6 +355,27 @@ pub struct CommandRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn versioned_models_preserve_metadata_without_private_fields() {
+        let metadata = crate::model_metadata::ModelMetadata::from_legacy(Some("vlm"));
+        let raw = serde_json::json!({"node_id":"a","models":[{"model_id":"m","backend":"ollama","model_metadata":metadata,"path":"SECRET"}]});
+        let record = PeerRecord::from_registration(&raw).unwrap();
+        assert_eq!(record.models[0].normalized_metadata(), metadata);
+        assert!(!serde_json::to_string(&record).unwrap().contains("SECRET"));
+        let mut invalid = raw.clone();
+        invalid["models"][0]["model_metadata"]["schema_version"] = serde_json::json!(2);
+        assert!(PeerRecord::from_registration(&invalid).is_err());
+        invalid["models"][0]["model_metadata"] = serde_json::Value::Null;
+        assert!(PeerRecord::from_registration(&invalid).is_err());
+        let mut duplicate = raw.clone();
+        duplicate["models"]
+            .as_array_mut()
+            .unwrap()
+            .push(raw["models"][0].clone());
+        assert!(PeerRecord::from_registration(&duplicate).is_err());
+        duplicate["models"][1]["backend"] = serde_json::json!("llamacpp");
+        assert!(PeerRecord::from_registration(&duplicate).is_ok());
+    }
     #[test]
     fn peer_queries_and_registration_projections_are_bounded() {
         assert!(serde_json::from_str::<PeerQuery>(r#"{"requester":"forged"}"#).is_err());

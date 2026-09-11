@@ -97,16 +97,18 @@ model name on two backends/nodes remains distinct. Duplicate identities in a
 registration are rejected, not silently merged. Registration freshness is shown
 separately; stale metadata is not readiness or proof that inference will work.
 
-This first inventory slice normalizes **legacy** text/VLM registration hints to
-capability and input/output modality lists. Unrecognized modality supplies no
-capability hints. It does not inspect every installed file or backend, invent
-roles, measure residency/memory, or verify advertised capabilities. Unreported
+Inventory uses [versioned model metadata](MODEL-METADATA.md) when supplied, or
+normalizes legacy text/VLM hints when it is absent. `metadata_source` identifies
+which path was used. Unrecognized legacy modality supplies no capability hints.
+It does not inspect every installed file or backend, invent roles, measure
+residency/memory, or verify advertised capabilities. Unreported
 roles, lifecycle and resource estimates are `null`, not zero. Private paths,
 network addresses, configuration and credentials are not projected.
 
-No model is loaded/downloaded, no permission is granted and scheduling is unchanged.
-General multi-capability model configuration/registration, role bindings and
-capability-based scheduling remain later work. Published v0.4.0a2 installers do
+The command loads/downloads no model and grants no permission. The subsequent
+metadata increment makes existing text/vision routing respect advertised
+capabilities/state; general model configuration, role bindings and new capability
+executors remain later work. Published v0.4.0a2 installers do
 not include this new coordinator command; their nodes remain compatible.
 
 ## Node network commands (v0.4.0a2)

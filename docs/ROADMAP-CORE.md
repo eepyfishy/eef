@@ -98,7 +98,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | --- | --- | --- | --- |
 | 1 | Identity + advertised address | Local coordinator connection and different advertised address coexist; rename/address change preserves identity; command config/readback; old configs migrate. | Implemented in development; one-PC command tests passed; physical acceptance pending |
 | 2 | Coordinator advertisements + network view | Authenticated, bounded, fresh node listings and coordinator hints; authorized peer lookup; no automatic trust or claimed cluster election. | Scoped pull discovery, registration metadata and freshness implemented; owner grant/revoke and restart CLI added in development; no direct peer transport claim |
-| 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Read-only legacy inventory command added in development; general model configuration/registration and scheduling still planned |
+| 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned registration metadata and inventory added in development; text/vision routing filters declared capabilities/state; general configuration, roles and new executors remain planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | Planned |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Planned |
 | 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Planned |
@@ -355,6 +355,16 @@ Unknown roles, memory estimates and lifecycle remain unknown; model names do not
 infer capabilities. This does not change config, backend discovery, loading or
 scheduling, and does not complete step 3's general multi-capability contract.
 No model is downloaded or loaded by the command. See [command scope](COMMANDS.md).
+
+### Versioned model registration increment
+
+The subsequent increment adds a shared bounded metadata contract to existing
+registration, sanitized discovery, inventory and model routing. New Ollama/GGUF
+nodes emit it alongside legacy fields. Explicit capabilities override legacy
+labels; unknown metadata stays unknown. Node model snapshots replace atomically,
+and backend failure state is isolated. See [contract and remaining scope](MODEL-METADATA.md).
+General owner configuration for non-text/vision models, role-based scheduling,
+default LM bootstrap, leases and lifecycle controllers are not yet implemented.
 
 ## Installation direction: MSI
 
