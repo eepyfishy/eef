@@ -76,6 +76,55 @@ Set `EEF_LIVE_MODEL_INVENTORY=1` to also verify read-only model registration
 inventory on both nodes. This requires the development coordinator command below;
 it does not scan backends, download models or run inference.
 
+## Unreleased: node model selection commands
+
+These commands operate on the existing Ollama/GGUF configuration through the node
+core service, without JSON editing or a browser:
+
+```powershell
+.\eefn.exe models show --json
+.\eefn.exe models select-ollama --model OWNER_MODEL_ID --modality text --role request_interpreter --json
+.\eefn.exe models select-gguf --model OWNER_MODEL_ID --file C:\Models\owner-model.gguf --json
+.\eefn.exe models hints --backend ollama --model OWNER_MODEL_ID --capability llm.infer --role request_interpreter --json
+.\eefn.exe models hints --backend ollama --model OWNER_MODEL_ID --clear-roles --json
+.\eefn.exe models provider ollama --json
+.\eefn.exe models remove --backend ollama --model OWNER_MODEL_ID --json
+```
+
+Selection commands do not download/load models or restart the node. They report
+`saved_selections` separately from `registered_models`; registration is not proof
+of loaded state. Apply pending changes by restarting the node. Offline commands
+hold the instance lock and save for its next start. An existing saved identity is
+required (normally created by setup; `network set` can initialize it).
+
+Provider selection remains `auto`, `ollama`, or `llamacpp`; auto prefers an
+available Ollama service. Selecting a model does not silently change provider.
+Ollama selection names need not be installed yet; unavailable selections are not
+advertised on connection. GGUF requires an existing file and can accept
+`--projector`, `--gpu-layers`, `--context`, and an optional advanced `--port`.
+Without a port, the command reuses the model's saved internal port or briefly
+allocates a loopback port; availability is checked again when the backend starts.
+It never launches a model server during selection.
+
+Repeated `--capability` and `--role` flags form bounded lists. Capabilities may
+restrict existing adapter support, not add unsupported executors. `--clear-capabilities`
+on `hints` disables that selection's inference capabilities; it does not remove
+the model or unload it immediately. Role labels do not grant permissions or select
+a default interpreter yet. Empty roles explicitly clear labels. Re-selecting an
+existing model without selection hints preserves its current hints.
+
+The local owner API is POST `/api/commands/models`, taking
+`{schema_version:1,expected_node_id,command}`. Operations are `show`,
+`select_ollama`, `select_gguf`, `hints`, `remove`, and `provider`; see the shared
+typed commands in `eefn/src/model_selection.rs`. Edits use the same config lock as
+other node settings, preserve unrelated values, reject corrupt/missing files,
+and avoid writing on no-ops. Removing a selection never deletes model files.
+Output omits GGUF/projector paths, backend service URLs and credentials. A failed
+or timed-out response is not permission to automatically retry a mutation.
+
+Published older nodes do not enforce these new selection restrictions. Do not
+downgrade a restricted node and assume that its restrictions remain enforced.
+
 ## Unreleased: registered model inventory
 
 ```powershell

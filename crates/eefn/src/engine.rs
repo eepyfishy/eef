@@ -223,7 +223,7 @@ pub struct NodeEngine {
     current_version: String,
     http: reqwest::Client,
     ollama_url: String,
-    ollama_models: HashMap<String, String>,
+    ollama_models: HashMap<String, crate::model_metadata::ModelMetadata>,
     service: Option<Arc<crate::NodeService>>,
     resource_owner: String,
     resources: Vec<crate::context::Resource>,
@@ -306,11 +306,15 @@ impl NodeEngine {
     pub fn with_ollama(
         mut self,
         url: String,
-        models: impl IntoIterator<Item = (String, String)>,
-    ) -> Self {
+        models: impl IntoIterator<Item = crate::SelectedModel>,
+    ) -> Result<Self> {
         self.ollama_url = url;
-        self.ollama_models = models.into_iter().collect();
-        self
+        for model in models {
+            model.validate()?;
+            self.ollama_models
+                .insert(model.model_id.clone(), model.selection_metadata()?);
+        }
+        Ok(self)
     }
 
     pub async fn add_python_plugin(
@@ -363,16 +367,23 @@ impl NodeEngine {
         let has_text = self
             .ollama_models
             .values()
-            .any(|value| matches!(value.as_str(), "text" | "vlm"))
-            || self
-                .model_server
-                .as_ref()
-                .is_some_and(|server| !server.slots.is_empty());
-        let has_vlm = self.ollama_models.values().any(|value| value == "vlm")
-            || self
-                .model_server
-                .as_ref()
-                .is_some_and(|server| server.slots.iter().any(|slot| slot.is_vlm()));
+            .any(|value| value.supports("llm.infer"))
+            || self.model_server.as_ref().is_some_and(|server| {
+                server.slots.iter().any(|slot| {
+                    slot.selection_metadata()
+                        .is_ok_and(|m| m.supports("llm.infer"))
+                })
+            });
+        let has_vlm = self
+            .ollama_models
+            .values()
+            .any(|value| value.supports("vlm.analyze"))
+            || self.model_server.as_ref().is_some_and(|server| {
+                server.slots.iter().any(|slot| {
+                    slot.selection_metadata()
+                        .is_ok_and(|m| m.supports("vlm.analyze"))
+                })
+            });
         if has_text {
             values.push("llm.infer".into());
         }
@@ -884,25 +895,25 @@ impl NodeEngine {
             && server.slot(Some(model)).is_some()
             && backend != Some("ollama")
         {
-            if capability == "vlm.analyze" && !server.slot(Some(model)).unwrap().is_vlm() {
-                bail!("This local model has no vision projector configured")
+            if !server
+                .slot(Some(model))
+                .unwrap()
+                .selection_metadata()?
+                .supports(capability)
+            {
+                bail!("This capability is not enabled for the selected local model")
             }
             return self.llamacpp(server, &params).await;
         }
         if backend == Some("llamacpp") {
             bail!("model is not selected on the requested llama.cpp backend")
         }
-        let modality = self
+        let metadata = self
             .ollama_models
             .get(model)
             .with_context(|| format!("model '{model}' is not selected on this node"))?;
-        let expected = if capability == "vlm.analyze" {
-            "vlm"
-        } else {
-            "text"
-        };
-        if modality != expected && !(expected == "text" && modality == "vlm") {
-            bail!("model '{model}' is selected as '{modality}', not '{expected}'")
+        if !metadata.supports(capability) {
+            bail!("This capability is not enabled for the selected Ollama model")
         }
         self.ollama(&params).await
     }
@@ -1525,6 +1536,23 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("requested llama.cpp backend"));
+    }
+
+    #[tokio::test]
+    async fn model_capability_restrictions_are_enforced_without_calling_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        let selected:crate::SelectedModel=serde_json::from_value(json!({"model_id":"m","modality":"vlm","selection":{"capabilities":["llm.infer"],"roles":["request_interpreter"]}})).unwrap();
+        let engine = NodeEngine::new(false, vec![], dir.path().into())
+            .unwrap()
+            .with_ollama("http://127.0.0.1:1".into(), [selected])
+            .unwrap();
+        assert!(engine.capabilities().contains(&"llm.infer".to_owned()));
+        assert!(!engine.capabilities().contains(&"vlm.analyze".to_owned()));
+        let error = engine
+            .infer("vlm.analyze", json!({"model":"m","backend":"ollama"}))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("not enabled"));
     }
 
     #[test]

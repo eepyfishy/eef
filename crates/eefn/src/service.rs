@@ -148,6 +148,48 @@ impl NodeService {
         )
     }
 
+    /// Local owner edits under the same lock as network/dashboard configuration.
+    pub fn model_command(
+        &self,
+        request: crate::model_selection::ModelCommandRequest,
+    ) -> Result<Value> {
+        if request.schema_version != 1 || request.expected_node_id != self.node_id {
+            bail!("command schema or target node does not match this instance")
+        }
+        let _guard = self.config_lock.lock().expect("config lock");
+        if !self.config_path.is_file() {
+            bail!("saved node configuration is missing")
+        }
+        let mut config = self.read_config()?;
+        if config["node_id"].as_str() != Some(self.node_id.as_str()) {
+            bail!("saved node identity does not match this instance")
+        }
+        let changed = crate::model_selection::apply(&mut config, &request.command)?;
+        let selections = crate::model_selection::selection_view(&config)?;
+        let live = self.live.lock().unwrap();
+        let registered = if let Some(models) = live.get("models") {
+            let record = crate::network::PeerRecord::from_registration(
+                &json!({"node_id":self.node_id,"models":models}),
+            )?;
+            Some(record.models.into_iter().map(|model|json!({"backend":model.backend,"model_id":model.model_id,"model_metadata":model.normalized_metadata()})).collect::<Vec<_>>())
+        } else {
+            None
+        };
+        drop(live);
+        if changed {
+            self.save_config_locked(config.clone())?;
+            self.live.lock().unwrap()["pending_restart"] = json!(true);
+        }
+        let live = self.live.lock().unwrap();
+        Ok(
+            json!({"schema_version":1,"success":true,"report_type":"model_selections","node_id":self.node_id,
+            "changed":changed,"saved_selections":selections,"registered_models":registered,
+            "provider":config.pointer("/models/provider").and_then(Value::as_str).unwrap_or("auto"),
+            "restart_required":live["pending_restart"].as_bool().unwrap_or(false),
+            "note":"Saved selection is not running-model readiness. Restart the node to apply changes; provider controls which backend is active. No model download/load or file deletion was performed."}),
+        )
+    }
+
     /// Explicit export only: omit names, addresses, paths, secrets and raw errors.
     pub fn diagnostics(&self) -> Value {
         let live = self.live.lock().unwrap();
@@ -311,6 +353,7 @@ fn validate_config(value: &Value) -> Result<()> {
         let selected = serde_json::from_value::<Vec<crate::SelectedModel>>(selected.clone())?;
         let mut ids = std::collections::HashSet::new();
         for model in selected {
+            model.validate()?;
             if model.model_id.trim().is_empty()
                 || !ids.insert(model.model_id)
                 || !matches!(model.modality.as_str(), "text" | "vlm")
@@ -322,7 +365,13 @@ fn validate_config(value: &Value) -> Result<()> {
     if let Some(slots) = value.pointer("/models/llamacpp/slots") {
         let slots = serde_json::from_value::<Vec<crate::ModelSlot>>(slots.clone())?;
         let mut ports = std::collections::HashSet::new();
+        let mut ids = std::collections::HashSet::new();
         for slot in slots {
+            crate::model_selection::validate_id(&slot.model_id)?;
+            slot.selection_metadata()?;
+            if !ids.insert(slot.model_id.clone()) {
+                bail!("local model IDs must be unique")
+            }
             if slot.model_id.trim().is_empty() || !slot.model_path.is_file() {
                 bail!("Choose an installed model file before saving")
             }
@@ -331,6 +380,7 @@ fn validate_config(value: &Value) -> Result<()> {
             }
         }
     }
+    crate::model_selection::selection_view(value)?;
     if value
         .get("endpoints")
         .is_some_and(|endpoints| !endpoints.is_array())

@@ -67,11 +67,212 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Inspect and edit saved model selections; no downloads or automatic restart.
+    Models {
+        #[command(subcommand)]
+        command: ModelsAction,
+    },
     /// Inspect or configure node identity and advertised network metadata.
     Network {
         #[command(subcommand)]
         command: NetworkAction,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ModelsAction {
+    Show,
+    /// Select an Ollama model ID. Installation/availability is checked on connection.
+    SelectOllama {
+        #[arg(long)]
+        model: String,
+        #[arg(long, value_parser=["text","vlm"])]
+        modality: String,
+        #[arg(long = "capability")]
+        capabilities: Vec<String>,
+        #[arg(long = "role")]
+        roles: Vec<String>,
+    },
+    /// Select an existing GGUF; internal service port is allocated automatically.
+    SelectGguf {
+        #[arg(long)]
+        model: String,
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        projector: Option<PathBuf>,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long, default_value_t = 0)]
+        gpu_layers: i32,
+        #[arg(long, default_value_t = 4096)]
+        context: u32,
+        #[arg(long = "capability")]
+        capabilities: Vec<String>,
+        #[arg(long = "role")]
+        roles: Vec<String>,
+    },
+    /// Remove selection only, never model files.
+    Remove {
+        #[arg(long,value_parser=["ollama","llamacpp"])]
+        backend: String,
+        #[arg(long)]
+        model: String,
+    },
+    /// Update an existing selection's restrictions or role labels.
+    Hints {
+        #[arg(long,value_parser=["ollama","llamacpp"])]
+        backend: String,
+        #[arg(long)]
+        model: String,
+        #[arg(long = "capability", conflicts_with = "clear_capabilities")]
+        capabilities: Vec<String>,
+        #[arg(long)]
+        clear_capabilities: bool,
+        #[arg(long = "role", conflicts_with = "clear_roles")]
+        roles: Vec<String>,
+        #[arg(long)]
+        clear_roles: bool,
+    },
+    /// Choose which configured backend activates on restart (auto prefers Ollama).
+    Provider {
+        #[arg(value_parser=["auto","ollama","llamacpp"])]
+        provider: String,
+    },
+}
+
+async fn execute_model_command(args: &Args, action: &ModelsAction) -> Result<serde_json::Value> {
+    use eefn::model_selection::{Backend, ModelCommand, ModelCommandRequest, ModelHints};
+    let backend = |name: &str| {
+        if name == "ollama" {
+            Backend::Ollama
+        } else {
+            Backend::Llamacpp
+        }
+    };
+    let hints = |capabilities: &Vec<String>, roles: &Vec<String>| ModelHints {
+        capabilities: (!capabilities.is_empty()).then(|| capabilities.clone()),
+        roles: (!roles.is_empty()).then(|| roles.clone()),
+    };
+    let command = match action {
+        ModelsAction::Show => ModelCommand::Show {},
+        ModelsAction::Provider { provider } => ModelCommand::Provider {
+            provider: provider.clone(),
+        },
+        ModelsAction::SelectOllama {
+            model,
+            modality,
+            capabilities,
+            roles,
+        } => ModelCommand::SelectOllama {
+            model: SelectedModel {
+                model_id: model.clone(),
+                modality: modality.clone(),
+                hints: hints(capabilities, roles),
+            },
+        },
+        ModelsAction::SelectGguf {
+            model,
+            file,
+            projector,
+            port,
+            gpu_layers,
+            context,
+            capabilities,
+            roles,
+        } => ModelCommand::SelectGguf {
+            slot: ModelSlot {
+                model_id: model.clone(),
+                model_path: std::fs::canonicalize(file).context("GGUF file does not exist")?,
+                mmproj_path: projector
+                    .as_ref()
+                    .map(std::fs::canonicalize)
+                    .transpose()
+                    .context("projector file does not exist")?,
+                port: port.unwrap_or(0),
+                gpu_layers: *gpu_layers,
+                context: *context,
+                gpu_vram_mb: 0,
+                hints: hints(capabilities, roles),
+            },
+        },
+        ModelsAction::Remove {
+            backend: name,
+            model,
+        } => ModelCommand::Remove {
+            backend: backend(name),
+            model_id: model.clone(),
+        },
+        ModelsAction::Hints {
+            backend: name,
+            model,
+            capabilities,
+            clear_capabilities,
+            roles,
+            clear_roles,
+        } => ModelCommand::Hints {
+            backend: backend(name),
+            model_id: model.clone(),
+            capabilities: (!capabilities.is_empty() || *clear_capabilities)
+                .then(|| capabilities.clone()),
+            roles: (!roles.is_empty() || *clear_roles).then(|| roles.clone()),
+        },
+    };
+    let lock = eefn::setup::instance_lock(&args.config)?;
+    let file = load_file(&args.config)?;
+    if file.node_id.is_empty() {
+        bail!("No saved node identity; configure the node with network set first")
+    }
+    let request = ModelCommandRequest {
+        schema_version: 1,
+        expected_node_id: file.node_id.clone(),
+        command,
+    };
+    if lock.is_some() {
+        let service = NodeService::new(args.config.clone(), file.node_id);
+        let mut result = service.model_command(request)?;
+        result["running"] = serde_json::json!(false);
+        result["restart_required"] = serde_json::json!(false);
+        result["note"] = serde_json::json!(
+            "Saved for next node start. No backend download or model load was performed."
+        );
+        return Ok(result);
+    }
+    let local = file.dashboard.unwrap_or_default();
+    if !local.enabled {
+        bail!("The running node's local API is disabled; stop it before editing offline")
+    }
+    let host: std::net::IpAddr = local
+        .host
+        .parse()
+        .context("local command address must be loopback")?;
+    if !host.is_loopback() {
+        bail!("commands require a loopback local API")
+    }
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
+        .post(format!(
+            "http://{}/api/commands/models",
+            std::net::SocketAddr::new(host, local.port)
+        ))
+        .timeout(Duration::from_secs(15))
+        .json(&request)
+        .send()
+        .await?;
+    let ok = response.status().is_success();
+    let mut result = eefn::model_manager::bounded_json(response).await?;
+    if !ok {
+        bail!(
+            "{}",
+            result["error"]
+                .as_str()
+                .unwrap_or("local model command failed")
+        )
+    }
+    result["running"] = serde_json::json!(true);
+    Ok(result)
 }
 
 #[derive(Debug, Subcommand)]
@@ -118,7 +319,12 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     use eefn::network::{
         CommandRequest, CoordinatorAdvertisement, CoordinatorState, NetworkChanges, NetworkCommand,
     };
-    let Commands::Network { command } = command;
+    if let Commands::Models { command } = command {
+        return execute_model_command(args, command).await;
+    }
+    let Commands::Network { command } = command else {
+        unreachable!()
+    };
     let command = match command {
         NetworkAction::Show => NetworkCommand::Show,
         NetworkAction::Diagnose => NetworkCommand::Diagnose,
@@ -710,12 +916,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         .with_service(dashboard.clone())
         .with_policy(permissions)?
         .with_update_manifest(manifest)
-        .with_ollama(
-            ollama_url.clone(),
-            active_ollama_models
-                .iter()
-                .map(|model| (model.model_id.clone(), model.modality.clone())),
-        );
+        .with_ollama(ollama_url.clone(), active_ollama_models.iter().cloned())?;
     if let Some(server) = &model_server {
         engine = engine.with_model_server(server.clone())
     }
@@ -986,6 +1187,7 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
     Ok(SelectedModel {
         model_id: model_id.trim().into(),
         modality,
+        hints: Default::default(),
     })
 }
 

@@ -25,6 +25,26 @@ pub struct SelectedModel {
     pub model_id: String,
     #[serde(default = "text_modality")]
     pub modality: String,
+    #[serde(
+        default,
+        rename = "selection",
+        skip_serializing_if = "crate::model_selection::ModelHints::is_empty"
+    )]
+    pub hints: crate::model_selection::ModelHints,
+}
+
+impl SelectedModel {
+    pub fn validate(&self) -> Result<()> {
+        crate::model_selection::validate_id(&self.model_id)?;
+        if !matches!(self.modality.as_str(), "text" | "vlm") {
+            bail!("model modality must be text or vlm")
+        }
+        self.selection_metadata()?;
+        Ok(())
+    }
+    pub fn selection_metadata(&self) -> Result<crate::model_metadata::ModelMetadata> {
+        self.hints.metadata(&self.modality)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -144,6 +164,7 @@ impl NodeClient {
         });
         let mut model_ids = std::collections::HashSet::new();
         for model in &config.ollama_models {
+            model.validate()?;
             if model.model_id.trim().is_empty() {
                 bail!("selected model_id must not be empty")
             }
@@ -292,7 +313,7 @@ impl NodeClient {
         )
         .await;
         if let Some(server) = &self.engine.model_server {
-            models.extend(server.models())
+            models.extend(server.models()?)
         }
         let capabilities = advertised_capabilities(&self.engine.capabilities(), &models);
         write_message(
@@ -439,7 +460,7 @@ impl NodeClient {
         )
         .await;
         if let Some(server) = &self.engine.model_server {
-            models.extend(server.models())
+            models.extend(server.models()?)
         }
         let capabilities = advertised_capabilities(&self.engine.capabilities(), &models);
         {
@@ -667,9 +688,9 @@ pub async fn discover_models(
     selected
         .iter()
         .filter(|model| installed.contains(model.model_id.as_str()))
-        .map(|model| {
-            let metadata = crate::model_metadata::ModelMetadata::from_legacy(Some(&model.modality));
-            json!({"model_id": model.model_id, "modality": model.modality, "backend": "ollama", "capabilities":metadata.capabilities,"model_metadata":metadata})
+        .filter_map(|model| {
+            let metadata = model.selection_metadata().ok()?;
+            Some(json!({"model_id": model.model_id, "modality": model.modality, "backend": "ollama", "capabilities":metadata.capabilities,"model_metadata":metadata}))
         })
         .collect()
 }
@@ -701,18 +722,22 @@ fn advertised_capabilities(configured: &[String], models: &[Value]) -> Vec<Strin
         .filter(|capability| !matches!(capability.as_str(), "llm.infer" | "vlm.analyze"))
         .cloned()
         .collect::<Vec<_>>();
-    if models.iter().any(|model| {
-        matches!(
-            model.get("modality").and_then(Value::as_str),
-            Some("text" | "vlm")
-        )
-    }) {
+    let supports = |model: &Value, capability: &str| {
+        let metadata = if let Some(raw) = model.get("model_metadata") {
+            serde_json::from_value::<crate::model_metadata::ModelMetadata>(raw.clone())
+                .ok()
+                .filter(|m| m.validate().is_ok())
+        } else {
+            Some(crate::model_metadata::ModelMetadata::from_legacy(
+                model.get("modality").and_then(Value::as_str),
+            ))
+        };
+        metadata.is_some_and(|m| m.supports(capability))
+    };
+    if models.iter().any(|model| supports(model, "llm.infer")) {
         capabilities.push("llm.infer".into());
     }
-    if models
-        .iter()
-        .any(|model| model.get("modality").and_then(Value::as_str) == Some("vlm"))
-    {
+    if models.iter().any(|model| supports(model, "vlm.analyze")) {
         capabilities.push("vlm.analyze".into());
     }
     capabilities.sort();
@@ -861,6 +886,15 @@ mod tests {
         assert_eq!(
             advertised_capabilities(&configured, &[json!({"modality":"vlm"})]),
             vec!["llm.infer", "system.ping", "vlm.analyze"]
+        );
+        let mut metadata = crate::model_metadata::ModelMetadata::from_legacy(Some("vlm"));
+        metadata.capabilities = vec![];
+        assert_eq!(
+            advertised_capabilities(
+                &configured,
+                &[json!({"modality":"vlm","model_metadata":metadata})]
+            ),
+            vec!["system.ping"]
         );
     }
 }

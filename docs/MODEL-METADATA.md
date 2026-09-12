@@ -70,9 +70,24 @@ into peer discovery or the model inventory command.
 - Text work uses `llm.infer`, vision work uses `vlm.analyze`; a vision-capable model
   is no longer automatically invoked as a vision operation for text-only work.
 
+### Owner selection hints (subsequent unreleased increment)
+
+Existing Ollama `selected[]` and GGUF `slots[]` may now include
+`selection: {capabilities: [...], roles: [...]}`. Missing capabilities preserve
+legacy adapter support; an empty list explicitly disables model capabilities.
+Only subsets of the selected text/VLM adapter's supported capabilities are allowed.
+Roles remain optional labels. Lifecycle and resources cannot be fabricated through
+this selection object. New nodes project the hints into registration metadata and
+enforce capability restrictions at execution, not just in EEF's routing.
+
+[Node model commands](COMMANDS.md) provide locked updates without editing JSON.
+The backend config format and auto-provider policy remain compatible; simultaneous
+backend activation and general non-text/VLM executor configuration remain pending.
+Older nodes ignore the new hints, so downgrade does not preserve enforcement.
+
 Non-text/vision metadata (e.g. OCR, embedding, detection or STT/TTS) is representable
 and inspectable, but this increment does not add those model executors, generalized
-model-selection configuration, role-based scheduling, default-LM bootstrap,
+non-text/vision configuration, role-based scheduling, default-LM bootstrap,
 resource-aware admission, lifecycle controllers or execution leases. Existing
 node permissions still govern execution. A reported capability is never a grant.
 

@@ -25,6 +25,12 @@ pub struct ModelSlot {
     pub context: u32,
     #[serde(default)]
     pub gpu_vram_mb: u64,
+    #[serde(
+        default,
+        rename = "selection",
+        skip_serializing_if = "crate::model_selection::ModelHints::is_empty"
+    )]
+    pub hints: crate::model_selection::ModelHints,
 }
 
 const fn default_port() -> u16 {
@@ -35,23 +41,27 @@ const fn default_context() -> u32 {
 }
 
 impl ModelSlot {
+    pub fn selection_metadata(&self) -> Result<crate::model_metadata::ModelMetadata> {
+        self.hints
+            .metadata(if self.is_vlm() { "vlm" } else { "text" })
+    }
     pub fn is_vlm(&self) -> bool {
         self.mmproj_path
             .as_ref()
             .is_some_and(|path| !path.as_os_str().is_empty())
     }
 
-    pub fn advertise(&self) -> Value {
+    pub fn advertise(&self) -> Result<Value> {
         let modality = if self.is_vlm() { "vlm" } else { "text" };
-        json!({
+        Ok(json!({
             "model_id": self.model_id,
             "backend": "llamacpp",
             "hardware": if self.gpu_layers != 0 { "gpu" } else { "cpu" },
             "vram_mb": self.gpu_vram_mb,
             "port": self.port,
             "modality": modality,
-            "model_metadata": crate::model_metadata::ModelMetadata::from_legacy(Some(modality)),
-        })
+            "model_metadata": self.selection_metadata()?,
+        }))
     }
 }
 
@@ -64,7 +74,7 @@ mod advertisement_tests {
             serde_json::from_value(json!({"model_id":"fixture", "model_path":"PRIVATE"})).unwrap();
         for vision in [false, true] {
             slot.mmproj_path = vision.then(|| PathBuf::from("PRIVATE-PROJECTOR"));
-            let value = slot.advertise();
+            let value = slot.advertise().unwrap();
             assert!(!value.to_string().contains("PRIVATE"));
             let metadata: crate::model_metadata::ModelMetadata =
                 serde_json::from_value(value["model_metadata"].clone()).unwrap();
@@ -108,6 +118,7 @@ impl ModelServer {
             );
         }
         for slot in &self.slots {
+            slot.selection_metadata()?;
             if slot.model_path.as_os_str().is_empty() || !slot.model_path.is_file() {
                 bail!(
                     "GGUF for '{}' does not exist: {}",
@@ -167,7 +178,7 @@ impl ModelServer {
         processes.clear();
     }
 
-    pub fn models(&self) -> Vec<Value> {
+    pub fn models(&self) -> Result<Vec<Value>> {
         self.slots.iter().map(ModelSlot::advertise).collect()
     }
 

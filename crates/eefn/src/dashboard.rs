@@ -66,6 +66,7 @@ impl NodeDashboard {
             .route("/api/status", get(status))
             .route("/api/diagnostics", get(diagnostics))
             .route("/api/commands/network", post(network_command))
+            .route("/api/commands/models", post(model_command))
             .route("/api/config", get(config_get).put(config_save))
             .route("/api/startup", get(startup_get).put(startup_set))
             .route("/api/restart", post(restart))
@@ -137,6 +138,13 @@ async fn status(State(state): State<Arc<NodeDashboard>>) -> Json<Value> {
         "pending_restart":live["pending_restart"], "download":live["download"], "update":live["update"],
         "proposal_pending":state.config_path.with_extension("proposal.json").is_file(),
     }))
+}
+
+async fn model_command(
+    State(state): State<Arc<NodeDashboard>>,
+    Json(request): Json<crate::model_selection::ModelCommandRequest>,
+) -> Result<Json<Value>, DashboardError> {
+    Ok(Json(state.model_command(request)?))
 }
 
 async fn network_command(

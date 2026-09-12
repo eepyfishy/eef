@@ -1,5 +1,25 @@
 # Architecture conformance status
 
+## Unreleased node model-selection commands
+
+- Added shared node `models show/select-ollama/select-gguf/hints/provider/remove`
+  commands and the guarded local owner API. Offline commands use the instance lock;
+  running commands use the existing node service and configuration lock. No JSON
+  editing, model download or automatic restart is required to save a selection.
+- Extended existing backend selections with optional capability restrictions and
+  role labels, projected into metadata and enforced by updated node executors.
+  Unsupported capabilities are rejected; an empty capability list disables that
+  model's inference operations. Role-based scheduling is still pending.
+- Saved selections and registered models remain distinct. No-op edits avoid writes;
+  corrupt/missing config, wrong targets and invalid hints are rejected. Removal
+  affects selection only, not model files. GGUF ports can be allocated internally.
+- 130 Rust tests passed on 2026-09-12. Evidence:
+  `.validation/model-metadata-3wV2vO`, `.validation/node-commands-YJoF6P`,
+  `.validation/first-run-lVU6xZ`, `.validation/peer-discovery-sDhh29`;
+  browser copying/focus checks also passed. Tests use isolated configs and a fake
+  backend, not real inference. Published apps/feeds and the real network were not
+  changed. See [commands and downgrade caveat](COMMANDS.md).
+
 ## Unreleased versioned model metadata checkpoint
 
 - Added a shared, bounded `model_metadata` registration schema: multiple

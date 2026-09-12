@@ -31,6 +31,12 @@ try {
   assert.equal(first.network.advertised_address,'26.1.2.3');
   assert.equal((await command(['show'])).node_id,id);
   const offlineReport=await command(['diagnose']);assert.equal(offlineReport.connection_state,'stopped');assert.equal(offlineReport.metrics_available,false);assert.equal(offlineReport.service_uptime_ms,null);
+  const modelCommand=async(args,success=true)=>{const child=launch('eefn',['--config',config,'--json','models',...args]);const timer=setTimeout(()=>child.kill(),20000);try{const result=await child.result;assert.equal(result.code,success?0:1,result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
+  const selected=await modelCommand(['select-ollama','--model','offline-fixture','--modality','text','--role','request_interpreter']);
+  assert.equal(selected.running,false);assert.equal(selected.restart_required,false);assert.equal(selected.saved_selections.length,1);
+  const selectionBefore=await readFile(config,'utf8');
+  await modelCommand(['hints','--backend','ollama','--model','offline-fixture','--capability','vlm.analyze'],false);assert.equal(await readFile(config,'utf8'),selectionBefore);
+  await modelCommand(['remove','--backend','ollama','--model','offline-fixture']);assert.equal((await modelCommand(['show'])).saved_selections.length,0);
   const before=await readFile(config,'utf8');
   await command(['set','--name','Must not save','--advertise-address','http://bad/path'],false);
   assert.equal(await readFile(config,'utf8'),before);
