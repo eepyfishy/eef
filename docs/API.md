@@ -1,5 +1,11 @@
 # HTTP API
 
+Unreleased: guarded `POST /api/commands/node/models` on EEF takes
+`{schema_version:1,node_id,command}`. `command` is the same typed selection
+operation used by node `POST /api/commands/models`. EEF uses the authenticated
+node control channel with the stable target ID, never the node's local API.
+See [remote model command permissions and uncertain outcomes](COMMANDS.md).
+
 Unreleased: guarded `GET /api/commands/models/route` accepts `capability` and
 optional `role`, `node_id`, `backend`, `model_id`, `limit` query fields. This is
 a read-only candidate preview, not execution authorization. See [commands](COMMANDS.md).

@@ -153,6 +153,14 @@ impl NodeService {
         &self,
         request: crate::model_selection::ModelCommandRequest,
     ) -> Result<Value> {
+        self.model_command_authorized(request, false)
+    }
+
+    fn model_command_authorized(
+        &self,
+        request: crate::model_selection::ModelCommandRequest,
+        remote: bool,
+    ) -> Result<Value> {
         if request.schema_version != 1 || request.expected_node_id != self.node_id {
             bail!("command schema or target node does not match this instance")
         }
@@ -163,6 +171,25 @@ impl NodeService {
         let mut config = self.read_config()?;
         if config["node_id"].as_str() != Some(self.node_id.as_str()) {
             bail!("saved node identity does not match this instance")
+        }
+        // Read and enforce current owner approval while holding the write lock.
+        // A previous inspection or cached permission is never mutation authority.
+        let remote_allowed = config
+            .pointer("/management/allow_remote")
+            .and_then(Value::as_bool)
+            == Some(true);
+        if remote
+            && !remote_allowed
+            && !matches!(
+                request.command,
+                crate::model_selection::ModelCommand::Show {}
+            )
+        {
+            return Ok(
+                json!({"schema_version":1,"success":false,"node_id":self.node_id,
+                "error_code":"approval_required","changed":false,
+                "note":"Enable management from EEF locally on this node before changing model selections."}),
+            );
         }
         let changed = crate::model_selection::apply(&mut config, &request.command)?;
         let selections = crate::model_selection::selection_view(&config)?;
@@ -184,6 +211,7 @@ impl NodeService {
         Ok(
             json!({"schema_version":1,"success":true,"report_type":"model_selections","node_id":self.node_id,
             "changed":changed,"saved_selections":selections,"registered_models":registered,
+            "remote_management_allowed":remote_allowed,
             "provider":config.pointer("/models/provider").and_then(Value::as_str).unwrap_or("auto"),
             "restart_required":live["pending_restart"].as_bool().unwrap_or(false),
             "note":"Saved selection is not running-model readiness. Restart the node to apply changes; provider controls which backend is active. No model download/load or file deletion was performed."}),
@@ -286,6 +314,7 @@ impl NodeService {
             .and_then(Value::as_bool)
             == Some(true);
         match action {
+            "model_command" => self.model_command_authorized(serde_json::from_value(params)?, true),
             "diagnostics" => Ok(self.diagnostics()),
             "get" => {
                 config["psk"] = json!(SECRET_PLACEHOLDER);
@@ -594,6 +623,80 @@ mod tests {
         assert!(validate_config(&json!({"models": {"provider": "magic"}})).is_err());
         assert!(validate_config(&json!({"models": {"provider": "auto"}})).is_ok());
         assert!(validate_config(&json!({"models":{"ollama":{"selected":[{"model_id":"fixture","modality":"unknown"}]}}})).is_err());
+    }
+
+    #[tokio::test]
+    async fn typed_remote_models_recheck_owner_approval_and_preserve_unrelated_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        let initial = json!({"node_id":"stable","psk":"private","future":{"keep":true},"management":{"allow_remote":false}});
+        crate::setup::write_json(&path, &initial).unwrap();
+        let service = NodeService::new(path.clone(), "stable".into());
+        let request = |command: Value| json!({"schema_version":1,"expected_node_id":"stable","command":command});
+        let change = request(
+            json!({"operation":"select_ollama","model":{"model_id":"fixture","modality":"text"}}),
+        );
+        let show = service
+            .remote("model_command", request(json!({"operation":"show"})))
+            .await
+            .unwrap();
+        assert_eq!(show["remote_management_allowed"], false);
+        assert!(!show.to_string().contains("private"));
+        assert_eq!(
+            service
+                .remote("model_command", change.clone())
+                .await
+                .unwrap()["error_code"],
+            "approval_required"
+        );
+        assert_eq!(service.read_config().unwrap(), initial);
+        let mut allowed = initial.clone();
+        allowed["management"]["allow_remote"] = json!(true);
+        service.save_config(allowed).unwrap();
+        assert_eq!(
+            service
+                .remote("model_command", change.clone())
+                .await
+                .unwrap()["changed"],
+            true
+        );
+        assert_eq!(
+            service
+                .remote("model_command", change.clone())
+                .await
+                .unwrap()["changed"],
+            false
+        );
+        let mut saved = service.read_config().unwrap();
+        assert_eq!(saved["psk"], initial["psk"]);
+        assert_eq!(saved["future"], initial["future"]);
+        // A successful earlier inspection is not authority after owner revocation.
+        assert_eq!(
+            service
+                .remote("model_command", request(json!({"operation":"show"})))
+                .await
+                .unwrap()["remote_management_allowed"],
+            true
+        );
+        saved["management"]["allow_remote"] = json!(false);
+        service.save_config(saved.clone()).unwrap();
+        assert_eq!(
+            service
+                .remote(
+                    "model_command",
+                    request(json!({"operation":"remove","backend":"ollama","model_id":"fixture"}))
+                )
+                .await
+                .unwrap()["error_code"],
+            "approval_required"
+        );
+        assert_eq!(service.read_config().unwrap(), saved);
+        let mut wrong = change;
+        wrong["expected_node_id"] = json!("other");
+        assert!(service.remote("model_command", wrong).await.is_err());
+        let mut spoof = request(json!({"operation":"show"}));
+        spoof["remote"] = json!(false);
+        assert!(service.remote("model_command", spoof).await.is_err());
     }
 
     #[test]

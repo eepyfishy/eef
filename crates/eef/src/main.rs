@@ -61,6 +61,13 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum NodeCommand {
+    /// Inspect or edit a connected node's model selections with its owner's approval.
+    Models {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eefn::model_cli::ModelsAction,
+    },
     /// Restart the node app, not Windows. Requires local node management approval.
     Restart {
         #[arg(long)]
@@ -174,6 +181,14 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 .query(&query)
                 .send()
                 .await?
+        }
+        Command::Node {
+            command: NodeCommand::Models { node, command },
+        } => {
+            eefn::network::validate_node_id(node)?;
+            client.post(format!("{base}/api/commands/node/models"))
+                .json(&json!({"schema_version":1,"node_id":node,"command":command.to_command(false)?}))
+                .send().await?
         }
         Command::Node {
             command: NodeCommand::Restart { node, wait_seconds },

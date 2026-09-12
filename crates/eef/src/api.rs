@@ -129,6 +129,7 @@ pub fn router(runtime: Arc<Runtime>) -> Router {
         .route("/api/commands/models", get(model_inventory))
         .route("/api/commands/models/route", get(model_route_preview))
         .route("/api/commands/node/restart", post(node_restart))
+        .route("/api/commands/node/models", post(node_models))
         .route(
             "/api/commands/discovery",
             get(discovery_status).post(discovery_command),
@@ -264,6 +265,15 @@ async fn node_restart(
 ) -> ApiResult<Value> {
     Ok(Json(
         crate::node_control::restart(&runtime.node_server, request).await?,
+    ))
+}
+
+async fn node_models(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::node_control::ModelsRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_control::models(&runtime.node_server, request).await?,
     ))
 }
 

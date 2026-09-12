@@ -42,6 +42,7 @@ try{
  Object.assign(config,{node_id:id,name:'Metadata fixture',psk:secret,auto_local:false,local_pairing:false,endpoints:[`127.0.0.1:${nodePort}`],heartbeat_seconds:1,dashboard:{enabled:true,host:'127.0.0.1',port:apiPort},update:{policy:'off'},models:{provider:'ollama',ollama:{base_url:`http://127.0.0.1:${fake.address().port}`,selected:[{model_id:'fixture-text',modality:'text'},{model_id:'fixture-vision',modality:'vlm'}]},llamacpp:{slots:[]}}});
  const nodeConfig=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml');
  const nodeCommand=async(args,success=true)=>{const child=launch('eefn',['--config',nodeConfig,'models',...args,'--json']);const timer=setTimeout(()=>child.kill(),20000);try{const result=await child.result;assert.equal(result.code,success?0:1,result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
+ const remoteModels=async(args,success=true)=>{const child=launch('eef',['--config',eefConfig,'node','models','--node',id,...args,'--json']);const timer=setTimeout(()=>child.kill(),25000);try{const result=await child.result;assert.equal(result.code,success?0:1,result.out+' '+result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
  const localRestart=async()=>{const child=launch('eefn',['--config',nodeConfig,'restart','--wait-seconds','60','--json']);const timer=setTimeout(()=>child.kill(),70000);try{const result=await child.result;assert.equal(result.code,0,result.out+' '+result.err);const reply=JSON.parse(result.out);assert.equal(reply.completed,true);assert.notEqual(reply.runtime_id,reply.previous_runtime_id);return reply;}finally{clearTimeout(timer);}};
  await writeFile(nodeConfig,JSON.stringify(config));
  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
@@ -63,6 +64,25 @@ try{
  if(!legacyNode){const wrong=await invoke({backend:'llamacpp'});assert.equal(wrong.success,false);assert.equal(requests.length,1,'wrong backend must not fall back');}
  const status=await json(eef+'/api/status');assert.equal(status.models.length,2);assert(status.models.every(m=>m.model_metadata.schema_version===1));
  if(!legacyNode){
+  const ownerConfig=(await json(node+'/api/config')).config;
+  ownerConfig.management={allow_remote:false};await json(node+'/api/config',{config:ownerConfig},'PUT');
+  const remoteShow=await remoteModels(['show']);
+  assert.equal(remoteShow.data.saved_selections.length,2);assert.equal(remoteShow.data.remote_management_allowed,false);
+  assert.equal(remoteShow.mutation_requested,false);assert(!JSON.stringify(remoteShow).includes(secret));
+  const deniedBefore=await readFile(nodeConfig,'utf8');
+  const remoteDenied=await remoteModels(['hints','--backend','ollama','--model','fixture-text','--role','node_tool'],false);
+  assert.equal(remoteDenied.error_code,'approval_required');assert.equal(remoteDenied.mutation_requested,false);
+  assert.equal(await readFile(nodeConfig,'utf8'),deniedBefore);
+  const approved=(await json(node+'/api/config')).config;approved.management.allow_remote=true;
+  await json(node+'/api/config',{config:approved},'PUT');
+  const remoteSaved=await remoteModels(['hints','--backend','ollama','--model','fixture-text','--role','node_tool']);
+  assert.equal(remoteSaved.acknowledged,true);assert.equal(remoteSaved.data.changed,true);assert.equal(remoteSaved.data.restart_required,true);
+  assert.deepEqual(remoteSaved.data.saved_selections.find(m=>m.model_id==='fixture-text').model_metadata.roles,['node_tool']);
+  assert.equal(remoteSaved.data.registered_models.find(m=>m.model_id==='fixture-text').model_metadata.roles,null,'saved must not pretend to be applied');
+  assert.equal((await remoteModels(['hints','--backend','ollama','--model','fixture-text','--role','node_tool'])).data.changed,false);
+  const remoteBody={schema_version:1,node_id:id,command:{operation:'show'}};
+  assert.equal((await fetch(eef+'/api/commands/node/models',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(remoteBody)})).status,403);
+  assert.equal(requests.length,1,'selection commands must not execute inference');
   const before=await readFile(nodeConfig,'utf8');
   await nodeCommand(['hints','--backend','ollama','--model','fixture-text','--capability','vlm.analyze'],false);
   assert.equal(await readFile(nodeConfig,'utf8'),before);
@@ -98,9 +118,11 @@ try{
   node=`http://127.0.0.1:${newPort}`;
   assert.equal((await json(node+'/api/diagnostics')).runtime_id,changed.runtime_id);
   await until(async()=>(await inventory()).nodes[0]?.models.length===2,'reconnect after local API port change');
-  for(const model of ['fixture-text','fixture-vision'])await nodeCommand(['remove','--backend','ollama','--model',model]);
+  for(const model of ['fixture-text','fixture-vision'])await remoteModels(['remove','--backend','ollama','--model',model]);
   const removed=await nodeCommand(['show']);assert.equal(removed.saved_selections.length,0);assert.equal(removed.registered_models.length,2);
  }else{
+  const unsupported=await remoteModels(['provider','auto'],false);
+  assert.equal(unsupported.error_code,'model_commands_unavailable');assert.equal(unsupported.mutation_requested,false);
   const current=(await json(node+'/api/config')).config;current.models.ollama.selected=[];
   await json(node+'/api/config',{config:current},'PUT');
  }
@@ -108,7 +130,7 @@ try{
  await until(async()=>(await inventory()).nodes[0]?.models.length===0&&(await json(eef+'/api/status')).models.length===0,'empty snapshot replaces old models');
  assert.equal((await json(node+'/api/diagnostics')).node_id,id);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,versioned_inventory:!legacyNode,owner_cli:true,origin_guard:true,selection_commands:!legacyNode,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:legacyNode?'not supported by old node':true,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
- console.log('Model metadata protocol checks passed: '+scratch);
+ console.log('Model metadata and remote selection protocol checks passed: '+scratch);
 }finally{
  for(const child of children)if(child.exitCode===null)child.kill();
  await Promise.allSettled(children.map(c=>c.result));

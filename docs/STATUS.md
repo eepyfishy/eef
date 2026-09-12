@@ -1,5 +1,23 @@
 # Architecture conformance status
 
+## Unreleased coordinator-to-node model commands
+
+- EEF now exposes `node models` using the same typed model-selection operations
+  and CLI adapter as EEFN. Mutations require node-local management approval,
+  rechecked under the config lock. Inspection remains read-only. No implicit
+  downloads, loads, restarts or legacy full-config save fallback.
+- Requests are sent once; uncertain replies are explicitly unconfirmed. Remote
+  GGUF/projector paths are validated on the target node, not the coordinator.
+- 140 Rust tests passed on 2026-09-12. Isolated integration evidence:
+  `.validation/model-metadata-FyzHyP`; old-node refusal/compatibility:
+  `.validation/model-metadata-r6gwng`. Command, discovery, first-run/job and
+  browser-copy regressions passed (`.validation/node-commands-gHb7T0`,
+  `.validation/peer-discovery-lez654`, `.validation/first-run-6iYR9q`).
+- A read-only check of the installed coordinator still reported two connected
+  nodes and no pending restart. These installed v0.4.0a2 apps were not changed;
+  the new feature tests used isolated processes and a fake backend, not real
+  inference. No release or automatic telemetry upload was performed.
+
 ## Unreleased explicit model-role routing checkpoint
 
 - Added bounded, read-only `eef models route` and its guarded API. It previews

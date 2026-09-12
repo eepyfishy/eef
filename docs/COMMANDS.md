@@ -129,6 +129,36 @@ stale records. Failure to write discovery is logged without stopping the node.
 
 ## Unreleased: node model selection commands
 
+The development coordinator also exposes these operations for a connected node:
+
+```powershell
+.\eef.exe node models --node NODE_ID show --json
+.\eef.exe node models --node NODE_ID select-ollama --model OWNER_MODEL_ID --modality text --role request_interpreter --json
+.\eef.exe node models --node NODE_ID hints --backend ollama --model OWNER_MODEL_ID --clear-roles --json
+.\eef.exe node models --node NODE_ID provider auto --json
+.\eef.exe node models --node NODE_ID remove --backend ollama --model OWNER_MODEL_ID --json
+```
+
+Both EEF and the target node need the development version. `show` is read-only
+over the existing authenticated coordinator connection. Changes require the
+node owner's existing management approval. EEF first inspects support/approval;
+the node checks current approval again under its configuration lock before
+applying the change. Approval cannot be granted by these commands. Older nodes
+fail with `model_commands_unavailable`, without a legacy full-config save fallback.
+
+Local and remote model commands share their argument adapter and node core
+operation. Remote `select-gguf --file`/`--projector` paths refer to existing files
+on the **target node**, not on the coordinator. Removal never deletes model files.
+No download, model load, provider switch or restart is implicit. Run the separate
+approved `eef node restart --node NODE_ID` command when ready to apply all pending
+settings. Saved selections and registered models remain distinct.
+
+The EEF result wraps the node report in `data` and includes `mutation_requested`,
+`acknowledged` and `outcome_unknown`. A mutation is sent once; a lost/ambiguous
+response returns `model_change_unconfirmed`, not an automatic retry. Inspect
+saved selections before retrying. This does not promise durable deduplication or
+exactly-once writes. Approval denial is known not to apply the selection change.
+
 These commands operate on the existing Ollama/GGUF configuration through the node
 core service, without JSON editing or a browser:
 

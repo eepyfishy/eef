@@ -81,6 +81,10 @@ this selection object. New nodes project the hints into registration metadata an
 enforce capability restrictions at execution, not just in EEF's routing.
 
 [Node model commands](COMMANDS.md) provide locked updates without editing JSON.
+The development EEF command facade can invoke the same selection operations on
+connected, updated nodes; mutation requires node-local management approval,
+rechecked under the node configuration lock. It never downloads or restarts
+implicitly and does not use a legacy full-config save fallback.
 The backend config format and auto-provider policy remain compatible; simultaneous
 backend activation and general non-text/VLM executor configuration remain pending.
 Older nodes ignore the new hints, so downgrade does not preserve enforcement.
