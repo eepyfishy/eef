@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 description = "Native EEF coordinator"
 
+[features]
+default = ["dashboard"]
+dashboard = []
+
 [dependencies]
 reqwest.workspace = true
 anyhow.workspace = true
@@ -13,7 +17,7 @@ async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
 clap.workspace = true
-eefn = { path = "../eefn" }
+eefn = { path = "../eefn", default-features = false }
 futures-util.workspace = true
 fs2.workspace = true
 indexmap.workspace = true

@@ -17,6 +17,8 @@ pub mod node_control;
 pub mod runtime;
 pub mod task;
 pub mod update;
+#[cfg(feature = "dashboard")]
+mod web_ui;
 pub mod world;
 
 pub use runtime::Runtime;

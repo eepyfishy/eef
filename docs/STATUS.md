@@ -1,5 +1,30 @@
 # Architecture conformance status
 
+## Unreleased backend/browser separation checkpoint
+
+- Browser assets are optional in both crates; both executables support `--no-ui`.
+  Node HTTP routes moved to `api.rs`, with core status/configuration, connection,
+  proposal, startup and update operations owned by `NodeService`. Browser files
+  contain presentation routes/native picker only. A source dependency guard
+  checks that runtime modules do not import the browser/HTTP adapters.
+- Added `eefn connection show/pause/resume/pair-local`. Pausing the outgoing EEF
+  connection does not disable the local command API. Connection config edits
+  serialize with model edits, preserving unrelated saved settings.
+- Saved `dashboard.ui_enabled` / `web.ui_enabled` preferences hide just the
+  browser, without changing legacy listener enablement. The node adapter can
+  change its browser gate without rebinding its command listener. CLI `--no-ui`
+  remains an override; no-dashboard builds cannot enable browser assets.
+- 148 default-feature Rust tests passed on 2026-09-12, including browser-gate
+  and configuration validation. Saved-preference integration passed in
+  `.validation/model-metadata-S3J9GL`: both roles' commands worked with UI hidden,
+  node UI enable/disable preserved the command endpoint, and connection controls,
+  models, jobs and restarts passed against an isolated fake HTTP backend.
+- The earlier no-dashboard build passed 146 Rust tests and process integration
+  (`.validation/model-metadata-2i2Vce`); all 148 tests also passed without dashboard
+  features on 2026-09-13 after the saved-preference follow-up. This is not real inference or physical
+  two-PC acceptance. No installed app, model, release feed or signing status was
+  changed. See [boundary and remaining scope](BACKEND-BOUNDARY.md).
+
 ## Unreleased node-origin job commands
 
 - Added `eefn jobs list/get/output/pause/resume/stop/remove/generate-text` and

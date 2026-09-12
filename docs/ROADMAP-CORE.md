@@ -31,6 +31,11 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The unreleased [backend/browser boundary](BACKEND-BOUNDARY.md) now separates both
+roles' optional browser assets from their independently operable command/API adapters.
+It adds API-only startup and no-dashboard builds, node connection commands, and
+independent saved browser preferences while preserving legacy listener settings.
+
 ```text
 CLI / automation / dashboard -> shared typed commands -> policy + core services
 natural language -> node interpreter -> validated request -> EEF plan + grant

@@ -3,7 +3,9 @@
 //! The wire format is byte-compatible with the Python 0.1 implementation:
 //! newline-framed JSON encrypted with AES-256-GCM and the same HKDF inputs.
 
+pub mod api;
 pub mod client;
+pub mod connection_commands;
 pub mod context;
 pub mod crypto;
 pub mod dashboard;

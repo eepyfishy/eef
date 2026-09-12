@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Control the outgoing EEF connection while keeping local commands available.
+    Connection {
+        #[command(subcommand)]
+        command: eefn::connection_commands::ConnectionCommand,
+    },
     /// Submit and control this node's durable jobs through its running connection.
     Jobs {
         #[command(subcommand)]
@@ -144,6 +149,49 @@ async fn execute_model_command(
     }
     result["running"] = serde_json::json!(true);
     Ok(result)
+}
+
+async fn execute_connection_command(
+    args: &Args,
+    command: &eefn::connection_commands::ConnectionCommand,
+) -> Result<serde_json::Value> {
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("node is not running; connection controls do not launch another node")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
+        .post(format!("http://{address}/api/commands/connection"))
+        .timeout(Duration::from_secs(15))
+        .json(&eefn::connection_commands::ConnectionRequest {
+            schema_version: 1,
+            expected_node_id: file.node_id,
+            command: command.clone(),
+        })
+        .send()
+        .await
+        .context("Connection command reply unavailable; inspect status before retrying")?;
+    let ok = response.status().is_success();
+    let value = eefn::model_manager::bounded_json(response).await?;
+    if !ok {
+        bail!(
+            "{}",
+            value["error"]
+                .as_str()
+                .unwrap_or("connection command unavailable; update the node")
+        )
+    }
+    Ok(value)
 }
 
 async fn execute_job_command(
@@ -348,6 +396,9 @@ enum NetworkAction {
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Connection { command } = command {
+        return execute_connection_command(args, command).await;
+    }
     if let Commands::Jobs { command } = command {
         return execute_job_command(args, command).await;
     }
@@ -551,6 +602,8 @@ fn auto_provider() -> String {
 struct DashboardConfig {
     #[serde(default = "enabled")]
     enabled: bool,
+    #[serde(default = "enabled")]
+    ui_enabled: bool,
     #[serde(default = "dashboard_host")]
     host: String,
     #[serde(default = "dashboard_port")]
@@ -561,6 +614,7 @@ impl Default for DashboardConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            ui_enabled: true,
             host: dashboard_host(),
             port: dashboard_port(),
         }
@@ -697,7 +751,11 @@ async fn main() -> Result<()> {
                 Some(lock) => Some(lock),
                 None => {
                     let config = load_file(&args.config)?.dashboard.unwrap_or_default();
-                    if args.open_dashboard && !args.no_ui {
+                    if args.open_dashboard
+                        && !args.no_ui
+                        && config.ui_enabled
+                        && cfg!(feature = "dashboard")
+                    {
                         eefn::setup::open_dashboard(&config.host, config.port);
                     }
                     return Ok(());
@@ -719,13 +777,22 @@ async fn main() -> Result<()> {
     let mut dashboard_task = if dashboard_config.enabled && interactive {
         Some(
             dashboard
-                .start_with_ui(&dashboard_config.host, dashboard_config.port, !args.no_ui)
+                .start_api(
+                    &dashboard_config.host,
+                    dashboard_config.port,
+                    !args.no_ui && dashboard_config.ui_enabled,
+                )
                 .await?,
         )
     } else {
         None
     };
-    if args.open_dashboard && !args.no_ui && dashboard_task.is_some() {
+    if args.open_dashboard
+        && !args.no_ui
+        && dashboard_config.ui_enabled
+        && cfg!(feature = "dashboard")
+        && dashboard_task.is_some()
+    {
         eefn::setup::open_dashboard(&dashboard_config.host, dashboard_config.port);
     }
     let discovery = if interactive {
@@ -746,6 +813,10 @@ async fn main() -> Result<()> {
     loop {
         if let Ok(file) = load_file(&args.config) {
             let next = file.dashboard.unwrap_or_default();
+            if let Some(api) = &dashboard_task {
+                api.set_ui_enabled(!args.no_ui && next.ui_enabled);
+            }
+            dashboard_config.ui_enabled = next.ui_enabled;
             if interactive
                 && (next.host != dashboard_config.host
                     || next.port != dashboard_config.port
@@ -754,7 +825,7 @@ async fn main() -> Result<()> {
                 let replacement = if next.enabled {
                     Some(
                         dashboard
-                            .start_with_ui(&next.host, next.port, !args.no_ui)
+                            .start_api(&next.host, next.port, !args.no_ui && next.ui_enabled)
                             .await?,
                     )
                 } else {

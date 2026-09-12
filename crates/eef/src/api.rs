@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -114,12 +114,20 @@ struct LogsQuery {
 }
 
 pub fn router(runtime: Arc<Runtime>) -> Router {
-    Router::new()
-        .route("/", get(root))
-        .route("/app.js", get(ui_script))
-        .route("/app.css", get(ui_style))
-        .route("/advanced/legacy", get(legacy))
-        .route("/api/ui", get(ui_info))
+    router_with_ui(runtime, true)
+}
+
+pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
+    let app = Router::new();
+    #[cfg(feature = "dashboard")]
+    let app = if ui_enabled {
+        app.merge(crate::web_ui::router())
+    } else {
+        app
+    };
+    #[cfg(not(feature = "dashboard"))]
+    let _ = ui_enabled;
+    app.route("/api/ui", get(ui_info))
         .route("/api/restart", post(restart))
         .route("/api/network/invite", post(invite))
         .route("/api/devices/{node_id}/manage", post(device_manage))
@@ -164,27 +172,6 @@ pub fn router(runtime: Arc<Runtime>) -> Router {
         .with_state(runtime)
 }
 
-async fn root() -> Html<&'static str> {
-    Html(include_str!("../../../dashboard/app.html"))
-}
-async fn legacy() -> Html<&'static str> {
-    Html(include_str!("../../../dashboard/index.html"))
-}
-async fn ui_script() -> impl IntoResponse {
-    (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "text/javascript; charset=utf-8",
-        )],
-        include_str!("../../../dashboard/app.js"),
-    )
-}
-async fn ui_style() -> impl IntoResponse {
-    (
-        [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        include_str!("../../../dashboard/app.css"),
-    )
-}
 async fn ui_info(State(runtime): State<Arc<Runtime>>) -> Json<Value> {
     Json(
         json!({"role":"eef","peer_url":runtime.config.string("web.device_dashboard_url","http://127.0.0.1:51336/")}),

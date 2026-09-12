@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 description = "Native EEF node runtime and coordinator gateway"
 
+[features]
+default = ["dashboard"]
+dashboard = []
+
 [dependencies]
 aes-gcm.workspace = true
 anyhow.workspace = true

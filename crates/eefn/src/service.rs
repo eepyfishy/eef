@@ -108,6 +108,179 @@ impl NodeService {
         Ok(())
     }
 
+    /// Local-owner configuration view, shared by HTTP and deterministic commands.
+    pub fn configuration(&self) -> Result<Value> {
+        let mut config = self.read_config()?;
+        if config["psk"]
+            .as_str()
+            .is_some_and(|secret| !secret.is_empty())
+        {
+            config["psk"] = json!(SECRET_PLACEHOLDER);
+        }
+        Ok(
+            json!({"config":config,"path":self.config_path.display().to_string(),
+            "note":"Changes apply after EEFN restarts"}),
+        )
+    }
+
+    pub fn connection_command(
+        &self,
+        request: crate::connection_commands::ConnectionRequest,
+    ) -> Result<Value> {
+        use crate::connection_commands::ConnectionCommand;
+        if request.schema_version != 1 || request.expected_node_id != self.node_id {
+            bail!("connection command schema or target node does not match this instance")
+        }
+        let restart_requested = !matches!(request.command, ConnectionCommand::Show {});
+        match request.command {
+            ConnectionCommand::Show {} => {}
+            ConnectionCommand::Pause {} => {
+                self.set_connection_paused(true)?;
+            }
+            ConnectionCommand::Resume {} => {
+                self.set_connection_paused(false)?;
+            }
+            ConnectionCommand::PairLocal {} => {
+                self.pair_with_local_coordinator()?;
+            }
+        }
+        let _guard = self.config_lock.lock().expect("config lock");
+        let config = self.read_config()?;
+        let live = self.live.lock().unwrap();
+        Ok(
+            json!({"schema_version":1,"success":true,"report_type":"node_connection",
+            "node_id":self.node_id,"saved_connection_enabled":config["connection_enabled"].as_bool().unwrap_or(true),
+            "auto_local":config["auto_local"].as_bool().unwrap_or(true),
+            "local_pairing":config["local_pairing"].as_bool().unwrap_or(true),
+            "connection":live["connection"],"restart_requested":restart_requested,
+            "note":"Saved connection policy is not completed reconnection. Local commands remain available; the requested node runtime restart also applies pending settings."}),
+        )
+    }
+
+    pub fn status(&self) -> Value {
+        let config = self.read_config().unwrap_or_else(|_| json!({}));
+        let live = self.live.lock().unwrap().clone();
+        json!({"node_id":self.node_id,"network":live["network"],"runtime":"rust","version":crate::VERSION,
+            "node_alive":true,"coordinator_required_for_node":false,"coordinator_required_for_orchestration":true,
+            "name":config["name"],"hostname":crate::setup::hostname(),"coordinator_name":config["coordinator_name"],"metadata":live["metadata"],
+            "connection":live["connection"],"hardware":live["hardware"],"permissions":live["permissions"],"models":live["models"],
+            "capabilities":live["capabilities"],"last_activity":live["last_activity"],"last_request_context":live["last_request_context"],
+            "last_resource_id":live["last_resource_id"],"pending_restart":live["pending_restart"],"download":live["download"],"update":live["update"],
+            "proposal_pending":self.config_path.with_extension("proposal.json").is_file()})
+    }
+
+    pub fn save_configuration(&self, value: Value) -> Result<Value> {
+        self.save_config(value)?;
+        self.live.lock().unwrap()["pending_restart"] = json!(true);
+        Ok(json!({"saved":true,"restart_required":true}))
+    }
+
+    pub fn set_connection_paused(&self, paused: bool) -> Result<Value> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        let mut config = self.read_config()?;
+        config["connection_enabled"] = json!(!paused);
+        self.save_config_locked(config)?;
+        self.restart.notify_one();
+        Ok(json!({"paused":paused}))
+    }
+
+    pub fn restore_configuration(&self) -> Result<Value> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        let backup: Value =
+            serde_json::from_slice(&std::fs::read(self.config_path.with_extension("json.bak"))?)?;
+        self.save_config_locked(backup)?;
+        self.live.lock().unwrap()["pending_restart"] = json!(true);
+        Ok(json!({"saved":true,"restart_required":true}))
+    }
+
+    pub fn reset_configuration(&self) -> Result<Value> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        let mut config = crate::setup::defaults();
+        config["name"] = json!(crate::setup::hostname());
+        self.save_config_locked(config)?;
+        self.live.lock().unwrap()["pending_restart"] = json!(true);
+        Ok(json!({"saved":true,"restart_required":true}))
+    }
+
+    pub fn pair_with_local_coordinator(&self) -> Result<Value> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        let mut config = self.read_config()?;
+        config["auto_local"] = json!(true);
+        config["local_pairing"] = json!(true);
+        config["endpoints"] = json!([]);
+        self.save_config_locked(config)?;
+        crate::setup::pair_local(&self.config_path)?;
+        self.restart.notify_one();
+        Ok(json!({"saved":true}))
+    }
+
+    pub fn configuration_proposal(&self) -> Result<Value> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        let mut value: Value = serde_json::from_slice(&std::fs::read(
+            self.config_path.with_extension("proposal.json"),
+        )?)?;
+        if value.get("psk").is_some() {
+            value["psk"] = json!(SECRET_PLACEHOLDER);
+        }
+        Ok(json!({"config":value}))
+    }
+
+    pub fn discard_configuration_proposal(&self) -> Result<Value> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        let path = self.config_path.with_extension("proposal.json");
+        if path.is_file() {
+            std::fs::remove_file(path)?;
+        }
+        Ok(json!({"discarded":true}))
+    }
+
+    pub fn startup_status(&self) -> Result<crate::StartupStatus> {
+        crate::startup_status("EEF Node")
+    }
+
+    pub fn set_startup(&self, enabled: bool) -> Result<crate::StartupStatus> {
+        let current = std::env::current_exe()?;
+        let stable = crate::updater::installation_root(&current)?.join("eefn.exe");
+        let executable = if stable.is_file() { stable } else { current };
+        crate::set_startup(
+            "EEF Node",
+            &executable,
+            &["--config".into(), self.config_path.display().to_string()],
+            enabled,
+        )
+    }
+
+    pub async fn check_update(&self) -> Result<Value> {
+        let config = self.read_config()?;
+        let url = config
+            .pointer("/update/manifest_url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("Configure an update manifest URL first"))?;
+        Ok(json!(
+            crate::updater::check(url, crate::VERSION, std::time::Duration::from_secs(30)).await?
+        ))
+    }
+
+    pub async fn apply_update(&self) -> Result<Value> {
+        let config = self.read_config()?;
+        let url = config
+            .pointer("/update/manifest_url")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("Configure an update manifest URL first"))?;
+        let root = crate::updater::installation_root(std::env::current_exe()?)?;
+        if !crate::updater::check(url, crate::VERSION, std::time::Duration::from_secs(30))
+            .await?
+            .update_available
+        {
+            bail!("You are already up to date")
+        }
+        let result =
+            crate::updater::apply_for(url, root, std::time::Duration::from_secs(600), "eefn")
+                .await?;
+        self.live.lock().unwrap()["pending_restart"] = json!(true);
+        Ok(json!(result))
+    }
+
     /// Local owner operation shared by CLI and HTTP; no network lookup or LM.
     pub fn network_command(&self, request: crate::network::CommandRequest) -> Result<Value> {
         if request.schema_version != 1 || request.expected_node_id != self.node_id {
@@ -385,6 +558,11 @@ fn validate_config(value: &Value) -> Result<()> {
         if !dashboard.is_object() {
             bail!("Dashboard settings must be an object")
         }
+        for key in ["enabled", "ui_enabled"] {
+            if dashboard.get(key).is_some_and(|value| !value.is_boolean()) {
+                bail!("API and UI enabled settings must be boolean")
+            }
+        }
         if dashboard
             .get("port")
             .is_some_and(|p| !p.as_u64().is_some_and(|n| n > 0 && n <= 65535))
@@ -561,6 +739,86 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), "broken {");
     }
 
+    #[test]
+    fn connection_controls_and_configuration_work_without_http_or_dashboard() {
+        use crate::connection_commands::{ConnectionCommand, ConnectionRequest};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        let original = json!({"node_id":"stable","name":"Original","psk":"secret","future":{"keep":true},"connection_enabled":true});
+        crate::setup::write_json(&path, &original).unwrap();
+        let service = NodeService::new(path.clone(), "stable".into());
+        let request = |command| ConnectionRequest {
+            schema_version: 1,
+            expected_node_id: "stable".into(),
+            command,
+        };
+        let shown = service
+            .connection_command(request(ConnectionCommand::Show {}))
+            .unwrap();
+        assert_eq!(shown["saved_connection_enabled"], true);
+        assert_eq!(shown["restart_requested"], false);
+        assert_eq!(
+            service
+                .connection_command(request(ConnectionCommand::Pause {}))
+                .unwrap()["saved_connection_enabled"],
+            false
+        );
+        assert_eq!(service.read_config().unwrap()["future"], original["future"]);
+        assert_eq!(
+            service.configuration().unwrap()["config"]["psk"],
+            SECRET_PLACEHOLDER
+        );
+        assert_eq!(service.status()["node_id"], "stable");
+        service.restore_configuration().unwrap();
+        assert_eq!(service.read_config().unwrap(), original);
+        let mut wrong = request(ConnectionCommand::Pause {});
+        wrong.expected_node_id = "other".into();
+        assert!(service.connection_command(wrong).is_err());
+        assert_eq!(service.read_config().unwrap(), original);
+        assert!(
+            serde_json::from_value::<ConnectionCommand>(
+                json!({"operation":"resume","permissions":true})
+            )
+            .is_err()
+        );
+        service
+            .connection_command(request(ConnectionCommand::Resume {}))
+            .unwrap();
+        assert_eq!(service.read_config().unwrap()["psk"], "secret");
+    }
+
+    #[test]
+    fn concurrent_connection_and_model_changes_preserve_each_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        crate::setup::write_json(
+            &path,
+            &json!({"node_id":"stable","name":"Original","future":{"keep":true}}),
+        )
+        .unwrap();
+        let service = NodeService::new(path, "stable".into());
+        let first = service.clone();
+        let second = service.clone();
+        let a = std::thread::spawn(move || first.set_connection_paused(true).unwrap());
+        let b = std::thread::spawn(move || {
+            second
+                .model_command(crate::model_selection::ModelCommandRequest {
+                    schema_version: 1,
+                    expected_node_id: "stable".into(),
+                    command: crate::model_selection::ModelCommand::Provider {
+                        provider: "ollama".into(),
+                    },
+                })
+                .unwrap()
+        });
+        a.join().unwrap();
+        b.join().unwrap();
+        let saved = service.read_config().unwrap();
+        assert_eq!(saved["models"]["provider"], "ollama");
+        assert_eq!(saved["connection_enabled"], false);
+        assert_eq!(saved["future"]["keep"], true);
+    }
+
     #[tokio::test]
     async fn remote_management_requires_local_approval_and_cannot_grant_itself_trust() {
         let dir = tempfile::tempdir().unwrap();
@@ -620,6 +878,8 @@ mod tests {
 
     #[test]
     fn rejects_unknown_model_provider() {
+        assert!(validate_config(&json!({"dashboard":{"enabled":false,"ui_enabled":true}})).is_ok());
+        assert!(validate_config(&json!({"dashboard":{"ui_enabled":"false"}})).is_err());
         assert!(validate_config(&json!({"models": {"provider": "magic"}})).is_err());
         assert!(validate_config(&json!({"models": {"provider": "auto"}})).is_ok());
         assert!(validate_config(&json!({"models":{"ollama":{"selected":[{"model_id":"fixture","modality":"unknown"}]}}})).is_err());

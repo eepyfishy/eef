@@ -1,5 +1,13 @@
 # HTTP API
 
+Unreleased: both roles support API-only startup with `--no-ui`. The node HTTP
+adapter is now `eefn::api`; optional browser assets/native picker live separately
+in `eefn::dashboard`. Core configuration, status, connection, startup and update
+operations live in `NodeService`. Existing HTTP response shapes remain compatible.
+`POST /api/commands/connection` takes `{schema_version:1,expected_node_id,command}`;
+operations are `show`, `pause`, `resume`, `pair_local`. Local origin/host guards
+still apply, including when no UI assets are compiled or served.
+
 Unreleased node `POST /api/commands/jobs` takes
 `{schema_version:1,expected_node_id,command}` with typed operations `list`, `get`,
 `output`, `pause`, `resume`, `stop`, `remove`, `generate_text`. Identity/version and

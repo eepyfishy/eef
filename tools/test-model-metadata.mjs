@@ -13,6 +13,7 @@ const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const children=[],requests=[],gates=new Map();
 // Optional compatibility run: selected old executable, still isolated config/data.
 const legacyNode=process.env.EEF_TEST_LEGACY_NODE_BINARY;
+const uiConfig=process.env.EEF_TEST_UI_CONFIG==='1';
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 function launch(name,args,extra={}) {
  const executable=name==='eefn'&&legacyNode?resolve(legacyNode):join(bin,name+'.exe');
@@ -44,17 +45,33 @@ try{
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
  Object.assign(config,{node_id:id,name:'Metadata fixture',psk:secret,auto_local:false,local_pairing:false,endpoints:[`127.0.0.1:${nodePort}`],heartbeat_seconds:1,dashboard:{enabled:true,host:'127.0.0.1',port:apiPort},update:{policy:'off'},models:{provider:'ollama',ollama:{base_url:`http://127.0.0.1:${fake.address().port}`,selected:[{model_id:'fixture-text',modality:'text'},{model_id:'fixture-vision',modality:'vlm'}]},llamacpp:{slots:[]}}});
  const nodeConfig=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml');
+ if(uiConfig)config.dashboard.ui_enabled=false;
  const nodeCommand=async(args,success=true)=>{const child=launch('eefn',['--config',nodeConfig,'models',...args,'--json']);const timer=setTimeout(()=>child.kill(),20000);try{const result=await child.result;assert.equal(result.code,success?0:1,result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
  const remoteModels=async(args,success=true)=>{const child=launch('eef',['--config',eefConfig,'node','models','--node',id,...args,'--json']);const timer=setTimeout(()=>child.kill(),25000);try{const result=await child.result;assert.equal(result.code,success?0:1,result.out+' '+result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
  const nodeJobs=async(args,success=true)=>{const child=launch('eefn',['--config',nodeConfig,'jobs',...args,'--json']);const timer=setTimeout(()=>child.kill(),25000);try{const result=await child.result;assert.equal(result.code,success?0:1,result.out+' '+result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
+ const nodeConnection=async(action)=>{const child=launch('eefn',['--config',nodeConfig,'connection',action,'--json']);const timer=setTimeout(()=>child.kill(),25000);try{const result=await child.result;assert.equal(result.code,0,result.out+' '+result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
  const localRestart=async()=>{const child=launch('eefn',['--config',nodeConfig,'restart','--wait-seconds','60','--json']);const timer=setTimeout(()=>child.kill(),70000);try{const result=await child.result;assert.equal(result.code,0,result.out+' '+result.err);const reply=JSON.parse(result.out);assert.equal(reply.completed,true);assert.notEqual(reply.runtime_id,reply.previous_runtime_id);return reply;}finally{clearTimeout(timer);}};
  await writeFile(nodeConfig,JSON.stringify(config));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
+ let yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
+ if(uiConfig)yaml=yaml.replace('ui_enabled: true','ui_enabled: false');
  await writeFile(eefConfig,yaml);
- launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain'],{EEF_NODE_PSK:secret});
- launch('eefn',['--config',nodeConfig,'--no-ui']);
+ launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain',...uiConfig?[]:['--no-ui']],{EEF_NODE_PSK:secret});
+ launch('eefn',['--config',nodeConfig,...uiConfig?[]:['--no-ui']]);
  const inventory=()=>json(eef+'/api/commands/models?node_id='+id);
  await until(async()=>(await inventory()).nodes[0]?.models.length===2,'versioned registration');
+ for(const base of [eef,node])for(const path of ['/','/app.js','/app.css','/advanced/legacy'])assert.equal((await fetch(base+path)).status,404,'API-only process must not serve browser assets');
+ if(!legacyNode)assert.equal((await fetch(node+'/api/pick',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'model'})})).status,404,'API-only mode must not open native UI');
+ if(uiConfig&&!legacyNode){
+  const initialRuntime=(await json(node+'/api/diagnostics')).runtime_id;
+  const visible=(await json(node+'/api/config')).config;visible.dashboard.ui_enabled=true;
+  await json(node+'/api/config',{config:visible},'PUT');
+  const shown=await localRestart();assert.equal(shown.previous_runtime_id,initialRuntime);
+  await until(async()=>(await fetch(node+'/')).status===200,'enable browser without rebinding command port');
+  const hidden=(await json(node+'/api/config')).config;hidden.dashboard.ui_enabled=false;
+  await json(node+'/api/config',{config:hidden},'PUT');await localRestart();
+  assert.equal((await fetch(node+'/')).status,404);assert.equal((await nodeConnection('show')).success,true);
+  await until(async()=>(await inventory()).nodes[0]?.models.length===2,'reconnect with browser disabled');
+ }
  const models=(await inventory()).nodes[0].models;
  assert(models.every(m=>m.metadata_source===(legacyNode?'legacy_registration':'model_metadata_v1')&&m.lifecycle===null&&m.resource_estimates.ram_mb===null));
  assert.deepEqual(models.find(m=>m.instance.model_id==='fixture-vision').capabilities,['llm.infer','vlm.analyze']);
@@ -148,6 +165,14 @@ try{
   node=`http://127.0.0.1:${newPort}`;
   assert.equal((await json(node+'/api/diagnostics')).runtime_id,changed.runtime_id);
   await until(async()=>(await inventory()).nodes[0]?.models.length===2,'reconnect after local API port change');
+  const countBeforePause=requests.length;
+  assert.equal((await nodeConnection('show')).saved_connection_enabled,true);
+  assert.equal((await nodeConnection('pause')).saved_connection_enabled,false);
+  await until(async()=>(await json(node+'/api/status')).connection.state==='paused','connection paused while command API stays available');
+  assert.equal((await nodeJobs(['list'],false)).error_code,'not_sent');
+  assert.equal((await nodeConnection('resume')).saved_connection_enabled,true);
+  await until(async()=>(await inventory()).nodes[0]?.models.length===2,'connection resumed through same command API');
+  assert.equal(requests.length,countBeforePause,'pause/resume does not execute inference');
   for(const model of ['fixture-text','fixture-vision'])await remoteModels(['remove','--backend','ollama','--model',model]);
   const removed=await nodeCommand(['show']);assert.equal(removed.saved_selections.length,0);assert.equal(removed.registered_models.length,2);
  }else{
@@ -159,7 +184,7 @@ try{
  if(legacyNode)await json(node+'/api/restart',{});else await localRestart();
  await until(async()=>(await inventory()).nodes[0]?.models.length===0&&(await json(eef+'/api/status')).models.length===0,'empty snapshot replaces old models');
  assert.equal((await json(node+'/api/diagnostics')).node_id,id);
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,versioned_inventory:!legacyNode,owner_cli:true,origin_guard:true,selection_commands:!legacyNode,remote_selection_commands:!legacyNode,old_node_remote_command_refusal:!!legacyNode,node_job_commands:!legacyNode,node_job_origin_scope:!legacyNode,explicit_text_output:!legacyNode,pause_resume_without_reexecution:!legacyNode,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:legacyNode?'not supported by old node':true,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,versioned_inventory:!legacyNode,owner_cli:true,api_only_both_roles:true,saved_ui_preferences:uiConfig,connection_commands:!legacyNode,origin_guard:true,selection_commands:!legacyNode,remote_selection_commands:!legacyNode,old_node_remote_command_refusal:!!legacyNode,node_job_commands:!legacyNode,node_job_origin_scope:!legacyNode,explicit_text_output:!legacyNode,pause_resume_without_reexecution:!legacyNode,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:legacyNode?'not supported by old node':true,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
  console.log('Model metadata and remote selection protocol checks passed: '+scratch);
 }finally{
  for(const release of gates.values())release();gates.clear();

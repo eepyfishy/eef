@@ -4,6 +4,45 @@ This test release supports these commands without a browser or LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Unreleased: backend-only operation and connection controls
+
+Both `eef --no-ui` and `eefn --no-ui` keep their command/API services running
+without mounting browser HTML, JavaScript, CSS or legacy pages. Node API-only
+mode also omits the interactive file-picker endpoint. These are runtime flags;
+developers can additionally compile either role with `--no-default-features`
+to omit bundled dashboard assets entirely. Default builds retain the dashboard.
+
+```powershell
+.\eefn.exe connection show --json
+.\eefn.exe connection pause --json
+.\eefn.exe connection resume --json
+.\eefn.exe connection pair-local --json
+```
+
+Connection controls require a running development node and call the same backend
+operations as the existing UI. Pause saves disabled outgoing EEF connections;
+resume uses the existing endpoints and trust. Both request a node runtime restart
+to apply the change, including other pending settings. This does not restart
+Windows or shut down the local command API. Inspect the returned saved policy
+separately from live connection state; acknowledgement is not reconnection.
+
+`pair-local` explicitly clears selected EEF endpoints and enables automatic
+same-user local pairing. It is an owner configuration change, not a network scan
+or trust grant for arbitrary peers. It must not be used merely to inspect status.
+No connection command implicitly downloads models or executes inference.
+
+Saved UI preferences are `dashboard.ui_enabled` on the node and `web.ui_enabled`
+on EEF, both defaulting to true. False hides the browser while keeping commands
+available. Apply saved preferences with the role's restart command. On the node,
+the browser route gate changes without rebinding its command listener; that node
+runtime restart still applies other pending settings. `--no-ui` overrides a saved
+true value. Builds without dashboard assets cannot enable the browser.
+
+Compatibility: existing node `dashboard.host/port/enabled` fields still configure
+the local HTTP listener. Legacy `enabled:false` disables that listener, including
+commands; use `ui_enabled:false` or `--no-ui` to hide only the browser. No old
+explicitly disabled listener is silently enabled by the new preference.
+
 ## Unreleased: jobs through the running node
 
 ```powershell

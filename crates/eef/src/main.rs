@@ -14,6 +14,9 @@ struct Args {
     json: bool,
     #[arg(long)]
     open_dashboard: bool,
+    /// Run command/API services without serving the browser UI.
+    #[arg(long)]
+    no_ui: bool,
     #[arg(long, global = true, default_value = "config/default_identity.yaml")]
     config: PathBuf,
     #[arg(long, default_value = "data/eef_memory.db")]
@@ -338,7 +341,11 @@ async fn main() -> Result<()> {
         Some(lock) => lock,
         None => {
             let config = eef::config::Config::load(Some(&args.config))?;
-            if args.open_dashboard {
+            if args.open_dashboard
+                && !args.no_ui
+                && config.bool("web.ui_enabled", true)
+                && cfg!(feature = "dashboard")
+            {
                 eefn::setup::open_dashboard(
                     &config.string("web.host", "127.0.0.1"),
                     config.u64("web.port", 51334) as u16,
@@ -347,7 +354,7 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     };
-    let mut open_dashboard = args.open_dashboard;
+    let mut open_dashboard = args.open_dashboard && !args.no_ui && cfg!(feature = "dashboard");
     if let Some(parent) = args
         .database
         .parent()
@@ -370,7 +377,7 @@ async fn main() -> Result<()> {
             .await
             .with_context(|| format!("bind EEF API {host}:{port}"))?;
         info!(%host, %port, node_port = runtime.node_server.port(), "EEF API listening");
-        if open_dashboard {
+        if open_dashboard && runtime.config.bool("web.ui_enabled", true) {
             eefn::setup::open_dashboard(&host, port);
             open_dashboard = false;
         }
@@ -388,7 +395,7 @@ async fn main() -> Result<()> {
         let requested = restart_requested.clone();
         let restart = runtime.restart.clone();
         let shutdown_runtime = runtime.clone();
-        let result = axum::serve(listener, eef::api::router(runtime.clone()))
+        let result = axum::serve(listener, eef::api::router_with_ui(runtime.clone(), !args.no_ui && runtime.config.bool("web.ui_enabled", true)))
         .with_graceful_shutdown(async move {
             tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=restart.notified()=>{requested.store(true,std::sync::atomic::Ordering::Relaxed);} }
             // Stop runners before graceful HTTP draining; an in-flight job must

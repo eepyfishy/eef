@@ -33,6 +33,7 @@ impl Config {
         } else {
             defaults
         };
+        validate_ui_preference(&value)?;
         Ok(Self {
             value: Arc::new(value),
             source: source.map(Arc::new),
@@ -124,6 +125,7 @@ impl Config {
             bail!("configuration must be a JSON/YAML object")
         }
         crate::discovery::DiscoveryPolicy::parse(value.get("discovery"))?;
+        validate_ui_preference(value)?;
         for section in [
             "web", "node", "models", "update", "python", "identity", "jobs",
         ] {
@@ -189,6 +191,24 @@ fn deep_merge(mut base: Value, overlay: Value) -> Value {
 
 pub fn embedded_defaults_for_test() -> Value {
     json!({"identity": {"name": "EEF"}})
+}
+
+fn validate_ui_preference(value: &Value) -> Result<()> {
+    if value
+        .pointer("/web/ui_enabled")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        bail!("web.ui_enabled must be true or false")
+    }
+    Ok(())
+}
+
+#[test]
+fn browser_preference_is_explicit_boolean_and_legacy_default_is_preserved() {
+    assert!(validate_ui_preference(&json!({})).is_ok());
+    assert!(validate_ui_preference(&json!({"web":{"ui_enabled":false}})).is_ok());
+    assert!(validate_ui_preference(&json!({"web":{"ui_enabled":"false"}})).is_err());
+    assert!(validate_ui_preference(&json!({"web":{"ui_enabled":null}})).is_err());
 }
 
 #[cfg(test)]
