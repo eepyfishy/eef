@@ -76,6 +76,42 @@ Set `EEF_LIVE_MODEL_INVENTORY=1` to also verify read-only model registration
 inventory on both nodes. This requires the development coordinator command below;
 it does not scan backends, download models or run inference.
 
+## Unreleased: local node restart and actual API discovery
+
+```powershell
+.\eefn.exe restart --json
+.\eefn.exe restart --wait-seconds 60 --json
+```
+
+This is a local owner command: remote-management approval is not required. It
+restarts the node app, not Windows, and applies all pending node settings. It
+refuses to start a stopped node. It sends one restart request, never an automatic
+retry. The existing browser and approved remote restart paths call the same core
+restart operation; their permission guards remain unchanged.
+
+The default completion wait is 30 seconds, with 0-60 supported. Zero waits for
+acknowledgement only. A positive wait requires the same stable node ID and a new
+initialized runtime ID. Results distinguish requested, acknowledged, completed
+and unknown outcome. Timeout/lost replies return failure with an uncertain outcome,
+not proof that restart did not happen. Completion does not verify EEF reconnection,
+workloads or model readiness. If the restart disables the local API, local
+completion cannot be observed; inspect state before any explicit retry.
+
+POST `/api/commands/restart` takes
+`{schema_version:1,expected_node_id,expected_runtime_id}` and checks the current
+node/runtime before queueing. Null runtime is allowed only when the current node
+has not initialized one, allowing a repaired startup configuration to be retried.
+Operation IDs in CLI output are correlation IDs, not durable deduplication keys.
+
+New nodes record their bound local API beside the configuration as
+`CONFIG_FILENAME.api.json`. Commands consult it only while the instance lock is
+held by the running node, validate identity and loopback scope, and reject corrupt
+or oversized records. Thus saved port/disable settings do not redirect commands
+away from the still-running API. Restart completion polling follows the updated
+record if the port changes. This is local discovery, not a new remote listener.
+Missing records fall back to config for older nodes; stopped-node commands ignore
+stale records. Failure to write discovery is logged without stopping the node.
+
 ## Unreleased: node model selection commands
 
 These commands operate on the existing Ollama/GGUF configuration through the node
@@ -93,7 +129,7 @@ core service, without JSON editing or a browser:
 
 Selection commands do not download/load models or restart the node. They report
 `saved_selections` separately from `registered_models`; registration is not proof
-of loaded state. Apply pending changes by restarting the node. Offline commands
+of loaded state. Apply pending changes with `eefn restart`. Offline commands
 hold the instance lock and save for its next start. An existing saved identity is
 required (normally created by setup; `network set` can initialize it).
 

@@ -243,6 +243,35 @@ impl NodeService {
         self.network_command(request)
     }
 
+    pub fn request_restart(
+        self: &Arc<Self>,
+        request: crate::local_commands::RestartRequest,
+    ) -> Result<Value> {
+        let current = self.live.lock().unwrap()["runtime_id"]
+            .as_str()
+            .map(str::to_owned);
+        if request.schema_version != 1
+            || request.expected_node_id != self.node_id
+            || request.expected_runtime_id != current
+        {
+            bail!("restart command schema, node or runtime does not match this instance")
+        }
+        Ok(self.queue_restart())
+    }
+
+    /// Existing local-owner and approved remote restart share one runtime operation.
+    pub fn queue_restart(self: &Arc<Self>) -> Value {
+        let current = self.live.lock().unwrap()["runtime_id"].clone();
+        let state = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            state.restart.notify_one();
+        });
+        json!({"schema_version":1,"success":true,"restarting":true,"restart_requested":true,"completed":false,
+            "node_id":self.node_id,"previous_runtime_id":current,
+            "note":"Restart requested, not completed. Other pending node settings will also apply."})
+    }
+
     pub(crate) fn model_directory(&self) -> PathBuf {
         self.config_path
             .parent()
@@ -301,14 +330,7 @@ impl NodeService {
                 self.live.lock().unwrap()["pending_restart"] = json!(true);
                 Ok(json!({"saved":true,"restart_required":true}))
             }
-            "restart" if allowed => {
-                let state = self.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    state.restart.notify_one();
-                });
-                Ok(json!({"restarting":true}))
-            }
+            "restart" if allowed => Ok(self.queue_restart()),
             "install" if allowed => {
                 crate::model_manager::install(self.clone(), params).await?;
                 Ok(json!({"started":true}))

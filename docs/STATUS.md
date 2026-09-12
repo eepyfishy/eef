@@ -1,5 +1,21 @@
 # Architecture conformance status
 
+## Unreleased local restart and API discovery checkpoint
+
+- Added `eefn restart` with local-owner node/runtime preconditions, one send,
+  bounded completion observation and explicit uncertain outcomes. It shares the
+  node core restart operation with existing browser/approved remote controls.
+  Completion is a new initialized runtime, not a workload/model/reconnection claim.
+- A bounded per-config local API marker records the actual bound endpoint.
+  Network/model/input commands and restart polling follow it instead of pending
+  port settings. It is identity-checked and loopback-only, with old-node fallback
+  only when the marker is absent. No remote listener was added.
+- 133 Rust tests passed on 2026-09-12. Isolated process testing verified restart
+  and API port migration (`.validation/model-metadata-YyzqX8`); command and
+  discovery tests passed (`.validation/node-commands-g9t1Vl`,
+  `.validation/peer-discovery-QXwoD4`), as did first-run/job/browser regressions
+  (`.validation/first-run-ezjgWB`). No real model download or release deployment.
+
 ## Unreleased node model-selection commands
 
 - Added shared node `models show/select-ollama/select-gguf/hints/provider/remove`

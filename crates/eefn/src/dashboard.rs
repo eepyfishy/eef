@@ -52,6 +52,11 @@ impl NodeDashboard {
             .await
             .with_context(|| format!("bind EEFN dashboard {host}:{port}"))?;
         let actual_port = listener.local_addr()?.port();
+        if let Err(error) =
+            crate::local_commands::publish(&self.config_path, &self.node_id, listener.local_addr()?)
+        {
+            warn!(%error,"could not save local API discovery; commands may require unchanged API settings");
+        }
         let app = if ui_enabled {
             Router::new()
                 .route("/", get(index))
@@ -67,6 +72,7 @@ impl NodeDashboard {
             .route("/api/diagnostics", get(diagnostics))
             .route("/api/commands/network", post(network_command))
             .route("/api/commands/models", post(model_command))
+            .route("/api/commands/restart", post(restart_command))
             .route("/api/config", get(config_get).put(config_save))
             .route("/api/startup", get(startup_get).put(startup_set))
             .route("/api/restart", post(restart))
@@ -138,6 +144,13 @@ async fn status(State(state): State<Arc<NodeDashboard>>) -> Json<Value> {
         "pending_restart":live["pending_restart"], "download":live["download"], "update":live["update"],
         "proposal_pending":state.config_path.with_extension("proposal.json").is_file(),
     }))
+}
+
+async fn restart_command(
+    State(state): State<Arc<NodeDashboard>>,
+    Json(request): Json<crate::local_commands::RestartRequest>,
+) -> Result<Json<Value>, DashboardError> {
+    Ok(Json(state.request_restart(request)?))
 }
 
 async fn model_command(
@@ -256,11 +269,7 @@ async fn pause_connection(
 }
 
 async fn restart(State(state): State<Arc<NodeDashboard>>) -> Json<Value> {
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        state.restart.notify_one();
-    });
-    Json(json!({"restarting":true}))
+    Json(state.queue_restart())
 }
 async fn restore(State(state): State<Arc<NodeDashboard>>) -> Result<Json<Value>, DashboardError> {
     let backup: Value = serde_json::from_slice(

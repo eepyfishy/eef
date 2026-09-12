@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Restart this node app and optionally verify its new runtime (not Windows).
+    Restart {
+        #[arg(long, default_value_t = 30)]
+        wait_seconds: u64,
+    },
     /// Inspect and edit saved model selections; no downloads or automatic restart.
     Models {
         #[command(subcommand)]
@@ -239,24 +244,18 @@ async fn execute_model_command(args: &Args, action: &ModelsAction) -> Result<ser
         return Ok(result);
     }
     let local = file.dashboard.unwrap_or_default();
-    if !local.enabled {
-        bail!("The running node's local API is disabled; stop it before editing offline")
-    }
-    let host: std::net::IpAddr = local
-        .host
-        .parse()
-        .context("local command address must be loopback")?;
-    if !host.is_loopback() {
-        bail!("commands require a loopback local API")
-    }
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &request.expected_node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
     let response = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .build()?
-        .post(format!(
-            "http://{}/api/commands/models",
-            std::net::SocketAddr::new(host, local.port)
-        ))
+        .post(format!("http://{}/api/commands/models", address))
         .timeout(Duration::from_secs(15))
         .json(&request)
         .send()
@@ -272,6 +271,113 @@ async fn execute_model_command(args: &Args, action: &ModelsAction) -> Result<ser
         )
     }
     result["running"] = serde_json::json!(true);
+    Ok(result)
+}
+
+async fn execute_restart(args: &Args, wait_seconds: u64) -> Result<serde_json::Value> {
+    use serde_json::json;
+    if wait_seconds > 60 {
+        bail!("wait_seconds must be 0-60")
+    }
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("node is not running; restart does not launch a stopped node")
+    }
+    let file = load_file(&args.config)?;
+    let node_id = file.node_id;
+    let local = file.dashboard.unwrap_or_default();
+    let address = || {
+        eefn::local_commands::endpoint(
+            &args.config,
+            &node_id,
+            &local.host,
+            local.port,
+            local.enabled,
+        )
+    };
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(3))
+        .build()?;
+    let diagnostics = async || -> Result<serde_json::Value> {
+        let response = http
+            .get(format!("http://{}/api/diagnostics", address()?))
+            .send()
+            .await?
+            .error_for_status()?;
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if value["success"] != true || value["node_id"] != node_id {
+            bail!("local diagnostics do not match this node")
+        }
+        Ok(value)
+    };
+    let before = diagnostics().await?;
+    let previous = before["runtime_id"].as_str().map(str::to_owned);
+    let mut result = json!({"schema_version":1,"success":false,"report_type":"local_node_restart","node_id":node_id,
+        "operation_id":uuid::Uuid::new_v4().to_string(),"previous_runtime_id":previous,"restart_requested":true,"acknowledged":false,"completed":false,"outcome_unknown":false});
+    let reply = http
+        .post(format!("http://{}/api/commands/restart", address()?))
+        .json(&eefn::local_commands::RestartRequest {
+            schema_version: 1,
+            expected_node_id: node_id.clone(),
+            expected_runtime_id: previous.clone(),
+        })
+        .send()
+        .await;
+    match reply {
+        Ok(response) if response.status().is_client_error() => {
+            result["error_code"] = json!("restart_rejected");
+            result["note"] =
+                json!("Node rejected restart or does not support this command. No retry was sent.");
+            return Ok(result);
+        }
+        Ok(response) if response.status().is_success() => {
+            if let Ok(value) = eefn::model_manager::bounded_json(response).await {
+                if value["success"] == true
+                    && value["node_id"] == node_id
+                    && value["restart_requested"] == true
+                    && value["previous_runtime_id"] == json!(previous)
+                {
+                    result["acknowledged"] = json!(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    if wait_seconds == 0 && result["acknowledged"] == true {
+        result["success"] = json!(true);
+        result["note"] = json!("Restart acknowledged; completion was not requested or verified.");
+        return Ok(result);
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(wait_seconds);
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(Ok(current)) = tokio::time::timeout_at(deadline, diagnostics()).await {
+            if let Some(runtime) = current["runtime_id"]
+                .as_str()
+                .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+            {
+                if previous.as_deref() != Some(runtime) {
+                    result["success"] = json!(true);
+                    result["completed"] = json!(true);
+                    result["runtime_id"] = json!(runtime);
+                    result["pending_restart"] = current["pending_restart"].clone();
+                    result["note"] = json!(
+                        "Same stable node ID initialized a new runtime. Coordinator reconnection, jobs and model readiness are not verified."
+                    );
+                    return Ok(result);
+                }
+            }
+        }
+        tokio::time::sleep_until(
+            (tokio::time::Instant::now() + Duration::from_millis(250)).min(deadline),
+        )
+        .await;
+    }
+    result["error_code"] = json!("restart_unconfirmed");
+    result["outcome_unknown"] = json!(true);
+    result["note"] = json!(
+        "Restart was not confirmed; it may still be running or may have disabled its local API. Inspect diagnostics before retrying. No automatic retry was sent."
+    );
     Ok(result)
 }
 
@@ -316,6 +422,9 @@ enum NetworkAction {
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Restart { wait_seconds } = command {
+        return execute_restart(args, *wait_seconds).await;
+    }
     use eefn::network::{
         CommandRequest, CoordinatorAdvertisement, CoordinatorState, NetworkChanges, NetworkCommand,
     };
@@ -407,24 +516,18 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     // Ask the existing instance to mutate its config under its own lock.
     let file = load_file(&args.config)?;
     let local = file.dashboard.unwrap_or_default();
-    if !local.enabled {
-        bail!("The running node's local API is disabled; stop it before editing offline")
-    }
-    let address: std::net::IpAddr = local
-        .host
-        .parse()
-        .context("local command address must be loopback")?;
-    if !address.is_loopback() {
-        bail!("commands require a loopback local API")
-    }
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
     let response = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .build()?
-        .post(format!(
-            "http://{}/api/commands/network",
-            std::net::SocketAddr::new(address, local.port)
-        ))
+        .post(format!("http://{}/api/commands/network", address))
         .timeout(Duration::from_secs(15))
         .json(&CommandRequest {
             schema_version: 1,
@@ -604,6 +707,9 @@ async fn main() -> Result<()> {
                     );
                     println!("{}", serde_json::to_string_pretty(&value)?);
                 }
+                if value["success"].as_bool() == Some(false) {
+                    bail!("command did not complete; inspect the result before retrying")
+                }
                 return Ok(());
             }
             Err(error) => {
@@ -623,21 +729,16 @@ async fn main() -> Result<()> {
         match eefn::setup::instance_lock(&args.config)? {
             Some(lock) => Some(lock),
             None => {
-                let dashboard = load_file(&args.config)?.dashboard.unwrap_or_default();
-                if !dashboard.enabled {
-                    bail!("the node is already running with its local interface disabled")
-                }
-                let address: std::net::IpAddr = dashboard
-                    .host
-                    .parse()
-                    .context("the running node interface must use a loopback address")?;
-                if !address.is_loopback() {
-                    bail!("node input requires a local loopback interface")
-                }
-                let url = format!(
-                    "http://{}/api/chat",
-                    std::net::SocketAddr::new(address, dashboard.port)
-                );
+                let file = load_file(&args.config)?;
+                let dashboard = file.dashboard.unwrap_or_default();
+                let address = eefn::local_commands::endpoint(
+                    &args.config,
+                    &file.node_id,
+                    &dashboard.host,
+                    dashboard.port,
+                    dashboard.enabled,
+                )?;
+                let url = format!("http://{}/api/chat", address);
                 let response = reqwest::Client::new()
                     .post(url)
                     .timeout(Duration::from_secs(125))
