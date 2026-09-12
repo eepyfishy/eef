@@ -127,6 +127,7 @@ pub fn router(runtime: Arc<Runtime>) -> Router {
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/diagnostics/probe", post(diagnostic_probe))
         .route("/api/commands/models", get(model_inventory))
+        .route("/api/commands/models/route", get(model_route_preview))
         .route("/api/commands/node/restart", post(node_restart))
         .route(
             "/api/commands/discovery",
@@ -248,6 +249,13 @@ async fn model_inventory(
     Query(query): Query<crate::model_inventory::InventoryQuery>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.model_inventory(query).await?))
+}
+
+async fn model_route_preview(
+    State(runtime): State<Arc<Runtime>>,
+    Query(query): Query<crate::model::RouteQuery>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.model_route_preview(query).await?))
 }
 
 async fn node_restart(

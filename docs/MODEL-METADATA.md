@@ -87,9 +87,17 @@ Older nodes ignore the new hints, so downgrade does not preserve enforcement.
 
 Non-text/vision metadata (e.g. OCR, embedding, detection or STT/TTS) is representable
 and inspectable, but this increment does not add those model executors, generalized
-non-text/vision configuration, role-based scheduling, default-LM bootstrap,
+non-text/vision configuration, automatic role-based planning, default-LM bootstrap,
 resource-aware admission, lifecycle controllers or execution leases. Existing
 node permissions still govern execution. A reported capability is never a grant.
+
+Explicit text/vision requests can require `constraints.model_role`, matching an
+advertised role exactly. Missing or empty roles do not match; malformed role
+constraints are rejected. Backend and role constraints also hold during tier
+fallback. `eef models route` previews connected candidates using this filtering,
+without loading a model or granting execution. Existing durable jobs now include
+`generate_text` and `analyze_image` templates; these are deterministic requests,
+not a natural-language interpreter or automatic role assignment.
 
 ## Tests
 

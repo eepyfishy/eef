@@ -1,5 +1,19 @@
 # Architecture conformance status
 
+## Unreleased explicit model-role routing checkpoint
+
+- Added bounded, read-only `eef models route` and its guarded API. It previews
+  connected candidates by capability/role/node/backend/model without inference,
+  permission changes, readiness claims or reservations.
+- Existing routing enforces explicit `model_role` and backend constraints even
+  during tier fallback. Existing durable jobs support `generate_text` and
+  `analyze_image`; automatic interpretation/planning remains pending.
+- 135 Rust tests passed on 2026-09-12. Isolated integration evidence:
+  `.validation/model-metadata-y8lWNI`. A fake backend verified exact role dispatch,
+  missing-role job failure without fallback, and no inference during preview.
+  This is not real inference or a physical two-PC test. Installed apps and
+  published releases remain unchanged.
+
 ## Unreleased local restart and API discovery checkpoint
 
 - Added `eefn restart` with local-owner node/runtime preconditions, one send,

@@ -73,6 +73,21 @@ enum NodeCommand {
 
 #[derive(Debug, Subcommand)]
 enum ModelsCommand {
+    /// Preview current model candidates; does not authorize or execute inference.
+    Route {
+        #[arg(long,value_parser=["llm.infer","vlm.analyze"])]
+        capability: String,
+        #[arg(long)]
+        role: Option<String>,
+        #[arg(long)]
+        node: Option<String>,
+        #[arg(long)]
+        backend: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long, default_value_t = 8)]
+        limit: usize,
+    },
     List {
         #[arg(long)]
         node: Option<String>,
@@ -104,6 +119,37 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::Models {
+            command:
+                ModelsCommand::Route {
+                    capability,
+                    role,
+                    node,
+                    backend,
+                    model,
+                    limit,
+                },
+        } => {
+            let mut query = vec![
+                ("capability", capability.clone()),
+                ("limit", limit.to_string()),
+            ];
+            for (key, value) in [
+                ("role", role),
+                ("node_id", node),
+                ("backend", backend),
+                ("model_id", model),
+            ] {
+                if let Some(value) = value {
+                    query.push((key, value.clone()));
+                }
+            }
+            client
+                .get(format!("{base}/api/commands/models/route"))
+                .query(&query)
+                .send()
+                .await?
+        }
         Command::Models {
             command:
                 ModelsCommand::List {

@@ -206,6 +206,34 @@ impl Runtime {
             .await
     }
 
+    pub async fn model_route_preview(&self, query: crate::model::RouteQuery) -> Result<Value> {
+        let request = query.request()?;
+        let connected = self.node_server.connected_nodes().await;
+        if query
+            .node_id
+            .as_ref()
+            .is_some_and(|id| !connected.contains_key(id))
+        {
+            bail!("node is not connected")
+        }
+        let candidates = self
+            .model_registry
+            .route(&request, &Default::default())
+            .into_iter()
+            .filter(|spec| connected.contains_key(&spec.node_id))
+            .collect::<Vec<_>>();
+        let matched = candidates.len();
+        let models=candidates.into_iter().take(query.limit).map(|spec|json!({
+            "instance":{"node_id":spec.node_id,"backend":spec.backend,"model_id":spec.model_id},
+            "model_metadata":spec.model_metadata,
+        })).collect::<Vec<_>>();
+        Ok(
+            json!({"schema_version":1,"success":true,"report_type":"model_route_preview","runtime_id":self.instance_id,
+            "capability":query.capability,"role":query.role,"candidates":models,"matched_count":matched,"truncated":matched>query.limit,
+            "execution_authorized":false,"note":"Current connected registry candidates in existing load/latency order, not an execution grant, model reservation or readiness check. State may change before dispatch."}),
+        )
+    }
+
     pub fn request_restart(&self) -> Value {
         let restart = self.restart.clone();
         tokio::spawn(async move {

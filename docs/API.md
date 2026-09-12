@@ -1,5 +1,11 @@
 # HTTP API
 
+Unreleased: guarded `GET /api/commands/models/route` accepts `capability` and
+optional `role`, `node_id`, `backend`, `model_id`, `limit` query fields. This is
+a read-only candidate preview, not execution authorization. See [commands](COMMANDS.md).
+Existing durable job templates include `generate_text` and `analyze_image`, with
+optional `constraints.model_role` enforced by the existing model router.
+
 Unreleased: [network commands](COMMANDS.md) document the shared node command
 service, `POST /api/commands/network`, API-only mode, and registration advertisements.
 The same command endpoint now accepts `operation:"peers"`; EEF enforces its

@@ -76,6 +76,20 @@ try{
   await until(async()=>{const m=(await inventory()).nodes[0]?.models.find(m=>m.instance.model_id==='fixture-vision');return m?.roles?.includes('request_interpreter')&&!m.capabilities.includes('vlm.analyze');},'owner hints apply after restart');
   const denied=await json(eef+`/api/node/${id}/invoke`,{capability:'vlm.analyze',action:'run',params:{model:'fixture-vision',backend:'ollama'},timeout:10});
   assert.equal(denied.success,false);assert.equal(requests.length,1,'restricted capability must not reach backend');
+  const preview=await json(eef+'/api/commands/models/route?capability=llm.infer&role=request_interpreter');
+  assert.equal(preview.execution_authorized,false);assert.equal(preview.candidates.length,1);assert.equal(preview.candidates[0].instance.model_id,'fixture-vision');
+  assert.equal((await json(eef+'/api/commands/models/route?capability=llm.infer&role=missing')).candidates.length,0);
+  const previewCli=launch('eef',['--config',eefConfig,'models','route','--capability','llm.infer','--role','request_interpreter','--json']);
+  const previewTimer=setTimeout(()=>previewCli.kill(),20000);const previewResult=await previewCli.result;clearTimeout(previewTimer);
+  assert.equal(previewResult.code,0,previewResult.err);assert.equal(JSON.parse(previewResult.out).candidates[0].instance.model_id,'fixture-vision');
+  assert.equal(requests.length,1,'preview must not run inference');
+  assert.equal((await fetch(eef+'/api/commands/models/route?capability=llm.infer',{headers:{Origin:'https://untrusted.example'}})).status,403);
+  const job=await json(eef+'/api/jobs',{description:'role-routing fixture',template:'generate_text',params:{prompt:'fixture only'},constraints:{model_role:'request_interpreter',node_id:id}});
+  await until(async()=>(await json(eef+'/api/jobs/'+job.id)).status==='completed','role-constrained model job');
+  assert.equal(requests.length,2);assert.equal(requests.at(-1).model,'fixture-vision');
+  const missing=await json(eef+'/api/jobs',{description:'missing role fixture',template:'generate_text',params:{prompt:'must not execute'},constraints:{model_role:'missing',node_id:id}});
+  await until(async()=>(await json(eef+'/api/jobs/'+missing.id)).status==='failed','missing role does not fall back');
+  assert.equal(requests.length,2,'missing role must not use unrelated model');
   const newPort=await port(),pending=(await json(node+'/api/config')).config;
   pending.dashboard.port=newPort;await json(node+'/api/config',{config:pending},'PUT');
   assert.equal((await nodeCommand(['show'])).restart_required,true,'commands must reach actual API despite pending port');
@@ -93,7 +107,7 @@ try{
  if(legacyNode)await json(node+'/api/restart',{});else await localRestart();
  await until(async()=>(await inventory()).nodes[0]?.models.length===0&&(await json(eef+'/api/status')).models.length===0,'empty snapshot replaces old models');
  assert.equal((await json(node+'/api/diagnostics')).node_id,id);
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,versioned_inventory:!legacyNode,owner_cli:true,origin_guard:true,selection_commands:!legacyNode,local_restart:!legacyNode,pending_api_port_change:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:legacyNode?'not supported by old node':true,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,versioned_inventory:!legacyNode,owner_cli:true,origin_guard:true,selection_commands:!legacyNode,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:legacyNode?'not supported by old node':true,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
  console.log('Model metadata protocol checks passed: '+scratch);
 }finally{
  for(const child of children)if(child.exitCode===null)child.kill();

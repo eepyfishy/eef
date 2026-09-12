@@ -65,6 +65,78 @@ pub struct ModelRequest {
     pub constraints: Value,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteQuery {
+    pub capability: String,
+    pub role: Option<String>,
+    pub node_id: Option<String>,
+    pub backend: Option<String>,
+    pub model_id: Option<String>,
+    #[serde(default = "route_limit")]
+    pub limit: usize,
+}
+fn route_limit() -> usize {
+    8
+}
+fn role_identifier(role: &str) -> Result<()> {
+    if role.is_empty()
+        || role.len() > 64
+        || !role
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    {
+        bail!("model role must be a bounded ASCII identifier")
+    }
+    Ok(())
+}
+pub fn validate_model_constraints(constraints: &Value) -> Result<()> {
+    if let Some(role) = constraints.get("model_role") {
+        role_identifier(role.as_str().context("model_role must be text")?)?;
+    }
+    Ok(())
+}
+impl RouteQuery {
+    pub fn request(&self) -> Result<ModelRequest> {
+        let modality = match self.capability.as_str() {
+            "llm.infer" => Modality::Text,
+            "vlm.analyze" => Modality::Vlm,
+            _ => bail!("route preview currently supports llm.infer and vlm.analyze"),
+        };
+        if !(1..=32).contains(&self.limit) {
+            bail!("route preview limit must be 1-32")
+        }
+        if let Some(role) = &self.role {
+            role_identifier(role)?;
+        }
+        if let Some(id) = &self.node_id {
+            eefn::network::validate_node_id(id)?;
+        }
+        if let Some(id) = &self.model_id {
+            eefn::model_selection::validate_id(id)?;
+        }
+        if let Some(backend) = &self.backend {
+            role_identifier(backend)?;
+        }
+        let mut constraints = json!({});
+        for (key, value) in [
+            ("model_role", &self.role),
+            ("node_id", &self.node_id),
+            ("backend", &self.backend),
+        ] {
+            if let Some(value) = value {
+                constraints[key] = json!(value);
+            }
+        }
+        Ok(ModelRequest {
+            modality,
+            tier: None,
+            model_id: self.model_id.clone(),
+            constraints,
+        })
+    }
+}
+
 #[derive(Default)]
 struct RegistryState {
     models: BTreeMap<String, Vec<ModelSpec>>,
@@ -230,6 +302,9 @@ impl ModelRegistry {
 }
 
 fn available(spec: &ModelSpec, request: &ModelRequest) -> bool {
+    if validate_model_constraints(&request.constraints).is_err() {
+        return false;
+    }
     let capability = match request.modality {
         Modality::Text => "llm.infer",
         Modality::Vlm => "vlm.analyze",
@@ -255,6 +330,20 @@ fn available(spec: &ModelSpec, request: &ModelRequest) -> bool {
     let Some(constraints) = request.constraints.as_object() else {
         return true;
     };
+    if let Some(role) = constraints.get("model_role").and_then(Value::as_str) {
+        if !metadata
+            .roles
+            .as_ref()
+            .is_some_and(|roles| roles.iter().any(|value| value == role))
+        {
+            return false;
+        }
+    }
+    if let Some(backend) = constraints.get("backend") {
+        if backend.as_str() != Some(spec.backend.as_str()) {
+            return false;
+        }
+    }
     if constraints
         .get("gpu")
         .and_then(Value::as_str)
@@ -314,6 +403,7 @@ impl LlmService {
     }
 
     pub async fn chat(&self, messages: Value, options: ChatOptions) -> Result<String> {
+        validate_model_constraints(&options.constraints)?;
         let modality = if options
             .images
             .as_array()
@@ -451,6 +541,64 @@ impl Default for ChatOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn role_and_backend_constraints_never_fall_back_to_unlabelled_models() {
+        let registry = ModelRegistry::default();
+        let mut metadata = eefn::model_metadata::ModelMetadata::from_legacy(Some("text"));
+        metadata.roles = Some(vec!["request_interpreter".into()]);
+        registry
+            .register_remote(
+                "a",
+                &[
+                    json!({"model_id":"fast-legacy","backend":"ollama","modality":"text"}),
+                    json!({"model_id":"labelled","backend":"ollama","model_metadata":metadata}),
+                    json!({"model_id":"labelled","backend":"llamacpp","model_metadata":metadata}),
+                ],
+            )
+            .unwrap();
+        let mut request = text_request();
+        request.tier = Some("fast".into());
+        request.constraints = json!({"model_role":"request_interpreter","backend":"ollama"});
+        let tiers = BTreeMap::from([("fast".into(), vec!["fast-legacy".into()])]);
+        let route = registry.route(&request, &tiers);
+        assert_eq!(route.len(), 1);
+        assert_eq!(route[0].model_id, "labelled");
+        assert_eq!(route[0].backend, "ollama");
+        request.constraints["model_role"] = json!("missing");
+        assert!(registry.route(&request, &tiers).is_empty());
+        request.constraints["model_role"] = json!(null);
+        assert!(validate_model_constraints(&request.constraints).is_err());
+        assert!(registry.route(&request, &tiers).is_empty());
+    }
+
+    #[test]
+    fn route_queries_are_bounded_and_reject_unimplemented_capabilities() {
+        for value in [
+            json!({"capability":"ocr"}),
+            json!({"capability":"llm.infer","role":"*"}),
+            json!({"capability":"llm.infer","limit":33}),
+            json!({"capability":"llm.infer","backend":"bad backend"}),
+        ] {
+            assert!(
+                serde_json::from_value::<RouteQuery>(value)
+                    .unwrap()
+                    .request()
+                    .is_err()
+            );
+        }
+        assert!(
+            serde_json::from_value::<RouteQuery>(json!({"capability":"llm.infer","grant":true}))
+                .is_err()
+        );
+        let query: RouteQuery =
+            serde_json::from_value(json!({"capability":"llm.infer","role":"request_interpreter"}))
+                .unwrap();
+        assert_eq!(
+            query.request().unwrap().constraints["model_role"],
+            "request_interpreter"
+        );
+    }
 
     fn text_request() -> ModelRequest {
         ModelRequest {

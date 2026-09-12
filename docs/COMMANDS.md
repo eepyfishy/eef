@@ -4,6 +4,21 @@ This test release supports these commands without a browser or LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Unreleased: model route inspection
+
+`eef models route --capability llm.infer --role request_interpreter --json`
+previews matching connected model instances without inference. Optional `--node`,
+`--backend`, `--model` and `--limit` (1-32, default 8) narrow the view. Supported
+capabilities are `llm.infer` and `vlm.analyze`. A role must match an explicit owner
+label; unknown roles do not match. This grants no execution or reservation and
+does not prove model readiness. State may change before actual dispatch.
+
+Durable jobs may use `generate_text` or `analyze_image` with
+`constraints.model_role` and the existing node/model constraints. Routing does
+not escape the requested role/backend when falling back across tiers. Image
+payloads must be supplied by the caller; this does not capture camera images or
+implement automatic interpretation/planning. Node permissions still apply.
+
 ## Unreleased: coordinator discovery controls and restart
 
 These additions are in the development tree, **not the published v0.4.0a2

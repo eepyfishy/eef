@@ -167,6 +167,31 @@ impl TaskPlanner {
             goal.template.clone()
         };
         let steps: Vec<(&str, &str, &[&str])> = match template.as_str() {
+            "generate_text" => vec![(
+                "llm.infer",
+                "run",
+                &[
+                    "prompt",
+                    "messages",
+                    "model_id",
+                    "tier",
+                    "max_tokens",
+                    "temperature",
+                ],
+            )],
+            "analyze_image" => vec![(
+                "vlm.analyze",
+                "run",
+                &[
+                    "prompt",
+                    "messages",
+                    "images",
+                    "model_id",
+                    "tier",
+                    "max_tokens",
+                    "temperature",
+                ],
+            )],
             "launch_application" => {
                 vec![("application.control", "launch", &["application", "args"])]
             }
