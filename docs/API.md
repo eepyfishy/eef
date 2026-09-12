@@ -1,5 +1,13 @@
 # HTTP API
 
+Unreleased node `POST /api/commands/jobs` takes
+`{schema_version:1,expected_node_id,command}` with typed operations `list`, `get`,
+`output`, `pause`, `resume`, `stop`, `remove`, `generate_text`. Identity/version and
+input bounds are validated by the node core before using its existing submission
+mailbox. EEF applies authenticated origin scoping. `jobs.output` is an explicit,
+bounded text-model projection; existing job views remain redacted. See
+[job command semantics](COMMANDS.md), including uncertainty and permissions.
+
 Unreleased: guarded `POST /api/commands/node/models` on EEF takes
 `{schema_version:1,node_id,command}`. `command` is the same typed selection
 operation used by node `POST /api/commands/models`. EEF uses the authenticated

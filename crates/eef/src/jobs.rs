@@ -418,6 +418,7 @@ impl crate::task::TaskEngine {
         }
         match kind {
             "jobs.get" => return Ok(view(&plan, true)),
+            "jobs.output" => return Ok(text_output(&plan)),
             "jobs.pause" => {
                 self.pause(id)?;
             }
@@ -433,6 +434,31 @@ impl crate::task::TaskEngine {
         }
         Ok(view(&self.store.get(id)?, true))
     }
+}
+
+/// Explicit origin-authorized output inspection. Default job views stay redacted.
+fn text_output(plan: &Plan) -> serde_json::Value {
+    use serde_json::json;
+    let matching = plan
+        .tasks
+        .iter()
+        .filter(|t| matches!(t.capability.as_str(), "llm.infer" | "vlm.analyze"))
+        .collect::<Vec<_>>();
+    let mut remaining = 32768usize;
+    let outputs = matching.iter().take(32).map(|task| {
+        let text = task.result.as_ref().and_then(|r| r.data["content"].as_str());
+        let mut truncated = false;
+        let content = text.map(|text| {
+            let mut end = text.len().min(remaining);
+            while !text.is_char_boundary(end) { end -= 1; }
+            remaining -= end; truncated = end < text.len();
+            &text[..end]
+        });
+        json!({"task_id":task.task_id,"capability":task.capability,"status":task.status,"content":content,"truncated":truncated})
+    }).collect::<Vec<_>>();
+    json!({"schema_version":1,"report_type":"job_text_output","id":plan.plan_id,"status":plan.status,
+        "outputs":outputs,"matching_tasks":matching.len(),"tasks_truncated":matching.len()>32,
+        "note":"Explicit text-model output only; file contents, media and execution parameters are not exported. Pending output is null."})
 }
 
 #[cfg(test)]
@@ -452,6 +478,36 @@ mod tests {
             "params":{"path":"fixture","content":"private output"},
             "request_context":{"request_id":"origin-request","origin_node":"owner","origin_area":["Home","Study"]}
         })).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn explicit_text_output_is_bounded_utf8_and_does_not_export_files_or_parameters() {
+        let mut job = plan("generate_text");
+        let result = crate::task::TaskResult {
+            task_id: job.tasks[0].task_id.clone(),
+            success: true,
+            data: json!({"content":"🙂".repeat(20000),"secret":"do not export"}),
+            error: String::new(),
+            error_type: String::new(),
+            duration_ms: 0,
+            attempts: 1,
+        };
+        job.tasks[0].result = Some(result);
+        let mut file = job.tasks[0].clone();
+        file.capability = "filesystem".into();
+        job.tasks.push(file);
+        let output = text_output(&job);
+        assert_eq!(output["outputs"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            output["outputs"][0]["content"].as_str().unwrap().len(),
+            32768
+        );
+        assert_eq!(output["outputs"][0]["truncated"], true);
+        assert!(!output.to_string().contains("do not export"));
+        assert!(!output.to_string().contains("private output"));
+        assert!(!view(&job, true).to_string().contains('🙂'));
+        job.tasks[0].result = None;
+        assert!(text_output(&job)["outputs"][0]["content"].is_null());
     }
     fn disk() -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -774,6 +830,7 @@ mod tests {
         );
         for kind in [
             "jobs.get",
+            "jobs.output",
             "jobs.pause",
             "jobs.resume",
             "jobs.stop",

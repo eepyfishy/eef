@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Submit and control this node's durable jobs through its running connection.
+    Jobs {
+        #[command(subcommand)]
+        command: eefn::job_commands::JobCommand,
+    },
     /// Restart this node app and optionally verify its new runtime (not Windows).
     Restart {
         #[arg(long, default_value_t = 30)]
@@ -139,6 +144,60 @@ async fn execute_model_command(
     }
     result["running"] = serde_json::json!(true);
     Ok(result)
+}
+
+async fn execute_job_command(
+    args: &Args,
+    command: &eefn::job_commands::JobCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.submission()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("node is not running; job commands do not launch a node or a second connection")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let request = eefn::job_commands::JobRequest {
+        schema_version: 1,
+        expected_node_id: file.node_id.clone(),
+        command: command.clone(),
+    };
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
+        .post(format!("http://{address}/api/commands/jobs"))
+        .timeout(Duration::from_secs(125))
+        .json(&request)
+        .send()
+        .await;
+    if let Ok(response) = response {
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            bail!("running node does not support typed job commands; update the node first")
+        }
+        let ok = response.status().is_success();
+        if let Ok(value) = eefn::model_manager::bounded_json(response).await {
+            if ok
+                && value["schema_version"] == 1
+                && value["report_type"] == "node_job_command"
+                && value["node_id"] == file.node_id
+            {
+                return Ok(value);
+            }
+        }
+    }
+    Ok(
+        json!({"schema_version":1,"success":false,"node_id":file.node_id,
+        "error_code":"local_job_reply_unconfirmed","acknowledged":false,"outcome_unknown":command.mutates(),
+        "note":"No valid local job reply. Inspect jobs after reconnecting before retrying; no automatic resubmission was sent."}),
+    )
 }
 
 async fn execute_restart(args: &Args, wait_seconds: u64) -> Result<serde_json::Value> {
@@ -289,6 +348,9 @@ enum NetworkAction {
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Jobs { command } = command {
+        return execute_job_command(args, command).await;
+    }
     if let Commands::Restart { wait_seconds } = command {
         return execute_restart(args, *wait_seconds).await;
     }

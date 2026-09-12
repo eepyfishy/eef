@@ -69,6 +69,13 @@ commands. Both paths pass the same authorization and validation boundaries.
 
 ## Mapping onto v0.4.0a
 
+Subsequent unreleased command increments now include model selections locally
+and through approved EEF control, explicit role-constrained text/vision routing,
+and node-origin job CLI controls with bounded text-output inspection. These reuse
+the existing services, submission connection and durable journal. They do not
+complete automatic interpretation, model bootstrap, execution grants, direct-peer
+authorization or clustered coordinator safety. See [commands](COMMANDS.md).
+
 Inspected source, not just the earlier proposal:
 
 | Concept | Existing implementation | Required extension |

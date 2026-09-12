@@ -10,7 +10,7 @@ import {randomBytes} from 'node:crypto';
 const root=resolve(import.meta.dirname,'..');
 const scratch=await mkdtemp(join(root,'.validation','model-metadata-'));
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
-const children=[],requests=[];
+const children=[],requests=[],gates=new Map();
 // Optional compatibility run: selected old executable, still isolated config/data.
 const legacyNode=process.env.EEF_TEST_LEGACY_NODE_BINARY;
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
@@ -29,7 +29,10 @@ const fake=createServer(async(req,res)=>{
  if(req.url==='/api/show')return res.end(JSON.stringify({capabilities:['completion','vision']}));
  if(req.url==='/api/chat'){
   let body='';for await(const chunk of req){body+=chunk;if(body.length>65536){res.writeHead(413);return res.end('{}');}}
-  requests.push(JSON.parse(body));return res.end(JSON.stringify({message:{content:'fixture response; not real inference'}}));
+  const payload=JSON.parse(body);requests.push(payload);
+  const prompt=payload.messages?.at(-1)?.content;
+  if(typeof prompt==='string'&&prompt.startsWith('gated-job-'))await new Promise(resolve=>gates.set(prompt,resolve));
+  return res.end(JSON.stringify({message:{content:'fixture response; not real inference'}}));
  }
  res.writeHead(404);res.end('{}');
 });
@@ -43,6 +46,7 @@ try{
  const nodeConfig=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml');
  const nodeCommand=async(args,success=true)=>{const child=launch('eefn',['--config',nodeConfig,'models',...args,'--json']);const timer=setTimeout(()=>child.kill(),20000);try{const result=await child.result;assert.equal(result.code,success?0:1,result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
  const remoteModels=async(args,success=true)=>{const child=launch('eef',['--config',eefConfig,'node','models','--node',id,...args,'--json']);const timer=setTimeout(()=>child.kill(),25000);try{const result=await child.result;assert.equal(result.code,success?0:1,result.out+' '+result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
+ const nodeJobs=async(args,success=true)=>{const child=launch('eefn',['--config',nodeConfig,'jobs',...args,'--json']);const timer=setTimeout(()=>child.kill(),25000);try{const result=await child.result;assert.equal(result.code,success?0:1,result.out+' '+result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
  const localRestart=async()=>{const child=launch('eefn',['--config',nodeConfig,'restart','--wait-seconds','60','--json']);const timer=setTimeout(()=>child.kill(),70000);try{const result=await child.result;assert.equal(result.code,0,result.out+' '+result.err);const reply=JSON.parse(result.out);assert.equal(reply.completed,true);assert.notEqual(reply.runtime_id,reply.previous_runtime_id);return reply;}finally{clearTimeout(timer);}};
  await writeFile(nodeConfig,JSON.stringify(config));
  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
@@ -110,6 +114,32 @@ try{
   const missing=await json(eef+'/api/jobs',{description:'missing role fixture',template:'generate_text',params:{prompt:'must not execute'},constraints:{model_role:'missing',node_id:id}});
   await until(async()=>(await json(eef+'/api/jobs/'+missing.id)).status==='failed','missing role does not fall back');
   assert.equal(requests.length,2,'missing role must not use unrelated model');
+  assert.equal((await nodeJobs(['list'])).data.jobs.length,0,'coordinator-owner jobs are not node-origin jobs');
+  assert.equal((await nodeJobs(['get',job.id],false)).error_code,'job_rejected');
+  assert.equal((await nodeJobs(['output',job.id],false)).error_code,'job_rejected');
+  for(const action of ['pause','stop']){
+   const prompt='gated-job-'+action;
+   const submitted=await nodeJobs(['generate-text','--prompt',prompt,'--role','request_interpreter','--target-node',id]);
+   const jobId=submitted.data.id;assert.equal(submitted.acknowledged,true);
+   assert.equal(submitted.data.request_context.origin_node,id);
+   await until(()=>gates.has(prompt),'backend gate for '+action);
+   const controls=await nodeJobs([action,jobId]);assert.equal(controls.data.status,action==='pause'?'pausing':'stopping');
+   gates.get(prompt)();gates.delete(prompt);
+   await until(async()=>(await json(node+'/api/jobs/'+jobId)).status===(action==='pause'?'paused':'cancelled'),'settled node job '+action);
+   if(action==='pause'){
+    const count=requests.length;
+    await nodeJobs(['resume',jobId]);
+    await until(async()=>(await json(node+'/api/jobs/'+jobId)).status==='completed','resumed job complete');
+    assert.equal(requests.length,count,'resume must not rerun a completed step');
+   }
+   assert.equal((await nodeJobs(['get',jobId])).data.request_context.origin_node,id);
+   const output=await nodeJobs(['output',jobId]);assert.equal(output.data.outputs[0].content,'fixture response; not real inference');
+   assert.equal(output.data.outputs[0].truncated,false);
+   assert.equal((await nodeJobs(['remove',jobId])).data.removed,true);
+   assert.equal((await nodeJobs(['get',jobId],false)).error_code,'job_rejected');
+  }
+  assert.equal((await nodeJobs(['list'])).data.jobs.length,0);
+  assert.equal((await fetch(node+'/api/commands/jobs',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({schema_version:1,expected_node_id:id,command:{operation:'list'}})})).status,403);
   const newPort=await port(),pending=(await json(node+'/api/config')).config;
   pending.dashboard.port=newPort;await json(node+'/api/config',{config:pending},'PUT');
   assert.equal((await nodeCommand(['show'])).restart_required,true,'commands must reach actual API despite pending port');
@@ -129,9 +159,10 @@ try{
  if(legacyNode)await json(node+'/api/restart',{});else await localRestart();
  await until(async()=>(await inventory()).nodes[0]?.models.length===0&&(await json(eef+'/api/status')).models.length===0,'empty snapshot replaces old models');
  assert.equal((await json(node+'/api/diagnostics')).node_id,id);
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,versioned_inventory:!legacyNode,owner_cli:true,origin_guard:true,selection_commands:!legacyNode,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:legacyNode?'not supported by old node':true,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,versioned_inventory:!legacyNode,owner_cli:true,origin_guard:true,selection_commands:!legacyNode,remote_selection_commands:!legacyNode,old_node_remote_command_refusal:!!legacyNode,node_job_commands:!legacyNode,node_job_origin_scope:!legacyNode,explicit_text_output:!legacyNode,pause_resume_without_reexecution:!legacyNode,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:legacyNode?'not supported by old node':true,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
  console.log('Model metadata and remote selection protocol checks passed: '+scratch);
 }finally{
+ for(const release of gates.values())release();gates.clear();
  for(const child of children)if(child.exitCode===null)child.kill();
  await Promise.allSettled(children.map(c=>c.result));
  fake.closeAllConnections();await new Promise(r=>fake.close(r));

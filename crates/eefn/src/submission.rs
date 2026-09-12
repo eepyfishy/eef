@@ -13,6 +13,15 @@ pub(crate) struct Submission {
     pub reply: oneshot::Sender<Result<Value>>,
 }
 
+/// Known outcomes only; transport/timeout errors deliberately remain uncertain.
+#[derive(Debug, thiserror::Error)]
+pub enum SubmissionFailure {
+    #[error("{0}")]
+    NotSent(String),
+    #[error("{0}")]
+    Rejected(String),
+}
+
 #[derive(Default)]
 pub struct SubmissionMailbox {
     sender: Mutex<Option<mpsc::Sender<Submission>>>,
@@ -40,6 +49,7 @@ impl SubmissionMailbox {
                 | "network.peers"
                 | "jobs.list"
                 | "jobs.get"
+                | "jobs.output"
                 | "jobs.create"
                 | "jobs.pause"
                 | "jobs.resume"
@@ -60,10 +70,16 @@ impl SubmissionMailbox {
             .lock()
             .expect("submission mailbox")
             .as_ref()
-            .context("EEF is not connected. Wait for Connected, then send again.")?
+            .ok_or_else(|| {
+                SubmissionFailure::NotSent(
+                    "EEF is not connected. Wait for Connected, then send again.".into(),
+                )
+            })?
             .try_send(command)
             .map_err(|_| {
-                anyhow::anyhow!("Node connection is unavailable or busy. The message was not sent.")
+                SubmissionFailure::NotSent(
+                    "Node connection is unavailable or busy. The message was not sent.".into(),
+                )
             })?;
         tokio::time::timeout(Duration::from_secs(120), response).await
             .context("No reply within two minutes. Work may still be running; the message was not automatically retried.")?

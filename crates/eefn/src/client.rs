@@ -533,7 +533,7 @@ impl NodeClient {
                         replies.retain(|_, reply| !reply.is_closed());
                         if command.reply.is_closed() { continue; }
                         if replies.len() >= 8 {
-                            let _ = command.reply.send(Err(anyhow::anyhow!("Node is busy. This message was not sent.")));
+                            let _ = command.reply.send(Err(crate::submission::SubmissionFailure::NotSent("Node is busy. This message was not sent.".into()).into()));
                             continue;
                         }
                         let value = json!({"type":"submit","id":command.id,"node_id":self.config.node_id,
@@ -556,10 +556,13 @@ impl NodeClient {
                     let result = if message["success"] == true {
                         Ok(message["data"].clone())
                     } else {
-                        Err(anyhow::anyhow!(
-                            "{}",
-                            message["error"].as_str().unwrap_or("Request failed")
-                        ))
+                        Err(crate::submission::SubmissionFailure::Rejected(
+                            message["error"]
+                                .as_str()
+                                .unwrap_or("Request failed")
+                                .to_owned(),
+                        )
+                        .into())
                     };
                     let _ = reply.send(result);
                 }

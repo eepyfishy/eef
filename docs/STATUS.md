@@ -1,5 +1,28 @@
 # Architecture conformance status
 
+## Unreleased node-origin job commands
+
+- Added `eefn jobs list/get/output/pause/resume/stop/remove/generate-text` and
+  guarded typed `/api/commands/jobs`. The runtime service uses the running node's
+  existing submission connection and actual API discovery; no second node,
+  browser controller, local LM or remote-management permission is required.
+- EEF preserves authenticated origin ownership and existing durable lifecycle
+  rules. Creation acknowledges a job, not completed work; pause/stop report
+  intermediate states. Commands distinguish known-not-sent from rejected or
+  uncertain mutations and never automatically resubmit after a lost reply.
+- Explicit output inspection returns bounded text-model content only, while
+  ordinary status remains redacted. It uses the same origin check as controls;
+  it does not export file contents, media, parameters or another origin's results.
+- 144 Rust tests passed on 2026-09-12. Isolated integration evidence:
+  `.validation/model-metadata-YCa5L1` verified origin scoping, text output,
+  pause/resume without repeated execution, stop and finished-history removal,
+  alongside remote model selection and restart tests. The backend was a fake
+  local HTTP service, not real inference or a physical two-PC test.
+- Command and discovery regressions passed (`.validation/node-commands-9NIgvh`,
+  `.validation/peer-discovery-ltgV03`), as did first-run/job persistence and
+  browser-copy regressions (`.validation/first-run-cZdAMC`). No installed app, release artifact or
+  model was changed or downloaded. UI development remains paused.
+
 ## Unreleased coordinator-to-node model commands
 
 - EEF now exposes `node models` using the same typed model-selection operations

@@ -72,6 +72,7 @@ impl NodeDashboard {
             .route("/api/diagnostics", get(diagnostics))
             .route("/api/commands/network", post(network_command))
             .route("/api/commands/models", post(model_command))
+            .route("/api/commands/jobs", post(job_command))
             .route("/api/commands/restart", post(restart_command))
             .route("/api/config", get(config_get).put(config_save))
             .route("/api/startup", get(startup_get).put(startup_set))
@@ -158,6 +159,13 @@ async fn model_command(
     Json(request): Json<crate::model_selection::ModelCommandRequest>,
 ) -> Result<Json<Value>, DashboardError> {
     Ok(Json(state.model_command(request)?))
+}
+
+async fn job_command(
+    State(state): State<Arc<NodeDashboard>>,
+    Json(request): Json<crate::job_commands::JobRequest>,
+) -> Result<Json<Value>, DashboardError> {
+    Ok(Json(state.job_command(request).await?))
 }
 
 async fn network_command(

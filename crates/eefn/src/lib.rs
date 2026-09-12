@@ -9,6 +9,7 @@ pub mod crypto;
 pub mod dashboard;
 pub mod engine;
 pub mod firmware;
+pub mod job_commands;
 pub mod local_commands;
 pub mod model_cli;
 pub mod model_manager;

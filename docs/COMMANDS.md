@@ -4,6 +4,51 @@ This test release supports these commands without a browser or LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Unreleased: jobs through the running node
+
+```powershell
+.\eefn.exe jobs list --json
+.\eefn.exe jobs generate-text --prompt "Explain the current task" --role request_interpreter --json
+.\eefn.exe jobs get JOB_ID --json
+.\eefn.exe jobs output JOB_ID --json
+.\eefn.exe jobs pause JOB_ID --json
+.\eefn.exe jobs resume JOB_ID --json
+.\eefn.exe jobs stop JOB_ID --json
+.\eefn.exe jobs remove JOB_ID --json
+```
+
+These deterministic commands need the development node; `generate-text` and
+`output` also need the development coordinator. They use the running node's
+actual local command endpoint and existing authenticated EEF connection, never
+launching a second node or guessing an executor from its hostname. They work in
+API-only mode. Node-local management approval is not required to control this
+node's own jobs; execution still requires the executor's normal permissions.
+
+EEF stamps the origin from the connection. List, status, controls and output are
+restricted to jobs submitted by that stable origin node, not jobs merely executed
+there or created by the coordinator owner. `generate-text` optionally accepts
+`--target-node`, `--backend` and `--model`; `--role` is an exact advertised model
+label, not authority. This creates an existing durable text-inference job, not an
+automatic natural-language plan. Prompt size is bounded to 32768 bytes.
+
+Acknowledgement is not completion. Inspect `data.status`; pausing/stopping may
+remain in progress until the current step finishes. Stop does not undo remote
+effects. Resume retains completed steps and follows the existing uncertain-work
+rules. Remove deletes only finished job history and cannot stop an active job.
+List returns the existing bounded view (first 100 visible jobs plus total).
+
+`output` explicitly returns text-model results only: at most 32 tasks and 32768
+aggregate UTF-8 content bytes with truncation flags. Pending text is null. Normal
+status still omits output; file contents, media and raw parameters are not exposed
+by this command. Output can contain sensitive user-requested text; don't publish
+it as diagnostics without reviewing it.
+
+Failures distinguish `not_sent`, coordinator `job_rejected`, and unconfirmed
+transport outcomes. Mutating errors remain conservatively uncertain unless known
+not sent: an error does not prove a checkpoint was rolled back. Inspect list/status
+before an explicit retry. Job commands are not automatically resubmitted after timeout or
+reconnection; the command operation ID is not a durable deduplication key.
+
 ## Unreleased: model route inspection
 
 `eef models route --capability llm.infer --role request_interpreter --json`
