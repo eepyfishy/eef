@@ -537,7 +537,7 @@ impl NodeClient {
                             continue;
                         }
                         let value = json!({"type":"submit","id":command.id,"node_id":self.config.node_id,
-                            "kind":command.kind,"payload":command.payload});
+                            "kind":command.kind,"payload":command.payload,"operation_id":command.operation_id});
                         // Store before writing: a failed/partial write is unknown,
                         // not permission to automatically execute the request twice.
                         replies.insert(command.id, command.reply);

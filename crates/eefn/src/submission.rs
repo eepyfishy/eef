@@ -8,6 +8,7 @@ use tokio::sync::{mpsc, oneshot};
 
 pub(crate) struct Submission {
     pub id: String,
+    pub operation_id: Option<String>,
     pub kind: String,
     pub payload: Value,
     pub reply: oneshot::Sender<Result<Value>>,
@@ -43,11 +44,26 @@ impl SubmissionMailbox {
     }
 
     pub async fn request(self: &Arc<Self>, kind: &str, payload: Value) -> Result<Value> {
+        self.request_correlated(kind, payload, None).await
+    }
+
+    /// Correlation is separate from the fresh transport ID: reusing a receipt
+    /// must never route a late reply to a different waiter. This is not deduplication.
+    pub(crate) async fn request_correlated(
+        self: &Arc<Self>,
+        kind: &str,
+        payload: Value,
+        operation_id: Option<String>,
+    ) -> Result<Value> {
+        if let Some(id) = &operation_id {
+            crate::job_commands::validate_operation_id(id)?;
+        }
         if !matches!(
             kind,
             "message"
                 | "network.peers"
                 | "jobs.list"
+                | "jobs.find"
                 | "jobs.get"
                 | "jobs.output"
                 | "jobs.create"
@@ -62,6 +78,7 @@ impl SubmissionMailbox {
         let (reply, response) = oneshot::channel();
         let command = Submission {
             id: uuid::Uuid::new_v4().simple().to_string(),
+            operation_id,
             kind: kind.into(),
             payload,
             reply,
@@ -90,6 +107,33 @@ impl SubmissionMailbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn reused_correlation_cannot_replace_waiters_or_match_late_transport_replies() {
+        let mailbox = Arc::new(SubmissionMailbox::default());
+        let mut receiver = mailbox.connect();
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        let start = || {
+            let mailbox = mailbox.clone();
+            let id = operation_id.clone();
+            tokio::spawn(async move {
+                mailbox
+                    .request_correlated("jobs.list", serde_json::json!({}), Some(id))
+                    .await
+            })
+        };
+        let first = start();
+        let a = receiver.recv().await.unwrap();
+        let second = start();
+        let b = receiver.recv().await.unwrap();
+        assert_ne!(a.id, b.id);
+        assert_eq!(a.operation_id.as_deref(), Some(operation_id.as_str()));
+        assert_eq!(a.operation_id, b.operation_id);
+        b.reply.send(Ok(serde_json::json!("second"))).unwrap();
+        a.reply.send(Ok(serde_json::json!("first"))).unwrap();
+        assert_eq!(first.await.unwrap().unwrap(), "first");
+        assert_eq!(second.await.unwrap().unwrap(), "second");
+    }
+
     #[tokio::test]
     async fn disconnected_input_is_not_queued_for_later() {
         let mailbox = Arc::new(SubmissionMailbox::default());

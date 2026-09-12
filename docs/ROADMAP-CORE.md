@@ -81,6 +81,12 @@ the existing services, submission connection and durable journal. They do not
 complete automatic interpretation, model bootstrap, execution grants, direct-peer
 authorization or clustered coordinator safety. See [commands](COMMANDS.md).
 
+Job creation receipts now correlate CLI attempts with persisted origin context;
+`jobs find` searches retained origin-scoped history after uncertain replies.
+Reply-routing IDs are independent and no mutation is automatically replayed.
+This is recovery inspection, not durable command deduplication or exactly-once
+execution; the planned admission/deduplication boundary remains incomplete.
+
 Inspected source, not just the earlier proposal:
 
 | Concept | Existing implementation | Required extension |

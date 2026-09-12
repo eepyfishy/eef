@@ -474,8 +474,19 @@ impl NodeServer {
                     let id = message["id"]
                         .as_str()
                         .context("submission requires an id")?;
+                    let request_id =
+                        match message.get("operation_id").filter(|value| !value.is_null()) {
+                            Some(value) => {
+                                let id = value
+                                    .as_str()
+                                    .context("operation ID must be a UUID string")?;
+                                crate::job_commands::validate_operation_id(id)?;
+                                id
+                            }
+                            None => id,
+                        };
                     let origin = crate::context::RequestContext::new(
-                        id.into(),
+                        request_id.into(),
                         authenticated_id.into(),
                         metadata.area.clone(),
                     )?;
@@ -674,11 +685,12 @@ mod tests {
     async fn gateway_stamps_origin_and_snapshots_area_without_leaking_bindings() {
         let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
         let mut events = server.subscribe();
+        let operation_id = uuid::Uuid::new_v4().to_string();
         let messages = [
             json!({"type":"register","node_id":"owner","capabilities":["camera.capture"],"metadata":{"area":["Home","Office"],"resources":[{"id":"camera","capability":"camera.capture","parameters":{"password":"private"}}]}}),
             json!({"type":"submit","node_id":"owner","id":"one","request_context":{"origin_node":"forged","origin_area":["Other"]}}),
             json!({"type":"register","node_id":"owner"}),
-            json!({"type":"submit","node_id":"owner","id":"two"}),
+            json!({"type":"submit","node_id":"owner","id":"two","operation_id":operation_id,"request_context":{"origin_node":"forged"}}),
         ];
         let mut wire = Vec::new();
         for message in messages {
@@ -710,6 +722,12 @@ mod tests {
             panic!()
         };
         assert_eq!(second["request_context"]["origin_area"], json!([]));
+        assert_eq!(second["request_context"]["request_id"], operation_id);
+        assert_eq!(second["request_context"]["origin_node"], "owner");
+        assert_eq!(
+            second["id"], "two",
+            "reply routing retains the transport ID"
+        );
         assert_eq!(
             first["request_context"]["origin_area"],
             json!(["Home", "Office"])
@@ -722,6 +740,23 @@ mod tests {
             write_message(&server.inner.crypto, &mut wire, &invalid)
                 .await
                 .unwrap();
+            assert!(
+                server
+                    .serve("owner", &mut BufReader::new(wire.as_slice()))
+                    .await
+                    .is_err()
+            );
+        }
+        for invalid in [json!("bad"), json!(42), json!({"origin_node":"forged"})] {
+            let mut wire = Vec::new();
+            for message in [
+                json!({"type":"register","node_id":"owner"}),
+                json!({"type":"submit","node_id":"owner","id":"three","operation_id":invalid}),
+            ] {
+                write_message(&server.inner.crypto, &mut wire, &message)
+                    .await
+                    .unwrap();
+            }
             assert!(
                 server
                     .serve("owner", &mut BufReader::new(wire.as_slice()))

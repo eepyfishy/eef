@@ -158,6 +158,10 @@ try{
    const submitted=await nodeJobs(['generate-text','--prompt',prompt,'--role','request_interpreter','--target-node',id]);
    const jobId=submitted.data.id;assert.equal(submitted.acknowledged,true);
    assert.equal(submitted.data.request_context.origin_node,id);
+   assert.equal(submitted.creation_correlated,true);
+   assert.equal(submitted.data.request_context.request_id,submitted.operation_id);
+   const found=await nodeJobs(['find','--operation-id',submitted.operation_id]);
+   assert.equal(found.data.total,1);assert.equal(found.data.jobs[0].id,jobId);
    await until(()=>gates.has(prompt),'backend gate for '+action);
    const controls=await nodeJobs([action,jobId]);assert.equal(controls.data.status,action==='pause'?'pausing':'stopping');
    gates.get(prompt)();gates.delete(prompt);
@@ -175,6 +179,34 @@ try{
    assert.equal((await nodeJobs(['get',jobId],false)).error_code,'job_rejected');
   }
   assert.equal((await nodeJobs(['list'])).data.jobs.length,0);
+  // Lose the local HTTP reply after EEF has accepted the creation. The CLI must
+  // retain its pre-send receipt and never replay; restore only our fixture marker.
+  const marker=nodeConfig+'.api.json',originalMarker=await readFile(marker,'utf8');
+  let forwarded=0,forwardError=null,accepted=null;
+  const dropReply=createServer(async(req,res)=>{
+   try{
+    let body='';for await(const chunk of req)body+=chunk;
+    forwarded++;
+    const response=await fetch(node+req.url,{method:req.method,headers:{'Content-Type':'application/json'},body,signal:AbortSignal.timeout(15000)});
+    accepted=await response.json();
+   }catch(error){forwardError=error;}finally{res.destroy();}
+  });
+  try{
+   await new Promise(r=>dropReply.listen(0,'127.0.0.1',r));
+   await writeFile(marker,JSON.stringify({schema_version:1,node_id:id,address:`127.0.0.1:${dropReply.address().port}`}));
+   const unconfirmed=await nodeJobs(['generate-text','--prompt','receipt-loss fixture','--role','request_interpreter'],false);
+   assert.equal(forwardError,null);assert.equal(forwarded,1,'lost reply must not replay creation');
+   assert.equal(unconfirmed.error_code,'local_job_reply_unconfirmed');assert.equal(unconfirmed.outcome_unknown,true);
+   assert.equal(unconfirmed.operation_id,accepted.operation_id);
+   await writeFile(marker,originalMarker);
+   const found=await nodeJobs(['find','--operation-id',unconfirmed.operation_id]);
+   assert.equal(found.data.total,1);assert.equal(found.data.jobs[0].id,accepted.data.id);
+   await until(async()=>(await json(node+'/api/jobs/'+accepted.data.id)).status==='completed','receipt-recovered job completes');
+   await nodeJobs(['remove',accepted.data.id]);
+   assert.equal((await nodeJobs(['find','--operation-id',unconfirmed.operation_id])).data.total,0,'lookup searches retained history only');
+  }finally{
+   await writeFile(marker,originalMarker);dropReply.closeAllConnections();await new Promise(r=>dropReply.close(r));
+  }
   assert.equal((await fetch(node+'/api/commands/jobs',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({schema_version:1,expected_node_id:id,command:{operation:'list'}})})).status,403);
   const newPort=await port(),pending=(await json(node+'/api/config')).config;
   pending.dashboard.port=newPort;await json(node+'/api/config',{config:pending},'PUT');

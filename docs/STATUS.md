@@ -1,5 +1,23 @@
 # Architecture conformance status
 
+## Unreleased job receipt recovery
+
+- The node CLI generates an operation receipt before sending. Updated EEF stores
+  it in the authenticated job origin context while keeping transport reply IDs
+  independent. `eefn jobs find --operation-id UUID` searches only that origin's
+  retained creation history, filtering before the bounded result page.
+- Lookup does not replay work or deduplicate submissions; an empty match is not
+  proof that an uncertain request was never accepted. It is not a control-command
+  receipt ledger. See [command recovery semantics](COMMANDS.md).
+- All 152 Rust tests passed on 2026-09-13, including persistence/reopen, filtering
+  beyond the first 100 jobs, origin scoping and independently correlated replies.
+  Isolated `.validation/model-metadata-bnagjD` deliberately dropped the local
+  creation reply, verified exactly one submission and recovered the saved job
+  using the CLI receipt. It also passed the earlier model/auth/job/restart checks.
+- A read-only installed-coordinator check still showed two connected nodes,
+  two registered models and no pending restart. Those v0.4.0a2 installations were
+  not updated; new-code execution used a fake backend, not physical inference.
+
 ## Unreleased remote authorization race fixes
 
 - Legacy remote configuration writes now read, authorize and save under the

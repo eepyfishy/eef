@@ -215,6 +215,7 @@ async fn execute_job_command(
     let request = eefn::job_commands::JobRequest {
         schema_version: 1,
         expected_node_id: file.node_id.clone(),
+        operation_id: Some(uuid::Uuid::new_v4().to_string()),
         command: command.clone(),
     };
     let response = reqwest::Client::builder()
@@ -236,6 +237,7 @@ async fn execute_job_command(
                 && value["schema_version"] == 1
                 && value["report_type"] == "node_job_command"
                 && value["node_id"] == file.node_id
+                && value["operation_id"].as_str() == request.operation_id.as_deref()
             {
                 return Ok(value);
             }
@@ -243,8 +245,9 @@ async fn execute_job_command(
     }
     Ok(
         json!({"schema_version":1,"success":false,"node_id":file.node_id,
+        "report_type":"node_job_command","operation_id":request.operation_id,
         "error_code":"local_job_reply_unconfirmed","acknowledged":false,"outcome_unknown":command.mutates(),
-        "note":"No valid local job reply. Inspect jobs after reconnecting before retrying; no automatic resubmission was sent."}),
+        "note":"No valid local job reply. For creation, use jobs find --operation-id with this receipt, then inspect job status. No automatic resubmission was sent; no match is not proof that work was never accepted."}),
     )
 }
 

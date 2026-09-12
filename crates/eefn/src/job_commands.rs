@@ -9,6 +9,11 @@ use serde_json::{Value, json};
 pub enum JobCommand {
     /// List this origin node's jobs, not every job on the coordinator.
     List {},
+    /// Find retained jobs created by this node with a command receipt ID.
+    Find {
+        #[arg(long)]
+        operation_id: String,
+    },
     Get {
         id: String,
     },
@@ -49,12 +54,25 @@ pub enum JobCommand {
 pub struct JobRequest {
     pub schema_version: u32,
     pub expected_node_id: String,
+    /// Optional for older local clients. Correlation only, never a retry token.
+    #[serde(default)]
+    pub operation_id: Option<String>,
     pub command: JobCommand,
+}
+
+pub fn validate_operation_id(id: &str) -> Result<()> {
+    if id.len() != 36 || uuid::Uuid::parse_str(id)?.to_string() != id {
+        bail!("operation ID must be a canonical lowercase hyphenated UUID")
+    }
+    Ok(())
 }
 
 impl JobCommand {
     pub fn mutates(&self) -> bool {
-        !matches!(self, Self::List {} | Self::Get { .. } | Self::Output { .. })
+        !matches!(
+            self,
+            Self::List {} | Self::Find { .. } | Self::Get { .. } | Self::Output { .. }
+        )
     }
 
     pub fn submission(&self) -> Result<(&'static str, Value)> {
@@ -71,6 +89,10 @@ impl JobCommand {
         };
         match self {
             Self::List {} => Ok(("jobs.list", json!({}))),
+            Self::Find { operation_id } => {
+                validate_operation_id(operation_id)?;
+                Ok(("jobs.find", json!({"operation_id":operation_id})))
+            }
             Self::Get { id } => identified("jobs.get", id),
             Self::Output { id } => identified("jobs.output", id),
             Self::Pause { id } => identified("jobs.pause", id),
@@ -125,11 +147,23 @@ impl crate::NodeService {
             bail!("job command schema or target node does not match this instance")
         }
         let (kind, payload) = request.command.submission()?;
+        let operation_id = request
+            .operation_id
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        validate_operation_id(&operation_id)?;
         let mut result = json!({"schema_version":1,"success":false,"report_type":"node_job_command",
-            "node_id":self.node_id,"operation_id":uuid::Uuid::new_v4().to_string(),
+            "node_id":self.node_id,"operation_id":operation_id,
             "acknowledged":false,"outcome_unknown":false});
-        match self.submissions.request(kind, payload).await {
+        match self
+            .submissions
+            .request_correlated(kind, payload, Some(operation_id.clone()))
+            .await
+        {
             Ok(data) => {
+                if kind == "jobs.create" {
+                    result["creation_correlated"] =
+                        json!(data["request_context"]["request_id"] == operation_id);
+                }
                 result["success"] = json!(true);
                 result["acknowledged"] = json!(true);
                 result["data"] = data;
@@ -176,6 +210,20 @@ mod tests {
     use super::*;
     #[test]
     fn typed_jobs_cannot_supply_origin_or_arbitrary_plan_authority() {
+        for id in [
+            "",
+            "../other",
+            "00112233445566778899aabbccddeeff",
+            "00112233-4455-6677-8899-AABBCCDDEEFF",
+        ] {
+            assert!(validate_operation_id(id).is_err());
+        }
+        assert!(
+            !JobCommand::Find {
+                operation_id: uuid::Uuid::new_v4().to_string()
+            }
+            .mutates()
+        );
         assert!(
             serde_json::from_value::<JobCommand>(
                 json!({"operation":"list","origin_node":"forged"})
@@ -218,23 +266,32 @@ mod tests {
         let request = JobRequest {
             schema_version: 1,
             expected_node_id: "origin".into(),
+            operation_id: None,
             command: JobCommand::List {},
         };
         let mut wrong = request.clone();
         wrong.expected_node_id = "other".into();
         assert!(node.job_command(wrong).await.is_err());
+        let mut invalid = request.clone();
+        invalid.operation_id = Some("not-a-receipt".into());
+        assert!(node.job_command(invalid).await.is_err());
         assert!(receiver.try_recv().is_err());
         let copy = node.clone();
         let command = tokio::spawn(async move { copy.job_command(request).await.unwrap() });
         let submission = receiver.recv().await.unwrap();
         assert_eq!(submission.kind, "jobs.list");
+        let operation_id = submission.operation_id.clone().unwrap();
+        assert_ne!(submission.id, operation_id);
         submission.reply.send(Ok(json!({"jobs":[]}))).unwrap();
-        assert_eq!(command.await.unwrap()["data"]["jobs"], json!([]));
+        let report = command.await.unwrap();
+        assert_eq!(report["operation_id"], operation_id);
+        assert_eq!(report["data"]["jobs"], json!([]));
         let copy = node.clone();
         let command = tokio::spawn(async move {
             copy.job_command(JobRequest {
                 schema_version: 1,
                 expected_node_id: "origin".into(),
+                operation_id: None,
                 command: JobCommand::Stop {
                     id: "job-id".into(),
                 },
@@ -258,6 +315,7 @@ mod tests {
             .job_command(JobRequest {
                 schema_version: 1,
                 expected_node_id: "origin".into(),
+                operation_id: None,
                 command: JobCommand::Stop { id: "job".into() },
             })
             .await

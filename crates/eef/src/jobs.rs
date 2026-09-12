@@ -398,11 +398,32 @@ impl crate::task::TaskEngine {
                     .is_some_and(|c| c.origin_node() == node.origin_node())
             })
         };
-        if kind == "jobs.list" {
+        if kind == "jobs.list" || kind == "jobs.find" {
+            let operation_id = if kind == "jobs.find" {
+                let id = payload["operation_id"]
+                    .as_str()
+                    .context("operation ID is required")?;
+                eefn::job_commands::validate_operation_id(id)?;
+                Some(id)
+            } else {
+                None
+            };
             let all = self.store.list()?;
-            let visible = all.iter().filter(|p| owns(p)).collect::<Vec<_>>();
+            let visible = all
+                .iter()
+                .filter(|p| {
+                    owns(p)
+                        && operation_id.is_none_or(|id| {
+                            p.goal
+                                .request_context
+                                .as_ref()
+                                .is_some_and(|context| context.request_id() == id)
+                        })
+                })
+                .collect::<Vec<_>>();
             return Ok(
-                json!({"jobs":visible.iter().take(100).map(|p|view(p,false)).collect::<Vec<_>>(),"total":visible.len(),"storage":self.store.usage()?}),
+                json!({"jobs":visible.iter().take(100).map(|p|view(p,false)).collect::<Vec<_>>(),"total":visible.len(),"storage":self.store.usage()?,
+                "operation_id":operation_id,"truncated":visible.len()>100}),
             );
         }
         if kind == "jobs.create" {
@@ -517,6 +538,62 @@ mod tests {
     }
     fn open(path: &Path) -> Arc<JobStore> {
         JobStore::open(path, 500, 64 * 1024 * 1024).unwrap()
+    }
+    #[test]
+    fn receipt_lookup_survives_reopen_and_filters_before_the_result_limit() {
+        let (_dir, path) = disk();
+        let store = open(&path);
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        let origin =
+            eefn::context::RequestContext::new(operation_id.clone(), "owner".into(), vec![])
+                .unwrap();
+        let mut target = plan("generate_text");
+        target.goal.request_context = Some(origin.clone());
+        let target = TaskPlanner.plan(target.goal).unwrap();
+        let target_id = target.plan_id.clone();
+        for job in std::iter::once(target).chain((0..105).map(|_| plan("generate_text"))) {
+            let id = job.plan_id.clone();
+            store.insert(job).unwrap();
+            store
+                .change(&id, "fixture retained history", |p| {
+                    p.status = PlanStatus::Completed;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        store
+            .connection
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE durable_jobs SET updated_ms=0 WHERE job_id=?1",
+                [&target_id],
+            )
+            .unwrap();
+        drop(store);
+        let engine = TaskEngine::with_store(EventBus::new(10), open(&path));
+        let page = engine
+            .job_request("jobs.list", json!({}), Some(origin.clone()))
+            .unwrap();
+        assert_eq!(page["total"], 106);
+        assert_eq!(page["truncated"], true);
+        assert!(
+            !page["jobs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|job| job["id"] == target_id)
+        );
+        let found = engine
+            .job_request(
+                "jobs.find",
+                json!({"operation_id":operation_id}),
+                Some(origin),
+            )
+            .unwrap();
+        assert_eq!(found["total"], 1);
+        assert_eq!(found["jobs"][0]["id"], target_id);
+        assert!(!found.to_string().contains("private output"));
     }
     async fn settled(engine: &TaskEngine, id: &str) -> Plan {
         tokio::time::timeout(Duration::from_secs(3), async {
@@ -810,9 +887,13 @@ mod tests {
     async fn node_controls_are_origin_scoped_and_do_not_accept_forged_context() {
         let engine = TaskEngine::new(EventBus::new(20));
         engine.set_executor(Arc::new(Counting(AtomicU32::new(0))));
-        let origin =
-            eefn::context::RequestContext::new("r".into(), "node-a".into(), vec!["Room".into()])
-                .unwrap();
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        let origin = eefn::context::RequestContext::new(
+            operation_id.clone(),
+            "node-a".into(),
+            vec!["Room".into()],
+        )
+        .unwrap();
         let other =
             eefn::context::RequestContext::new("s".into(), "node-b".into(), vec![]).unwrap();
         let created=engine.job_request("jobs.create",json!({"description":"fixture","template":"read_file","request_context":{"request_id":"fake","origin_node":"node-b","origin_area":[]}}),Some(origin.clone())).unwrap();
@@ -821,6 +902,45 @@ mod tests {
         assert_eq!(
             engine.store.get(id).unwrap().goal.request_context,
             Some(origin.clone())
+        );
+        let found = engine
+            .job_request(
+                "jobs.find",
+                json!({"operation_id":operation_id}),
+                Some(origin.clone()),
+            )
+            .unwrap();
+        assert_eq!(found["total"], 1);
+        assert_eq!(found["jobs"][0]["id"], id);
+        assert_eq!(found["truncated"], false);
+        assert_eq!(
+            engine
+                .job_request(
+                    "jobs.find",
+                    json!({"operation_id":operation_id}),
+                    Some(other.clone())
+                )
+                .unwrap()["total"],
+            0
+        );
+        assert_eq!(
+            engine
+                .job_request(
+                    "jobs.find",
+                    json!({"operation_id":uuid::Uuid::new_v4().to_string()}),
+                    Some(origin.clone())
+                )
+                .unwrap()["total"],
+            0
+        );
+        assert!(
+            engine
+                .job_request(
+                    "jobs.find",
+                    json!({"operation_id":"bad"}),
+                    Some(origin.clone())
+                )
+                .is_err()
         );
         assert_eq!(
             engine

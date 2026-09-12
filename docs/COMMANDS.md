@@ -47,6 +47,7 @@ explicitly disabled listener is silently enabled by the new preference.
 
 ```powershell
 .\eefn.exe jobs list --json
+.\eefn.exe jobs find --operation-id RECEIPT_UUID --json
 .\eefn.exe jobs generate-text --prompt "Explain the current task" --role request_interpreter --json
 .\eefn.exe jobs get JOB_ID --json
 .\eefn.exe jobs output JOB_ID --json
@@ -87,6 +88,23 @@ transport outcomes. Mutating errors remain conservatively uncertain unless known
 not sent: an error does not prove a checkpoint was rolled back. Inspect list/status
 before an explicit retry. Job commands are not automatically resubmitted after timeout or
 reconnection; the command operation ID is not a durable deduplication key.
+
+Creation recovery in the current development build: the CLI generates a receipt
+`operation_id` before sending, including it in an unconfirmed local-reply report.
+With an updated coordinator, creation returns `creation_correlated:true` and the
+same ID is persisted as the job's `request_context.request_id`. Use `jobs find
+--operation-id RECEIPT_UUID` to search this origin node's retained creation
+history without executing anything. Matching happens before the 100-result limit;
+`total` and `truncated` describe the matched set. Inspect each returned job status.
+
+Lookup is not an execution receipt ledger: pause/resume/stop/remove commands do
+not become new job creations. No match can mean in-flight work, removed history,
+a different coordinator, or an older coordinator without correlation support;
+it does **not** prove that creation was never accepted. Reusing a receipt does
+not deduplicate work and may match multiple jobs. Do not automatically retry an
+uncertain mutation. Transport IDs remain independently generated, so reused
+correlation cannot mix up replies. Both roles must be updated for lookup; older
+coordinators reject `jobs.find` rather than returning an unfiltered list.
 
 ## Unreleased: model route inspection
 
