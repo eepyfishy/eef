@@ -1,5 +1,19 @@
 # Architecture conformance status
 
+## Unreleased remote authorization race fixes
+
+- Legacy remote configuration writes now read, authorize and save under the
+  same lock as local commands. They preserve concurrent owner changes and
+  cannot restore revoked management approval. Denied writes remain proposals.
+- Remote model installs recheck approval at download admission after backend
+  inspection, and reject changed model configuration. Approval revocation does
+  not retroactively cancel already admitted work; explicit cancellation remains
+  available. No new model source or automatic download was added.
+- All 150 Rust tests passed on 2026-09-13. The isolated process regression
+  `.validation/model-metadata-E9N5Nq` revoked permission during fake backend
+  discovery and verified that no pull started, then checked denied remote saves.
+  No model weights, installed apps, physical node settings or releases changed.
+
 ## Unreleased backend/browser separation checkpoint
 
 - Browser assets are optional in both crates; both executables support `--no-ui`.
@@ -24,6 +38,9 @@
   features on 2026-09-13 after the saved-preference follow-up. This is not real inference or physical
   two-PC acceptance. No installed app, model, release feed or signing status was
   changed. See [boundary and remaining scope](BACKEND-BOUNDARY.md).
+- Follow-up command/discovery, first-run/job and browser-copy regressions passed
+  on 2026-09-13 (`.validation/node-commands-6qd4MR`,
+  `.validation/peer-discovery-yOxtQ3`, `.validation/first-run-RPsvjj`).
 
 ## Unreleased node-origin job commands
 

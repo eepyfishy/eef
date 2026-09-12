@@ -158,7 +158,19 @@ fn normalize_capabilities(id: &str, details: &Value) -> Value {
     json!({"id":id,"capabilities_known":reported.is_some(),"capabilities":capabilities,"modality":if vision {Some("vlm")} else if completion {Some("text")} else {None}})
 }
 pub async fn install(state: Arc<NodeService>, request: Value) -> Result<()> {
-    let config = state.read_config()?;
+    install_authorized(state, request, false).await
+}
+
+pub(crate) async fn install_remote(state: Arc<NodeService>, request: Value) -> Result<()> {
+    install_authorized(state, request, true).await
+}
+
+async fn install_authorized(state: Arc<NodeService>, request: Value, remote: bool) -> Result<()> {
+    let config = if remote {
+        state.with_remote_authority(|config| Ok(config.clone()))?
+    } else {
+        state.read_config()?
+    };
     let selected = request["id"]
         .as_str()
         .context("Choose a model to install")?;
@@ -193,13 +205,7 @@ pub async fn install(state: Arc<NodeService>, request: Value) -> Result<()> {
             "Choose a model from the list. Custom downloads can be added to the catalog in Advanced."
         ),
     };
-    {
-        let mut live = state.live.lock().unwrap();
-        if live["download"]["state"] == "downloading" {
-            bail!("A model is already downloading. Wait or cancel it first.")
-        }
-        live["download"] = json!({"id":uuid::Uuid::new_v4().to_string(),"backend":backend,"state":"downloading","phase":"Starting","name":entry["name"],"completed":0,"total":if backend=="ollama" {Value::Null} else {entry["bytes"].clone()},"cancel_requested":false});
-    }
+    state.begin_model_download(&config, remote, json!({"id":uuid::Uuid::new_v4().to_string(),"backend":backend,"state":"downloading","phase":"Starting","name":entry["name"],"completed":0,"total":if backend=="ollama" {Value::Null} else {entry["bytes"].clone()},"cancel_requested":false}))?;
     tokio::spawn(async move {
         let transfer = async {
             if backend == "ollama" {

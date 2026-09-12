@@ -11,6 +11,7 @@ const root=resolve(import.meta.dirname,'..');
 const scratch=await mkdtemp(join(root,'.validation','model-metadata-'));
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const children=[],requests=[],gates=new Map();
+let tagGate=null,pullRequests=0;
 // Optional compatibility run: selected old executable, still isolated config/data.
 const legacyNode=process.env.EEF_TEST_LEGACY_NODE_BINARY;
 const uiConfig=process.env.EEF_TEST_UI_CONFIG==='1';
@@ -26,7 +27,11 @@ async function until(fn,label){const end=Date.now()+65000;while(Date.now()<end){
 async function json(url,body,method){const r=await fetch(url,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(10000)});const value=await r.json();assert(r.ok,JSON.stringify(value));return value;}
 const fake=createServer(async(req,res)=>{
  res.setHeader('Content-Type','application/json');
- if(req.url==='/api/tags')return res.end(JSON.stringify({models:[{name:'fixture-text'},{name:'fixture-vision'}]}));
+ if(req.url==='/api/tags'){
+  if(tagGate){const gate=tagGate;gate.entered=true;await new Promise(resolve=>gate.release=resolve);}
+  return res.end(JSON.stringify({models:[{name:'fixture-text'},{name:'fixture-vision'}]}));
+ }
+ if(req.url==='/api/pull'){pullRequests++;res.writeHead(409);return res.end(JSON.stringify({error:'test fixture never downloads models'}));}
  if(req.url==='/api/show')return res.end(JSON.stringify({capabilities:['completion','vision']}));
  if(req.url==='/api/chat'){
   let body='';for await(const chunk of req){body+=chunk;if(body.length>65536){res.writeHead(413);return res.end('{}');}}
@@ -104,6 +109,20 @@ try{
   const remoteBody={schema_version:1,node_id:id,command:{operation:'show'}};
   assert.equal((await fetch(eef+'/api/commands/node/models',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(remoteBody)})).status,403);
   assert.equal(requests.length,1,'selection commands must not execute inference');
+  tagGate={entered:false,release:null};
+  const installation=json(eef+`/api/node/${id}/invoke`,{capability:'node.configure',action:'install',params:{id:'fixture-revoked'},timeout:10});
+  await until(()=>tagGate.entered,'remote installation backend inspection');
+  const revoked=(await json(node+'/api/config')).config;revoked.management.allow_remote=false;
+  await json(node+'/api/config',{config:revoked},'PUT');
+  tagGate.release();tagGate=null;
+  const deniedInstall=await installation;assert.equal(deniedInstall.success,false);
+  assert.equal(pullRequests,0,'revoked approval must block download admission after inspection');
+  assert.notEqual((await json(node+'/api/status')).download?.state,'downloading');
+  const deniedSave=await json(eef+`/api/node/${id}/invoke`,{capability:'node.configure',action:'save',params:{config:{name:'Unapproved',management:{allow_remote:true}}},timeout:10});
+  assert.equal(deniedSave.data.approval_required,true);
+  const deniedConfig=(await json(node+'/api/config')).config;
+  assert.equal(deniedConfig.management.allow_remote,false);assert.notEqual(deniedConfig.name,'Unapproved');
+  deniedConfig.management.allow_remote=true;await json(node+'/api/config',{config:deniedConfig},'PUT');
   const before=await readFile(nodeConfig,'utf8');
   await nodeCommand(['hints','--backend','ollama','--model','fixture-text','--capability','vlm.analyze'],false);
   assert.equal(await readFile(nodeConfig,'utf8'),before);
@@ -187,6 +206,7 @@ try{
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,versioned_inventory:!legacyNode,owner_cli:true,api_only_both_roles:true,saved_ui_preferences:uiConfig,connection_commands:!legacyNode,origin_guard:true,selection_commands:!legacyNode,remote_selection_commands:!legacyNode,old_node_remote_command_refusal:!!legacyNode,node_job_commands:!legacyNode,node_job_origin_scope:!legacyNode,explicit_text_output:!legacyNode,pause_resume_without_reexecution:!legacyNode,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:legacyNode?'not supported by old node':true,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
  console.log('Model metadata and remote selection protocol checks passed: '+scratch);
 }finally{
+ tagGate?.release?.();tagGate=null;
  for(const release of gates.values())release();gates.clear();
  for(const child of children)if(child.exitCode===null)child.kill();
  await Promise.allSettled(children.map(c=>c.result));

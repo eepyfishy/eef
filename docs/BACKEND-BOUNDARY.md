@@ -46,3 +46,12 @@ This boundary is not a claim that every command family or roadmap feature is
 complete. Generalized permissions, model bootstrap, interpretation, execution
 leases, direct-peer sessions and cluster safety still have their own acceptance
 gates. No visual redesign or release is included in this checkpoint.
+
+The subsequent backend authorization hardening also merges legacy remote settings
+under the same configuration lock, using current local approval. Remote restart
+and cancellation check current approval at admission. Model installation checks
+again after asynchronous backend inspection, rejecting changed model/catalog
+settings or revoked approval before marking a download active. This does not
+retroactively cancel previously admitted transfers; use explicit local cancellation
+to stop this node's request. Shared Ollama downloads can outlive an individual
+client's cancellation, as documented by the existing download controls.

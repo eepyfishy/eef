@@ -480,6 +480,78 @@ impl NodeService {
             .join("models")
     }
 
+    pub(crate) fn with_remote_authority<T>(
+        &self,
+        operation: impl FnOnce(&Value) -> Result<T>,
+    ) -> Result<T> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        let config = self.read_config()?;
+        require_remote_authority(&config)?;
+        operation(&config)
+    }
+
+    fn save_remote_configuration(&self, changes: &Value) -> Result<Value> {
+        if !changes.is_object() {
+            bail!("node settings must be an object")
+        }
+        let _guard = self.config_lock.lock().expect("config lock");
+        let mut config = self.read_config()?;
+        let allowed = require_remote_authority(&config).is_ok();
+        // Merge into the latest saved state while holding its lock. Never restore
+        // an earlier approval value or overwrite unrelated concurrent local edits.
+        for key in [
+            "name",
+            "permissions",
+            "models",
+            "update",
+            "metadata",
+            "network",
+        ] {
+            if let Some(value) = changes.get(key) {
+                config[key] = value.clone();
+            }
+        }
+        validate_config(&config)?;
+        if !allowed {
+            config["psk"] = json!(SECRET_PLACEHOLDER);
+            crate::setup::write_json(&self.config_path.with_extension("proposal.json"), &config)?;
+            return Ok(
+                json!({"approval_required":true,"message":"Review and approve these changes in the node app."}),
+            );
+        }
+        self.save_config_locked(config)?;
+        self.live.lock().unwrap()["pending_restart"] = json!(true);
+        Ok(json!({"saved":true,"restart_required":true}))
+    }
+
+    /// Final download admission after asynchronous backend inspection. Does not
+    /// cancel previously admitted downloads when approval later changes.
+    pub(crate) fn begin_model_download(
+        &self,
+        snapshot: &Value,
+        remote: bool,
+        progress: Value,
+    ) -> Result<()> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        let current = self.read_config()?;
+        if remote {
+            require_remote_authority(&current)?;
+        }
+        if current.get("models") != snapshot.get("models")
+            || current.get("model_catalog") != snapshot.get("model_catalog")
+        {
+            bail!(
+                "Model settings changed during backend inspection. Inspect current settings before retrying."
+            )
+        }
+        let mut live = self.live.lock().unwrap();
+        if live["download"]["state"] == "downloading" {
+            bail!("A model is already downloading. Wait or cancel it first.")
+        }
+        live["download"] = progress;
+        Ok(())
+    }
+
     pub async fn remote(self: &Arc<Self>, action: &str, params: Value) -> Result<Value> {
         let mut config = self.read_config()?;
         let allowed = config
@@ -501,45 +573,15 @@ impl NodeService {
             }
             "models" => crate::model_manager::list(self).await,
             "inspect" => crate::model_manager::inspect(self, params).await,
-            "save" => {
-                let changes = params.get("config").unwrap_or(&params);
-                // Remote management cannot grant itself permission, replace identity,
-                // replace the network secret, or inject arbitrary Python plugins.
-                for key in [
-                    "name",
-                    "permissions",
-                    "models",
-                    "update",
-                    "metadata",
-                    "network",
-                ] {
-                    if let Some(v) = changes.get(key) {
-                        config[key] = v.clone();
-                    }
-                }
-                validate_config(&config)?;
-                if !allowed {
-                    config["psk"] = json!(SECRET_PLACEHOLDER);
-                    crate::setup::write_json(
-                        &self.config_path.with_extension("proposal.json"),
-                        &config,
-                    )?;
-                    return Ok(
-                        json!({"approval_required":true,"message":"Review and approve these changes in the device app."}),
-                    );
-                }
-                self.save_config(config)?;
-                self.live.lock().unwrap()["pending_restart"] = json!(true);
-                Ok(json!({"saved":true,"restart_required":true}))
-            }
-            "restart" if allowed => Ok(self.queue_restart()),
-            "install" if allowed => {
-                crate::model_manager::install(self.clone(), params).await?;
+            "save" => self.save_remote_configuration(params.get("config").unwrap_or(&params)),
+            "restart" => self.with_remote_authority(|_| Ok(self.queue_restart())),
+            "install" => {
+                crate::model_manager::install_remote(self.clone(), params).await?;
                 Ok(json!({"started":true}))
             }
-            "cancel" if allowed => {
+            "cancel" => self.with_remote_authority(|_| {
                 Ok(json!({"requested":crate::model_manager::cancel(self, params["id"].as_str())?}))
-            }
+            }),
             _ => bail!(
                 "This device has not allowed remote management. Enable it in the device app’s Settings, or approve the proposed changes there."
             ),
@@ -634,6 +676,19 @@ fn validate_config(value: &Value) -> Result<()> {
     }
     if let Some(permissions) = value.get("permissions") {
         serde_json::from_value::<NodePolicy>(permissions.clone())?.validate()?;
+    }
+    Ok(())
+}
+
+fn require_remote_authority(config: &Value) -> Result<()> {
+    if config
+        .pointer("/management/allow_remote")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        bail!(
+            "This node has not allowed remote management. Enable it locally before requesting changes."
+        )
     }
     Ok(())
 }
@@ -817,6 +872,81 @@ mod tests {
         assert_eq!(saved["models"]["provider"], "ollama");
         assert_eq!(saved["connection_enabled"], false);
         assert_eq!(saved["future"]["keep"], true);
+    }
+
+    #[test]
+    fn legacy_remote_settings_cannot_restore_revoked_approval_or_lose_local_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        crate::setup::write_json(&path,&json!({"node_id":"stable","name":"Original","psk":"private","management":{"allow_remote":true}})).unwrap();
+        let service = NodeService::new(path, "stable".into());
+        let remote = service.clone();
+        let local = service.clone();
+        let gate = Arc::new(std::sync::Barrier::new(2));
+        let remote_gate = gate.clone();
+        let worker = std::thread::spawn(move || {
+            remote_gate.wait();
+            remote.save_remote_configuration(&json!({"name":"Remote","management":{"allow_remote":true},"psk":"replacement","node_id":"replacement"})).unwrap()
+        });
+        let guard = local.config_lock.lock().unwrap();
+        gate.wait();
+        let mut config = local.read_config().unwrap();
+        config["management"]["allow_remote"] = json!(false);
+        config["connection_enabled"] = json!(false);
+        config["future"] = json!({"keep":true});
+        local.save_config_locked(config.clone()).unwrap();
+        drop(guard);
+        assert_eq!(worker.join().unwrap()["approval_required"], true);
+        assert_eq!(service.read_config().unwrap(), config);
+        assert_eq!(
+            service.configuration_proposal().unwrap()["config"]["psk"],
+            SECRET_PLACEHOLDER
+        );
+        assert!(service.with_remote_authority(|_| Ok(())).is_err());
+    }
+
+    #[test]
+    fn download_admission_rechecks_approval_and_model_snapshot_without_starting_transfer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        let snapshot = json!({"node_id":"stable","management":{"allow_remote":true},"models":{"provider":"ollama"}});
+        crate::setup::write_json(&path, &snapshot).unwrap();
+        let service = NodeService::new(path, "stable".into());
+        let progress = json!({"state":"downloading","id":"fixture"});
+        let mut revoked = snapshot.clone();
+        revoked["management"]["allow_remote"] = json!(false);
+        service.save_config(revoked).unwrap();
+        let before = service.live.lock().unwrap().clone();
+        assert!(
+            service
+                .begin_model_download(&snapshot, true, progress.clone())
+                .is_err()
+        );
+        assert_eq!(*service.live.lock().unwrap(), before);
+        // Local ownership still permits explicit installation after remote revocation.
+        service
+            .begin_model_download(&snapshot, false, progress.clone())
+            .unwrap();
+        assert!(
+            service
+                .begin_model_download(&snapshot, false, progress.clone())
+                .is_err()
+        );
+        service.live.lock().unwrap()["download"] = json!({"state":"idle"});
+        let mut changed = snapshot.clone();
+        changed["models"]["provider"] = json!("llamacpp");
+        service.save_config(changed).unwrap();
+        assert!(
+            service
+                .begin_model_download(&snapshot, true, progress.clone())
+                .is_err()
+        );
+        assert!(
+            service
+                .begin_model_download(&snapshot, false, progress)
+                .is_err()
+        );
+        assert_eq!(service.live.lock().unwrap()["download"]["state"], "idle");
     }
 
     #[tokio::test]
