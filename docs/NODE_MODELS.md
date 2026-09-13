@@ -78,7 +78,7 @@ EEF receives these advertisements over the authenticated node link. It ranks
 eligible providers by capability, modality, load, latency, hardware,
 constraints, and health; it does not contain a default model name.
 
-## Unreleased: optional runtime startup failures
+## Added in v0.4.0a3: optional runtime startup failures
 
 If the configured llama.cpp group fails startup, EEFN stops any partially
 started children it owns, omits that group from registration/execution and

@@ -1,4 +1,4 @@
-# Backend and browser boundary (unreleased)
+# Backend and browser boundary (v0.4.0a3)
 
 The dashboard is an optional client. It does not own runtime state or keep jobs,
 connections, model management or update operations alive. CLI and automation use

@@ -1,6 +1,6 @@
 # HTTP API
 
-Unreleased: both roles support API-only startup with `--no-ui`. The node HTTP
+v0.4.0a3: both roles support API-only startup with `--no-ui`. The node HTTP
 adapter is now `eefn::api`; optional browser assets/native picker live separately
 in `eefn::dashboard`. Core configuration, status, connection, startup and update
 operations live in `NodeService`. Existing HTTP response shapes remain compatible.
@@ -11,7 +11,7 @@ semantics](NODE_MODELS.md). Missing optional components do not grant permissions
 operations are `show`, `pause`, `resume`, `pair_local`. Local origin/host guards
 still apply, including when no UI assets are compiled or served.
 
-Unreleased node `POST /api/commands/jobs` takes
+v0.4.0a3 node `POST /api/commands/jobs` takes
 `{schema_version:1,expected_node_id,operation_id?,command}` with typed operations `list`, `find`, `get`,
 `output`, `pause`, `resume`, `stop`, `remove`, `generate_text`. Identity/version and
 input bounds are validated by the node core before using its existing submission
@@ -29,19 +29,19 @@ The `find` command takes `{operation:"find",operation_id:UUID}` and submits
 `jobs.find` through the existing connection. Only matching retained jobs owned
 by that origin are returned; no inference, mutation or automatic retry occurs.
 
-Unreleased: guarded `POST /api/commands/node/models` on EEF takes
+v0.4.0a3: guarded `POST /api/commands/node/models` on EEF takes
 `{schema_version:1,node_id,command}`. `command` is the same typed selection
 operation used by node `POST /api/commands/models`. EEF uses the authenticated
 node control channel with the stable target ID, never the node's local API.
 See [remote model command permissions and uncertain outcomes](COMMANDS.md).
 
-Unreleased: guarded `GET /api/commands/models/route` accepts `capability` and
+v0.4.0a3: guarded `GET /api/commands/models/route` accepts `capability` and
 optional `role`, `node_id`, `backend`, `model_id`, `limit` query fields. This is
 a read-only candidate preview, not execution authorization. See [commands](COMMANDS.md).
 Existing durable job templates include `generate_text` and `analyze_image`, with
 optional `constraints.model_role` enforced by the existing model router.
 
-Unreleased: [network commands](COMMANDS.md) document the shared node command
+v0.4.0a3: [network commands](COMMANDS.md) document the shared node command
 service, `POST /api/commands/network`, API-only mode, and registration advertisements.
 The same command endpoint now accepts `operation:"peers"`; EEF enforces its
 applied `discovery` policy using authenticated origin, with self-only defaults.

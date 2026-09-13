@@ -1,10 +1,10 @@
-# Commands in v0.4.0a2
+# Commands in v0.4.0a3
 
 This test release supports these commands without a browser or LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
-## Unreleased: backend-only operation and connection controls
+## Added in v0.4.0a3: backend-only operation and connection controls
 
 Both `eef --no-ui` and `eefn --no-ui` keep their command/API services running
 without mounting browser HTML, JavaScript, CSS or legacy pages. Node API-only
@@ -43,7 +43,7 @@ the local HTTP listener. Legacy `enabled:false` disables that listener, includin
 commands; use `ui_enabled:false` or `--no-ui` to hide only the browser. No old
 explicitly disabled listener is silently enabled by the new preference.
 
-## Unreleased: jobs through the running node
+## Added in v0.4.0a3: jobs through the running node
 
 ```powershell
 .\eefn.exe jobs list --json
@@ -106,7 +106,7 @@ uncertain mutation. Transport IDs remain independently generated, so reused
 correlation cannot mix up replies. Both roles must be updated for lookup; older
 coordinators reject `jobs.find` rather than returning an unfiltered list.
 
-## Unreleased: model route inspection
+## Added in v0.4.0a3: model route inspection
 
 `eef models route --capability llm.infer --role request_interpreter --json`
 previews matching connected model instances without inference. Optional `--node`,
@@ -121,7 +121,7 @@ not escape the requested role/backend when falling back across tiers. Image
 payloads must be supplied by the caller; this does not capture camera images or
 implement automatic interpretation/planning. Node permissions still apply.
 
-## Unreleased: coordinator discovery controls and restart
+## Added in v0.4.0a3: coordinator discovery controls and restart
 
 These additions are in the development tree, **not the published v0.4.0a2
 installers**. They work with existing v0.4.0a2 nodes; only EEF needs the new code.
@@ -193,7 +193,7 @@ Set `EEF_LIVE_MODEL_INVENTORY=1` to also verify read-only model registration
 inventory on both nodes. This requires the development coordinator command below;
 it does not scan backends, download models or run inference.
 
-## Unreleased: local node restart and actual API discovery
+## Added in v0.4.0a3: local node restart and actual API discovery
 
 ```powershell
 .\eefn.exe restart --json
@@ -229,7 +229,7 @@ record if the port changes. This is local discovery, not a new remote listener.
 Missing records fall back to config for older nodes; stopped-node commands ignore
 stale records. Failure to write discovery is logged without stopping the node.
 
-## Unreleased: node model selection commands
+## Added in v0.4.0a3: node model selection commands
 
 The development coordinator also exposes these operations for a connected node:
 
@@ -308,7 +308,7 @@ or timed-out response is not permission to automatically retry a mutation.
 Published older nodes do not enforce these new selection restrictions. Do not
 downgrade a restricted node and assume that its restrictions remain enforced.
 
-## Unreleased: registered model inventory
+## Added in v0.4.0a3: registered model inventory
 
 ```powershell
 .\eef.exe models list --json

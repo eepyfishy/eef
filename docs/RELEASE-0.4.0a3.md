@@ -56,3 +56,28 @@ disable protection, add exclusions or restore detected artifacts for testing.
 Keep dashboards local. Existing owner permissions and authenticated transport
 remain required. No private test address, credentials or special developer
 access is embedded. No automatic analytics upload is added.
+
+## Build evidence (2026-09-13)
+
+Built from clean source `b48a431d784818ce9be80ea5ee0c051f039a6f6a`.
+The release tag includes subsequent documentation/manual-manifest changes;
+the packaged source revision is recorded in each `provenance.json`.
+
+- 154 locked Rust tests passed; optimized release binaries passed node-command,
+  discovery, model/job/receipt/authorization, optional-runtime and first-run tests.
+- Both installers passed isolated installation and upgrade, preserved config
+  and startup choices, backed up stale version selectors and matched inventories.
+  Bundled Python imports and llama.cpp version checks passed.
+- Local Defender scans passed for binaries, runtime archives, unpacked bundle
+  and final installers, including installer retests. Engine `1.1.26080.3`,
+  signatures `1.459.183.0`; real-time protection remained enabled.
+
+Local evidence: `.validation/v0.4.0-alpha.3`, `model-metadata-fc9EuI`,
+`node-commands-tznjEN`, `peer-discovery-x93PF0`, `first-run-ZPkKyH`,
+`install-test-7424643fc5f44a8faa224a4c1e0765e5`. These are isolated tests,
+not physical multi-node inference proof.
+
+| Installer | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `eef-installer.exe` | 17,925,212 | `f877f9fa4c78d5d1b4daa6fb950c15c1378640ec20063a11875c37071a2df5cb` |
+| `eefn-installer.exe` | 109,751,403 | `a1d395d0cd2fb0ccb3fe8da5c82f361292822a0573aae871693f50c9a52e4ab2` |
