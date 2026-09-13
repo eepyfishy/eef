@@ -844,6 +844,7 @@ async fn main() -> Result<()> {
         {
             let mut status = dashboard.live.lock().unwrap();
             status["connection"] = serde_json::json!({"state":"starting"});
+            status["startup_issues"] = serde_json::json!([]);
         }
         tokio::select! {
             result = run_node(&args, install_dir.clone(), dashboard.clone()) => {
@@ -973,7 +974,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
     let use_llamacpp = provider == "llamacpp" || (provider == "auto" && !ollama_available);
     info!(%provider, ollama_available, use_ollama, use_llamacpp, "model provider selected");
 
-    let model_server = if use_llamacpp {
+    let mut model_server = if use_llamacpp {
         file.models
             .as_ref()
             .and_then(|models| models.llamacpp.as_ref())
@@ -998,7 +999,14 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         None
     };
     if let Some(server) = &model_server {
-        server.start(Duration::from_secs(300)).await?;
+        if let Err(error) = server.start(Duration::from_secs(300)).await {
+            // The local model group is optional. Clean up any partially started
+            // owned children and do not advertise or dispatch to this group.
+            server.stop().await;
+            warn!(%error, "local models unavailable; node core will remain connected");
+            dashboard.record_startup_issue(eefn::service::StartupIssue::LlamacppStartupFailed);
+            model_server = None;
+        }
     }
 
     let active_ollama_models = if use_ollama {
@@ -1039,25 +1047,41 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         (media.input_control, "input_control.py"),
     ];
     if !file.python_plugins.is_empty() || builtin_plugins.iter().any(|(enabled, _)| *enabled) {
-        let runtime = Arc::new(
-            PythonRuntime::discover(file.python.clone()).context("Python runtime unavailable")?,
-        );
-        info!(python = %runtime.executable().display(), "Python plugin runtime enabled");
-        for (_, filename) in builtin_plugins.iter().filter(|(enabled, _)| *enabled) {
-            let path = resolve_builtin_plugin(&install_dir, filename)?;
-            engine
-                .add_python_plugin(runtime.clone(), path.clone())
-                .await
-                .with_context(|| format!("load enabled built-in plugin {}", path.display()))?;
-        }
-        for plugin in &file.python_plugins {
-            let path = resolve_relative(&args.config, plugin);
-            if let Err(error) = engine
-                .add_python_plugin(runtime.clone(), path.clone())
-                .await
-            {
-                warn!(plugin = %path.display(), %error, "Python plugin not loaded");
+        let runtime = match PythonRuntime::discover(file.python.clone()) {
+            Some(runtime) if runtime.check_available().await.is_ok() => Some(Arc::new(runtime)),
+            _ => None,
+        };
+        if let Some(runtime) = runtime {
+            info!(python = %runtime.executable().display(), "Python plugin runtime enabled");
+            for (_, filename) in builtin_plugins.iter().filter(|(enabled, _)| *enabled) {
+                let load = async {
+                    let path = resolve_builtin_plugin(&install_dir, filename)?;
+                    engine.add_python_plugin(runtime.clone(), path).await
+                }
+                .await;
+                if let Err(error) = load {
+                    warn!(plugin = %filename, %error, "built-in plugin unavailable; node core will remain connected");
+                    dashboard.record_startup_issue(
+                        eefn::service::StartupIssue::BuiltinPluginUnavailable,
+                    );
+                }
             }
+            for plugin in &file.python_plugins {
+                let path = resolve_relative(&args.config, plugin);
+                if let Err(error) = engine
+                    .add_python_plugin(runtime.clone(), path.clone())
+                    .await
+                {
+                    warn!(plugin = %path.display(), %error, "Python plugin not loaded");
+                    dashboard
+                        .record_startup_issue(eefn::service::StartupIssue::CustomPluginUnavailable);
+                }
+            }
+        } else {
+            warn!(
+                "Python runtime unavailable; node core will remain connected without Python capabilities"
+            );
+            dashboard.record_startup_issue(eefn::service::StartupIssue::PythonRuntimeUnavailable);
         }
     }
     let engine = Arc::new(engine);

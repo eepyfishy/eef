@@ -1,5 +1,23 @@
 # Architecture conformance status
 
+## Unreleased optional runtime startup isolation
+
+- Failed llama.cpp startup now cleans up the local model group and continues
+  node registration without advertising that group. Missing Python or failed
+  plugin inspection withholds affected capabilities rather than disabling the
+  core connection. Owner settings remain unchanged; no silent model substitution.
+- Status and diagnostics expose bounded `startup_issues` codes, without raw
+  exception text or paths. This is a startup snapshot, not continuous health.
+  Nonblocking model loading and individual slot recovery remain future work.
+- All 153 Rust tests passed both with and without dashboard features on
+  2026-09-13. Isolated `.validation/model-metadata-rIcvW6` verified connected job
+  commands and system ping despite missing model/Python runtimes, plus approved
+  remote restart and recovery. It also passed receipt-loss and authorization
+  revocation checks. No physical model/hardware test or deployment is implied.
+- Command/discovery, first-run and browser-copy regressions passed:
+  `.validation/node-commands-oRA9UM`, `.validation/peer-discovery-UfZBLg`,
+  `.validation/first-run-Zbjo2h`. No model download or installed-node change.
+
 ## Unreleased job receipt recovery
 
 - The node CLI generates an operation receipt before sending. Updated EEF stores

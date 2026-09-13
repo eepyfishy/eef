@@ -6,6 +6,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 pub(crate) const SECRET_PLACEHOLDER: &str = "__KEEP_EXISTING_SECRET__";
 
+/// Bounded startup diagnostics, not raw paths/errors or ongoing health claims.
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartupIssue {
+    LlamacppStartupFailed,
+    PythonRuntimeUnavailable,
+    BuiltinPluginUnavailable,
+    CustomPluginUnavailable,
+}
+
 #[derive(Clone)]
 pub struct NodeService {
     pub(crate) config_path: PathBuf,
@@ -18,6 +28,15 @@ pub struct NodeService {
 }
 
 impl NodeService {
+    pub fn record_startup_issue(&self, issue: StartupIssue) {
+        let mut live = self.live.lock().unwrap();
+        let mut issues = startup_issues(&live);
+        if !issues.contains(&issue) {
+            issues.push(issue);
+        }
+        live["startup_issues"] = json!(issues);
+    }
+
     pub fn new(config_path: PathBuf, node_id: String) -> Arc<Self> {
         Arc::new(Self {
             config_path,
@@ -162,6 +181,7 @@ impl NodeService {
         let live = self.live.lock().unwrap().clone();
         json!({"node_id":self.node_id,"network":live["network"],"runtime":"rust","version":crate::VERSION,
             "node_alive":true,"coordinator_required_for_node":false,"coordinator_required_for_orchestration":true,
+            "startup_issues":startup_issues(&live),
             "name":config["name"],"hostname":crate::setup::hostname(),"coordinator_name":config["coordinator_name"],"metadata":live["metadata"],
             "connection":live["connection"],"hardware":live["hardware"],"permissions":live["permissions"],"models":live["models"],
             "capabilities":live["capabilities"],"last_activity":live["last_activity"],"last_request_context":live["last_request_context"],
@@ -424,6 +444,7 @@ impl NodeService {
             "pending_restart":live["pending_restart"].as_bool().unwrap_or(false),
             "model_count":live["models"].as_array().map(Vec::len).unwrap_or(0),
             "capability_count":live["capabilities"].as_array().map(Vec::len).unwrap_or(0),
+            "startup_issues":startup_issues(&live),
             "privacy":"Includes stable node/runtime IDs for correlation. No automatic upload."})
     }
 
@@ -693,9 +714,37 @@ fn require_remote_authority(config: &Value) -> Result<()> {
     Ok(())
 }
 
+fn startup_issues(live: &Value) -> Vec<StartupIssue> {
+    live["startup_issues"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(4)
+        .filter_map(|value| serde_json::from_value(value.clone()).ok())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn startup_issue_reports_are_bounded_deduplicated_and_do_not_leak_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = NodeService::new(dir.path().join("node.json"), "stable".into());
+        service.live.lock().unwrap()["startup_issues"] = json!(["PRIVATE-PATH-ERROR"]);
+        for _ in 0..20 {
+            service.record_startup_issue(StartupIssue::LlamacppStartupFailed);
+        }
+        assert_eq!(
+            service.diagnostics()["startup_issues"],
+            json!(["llamacpp_startup_failed"])
+        );
+        assert_eq!(
+            service.status()["startup_issues"],
+            json!(["llamacpp_startup_failed"])
+        );
+        assert!(!service.diagnostics().to_string().contains("PRIVATE"));
+    }
 
     #[test]
     fn diagnostic_projection_never_includes_raw_config_or_errors() {

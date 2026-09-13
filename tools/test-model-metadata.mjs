@@ -235,6 +235,28 @@ try{
  if(legacyNode)await json(node+'/api/restart',{});else await localRestart();
  await until(async()=>(await inventory()).nodes[0]?.models.length===0&&(await json(eef+'/api/status')).models.length===0,'empty snapshot replaces old models');
  assert.equal((await json(node+'/api/diagnostics')).node_id,id);
+ if(!legacyNode){
+  const healthy=(await json(node+'/api/config')).config;
+  const broken=structuredClone(healthy),fakeGguf=join(scratch,'unusable-fixture.gguf');
+  await writeFile(fakeGguf,'fixture only: not a model');
+  broken.models.provider='llamacpp';
+  broken.models.llamacpp={binary:join(scratch,'missing-llama-server.exe'),slots:[{model_id:'unavailable-fixture',port:await port(),model_path:fakeGguf}]};
+  broken.python=join(scratch,'missing-python.exe');broken.permissions.media.tts=true;
+  await json(node+'/api/config',{config:broken},'PUT');await localRestart();
+  await until(async()=>(await json(node+'/api/status')).connection.state==='connected','node reconnects despite missing model and Python runtimes');
+  const diagnostics=await json(node+'/api/diagnostics');
+  assert.deepEqual(diagnostics.startup_issues.sort(),['llamacpp_startup_failed','python_runtime_unavailable']);
+  assert.equal(diagnostics.model_count,0);assert(!JSON.stringify(diagnostics).includes(scratch));
+  const state=await json(node+'/api/status');assert(!state.capabilities.includes('llm.infer'));assert(!state.capabilities.includes('tts.speak'));
+  assert.equal((await nodeJobs(['list'])).success,true,'deterministic commands remain connected');
+  const ping=await json(eef+`/api/node/${id}/invoke`,{capability:'system.ping',action:'run',params:{},timeout:10});assert.equal(ping.success,true);
+  assert.equal((await nodeCommand(['show'])).saved_selections[0].model_id,'unavailable-fixture','failure must not delete owner selections');
+  await json(node+'/api/config',{config:healthy},'PUT');
+  const restartResponse=await fetch(eef+'/api/commands/node/restart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({node_id:id,wait_seconds:60}),signal:AbortSignal.timeout(70000)});
+  assert(restartResponse.ok);assert.equal((await restartResponse.json()).completed,true,'approved remote restart works without optional runtimes');
+  await until(async()=>(await json(node+'/api/status')).connection.state==='connected','node recovers after fixing optional configuration');
+  assert.deepEqual((await json(node+'/api/diagnostics')).startup_issues,[]);
+ }
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,versioned_inventory:!legacyNode,owner_cli:true,api_only_both_roles:true,saved_ui_preferences:uiConfig,connection_commands:!legacyNode,origin_guard:true,selection_commands:!legacyNode,remote_selection_commands:!legacyNode,old_node_remote_command_refusal:!!legacyNode,node_job_commands:!legacyNode,node_job_origin_scope:!legacyNode,explicit_text_output:!legacyNode,pause_resume_without_reexecution:!legacyNode,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:legacyNode?'not supported by old node':true,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
  console.log('Model metadata and remote selection protocol checks passed: '+scratch);
 }finally{

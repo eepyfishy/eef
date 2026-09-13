@@ -54,6 +54,30 @@ impl PythonRuntime {
         &self.executable
     }
 
+    /// Probe only the configured interpreter, without importing a device plugin.
+    pub async fn check_available(&self) -> Result<()> {
+        let mut command = Command::new(&self.executable);
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000);
+        let mut child = command
+            .arg("-I")
+            .arg("-c")
+            .arg("pass")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .context("Python interpreter could not start")?;
+        let status = timeout(Duration::from_secs(5), child.wait())
+            .await
+            .context("Python interpreter availability check timed out")??;
+        if !status.success() {
+            bail!("Python interpreter availability check failed")
+        }
+        Ok(())
+    }
+
     pub async fn inspect(&self, plugin_path: impl AsRef<Path>) -> Result<PythonPlugin> {
         let path = plugin_path.as_ref().to_path_buf();
         let value = self.call(&path, json!({"op": "inspect"})).await?;

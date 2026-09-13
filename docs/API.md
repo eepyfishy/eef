@@ -4,6 +4,9 @@ Unreleased: both roles support API-only startup with `--no-ui`. The node HTTP
 adapter is now `eefn::api`; optional browser assets/native picker live separately
 in `eefn::dashboard`. Core configuration, status, connection, startup and update
 operations live in `NodeService`. Existing HTTP response shapes remain compatible.
+Node status/diagnostics add bounded `startup_issues` codes for optional runtime
+failures. They describe startup, not continuous health; see [runtime failure
+semantics](NODE_MODELS.md). Missing optional components do not grant permissions.
 `POST /api/commands/connection` takes `{schema_version:1,expected_node_id,command}`;
 operations are `show`, `pause`, `resume`, `pair_local`. Local origin/host guards
 still apply, including when no UI assets are compiled or served.

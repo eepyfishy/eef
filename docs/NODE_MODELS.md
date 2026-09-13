@@ -77,3 +77,30 @@ llama.cpp slots are also opt-in:
 EEF receives these advertisements over the authenticated node link. It ranks
 eligible providers by capability, modality, load, latency, hardware,
 constraints, and health; it does not contain a default model name.
+
+## Unreleased: optional runtime startup failures
+
+If the configured llama.cpp group fails startup, EEFN stops any partially
+started children it owns, omits that group from registration/execution and
+continues its deterministic node connection. Saved model selections and backend
+preference are retained; there is no silent switch to another model/provider.
+This currently disables the whole local group on startup failure, not just one
+slot. The existing startup health wait can still delay registration by about
+five minutes; the local command API remains available during it. Independent
+slot loading, nonblocking model startup and continuous health reporting remain
+future work.
+
+Missing/unusable Python or a failed built-in plugin similarly withholds the
+affected optional capabilities without preventing registration. A bounded
+interpreter probe runs only when Python capabilities/plugins were configured.
+No camera, microphone or audio invocation is performed by that probe. Importing
+owner-selected plugins still runs their existing inspection code.
+
+Node status and `eefn network diagnose --json` expose `startup_issues`: fixed,
+bounded codes `llamacpp_startup_failed`, `python_runtime_unavailable`,
+`builtin_plugin_unavailable`, `custom_plugin_unavailable`. These describe the
+latest startup attempt, not continuous health or proof of working inference or
+hardware. Raw exception text and file paths are excluded from diagnostics;
+local application logs may contain troubleshooting details. Fix the saved
+configuration and explicitly restart; normal approval is still required for
+remote restart. Successful startup clears the previous attempt's issue codes.
