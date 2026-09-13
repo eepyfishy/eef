@@ -125,6 +125,11 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
 | 10 | Full model lifecycle + unload | Measured transitions, load cancellation, active-use pinning and configurable idle unload; scheduler considers startup cost and actual usage. | Planned |
 
+The development increment after v0.4.0a3 runs local GGUF startup concurrently
+with node registration/control, reports bounded group readiness/error metadata,
+and cancels startup children on runtime restart. This is a reliability prerequisite
+for bootstrap, not completion of default model selection or full lifecycle work.
+
 Minimal load/readiness/error reporting is needed in steps 3-7; do not postpone
 basic execution correctness until step 10. Step 10 adds complete lifecycle
 control and optimization, rather than enabling the first usable inference.

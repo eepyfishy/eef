@@ -354,12 +354,12 @@ impl Runtime {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        self.registry.unregister_node(node_id);
+        let mut providers = Vec::new();
         for value in &capabilities {
             let Some(capability) = value.as_str() else {
                 continue;
             };
-            self.registry.register(CapabilityProvider {
+            providers.push(CapabilityProvider {
                 capability: capability.into(),
                 action: "*".into(),
                 node_id: node_id.into(),
@@ -380,6 +380,7 @@ impl Runtime {
                 last_heartbeat_ms: eefn::protocol::now_ms(),
             });
         }
+        self.registry.refresh_node(node_id, providers);
         let models = message
             .get("models")
             .and_then(Value::as_array)

@@ -1,13 +1,14 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex as SyncMutex};
+use std::time::Duration;
 
+use crate::model_metadata::{ModelAvailability, ModelLifecycle};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use tokio::time::sleep;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -68,6 +69,49 @@ impl ModelSlot {
 #[cfg(test)]
 mod advertisement_tests {
     use super::*;
+    #[tokio::test]
+    async fn failed_group_is_visible_but_never_routable() {
+        let fixture = tempfile::tempdir().unwrap();
+        let slot =
+            serde_json::from_value(json!({"model_id":"fixture","model_path":"PRIVATE"})).unwrap();
+        let server = ModelServer::new(fixture.path().join("missing.exe"), vec![slot]);
+        let mut changes = server.subscribe();
+        assert!(server.require_ready().is_err());
+        assert!(server.start(Duration::from_secs(1)).await.is_err());
+        assert_eq!(*changes.borrow_and_update(), ModelLifecycle::Error);
+        let models = server.models().unwrap();
+        assert!(!models[0].to_string().contains("PRIVATE"));
+        let metadata: crate::model_metadata::ModelMetadata =
+            serde_json::from_value(models[0]["model_metadata"].clone()).unwrap();
+        assert!(!metadata.routable());
+        assert!(server.require_ready().is_err());
+        assert!(server.processes.lock().unwrap().is_empty());
+        server.stop().await;
+        assert_eq!(*changes.borrow(), ModelLifecycle::Unloaded);
+        let invalid = serde_json::from_value(json!({
+            "model_id":"invalid-hints", "selection":{"roles":["not a valid role"]}
+        }))
+        .unwrap();
+        let invalid_server = ModelServer::new(fixture.path().join("missing.exe"), vec![invalid]);
+        assert!(invalid_server.models().unwrap().is_empty());
+        assert!(invalid_server.start(Duration::from_secs(1)).await.is_err());
+        assert!(invalid_server.models().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelled_startup_clears_state_even_with_retained_server() {
+        let server = ModelServer::new(PathBuf::new(), vec![]);
+        server.lifecycle.send_replace(ModelLifecycle::Loading);
+        {
+            let _cleanup = StartupCleanup {
+                server: &server,
+                armed: true,
+            };
+        }
+        assert_eq!(*server.subscribe().borrow(), ModelLifecycle::Unloaded);
+        assert!(server.require_ready().is_err());
+    }
+
     #[test]
     fn gguf_advertises_compatible_metadata_without_private_paths_or_fake_state() {
         let mut slot: ModelSlot =
@@ -92,7 +136,9 @@ pub struct ModelServer {
     pub host: String,
     pub binary: PathBuf,
     pub slots: Vec<ModelSlot>,
-    processes: Mutex<HashMap<String, Child>>,
+    processes: SyncMutex<HashMap<String, Child>>,
+    operation: Mutex<()>,
+    lifecycle: watch::Sender<ModelLifecycle>,
     client: reqwest::Client,
 }
 
@@ -102,12 +148,46 @@ impl ModelServer {
             host: "127.0.0.1".into(),
             binary,
             slots,
-            processes: Mutex::new(HashMap::new()),
+            processes: SyncMutex::new(HashMap::new()),
+            operation: Mutex::new(()),
+            lifecycle: watch::channel(ModelLifecycle::Unloaded).0,
             client: reqwest::Client::new(),
         })
     }
 
     pub async fn start(&self, health_timeout: Duration) -> Result<()> {
+        let _operation = self
+            .operation
+            .try_lock()
+            .context("model operation already running")?;
+        if *self.lifecycle.borrow() == ModelLifecycle::Ready {
+            bail!("model group already started");
+        }
+        self.lifecycle.send_replace(ModelLifecycle::Loading);
+        // Dropping a startup future (restart/shutdown) must kill its children,
+        // even if another Arc still references this server.
+        let mut cleanup = StartupCleanup {
+            server: self,
+            armed: true,
+        };
+        let result = tokio::time::timeout(health_timeout, self.start_inner())
+            .await
+            .context("model startup timed out")
+            .and_then(|result| result);
+        match &result {
+            Ok(()) => {
+                self.lifecycle.send_replace(ModelLifecycle::Ready);
+            }
+            Err(_) => {
+                self.stop_children().await;
+                self.lifecycle.send_replace(ModelLifecycle::Error);
+            }
+        }
+        cleanup.armed = false;
+        result
+    }
+
+    async fn start_inner(&self) -> Result<()> {
         if self.slots.is_empty() {
             return Ok(());
         }
@@ -154,32 +234,75 @@ impl ModelServer {
                 .with_context(|| format!("spawn model '{}'", slot.model_id))?;
             self.processes
                 .lock()
-                .await
+                .unwrap()
                 .insert(slot.model_id.clone(), child);
         }
-        let deadline = Instant::now() + health_timeout;
         for slot in &self.slots {
-            while Instant::now() < deadline && !self.healthy(slot).await {
+            loop {
+                self.check_children()?;
+                if self.healthy(slot).await {
+                    break;
+                }
                 sleep(Duration::from_millis(250)).await;
             }
-            if !self.healthy(slot).await {
-                self.stop().await;
-                bail!("model '{}' did not become healthy", slot.model_id);
+        }
+        self.check_children()?;
+        Ok(())
+    }
+
+    pub async fn stop(&self) {
+        let _operation = self.operation.lock().await;
+        self.lifecycle.send_replace(ModelLifecycle::Unloaded);
+        self.stop_children().await;
+    }
+
+    async fn stop_children(&self) {
+        let mut processes = std::mem::take(&mut *self.processes.lock().unwrap());
+        for child in processes.values_mut() {
+            let _ = child.kill().await;
+        }
+    }
+
+    fn check_children(&self) -> Result<()> {
+        for child in self.processes.lock().unwrap().values_mut() {
+            if child.try_wait()?.is_some() {
+                bail!("model process exited during startup");
             }
         }
         Ok(())
     }
 
-    pub async fn stop(&self) {
-        let mut processes = self.processes.lock().await;
-        for child in processes.values_mut() {
-            let _ = child.kill().await;
+    pub fn subscribe(&self) -> watch::Receiver<ModelLifecycle> {
+        self.lifecycle.subscribe()
+    }
+
+    pub fn require_ready(&self) -> Result<()> {
+        if *self.lifecycle.borrow() != ModelLifecycle::Ready {
+            bail!("model_not_ready: local model group is not ready; inspect model status");
         }
-        processes.clear();
+        Ok(())
     }
 
     pub fn models(&self) -> Result<Vec<Value>> {
-        self.slots.iter().map(ModelSlot::advertise).collect()
+        let state = *self.lifecycle.borrow();
+        self.slots
+            .iter()
+            // Invalid optional selection hints fail startup, but must never
+            // poison the node's registration snapshot or command connection.
+            .filter(|slot| slot.selection_metadata().is_ok())
+            .map(|slot| {
+                let mut advertised = slot.advertise()?;
+                let mut metadata = slot.selection_metadata()?;
+                metadata.lifecycle = Some(state);
+                metadata.availability = Some(if state == ModelLifecycle::Ready {
+                    ModelAvailability::Available
+                } else {
+                    ModelAvailability::Unavailable
+                });
+                advertised["model_metadata"] = json!(metadata);
+                Ok(advertised)
+            })
+            .collect()
     }
 
     pub fn slot(&self, model_id: Option<&str>) -> Option<&ModelSlot> {
@@ -201,5 +324,20 @@ impl ModelServer {
             .send()
             .await
             .is_ok_and(|response| response.status().is_success())
+    }
+}
+
+struct StartupCleanup<'a> {
+    server: &'a ModelServer,
+    armed: bool,
+}
+impl Drop for StartupCleanup<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            // Child::kill_on_drop is enabled. This is synchronous so cancellation
+            // cannot leave a detached task spawning children after a restart.
+            self.server.processes.lock().unwrap().clear();
+            self.server.lifecycle.send_replace(ModelLifecycle::Unloaded);
+        }
     }
 }

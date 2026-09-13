@@ -78,17 +78,33 @@ EEF receives these advertisements over the authenticated node link. It ranks
 eligible providers by capability, modality, load, latency, hardware,
 constraints, and health; it does not contain a default model name.
 
-## Added in v0.4.0a3: optional runtime startup failures
+## Model startup (development after v0.4.0a3)
 
 If the configured llama.cpp group fails startup, EEFN stops any partially
-started children it owns, omits that group from registration/execution and
+started children it owns, marks that group unavailable for execution and
 continues its deterministic node connection. Saved model selections and backend
 preference are retained; there is no silent switch to another model/provider.
 This currently disables the whole local group on startup failure, not just one
-slot. The existing startup health wait can still delay registration by about
-five minutes; the local command API remains available during it. Independent
-slot loading, nonblocking model startup and continuous health reporting remain
-future work.
+slot. Model startup now runs alongside registration, heartbeats and commands;
+the five-minute group health deadline does not block the core connection.
+Restart/shutdown cancels the scoped startup future and cleans up its children.
+There is no detached loader that can continue spawning after a restart.
+
+The selected group remains inspectable in model inventory with `unloaded`,
+`loading`, `ready` or `error` lifecycle metadata. It is advertised as unavailable
+until every configured slot passes startup health checks. Non-ready models do
+not advertise inference capabilities, and direct inference also checks readiness.
+Readiness changes refresh registration on the existing authenticated connection,
+without reconnecting or resetting unchanged capability scheduling counters.
+Saved selections are never removed on failure and no mutation is replayed.
+
+This is group startup state, not continuous health monitoring or measured active
+usage. Independent slot loading, on-demand loading, idle unload and a default LM
+bootstrap remain future work. A process failure after startup is not yet reflected
+in lifecycle metadata; normal inference errors still propagate to the caller.
+Provider discovery and Python/plugin inspection retain their existing bounded
+startup work. Released v0.4.0a3 still waits for GGUF startup before registration;
+these changes are not in its published installers.
 
 Missing/unusable Python or a failed built-in plugin similarly withholds the
 affected optional capabilities without preventing registration. A bounded

@@ -491,6 +491,12 @@ impl NodeClient {
             status["capabilities"] = json!(capabilities);
         }
 
+        // Subscribe before the first refresh. A startup transition that happened
+        // during authentication must not be lost between snapshot and subscription.
+        let mut model_changes = self.engine.model_server.as_ref().map(|s| s.subscribe());
+        if let Some(changes) = &mut model_changes {
+            changes.mark_changed();
+        }
         let heartbeat_writer = writer.clone();
         let heartbeat_crypto = self.crypto.clone();
         let heartbeat_id = self.config.node_id.clone();
@@ -529,6 +535,27 @@ impl NodeClient {
             let message = loop {
                 tokio::select! {
                     message = &mut incoming => break message?,
+                    _ = async {
+                        if let Some(changes) = &mut model_changes { let _ = changes.changed().await; }
+                        else { std::future::pending::<()>().await; }
+                    } => {
+                        // Refresh in place while retaining the in-progress frame.
+                        if let Some(changes) = &mut model_changes { changes.borrow_and_update(); }
+                        let mut updated = models.iter().filter(|m| m["backend"] != "llamacpp")
+                            .cloned().collect::<Vec<_>>();
+                        if let Some(server) = &self.engine.model_server { updated.extend(server.models()?); }
+                        if updated == models { continue; }
+                        let capabilities = advertised_capabilities(&self.engine.capabilities(), &updated);
+                        let registration = self.registration(&self.config.node_id, &self.config.name,
+                            crate::VERSION, &capabilities, &specs, &updated);
+                        timeout(Duration::from_secs(5), async {
+                            write_message(&self.crypto, &mut *writer.lock().await, &registration).await
+                        }).await.context("model registration refresh timed out")??;
+                        models = updated;
+                        let mut status = self.status.lock().expect("status");
+                        status["models"] = json!(models);
+                        status["capabilities"] = json!(capabilities);
+                    }
                     Some(command) = local.recv() => {
                         replies.retain(|_, reply| !reply.is_closed());
                         if command.reply.is_closed() { continue; }
@@ -735,7 +762,7 @@ fn advertised_capabilities(configured: &[String], models: &[Value]) -> Vec<Strin
                 model.get("modality").and_then(Value::as_str),
             ))
         };
-        metadata.is_some_and(|m| m.supports(capability))
+        metadata.is_some_and(|m| m.supports(capability) && m.routable())
     };
     if models.iter().any(|model| supports(model, "llm.infer")) {
         capabilities.push("llm.infer".into());

@@ -135,6 +135,36 @@ impl CapabilityRegistry {
         });
     }
 
+    /// Refresh an authenticated node snapshot without resetting scheduler-owned
+    /// counters/limits for unchanged capabilities. Hold one lock across replacement.
+    pub fn refresh_node(&self, node_id: &str, replacements: Vec<CapabilityProvider>) {
+        let mut providers = self.providers.write().expect("registry lock");
+        let previous = providers
+            .values()
+            .flatten()
+            .filter(|p| p.node_id == node_id)
+            .map(|p| ((p.capability.clone(), p.action.clone()), p.clone()))
+            .collect::<BTreeMap<_, _>>();
+        providers.retain(|_, values| {
+            values.retain(|p| p.node_id != node_id);
+            !values.is_empty()
+        });
+        for mut provider in replacements.into_iter().filter(|p| p.node_id == node_id) {
+            if let Some(old) = previous.get(&(provider.capability.clone(), provider.action.clone()))
+            {
+                provider.load = old.load;
+                provider.latency_ms = old.latency_ms;
+                provider.priority = old.priority;
+                provider.in_flight = old.in_flight;
+                provider.max_concurrent = old.max_concurrent;
+            }
+            let entries = providers.entry(provider.capability.clone()).or_default();
+            entries
+                .retain(|old| !(old.node_id == provider.node_id && old.action == provider.action));
+            entries.push(provider);
+        }
+    }
+
     pub fn all_capabilities(&self) -> Vec<String> {
         self.providers
             .read()
@@ -423,6 +453,38 @@ fn type_matches(value: &Value, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_registration_refresh_retains_active_scheduler_accounting() {
+        let registry = CapabilityRegistry::default();
+        let mut original = CapabilityProvider::local("system.ping", "*", json!({}));
+        original.node_id = "fixture".into();
+        original.in_flight = 2;
+        original.max_concurrent = 3;
+        original.load = 0.7;
+        original.latency_ms = 12.0;
+        original.priority = 4;
+        registry.register(original.clone());
+        registry.register(CapabilityProvider::local("local.keep", "*", json!({})));
+        let mut refreshed = original.clone();
+        refreshed.in_flight = 0;
+        refreshed.max_concurrent = 0;
+        refreshed.node_name = "renamed".into();
+        refreshed.load = 0.0;
+        refreshed.priority = 0;
+        registry.refresh_node("fixture", vec![refreshed.clone(), refreshed]);
+        assert_eq!(registry.find("system.ping", "run").len(), 1);
+        let provider = registry.find("system.ping", "run").pop().unwrap();
+        assert_eq!(provider.in_flight, 2);
+        assert_eq!(provider.max_concurrent, 3);
+        assert_eq!(provider.load, 0.7);
+        assert_eq!(provider.latency_ms, 12.0);
+        assert_eq!(provider.priority, 4);
+        assert_eq!(provider.node_name, "renamed");
+        registry.refresh_node("fixture", vec![]);
+        assert!(registry.find("system.ping", "run").is_empty());
+        assert_eq!(registry.find("local.keep", "run").len(), 1);
+    }
 
     #[test]
     fn origin_resource_routing_respects_health_capacity_and_explicit_targets() {

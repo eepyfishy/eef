@@ -974,7 +974,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
     let use_llamacpp = provider == "llamacpp" || (provider == "auto" && !ollama_available);
     info!(%provider, ollama_available, use_ollama, use_llamacpp, "model provider selected");
 
-    let mut model_server = if use_llamacpp {
+    let model_server = if use_llamacpp {
         file.models
             .as_ref()
             .and_then(|models| models.llamacpp.as_ref())
@@ -998,16 +998,6 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
     } else {
         None
     };
-    if let Some(server) = &model_server {
-        if let Err(error) = server.start(Duration::from_secs(300)).await {
-            // The local model group is optional. Clean up any partially started
-            // owned children and do not advertise or dispatch to this group.
-            server.stop().await;
-            warn!(%error, "local models unavailable; node core will remain connected");
-            dashboard.record_startup_issue(eefn::service::StartupIssue::LlamacppStartupFailed);
-            model_server = None;
-        }
-    }
 
     let active_ollama_models = if use_ollama {
         ollama_models
@@ -1123,41 +1113,66 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
                     ollama_url,
                     ollama_models: active_ollama_models,
                 },
-                engine,
+                engine.clone(),
             )?
             .with_status(dashboard.live.clone())
             .with_submissions(dashboard.submissions.clone()),
         )
     };
-    if let Some(message) = &args.ask {
-        let result = client
-            .as_ref()
-            .context("--ask requires at least one configured EEF coordinator")?
-            .submit_message(message, Duration::from_secs(120))
-            .await?;
-        println!("{}", serde_json::to_string_pretty(&result)?);
+    // Scoped futures, not detached tasks: runtime restart drops model startup
+    // and its child cleanup guard before another runtime begins.
+    let model_startup = async {
         if let Some(server) = &model_server {
-            server.stop().await
+            let mut snapshot = server.models()?;
+            for model in &mut snapshot {
+                model["model_metadata"]["lifecycle"] = serde_json::json!("loading");
+            }
+            dashboard.live.lock().unwrap()["models"] = serde_json::json!(snapshot);
+            if let Err(error) = server.start(Duration::from_secs(300)).await {
+                warn!(%error, "local models unavailable; node core remains controllable");
+                dashboard.record_startup_issue(eefn::service::StartupIssue::LlamacppStartupFailed);
+            }
+            let mut status = dashboard.live.lock().unwrap();
+            // llama.cpp and Ollama are mutually exclusive providers here. Keep
+            // this local snapshot inspectable even while EEF is unreachable.
+            status["models"] = serde_json::json!(server.models()?);
+            status["capabilities"] = serde_json::json!(engine.capabilities());
         }
-        return Ok(());
-    }
-    let update_task =
-        start_update_monitor(file.update.as_ref(), install_dir.clone(), dashboard.clone())?
-            .map(AbortTask);
-    if let Some(client) = &client {
-        tokio::select! {
-            result = client.run() => result?,
-            _ = tokio::signal::ctrl_c() => info!("shutdown requested"),
+        std::future::pending::<Result<()>>().await
+    };
+    let run = async {
+        if let Some(message) = &args.ask {
+            let result = client
+                .as_ref()
+                .context("--ask requires at least one configured EEF coordinator")?
+                .submit_message(message, Duration::from_secs(120))
+                .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
         }
-    } else {
-        tokio::signal::ctrl_c().await?;
-        info!("shutdown requested");
-    }
+        let update_task =
+            start_update_monitor(file.update.as_ref(), install_dir.clone(), dashboard.clone())?
+                .map(AbortTask);
+        if let Some(client) = &client {
+            tokio::select! {
+                result = client.run() => result?,
+                _ = tokio::signal::ctrl_c() => info!("shutdown requested"),
+            }
+        } else {
+            tokio::signal::ctrl_c().await?;
+            info!("shutdown requested");
+        }
+        drop(update_task);
+        Ok::<(), anyhow::Error>(())
+    };
+    let result = tokio::select! {
+        result = model_startup => result,
+        result = run => result,
+    };
     if let Some(server) = &model_server {
-        server.stop().await
+        server.stop().await;
     }
-    drop(update_task);
-    Ok(())
+    result
 }
 
 fn start_update_monitor(

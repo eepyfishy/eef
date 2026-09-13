@@ -369,20 +369,22 @@ impl NodeEngine {
             .values()
             .any(|value| value.supports("llm.infer"))
             || self.model_server.as_ref().is_some_and(|server| {
-                server.slots.iter().any(|slot| {
-                    slot.selection_metadata()
-                        .is_ok_and(|m| m.supports("llm.infer"))
-                })
+                server.require_ready().is_ok()
+                    && server.slots.iter().any(|slot| {
+                        slot.selection_metadata()
+                            .is_ok_and(|m| m.supports("llm.infer"))
+                    })
             });
         let has_vlm = self
             .ollama_models
             .values()
             .any(|value| value.supports("vlm.analyze"))
             || self.model_server.as_ref().is_some_and(|server| {
-                server.slots.iter().any(|slot| {
-                    slot.selection_metadata()
-                        .is_ok_and(|m| m.supports("vlm.analyze"))
-                })
+                server.require_ready().is_ok()
+                    && server.slots.iter().any(|slot| {
+                        slot.selection_metadata()
+                            .is_ok_and(|m| m.supports("vlm.analyze"))
+                    })
             });
         if has_text {
             values.push("llm.infer".into());
@@ -957,6 +959,7 @@ impl NodeEngine {
     }
 
     async fn llamacpp(&self, server: &ModelServer, params: &Value) -> Result<Value> {
+        server.require_ready()?;
         let model = params.get("model").and_then(Value::as_str);
         let base = server
             .base_url(model)

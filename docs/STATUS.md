@@ -1,5 +1,28 @@
 # Architecture conformance status
 
+## Unreleased nonblocking local model startup
+
+- GGUF group startup no longer holds up node registration, heartbeats, jobs or
+  restart commands. A scoped loader is cancelled with the runtime and cleans up
+  partially started children. Startup failure retains owner selections.
+- Loading/error/unloaded groups remain visible with unavailable metadata; both
+  capability advertisement and direct inference refuse non-ready groups.
+  Readiness refreshes the existing authenticated registration without reconnect.
+  EEF preserves unchanged capability in-flight counts, limits and measured load
+  atomically while replacing the advertised capability snapshot.
+- No default model, interpreter, inference weights, peer transport, UI changes,
+  installer changes or physical-node deployment are included in this increment.
+  Group readiness is not ongoing health monitoring or per-slot lifecycle control.
+- Validation on 2026-09-13: 157 Rust workspace tests passed, including the
+  dashboard-free build and duplicate-capability refresh/accounting regression.
+  The initial default-feature pass also passed all 157 tests. Final API-only
+  process fixtures passed in `.validation/model-startup-Rt9wAe` and
+  `.validation/model-metadata-2tkVvQ`: registration/commands while health is gated,
+  restart cleanup of loading and ready children, readiness refresh without a
+  reconnect, paused-connection loading/readiness, invalid/missing optional runtime
+  isolation, job/receipt recovery and approval checks. Fake backends only, not
+  physical two-PC inference. Source boundary, formatting and diff checks passed.
+
 ## v0.4.0a3 release preparation
 
 This opt-in alpha packages the backend checkpoints below. Stable update feeds

@@ -246,7 +246,9 @@ try{
   await until(async()=>(await json(node+'/api/status')).connection.state==='connected','node reconnects despite missing model and Python runtimes');
   const diagnostics=await json(node+'/api/diagnostics');
   assert.deepEqual(diagnostics.startup_issues.sort(),['llamacpp_startup_failed','python_runtime_unavailable']);
-  assert.equal(diagnostics.model_count,0);assert(!JSON.stringify(diagnostics).includes(scratch));
+  assert.equal(diagnostics.model_count,1);assert(!JSON.stringify(diagnostics).includes(scratch));
+  const unavailable=(await inventory()).nodes[0].models[0];
+  assert.equal(unavailable.lifecycle,'error');assert.equal(unavailable.availability,'unavailable');
   const state=await json(node+'/api/status');assert(!state.capabilities.includes('llm.infer'));assert(!state.capabilities.includes('tts.speak'));
   assert.equal((await nodeJobs(['list'])).success,true,'deterministic commands remain connected');
   const ping=await json(eef+`/api/node/${id}/invoke`,{capability:'system.ping',action:'run',params:{},timeout:10});assert.equal(ping.success,true);
