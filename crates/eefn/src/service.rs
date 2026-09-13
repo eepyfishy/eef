@@ -566,6 +566,9 @@ impl NodeService {
             )
         }
         let mut live = self.live.lock().unwrap();
+        if progress["id"].is_string() && live["download"]["id"] == progress["id"] {
+            bail!("This download ID was already admitted. Inspect its status; do not replay it.")
+        }
         if live["download"]["state"] == "downloading" {
             bail!("A model is already downloading. Wait or cancel it first.")
         }

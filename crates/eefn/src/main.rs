@@ -82,10 +82,10 @@ enum Commands {
         #[arg(long, default_value_t = 30)]
         wait_seconds: u64,
     },
-    /// Inspect and edit saved model selections; no downloads or automatic restart.
+    /// Inspect/select models and explicitly manage downloads; no automatic restart.
     Models {
         #[command(subcommand)]
-        command: eefn::model_cli::ModelsAction,
+        command: eefn::model_downloads::NodeModelsAction,
     },
     /// Inspect or configure node identity and advertised network metadata.
     Network {
@@ -149,6 +149,64 @@ async fn execute_model_command(
     }
     result["running"] = serde_json::json!(true);
     Ok(result)
+}
+
+async fn execute_download_command(
+    args: &Args,
+    command: eefn::model_downloads::DownloadCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.validate()?;
+    let operation_id = command.operation_id().map(str::to_owned);
+    let mutating = command.mutating();
+    // A short-lived CLI must never own a transfer or launch a second node.
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        return Ok(
+            json!({"schema_version":1,"report_type":"model_download","success":false,
+            "operation_id":operation_id,"error_code":"node_not_running","request_sent":false,
+            "error":"Start the node first. Download commands do not launch another node."}),
+        );
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let request = eefn::model_downloads::DownloadRequest {
+        schema_version: 1,
+        expected_node_id: file.node_id.clone(),
+        command,
+    };
+    let exchange = async {
+        let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
+            .post(format!("http://{address}/api/commands/model-downloads"))
+            .timeout(Duration::from_secs(15)).json(&request).send().await?;
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(json!({"schema_version":1,"report_type":"model_download","success":false,
+                "operation_id":operation_id,"error_code":"unsupported_command","error":"This running node does not support download commands. Upgrade it explicitly; no legacy action was retried."}));
+        }
+        let report = eefn::model_manager::bounded_json(response).await?;
+        if !status.is_success() || report["schema_version"] != 1 || report["report_type"] != "model_download"
+            || report["node_id"] != file.node_id || report["operation_id"] != json!(operation_id)
+            || !report["success"].is_boolean() {
+            bail!("Unrecognized download-command response");
+        }
+        Ok::<serde_json::Value, anyhow::Error>(report)
+    }.await;
+    Ok(match exchange {
+        Ok(report) => report,
+        Err(_) => {
+            json!({"schema_version":1,"report_type":"model_download","success":false,"node_id":file.node_id,
+            "operation_id":operation_id,"error_code":if mutating {"outcome_unknown"} else {"inspection_failed"},
+            "outcome_unknown":mutating,"automatically_retried":false,
+            "error":"No confirmed command reply. Inspect download-status with this receipt before deciding whether to retry. Only the latest in-memory transfer is retained."})
+        }
+    })
 }
 
 async fn execute_connection_command(
@@ -412,7 +470,15 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
         CommandRequest, CoordinatorAdvertisement, CoordinatorState, NetworkChanges, NetworkCommand,
     };
     if let Commands::Models { command } = command {
-        return execute_model_command(args, command).await;
+        return match command {
+            eefn::model_downloads::NodeModelsAction::Selection(action) => {
+                execute_model_command(args, action).await
+            }
+            action => {
+                execute_download_command(args, action.download_command().expect("download action"))
+                    .await
+            }
+        };
     }
     let Commands::Network { command } = command else {
         unreachable!()

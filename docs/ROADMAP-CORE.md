@@ -130,6 +130,13 @@ with node registration/control, reports bounded group readiness/error metadata,
 and cancels startup children on runtime restart. This is a reliability prerequisite
 for bootstrap, not completion of default model selection or full lifecycle work.
 
+The next command increment exposes the existing installed-model browser,
+explicit model installation and exact receipt progress/cancellation through the
+running node's CLI/API. It retains the current transfer service, provider policy,
+verification and disk limits. Receipts are only the latest in-memory transfer,
+not durable bootstrap state. Default artifact selection, verified bootstrap
+manifest policy and automatic interpreter role binding remain planned.
+
 Minimal load/readiness/error reporting is needed in steps 3-7; do not postpone
 basic execution correctness until step 10. Step 10 adds complete lifecycle
 control and optimization, rather than enabling the first usable inference.

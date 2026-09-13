@@ -1,5 +1,28 @@
 # Architecture conformance status
 
+## Unreleased command-based model installation
+
+- `eefn models installed`, `inspect`, `install`, `download-status` and
+  `cancel-download` use a typed local command service backed by the existing model
+  installer. They need a running node but no browser, EEF connection or model.
+- CLI install attempts carry a pre-send UUID. Lost replies remain unknown and
+  are never automatically replayed. Exact-ID status/cancellation cannot target
+  a newer transfer; the currently retained ID cannot be admitted twice.
+  Only the latest in-memory transfer is retained, not a durable receipt ledger.
+- Selection commands remain compatible. Installation does not select/load a
+  model, enable permissions or restart the node. No default model, bootstrap
+  policy, UI changes, release or physical-node deployment is included here.
+- Validation on 2026-09-13: 161 Rust tests passed with and without dashboard support.
+  Isolated `.validation/model-downloads-lkTc15` passed installed-model inspection,
+  explicit admission, progress after CLI exit, exact-ID cancellation, one lost
+  reply recovered by receipt, refusal of duplicate/stale IDs and no legacy API
+  fallback. `.validation/model-metadata-Cq58tM` and `model-startup-vW9fZA` passed
+  the existing model/job/approval and nonblocking-startup regressions. Fake local
+  backends only, no real model downloads/inference or physical two-PC claim.
+  Validation disabled debug symbols and incremental compilation to limit disk
+  growth; no installed application, default update feed or global Git identity
+  was changed.
+
 ## Unreleased nonblocking local model startup
 
 - GGUF group startup no longer holds up node registration, heartbeats, jobs or

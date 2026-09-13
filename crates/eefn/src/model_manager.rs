@@ -158,14 +158,27 @@ fn normalize_capabilities(id: &str, details: &Value) -> Value {
     json!({"id":id,"capabilities_known":reported.is_some(),"capabilities":capabilities,"modality":if vision {Some("vlm")} else if completion {Some("text")} else {None}})
 }
 pub async fn install(state: Arc<NodeService>, request: Value) -> Result<()> {
-    install_authorized(state, request, false).await
+    install_authorized(state, request, false, uuid::Uuid::new_v4().to_string()).await
 }
 
 pub(crate) async fn install_remote(state: Arc<NodeService>, request: Value) -> Result<()> {
-    install_authorized(state, request, true).await
+    install_authorized(state, request, true, uuid::Uuid::new_v4().to_string()).await
 }
 
-async fn install_authorized(state: Arc<NodeService>, request: Value, remote: bool) -> Result<()> {
+pub(crate) async fn install_identified(
+    state: Arc<NodeService>,
+    model: String,
+    operation_id: String,
+) -> Result<()> {
+    install_authorized(state, json!({"id":model}), false, operation_id).await
+}
+
+async fn install_authorized(
+    state: Arc<NodeService>,
+    request: Value,
+    remote: bool,
+    operation_id: String,
+) -> Result<()> {
     let config = if remote {
         state.with_remote_authority(|config| Ok(config.clone()))?
     } else {
@@ -205,7 +218,7 @@ async fn install_authorized(state: Arc<NodeService>, request: Value, remote: boo
             "Choose a model from the list. Custom downloads can be added to the catalog in Advanced."
         ),
     };
-    state.begin_model_download(&config, remote, json!({"id":uuid::Uuid::new_v4().to_string(),"backend":backend,"state":"downloading","phase":"Starting","name":entry["name"],"completed":0,"total":if backend=="ollama" {Value::Null} else {entry["bytes"].clone()},"cancel_requested":false}))?;
+    state.begin_model_download(&config, remote, json!({"id":operation_id,"model_id":selected,"backend":backend,"state":"downloading","phase":"Starting","name":entry["name"],"completed":0,"total":if backend=="ollama" {Value::Null} else {entry["bytes"].clone()},"cancel_requested":false}))?;
     tokio::spawn(async move {
         let transfer = async {
             if backend == "ollama" {

@@ -91,6 +91,10 @@ impl NodeService {
             .route("/api/commands/network", post(network_command))
             .route("/api/commands/connection", post(connection_command))
             .route("/api/commands/models", post(model_command))
+            .route(
+                "/api/commands/model-downloads",
+                post(model_download_command),
+            )
             .route("/api/commands/jobs", post(job_command))
             .route("/api/commands/restart", post(restart_command))
             .route("/api/config", get(config_get).put(config_save))
@@ -141,6 +145,13 @@ async fn model_command(
     Json(request): Json<crate::model_selection::ModelCommandRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.model_command(request)?))
+}
+
+async fn model_download_command(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::model_downloads::DownloadRequest>,
+) -> Json<Value> {
+    Json(state.download_command(request).await)
 }
 
 async fn job_command(

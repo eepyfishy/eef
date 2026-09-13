@@ -78,6 +78,14 @@ EEF receives these advertisements over the authenticated node link. It ranks
 eligible providers by capability, modality, load, latency, hardware,
 constraints, and health; it does not contain a default model name.
 
+## Command-based installation (development after v0.4.0a3)
+
+The running node now exposes installed-model inspection, explicit installation,
+receipt-scoped progress and cancellation through `eefn models` commands. They
+reuse the same installer as the API/UI, with no automatic selection, loading or
+restart. This is groundwork for default lightweight-model setup, not completed
+bootstrap. See [command syntax and lost-reply limits](COMMANDS.md).
+
 ## Model startup (development after v0.4.0a3)
 
 If the configured llama.cpp group fails startup, EEFN stops any partially

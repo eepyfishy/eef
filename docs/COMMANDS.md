@@ -1,8 +1,64 @@
-# Commands in v0.4.0a3
+# Node commands
 
-This test release supports these commands without a browser or LM. Run
+Unless marked unreleased, v0.4.0a3 supports these commands without a browser or LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
+
+## Unreleased: model download commands
+
+```powershell
+.\eefn.exe models installed --json
+.\eefn.exe models inspect --model INSTALLED_OLLAMA_ID --json
+.\eefn.exe models install --model CATALOG_OR_OLLAMA_ID --json
+.\eefn.exe models download-status --json
+.\eefn.exe models download-status --id DOWNLOAD_UUID --json
+.\eefn.exe models cancel-download --id DOWNLOAD_UUID --json
+```
+
+These commands require the running development node's local command API, not a
+browser, EEF connection or loaded LM. They discover the actual endpoint from the
+existing instance marker. A stopped node returns `node_not_running` without
+starting a process or transfer. Published v0.4.0a3 lacks this command endpoint;
+the CLI does not retry through legacy routes. Existing selection commands remain
+unchanged. Remote coordinator download CLI commands are not added here.
+
+`installed` exposes the existing installed-model browser, catalog, backend and
+storage report. `inspect` reads installed Ollama capability metadata; it does not
+load the model. `install` explicitly admits one transfer using the saved provider
+and catalog. Auto provider selection prefers reachable Ollama. GGUF downloads
+retain the existing HTTPS, declared size, digest verification and disk checks.
+Ollama manages its own storage; its free space is unknown, not the node's disk.
+Selecting, loading and assigning interpreter roles remain separate commands.
+No new default model or automatic bootstrap has been selected or enabled.
+
+An install returns a CLI-generated `operation_id`, `accepted:true` and
+`completed:false`. The running service owns the transfer after the CLI exits.
+Inspect `download.state` for `downloading`, `installed`, `cancelled` or `error`;
+an accepted request is not installation success. Cancellation requires the exact
+ID and reports `cancel_requested` separately from terminal status. It never
+cancels whichever download happens to be active. Cancellation cannot undo a
+completed file or stop other users of shared Ollama layers/transfers.
+
+Receipts retain only the latest transfer **in memory**, not durable job history.
+A newer admitted download replaces the old record; a process restart loses it.
+Repeated admission of the currently retained ID is refused. This is not durable
+deduplication or exactly-once installation. Ordinary node runtime restarts retain
+the service and its transfer; a process upgrade/shutdown does not.
+
+A lost or unrecognized mutation reply returns `outcome_unknown`, retains the ID,
+and does not retry. Query `download-status --id` before deciding to try again.
+`operation_not_found` means the ID is not retained; it does not prove the request
+was never accepted. Other reports include `download_command_rejected`,
+`inspection_failed` and `unsupported_command`. JSON stays on stdout, diagnostics
+on stderr; unsuccessful commands exit nonzero.
+
+The typed local endpoint is `POST /api/commands/model-downloads`, with
+`schema_version:1`, `expected_node_id` and a `command` tagged by `operation`:
+`installed`, `inspect`, `install`, `status` or `cancel`. Install carries `model`
+and a canonical UUID `operation_id`; inspect carries `model`; status accepts a
+nullable `operation_id`; cancel requires one. Unknown fields, wrong node identity
+and unsupported schemas are rejected before transfer admission. The existing
+local-origin guard protects it. No remote permissions are widened.
 
 ## Added in v0.4.0a3: backend-only operation and connection controls
 

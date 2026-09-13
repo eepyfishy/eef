@@ -14,6 +14,7 @@ pub mod firmware;
 pub mod job_commands;
 pub mod local_commands;
 pub mod model_cli;
+pub mod model_downloads;
 pub mod model_manager;
 pub mod model_metadata;
 pub mod model_selection;
