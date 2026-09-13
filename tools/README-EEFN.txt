@@ -1,6 +1,6 @@
 EEFN node for Windows
 
-v0.4.0a2 diagnostic alpha. See TWO_PC_TEST.md. Use eefn.exe network diagnose
+v0.4.0a3 backend alpha. See TWO_PC_TEST.md. Use eefn.exe network diagnose
 --json for a minimal local report, or network show/set/peers for network commands.
 No reports upload automatically. Pairing codes and raw config must stay private.
 
@@ -23,3 +23,6 @@ Use Home to ask your network and Jobs to review saved planned actions. Stop does
 not undo completed actions; work already sent to a node may finish. This alpha
 does not provide live media relay, Wi-Fi/Bluetooth control, or a peer mesh.
 The builds are unsigned. Do not bypass a Defender detection to install them.
+Feed-based updates reject alpha/beta/RC builds, including automatic updates.
+Use --no-ui for API-only operation; models, jobs, connection and restart commands
+operate through the running node without a browser or local language model.

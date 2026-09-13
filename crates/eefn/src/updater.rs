@@ -35,6 +35,7 @@ pub struct UpdateCheck {
     pub current_version: String,
     pub latest_version: String,
     pub update_available: bool,
+    pub prerelease_blocked: bool,
     pub sha256: String,
     pub dist_url: String,
 }
@@ -70,10 +71,12 @@ pub async fn load_manifest(url: &str, timeout: Duration) -> Result<UpdateManifes
 
 pub async fn check(url: &str, current_version: &str, timeout: Duration) -> Result<UpdateCheck> {
     let manifest = load_manifest(url, timeout).await?;
+    let prerelease_blocked = manifest.version.contains('-');
     Ok(UpdateCheck {
         current_version: current_version.into(),
         latest_version: manifest.version.clone(),
-        update_available: is_newer(&manifest.version, current_version),
+        update_available: !prerelease_blocked && is_newer(&manifest.version, current_version),
+        prerelease_blocked,
         sha256: manifest.sha256,
         dist_url: manifest.url,
     })
@@ -103,6 +106,11 @@ pub async fn apply_for(
     }
     let manifest = load_manifest(url, timeout.min(Duration::from_secs(30))).await?;
     validate_version(&manifest.version)?;
+    // Recheck the actual manifest being installed, not a previous check result.
+    // Alpha/beta/RC builds are explicit installer choices, never feed updates.
+    if manifest.version.contains('-') {
+        bail!("prerelease updates are blocked; use an explicitly selected prerelease installer")
+    }
     let versions = install.join("versions");
     fs::create_dir_all(&versions)?;
     let destination = versions.join(&manifest.version);
@@ -577,6 +585,54 @@ mod tests {
                 fs::read_to_string(dir.path().join("previous.txt")).unwrap(),
                 "0.3.2"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn feed_updates_never_install_prereleases_even_after_a_stable_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed = dir.path().join("feed.json");
+        let save = |version: &str| {
+            fs::write(&feed, serde_json::to_vec(&serde_json::json!({
+            "version":version,"url":"http://127.0.0.1:1/must-not-download","sha256":"0".repeat(64)
+        })).unwrap()).unwrap()
+        };
+        for program in ["eef", "eefn"] {
+            save("0.4.0");
+            assert!(
+                check(
+                    feed.to_str().unwrap(),
+                    "0.4.0-alpha.2",
+                    Duration::from_secs(1)
+                )
+                .await
+                .unwrap()
+                .update_available
+            );
+            for version in [
+                "0.4.0-alpha.3",
+                "99.0.0-beta.1",
+                "99.0.0-rc.1",
+                "99.0.0-dev.1",
+            ] {
+                save(version);
+                let report = check(feed.to_str().unwrap(), "0.3.2", Duration::from_secs(1))
+                    .await
+                    .unwrap();
+                assert!(!report.update_available);
+                assert!(report.prerelease_blocked);
+                let error = apply_for(
+                    feed.to_str().unwrap(),
+                    dir.path(),
+                    Duration::from_secs(1),
+                    program,
+                )
+                .await
+                .unwrap_err();
+                assert!(error.to_string().contains("prerelease updates are blocked"));
+                assert!(!dir.path().join("versions").exists());
+                assert!(!dir.path().join("current.txt").exists());
+            }
         }
     }
 

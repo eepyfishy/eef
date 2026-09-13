@@ -5,6 +5,19 @@ this repository's separate EEF and EEFN manifests by default. The URL and
 policy are ordinary configuration values: forks and self-hosting users can
 replace the feed or disable it from the dashboard.
 
+From v0.4.0a3 onward, feed-based checks and installation are **stable-only** for
+both roles, including `auto`, dashboard/API apply and approved `node.update`.
+Prerelease versions (alpha, beta, RC or any hyphenated prerelease) report
+`update_available:false` and `prerelease_blocked:true`. Installation independently
+rechecks the downloaded manifest and rejects prereleases before downloading the
+artifact or creating an installation directory. Installing an alpha does not
+subscribe that machine to alpha updates. Stable feeds remain on stable releases.
+
+Prereleases require an explicitly chosen installer. A version-pinned test
+manifest may be used only for an owner-supervised migration from an older node
+without this guard, with automatic checks disabled throughout and its original
+stable feed restored before launching the new build. It is never a default feed.
+
 ```json
 {
   "version": "0.3.0",

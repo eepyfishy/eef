@@ -1,5 +1,12 @@
 # Architecture conformance status
 
+## v0.4.0a3 release preparation
+
+This opt-in alpha packages the backend checkpoints below. Stable update feeds
+remain unchanged. Both roles now reject prerelease feed updates at check and
+installation time; a changed manifest cannot bypass the installation guard.
+See [release scope and limits](RELEASE-0.4.0a3.md).
+
 ## Unreleased optional runtime startup isolation
 
 - Failed llama.cpp startup now cleans up the local model group and continues

@@ -1,4 +1,4 @@
-# Two-PC diagnostic test (v0.4.0a2)
+# Two-PC diagnostic test (v0.4.0a3)
 
 Use the same alpha version on both PCs. These steps do not require a model, shell
 permission, filesystem grants or remote access to Windows. Keep both machines on
