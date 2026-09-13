@@ -9,6 +9,7 @@ Older v0.4.0a installers do not contain them.
 ```powershell
 .\eefn.exe models installed --json
 .\eefn.exe models inspect --model INSTALLED_OLLAMA_ID --json
+.\eefn.exe models install-plan --model CATALOG_OR_OLLAMA_ID --json
 .\eefn.exe models install --model CATALOG_OR_OLLAMA_ID --json
 .\eefn.exe models download-status --json
 .\eefn.exe models download-status --id DOWNLOAD_UUID --json
@@ -59,6 +60,36 @@ and a canonical UUID `operation_id`; inspect carries `model`; status accepts a
 nullable `operation_id`; cancel requires one. Unknown fields, wrong node identity
 and unsupported schemas are rejected before transfer admission. The existing
 local-origin guard protects it. No remote permissions are widened.
+
+### Unreleased: install preflight
+
+`install-plan` is a read-only command (`operation:"plan"` with `model` on the
+same typed endpoint). It may query the configured Ollama service's model list,
+but never fetches model artifacts, hashes cached weights, creates a directory,
+changes transfer progress or modifies selections. Explicit llama.cpp selection
+does not query Ollama. Automatic provider choice still prefers reachable Ollama.
+
+Inspect `plan.can_request` and `plan.blocker`; a successfully inspected blocked
+plan is still a successful read command. Reported blockers include an unreachable
+Ollama service, an active download, insufficient/unknown local space and a cached
+file whose size differs from the catalog. Malformed artifact fields or duplicate
+matching catalog IDs reject the command. Installation repeats this inspection
+against current configuration before admission, then retains existing locked
+configuration/approval checks and transfer-time disk/digest verification.
+
+For GGUF, `artifact` is a normalized version-1 descriptor containing HTTPS URL,
+SHA-256 and positive byte count. The same validator is used by transfer execution.
+Local disk availability is a snapshot, not a reservation; an existing cache file
+is only a candidate until installation verifies both digest and size. A corrupt
+cached file is preserved for inspection, never silently replaced.
+
+For Ollama, the exact artifact, byte count and free storage are unknown/provider-
+managed. A catalog's GGUF hash/size is not reused as Ollama metadata. A reachable
+provider can accept an explicit request even though those checks remain unknown.
+`can_request` is not a guarantee of installation, usable inference, or sufficient
+space for the provider. License/source labels are catalog metadata, not a review;
+`license_reviewed` and `runtime_compatibility_verified` remain false. This plan is
+not an automatic bootstrap policy, default-model selection or execution grant.
 
 ## Added in v0.4.0a3: backend-only operation and connection controls
 

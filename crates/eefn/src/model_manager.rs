@@ -50,7 +50,12 @@ fn storage(directory: &std::path::Path, backend: &str) -> Value {
     if backend == "ollama" {
         return json!({"scope":"ollama","free_bytes":null,"message":"Ollama manages its own storage. Its free space is not reported here; this node's free space is not an Ollama disk check."});
     }
-    let free = directory
+    let absolute = if directory.is_absolute() {
+        directory.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(directory)
+    };
+    let free = absolute
         .ancestors()
         .find(|path| path.is_dir())
         .and_then(|path| fs2::available_space(path).ok());
@@ -173,6 +178,143 @@ pub(crate) async fn install_identified(
     install_authorized(state, json!({"id":model}), false, operation_id).await
 }
 
+async fn resolve_install(
+    config: &Value,
+    selected: &str,
+) -> Result<(&'static str, Value, Option<bool>)> {
+    crate::model_selection::validate_id(selected)?;
+    let catalog = catalog(config);
+    let matches = catalog
+        .as_array()
+        .context("Model catalog must be a list")?
+        .iter()
+        .filter(|v| v["id"].as_str() == Some(selected))
+        .collect::<Vec<_>>();
+    if matches.len() > 1 {
+        bail!("Model catalog contains duplicate IDs for this selection");
+    }
+    let provider = config
+        .pointer("/models/provider")
+        .and_then(Value::as_str)
+        .unwrap_or("auto");
+    if !matches!(provider, "auto" | "ollama" | "llamacpp") {
+        bail!("Unknown model provider");
+    }
+    // An explicit GGUF preference must not depend on contacting Ollama.
+    let available = if provider == "llamacpp" {
+        None
+    } else {
+        Some(ollama_models(config).await.is_ok())
+    };
+    let backend = if provider == "ollama" || (provider == "auto" && available == Some(true)) {
+        "ollama"
+    } else {
+        "llamacpp"
+    };
+    let entry = match matches.first() {
+        Some(entry) => (*entry).clone(),
+        None if backend == "ollama"
+            && selected.len() < 200
+            && selected
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "/_:.-".contains(c)) =>
+        {
+            json!({"id":selected,"name":selected,"ollama":selected})
+        }
+        _ => {
+            bail!("Choose a model from the catalog. Custom Ollama IDs require the Ollama backend.")
+        }
+    };
+    Ok((backend, entry, available))
+}
+
+fn space_check(bytes: u64, free: Option<u64>, cached_size: Option<u64>) -> (&'static str, bool) {
+    match cached_size {
+        Some(size) if size != bytes => ("cached_size_mismatch", false),
+        Some(_) => ("cache_requires_verification", true),
+        None => match free {
+            Some(free) if free >= bytes => ("sufficient_at_inspection", true),
+            Some(_) => ("insufficient_space", false),
+            None => ("space_unknown", false),
+        },
+    }
+}
+
+fn plan_snapshot(
+    state: &NodeService,
+    backend: &str,
+    entry: &Value,
+    available: Option<bool>,
+) -> Result<Value> {
+    let directory = state.model_directory();
+    let storage = storage(&directory, backend);
+    let metadata = |key: &str| entry[key].as_str().filter(|s| s.len() <= 8192);
+    let mut plan = json!({"schema_version":1,"model_id":entry["id"],"backend":backend,
+        "ollama_available":available,"storage":storage,"license":metadata("license"),
+        "source":metadata("source"),"source_page":metadata("source_page"),
+        "license_reviewed":false,"runtime_compatibility_verified":false,"download_started":false,
+        "selection_changed":false,"reservation_created":false,
+        "note":"Read-only inspection, not a reservation or execution grant. Installation rechecks the current catalog and storage."});
+    if backend == "ollama" {
+        let model = entry["ollama"]
+            .as_str()
+            .filter(|s| s.len() < 200)
+            .context("This catalog entry has no valid Ollama model")?;
+        crate::model_selection::validate_id(model)?;
+        plan["provider_model_id"] = json!(model);
+        // A catalog's GGUF bytes/hash must never be presented as Ollama's manifest.
+        plan["artifact"] = Value::Null;
+        plan["download_bytes_if_needed"] = Value::Null;
+        plan["disk_check"] = json!("provider_managed_unknown");
+        plan["can_request"] = json!(available == Some(true));
+        plan["blocker"] = if available == Some(true) {
+            Value::Null
+        } else {
+            json!("backend_unavailable")
+        };
+        plan["artifact_verification"] = json!("provider_managed");
+    } else {
+        let artifact = crate::model_manifest::GgufArtifact::from_catalog(entry)?;
+        let destination = directory.join(format!("{}.gguf", artifact.sha256));
+        let existing = match std::fs::metadata(&destination) {
+            Ok(metadata) if metadata.is_file() => Some(metadata.len()),
+            Ok(_) => bail!("The model cache destination is not a regular file"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        let (check, can_request) =
+            space_check(artifact.bytes, storage["free_bytes"].as_u64(), existing);
+        plan["disk_check"] = json!(check);
+        plan["can_request"] = json!(can_request);
+        plan["blocker"] = if can_request {
+            Value::Null
+        } else {
+            json!(check)
+        };
+        plan["cache_candidate_present"] = json!(existing.is_some());
+        plan["cache_digest_verified"] = json!(false);
+        plan["download_bytes_if_needed"] = json!(artifact.bytes);
+        plan["artifact_verification"] = json!("sha256_and_exact_size_at_install");
+        plan["artifact"] = serde_json::to_value(artifact)?;
+    }
+    let live = state.live.lock().unwrap();
+    let busy = live["download"]["state"] == "downloading";
+    plan["download_busy"] = json!(busy);
+    if busy {
+        plan["can_request"] = json!(false);
+        if plan["blocker"].is_null() {
+            plan["blocker"] = json!("download_in_progress");
+        }
+    }
+    Ok(plan)
+}
+
+pub async fn install_plan(state: &NodeService, selected: &str) -> Result<Value> {
+    let config = state.read_config()?;
+    let (backend, entry, available) = resolve_install(&config, selected).await?;
+    plan_snapshot(state, backend, &entry, available)
+}
+
 async fn install_authorized(
     state: Arc<NodeService>,
     request: Value,
@@ -187,37 +329,14 @@ async fn install_authorized(
     let selected = request["id"]
         .as_str()
         .context("Choose a model to install")?;
-    let entry = catalog(&config)
-        .as_array()
-        .context("Model catalog must be a list")?
-        .iter()
-        .find(|v| v["id"].as_str() == Some(selected))
-        .cloned();
-    let available = ollama_models(&config).await.is_ok();
-    let provider = config
-        .pointer("/models/provider")
-        .and_then(Value::as_str)
-        .unwrap_or("auto");
-    let backend = if provider == "ollama" || (provider == "auto" && available) {
-        "ollama"
-    } else {
-        "llamacpp"
-    };
-    let entry = match entry {
-        Some(entry) => entry,
-        None if backend == "ollama"
-            && !selected.is_empty()
-            && selected.len() < 200
-            && selected
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "/_:.-".contains(c)) =>
-        {
-            json!({"id":selected,"name":selected,"ollama":selected})
-        }
-        _ => bail!(
-            "Choose a model from the list. Custom downloads can be added to the catalog in Advanced."
-        ),
-    };
+    let (backend, entry, available) = resolve_install(&config, selected).await?;
+    let plan = plan_snapshot(&state, backend, &entry, available)?;
+    if plan["can_request"] != true {
+        bail!(
+            "Model installation preflight blocked: {}; inspect install-plan before retrying",
+            plan["blocker"].as_str().unwrap_or("preflight_failed")
+        );
+    }
     state.begin_model_download(&config, remote, json!({"id":operation_id,"model_id":selected,"backend":backend,"state":"downloading","phase":"Starting","name":entry["name"],"completed":0,"total":if backend=="ollama" {Value::Null} else {entry["bytes"].clone()},"cancel_requested":false}))?;
     tokio::spawn(async move {
         let transfer = async {
@@ -385,22 +504,9 @@ impl Drop for PartialFile {
     }
 }
 async fn download(state: &NodeService, entry: &Value) -> Result<()> {
-    let url = reqwest::Url::parse(
-        entry["url"]
-            .as_str()
-            .context("Model download address is missing")?,
-    )?;
-    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
-        bail!("Model downloads require HTTPS without embedded credentials")
-    }
-    let expected = entry["sha256"]
-        .as_str()
-        .filter(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        .context("Model catalog needs a SHA-256 checksum")?;
-    let bytes = entry["bytes"]
-        .as_u64()
-        .filter(|n| *n > 0)
-        .context("Model catalog needs the download size")?;
+    let artifact = crate::model_manifest::GgufArtifact::from_catalog(entry)?;
+    let expected = artifact.sha256.as_str();
+    let bytes = artifact.bytes;
     let directory = state.model_directory();
     tokio::fs::create_dir_all(&directory).await?;
     let mut installed = installed_index(&directory)?;
@@ -415,7 +521,12 @@ async fn download(state: &NodeService, entry: &Value) -> Result<()> {
             .await?;
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() > 8 || attempt.url().scheme() != "https" {
+                if attempt.previous().len() > 8
+                    || attempt.url().scheme() != "https"
+                    || !attempt.url().username().is_empty()
+                    || attempt.url().password().is_some()
+                    || attempt.url().fragment().is_some()
+                {
                     attempt.stop()
                 } else {
                     attempt.follow()
@@ -423,7 +534,7 @@ async fn download(state: &NodeService, entry: &Value) -> Result<()> {
             }))
             .build()?;
         let mut stream = client
-            .get(url)
+            .get(&artifact.url)
             .timeout(Duration::from_secs(3600))
             .send()
             .await?
@@ -452,7 +563,9 @@ async fn download(state: &NodeService, entry: &Value) -> Result<()> {
             bail!("Model verification failed. The incomplete download was removed; try again.")
         }
         tokio::fs::rename(&temp.0, &destination).await?;
-    } else if crate::updater::sha256_file(&destination)? != expected.to_ascii_lowercase() {
+    } else if std::fs::metadata(&destination)?.len() != bytes
+        || crate::updater::sha256_file(&destination)? != expected.to_ascii_lowercase()
+    {
         bail!(
             "The existing model file failed verification. Move it aside before downloading again."
         )
@@ -476,6 +589,100 @@ fn ensure_space(available: u64, required: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preflight_never_assumes_unknown_storage_or_verifies_cache_by_name() {
+        assert_eq!(
+            space_check(100, Some(100), None),
+            ("sufficient_at_inspection", true)
+        );
+        assert_eq!(
+            space_check(100, Some(99), None),
+            ("insufficient_space", false)
+        );
+        assert_eq!(space_check(100, None, None), ("space_unknown", false));
+        assert_eq!(
+            space_check(100, Some(0), Some(100)),
+            ("cache_requires_verification", true)
+        );
+        assert_eq!(
+            space_check(100, Some(1000), Some(99)),
+            ("cached_size_mismatch", false)
+        );
+    }
+
+    #[tokio::test]
+    async fn preflight_is_read_only_and_invalid_admission_preserves_receipts() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("node.json");
+        let entry = json!({"id":"fixture","url":"https://example.invalid/not-fetched","sha256":"b".repeat(64),"bytes":100,"license":"owner supplied"});
+        let mut config =
+            json!({"node_id":"node","models":{"provider":"llamacpp"},"model_catalog":[entry]});
+        crate::setup::write_json(&config_path, &config).unwrap();
+        let service = NodeService::new(config_path.clone(), "node".into());
+        let progress = json!({"id":"previous","state":"installed"});
+        service.live.lock().unwrap()["download"] = progress.clone();
+        let plan = install_plan(&service, "fixture").await.unwrap();
+        assert_eq!(plan["artifact"]["schema_version"], 1);
+        assert_eq!(plan["artifact"]["bytes"], 100);
+        assert_eq!(plan["download_started"], false);
+        assert_eq!(plan["license_reviewed"], false);
+        assert_eq!(plan["ollama_available"], Value::Null);
+        assert!(!service.model_directory().exists());
+        assert_eq!(service.live.lock().unwrap()["download"], progress);
+        assert_eq!(service.read_config().unwrap(), config);
+        // A successful plan does not authorize or freeze later configuration.
+        config["model_catalog"][0]["sha256"] = json!("invalid");
+        crate::setup::write_json(&config_path, &config).unwrap();
+        assert!(
+            install_identified(
+                service.clone(),
+                "fixture".into(),
+                uuid::Uuid::new_v4().to_string()
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(service.live.lock().unwrap()["download"], progress);
+        assert!(!service.model_directory().exists());
+        config["model_catalog"][0] = entry.clone();
+        config["model_catalog"][0]["bytes"] = json!(i64::MAX);
+        crate::setup::write_json(&config_path, &config).unwrap();
+        let full = install_plan(&service, "fixture").await.unwrap();
+        assert_eq!(full["can_request"], false);
+        assert_eq!(full["blocker"], "insufficient_space");
+        assert!(
+            install_identified(
+                service.clone(),
+                "fixture".into(),
+                uuid::Uuid::new_v4().to_string()
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(service.live.lock().unwrap()["download"], progress);
+        assert!(!service.model_directory().exists());
+        config["model_catalog"] = json!([entry.clone(), entry]);
+        crate::setup::write_json(&config_path, &config).unwrap();
+        assert!(install_plan(&service, "fixture").await.is_err());
+    }
+
+    #[test]
+    fn ollama_plan_does_not_relabel_gguf_digest_or_size_as_provider_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = NodeService::new(dir.path().join("node.json"), "node".into());
+        let entry =
+            json!({"id":"fixture","ollama":"fixture:tag","bytes":100,"sha256":"a".repeat(64)});
+        let plan = plan_snapshot(&state, "ollama", &entry, Some(true)).unwrap();
+        assert_eq!(plan["artifact"], Value::Null);
+        assert_eq!(plan["download_bytes_if_needed"], Value::Null);
+        assert_eq!(plan["storage"]["free_bytes"], Value::Null);
+        assert_eq!(plan["disk_check"], "provider_managed_unknown");
+        assert_eq!(
+            plan_snapshot(&state, "ollama", &entry, Some(false)).unwrap()["blocker"],
+            "backend_unavailable"
+        );
+    }
 
     #[tokio::test]
     async fn existing_gguf_is_verified_reused_and_corruption_is_preserved() {

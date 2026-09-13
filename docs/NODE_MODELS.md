@@ -86,6 +86,12 @@ reuse the same installer as the API/UI, with no automatic selection, loading or
 restart. This is groundwork for default lightweight-model setup, not completed
 bootstrap. See [command syntax and lost-reply limits](COMMANDS.md).
 
+`models install-plan --model ID` adds a read-only backend/artifact/storage
+preflight. GGUF catalog metadata is validated before admission and again by the
+transfer; cached files require exact size and digest verification. Ollama's own
+artifact size/hash/storage are reported as unknown rather than borrowed from a
+GGUF entry. Planning does not download, reserve space or prove model compatibility.
+
 ## Model startup (development after v0.4.0a3)
 
 If the configured llama.cpp group fails startup, EEFN stops any partially

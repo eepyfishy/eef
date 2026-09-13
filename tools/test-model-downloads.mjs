@@ -1,6 +1,6 @@
 // Command/API-only local transfer tests. Fake Ollama streams, no model weights.
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
+import {mkdtemp,readFile,writeFile,readdir} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
@@ -12,12 +12,13 @@ const configPath=join(scratch,'node.json'),marker=configPath+'.api.json',childre
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 function launch(args){const child=spawn(join(bin,'eefn.exe'),['--config',configPath,...args],{cwd:root,windowsHide:true,env,stdio:['ignore','pipe','pipe']});let out='',err='';child.stdout.on('data',b=>out=(out+b).slice(-4194304));child.stderr.on('data',b=>err=(err+b).slice(-1048576));child.result=new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>resolve({code,out,err}));});children.push(child);return child;}
 async function cli(args,success=true){const child=launch(['models',...args,'--json']);const timer=setTimeout(()=>child.kill(),22000);try{const r=await child.result;assert.equal(r.code,success?0:1,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}}
-async function json(url,body){const r=await fetch(url,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(10000)});const value=await r.json();assert(r.ok,JSON.stringify(value));return value;}
+async function json(url,body,method){const r=await fetch(url,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(10000)});const value=await r.json();assert(r.ok,JSON.stringify(value));return value;}
 async function until(fn,label){const end=Date.now()+45000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('Timeout: '+label);}
 async function listen(server){await new Promise(r=>server.listen(0,'127.0.0.1',r));return server.address().port;}
+let tagRequests=0;
 const fake=createServer(async(req,res)=>{
  res.setHeader('Content-Type','application/json');
- if(req.url==='/api/tags')return res.end(JSON.stringify({models:[{name:'fixture'}]}));
+ if(req.url==='/api/tags'){tagRequests++;return res.end(JSON.stringify({models:[{name:'fixture'}]}));}
  if(req.url==='/api/show')return res.end(JSON.stringify({capabilities:['completion']}));
  if(req.url==='/api/pull'){
   let body='';for await(const part of req)body+=part;
@@ -50,6 +51,13 @@ try {
  await until(async()=>{const m=JSON.parse(await readFile(marker,'utf8'));node='http://'+m.address;return !!(await json(node+'/api/diagnostics')).runtime_id;},'command API discovery');
  assert.equal((await fetch(node+'/')).status,404);
  const before=(await json(node+'/api/config')).config;
+ const untouchedDownload=(await json(node+'/api/status')).download;
+ const plan=await cli(['install-plan','--model','gated-fixture']);
+ assert.equal(plan.plan.backend,'ollama');assert.equal(plan.plan.can_request,true);
+ assert.equal(plan.plan.artifact,null);assert.equal(plan.plan.download_bytes_if_needed,null);
+ assert.equal(plan.plan.disk_check,'provider_managed_unknown');assert.equal(plan.plan.download_started,false);
+ assert.equal(plan.plan.license_reviewed,false);assert.equal(pulls.length,0);
+ assert.deepEqual((await json(node+'/api/status')).download,untouchedDownload,'preflight must not reset transfer status');
  assert.equal((await cli(['show'])).saved_selections.length,0,'old selection commands retained');
  const inventory=await cli(['installed']);assert.equal(inventory.inventory.backend,'ollama');assert.equal(inventory.inventory.storage.free_bytes,null);
  assert.deepEqual((await cli(['inspect','--model','fixture'])).model.capabilities,['llm.infer']);
@@ -57,6 +65,8 @@ try {
  assert.equal(accepted.accepted,true);assert.equal(accepted.completed,false);assert.equal(accepted.selection_changed,false);
  const id=accepted.operation_id;assert.match(id,/^[0-9a-f-]{36}$/);
  await until(async()=>(await cli(['download-status','--id',id])).download.completed===1,'progress through independent command');
+ const busy=await cli(['install-plan','--model','gated-fixture']);
+ assert.equal(busy.plan.can_request,false);assert.equal(busy.plan.blocker,'download_in_progress');
  const typed=command=>json(node+'/api/commands/model-downloads',{schema_version:1,expected_node_id:config.node_id,command});
  const duplicate=await typed({operation:'install',model:'gated-fixture',operation_id:id});assert.equal(duplicate.success,false);assert.equal(pulls.length,1);
  const wrong=randomUUID();assert.equal((await cli(['cancel-download','--id',wrong],false)).success,false);
@@ -87,7 +97,25 @@ try {
   assert.equal((await cli(['install','--model','unsupported-fixture'],false)).error_code,'unsupported_command');
   assert.equal(legacyRequests,1);assert.equal(pulls.length,3,'no legacy fallback installation');
  } finally {await writeFile(marker,originalMarker);}
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,api_only:true,offline_no_launch:true,installed_and_inspect:true,progress_and_exact_cancel:true,lost_reply_receipt:true,no_automatic_retry:true,no_legacy_fallback:true,no_selection_changes:true,physical_two_pc:false,real_model_downloads:false},null,2));
+ // GGUF inspection uses saved configuration, without contacting the artifact or
+ // the unselected provider. An earlier plan does not skip admission validation.
+ const ggufConfig=structuredClone(before);ggufConfig.dashboard.port=Number(new URL(node).port);
+ ggufConfig.models.provider='llamacpp';
+ ggufConfig.model_catalog=[{id:'gguf-fixture',url:'https://example.invalid/never-fetched',sha256:'c'.repeat(64),bytes:1000,license:'fixture metadata'}];
+ await json(node+'/api/config',{config:ggufConfig},'PUT');
+ const filesBefore=(await readdir(scratch)).sort(),tagsBefore=tagRequests;
+ const ggufPlan=(await cli(['install-plan','--model','gguf-fixture'])).plan;
+ assert.equal(ggufPlan.can_request,true);assert.equal(ggufPlan.artifact.schema_version,1);
+ assert.equal(ggufPlan.artifact.bytes,1000);assert.equal(ggufPlan.storage.scope,'node');
+ assert.equal(ggufPlan.cache_digest_verified,false);assert.equal(ggufPlan.runtime_compatibility_verified,false);
+ assert.equal(tagRequests,tagsBefore,'explicit GGUF must not inspect Ollama');
+ assert.deepEqual((await readdir(scratch)).sort(),filesBefore,'preflight must not create cache files or directories');
+ ggufConfig.model_catalog[0].sha256='invalid';
+ await json(node+'/api/config',{config:ggufConfig},'PUT');
+ assert.equal((await cli(['install','--model','gguf-fixture'],false)).error_code,'download_command_rejected');
+ assert.equal((await cli(['download-status','--id',complete.operation_id])).download.state,'installed','invalid admission preserves retained receipt');
+ assert.equal(pulls.length,3);assert.equal(tagRequests,tagsBefore);
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,api_only:true,offline_no_launch:true,installed_and_inspect:true,read_only_install_preflight:true,gguf_preflight_no_provider_query:true,invalid_admission_preserves_receipt:true,provider_storage_unknown:true,busy_preflight:true,progress_and_exact_cancel:true,lost_reply_receipt:true,no_automatic_retry:true,no_legacy_fallback:true,no_selection_changes:true,physical_two_pc:false,real_model_downloads:false},null,2));
  console.log('Model download command checks passed: '+scratch);
 } finally {
  for(const stream of streams)stream.destroy();

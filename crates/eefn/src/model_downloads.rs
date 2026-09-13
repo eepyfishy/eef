@@ -18,6 +18,11 @@ pub enum NodeModelsAction {
         #[arg(long)]
         model: String,
     },
+    /// Read-only backend, artifact and disk preflight; does not download or load.
+    InstallPlan {
+        #[arg(long)]
+        model: String,
+    },
     /// Request installation once; does not select/load the model or restart the node.
     Install {
         #[arg(long)]
@@ -40,6 +45,7 @@ pub enum NodeModelsAction {
 pub enum DownloadCommand {
     Installed {},
     Inspect { model: String },
+    Plan { model: String },
     Install { model: String, operation_id: String },
     Status { operation_id: Option<String> },
     Cancel { operation_id: String },
@@ -64,7 +70,7 @@ impl DownloadCommand {
                 bail!("download ID must be a canonical UUID");
             }
         }
-        if let Self::Install { model, .. } | Self::Inspect { model } = self {
+        if let Self::Install { model, .. } | Self::Inspect { model } | Self::Plan { model } = self {
             crate::model_selection::validate_id(model)?;
         }
         Ok(())
@@ -77,6 +83,9 @@ impl NodeModelsAction {
             Self::Selection(_) => return None,
             Self::Installed => DownloadCommand::Installed {},
             Self::Inspect { model } => DownloadCommand::Inspect {
+                model: model.clone(),
+            },
+            Self::InstallPlan { model } => DownloadCommand::Plan {
                 model: model.clone(),
             },
             Self::Install { model } => DownloadCommand::Install {
@@ -116,6 +125,7 @@ impl NodeService {
             match request.command {
                 DownloadCommand::Installed {} => Ok(json!({"inventory":crate::model_manager::list(self).await?})),
                 DownloadCommand::Inspect { model } => Ok(json!({"model":crate::model_manager::inspect(self, json!({"id":model})).await?})),
+                DownloadCommand::Plan { model } => Ok(json!({"plan":crate::model_manager::install_plan(self, &model).await?})),
                 DownloadCommand::Install { model, operation_id } => {
                     crate::model_manager::install_identified(self.clone(), model, operation_id).await?;
                     Ok(json!({"accepted":true,"completed":false,"selection_changed":false,"restart_requested":false,

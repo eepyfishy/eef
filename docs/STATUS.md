@@ -1,5 +1,28 @@
 # Architecture conformance status
 
+## Unreleased model install preflight
+
+- `eefn models install-plan --model ID` inspects the provider, source/license
+  metadata, versioned GGUF artifact contract, local disk snapshot, cache candidate
+  and active-download state without fetching weights or changing node state.
+- Installation uses the same artifact validator before admitting a transfer.
+  Invalid/ambiguous catalog entries and known disk failures leave prior receipts
+  untouched. Cache reuse checks exact size as well as digest. Existing remote
+  approval/configuration admission checks and transfer-time limits remain in force.
+- Explicit llama.cpp selection no longer contacts Ollama to decide its backend.
+  Ollama plans do not mislabel GGUF size/hash as provider metadata. License review,
+  runtime compatibility and default-model/bootstrap policy remain unverified or
+  planned; no model artifact, installed node or release was changed.
+- Validation on 2026-09-13: 165 Rust tests passed with and without dashboard support,
+  including unsafe/incomplete artifact metadata, insufficient/unknown space,
+  cache size/digest semantics, duplicate catalog IDs and preservation of prior
+  receipts after failed admission. Isolated `model-downloads-LaQNkt` verified
+  read-only CLI preflight, provider-specific unknowns, active-transfer blocking,
+  no Ollama request for explicit GGUF, and rejection after a catalog change.
+  `model-metadata-7fbTQb` and `model-startup-0rIH0b` passed the existing model/job,
+  approval, receipt and startup regressions. Evidence is under `.validation/`;
+  fake backends only, no real inference or physical multi-node acceptance.
+
 ## Unreleased command-based model installation
 
 - `eefn models installed`, `inspect`, `install`, `download-status` and

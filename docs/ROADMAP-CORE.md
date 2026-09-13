@@ -137,6 +137,11 @@ verification and disk limits. Receipts are only the latest in-memory transfer,
 not durable bootstrap state. Default artifact selection, verified bootstrap
 manifest policy and automatic interpreter role binding remain planned.
 
+Install preflight now normalizes GGUF artifact metadata into a versioned contract
+shared with the installer and reports backend-specific storage/verification
+limits before transfer admission. It does not select a default, perform license
+review, establish runtime compatibility or authorize automatic bootstrap.
+
 Minimal load/readiness/error reporting is needed in steps 3-7; do not postpone
 basic execution correctness until step 10. Step 10 adds complete lifecycle
 control and optimization, rather than enabling the first usable inference.
