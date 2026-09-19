@@ -1,5 +1,13 @@
 # Architecture conformance status
 
+## v0.4.0a4 release checkpoint
+
+The following development checkpoints through owner-selected request preview
+are included in v0.4.0a4. Their historical "unreleased" labels describe their
+original validation dates, not alpha.4 availability. See the
+[release notes](RELEASE-0.4.0a4.md) for packaging and deployment evidence.
+No default interpreter is approved and preview never dispatches work.
+
 ## Unreleased owner-selected request preview
 
 - `eefn requests preview --text TEXT --json` now uses exactly one applied model

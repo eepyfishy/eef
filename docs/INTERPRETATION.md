@@ -1,7 +1,7 @@
-# Untrusted interpretation contract (development)
+# Untrusted interpretation contract (v0.4.0a4)
 
-`eefn::interpretation` is a shared Rust prompt/validation module. The subsequent
-development increment adds `eefn requests preview --text TEXT`, backed by this
+`eefn::interpretation` is a shared Rust prompt/validation module. Alpha.4
+adds `eefn requests preview --text TEXT`, backed by this
 module and an explicitly owner-selected `request_interpreter` model role. It is
 **not connected to chat auto-interpretation, coordinator submissions or workload
 execution**. No default model or automatic selection is enabled.

@@ -1,6 +1,6 @@
 EEF coordinator for Windows
 
-v0.4.0a3 backend alpha. TWO_PC_TEST.md describes private-network pairing and
+v0.4.0a4 backend alpha. TWO_PC_TEST.md describes private-network pairing and
 safe two-PC checks. Commands: eef.exe diagnostics --json; eef.exe diagnostics
 --node NODE_ID --samples 5 --json; eef.exe invite --address HOST:PORT --json.
 Connection codes are secret. Reports are local only; no automatic analytics upload.

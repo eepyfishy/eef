@@ -1,6 +1,6 @@
 EEFN node for Windows
 
-v0.4.0a3 backend alpha. See TWO_PC_TEST.md. Use eefn.exe network diagnose
+v0.4.0a4 backend alpha. See TWO_PC_TEST.md. Use eefn.exe network diagnose
 --json for a minimal local report, or network show/set/peers for network commands.
 No reports upload automatically. Pairing codes and raw config must stay private.
 
@@ -26,3 +26,9 @@ The builds are unsigned. Do not bypass a Defender detection to install them.
 Feed-based updates reject alpha/beta/RC builds, including automatic updates.
 Use --no-ui for API-only operation; models, jobs, connection and restart commands
 operate through the running node without a browser or local language model.
+
+Models supports installed/inspect/install-plan/install/download-status and
+cancel-download commands. Downloads never select or load a model automatically.
+requests preview --text TEXT --json requires exactly one applied, owner-selected
+request_interpreter model. It returns a proposal only, never dispatches work,
+and is not a substitute for deterministic commands or authorization.

@@ -78,7 +78,7 @@ EEF receives these advertisements over the authenticated node link. It ranks
 eligible providers by capability, modality, load, latency, hardware,
 constraints, and health; it does not contain a default model name.
 
-## Command-based installation (development after v0.4.0a3)
+## Command-based installation (v0.4.0a4)
 
 The running node now exposes installed-model inspection, explicit installation,
 receipt-scoped progress and cancellation through `eefn models` commands. They
@@ -92,7 +92,7 @@ transfer; cached files require exact size and digest verification. Ollama's own
 artifact size/hash/storage are reported as unknown rather than borrowed from a
 GGUF entry. Planning does not download, reserve space or prove model compatibility.
 
-## Model startup (development after v0.4.0a3)
+## Model startup (v0.4.0a4)
 
 See also the [CPU candidate evaluation](MODEL-CANDIDATE-EVALUATION.md). It does
 not select a default or enable automatic interpretation/bootstrap.

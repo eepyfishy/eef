@@ -1,13 +1,13 @@
 # Node commands
 
-Unless marked unreleased, v0.4.0a3 supports these commands without a browser or LM. Run
+v0.4.0a4 supports these commands without a browser. Deterministic commands need no LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
 ## Request preview (development)
 
-Unreleased after v0.4.0a3; requires a development node and an explicitly selected
-model. It is not available in the published alpha.3 installers.
+Added in v0.4.0a4; requires an explicitly selected model. It is not available in
+the older alpha.3 installers. The heading retains its development anchor for links.
 
 ```powershell
 eefn models hints --backend ollama --model OWNER_SELECTED_MODEL --role request_interpreter
@@ -48,7 +48,7 @@ Common errors: `node_not_running`, `runtime_unavailable`, `runtime_changed`,
 `invalid_interpreter_context`, `unsupported_command`, `preview_unconfirmed`.
 Existing deterministic commands remain model-independent.
 
-## Unreleased: model download commands
+## Added in v0.4.0a4: model download commands
 
 ```powershell
 .\eefn.exe models installed --json
@@ -60,7 +60,7 @@ Existing deterministic commands remain model-independent.
 .\eefn.exe models cancel-download --id DOWNLOAD_UUID --json
 ```
 
-These commands require the running development node's local command API, not a
+These commands require the running alpha.4 node's local command API, not a
 browser, EEF connection or loaded LM. They discover the actual endpoint from the
 existing instance marker. A stopped node returns `node_not_running` without
 starting a process or transfer. Published v0.4.0a3 lacks this command endpoint;
@@ -105,7 +105,7 @@ nullable `operation_id`; cancel requires one. Unknown fields, wrong node identit
 and unsupported schemas are rejected before transfer admission. The existing
 local-origin guard protects it. No remote permissions are widened.
 
-### Unreleased: install preflight
+### Added in v0.4.0a4: install preflight
 
 `install-plan` is a read-only command (`operation:"plan"` with `model` on the
 same typed endpoint). It may query the configured Ollama service's model list,
