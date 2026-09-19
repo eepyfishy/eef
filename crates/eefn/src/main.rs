@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Preview an untrusted interpretation locally; never submit or execute work.
+    Requests {
+        #[command(subcommand)]
+        command: eefn::request_preview::RequestAction,
+    },
     /// Control the outgoing EEF connection while keeping local commands available.
     Connection {
         #[command(subcommand)]
@@ -149,6 +154,55 @@ async fn execute_model_command(
     }
     result["running"] = serde_json::json!(true);
     Ok(result)
+}
+
+async fn execute_request_preview(args: &Args, text: &str) -> Result<serde_json::Value> {
+    use serde_json::json;
+    eefn::interpretation::messages(text, &[])?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        return Ok(
+            json!({"schema_version":1,"report_type":"request_preview","success":false,
+            "error_code":"node_not_running","execution_authorized":false,"dispatched":false,
+            "error":"Start the node first. Preview does not start a second runtime."}),
+        );
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let request = eefn::request_preview::PreviewRequest {
+        schema_version: 1,
+        expected_node_id: file.node_id.clone(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+        text: text.into(),
+    };
+    let exchange = async {
+        let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
+            .post(format!("http://{address}/api/commands/requests/preview"))
+            .timeout(Duration::from_secs(25)).json(&request).send().await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(json!({"schema_version":1,"report_type":"request_preview","success":false,
+                "error_code":"unsupported_command","execution_authorized":false,"dispatched":false,
+                "error":"This running node does not support preview. No chat/job fallback was attempted."}));
+        }
+        let status = response.status();
+        let report = eefn::model_manager::bounded_json(response).await?;
+        if !status.is_success() || report["schema_version"] != 1 || report["report_type"] != "request_preview"
+            || report["node_id"] != file.node_id || report["request_id"] != request.request_id
+            || !report["success"].is_boolean() || report["execution_authorized"] != false || report["dispatched"] != false {
+            bail!("Unrecognized request-preview response");
+        }
+        Ok::<serde_json::Value, anyhow::Error>(report)
+    }.await;
+    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"request_preview","success":false,
+        "request_id":request.request_id,"error_code":"preview_unconfirmed","execution_authorized":false,
+        "dispatched":false,"automatically_retried":false,
+        "error":"No confirmed preview reply. Inference may have run; no job or action was requested. No automatic retry."})))
 }
 
 async fn execute_download_command(
@@ -479,6 +533,12 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                     .await
             }
         };
+    }
+    if let Commands::Requests {
+        command: eefn::request_preview::RequestAction::Preview { text },
+    } = command
+    {
+        return execute_request_preview(args, text).await;
     }
     let Commands::Network { command } = command else {
         unreachable!()
@@ -1141,10 +1201,11 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         }
     }
     let engine = Arc::new(engine);
+    let runtime_id = uuid::Uuid::new_v4().to_string();
     {
         let mut status = dashboard.live.lock().unwrap();
         status["hardware"] = hardware;
-        status["runtime_id"] = serde_json::json!(uuid::Uuid::new_v4().to_string());
+        status["runtime_id"] = serde_json::json!(runtime_id);
         status["metadata"] = serde_json::json!(file.metadata.advertised(&engine.capabilities()));
         status["network"] = serde_json::json!(file.network);
         status["name"] = serde_json::json!(file.name);
@@ -1155,6 +1216,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         status["connection"] =
             serde_json::json!({"state":if file.connection_enabled {"waiting"} else {"paused"}});
     }
+    let _preview_runtime = dashboard.attach_preview_runtime(&engine, runtime_id);
     let client = if file.endpoints.is_empty() || !file.connection_enabled {
         None
     } else {

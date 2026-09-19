@@ -30,6 +30,7 @@ try {
  await writeFile(siblingFile,JSON.stringify({ready_file:readyFile,pid_file:siblingPidFile}));
  Object.assign(config,{node_id:id,name:'Startup fixture',psk:secret,auto_local:false,local_pairing:false,endpoints:[`127.0.0.1:${gateway}`],heartbeat_seconds:0.5,dashboard:{enabled:true,host:'127.0.0.1',port:apiPort},update:{policy:'off'},models:{provider:'llamacpp',ollama:{selected:[],base_url:'http://127.0.0.1:1'},llamacpp:{binary:join(bin,'examples/model_startup_fixture.exe'),slots:[{model_id:'gated-model',model_path:modelFile,port:modelPort}]}}});
  config.models.llamacpp.slots.push({model_id:'sibling-model',model_path:siblingFile,port:siblingPort});
+ config.models.llamacpp.slots[0].selection={roles:['request_interpreter']};
  const nodeConfig=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml');
  await writeFile(nodeConfig,JSON.stringify(config));
  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
@@ -73,6 +74,10 @@ try {
  const partialReply=await infer('fixture-length');assert.equal(partialReply.success,true);
  assert.equal(partialReply.data.completion_complete,false);assert.equal(partialReply.data.finish_reason,'length');
  assert.equal((await infer('fixture-missing')).success,false);
+ const preview=await command(['requests','preview','--text','fixture-preview']);
+ assert.equal(preview.execution_authorized,false);assert.equal(preview.dispatched,false);
+ assert.equal(preview.result.model.backend,'llamacpp');assert.equal(preview.result.model.model_id,'gated-model');
+ assert.equal(preview.result.interpretation.original_text,'fixture-preview');
  // Actual owned-child exit after readiness must withdraw the whole group and
  // stop its sibling without reconnecting, retrying inference or restarting.
  process.kill(newPid);

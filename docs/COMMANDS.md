@@ -4,6 +4,50 @@ Unless marked unreleased, v0.4.0a3 supports these commands without a browser or 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Request preview (development)
+
+Unreleased after v0.4.0a3; requires a development node and an explicitly selected
+model. It is not available in the published alpha.3 installers.
+
+```powershell
+eefn models hints --backend ollama --model OWNER_SELECTED_MODEL --role request_interpreter
+eefn restart --wait-seconds 30 --json
+eefn requests preview --text "Is this node running?" --json
+```
+
+The model must already be selected and support `llm.infer`; use `--backend
+llamacpp` for an existing GGUF selection. `hints` replaces the selected model's
+role list; include any other intended roles too. Selection/role changes require
+restart. Preview uses exactly one **applied** `request_interpreter` role, not an
+arbitrary installed model or pending configuration. Missing/ambiguous roles are
+errors, not permission to download or pick another model.
+
+Preview calls the node's configured model backend and validates an untrusted
+proposal. It works with the coordinator connection paused and browser UI disabled.
+The text is not sent to EEF and no job, plan, permission or action is created.
+`execution_authorized` and `dispatched` are always false. A schema-valid result
+still requires review; it is not proof that the model understood the request.
+See [proposal schema, bounds and limitations](INTERPRETATION.md).
+
+One preview runs at a time, with a 20-second service deadline and 512 output
+tokens. Partial/unknown backend completion is rejected. Restart invalidates
+in-flight previews; a shared/external model server may continue computation after
+the local request is cancelled. CLI reply timeout is 25 seconds. Requests are not
+persisted or automatically retried, and this command never falls back to chat,
+job submission or legacy endpoints.
+
+Local owner endpoint: `POST /api/commands/requests/preview` with
+`schema_version: 1`, `expected_node_id`, canonical UUID `request_id`, and `text`.
+The JSON report has `report_type: request_preview`, target/runtime/correlation
+identity, `success` and either `result` or `error_code`.
+
+Common errors: `node_not_running`, `runtime_unavailable`, `runtime_changed`,
+`interpreter_unavailable`, `interpreter_ambiguous`, `interpreter_busy`,
+`interpreter_backend_failed`, `interpretation_timeout`, `interpretation_incomplete`,
+`interpretation_invalid`, `invalid_preview_input`, `invalid_preview_request`,
+`invalid_interpreter_context`, `unsupported_command`, `preview_unconfirmed`.
+Existing deterministic commands remain model-independent.
+
 ## Unreleased: model download commands
 
 ```powershell

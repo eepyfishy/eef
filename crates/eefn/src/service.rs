@@ -23,6 +23,7 @@ pub struct NodeService {
     pub live: Arc<std::sync::Mutex<Value>>,
     pub restart: Arc<tokio::sync::Notify>,
     pub submissions: Arc<crate::submission::SubmissionMailbox>,
+    pub(crate) preview: Arc<crate::request_preview::PreviewRuntime>,
     config_lock: Arc<std::sync::Mutex<()>>,
     started: std::time::Instant,
 }
@@ -46,6 +47,7 @@ impl NodeService {
             )),
             restart: Arc::new(tokio::sync::Notify::new()),
             submissions: Arc::new(crate::submission::SubmissionMailbox::default()),
+            preview: Arc::new(crate::request_preview::PreviewRuntime::default()),
             config_lock: Arc::new(std::sync::Mutex::new(())),
             started: std::time::Instant::now(),
         })

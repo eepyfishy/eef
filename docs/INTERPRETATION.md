@@ -1,9 +1,10 @@
 # Untrusted interpretation contract (development)
 
-`eefn::interpretation` is a shared Rust prompt/validation module. This first slice
-has unit tests and a test-only CPU evaluation adapter. It is **not yet connected
-to node chat, commands, coordinator submissions or workload execution**. No new
-user-facing command, interpreter role binding or default model is enabled.
+`eefn::interpretation` is a shared Rust prompt/validation module. The subsequent
+development increment adds `eefn requests preview --text TEXT`, backed by this
+module and an explicitly owner-selected `request_interpreter` model role. It is
+**not connected to chat auto-interpretation, coordinator submissions or workload
+execution**. No default model or automatic selection is enabled.
 
 ## Proposal, not authority
 
@@ -81,8 +82,24 @@ second JavaScript implementation. Neither example executable is packaged.
 The earlier `baseline`/`detailed` benchmark profiles intentionally use a smaller
 three-field classifier schema and are not directly equivalent accuracy tests.
 
-Remaining: reviewed model/bootstrap policy, owner-selected interpreter role,
-bounded provider adapter and cancellation, node request preview/clarification
-commands, authenticated original context, EEF revalidation, and explicit
-planning/authorization. The existing deterministic commands continue working
-without any model and are unchanged by this module.
+The preview command now reuses existing Ollama/llama.cpp inference with a
+20-second service deadline, 512 output tokens and one concurrent preview per
+running node process. Exactly one applied model must support `llm.infer` and
+carry the `request_interpreter` role. Missing/ambiguous roles never silently pick
+another model, start a runtime or download anything. Partial/unknown completions
+and invalid proposals fail closed. The weak runtime binding is invalidated on
+restart, cancelling the local wait and rejecting stale results. It does not
+promise that an external Ollama service stops all computation on disconnect.
+Ordinary inference traffic is not governed by this preview-only semaphore.
+
+The original text goes only to the configured model backend (which may be an
+owner-configured remote Ollama endpoint), not to EEF. Preview has no job journal
+entry, execution grant or persistent receipt. A lost reply does not automatically
+retry. Closing the CLI may leave bounded inference running until service timeout;
+it cannot cause an action to be executed. No UI is required, and a paused or
+unconfigured coordinator connection does not prevent preview.
+
+Remaining: reviewed model/bootstrap policy, better candidate/prompt quality,
+interactive clarification/approval flow, authenticated original context, EEF
+revalidation, and explicit planning/authorization. The existing deterministic
+commands continue working without any model. See [command usage](COMMANDS.md#request-preview-development).

@@ -1,5 +1,32 @@
 # Architecture conformance status
 
+## Unreleased owner-selected request preview
+
+- `eefn requests preview --text TEXT --json` now uses exactly one applied model
+  with `llm.infer` and the explicit `request_interpreter` role. It uses the shared
+  strict proposal contract, retains original input, requires reported completion,
+  and always reports no dispatch/no execution authority. No job, permission,
+  default model, download or coordinator submission is created.
+- The service has one-preview capacity, a 20-second deadline and a 512-token
+  output limit. A weak runtime binding is invalidated on node restart so old
+  results cannot become current proposals. Missing/ambiguous roles, invalid or
+  partial results and unavailable backends fail without fallback. CLI discovery,
+  target/correlation checks, origin guard and no-replay behavior work without UI
+  or an EEF connection. External providers may continue compute after disconnect.
+- Validation checkpoint 2026-09-20: 178 Rust tests passed with and without
+  dashboard support. `request-preview-nFGNN7` passed paused-node CLI preview,
+  original text retention, invalid/incomplete rejection, role checks, exact target,
+  origin guard, busy admission, timeout/capacity release, restart invalidation,
+  lost-reply/no-retry and old-endpoint/no-fallback checks. `model-startup-8ieqHk`
+  additionally passed llama.cpp preview and model lifecycle regressions.
+  `model-metadata-Qv24TM` and `model-downloads-Fy8QLw` passed existing model/job,
+  response-boundary, approval and transfer regressions. All process backends were
+  synthetic, not a real interpreter quality or physical two-PC acceptance claim.
+- Automatic chat interpretation, interactive clarification/approval, EEF context
+  validation and execution grants remain planned. No release, installed node or
+  teacher-submission snapshot changed. See [usage](COMMANDS.md#request-preview-development)
+  and [contract limits](INTERPRETATION.md).
+
 ## Unreleased bounded inference response handling
 
 - Ollama and llama.cpp now share bounded chat normalization: 4 MiB backend JSON

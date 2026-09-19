@@ -96,6 +96,7 @@ impl NodeService {
                 post(model_download_command),
             )
             .route("/api/commands/jobs", post(job_command))
+            .route("/api/commands/requests/preview", post(request_preview))
             .route("/api/commands/restart", post(restart_command))
             .route("/api/config", get(config_get).put(config_save))
             .route("/api/startup", get(startup_get).put(startup_set))
@@ -238,6 +239,13 @@ async fn jobs_control(
             .request(&format!("jobs.{action}"), json!({"id":id}))
             .await?,
     ))
+}
+
+async fn request_preview(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_preview::PreviewRequest>,
+) -> Json<Value> {
+    Json(state.preview_request(request).await)
 }
 
 async fn chat(

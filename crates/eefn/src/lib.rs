@@ -25,6 +25,7 @@ pub mod model_server;
 pub mod network;
 pub mod protocol;
 pub mod python;
+pub mod request_preview;
 pub mod server;
 pub mod service;
 pub mod setup;

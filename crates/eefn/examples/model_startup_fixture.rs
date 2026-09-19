@@ -29,8 +29,13 @@ async fn main() -> anyhow::Result<()> {
         listener,
         Router::new().route("/v1/chat/completions", post(|Json(request): Json<Value>| async move {
             let prompt = request["messages"].as_array().and_then(|v|v.last()).and_then(|v|v["content"].as_str());
-            Json(match prompt {
-                Some("fixture-missing") => json!({}),
+                    Json(match prompt {
+                        Some("fixture-preview") => json!({"choices":[{"message":{"content":json!({
+                            "schema_version":1,"intent":"information","goal":"Inspect node status",
+                            "context_hints":[],"constraints":[],"suggested_capabilities":["system.info"],
+                            "complexity":"simple","workload":"one_shot","needs_clarification":false,"clarification":null
+                        }).to_string()},"finish_reason":"stop"}]}),
+                        Some("fixture-missing") => json!({}),
                 Some("fixture-length") => json!({"choices":[{"message":{"content":"fixture partial"},"finish_reason":"length"}]}),
                 _ => json!({"choices":[{"message":{"content":"fixture only; no real inference"},"finish_reason":"stop"}]}),
             })

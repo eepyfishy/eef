@@ -920,6 +920,65 @@ impl NodeEngine {
         self.ollama(&params).await
     }
 
+    pub(crate) async fn preview_interpretation(
+        &self,
+        text: &str,
+    ) -> std::result::Result<Value, &'static str> {
+        let has_role = |metadata: &crate::model_metadata::ModelMetadata| {
+            metadata.supports("llm.infer")
+                && metadata
+                    .roles
+                    .as_ref()
+                    .is_some_and(|roles| roles.iter().any(|role| role == "request_interpreter"))
+        };
+        let mut candidates = self
+            .ollama_models
+            .iter()
+            .filter(|(_, metadata)| has_role(metadata))
+            .map(|(id, _)| ("ollama", id.clone()))
+            .collect::<Vec<_>>();
+        if let Some(server) = &self.model_server {
+            for slot in &server.slots {
+                if slot
+                    .selection_metadata()
+                    .is_ok_and(|metadata| has_role(&metadata))
+                {
+                    candidates.push(("llamacpp", slot.model_id.clone()));
+                }
+            }
+        }
+        if candidates.is_empty() {
+            return Err("interpreter_unavailable");
+        }
+        if candidates.len() != 1 {
+            return Err("interpreter_ambiguous");
+        }
+        let (backend, model) = &candidates[0];
+        let mut capabilities = self.capabilities();
+        capabilities.sort();
+        capabilities.dedup();
+        let messages = crate::interpretation::messages(text, &capabilities)
+            .map_err(|_| "invalid_interpreter_context")?;
+        let response = self
+            .infer(
+                "llm.infer",
+                json!({"backend":backend,"model":model,"messages":messages,
+            "temperature":0,"max_tokens":512,"timeout":30}),
+            )
+            .await
+            .map_err(|_| "interpreter_backend_failed")?;
+        if response["completion_complete"] != true {
+            return Err("interpretation_incomplete");
+        }
+        let output = response["content"]
+            .as_str()
+            .ok_or("interpretation_invalid")?;
+        let interpretation =
+            crate::interpretation::validate(text, output.as_bytes(), &capabilities)
+                .map_err(|_| "interpretation_invalid")?;
+        Ok(json!({"model":{"backend":backend,"model_id":model},"interpretation":interpretation}))
+    }
+
     async fn ollama(&self, params: &Value) -> Result<Value> {
         let model = params
             .get("model")
