@@ -1,5 +1,29 @@
 # Architecture conformance status
 
+## Unreleased post-startup model process monitoring
+
+- A runtime-scoped monitor checks the owned GGUF group once per second after
+  readiness. An observed exit, missing owned process or process-status error
+  withdraws group availability and stops remaining owned model children. Node
+  commands remain available; saved selections are retained and retry requires
+  explicit restart. No work is replayed and no automatic respawn is performed.
+- Existing authenticated registration refresh propagates the error without an
+  intentional reconnect. Local model/capability status also updates with the
+  connection paused or unreachable. Runtime exits are not startup issue codes.
+  Detection and propagation are not instantaneous; ongoing HTTP health, hangs,
+  successful inference, per-slot recovery and resource usage remain unmeasured.
+- Validation on 2026-09-19: 167 Rust workspace/all-target tests passed with and
+  without dashboard support. `.validation/model-startup-c2Vj4K` killed a ready
+  fixture child and verified unavailable/error metadata, surviving-sibling
+  cleanup, command availability, unchanged connection/runtime identity, explicit
+  restart recovery and paused-connection failure reporting. Existing loading
+  and restart-cleanup checks also passed. `.validation/model-downloads-ltpT2Z`
+  and `.validation/model-metadata-QbhXFk` passed transfer/receipt/approval and
+  model/job regressions. The backend/browser boundary check and formatting passed.
+- These are isolated fake-backend process tests, not real inference or physical
+  two-PC acceptance. No model weights, release, installed node, stable update
+  policy or teacher-submission snapshot was changed.
+
 ## Unreleased model install preflight
 
 - `eefn models install-plan --model ID` inspects the provider, source/license

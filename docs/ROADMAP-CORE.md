@@ -130,6 +130,12 @@ with node registration/control, reports bounded group readiness/error metadata,
 and cancels startup children on runtime restart. This is a reliability prerequisite
 for bootstrap, not completion of default model selection or full lifecycle work.
 
+A follow-up scoped process monitor now withdraws the local group after an owned
+child exits following readiness and stops surviving siblings. Commands stay
+available, including while disconnected, and explicit restart retries the saved
+selection. This is process-exit observation, not ongoing inference/HTTP health,
+automatic recovery, per-slot lifecycle control or completion of step 10.
+
 The next command increment exposes the existing installed-model browser,
 explicit model installation and exact receipt progress/cancellation through the
 running node's CLI/API. It retains the current transfer service, provider policy,

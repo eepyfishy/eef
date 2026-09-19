@@ -48,7 +48,9 @@ into peer discovery or the model inventory command.
   when the legacy label disagrees. Invalid metadata is never silently downgraded.
 - New Ollama and local-GGUF advertisements emit this object alongside the legacy
   fields, based on the existing selected modality/projector configuration. They
-  do not infer capabilities from model names or claim lifecycle/resource telemetry.
+  do not infer capabilities from model names or claim measured resource telemetry.
+  Development GGUF nodes additionally report observed group startup/process-exit
+  state; see [lifetime monitoring and its limits](NODE_MODELS.md#model-startup-development-after-v040a3).
   Old coordinators ignore the additional object and continue using legacy fields.
 - `eef models list` exposes normalized metadata with `metadata_source` equal to
   `model_metadata_v1` or `legacy_registration`, and separate registration freshness.

@@ -1186,7 +1186,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         )
     };
     // Scoped futures, not detached tasks: runtime restart drops model startup
-    // and its child cleanup guard before another runtime begins.
+    // and process monitoring before another runtime begins.
     let model_startup = async {
         if let Some(server) = &model_server {
             let mut snapshot = server.models()?;
@@ -1198,11 +1198,19 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
                 warn!(%error, "local models unavailable; node core remains controllable");
                 dashboard.record_startup_issue(eefn::service::StartupIssue::LlamacppStartupFailed);
             }
-            let mut status = dashboard.live.lock().unwrap();
-            // llama.cpp and Ollama are mutually exclusive providers here. Keep
-            // this local snapshot inspectable even while EEF is unreachable.
-            status["models"] = serde_json::json!(server.models()?);
-            status["capabilities"] = serde_json::json!(engine.capabilities());
+            {
+                let mut status = dashboard.live.lock().unwrap();
+                // llama.cpp and Ollama are mutually exclusive providers here. Keep
+                // this local snapshot inspectable even while EEF is unreachable.
+                status["models"] = serde_json::json!(server.models()?);
+                status["capabilities"] = serde_json::json!(engine.capabilities());
+            }
+            if let Err(error) = server.monitor_processes().await {
+                warn!(%error, "local model process failed; explicit restart required");
+                let mut status = dashboard.live.lock().unwrap();
+                status["models"] = serde_json::json!(server.models()?);
+                status["capabilities"] = serde_json::json!(engine.capabilities());
+            }
         }
         std::future::pending::<Result<()>>().await
     };

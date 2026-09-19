@@ -112,10 +112,20 @@ Readiness changes refresh registration on the existing authenticated connection,
 without reconnecting or resetting unchanged capability scheduling counters.
 Saved selections are never removed on failure and no mutation is replayed.
 
-This is group startup state, not continuous health monitoring or measured active
-usage. Independent slot loading, on-demand loading, idle unload and a default LM
-bootstrap remain future work. A process failure after startup is not yet reflected
-in lifecycle metadata; normal inference errors still propagate to the caller.
+After readiness, a runtime-scoped monitor checks owned child processes once per
+second. An observed exit or process-status failure marks the whole group `error`
+and unavailable, withdraws its inference capabilities, and stops its remaining
+owned children. Local status is updated even when the coordinator connection is
+paused or unreachable; connected nodes refresh registration without deliberately
+reconnecting. There is a detection/propagation window, not instantaneous remote
+withdrawal. In-flight requests may fail; they are not automatically replayed.
+The node core stays available and saved selections remain intact. Fix the cause
+and explicitly restart the node to retry; models are not automatically respawned.
+
+This monitors process lifetime, not ongoing HTTP health, model hangs, successful
+inference or measured active usage. Independent slot loading, on-demand loading,
+idle unload and a default LM bootstrap remain future work. Runtime exits are
+reported through model lifecycle `error`, not mislabeled as `startup_issues`.
 Provider discovery and Python/plugin inspection retain their existing bounded
 startup work. Released v0.4.0a3 still waits for GGUF startup before registration;
 these changes are not in its published installers.

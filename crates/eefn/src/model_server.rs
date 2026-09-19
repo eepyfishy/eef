@@ -112,6 +112,52 @@ mod advertisement_tests {
         assert!(server.require_ready().is_err());
     }
 
+    #[tokio::test]
+    async fn missing_owned_process_withdraws_ready_group() {
+        let slot = serde_json::from_value(json!({"model_id":"missing-process"})).unwrap();
+        let server = ModelServer::new(PathBuf::new(), vec![slot]);
+        server.lifecycle.send_replace(ModelLifecycle::Ready);
+        let mut changes = server.subscribe();
+        assert!(server.monitor_processes().await.is_err());
+        assert!(changes.has_changed().unwrap());
+        assert_eq!(*changes.borrow_and_update(), ModelLifecycle::Error);
+        assert!(server.require_ready().is_err());
+        assert_eq!(
+            server.models().unwrap()[0]["model_metadata"]["availability"],
+            "unavailable"
+        );
+        assert!(server.processes.lock().unwrap().is_empty());
+        // No automatic restart/retry and no replacement of a terminal error.
+        server.monitor_processes().await.unwrap();
+        assert_eq!(*changes.borrow(), ModelLifecycle::Error);
+    }
+
+    #[tokio::test]
+    async fn process_monitor_does_not_change_non_ready_states_or_block_stop() {
+        let server = ModelServer::new(PathBuf::new(), vec![]);
+        for state in [
+            ModelLifecycle::Unloaded,
+            ModelLifecycle::Loading,
+            ModelLifecycle::Error,
+        ] {
+            server.lifecycle.send_replace(state);
+            server.monitor_processes().await.unwrap();
+            assert_eq!(*server.subscribe().borrow(), state);
+        }
+        server.lifecycle.send_replace(ModelLifecycle::Ready);
+        tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::join!(server.monitor_processes(), async {
+                sleep(Duration::from_millis(20)).await;
+                server.stop().await;
+            })
+            .0
+            .unwrap();
+        })
+        .await
+        .unwrap();
+        assert_eq!(*server.subscribe().borrow(), ModelLifecycle::Unloaded);
+    }
+
     #[test]
     fn gguf_advertises_compatible_metadata_without_private_paths_or_fake_state() {
         let mut slot: ModelSlot =
@@ -264,12 +310,37 @@ impl ModelServer {
     }
 
     fn check_children(&self) -> Result<()> {
-        for child in self.processes.lock().unwrap().values_mut() {
+        let mut processes = self.processes.lock().unwrap();
+        if processes.len() != self.slots.len() {
+            bail!("model group does not own every configured process");
+        }
+        for child in processes.values_mut() {
             if child.try_wait()?.is_some() {
-                bail!("model process exited during startup");
+                bail!("model process exited");
             }
         }
         Ok(())
+    }
+
+    /// Observe owned process exits after startup, without restarting or replaying
+    /// work. This does not probe ongoing HTTP health or prove inference works.
+    /// The caller owns this future as part of the runtime, never a detached task.
+    pub async fn monitor_processes(&self) -> Result<()> {
+        loop {
+            {
+                let _operation = self.operation.lock().await;
+                if *self.lifecycle.borrow() != ModelLifecycle::Ready {
+                    return Ok(());
+                }
+                if let Err(error) = self.check_children() {
+                    // Withdraw routing before asynchronous sibling cleanup.
+                    self.lifecycle.send_replace(ModelLifecycle::Error);
+                    self.stop_children().await;
+                    return Err(error);
+                }
+            }
+            sleep(Duration::from_secs(1)).await;
+        }
     }
 
     pub fn subscribe(&self) -> watch::Receiver<ModelLifecycle> {
