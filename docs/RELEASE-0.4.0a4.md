@@ -49,3 +49,26 @@ model-download process suites. Their inference backends were synthetic, not
 physical two-PC inference or real interpreter-quality acceptance. Release
 packaging, installer validation and deployment evidence are recorded separately
 when complete; no successful remote upgrade is implied by publishing this tag.
+
+## Optimized-binary validation (2026-09-20)
+
+The version-bumped source passed all 178 locked Rust tests. Optimized alpha.4
+binaries passed these isolated suites:
+
+- Request preview: `request-preview-LmvH36`.
+- Model transfer commands: `model-downloads-AP1Yvb`.
+- Models, jobs, receipts and approval: `model-metadata-9OWTEO`.
+- Nonblocking startup, owned process failure and preview: `model-startup-AFPxu8`.
+- Node commands: `node-commands-q9D1QZ`.
+- Scoped peer discovery: `peer-discovery-GZhwyH`.
+- First-run and browser regression: `first-run-3F5Z2n`.
+
+Formatting and backend/browser dependency checks passed. These process suites
+use isolated configurations and synthetic model services. The new diagnostic
+client also passed five authenticated pings through the existing alpha.2
+coordinator to an existing alpha.3 remote node. That is a connectivity and
+client-compatibility check, not a remote upgrade or inference acceptance test.
+
+The remote node remains on alpha.3: its stable-only feed rejects prereleases,
+and remote process/filesystem deployment is not enabled. An explicit local
+installer upgrade is required; permissions and update feeds were not changed.
