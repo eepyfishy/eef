@@ -1,5 +1,10 @@
 //! Test-only fake llama-server. Never packaged; no model inference or downloads.
-use axum::{Router, http::StatusCode, routing::get};
+use axum::{
+    Json, Router,
+    http::StatusCode,
+    routing::{get, post},
+};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -22,7 +27,14 @@ async fn main() -> anyhow::Result<()> {
     std::fs::write(marker, std::process::id().to_string())?;
     axum::serve(
         listener,
-        Router::new().route(
+        Router::new().route("/v1/chat/completions", post(|Json(request): Json<Value>| async move {
+            let prompt = request["messages"].as_array().and_then(|v|v.last()).and_then(|v|v["content"].as_str());
+            Json(match prompt {
+                Some("fixture-missing") => json!({}),
+                Some("fixture-length") => json!({"choices":[{"message":{"content":"fixture partial"},"finish_reason":"length"}]}),
+                _ => json!({"choices":[{"message":{"content":"fixture only; no real inference"},"finish_reason":"stop"}]}),
+            })
+        })).route(
             "/health",
             get(move || {
                 let ready = ready.clone();

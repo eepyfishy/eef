@@ -67,6 +67,12 @@ rejected. Bounds apply to bytes, not character counts. The future model adapter
 must separately bound HTTP bodies, output tokens, elapsed inference time and
 concurrency **before** collecting output for this validator.
 
+The existing general inference adapters now cap backend JSON responses at 4 MiB
+(including chunked bodies) and expose reported finish metadata; see
+[response semantics](NODE_MODELS.md#inference-response-bounds-development).
+This is separate from the tighter 16 KiB proposal limit and does not connect the
+interpreter or impose its future inference/concurrency budget.
+
 ## Evaluation and remaining integration
 
 Build the test-only `interpretation_fixture` example and run the CPU harness with

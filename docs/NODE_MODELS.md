@@ -94,6 +94,9 @@ GGUF entry. Planning does not download, reserve space or prove model compatibili
 
 ## Model startup (development after v0.4.0a3)
 
+See also the [CPU candidate evaluation](MODEL-CANDIDATE-EVALUATION.md). It does
+not select a default or enable automatic interpretation/bootstrap.
+
 If the configured llama.cpp group fails startup, EEFN stops any partially
 started children it owns, marks that group unavailable for execution and
 continues its deterministic node connection. Saved model selections and backend
@@ -144,3 +147,24 @@ hardware. Raw exception text and file paths are excluded from diagnostics;
 local application logs may contain troubleshooting details. Fix the saved
 configuration and explicitly restart; normal approval is still required for
 remote restart. Successful startup clears the previous attempt's issue codes.
+
+## Inference response bounds (development)
+
+Both Ollama and llama.cpp chat adapters now read at most 4 MiB of backend JSON,
+checking declared length and cumulative streamed chunks before parsing. Their
+existing request timeout also applies while reading the body. Oversized,
+malformed, missing/non-textual completions and provider error objects fail rather
+than becoming an empty successful answer. There is no automatic retry/fallback.
+
+The result retains `content` and adds `finish_reason` plus
+`completion_complete` (`true`, `false`, or `null` when not known). These reflect
+provider reports, not independent semantic validation. A normal stop is complete
+only when the backend's corresponding completion metadata is present; a length
+limit, tool-call finish, filtering or explicit unfinished response is not complete.
+Missing/unknown reason remains unknown. Ordinary text consumers may display
+partial content; future structured interpretation must reject partial/unknown
+completion instead of treating it as an actionable proposal.
+
+This is a response-size boundary, not measured model memory or a complete runtime
+budget. It does not execute tools named in a response, grant any permissions,
+change model selection, or enable the planned interpreter.

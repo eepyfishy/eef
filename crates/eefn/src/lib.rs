@@ -19,6 +19,7 @@ pub mod model_downloads;
 pub mod model_manager;
 pub mod model_manifest;
 pub mod model_metadata;
+mod model_response;
 pub mod model_selection;
 pub mod model_server;
 pub mod network;

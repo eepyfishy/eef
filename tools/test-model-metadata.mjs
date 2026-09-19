@@ -38,7 +38,13 @@ const fake=createServer(async(req,res)=>{
   const payload=JSON.parse(body);requests.push(payload);
   const prompt=payload.messages?.at(-1)?.content;
   if(typeof prompt==='string'&&prompt.startsWith('gated-job-'))await new Promise(resolve=>gates.set(prompt,resolve));
-  return res.end(JSON.stringify({message:{content:'fixture response; not real inference'}}));
+  if(prompt==='response-fixture-missing')return res.end('{}');
+  if(prompt==='response-fixture-length')return res.end(JSON.stringify({message:{content:'partial fixture'},done:true,done_reason:'length'}));
+  if(prompt==='response-fixture-unknown')return res.end(JSON.stringify({message:{content:'older fixture'}}));
+  if(prompt==='response-fixture-oversize'){const body='x'.repeat(4*1024*1024+1);res.setHeader('Content-Length',Buffer.byteLength(body));return res.end(body);}
+  if(prompt==='response-fixture-chunked'){for(let n=0;n<65;n++)res.write('x'.repeat(65536));return res.end();}
+  if(prompt==='response-fixture-stalled'){res.write('{"message":');await new Promise(r=>setTimeout(r,2000));return res.end('{} }');}
+  return res.end(JSON.stringify({message:{content:'fixture response; not real inference'},done:true,done_reason:'stop'}));
  }
  res.writeHead(404);res.end('{}');
 });
@@ -87,6 +93,7 @@ try{
  assert.equal(cli.code,0,cli.err);assert.equal(JSON.parse(cli.out).nodes[0].models.length,2);
  const invoke=params=>json(eef+`/api/node/${id}/invoke`,{capability:'llm.infer',action:'run',params:{model:'fixture-text',prompt:'protocol fixture',...params},timeout:10});
  const reply=await invoke({backend:'ollama'});assert.equal(reply.success,true);assert.equal(requests.length,1);
+ if(!legacyNode){assert.equal(reply.data.completion_complete,true);assert.equal(reply.data.finish_reason,'stop');}
  if(!legacyNode){const wrong=await invoke({backend:'llamacpp'});assert.equal(wrong.success,false);assert.equal(requests.length,1,'wrong backend must not fall back');}
  const status=await json(eef+'/api/status');assert.equal(status.models.length,2);assert(status.models.every(m=>m.model_metadata.schema_version===1));
  if(!legacyNode){
@@ -150,6 +157,17 @@ try{
   const missing=await json(eef+'/api/jobs',{description:'missing role fixture',template:'generate_text',params:{prompt:'must not execute'},constraints:{model_role:'missing',node_id:id}});
   await until(async()=>(await json(eef+'/api/jobs/'+missing.id)).status==='failed','missing role does not fall back');
   assert.equal(requests.length,2,'missing role must not use unrelated model');
+  for(const prompt of ['response-fixture-missing','response-fixture-oversize','response-fixture-chunked']) {
+   assert.equal((await invoke({backend:'ollama',prompt})).success,false,prompt);
+  }
+  const partial=await invoke({backend:'ollama',prompt:'response-fixture-length'});
+  assert.equal(partial.success,true);assert.equal(partial.data.completion_complete,false);assert.equal(partial.data.content,'partial fixture');
+  const unknown=await invoke({backend:'ollama',prompt:'response-fixture-unknown'});
+  assert.equal(unknown.success,true);assert.equal(unknown.data.completion_complete,null);assert.equal(unknown.data.finish_reason,null);
+  const timeoutStart=Date.now(),beforeTimeout=requests.length;
+  assert.equal((await invoke({backend:'ollama',prompt:'response-fixture-stalled',timeout:1})).success,false);
+  assert(Date.now()-timeoutStart<8000,'request timeout covers stalled response bodies');
+  assert.equal(requests.length,beforeTimeout+1,'inference timeout never retries the request');
   assert.equal((await nodeJobs(['list'])).data.jobs.length,0,'coordinator-owner jobs are not node-origin jobs');
   assert.equal((await nodeJobs(['get',job.id],false)).error_code,'job_rejected');
   assert.equal((await nodeJobs(['output',job.id],false)).error_code,'job_rejected');

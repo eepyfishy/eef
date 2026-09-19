@@ -950,12 +950,8 @@ impl NodeEngine {
             }))
             .send()
             .await?
-            .error_for_status()?
-            .json::<Value>()
-            .await?;
-        Ok(
-            json!({"content": response.pointer("/message/content").and_then(Value::as_str).unwrap_or("")}),
-        )
+            .error_for_status()?;
+        crate::model_response::chat(response, crate::model_selection::Backend::Ollama).await
     }
 
     async fn llamacpp(&self, server: &ModelServer, params: &Value) -> Result<Value> {
@@ -1000,14 +996,8 @@ impl NodeEngine {
             }))
             .send()
             .await?
-            .error_for_status()?
-            .json::<Value>()
-            .await?;
-        let content = response
-            .pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
-            .context("llama.cpp returned an unexpected response")?;
-        Ok(json!({"content": content}))
+            .error_for_status()?;
+        crate::model_response::chat(response, crate::model_selection::Backend::Llamacpp).await
     }
 
     async fn node_update(&self, action: &str, params: Value) -> Result<Value> {

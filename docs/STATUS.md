@@ -1,5 +1,23 @@
 # Architecture conformance status
 
+## Unreleased bounded inference response handling
+
+- Ollama and llama.cpp now share bounded chat normalization: 4 MiB backend JSON
+  limit for declared and chunked bodies, rejection of missing/non-text completions
+  and provider errors, plus additive `finish_reason` / `completion_complete`
+  metadata. Missing or unknown completion evidence stays unknown. A valid result
+  never grants tool execution and requests are not automatically retried.
+- Validation on 2026-09-19: 176 Rust tests passed with and without dashboard
+  support. `model-startup-uO7sIk` checked completed/partial/missing llama.cpp fixture
+  responses over the real node connection along with startup/crash regressions.
+  `model-metadata-sn1HSi` checked complete/partial/unknown Ollama fixture responses,
+  missing content, declared/chunked overflow, stalled-body timeout with no replay,
+  and existing model/job/approval behavior. `model-downloads-tW5Y1e` passed transfer
+  regressions. Source boundary, formatting and diff checks passed.
+- Fake backend acceptance only for this increment. No interpreter was enabled,
+  no additional model weights were fetched, and no installed node or release was
+  changed. See [response contract](NODE_MODELS.md#inference-response-bounds-development).
+
 ## Unreleased interpretation contract foundation
 
 - Added a shared typed Rust proposal parser/prompt. Original input is preserved;

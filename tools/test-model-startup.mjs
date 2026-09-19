@@ -64,6 +64,15 @@ try {
  assert.equal((await inventory()).nodes[0].models[0].availability,'available');
  assert((await json(node+'/api/status')).capabilities.includes('llm.infer'));
  assert.equal((await ping()).success,true);
+ // First verify shared bounded response normalization through the real node
+ // command path (the model backend is still only a synthetic fixture).
+ const infer=prompt=>json(eef+`/api/node/${id}/invoke`,{capability:'llm.infer',action:'run',params:{backend:'llamacpp',model:'gated-model',prompt},timeout:5});
+ const completeReply=await infer('fixture-complete');assert.equal(completeReply.success,true);
+ assert.equal(completeReply.data.content,'fixture only; no real inference');
+ assert.equal(completeReply.data.finish_reason,'stop');assert.equal(completeReply.data.completion_complete,true);
+ const partialReply=await infer('fixture-length');assert.equal(partialReply.success,true);
+ assert.equal(partialReply.data.completion_complete,false);assert.equal(partialReply.data.finish_reason,'length');
+ assert.equal((await infer('fixture-missing')).success,false);
  // Actual owned-child exit after readiness must withdraw the whole group and
  // stop its sibling without reconnecting, retrying inference or restarting.
  process.kill(newPid);
