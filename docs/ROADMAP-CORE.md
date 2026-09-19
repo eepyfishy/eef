@@ -117,7 +117,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 1 | Identity + advertised address | Local coordinator connection and different advertised address coexist; rename/address change preserves identity; command config/readback; old configs migrate. | Implemented in development; one-PC command tests passed; physical acceptance pending |
 | 2 | Coordinator advertisements + network view | Authenticated, bounded, fresh node listings and coordinator hints; authorized peer lookup; no automatic trust or claimed cluster election. | Scoped pull discovery, registration metadata and freshness implemented; owner grant/revoke and restart CLI added in development; no direct peer transport claim |
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned metadata/inventory and node selection commands added in development; text/vision routing filters capabilities/state and explicit owner role constraints; route inspection available; automatic role-based planning and new executors remain planned |
-| 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | Planned |
+| 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Planned |
 | 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Planned |
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Planned |
@@ -147,6 +147,12 @@ Install preflight now normalizes GGUF artifact metadata into a versioned contrac
 shared with the installer and reports backend-specific storage/verification
 limits before transfer admission. It does not select a default, perform license
 review, establish runtime compatibility or authorize automatic bootstrap.
+
+The [candidate evaluation](MODEL-CANDIDATE-EVALUATION.md) now records pinned
+artifact verification and real CPU startup/memory/classification measurements.
+The detailed baseline matched 9/12 synthetic cases but failed ambiguity and
+instruction-override cases; no automatic default was approved. Strict model-output
+validation and independent policy boundaries are required before integration.
 
 Minimal load/readiness/error reporting is needed in steps 3-7; do not postpone
 basic execution correctness until step 10. Step 10 adds complete lifecycle

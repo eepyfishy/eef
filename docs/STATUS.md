@@ -1,5 +1,20 @@
 # Architecture conformance status
 
+## Unreleased lightweight-model CPU evaluation
+
+- Added an opt-in bounded CPU benchmark that verifies an existing catalog
+  artifact and runs fixed synthetic classification inputs without executing
+  actions or changing node configuration. It records runtime identity, startup,
+  Windows peak working set, latency and strict output-schema/expected-intent counts.
+- On 2026-09-19 the pinned 491,400,032-byte candidate was downloaded once into
+  ignored `.validation/model-artifacts/` and its SHA-256 verified. Real CPU runs
+  completed in `model-benchmark-MYTDGw` and `model-benchmark-5uqQZo`: baseline
+  4/12 expected classifications, detailed prompt 9/12. No default was approved.
+  See [method, evidence, upstream license references and limits](MODEL-CANDIDATE-EVALUATION.md).
+- This is one-PC runtime feasibility, not physical two-PC acceptance or a
+  security evaluation. Installed nodes, stable update feeds and teacher snapshot
+  remain unchanged. The reusable development model cache uses about 469 MiB.
+
 ## Unreleased post-startup model process monitoring
 
 - A runtime-scoped monitor checks the owned GGUF group once per second after
