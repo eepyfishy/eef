@@ -56,6 +56,16 @@ semantically safe. The test strings were never executed.
 
 ## Decision and next gates
 
+The later `--profile contract` run (`model-benchmark-gmKt3L`) used the richer
+[shared Rust proposal prompt and validator](INTERPRETATION.md), with a 256-token
+output limit. Startup was 881 ms and peak working set 543,375,360 bytes. Six of
+twelve outputs passed the contract, but none matched both the expected intent
+and clarification decision. Some merely repeated template placeholders; other
+outputs had inconsistent clarification/workload fields or invented intent values.
+Accepted proposals still required review and never authorized execution. This
+profile is not the same schema/prompt task as the two simpler profiles above;
+do not compare the counts as a controlled model-quality regression.
+
 **Do not enable this candidate as the automatic interpreter default yet.**
 The runtime is CPU-capable on this PC, but this tiny synthetic set is neither a
 representative accuracy benchmark nor a security evaluation. It establishes a

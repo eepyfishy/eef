@@ -1,5 +1,28 @@
 # Architecture conformance status
 
+## Unreleased interpretation contract foundation
+
+- Added a shared typed Rust proposal parser/prompt. Original input is preserved;
+  version/type/byte/collection limits, mandatory nullable fields, duplicates,
+  unknown fields, capability context and clarification consistency are checked.
+  Every accepted proposal remains untrusted and requires review or clarification;
+  it cannot provide execution authority, origin identity or target/grant fields.
+- This is not integrated into chat, command submission, EEF planning or live
+  interpretation. No model role/default or automatic actions were enabled. The
+  test-only stdin example is not packaged; the CPU harness's `contract` profile
+  uses that native parser rather than duplicating validation in JavaScript.
+- Validation on 2026-09-19: 173 Rust tests passed with and without dashboard
+  support. Process suites passed in `model-startup-BRHv2I`,
+  `model-downloads-YMYajE` and `model-metadata-ITt7MW`. Real CPU contract evaluation
+  in `model-benchmark-gmKt3L` completed: 6/12 outputs were structurally accepted,
+  0/12 matched both expected intent and clarification. All accepted reports
+  retained original text and `execution_authorized: false`. The candidate remains
+  unapproved; schema validation is not semantic accuracy or a safety proof.
+- See [contract and remaining integration](INTERPRETATION.md) and
+  [candidate evaluation](MODEL-CANDIDATE-EVALUATION.md). No additional weights
+  were downloaded for this increment; installed nodes and teacher snapshot stayed
+  unchanged.
+
 ## Unreleased lightweight-model CPU evaluation
 
 - Added an opt-in bounded CPU benchmark that verifies an existing catalog
