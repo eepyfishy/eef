@@ -1,7 +1,7 @@
 # EEF
 
-**0.4.0a5 alpha** (`0.4.0-alpha.5` internally) is an opt-in two-PC testing release, not
-the complete v0.4.0 roadmap. See [alpha release notes](docs/RELEASE-0.4.0a5.md) for
+**0.4.0a6 alpha** (`0.4.0-alpha.6` internally) is an opt-in two-PC testing release, not
+the complete v0.4.0 roadmap. See [alpha release notes](docs/RELEASE-0.4.0a6.md) for
 what works and what is deferred. Automatic-update feeds are paused because no
 stable release is currently published. Older clients may show a feed-check error.
 The [active core roadmap](docs/ROADMAP-CORE.md) prioritizes command-based usability
@@ -10,6 +10,8 @@ authorized local/peer workloads do not change the published alpha's behavior.
 This alpha extends [headless commands, model selection and job recovery](docs/COMMANDS.md).
 Feed-based updates reject prereleases; installing an alpha does not enable alpha auto-updates.
 Alpha.5 adds a separate explicitly approved, artifact-pinned remote update command.
+Alpha.6 fixes uncertain job status during coordinator shutdown and clarifies
+errors when a command needs a newer coordinator.
 The builds are unsigned. Both v0.3.2 installers have unresolved Defender reports
 on a second PC; see [the investigation](docs/ANTIVIRUS.md). A passing local scan
 is not a Microsoft false-positive verdict. Do not bypass antivirus detections.

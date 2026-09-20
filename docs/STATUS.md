@@ -1,5 +1,13 @@
 # Architecture conformance status
 
+## v0.4.0a6 release checkpoint
+
+Alpha.6 packages the shutdown-order and command-response fixes documented below.
+Those checkpoints describe their original pre-release validation, not alpha.6
+availability. See [release notes](RELEASE-0.4.0a6.md) for final artifact and live
+deployment evidence. Automatic-update feeds remain paused; no self-development
+agent, permission expansion or model installation is introduced.
+
 ## Post-alpha.5 interrupted-job shutdown ordering
 
 Live two-PC tests on installed alpha.5 verified successful and failed remote

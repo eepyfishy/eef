@@ -1,6 +1,6 @@
 # Node commands
 
-v0.4.0a5 supports these commands without a browser. Deterministic commands need no LM. Run
+v0.4.0a6 supports these commands without a browser. Deterministic commands need no LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
@@ -711,5 +711,5 @@ node, restarts its coordinator, and checks durable interruption, refusal to
 resume uncertain non-retry-safe work, no replay, ignored late replies and healthy
 subsequent work. It uses no personal configuration, external service or shell
 command. Set `EEF_TEST_BINARY_DIR` to choose binaries (default `target/debug`).
-Published alpha.5 reproduces the shutdown-order failure; the post-alpha.5 source
-fix is required for this regression to pass.
+Published alpha.5 reproduces the shutdown-order failure; alpha.6 includes the
+fix required for this regression to pass.
