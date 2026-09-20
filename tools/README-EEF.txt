@@ -1,6 +1,6 @@
 EEF coordinator for Windows
 
-v0.4.0a4 backend alpha. TWO_PC_TEST.md describes private-network pairing and
+v0.4.0a5 backend alpha. TWO_PC_TEST.md describes private-network pairing and
 safe two-PC checks. Commands: eef.exe diagnostics --json; eef.exe diagnostics
 --node NODE_ID --samples 5 --json; eef.exe invite --address HOST:PORT --json.
 Connection codes are secret. Reports are local only; no automatic analytics upload.
@@ -21,6 +21,8 @@ Use Settings > Restart now to apply saved changes or an installed update.
 This alpha provides saved one-shot jobs, not recurring jobs or safe coordinator
 clustering. Use the node app's Jobs page to review, pause, resume or stop work.
 Interrupted jobs never resume automatically. Already-sent actions may finish.
-Stable update feeds remain on the stable release; alpha testing is opt-in.
+Automatic-update feeds are paused until a stable release is published.
 Feed-based updates reject alpha/beta/RC builds, including automatic updates.
 Use --no-ui to run commands and services without the browser interface.
+eef node update supports one explicitly approved, version/hash/size-pinned
+artifact on alpha.5+ nodes, without changing their automatic-update policy.

@@ -1,5 +1,12 @@
 # Architecture conformance status
 
+## v0.4.0a5 release checkpoint
+
+Alpha.5 includes the explicit-update correction below and a paused-feed response
+that contains no artifact. Both public feeds are withdrawn while all releases
+are prereleases. New clients report `feed_paused`; older clients fail closed.
+See [release notes](RELEASE-0.4.0a5.md) for build and deployment evidence.
+
 ## Unreleased explicit remote update correction
 
 - `eef node update` selects an exact version/HTTPS artifact/hash/size, with
@@ -13,7 +20,7 @@
   can silently opt old nodes into prereleases.
 - The fix is not inside published alpha.4. No published installer, installed
   node, stable manifest or teacher-submission repository is changed by this source
-  increment. See [command and recovery limits](COMMANDS.md#unreleased-explicit-remote-updates).
+  increment. See [command and recovery limits](COMMANDS.md#explicit-remote-updates).
 - Validation checkpoint 2026-09-20: all 183 Rust tests passed with and without
   dashboard support. Tests cover strict one-shot consent, URL/hash/size validation,
   downgrade/pending selection refusal, installation locking, corrupt selectors,

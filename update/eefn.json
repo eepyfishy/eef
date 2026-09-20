@@ -1,5 +1,5 @@
 {
-  "version": "0.3.2",
-  "url": "https://github.com/eepyfishy/eef/releases/download/v0.3.2/eefn-installer.exe",
-  "sha256": "882c5729de69727ac8a43fed6c588fc028e4cae16db6931b7490e718eb27212d"
+  "schema_version": 1,
+  "enabled": false,
+  "reason": "No stable release is currently published. Prereleases require an explicit owner-selected update."
 }

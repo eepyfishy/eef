@@ -36,6 +36,8 @@ pub struct UpdateCheck {
     pub latest_version: String,
     pub update_available: bool,
     pub prerelease_blocked: bool,
+    #[serde(default)]
+    pub feed_paused: bool,
     pub sha256: String,
     pub dist_url: String,
 }
@@ -155,7 +157,29 @@ pub async fn apply_explicit_for<G>(
 }
 
 pub async fn load_manifest(url: &str, timeout: Duration) -> Result<UpdateManifest> {
+    load_feed(url, timeout)
+        .await?
+        .context("stable update feed is paused; no artifact is available")
+}
+
+async fn load_feed(url: &str, timeout: Duration) -> Result<Option<UpdateManifest>> {
     let bytes = fetch(url, timeout, MAX_MANIFEST_BYTES).await?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).context("manifest is not valid JSON")?;
+    if value.get("enabled") == Some(&serde_json::json!(false)) {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PausedFeed {
+            schema_version: u32,
+            enabled: bool,
+            reason: String,
+        }
+        let paused: PausedFeed = serde_json::from_value(value)?;
+        if paused.schema_version != 1 || paused.enabled || paused.reason.len() > 512 {
+            bail!("invalid paused update feed")
+        }
+        return Ok(None);
+    }
     let manifest: UpdateManifest =
         serde_json::from_slice(&bytes).context("manifest is not valid JSON")?;
     if manifest.version.trim().is_empty()
@@ -172,17 +196,28 @@ pub async fn load_manifest(url: &str, timeout: Duration) -> Result<UpdateManifes
     {
         bail!("Update size must be positive and no larger than 512 MiB")
     }
-    Ok(manifest)
+    Ok(Some(manifest))
 }
 
 pub async fn check(url: &str, current_version: &str, timeout: Duration) -> Result<UpdateCheck> {
-    let manifest = load_manifest(url, timeout).await?;
+    let Some(manifest) = load_feed(url, timeout).await? else {
+        return Ok(UpdateCheck {
+            current_version: current_version.into(),
+            latest_version: current_version.into(),
+            update_available: false,
+            prerelease_blocked: false,
+            feed_paused: true,
+            sha256: String::new(),
+            dist_url: String::new(),
+        });
+    };
     let prerelease_blocked = manifest.version.contains('-');
     Ok(UpdateCheck {
         current_version: current_version.into(),
         latest_version: manifest.version.clone(),
         update_available: !prerelease_blocked && is_newer(&manifest.version, current_version),
         prerelease_blocked,
+        feed_paused: false,
         sha256: manifest.sha256,
         dist_url: manifest.url,
     })
@@ -640,6 +675,55 @@ async fn fetch_with_policy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn paused_feeds_have_no_artifact_and_fail_closed_for_old_and_new_installers() {
+        for text in [
+            r#"{"schema_version":1,"enabled":false,"reason":"No stable coordinator release"}"#,
+            r#"{"schema_version":1,"enabled":false,"reason":"No stable node release"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<UpdateManifest>(text).is_err(),
+                "old clients must not find an artifact"
+            );
+            let dir = tempfile::tempdir().unwrap();
+            let feed = dir.path().join("paused.json");
+            fs::write(&feed, text).unwrap();
+            let status = check(
+                feed.to_str().unwrap(),
+                "0.4.0-alpha.4",
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+            assert!(status.feed_paused);
+            assert!(!status.update_available);
+            assert!(status.dist_url.is_empty());
+            for program in ["eef", "eefn"] {
+                assert!(
+                    apply_for(
+                        feed.to_str().unwrap(),
+                        dir.path(),
+                        Duration::from_secs(1),
+                        program
+                    )
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("paused")
+                );
+            }
+            assert!(!dir.path().join("versions").exists());
+            let mut ambiguous: serde_json::Value = serde_json::from_str(text).unwrap();
+            ambiguous["url"] = serde_json::json!("https://example.invalid/never");
+            fs::write(&feed, serde_json::to_vec(&ambiguous).unwrap()).unwrap();
+            assert!(
+                check(feed.to_str().unwrap(), "0.3.1", Duration::from_secs(1))
+                    .await
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn installed_selector_is_bounded_and_fails_closed_on_corruption() {

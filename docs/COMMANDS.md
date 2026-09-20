@@ -1,10 +1,12 @@
 # Node commands
 
-v0.4.0a4 supports these commands without a browser. Deterministic commands need no LM. Run
+v0.4.0a5 supports these commands without a browser. Deterministic commands need no LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
-## Unreleased: explicit remote updates
+## Explicit remote updates
+
+Added in v0.4.0a5.
 
 Automatic and legacy feed updates stay stable-only for both roles. The new
 command selects one exact node artifact without editing its saved feed/policy.
@@ -13,6 +15,11 @@ Feed checks use the manifest's internal version, not GitHub's release checkbox.
 Marking an existing `0.3.2` GitHub release as a prerelease does not by itself
 withdraw that version from an existing feed. Feed publication must be managed
 separately when there is no eligible stable release.
+Both public feeds are currently paused: `schema_version: 1`, `enabled: false`,
+and a reason, with no artifact fields. Alpha.5 checks report `feed_paused: true`
+and no update; applying a paused feed fails before download. Older clients show
+a feed-check error because their required artifact fields are absent. This is
+intentional fail-closed behavior, not permission to change feeds or disable checks.
 
 ```powershell
 eef node update --node NODE_ID --version VERSION --url HTTPS_INSTALLER_URL --sha256 SHA256 --size-bytes BYTES --allow-prerelease --json
@@ -50,8 +57,8 @@ A successful apply needs a separate restart and running-version verification.
 
 Published alpha.4 and older nodes do not implement this action. They still need
 an explicit installer upgrade to a build containing this fix. Installing alpha.4
-alone does not provide these commands. UI changes and publishing/deployment of
-this development increment are separate from the source fix.
+alone does not provide these commands. Use the alpha.5 installer for that
+bootstrap; publishing a release does not automatically upgrade older nodes.
 
 ## Request preview (development)
 
