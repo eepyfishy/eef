@@ -352,8 +352,25 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 .await?
         }
     };
-    let ok = response.status().is_success();
-    let value = eefn::model_manager::bounded_json(response).await?;
+    command_response(response).await
+}
+
+async fn command_response(response: reqwest::Response) -> Result<serde_json::Value> {
+    let status = response.status();
+    let ok = status.is_success();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        bail!(
+            "coordinator returned HTTP 404; this command may require a newer coordinator. No fallback or retry was attempted; inspect node state before retrying"
+        )
+    }
+    let value = eefn::model_manager::bounded_json(response)
+        .await
+        .with_context(|| {
+            format!(
+                "invalid coordinator response (HTTP {}); outcome unconfirmed. No fallback or retry was attempted; inspect node state before retrying",
+                status.as_u16()
+            )
+        })?;
     if !ok {
         bail!(
             "{}",
@@ -363,6 +380,48 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         )
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod command_response_tests {
+    use super::*;
+
+    fn response(status: u16, body: &'static str) -> reqwest::Response {
+        axum::http::Response::builder()
+            .status(status)
+            .body(body)
+            .unwrap()
+            .into()
+    }
+
+    #[tokio::test]
+    async fn old_coordinator_and_invalid_replies_have_actionable_errors() {
+        let old = command_response(response(404, ""))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(old.contains("HTTP 404") && old.contains("newer coordinator"));
+        assert!(old.contains("No fallback or retry"));
+        for status in [200, 500] {
+            let invalid = command_response(response(status, "not JSON"))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(invalid.contains(&format!("HTTP {status}")));
+            assert!(invalid.contains("outcome unconfirmed"));
+        }
+        let denied = command_response(response(403, r#"{"error":"approval required"}"#))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(denied, "approval required");
+        assert_eq!(
+            command_response(response(200, r#"{"success":true}"#))
+                .await
+                .unwrap()["success"],
+            true
+        );
+    }
 }
 
 #[tokio::main]

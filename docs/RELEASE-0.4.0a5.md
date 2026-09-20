@@ -53,7 +53,24 @@ recorded below only after validation; publication alone does not prove deploymen
   was rejected and the new runtime reported the automatic feed paused. This
   used a patched development alpha.4 bootstrap on one PC, not the published
   alpha.4 build and not a two-PC deployment test.
-- Physical remote deployment is pending.
+- Physical two-PC validation: a published alpha.4 node was upgraded with the
+  normal alpha.5 installer after SHA-256 verification, a local Defender scan and
+  backup. Installed inventory, unchanged configuration and startup preference
+  passed. The node reconnected with the same identity, a new runtime and no
+  startup issues; all five authenticated ping samples passed.
+- On that laptop, Defender found no threats in the installer or installed node
+  executable (security intelligence `1.459.295.0`; real-time protection enabled).
+  This does not resolve all historical detections or provide publisher signing.
+- The real node reports the automatic feed paused and rejects missing explicit
+  prerelease consent and same-version updates. Remote restart through existing
+  authenticated node controls also reconnected with a new runtime.
+- The test coordinator remains alpha.2. Its missing newer restart-command route
+  produces an unclear CLI error in alpha.5; it did not restart the node. Use
+  matching coordinator versions for the newer CLI workflow. A clearer error is
+  added in source after this release, not retrofitted into its installers.
+  Positive explicit-update activation was tested in the disposable installation
+  above; the physical laptop used the normal installer bootstrap. No real model
+  inference or complete roadmap acceptance is claimed.
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |

@@ -1,11 +1,27 @@
 # Architecture conformance status
 
+## Post-alpha.5 command compatibility diagnostics
+
+The physical update test found an empty HTTP 404 when a new restart CLI contacts
+an older coordinator without that endpoint. The CLI now explains the possible
+coordinator-version mismatch instead of exposing a JSON EOF error. Malformed
+responses include HTTP status and unconfirmed-outcome guidance. No fallback,
+retry, permission change or new command endpoint is introduced. This source
+change is not in the already-published alpha.5 installers.
+
+Validation: 185 Rust tests passed with and without dashboard support, plus
+formatting and backend/browser boundary checks. A rebuilt headless CLI issued a
+read-only model-list request to the real older coordinator and reported the
+actionable HTTP 404 error with exit status 1, without fallback or retry.
+
 ## v0.4.0a5 release checkpoint
 
 Alpha.5 includes the explicit-update correction below and a paused-feed response
 that contains no artifact. Both public feeds are withdrawn while all releases
 are prereleases. New clients report `feed_paused`; older clients fail closed.
 See [release notes](RELEASE-0.4.0a5.md) for build and deployment evidence.
+The following explicit-update checkpoint describes source validation before
+alpha.5 packaging; its historical "unreleased" label is no longer its availability.
 
 ## Unreleased explicit remote update correction
 
