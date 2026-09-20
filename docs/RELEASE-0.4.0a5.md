@@ -40,14 +40,20 @@ recorded below only after validation; publication alone does not prove deploymen
 ## Release validation
 
 - Packaged source: `aa86109`, clean worktree at build time.
-- 184 Rust tests passed with dashboard support. Optimized explicit-update,
+- 184 Rust tests passed with and without dashboard support. Optimized explicit-update,
   node-command and request-preview process tests passed.
 - Both installers passed fresh-install and repeated quiet-upgrade tests,
   preserving configuration and startup preference. Inventory hashes, previous
   update-selector backup, bundled media imports and minimal llama runtime passed.
 - Local Defender scans passed for build payloads and both final installers:
   engine `1.1.26080.3`, security intelligence `1.459.299.0`.
-- Real downloaded-artifact activation and physical remote deployment are pending.
+- A disposable installation downloaded the published HTTPS node installer,
+  validated the exact artifact, activated it and completed restart handoff.
+  Stable identity and configuration were preserved; missing prerelease consent
+  was rejected and the new runtime reported the automatic feed paused. This
+  used a patched development alpha.4 bootstrap on one PC, not the published
+  alpha.4 build and not a two-PC deployment test.
+- Physical remote deployment is pending.
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
