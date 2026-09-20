@@ -36,3 +36,20 @@ support plus isolated command/permission/reply tests. Those tests used synthetic
 payloads and did not execute a downloaded release. This release adds paused-feed
 coverage. Final build, installer, real-artifact update and deployment results are
 recorded below only after validation; publication alone does not prove deployment.
+
+## Release validation
+
+- Packaged source: `aa86109`, clean worktree at build time.
+- 184 Rust tests passed with dashboard support. Optimized explicit-update,
+  node-command and request-preview process tests passed.
+- Both installers passed fresh-install and repeated quiet-upgrade tests,
+  preserving configuration and startup preference. Inventory hashes, previous
+  update-selector backup, bundled media imports and minimal llama runtime passed.
+- Local Defender scans passed for build payloads and both final installers:
+  engine `1.1.26080.3`, security intelligence `1.459.299.0`.
+- Real downloaded-artifact activation and physical remote deployment are pending.
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `eef-installer.exe` | 17,956,255 | `7abb983795ffcc64080e1857f898b8c0bae80e2e8ab4e195867c0cc901aa4a85` |
+| `eefn-installer.exe` | 109,874,777 | `70f48fee05de3fca864e7c326ef4843b7f9aac8f726e8d99bcd288bfb4552741` |
