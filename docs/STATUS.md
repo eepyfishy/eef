@@ -1,5 +1,33 @@
 # Architecture conformance status
 
+## Unreleased explicit remote update correction
+
+- `eef node update` selects an exact version/HTTPS artifact/hash/size, with
+  per-request prerelease consent. The distinct authenticated node action honors
+  remote-update approval, checks current owner revocation again before activation,
+  preserves stable-only automatic feeds and does not need process/filesystem grants.
+- A shared installation lock prevents concurrent explicit/feed installs; newer
+  pending selections are preserved. Bundle product/version and artifact integrity
+  are verified. `eef node update-status` reads the actual installed selector.
+  Restart remains a separate approved command. No command or automatic fallback
+  can silently opt old nodes into prereleases.
+- The fix is not inside published alpha.4. No published installer, installed
+  node, stable manifest or teacher-submission repository is changed by this source
+  increment. See [command and recovery limits](COMMANDS.md#unreleased-explicit-remote-updates).
+- Validation checkpoint 2026-09-20: all 183 Rust tests passed with and without
+  dashboard support. Tests cover strict one-shot consent, URL/hash/size validation,
+  downgrade/pending selection refusal, installation locking, corrupt selectors,
+  artifact integrity, product/version matching, activation-time revocation and
+  unchanged configuration. Stable-feed tests still reject prereleases even when
+  a manifest includes opt-in fields. Payload fixtures are never executed.
+- `explicit-updates-fx10vh` passed real local command/transport denial and
+  permission revocation with headless binaries; mock coordinator replies cover
+  exact confirmation, lost replies, older nodes and no replay/fallback. No real
+  release download or installation was performed by this process suite.
+  `node-commands-YnBFtD`, formatting, JavaScript syntax and backend/browser
+  dependency checks passed. An earlier dashboard-enabled command run also passed
+  (`explicit-updates-B2o0VA`).
+
 ## v0.4.0a4 release checkpoint
 
 The following development checkpoints through owner-selected request preview

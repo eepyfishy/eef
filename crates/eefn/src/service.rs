@@ -29,6 +29,14 @@ pub struct NodeService {
 }
 
 impl NodeService {
+    pub(crate) fn require_remote_update_permission(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        let guard = self.config_lock.lock().expect("config lock");
+        if self.read_config()?.pointer("/permissions/remote_updates") != Some(&json!(true)) {
+            bail!("remote updates are not allowed; approve updates in the local node app")
+        }
+        Ok(guard)
+    }
+
     pub fn record_startup_issue(&self, issue: StartupIssue) {
         let mut live = self.live.lock().unwrap();
         let mut issues = startup_issues(&live);

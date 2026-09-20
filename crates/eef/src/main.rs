@@ -64,6 +64,27 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum NodeCommand {
+    /// Read the installed update selector without downloading, applying or restarting.
+    UpdateStatus {
+        #[arg(long)]
+        node: String,
+    },
+    /// Install one exact owner-approved release; never changes automatic-update policy.
+    Update {
+        #[arg(long)]
+        node: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        url: String,
+        #[arg(long)]
+        sha256: String,
+        #[arg(long)]
+        size_bytes: u64,
+        /// Explicit consent for this alpha/beta/RC artifact only.
+        #[arg(long)]
+        allow_prerelease: bool,
+    },
     /// Inspect or edit a connected node's model selections with its owner's approval.
     Models {
         #[arg(long)]
@@ -129,6 +150,75 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::Node {
+            command: NodeCommand::UpdateStatus { node },
+        } => {
+            eefn::network::validate_node_id(node)?;
+            client
+                .post(format!("{base}/api/node/{node}/invoke"))
+                .json(
+                    &json!({"capability":"node.update","action":"status","params":{},"timeout":10}),
+                )
+                .send()
+                .await?
+        }
+        Command::Node {
+            command:
+                NodeCommand::Update {
+                    node,
+                    version,
+                    url,
+                    sha256,
+                    size_bytes,
+                    allow_prerelease,
+                },
+        } => {
+            let request = eefn::updater::ExplicitUpdate {
+                schema_version: 1,
+                expected_node_id: node.clone(),
+                request_id: uuid::Uuid::new_v4().to_string(),
+                version: version.clone(),
+                url: url.clone(),
+                sha256: sha256.clone(),
+                size_bytes: *size_bytes,
+                allow_prerelease: *allow_prerelease,
+            };
+            request.validate()?;
+            let mut report = json!({"schema_version":1,"report_type":"remote_explicit_update",
+                "node_id":node,"request_id":request.request_id,"success":false,
+                "outcome_unknown":true,"automatic_policy_changed":false,
+                "note":"No automatic retry. Inspect node update status before retrying; restart is a separate command."});
+            // Distinct action: older nodes reject it. Never fall back to feed changes or shell execution.
+            let exchange = async {
+                let response = client.post(format!("{base}/api/node/{node}/invoke"))
+                    .timeout(std::time::Duration::from_secs(140))
+                    .json(&json!({"capability":"node.update","action":"apply_explicit","params":request,"timeout":130}))
+                    .send().await?;
+                eefn::model_manager::bounded_json(response).await
+            }.await;
+            if let Ok(value) = exchange {
+                if value["success"] == true
+                    && value["data"]["report_type"] == "explicit_update"
+                    && value["data"]["schema_version"] == 1
+                    && value["data"]["success"] == true
+                    && value["data"]["node_id"] == *node
+                    && value["data"]["request_id"] == request.request_id
+                    && value["data"]["applied"]["new_version"] == *version
+                {
+                    report["success"] = json!(true);
+                    report["outcome_unknown"] = json!(false);
+                    report["result"] = value["data"].clone();
+                } else {
+                    report["error_code"] = json!("explicit_update_unconfirmed");
+                    report["error"] = json!(
+                        "Node did not confirm the exact update. It may be unsupported, denied, failed or still running; inspect before retrying."
+                    );
+                }
+            } else {
+                report["error_code"] = json!("explicit_update_unconfirmed");
+            }
+            return Ok(report);
+        }
         Command::Models {
             command:
                 ModelsCommand::Route {

@@ -48,6 +48,112 @@ pub struct UpdateApplied {
     pub install_dir: PathBuf,
 }
 
+/// Read a bounded, validated installed selector; corruption is not "no update".
+pub fn installed_version(install_dir: &Path) -> Result<Option<String>> {
+    let file = match File::open(install_dir.join("current.txt")) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let mut bytes = Vec::new();
+    file.take(1025).read_to_end(&mut bytes)?;
+    if bytes.len() > 1024 {
+        bail!("installed version selector is too large")
+    }
+    let value = String::from_utf8(bytes)?;
+    let version = value.trim();
+    if version.is_empty() {
+        return Ok(None);
+    }
+    validate_version(version)?;
+    Ok(Some(version.into()))
+}
+
+/// One-shot owner selection, never persisted as an automatic-update preference.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExplicitUpdate {
+    pub schema_version: u32,
+    pub expected_node_id: String,
+    pub request_id: String,
+    pub version: String,
+    pub url: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub allow_prerelease: bool,
+}
+
+impl ExplicitUpdate {
+    pub fn validate(&self) -> Result<()> {
+        if self.schema_version != 1 {
+            bail!("unsupported explicit update schema")
+        }
+        crate::network::validate_node_id(&self.expected_node_id)?;
+        if uuid::Uuid::parse_str(&self.request_id)?.to_string() != self.request_id {
+            bail!("update request_id must be a canonical UUID")
+        }
+        validate_version(&self.version)?;
+        if self.version.contains('-') && !self.allow_prerelease {
+            bail!("explicit prerelease update requires allow_prerelease")
+        }
+        validate_https_artifact(&self.url)?;
+        if self.sha256.len() != 64 || !self.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("explicit update requires an exact SHA-256")
+        }
+        if self.size_bytes == 0 || self.size_bytes > MAX_UPDATE_BYTES as u64 {
+            bail!("explicit update size must be positive and at most 512 MiB")
+        }
+        Ok(())
+    }
+}
+
+fn validate_https_artifact(url: &str) -> Result<()> {
+    if url.len() > 4096 || url.chars().any(char::is_control) {
+        bail!("invalid update URL")
+    }
+    let parsed = reqwest::Url::parse(url)?;
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.fragment().is_some()
+    {
+        bail!("explicit update requires HTTPS without credentials or a fragment")
+    }
+    Ok(())
+}
+
+pub async fn apply_explicit_for<G>(
+    request: &ExplicitUpdate,
+    install_dir: impl AsRef<Path>,
+    current_version: &str,
+    timeout: Duration,
+    program: &str,
+    authorize: impl Fn() -> Result<G>,
+) -> Result<UpdateApplied> {
+    request.validate()?;
+    if !is_newer(&request.version, current_version) {
+        bail!("explicit update must be newer than the running version")
+    }
+    drop(authorize()?);
+    let manifest = UpdateManifest {
+        version: request.version.clone(),
+        url: request.url.clone(),
+        sha256: request.sha256.clone(),
+        size_bytes: Some(request.size_bytes),
+    };
+    install_manifest(
+        &manifest,
+        install_dir.as_ref(),
+        timeout,
+        program,
+        Some(current_version),
+        true,
+        authorize,
+    )
+    .await
+}
+
 pub async fn load_manifest(url: &str, timeout: Duration) -> Result<UpdateManifest> {
     let bytes = fetch(url, timeout, MAX_MANIFEST_BYTES).await?;
     let manifest: UpdateManifest =
@@ -96,20 +202,59 @@ pub async fn apply_for(
     timeout: Duration,
     program: &str,
 ) -> Result<UpdateApplied> {
+    let manifest = load_manifest(url, timeout.min(Duration::from_secs(30))).await?;
+    validate_version(&manifest.version)?;
+    // Recheck the actual manifest being installed, not a previous check result.
+    // Automatic and legacy feed callers can never opt into prereleases.
+    if manifest.version.contains('-') {
+        bail!(
+            "prerelease updates are blocked on feeds; use an explicit update command or installer"
+        )
+    }
+    install_manifest(
+        &manifest,
+        install_dir.as_ref(),
+        timeout,
+        program,
+        None,
+        false,
+        || Ok(()),
+    )
+    .await
+}
+
+async fn install_manifest<G>(
+    manifest: &UpdateManifest,
+    install_dir: &Path,
+    timeout: Duration,
+    program: &str,
+    current_version: Option<&str>,
+    https_only: bool,
+    authorize: impl Fn() -> Result<G>,
+) -> Result<UpdateApplied> {
     validate_program(program)?;
     let install = install_dir
-        .as_ref()
         .canonicalize()
         .context("install directory does not exist")?;
     if !install.is_dir() {
         bail!("install directory is not a directory")
     }
-    let manifest = load_manifest(url, timeout.min(Duration::from_secs(30))).await?;
-    validate_version(&manifest.version)?;
-    // Recheck the actual manifest being installed, not a previous check result.
-    // Alpha/beta/RC builds are explicit installer choices, never feed updates.
-    if manifest.version.contains('-') {
-        bail!("prerelease updates are blocked; use an explicitly selected prerelease installer")
+    // Serialize explicit and automatic installers, including separate processes.
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(install.join(".update.lock"))?;
+    fs2::FileExt::try_lock_exclusive(&lock).context("another update is in progress")?;
+    let selected = installed_version(&install)?;
+    if let Some(current) = current_version {
+        if selected
+            .as_deref()
+            .is_some_and(|selected| selected != current)
+        {
+            bail!("an installed update is pending; restart and inspect before updating again")
+        }
     }
     let versions = install.join("versions");
     fs::create_dir_all(&versions)?;
@@ -117,11 +262,16 @@ pub async fn apply_for(
     if destination.exists() {
         bail!("this update version is already present; existing installed files were preserved")
     }
+    if let Some(selected) = selected.as_deref() {
+        if !is_newer(&manifest.version, selected) {
+            bail!("update cannot replace an equal or newer installed selection")
+        }
+    }
     let limit = manifest
         .size_bytes
         .map(|size| size as usize)
         .unwrap_or(MAX_UPDATE_BYTES);
-    let bytes = fetch(&manifest.url, timeout, limit).await?;
+    let bytes = fetch_with_policy(&manifest.url, timeout, limit, https_only).await?;
     if manifest
         .size_bytes
         .is_some_and(|size| size != bytes.len() as u64)
@@ -139,13 +289,30 @@ pub async fn apply_for(
     if !contains_binary(staging.path(), program) {
         bail!("update archive does not contain the {program} executable");
     }
+    if current_version.is_some() {
+        let binary = find_binary(staging.path(), program).context("missing update executable")?;
+        let metadata_path = binary
+            .parent()
+            .context("missing update directory")?
+            .join("bundle.json");
+        let mut metadata = Vec::new();
+        File::open(metadata_path)?
+            .take(65537)
+            .read_to_end(&mut metadata)?;
+        if metadata.len() > 65536 {
+            bail!("update bundle metadata is too large")
+        }
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata)?;
+        if metadata["name"] != program || metadata["version"] != manifest.version {
+            bail!("update bundle product/version does not match the explicit selection")
+        }
+    }
+    // A revoked grant while downloading must not select the staged update.
+    let _authorization_guard = authorize()?;
     fs::rename(staging.path(), &destination)?;
 
     let current_path = install.join("current.txt");
-    let previous = fs::read_to_string(&current_path)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
+    let previous = selected;
     let next_path = install.join("current.txt.next");
     fs::write(&next_path, format!("{}\n", manifest.version))?;
     fs::rename(&next_path, &current_path).or_else(|_| {
@@ -157,7 +324,7 @@ pub async fn apply_for(
         previous.clone().unwrap_or_default(),
     )?;
     Ok(UpdateApplied {
-        new_version: manifest.version,
+        new_version: manifest.version.clone(),
         previous_version: previous,
         restart: true,
         install_dir: install,
@@ -401,7 +568,19 @@ fn contains_binary(root: &Path, program: &str) -> bool {
 }
 
 async fn fetch(url: &str, timeout: Duration, limit: usize) -> Result<Vec<u8>> {
+    fetch_with_policy(url, timeout, limit, false).await
+}
+
+async fn fetch_with_policy(
+    url: &str,
+    timeout: Duration,
+    limit: usize,
+    https_only: bool,
+) -> Result<Vec<u8>> {
     use tokio::io::AsyncReadExt;
+    if https_only {
+        validate_https_artifact(url)?;
+    }
     if let Some(path) = url
         .strip_prefix("file://")
         .or_else(|| Path::new(url).is_file().then_some(url))
@@ -417,7 +596,23 @@ async fn fetch(url: &str, timeout: Duration, limit: usize) -> Result<Vec<u8>> {
         }
         return Ok(bytes);
     }
-    let mut response = reqwest::Client::new()
+    let client = if https_only {
+        reqwest::Client::builder()
+            .https_only(true)
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() >= 5
+                    || validate_https_artifact(attempt.url().as_str()).is_err()
+                {
+                    attempt.error("unsafe update redirect")
+                } else {
+                    attempt.follow()
+                }
+            }))
+            .build()?
+    } else {
+        reqwest::Client::new()
+    };
+    let mut response = client
         .get(url)
         .timeout(timeout)
         .send()
@@ -445,6 +640,297 @@ async fn fetch(url: &str, timeout: Duration, limit: usize) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_selector_is_bounded_and_fails_closed_on_corruption() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(installed_version(dir.path()).unwrap(), None);
+        let path = dir.path().join("current.txt");
+        fs::write(&path, "0.4.0-alpha.5\n").unwrap();
+        assert_eq!(
+            installed_version(dir.path()).unwrap().as_deref(),
+            Some("0.4.0-alpha.5")
+        );
+        for bytes in [b"../invalid".to_vec(), vec![b'a'; 1025], vec![255]] {
+            fs::write(&path, &bytes).unwrap();
+            assert!(installed_version(dir.path()).is_err());
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+    }
+
+    fn explicit_request() -> ExplicitUpdate {
+        ExplicitUpdate {
+            schema_version: 1,
+            expected_node_id: "fixture-node".into(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            version: "0.4.0-alpha.5".into(),
+            url: "https://example.invalid/node.exe".into(),
+            sha256: "a".repeat(64),
+            size_bytes: 123,
+            allow_prerelease: true,
+        }
+    }
+
+    #[test]
+    fn explicit_request_requires_exact_bounded_selection_and_one_shot_consent() {
+        let request = explicit_request();
+        request.validate().unwrap();
+        let mut bad = request.clone();
+        bad.allow_prerelease = false;
+        assert!(bad.validate().is_err());
+        bad.version = "0.4.0".into();
+        bad.validate().unwrap();
+        for url in [
+            "http://example.org/a",
+            "file:///a",
+            "https://user:password@example.org/a",
+            "https://example.org/a#fragment",
+        ] {
+            bad = request.clone();
+            bad.url = url.into();
+            assert!(bad.validate().is_err());
+        }
+        for bytes in [0, MAX_UPDATE_BYTES as u64 + 1] {
+            bad = request.clone();
+            bad.size_bytes = bytes;
+            assert!(bad.validate().is_err());
+        }
+        bad = request.clone();
+        bad.sha256 = "x".repeat(64);
+        assert!(bad.validate().is_err());
+        bad = request.clone();
+        bad.schema_version = 2;
+        assert!(bad.validate().is_err());
+        bad = request.clone();
+        bad.request_id = "not-a-uuid".into();
+        assert!(bad.validate().is_err());
+        let mut value = serde_json::to_value(request).unwrap();
+        value["automatic_policy"] = serde_json::json!("alpha");
+        assert!(serde_json::from_value::<ExplicitUpdate>(value).is_err());
+    }
+
+    #[tokio::test]
+    async fn explicit_update_rejects_no_consent_downgrade_and_denied_authority_before_io() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut request = explicit_request();
+        for version in ["0.4.0-alpha.5", "0.4.0", "1.0.0"] {
+            assert!(
+                apply_explicit_for(
+                    &request,
+                    dir.path(),
+                    version,
+                    Duration::from_secs(1),
+                    "eefn",
+                    || Ok(())
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("newer")
+            );
+        }
+        assert!(
+            apply_explicit_for(
+                &request,
+                dir.path(),
+                "0.4.0-alpha.4",
+                Duration::from_secs(1),
+                "eefn",
+                || -> Result<()> { anyhow::bail!("revoked") }
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("revoked")
+        );
+        request.allow_prerelease = false;
+        assert!(
+            apply_explicit_for(
+                &request,
+                dir.path(),
+                "0.4.0-alpha.4",
+                Duration::from_secs(1),
+                "eefn",
+                || Ok(())
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("allow_prerelease")
+        );
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn explicit_install_core_checks_artifact_authority_lock_and_preserves_feed() {
+        use std::io::Write;
+        for program in ["eef", "eefn"] {
+            let dir = tempfile::tempdir().unwrap();
+            let version = "0.4.0-alpha.5";
+            let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+            zip.start_file(
+                format!("{program}.exe"),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zip.write_all(b"fixture only, never executed").unwrap();
+            zip.start_file("bundle.json", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(
+                &serde_json::to_vec(&serde_json::json!({"name":program,"version":version}))
+                    .unwrap(),
+            )
+            .unwrap();
+            let bytes = zip.finish().unwrap().into_inner();
+            let artifact = dir.path().join("artifact.zip");
+            fs::write(&artifact, &bytes).unwrap();
+            let manifest = UpdateManifest {
+                version: version.into(),
+                url: artifact.to_string_lossy().into(),
+                sha256: hex::encode(Sha256::digest(&bytes)),
+                size_bytes: Some(bytes.len() as u64),
+            };
+            let current = "0.4.0-alpha.4";
+            fs::write(dir.path().join("current.txt"), current).unwrap();
+            fs::write(
+                dir.path().join("config.json"),
+                b"owner stable-only feed fixture",
+            )
+            .unwrap();
+            let assert_unchanged = || {
+                assert_eq!(
+                    fs::read_to_string(dir.path().join("current.txt")).unwrap(),
+                    current
+                );
+                assert!(!dir.path().join("versions").join(version).exists());
+            };
+            let mut bad = manifest.clone();
+            bad.sha256 = "0".repeat(64);
+            assert!(
+                install_manifest(
+                    &bad,
+                    dir.path(),
+                    Duration::from_secs(1),
+                    program,
+                    Some(current),
+                    false,
+                    || Ok(())
+                )
+                .await
+                .is_err()
+            );
+            assert_unchanged();
+            bad = manifest.clone();
+            bad.size_bytes = Some(bytes.len() as u64 + 1);
+            assert!(
+                install_manifest(
+                    &bad,
+                    dir.path(),
+                    Duration::from_secs(1),
+                    program,
+                    Some(current),
+                    false,
+                    || Ok(())
+                )
+                .await
+                .is_err()
+            );
+            bad = manifest.clone();
+            bad.version = "0.4.0-alpha.6".into();
+            assert!(
+                install_manifest(
+                    &bad,
+                    dir.path(),
+                    Duration::from_secs(1),
+                    program,
+                    Some(current),
+                    false,
+                    || Ok(())
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("product/version")
+            );
+            assert!(
+                install_manifest(
+                    &manifest,
+                    dir.path(),
+                    Duration::from_secs(1),
+                    program,
+                    Some(current),
+                    false,
+                    || -> Result<()> { bail!("revoked after download") }
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("revoked")
+            );
+            assert_unchanged();
+            let lock = File::options()
+                .read(true)
+                .write(true)
+                .open(dir.path().join(".update.lock"))
+                .unwrap();
+            fs2::FileExt::try_lock_exclusive(&lock).unwrap();
+            assert!(
+                install_manifest(
+                    &manifest,
+                    dir.path(),
+                    Duration::from_secs(1),
+                    program,
+                    Some(current),
+                    false,
+                    || Ok(())
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("in progress")
+            );
+            drop(lock);
+            let applied = install_manifest(
+                &manifest,
+                dir.path(),
+                Duration::from_secs(1),
+                program,
+                Some(current),
+                false,
+                || Ok(()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(applied.new_version, version);
+            assert_eq!(
+                fs::read_to_string(dir.path().join("previous.txt")).unwrap(),
+                current
+            );
+            assert_eq!(
+                fs::read(dir.path().join("config.json")).unwrap(),
+                b"owner stable-only feed fixture"
+            );
+            assert!(
+                install_manifest(
+                    &manifest,
+                    dir.path(),
+                    Duration::from_secs(1),
+                    program,
+                    Some(current),
+                    false,
+                    || Ok(())
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("pending")
+            );
+            assert_eq!(
+                fs::read_to_string(dir.path().join("current.txt")).unwrap(),
+                format!("{version}\n")
+            );
+        }
+    }
 
     #[tokio::test]
     async fn fetch_limits_local_declared_and_chunked_content() {
@@ -594,7 +1080,8 @@ mod tests {
         let feed = dir.path().join("feed.json");
         let save = |version: &str| {
             fs::write(&feed, serde_json::to_vec(&serde_json::json!({
-            "version":version,"url":"http://127.0.0.1:1/must-not-download","sha256":"0".repeat(64)
+            "version":version,"url":"http://127.0.0.1:1/must-not-download","sha256":"0".repeat(64),
+            "allow_prerelease":true,"manual_only":true
         })).unwrap()).unwrap()
         };
         for program in ["eef", "eefn"] {

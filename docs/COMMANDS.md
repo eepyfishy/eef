@@ -4,6 +4,55 @@ v0.4.0a4 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Unreleased: explicit remote updates
+
+Automatic and legacy feed updates stay stable-only for both roles. The new
+command selects one exact node artifact without editing its saved feed/policy.
+
+Feed checks use the manifest's internal version, not GitHub's release checkbox.
+Marking an existing `0.3.2` GitHub release as a prerelease does not by itself
+withdraw that version from an existing feed. Feed publication must be managed
+separately when there is no eligible stable release.
+
+```powershell
+eef node update --node NODE_ID --version VERSION --url HTTPS_INSTALLER_URL --sha256 SHA256 --size-bytes BYTES --allow-prerelease --json
+eef node update-status --node NODE_ID --json
+eef node restart --node NODE_ID --wait-seconds 60 --json
+```
+
+Use the internal version and exact byte count/hash of the release's EEFN
+installer. `--allow-prerelease` is required for that particular alpha/beta/RC;
+it is not a subscription or saved preference. Stable artifacts do not need the
+flag. No publisher, model or release URL is hardcoded. Choose trusted artifacts:
+the hash binds the download to your selection, not to a verified publisher.
+
+The node must have **Remote updates** enabled in its applied policy and current
+saved configuration. Disabling it takes effect for explicit update admission
+and is checked again under the configuration lock immediately before activation.
+General filesystem/process access is not needed. Restart is separate and still
+requires its own management approval; applying an artifact never restarts Windows.
+
+The backend uses `node.update/apply_explicit` with a strict `schema_version: 1`
+request containing `expected_node_id`, canonical UUID `request_id`, `version`,
+`url`, `sha256`, `size_bytes`, and `allow_prerelease`. Only credential-free HTTPS
+URLs/redirects are accepted. Downloads have a 512 MiB ceiling, exact size/hash
+verification, and bundle product/version checks. New versions must advance the
+running version; an already-pending selection is not silently replaced. Explicit
+and feed installers share a nonblocking installation lock. Feed callers cannot
+inherit the explicit opt-in, including from a manifest field.
+
+The CLI sends once and checks target, request ID and installed-version confirmation.
+Timeouts, lost replies, rejection and unexpected responses are reported conservatively
+as unconfirmed; there is no replay, shell fallback or feed replacement. Requests
+have no durable receipt/deduplication promise. Inspect `update-status` before
+retrying: it reads the actual version selector, not a cached dashboard status.
+A successful apply needs a separate restart and running-version verification.
+
+Published alpha.4 and older nodes do not implement this action. They still need
+an explicit installer upgrade to a build containing this fix. Installing alpha.4
+alone does not provide these commands. UI changes and publishing/deployment of
+this development increment are separate from the source fix.
+
 ## Request preview (development)
 
 Added in v0.4.0a4; requires an explicitly selected model. It is not available in
