@@ -1,5 +1,32 @@
 # Architecture conformance status
 
+## Post-alpha.5 interrupted-job shutdown ordering
+
+Live two-PC tests on installed alpha.5 verified successful and failed remote
+read jobs, bounded safe retries, subsequent healthy work, and persistence of
+full stored job results across coordinator restart without redispatch.
+
+A separate in-flight process test exposed a shutdown race: the gateway closed
+before the job engine checkpointed interruption, so its synthetic "node gateway
+stopped" response could mark an uncertain remote action as failed. The action
+was not retried, but its state was misleading. Shutdown now interrupts and
+drains job runners before stopping the gateway. This does not cancel remote
+effects or establish exactly-once execution.
+
+`tools/test-job-shutdown.mjs` reproduces the problem with the published alpha.5
+binaries using an isolated held HTTP request, without shell commands or personal
+settings. The rebuilt headless source passes interruption, unsafe-resume refusal,
+no replay, late-response isolation and subsequent healthy-work checks. The
+installed alpha.5 applications and published installers are unchanged; the fix
+requires a future build. Private live-test records remain outside the repository.
+
+Validation: 185 Rust tests passed with and without dashboard support. The new
+process regression failed against the published alpha.5 binaries and passed
+four consecutive times against rebuilt headless binaries. Existing node-command
+and explicit-update suites, formatting and backend/browser boundary checks passed.
+Live test histories were removed only after their evidence was saved; the real
+network remains on alpha.5 with no active test jobs or changed permissions.
+
 ## Post-alpha.5 command compatibility diagnostics
 
 The physical update test found an empty HTTP 404 when a new restart CLI contacts

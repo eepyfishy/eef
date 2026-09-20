@@ -598,13 +598,16 @@ impl Runtime {
             return;
         }
         self.brain.stop().await;
-        self.node_server.stop().await;
         for task in self.background.lock().await.drain(..) {
             task.abort();
             let _ = task.await;
         }
         self.submissions.lock().await.shutdown().await;
+        // Checkpoint in-flight jobs as interrupted before closing their transport.
+        // Otherwise gateway shutdown can win the race and persist "failed" for
+        // a remote action whose real outcome is unknown (and may still finish).
         self.engine.shutdown().await;
+        self.node_server.stop().await;
         self.adapters.shutdown().await;
         self.bus.publish("runtime.stopped", json!({})).await;
     }

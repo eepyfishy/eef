@@ -705,3 +705,11 @@ with isolated config, no model and no browser: offline/headless operation, stabl
 IDs, address separation, coordinator metadata, saved/applied state, permission
 preservation and invalid address/target/Origin rejection. It is not a physical
 second-PC or peer-connectivity test.
+
+`node tools/test-job-shutdown.mjs` holds a loopback HTTP request from an isolated
+node, restarts its coordinator, and checks durable interruption, refusal to
+resume uncertain non-retry-safe work, no replay, ignored late replies and healthy
+subsequent work. It uses no personal configuration, external service or shell
+command. Set `EEF_TEST_BINARY_DIR` to choose binaries (default `target/debug`).
+Published alpha.5 reproduces the shutdown-order failure; the post-alpha.5 source
+fix is required for this regression to pass.
