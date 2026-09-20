@@ -72,3 +72,31 @@ client-compatibility check, not a remote upgrade or inference acceptance test.
 The remote node remains on alpha.3: its stable-only feed rejects prereleases,
 and remote process/filesystem deployment is not enabled. An explicit local
 installer upgrade is required; permissions and update feeds were not changed.
+
+## Final build evidence
+
+Final packages were built from clean source
+`101881c9d79bc22b355da3d748c815a6c524344a`. Subsequent release-tag changes record
+validation evidence only; the packaged revision is in `provenance.json`.
+All 178 Rust tests also passed with dashboard features disabled after the
+version bump. The final embedded Python environment contains 20 distributions;
+all 18 applicable dependency requirements resolved within that bundle, and
+the media import check passed.
+
+Local Defender scans passed for executables, runtime archives, unpacked final
+bundle and both final installers with engine `1.1.26080.3`, definitions
+`1.459.290.0`, real-time protection enabled. Both installers are `NotSigned`.
+These results are not Microsoft clearance or a second-PC download verdict.
+
+| Installer | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `eef-installer.exe` | 17,933,275 | `fc52adb9406bf15e230c9c7dbef7d831d655dba6b6fc93581399b2a3f77e14cf` |
+| `eefn-installer.exe` | 109,852,658 | `5bbf3269e09a6b6ad58a53b4f8c07be05c02d2fd8c8abd1108e4920b9802222f` |
+
+Final scan reports are retained locally in `.validation/v0.4.0-alpha.4`.
+Both final installers passed isolated fresh installation and repeated upgrades,
+configuration/startup preservation, explicit startup removal, stale version
+selector backup, installed file inventory checks and executable version checks.
+Bundled Python imports and the minimal llama.cpp runtime version check passed.
+Evidence: `.validation/install-test-944b5e0b0520433694008f59d2543e2b`.
+These tests did not alter either existing personal installation.
