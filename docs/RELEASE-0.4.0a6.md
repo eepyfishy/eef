@@ -72,9 +72,31 @@ definitions before publication. No exclusions or protection changes were made.
 | `eef-installer.exe` | 17957721 | `91ece1f01041851db0bfd6bb393dda92cab33a45d2335a8208969f06f1085471` |
 | `eefn-installer.exe` | 109874577 | `6dbac06542640670118d5ee056a02df8b9646073dbdbeb1ee9039e09a772cb84` |
 
-Publication is not deployment. Remote alpha.6 update acceptance will be recorded
-separately after testing the published, exact-artifact command. Automatic feeds
-remain paused; this release requires explicit installation/selection.
+### Physical explicit-update acceptance (2026-09-21)
+
+After publication, GitHub reported exactly the two expected assets with matching
+byte counts and SHA-256 digests. An existing owner-approved alpha.5 node was
+updated using the installed coordinator's `node update` command, selecting the
+published EEFN installer, exact hash/size and one-shot prerelease consent. One
+request was sent, with no retry, shell installation fallback or feed edits.
+
+The node confirmed alpha.6 was staged while alpha.5 was still running. Its staged
+executable matched the build hash and passed a separate on-node Defender scan
+(engine `1.1.26080.3`, definitions `1.459.311.0`) before the separately approved
+restart. It reconnected as alpha.6 with the same stable node identity and a new
+runtime ID, no pending restart or startup issues, and unchanged configuration and
+permissions. All five version-matched network probes passed. Both live update
+checks still reported paused feeds and no available update. No model was installed.
+
+With both roles now on alpha.6, the physical in-flight interruption and durable-
+job persistence regressions were repeated and both passed again. Their test-owned
+terminal records were removed only after evidence was saved; no test jobs remain.
+
+The manual Defender check above is validation performed for this deployment, not
+a newly implemented updater feature. The physical test does not establish
+rollback, interrupted-download recovery, durable update receipts or exactly-once
+installation. Publication is not automatic deployment: feeds remain paused and
+this release requires explicit installation/selection.
 
 Builds remain unsigned. Defender scan success is not Microsoft clearance and
 does not resolve every historical false-positive report. Do not bypass antivirus.

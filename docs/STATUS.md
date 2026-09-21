@@ -15,6 +15,16 @@ existing alpha.5 node: interrupted checkpoint, unsafe-resume refusal, no observe
 replay, and no late-response state change. The historical pre-release notes below
 are retained as the validation sequence, not the current deployment state.
 
+The release is published as a prerelease with two hash-verified installer assets.
+The physical node was then updated from alpha.5 to alpha.6 through one exact-
+artifact CLI request and a separate approved restart. Its staged binary passed
+an on-node Defender scan, stable identity/configuration/permissions were preserved,
+and all five version-matched probes passed. Both live automatic feeds remain
+paused. This validates a successful explicit update, not crash-safe update
+receipts, rollback or model workloads.
+The physical interruption and durable-job persistence regressions also passed
+again with both roles on alpha.6; test-owned history was saved and then removed.
+
 ## Post-alpha.5 interrupted-job shutdown ordering
 
 Live two-PC tests on installed alpha.5 verified successful and failed remote
