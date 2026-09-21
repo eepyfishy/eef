@@ -8,6 +8,13 @@ availability. See [release notes](RELEASE-0.4.0a6.md) for final artifact and liv
 deployment evidence. Automatic-update feeds remain paused; no self-development
 agent, permission expansion or model installation is introduced.
 
+The alpha.6 optimized regressions and both installer validation suites passed.
+The local coordinator is upgraded with configuration, database and startup choice
+preserved. The physical two-PC in-flight interruption test now passes against an
+existing alpha.5 node: interrupted checkpoint, unsafe-resume refusal, no observed
+replay, and no late-response state change. The historical pre-release notes below
+are retained as the validation sequence, not the current deployment state.
+
 ## Post-alpha.5 interrupted-job shutdown ordering
 
 Live two-PC tests on installed alpha.5 verified successful and failed remote
