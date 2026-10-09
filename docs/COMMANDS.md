@@ -408,6 +408,16 @@ this node." This existing permission also permits remote settings changes; the
 command cannot enable it itself. Denial returns `approval_required` with exit 1
 and sends no restart. Restarting can interrupt active work; use an idle node.
 
+Unreleased after alpha.6: updated nodes add `control_schema_version:1`,
+`remote_allowed`, `runtime_id` and `connection_state` to existing
+`node.configure/status`. EEF uses reserved status capacity for restart approval,
+runtime inspection and completion polling. Model-work saturation alone therefore
+does not block this workflow. The node checks approval again when applying restart.
+An explicitly rejected full control pool reports `node_busy`/`not_started`, without
+retry. Legacy same-node status replies without the schema retain read-only
+get/diagnostics compatibility; malformed versioned replies and missing transport
+replies do not trigger fallback or restart.
+
 The default wait is 30 seconds (0-60 supported). Results carry an operation ID,
 stable node ID, prior/new runtime IDs, `restart_requested`, `acknowledged`,
 `completed` and `outcome_unknown`. With a nonzero wait, success means a connected
@@ -634,9 +644,10 @@ futures. The reserved operations are `system.ping` and `node.configure` actions
 `status`/`restart`. This changes admission only: restart still needs the normal
 owner approval, and every admitted request still passes the engine's permissions.
 Model installs/updates and other management actions use the work allowance.
-The reserve is per wire request, not an entire multi-stage CLI workflow: remote
-restart's existing configuration/diagnostic preflight and model controls still
-use work capacity. A received reply may still occupy its request slot briefly.
+The reserve is per wire request, not an unbounded workflow queue. Updated EEF/node
+restart checks and polling use status capacity throughout; legacy get/diagnostics
+compatibility and model controls use work capacity. A received reply may still
+occupy its request slot briefly.
 
 Owner configuration saves (or already-approved remote configuration saves) validate
 the limits before writing. Apply changes by restarting the node. Status/diagnostics

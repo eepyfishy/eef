@@ -22,6 +22,12 @@ pub async fn restart(server: &eefn::NodeServer, request: RestartRequest) -> Resu
 #[async_trait::async_trait]
 trait NodeControl: Sync {
     async fn call(&self, id: &str, action: &str, wait: Duration) -> Result<Value>;
+    async fn management_status(&self, id: &str) -> Result<Value> {
+        self.call(id, "get", Duration::from_secs(2)).await
+    }
+    async fn runtime_status(&self, id: &str) -> Result<Value> {
+        self.call(id, "diagnostics", Duration::from_secs(2)).await
+    }
     async fn model_command(
         &self,
         _request: &eefn::model_selection::ModelCommandRequest,
@@ -31,6 +37,24 @@ trait NodeControl: Sync {
 }
 #[async_trait::async_trait]
 impl NodeControl for eefn::NodeServer {
+    async fn management_status(&self, id: &str) -> Result<Value> {
+        let status = self.call(id, "status", Duration::from_secs(2)).await?;
+        if status["success"] == false || control_status(&status, id) {
+            return Ok(status);
+        }
+        require_legacy_status(&status, id)?;
+        // Older nodes lack the new status contract. Read-only compatibility;
+        // never fallback on transport failure or a known capacity rejection.
+        self.call(id, "get", Duration::from_secs(2)).await
+    }
+    async fn runtime_status(&self, id: &str) -> Result<Value> {
+        let status = self.call(id, "status", Duration::from_secs(2)).await?;
+        if status["success"] == false || control_status(&status, id) {
+            return Ok(status);
+        }
+        require_legacy_status(&status, id)?;
+        self.call(id, "diagnostics", Duration::from_secs(2)).await
+    }
     async fn model_command(
         &self,
         request: &eefn::model_selection::ModelCommandRequest,
@@ -166,7 +190,15 @@ async fn restart_on(server: &impl NodeControl, request: RestartRequest) -> Resul
     let mut result = json!({"schema_version":1,"success":false,"operation_id":uuid::Uuid::new_v4().to_string(),
         "node_id":id,"restart_requested":false,"acknowledged":false,"completed":false,
         "outcome_unknown":false});
-    let permitted = server.call(id, "get", Duration::from_secs(2)).await?;
+    let permitted = server.management_status(id).await?;
+    if not_started_busy(&permitted) {
+        result["error_code"] = json!("node_busy");
+        result["not_started"] = json!(true);
+        result["note"] = json!(
+            "Node control capacity is full. No restart was sent and no automatic retry was attempted."
+        );
+        return Ok(result);
+    }
     if permitted["success"] != true {
         bail!("node management status unavailable")
     }
@@ -176,11 +208,23 @@ async fn restart_on(server: &impl NodeControl, request: RestartRequest) -> Resul
             json!("Enable remote management in the local node app before requesting a restart.");
         return Ok(result);
     }
-    let before = runtime_id(server, id).await?;
+    let before = if control_status(&permitted, id) {
+        parse_runtime_id(&permitted, id)?
+    } else {
+        runtime_id(server, id).await?
+    };
     result["previous_runtime_id"] = json!(before);
     result["restart_requested"] = json!(true);
     let reply = server.call(id, "restart", Duration::from_secs(3)).await;
     match reply {
+        Ok(value) if not_started_busy(&value) => {
+            result["error_code"] = json!("node_busy");
+            result["not_started"] = json!(true);
+            result["note"] = json!(
+                "Node rejected restart before execution because its control capacity is full. No automatic retry was sent."
+            );
+            return Ok(result);
+        }
         Ok(value)
             if value["success"] == true
                 && value.pointer("/data/restarting") == Some(&json!(true)) =>
@@ -230,9 +274,11 @@ async fn restart_on(server: &impl NodeControl, request: RestartRequest) -> Resul
 }
 
 async fn runtime_id(server: &impl NodeControl, id: &str) -> Result<String> {
-    let response = server
-        .call(id, "diagnostics", Duration::from_secs(2))
-        .await?;
+    let response = server.runtime_status(id).await?;
+    parse_runtime_id(&response, id)
+}
+
+fn parse_runtime_id(response: &Value, id: &str) -> Result<String> {
     let data = &response["data"];
     if response["success"] != true
         || data["node_id"] != id
@@ -248,6 +294,23 @@ async fn runtime_id(server: &impl NodeControl, id: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("node requires runtime-aware diagnostics"))
 }
 
+fn control_status(reply: &Value, id: &str) -> bool {
+    reply["success"] == true
+        && reply["data"]["control_schema_version"] == 1
+        && reply["data"]["node_id"] == id
+        && reply["data"]["remote_allowed"].is_boolean()
+}
+
+fn require_legacy_status(reply: &Value, id: &str) -> Result<()> {
+    if reply["success"] != true
+        || reply["data"]["node_id"] != id
+        || reply["data"].get("control_schema_version").is_some()
+    {
+        bail!("node control status is malformed, mismatched or unsupported; no legacy fallback");
+    }
+    Ok(())
+}
+
 fn not_started_busy(reply: &Value) -> bool {
     reply["success"] == false && reply["error_type"] == "NodeBusy" && reply["not_started"] == true
 }
@@ -258,6 +321,48 @@ mod tests {
     use std::{collections::VecDeque, sync::Mutex};
     struct Fake(Mutex<VecDeque<(&'static str, Option<Value>)>>);
     struct ModelFake(Mutex<VecDeque<(&'static str, Option<Value>)>>);
+    #[test]
+    fn control_status_contract_rejects_forged_or_versioned_reports_without_legacy_fallback() {
+        let legacy = json!({"success":true,"data":{"node_id":"node-b"}});
+        assert!(require_legacy_status(&legacy, "node-b").is_ok());
+        for value in [json!(0), json!(2), json!(null)] {
+            let mut changed = legacy.clone();
+            changed["data"]["control_schema_version"] = value;
+            assert!(require_legacy_status(&changed, "node-b").is_err());
+            assert!(!control_status(&changed, "node-b"));
+        }
+        let status = json!({"success":true,"data":{"node_id":"node-b","control_schema_version":1,"remote_allowed":true,
+            "runtime_id":uuid::Uuid::new_v4().to_string(),"connection_state":"connected"}});
+        assert!(control_status(&status, "node-b"));
+        assert!(parse_runtime_id(&status, "node-b").is_ok());
+        assert!(!control_status(&status, "other"));
+        assert!(require_legacy_status(&status, "other").is_err());
+        let mut changed = status;
+        changed["data"]["runtime_id"] = json!("bad");
+        assert!(parse_runtime_id(&changed, "node-b").is_err());
+    }
+    #[tokio::test]
+    async fn restart_capacity_rejection_never_replays_or_reports_unknown_execution() {
+        let busy = Some(json!({"success":false,"error_type":"NodeBusy","not_started":true}));
+        for after_preflight in [false, true] {
+            let mut calls = VecDeque::new();
+            if after_preflight {
+                calls.push_back(("get", response(json!({"remote_allowed":true}))));
+                calls.push_back(("diagnostics", diagnostics(uuid::Uuid::new_v4())));
+            }
+            calls.push_back((
+                if after_preflight { "restart" } else { "get" },
+                busy.clone(),
+            ));
+            let fake = Fake(Mutex::new(calls));
+            let result = restart_on(&fake, request(0)).await.unwrap();
+            assert_eq!(result["error_code"], "node_busy");
+            assert_eq!(result["not_started"], true);
+            assert_eq!(result["restart_requested"], after_preflight);
+            assert_eq!(result["outcome_unknown"], false);
+            assert!(fake.0.lock().unwrap().is_empty());
+        }
+    }
     #[tokio::test]
     async fn model_capacity_rejections_are_known_not_started_without_mutation_replay() {
         let busy = json!({"success":false,"error_type":"NodeBusy","not_started":true});

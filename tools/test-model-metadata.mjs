@@ -210,6 +210,9 @@ try{
     const approvedConfig=(await json(node+'/api/config')).config;
     const deniedConfig=structuredClone(approvedConfig);deniedConfig.management.allow_remote=false;
     await json(node+'/api/config',{config:deniedConfig},'PUT');
+    const remoteRestart=launch('eef',['--config',eefConfig,'node','restart','--node',id,'--wait-seconds','0','--json']);
+    const deniedCommand=await remoteRestart.result;assert.equal(deniedCommand.code,1,deniedCommand.out+deniedCommand.err);
+    const deniedReport=JSON.parse(deniedCommand.out);assert.equal(deniedReport.error_code,'approval_required');assert.equal(deniedReport.restart_requested,false);
     const deniedRestart=await json(eef+`/api/node/${id}/invoke`,{capability:'node.configure',action:'restart',params:{},timeout:3});
     assert.equal(deniedRestart.success,false);assert.notEqual(deniedRestart.error_type,'NodeBusy');
     assert.equal((await json(node+'/api/status')).connection.state,'connected','control reserve must not bypass restart approval');
@@ -251,6 +254,22 @@ try{
    assert.equal((await nodeJobs(['get',jobId],false)).error_code,'job_rejected');
   }
   assert.equal((await nodeJobs(['list'])).data.jobs.length,0);
+  // The full approved restart CLI must not require a free work slot for its
+  // permission/runtime checks. Only our disposable fixture app is restarted.
+  const restartPrompt='gated-job-reserved-restart',beforeReservedRestart=requests.length;
+  const interruptedInvoke=invoke({backend:'ollama',prompt:restartPrompt}).then(
+   reply=>({reply}),error=>({unconfirmed:true}));
+  await until(()=>gates.has(restartPrompt),'work occupied before approved remote restart');
+  const beforeRemoteRuntime=(await json(node+'/api/diagnostics')).runtime_id;
+  const approvedRestart=launch('eef',['--config',eefConfig,'node','restart','--node',id,'--wait-seconds','15','--json']);
+  const approvedTimer=setTimeout(()=>approvedRestart.kill(),22000);
+  let restarted;
+  try{const result=await approvedRestart.result;assert.equal(result.code,0,result.out+result.err);restarted=JSON.parse(result.out);}finally{clearTimeout(approvedTimer);}
+  assert.equal(restarted.completed,true);assert.equal(restarted.previous_runtime_id,beforeRemoteRuntime);
+  assert.notEqual(restarted.runtime_id,beforeRemoteRuntime);
+  gates.get(restartPrompt)();gates.delete(restartPrompt);await interruptedInvoke;
+  await until(async()=>(await inventory()).nodes[0]?.models.length===2,'reconnect after reserved remote restart');
+  assert.equal(requests.length,beforeReservedRestart+1,'restart cannot replay interrupted inference');
   // Capacity-one stress is complete. Test later multi-stage model controls with
   // the normal work budget; a reply may still occupy the final work permit.
   await nodeConnection('limits',['--work','16']);await localRestart();

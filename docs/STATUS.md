@@ -1,5 +1,33 @@
 # Architecture conformance status
 
+## Unreleased: reserved-capacity remote restart workflow (2026-10-10)
+
+The bounded control pool initially protected raw status/restart requests, but
+EEF's restart command first requested full configuration and diagnostics through
+work capacity. Updated nodes now include a versioned control snapshot in existing
+status replies: approval state, stable node ID, current runtime ID and connection
+state. EEF uses reserved status for preflight and completion polling, avoiding
+full-configuration retrieval over the network and work-slot dependence. The node
+still rechecks owner approval when applying restart. Control slots are bounded;
+confirmed rejection reports not-started, without retry or an uncertain execution
+claim. Saturating all controls still prevents immediate restart.
+
+Older same-ID status replies without the new schema retain read-only get/diagnostic
+compatibility. Versioned malformed/mismatched replies, capacity rejections and
+transport failures do not fall back or send restart. No permissions are enabled
+by inspection, and interrupted inference is never automatically resubmitted.
+
+Validation: 225 workspace/all-target Rust tests passed in both feature modes.
+The rebuilt headless model/control fixture (`model-metadata-KXp27q`) holds the
+only work slot, then verifies both denied and approved full restart commands.
+Approval denial sends no restart; approval confirms the same stable node with a
+new runtime ID, without replaying interrupted inference. Unit tests cover bounded
+status projection, strict schema/identity/runtime validation, legacy inspection,
+and confirmed preflight/restart capacity rejection without retry. Formatting,
+diff, JavaScript syntax and browser-boundary checks passed. This uses isolated
+one-PC processes and fake inference, not physical two-PC validation. No installed
+node, model, permission, release-feed, installer or signing change.
+
 ## Unreleased: event-loss recovery and observer survival (2026-10-10)
 
 A deterministic overload test evicted registration/disconnect events from the

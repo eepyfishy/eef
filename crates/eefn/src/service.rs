@@ -653,7 +653,8 @@ impl NodeService {
             "status" => {
                 let live = self.live.lock().unwrap().clone();
                 Ok(
-                    json!({"name":config["name"],"node_id":self.node_id,"version":crate::VERSION,"connection":live["connection"],"hardware":live["hardware"],"permissions":live["permissions"],"models":live["models"],"pending_restart":live["pending_restart"],"download":live["download"],"metadata":live["metadata"],"last_request_context":live["last_request_context"],"last_resource_id":live["last_resource_id"]}),
+                    json!({"control_schema_version":1,"remote_allowed":allowed,"runtime_id":live["runtime_id"],"connection_state":live["connection"]["state"],
+                    "name":config["name"],"node_id":self.node_id,"version":crate::VERSION,"connection":live["connection"],"hardware":live["hardware"],"permissions":live["permissions"],"models":live["models"],"pending_restart":live["pending_restart"],"download":live["download"],"metadata":live["metadata"],"last_request_context":live["last_request_context"],"last_resource_id":live["last_resource_id"]}),
                 )
             }
             "models" => crate::model_manager::list(self).await,
@@ -798,6 +799,24 @@ fn startup_issues(live: &Value) -> Vec<StartupIssue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn remote_status_exposes_restart_preflight_without_raw_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("node.json");
+        std::fs::write(&config_path, br#"{"management":{"allow_remote":false},"psk":"PRIVATE-PSK","unrelated":"PRIVATE-CONFIG"}"#).unwrap();
+        let service = NodeService::new(config_path, "stable".into());
+        let runtime_id = uuid::Uuid::new_v4().to_string();
+        *service.live.lock().unwrap() =
+            json!({"runtime_id":runtime_id,"connection":{"state":"connected"}});
+        let status = service.remote("status", json!({})).await.unwrap();
+        assert_eq!(status["control_schema_version"], 1);
+        assert_eq!(status["node_id"], "stable");
+        assert_eq!(status["remote_allowed"], false);
+        assert_eq!(status["runtime_id"], runtime_id);
+        assert_eq!(status["connection_state"], "connected");
+        assert!(!status.to_string().contains("PRIVATE"));
+        assert!(service.remote("restart", json!({})).await.is_err());
+    }
     #[test]
     fn startup_issue_reports_are_bounded_deduplicated_and_do_not_leak_errors() {
         let dir = tempfile::tempdir().unwrap();

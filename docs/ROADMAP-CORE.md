@@ -130,6 +130,12 @@ and suspend world-condition automation when its observations may be stale.
 State repair does not replay lifecycle triggers or user submissions. Full world
 reconstruction and acknowledged resource-scoped execution remain future work.
 
+The next 2026-10-10 checkpoint keeps full remote restart inspection/polling in
+reserved status capacity on updated nodes, with application-time owner approval
+and read-only compatibility for older node status contracts. Saturated model work
+does not block this tested command path; saturated control capacity still rejects
+without retry. This is app restart, not acknowledged cancellation of remote effects.
+
 Inspected source, not just the earlier proposal:
 
 | Concept | Existing implementation | Required extension |
