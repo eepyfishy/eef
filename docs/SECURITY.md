@@ -8,9 +8,18 @@ artifact scans; a clean scan does not constitute a malware-free guarantee.
   trusted reverse proxy before exposing it to another network.
 - The node gateway binds to `0.0.0.0:51335` so remote nodes can connect. Every
   frame is AES-256-GCM encrypted and nodes authenticate with HMAC-SHA256.
+  The unreleased opt-in [independent credential path](NODE-CREDENTIALS.md) adds
+  a bounded plaintext node-ID selector before encrypted frames. The selector
+  is not identity proof. Provisioned/revoked identities never fall back to the
+  network key; disabling all legacy access is an explicit owner migration.
+  Credential changes/revocation apply only after coordinator restart. Existing
+  framing still lacks session message-replay fencing and forward secrecy;
+  execution grants and authenticated peer paths are not completed by this change.
 - `EEF_NODE_PSK` must be a non-placeholder value of at least 12 characters. A
   randomly generated 32-byte value is preferable. Keep it identical on the
   coordinator and nodes, and do not commit it.
+  Independently paired nodes instead use their own generated credential, shared
+  only with approved coordinators. Never reuse one credential across node IDs.
 - Authentication rejects stale timestamps, replayed nonces, mismatched node
   IDs, unsupported protocol versions, and duplicate live node IDs.
 - Filesystem access requires explicit existing roots. Roots and existing path

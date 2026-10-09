@@ -130,6 +130,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
     app.route("/api/ui", get(ui_info))
         .route("/api/restart", post(restart))
         .route("/api/network/invite", post(invite))
+        .route(
+            "/api/commands/credentials",
+            get(credential_status).post(credential_command),
+        )
         .route("/api/devices/{node_id}/manage", post(device_manage))
         .route("/api/status", get(status))
         .route("/api/diagnostics", get(diagnostics))
@@ -186,6 +190,12 @@ async fn invite(
     request: Option<Json<InviteRequest>>,
 ) -> ApiResult<Value> {
     use base64::Engine;
+    if !runtime.node_server.authentication_policy().allow_legacy {
+        return Err(anyhow::anyhow!(
+            "legacy pairing is disabled; provision an exact-node credential instead"
+        )
+        .into());
+    }
     let secret = std::env::var("EEF_NODE_PSK")
         .ok()
         .filter(|s| !s.is_empty())
@@ -222,6 +232,7 @@ async fn config_get(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
     // Forms edit saved preferences. Runtime status continues to report the
     // applied configuration until a restart, matching the node dashboard.
     let mut value = crate::config::Config::load(runtime.config.source())?.as_value();
+    eefn::authentication::AuthenticationPolicy::redact(&mut value);
     if value.pointer("/node/psk").is_some() {
         value["node"]["psk"] = json!("__KEEP_EXISTING_SECRET__");
     }
@@ -266,6 +277,16 @@ async fn node_models(
 
 async fn discovery_status(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
     Ok(Json(runtime.discovery_status()?))
+}
+
+async fn credential_status(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
+    Ok(Json(runtime.credential_status()?))
+}
+async fn credential_command(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::credentials::CredentialRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.credential_command(request)?))
 }
 
 async fn discovery_command(

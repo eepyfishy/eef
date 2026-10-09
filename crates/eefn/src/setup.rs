@@ -128,6 +128,10 @@ pub fn local_connection() -> Option<Value> {
 
 pub fn pair_local(path: &Path) -> Result<bool> {
     let mut config: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    // Never silently replace independently paired credentials with a shared key.
+    if config["auth_mode"] == "node_credential" {
+        return Ok(false);
+    }
     if config["auto_local"].as_bool() == Some(false) {
         return Ok(false);
     }

@@ -92,6 +92,11 @@ impl NodeService {
             bail!("node configuration must be a JSON object")
         }
         let old = self.read_config()?;
+        if value.get("auth_mode").is_none() {
+            if let Some(mode) = old.get("auth_mode") {
+                value["auth_mode"] = mode.clone();
+            }
+        }
         if let Some(id) = old.get("node_id") {
             value["node_id"] = id.clone();
         }
@@ -165,6 +170,7 @@ impl NodeService {
             ConnectionCommand::Pause {}
                 | ConnectionCommand::Resume {}
                 | ConnectionCommand::PairLocal {}
+                | ConnectionCommand::Pair { .. }
         );
         match request.command {
             ConnectionCommand::Show {} => {}
@@ -180,6 +186,9 @@ impl NodeService {
             ConnectionCommand::PairLocal {} => {
                 self.pair_with_local_coordinator()?;
             }
+            ConnectionCommand::Pair { code_file } => {
+                self.pair_with_credential_file(&code_file)?;
+            }
         }
         let _guard = self.config_lock.lock().expect("config lock");
         let config = self.read_config()?;
@@ -189,6 +198,7 @@ impl NodeService {
             "node_id":self.node_id,"saved_connection_enabled":config["connection_enabled"].as_bool().unwrap_or(true),
             "auto_local":config["auto_local"].as_bool().unwrap_or(true),
             "local_pairing":config["local_pairing"].as_bool().unwrap_or(true),
+            "saved_auth_mode":config["auth_mode"].as_str().unwrap_or("legacy"),
             "connection":live["connection"],"restart_requested":restart_requested,
             "note":"Saved connection policy is not completed reconnection. Local commands remain available; the requested node runtime restart also applies pending settings."}),
         )
@@ -277,9 +287,29 @@ impl NodeService {
         Ok(json!({"saved":true,"restart_required":true}))
     }
 
+    pub(crate) fn save_credential_pair(&self, address: &str, secret: &str) -> Result<()> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        let mut config = self.read_config()?;
+        config["auth_mode"] = json!("node_credential");
+        config["psk"] = json!(secret);
+        config["endpoints"] = json!([{"address":address,"priority":100}]);
+        config["auto_local"] = json!(false);
+        config["local_pairing"] = json!(false);
+        config["coordinator_name"] = Value::Null;
+        self.save_config_locked(config)?;
+        self.live.lock().unwrap()["pending_restart"] = json!(true);
+        self.restart.notify_one();
+        Ok(())
+    }
+
     pub fn pair_with_local_coordinator(&self) -> Result<Value> {
         let _guard = self.config_lock.lock().expect("config lock");
         let mut config = self.read_config()?;
+        if config["auth_mode"] == "node_credential" {
+            bail!(
+                "independently paired nodes require an exact-node invitation; local shared-key pairing was not applied"
+            )
+        }
         config["auto_local"] = json!(true);
         config["local_pairing"] = json!(true);
         config["endpoints"] = json!([]);
@@ -676,6 +706,16 @@ impl NodeService {
 }
 
 fn validate_config(value: &Value) -> Result<()> {
+    let auth_mode: crate::authentication::AuthMode = serde_json::from_value(
+        value
+            .get("auth_mode")
+            .cloned()
+            .unwrap_or_else(|| json!("legacy")),
+    )
+    .map_err(|_| anyhow::anyhow!("invalid node authentication mode"))?;
+    if auth_mode == crate::authentication::AuthMode::NodeCredential {
+        crate::authentication::validate_credential(value["psk"].as_str().unwrap_or(""))?;
+    }
     let limits: crate::request_limits::RequestLimits = serde_json::from_value(
         value
             .get("request_limits")

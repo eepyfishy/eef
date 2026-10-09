@@ -39,19 +39,29 @@ pub async fn read_message<R>(crypto: &NodeCrypto, reader: &mut R) -> Result<Opti
 where
     R: AsyncBufRead + Unpin,
 {
+    let Some(line) = read_wire_line(reader, MAX_WIRE_LINE).await? else {
+        return Ok(None);
+    };
+    Ok(Some(decode_line(crypto, &line)?))
+}
+
+pub(crate) async fn read_wire_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    limit: usize,
+) -> Result<Option<Vec<u8>>> {
     let mut line = Vec::new();
     // Bound allocation before reading, including peers that never send a newline.
     let count = reader
-        .take(MAX_WIRE_LINE as u64 + 1)
+        .take(limit as u64 + 1)
         .read_until(b'\n', &mut line)
         .await?;
     if count == 0 {
         return Ok(None);
     }
-    if line.len() > MAX_WIRE_LINE {
-        bail!("wire message exceeds {MAX_WIRE_LINE} bytes");
+    if line.len() > limit {
+        bail!("wire message exceeds {limit} bytes");
     }
-    Ok(Some(decode_line(crypto, &line)?))
+    Ok(Some(line))
 }
 
 pub async fn write_message<W>(crypto: &NodeCrypto, writer: &mut W, message: &Value) -> Result<()>

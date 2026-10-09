@@ -6,6 +6,10 @@ Older v0.4.0a installers do not contain them.
 
 ## Explicit remote updates
 
+Unreleased exact-node pairing and credential migration commands are documented
+in [independent node credentials](NODE-CREDENTIALS.md). They are not in the
+published alpha.6 installers and never grant feature permissions.
+
 Added in v0.4.0a5.
 
 Automatic and legacy feed updates stay stable-only for both roles. The new

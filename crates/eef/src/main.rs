@@ -31,6 +31,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Local-owner node credential provisioning and migration (not execution grants).
+    Credentials {
+        #[command(subcommand)]
+        command: eef::credentials::CredentialCommand,
+    },
     /// Inspect models advertised by connected nodes without loading or downloading.
     Models {
         #[command(subcommand)]
@@ -132,6 +137,32 @@ enum ModelsCommand {
     },
 }
 
+#[cfg(test)]
+mod credential_cli_tests {
+    use super::*;
+    #[test]
+    fn legacy_policy_requires_an_explicit_value_and_rotation_is_opt_in() {
+        assert!(Args::try_parse_from(["eef", "credentials", "legacy"]).is_err());
+        assert!(Args::try_parse_from(["eef", "credentials", "legacy", "--allow", "false"]).is_ok());
+        let args = Args::try_parse_from([
+            "eef",
+            "credentials",
+            "provision",
+            "--node",
+            "a",
+            "--address",
+            "127.0.0.1:51335",
+        ])
+        .unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Command::Credentials {
+                command: eef::credentials::CredentialCommand::Provision { rotate: false, .. }
+            })
+        ));
+    }
+}
+
 async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value> {
     use serde_json::json;
     let config = eef::config::Config::load(Some(&args.config))?;
@@ -150,6 +181,29 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::Credentials { command } => {
+            let response = client
+                .get(format!("{base}/api/commands/credentials"))
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                bail!("coordinator credential commands unavailable")
+            }
+            let state = eefn::model_manager::bounded_json(response).await?;
+            if matches!(command, eef::credentials::CredentialCommand::Show) {
+                return Ok(state);
+            }
+            let runtime_id = state["runtime_id"]
+                .as_str()
+                .context("coordinator returned no runtime ID")?;
+            client
+                .post(format!("{base}/api/commands/credentials"))
+                .json(
+                    &json!({"schema_version":1,"expected_runtime_id":runtime_id,"command":command}),
+                )
+                .send()
+                .await?
+        }
         Command::Node {
             command: NodeCommand::UpdateStatus { node },
         } => {
@@ -447,7 +501,7 @@ async fn main() -> Result<()> {
     if let Some(command) = &args.command {
         match run_command(&args, command).await {
             Ok(value) => {
-                if matches!(command, Command::Invite { .. }) {
+                if matches!(command, Command::Invite { .. }) || value["private"] == true {
                     eprintln!(
                         "Private connection code: share only with the node owner, not in reports or issues."
                     );

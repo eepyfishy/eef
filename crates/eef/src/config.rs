@@ -34,6 +34,7 @@ impl Config {
             defaults
         };
         validate_ui_preference(&value)?;
+        eefn::authentication::AuthenticationPolicy::parse(value.pointer("/node/authentication"))?;
         Ok(Self {
             value: Arc::new(value),
             source: source.map(Arc::new),
@@ -126,6 +127,7 @@ impl Config {
         }
         crate::discovery::DiscoveryPolicy::parse(value.get("discovery"))?;
         validate_ui_preference(value)?;
+        eefn::authentication::AuthenticationPolicy::parse(value.pointer("/node/authentication"))?;
         for section in [
             "web", "node", "models", "update", "python", "identity", "jobs",
         ] {

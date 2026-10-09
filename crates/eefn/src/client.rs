@@ -93,6 +93,8 @@ fn text_modality() -> String {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeClientConfig {
     #[serde(default)]
+    pub auth_mode: crate::authentication::AuthMode,
+    #[serde(default)]
     pub request_limits: crate::request_limits::RequestLimits,
     #[serde(default)]
     pub network: crate::network::NetworkAdvertisement,
@@ -148,6 +150,10 @@ impl Drop for AbortTask {
 
 impl NodeClient {
     pub fn new(mut config: NodeClientConfig, engine: Arc<NodeEngine>) -> Result<Self> {
+        if config.auth_mode == crate::authentication::AuthMode::NodeCredential {
+            crate::authentication::validate_credential(&config.psk)?;
+            crate::network::validate_node_id(&config.node_id)?;
+        }
         config.metadata.validate()?;
         config.network.validate()?;
         if config.endpoints.is_empty() {
@@ -398,6 +404,10 @@ impl NodeClient {
         let stream = timeout(Duration::from_secs(5), async {
             let stream = TcpStream::connect((host.as_str(), port)).await?;
             let mut connection = BufReader::new(stream);
+            if self.config.auth_mode == crate::authentication::AuthMode::NodeCredential {
+                crate::authentication::write_selector(connection.get_mut(), &self.config.node_id)
+                    .await?;
+            }
             let nonce = Uuid::new_v4().simple().to_string();
             write_message(
                 &self.crypto,
@@ -417,7 +427,10 @@ impl NodeClient {
             // 0.3.x answers this encrypted probe with an auth denial and closes.
             // This proves service reachability only. Normal authentication remains
             // mandatory on a fresh socket; no registration was sent by the probe.
-            if reply["type"] == "denied" && reply["error"] == "auth failed" {
+            if self.config.auth_mode == crate::authentication::AuthMode::Legacy
+                && reply["type"] == "denied"
+                && reply["error"] == "auth failed"
+            {
                 return TcpStream::connect((host.as_str(), port))
                     .await
                     .map_err(Into::into);
@@ -893,6 +906,7 @@ mod tests {
             Arc::new(NodeEngine::new(false, vec![], std::env::current_dir().unwrap()).unwrap());
         let client = NodeClient::new(
             NodeClientConfig {
+                auth_mode: Default::default(),
                 request_limits: Default::default(),
                 network: Default::default(),
                 metadata: Default::default(),

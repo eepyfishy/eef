@@ -22,6 +22,7 @@ use crate::protocol::{PROTOCOL_VERSION, now_ms, read_message, write_message};
 pub const DEFAULT_PORT: u16 = 51335;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
 const AUTH_CLOCK_SKEW_MS: i64 = 5 * 60 * 1000;
+const MAX_AUTH_NONCES: usize = 8192;
 
 #[derive(Debug, Error)]
 #[error("node '{0}' is not connected")]
@@ -73,6 +74,7 @@ struct Inner {
     host: String,
     port: AtomicU16,
     crypto: NodeCrypto,
+    authentication: crate::authentication::AuthenticationPolicy,
     connections: RwLock<HashMap<String, Connection>>,
     routes: RwLock<HashMap<String, ConnectionInfo>>,
     pending: Mutex<HashMap<String, Pending>>,
@@ -141,12 +143,24 @@ impl Drop for PendingCleanup {
 
 impl NodeServer {
     pub fn new(psk: &str, host: impl Into<String>, port: u16) -> Result<Self> {
+        Self::with_authentication(psk, host, port, Default::default())
+    }
+
+    pub fn with_authentication(
+        psk: &str,
+        host: impl Into<String>,
+        port: u16,
+        authentication: crate::authentication::AuthenticationPolicy,
+    ) -> Result<Self> {
+        authentication.validate()?;
+        authentication.validate_legacy_key(psk)?;
         let (events, _) = broadcast::channel(256);
         Ok(Self {
             inner: Arc::new(Inner {
                 host: host.into(),
                 port: AtomicU16::new(port),
                 crypto: NodeCrypto::new(psk)?,
+                authentication,
                 connections: RwLock::new(HashMap::new()),
                 routes: RwLock::new(HashMap::new()),
                 pending: Mutex::new(HashMap::new()),
@@ -160,6 +174,9 @@ impl NodeServer {
 
     pub fn port(&self) -> u16 {
         self.inner.port.load(Ordering::Relaxed)
+    }
+    pub fn authentication_policy(&self) -> &crate::authentication::AuthenticationPolicy {
+        &self.inner.authentication
     }
     pub fn subscribe(&self) -> broadcast::Receiver<NodeEvent> {
         self.inner.events.subscribe()
@@ -422,10 +439,49 @@ impl NodeServer {
     async fn handle_connection(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
-        let mut auth = timeout(AUTH_TIMEOUT, read_message(&self.inner.crypto, &mut reader))
-            .await
-            .context("auth timed out")??
-            .context("connection closed before auth")?;
+        // The selector is untrusted and public. It chooses an exact key only;
+        // it never reserves an identity or permits fallback to the network key.
+        let first = timeout(
+            AUTH_TIMEOUT,
+            crate::protocol::read_wire_line(&mut reader, 8192),
+        )
+        .await
+        .context("auth timed out")??
+        .context("connection closed before auth")?;
+        let (crypto, selected_id, mut auth) = if first.first() == Some(&b'{') {
+            if first.len() > 1024 {
+                bail!("credential selector exceeds bounds")
+            }
+            let selector: crate::authentication::CredentialSelector =
+                serde_json::from_slice(&first)
+                    .map_err(|_| anyhow::anyhow!("invalid credential selector"))?;
+            if selector.r#type != "node_credential" || selector.schema_version != 1 {
+                bail!("invalid credential selector")
+            }
+            crate::network::validate_node_id(&selector.node_id)?;
+            let secret = self
+                .inner
+                .authentication
+                .credentials
+                .get(&selector.node_id)
+                .and_then(Option::as_ref)
+                .context("node credential unavailable")?;
+            let crypto = NodeCrypto::new(secret)?;
+            let auth = timeout(AUTH_TIMEOUT, read_message(&crypto, &mut reader))
+                .await
+                .context("credential auth timed out")??
+                .context("connection closed before credential auth")?;
+            (crypto, Some(selector.node_id), auth)
+        } else {
+            if !self.inner.authentication.allow_legacy {
+                bail!("legacy authentication disabled")
+            }
+            (
+                self.inner.crypto.clone(),
+                None,
+                crate::protocol::decode_line(&self.inner.crypto, &first)?,
+            )
+        };
         // A bounded, encrypted service probe does not register or replace a node.
         if auth["type"] == "probe" {
             let nonce = auth["nonce"]
@@ -435,23 +491,35 @@ impl NodeServer {
             timeout(
                 Duration::from_secs(5),
                 write_message(
-                    &self.inner.crypto,
+                    &crypto,
                     &mut writer,
                     &json!({"type":"pong","nonce":nonce,"protocol":PROTOCOL_VERSION}),
                 ),
             )
             .await
             .context("probe reply timed out")??;
-            auth = timeout(AUTH_TIMEOUT, read_message(&self.inner.crypto, &mut reader))
+            auth = timeout(AUTH_TIMEOUT, read_message(&crypto, &mut reader))
                 .await
                 .context("auth after probe timed out")??
                 .context("connection closed after probe")?;
         }
-        let node_id = match self.verify_auth(&auth).await {
+        let verification = async {
+            let claimed = auth["node_id"].as_str().context("auth failed")?;
+            match selected_id.as_deref() {
+                Some(id) if id != claimed => bail!("credential identity mismatch"),
+                None if self.inner.authentication.credentials.contains_key(claimed) => {
+                    bail!("identity requires its node credential")
+                }
+                _ => {}
+            }
+            self.verify_auth_with(&crypto, &auth).await
+        }
+        .await;
+        let node_id = match verification {
             Ok(node_id) => node_id,
             Err(error) => {
                 let _ = write_message(
-                    &self.inner.crypto,
+                    &crypto,
                     &mut writer,
                     &json!({"type": "denied", "error": error.to_string()}),
                 )
@@ -467,7 +535,7 @@ impl NodeServer {
             .insert(node_id.clone());
         if !reserved {
             let denied = json!({"type": "denied", "error": "duplicate node id already connected"});
-            write_message(&self.inner.crypto, &mut writer, &denied).await?;
+            write_message(&crypto, &mut writer, &denied).await?;
             bail!("duplicate node id '{node_id}'");
         }
         let _identity = IdentityLease {
@@ -475,14 +543,13 @@ impl NodeServer {
             node_id: node_id.clone(),
         };
         write_message(
-            &self.inner.crypto,
+            &crypto,
             &mut writer,
             &json!({"type": "ok", "protocol": PROTOCOL_VERSION}),
         )
         .await?;
 
         let (send, mut receive) = mpsc::channel::<Value>(64);
-        let crypto = self.inner.crypto.clone();
         let info = ConnectionInfo {
             node_id: node_id.clone(),
             source_ip: peer.ip().to_string(),
@@ -508,7 +575,7 @@ impl NodeServer {
         // Neither direction is detached: shutdown/cancellation of this session
         // must release both halves, including a stalled outbound write.
         let result = tokio::select! {
-            result = self.serve(&node_id, &mut reader) => result,
+            result = self.serve(&node_id, &crypto, &mut reader) => result,
             result = async {
                 while let Some(message) = receive.recv().await {
                     write_message(&crypto, &mut writer, &message).await?;
@@ -522,14 +589,19 @@ impl NodeServer {
         result
     }
 
-    async fn serve<R>(&self, authenticated_id: &str, reader: &mut R) -> Result<()>
+    async fn serve<R>(
+        &self,
+        authenticated_id: &str,
+        crypto: &NodeCrypto,
+        reader: &mut R,
+    ) -> Result<()>
     where
         R: tokio::io::AsyncBufRead + Unpin,
     {
         let mut metadata = crate::context::NodeMetadata::default();
         let mut interpretation_capabilities = Vec::<String>::new();
         let mut registered = false;
-        while let Some(mut message) = read_message(&self.inner.crypto, reader).await? {
+        while let Some(mut message) = read_message(crypto, reader).await? {
             match message.get("type").and_then(Value::as_str) {
                 Some("register") => {
                     require_node_id(&message, authenticated_id)?;
@@ -653,7 +725,7 @@ impl NodeServer {
         Ok(())
     }
 
-    async fn verify_auth(&self, auth: &Value) -> Result<String> {
+    async fn verify_auth_with(&self, crypto: &NodeCrypto, auth: &Value) -> Result<String> {
         if auth.get("type").and_then(Value::as_str) != Some("auth") {
             bail!("auth failed")
         }
@@ -666,7 +738,15 @@ impl NodeServer {
         let nonce = text("nonce")?;
         let timestamp = text("timestamp")?;
         let signature = text("signature")?;
-        if node_id.is_empty() || node_id.len() > 128 {
+        if node_id.is_empty()
+            || node_id.len() > 128
+            || version.len() > 128
+            || nonce.is_empty()
+            || nonce.len() > 128
+            || nonce.chars().any(char::is_control)
+            || timestamp.len() > 20
+            || signature.len() > 128
+        {
             bail!("invalid node id")
         }
         let timestamp_ms: i64 = timestamp.parse().context("invalid auth timestamp")?;
@@ -674,21 +754,23 @@ impl NodeServer {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64;
-        if (local_ms - timestamp_ms).abs() > AUTH_CLOCK_SKEW_MS {
+        if local_ms.abs_diff(timestamp_ms) > AUTH_CLOCK_SKEW_MS as u64 {
             bail!("stale auth timestamp")
         }
         let raw = format!("{nonce}|{node_id}|{version}|{timestamp}");
-        if !self.inner.crypto.verify(raw.as_bytes(), signature) {
+        if !crypto.verify(raw.as_bytes(), signature) {
             bail!("auth failed")
         }
         let mut nonces = self.inner.nonces.lock().await;
         nonces.retain(|_, seen| seen.elapsed() < Duration::from_secs(10 * 60));
-        if nonces
-            .insert(format!("{node_id}:{nonce}"), Instant::now())
-            .is_some()
-        {
+        let receipt = format!("{node_id}:{nonce}");
+        if nonces.contains_key(&receipt) {
             bail!("replayed auth")
         }
+        if nonces.len() >= MAX_AUTH_NONCES {
+            bail!("authentication replay cache at capacity")
+        }
+        nonces.insert(receipt, Instant::now());
         Ok(node_id.into())
     }
 
@@ -743,6 +825,185 @@ fn require_node_id(message: &Value, authenticated_id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn independent_keys_enforce_identity_and_never_downgrade() {
+        let key_a = "a".repeat(64);
+        let key_b = "b".repeat(64);
+        for (selector, claimed, secret, allow_legacy, accepted) in [
+            (Some("a"), "a", key_a.as_str(), true, true),
+            (Some("b"), "b", key_b.as_str(), false, true),
+            (Some("b"), "b", key_a.as_str(), true, false),
+            (Some("a"), "b", key_a.as_str(), true, false),
+            (Some("a"), "a", "legacy-secret", true, false),
+            (Some("revoked"), "revoked", key_a.as_str(), true, false),
+            (Some("unknown"), "unknown", key_a.as_str(), true, false),
+            (None, "a", "legacy-secret", true, false),
+            (None, "revoked", "legacy-secret", true, false),
+            (None, "old-node", "legacy-secret", true, true),
+            (None, "old-node", "legacy-secret", false, false),
+        ] {
+            let policy = crate::authentication::AuthenticationPolicy {
+                allow_legacy,
+                credentials: std::collections::BTreeMap::from([
+                    ("a".into(), Some(key_a.clone())),
+                    ("b".into(), Some(key_b.clone())),
+                    ("revoked".into(), None),
+                ]),
+            };
+            let server =
+                NodeServer::with_authentication("legacy-secret", "127.0.0.1", 0, policy).unwrap();
+            let mut events = server.subscribe();
+            server.start().await.unwrap();
+            let stream = TcpStream::connect(("127.0.0.1", server.port()))
+                .await
+                .unwrap();
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let crypto = NodeCrypto::new(secret).unwrap();
+            if let Some(id) = selector {
+                crate::authentication::write_selector(&mut writer, id)
+                    .await
+                    .unwrap();
+            }
+            // Send auth without a probe to exercise both supported entry paths.
+            let _ = write_message(
+                &crypto,
+                &mut writer,
+                &crate::protocol::build_auth(&crypto, claimed, crate::VERSION),
+            )
+            .await;
+            let reply = timeout(Duration::from_secs(3), read_message(&crypto, &mut reader))
+                .await
+                .unwrap();
+            let ok = reply.ok().flatten().is_some_and(|v| v["type"] == "ok");
+            assert_eq!(
+                ok, accepted,
+                "selector={selector:?} claimed={claimed} legacy={allow_legacy}"
+            );
+            if !accepted {
+                assert_eq!(
+                    server.connection_counts().await,
+                    ConnectionCounts::default()
+                );
+                assert!(
+                    server.inner.nonces.lock().await.is_empty(),
+                    "unauthorized identity must not poison the replay cache"
+                );
+            } else {
+                write_message(
+                    &crypto,
+                    &mut writer,
+                    &json!({"type":"register","node_id":claimed}),
+                )
+                .await
+                .unwrap();
+                assert!(matches!(
+                    timeout(Duration::from_secs(3), events.recv())
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                    NodeEvent::Registered(_)
+                ));
+                // Exercise the selected key in both directions after authentication.
+                server
+                    .send_to_node(claimed, json!({"type":"test","private":"pair-only"}))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    read_message(&crypto, &mut reader).await.unwrap().unwrap()["private"],
+                    "pair-only"
+                );
+            }
+            server.stop().await;
+            assert!(server.inner.active_ids.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn extreme_auth_timestamps_fail_closed_without_panicking() {
+        let server = NodeServer::new("legacy-secret", "127.0.0.1", 0).unwrap();
+        for timestamp in [i64::MIN, i64::MAX] {
+            let mut auth = crate::protocol::build_auth(&server.inner.crypto, "a", crate::VERSION);
+            auth["timestamp"] = json!(timestamp.to_string());
+            assert!(
+                server
+                    .verify_auth_with(&server.inner.crypto, &auth)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn bounded_legacy_timestamp_nonces_remain_compatible() {
+        let server = NodeServer::new("legacy-secret", "127.0.0.1", 0).unwrap();
+        let mut auth = crate::protocol::build_auth(&server.inner.crypto, "old-node", "0.3.2");
+        auth["nonce"] = json!(crate::protocol::now_ms().to_string());
+        let raw = format!(
+            "{}|old-node|0.3.2|{}",
+            auth["nonce"].as_str().unwrap(),
+            auth["timestamp"].as_str().unwrap()
+        );
+        auth["signature"] = json!(server.inner.crypto.sign(raw.as_bytes()));
+        assert_eq!(
+            server
+                .verify_auth_with(&server.inner.crypto, &auth)
+                .await
+                .unwrap(),
+            "old-node"
+        );
+        assert!(
+            server
+                .verify_auth_with(&server.inner.crypto, &auth)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn authentication_replay_cache_is_bounded_and_rejections_do_not_extend_receipts() {
+        let server = NodeServer::new("legacy-secret", "127.0.0.1", 0).unwrap();
+        let auth = crate::protocol::build_auth(&server.inner.crypto, "a", crate::VERSION);
+        server
+            .verify_auth_with(&server.inner.crypto, &auth)
+            .await
+            .unwrap();
+        let original = server.inner.nonces.lock().await.clone();
+        assert!(
+            server
+                .verify_auth_with(&server.inner.crypto, &auth)
+                .await
+                .is_err()
+        );
+        assert_eq!(*server.inner.nonces.lock().await, original);
+        {
+            let mut cache = server.inner.nonces.lock().await;
+            for n in 1..MAX_AUTH_NONCES {
+                cache.insert(format!("fixture:{n}"), Instant::now());
+            }
+        }
+        let fresh = crate::protocol::build_auth(&server.inner.crypto, "a", crate::VERSION);
+        assert!(
+            server
+                .verify_auth_with(&server.inner.crypto, &fresh)
+                .await
+                .is_err()
+        );
+        assert_eq!(server.inner.nonces.lock().await.len(), MAX_AUTH_NONCES);
+        server
+            .inner
+            .nonces
+            .lock()
+            .await
+            .values_mut()
+            .for_each(|seen| *seen = Instant::now() - Duration::from_secs(601));
+        server
+            .verify_auth_with(&server.inner.crypto, &fresh)
+            .await
+            .unwrap();
+        assert_eq!(server.inner.nonces.lock().await.len(), 1);
+    }
 
     #[tokio::test]
     async fn connection_counts_distinguish_auth_registration_and_disconnect() {
@@ -1081,7 +1342,11 @@ mod tests {
         write_message(&server.inner.crypto,&mut wire,&json!({"type":"register","node_id":"node-a","network":{"advertised_address":"26.1.2.3"}})).await.unwrap();
         write_message(&server.inner.crypto,&mut wire,&json!({"type":"heartbeat","node_id":"node-a","network":{"advertised_address":"attacker"}})).await.unwrap();
         server
-            .serve("node-a", &mut BufReader::new(wire.as_slice()))
+            .serve(
+                "node-a",
+                &server.inner.crypto,
+                &mut BufReader::new(wire.as_slice()),
+            )
             .await
             .unwrap();
         let records = server.peer_records(&ids).await.unwrap();
@@ -1108,7 +1373,11 @@ mod tests {
         .unwrap();
         assert!(
             server
-                .serve("node-a", &mut BufReader::new(wire.as_slice()))
+                .serve(
+                    "node-a",
+                    &server.inner.crypto,
+                    &mut BufReader::new(wire.as_slice())
+                )
                 .await
                 .is_err()
         );
@@ -1136,7 +1405,11 @@ mod tests {
                 .await
                 .unwrap();
             let result = server
-                .serve("stable", &mut BufReader::new(wire.as_slice()))
+                .serve(
+                    "stable",
+                    &server.inner.crypto,
+                    &mut BufReader::new(wire.as_slice()),
+                )
                 .await;
             assert_eq!(result.is_ok(), accepted);
             if accepted {
@@ -1169,7 +1442,11 @@ mod tests {
                 .unwrap();
         }
         server
-            .serve("owner", &mut BufReader::new(wire.as_slice()))
+            .serve(
+                "owner",
+                &server.inner.crypto,
+                &mut BufReader::new(wire.as_slice()),
+            )
             .await
             .unwrap();
         let NodeEvent::Registered(registration) = events.recv().await.unwrap() else {
@@ -1217,7 +1494,11 @@ mod tests {
                 .unwrap();
             assert!(
                 server
-                    .serve("owner", &mut BufReader::new(wire.as_slice()))
+                    .serve(
+                        "owner",
+                        &server.inner.crypto,
+                        &mut BufReader::new(wire.as_slice())
+                    )
                     .await
                     .is_err()
             );
@@ -1234,7 +1515,11 @@ mod tests {
             }
             assert!(
                 server
-                    .serve("owner", &mut BufReader::new(wire.as_slice()))
+                    .serve(
+                        "owner",
+                        &server.inner.crypto,
+                        &mut BufReader::new(wire.as_slice())
+                    )
                     .await
                     .is_err()
             );
@@ -1302,7 +1587,11 @@ mod tests {
                 .unwrap();
         }
         server
-            .serve("owner", &mut BufReader::new(wire.as_slice()))
+            .serve(
+                "owner",
+                &server.inner.crypto,
+                &mut BufReader::new(wire.as_slice()),
+            )
             .await
             .unwrap();
         let old = server.node_state("owner").await.unwrap();
@@ -1319,7 +1608,11 @@ mod tests {
                 .unwrap();
         }
         server
-            .serve("owner", &mut BufReader::new(wire.as_slice()))
+            .serve(
+                "owner",
+                &server.inner.crypto,
+                &mut BufReader::new(wire.as_slice()),
+            )
             .await
             .unwrap();
         let latest = server.node_states().await.remove("owner").unwrap();

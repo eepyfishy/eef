@@ -4,6 +4,7 @@
 //! newline-framed JSON encrypted with AES-256-GCM and the same HKDF inputs.
 
 pub mod api;
+pub mod authentication;
 pub mod client;
 pub mod connection_commands;
 pub mod context;

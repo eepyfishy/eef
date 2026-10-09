@@ -19,6 +19,11 @@ pub enum ConnectionCommand {
     Resume {},
     /// Explicitly switch to automatic same-user local EEF pairing.
     PairLocal {},
+    /// Apply a PRIVATE exact-node invitation file; never changes feature permissions.
+    Pair {
+        #[arg(long)]
+        code_file: std::path::PathBuf,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

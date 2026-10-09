@@ -681,6 +681,8 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
 #[derive(Clone, Debug, Deserialize)]
 struct FileConfig {
     #[serde(default)]
+    auth_mode: eefn::authentication::AuthMode,
+    #[serde(default)]
     request_limits: eefn::request_limits::RequestLimits,
     #[serde(default)]
     network: eefn::network::NetworkAdvertisement,
@@ -1246,6 +1248,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         Some(
             NodeClient::new(
                 NodeClientConfig {
+                    auth_mode: file.auth_mode,
                     request_limits: file.request_limits,
                     network: file.network,
                     metadata: file.metadata,

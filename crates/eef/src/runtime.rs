@@ -71,7 +71,9 @@ impl Runtime {
         let host = config.string("node.host", "0.0.0.0");
         let port = u16::try_from(config.u64("node.port", eefn::DEFAULT_PORT.into()))
             .context("node.port exceeds 65535")?;
-        let node_server = NodeServer::new(&psk, host, port)?;
+        let authentication =
+            eefn::authentication::AuthenticationPolicy::parse(config.get("node.authentication"))?;
+        let node_server = NodeServer::with_authentication(&psk, host, port, authentication)?;
 
         let bus = EventBus::new(config.u64("logging.history", 500) as usize);
         let identity = IdentityMemory::new(config.clone());
@@ -272,8 +274,45 @@ impl Runtime {
         })
     }
 
+    pub fn credential_command(
+        &self,
+        request: crate::credentials::CredentialRequest,
+    ) -> Result<Value> {
+        if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
+            bail!("credential command schema or runtime does not match")
+        }
+        let mut result = crate::credentials::command(
+            &self.config,
+            self.node_server.authentication_policy(),
+            &request.command,
+        )?;
+        if result["changed"] == true {
+            self.pending_restart.store(true, Ordering::Relaxed);
+        }
+        result["runtime_id"] = json!(self.instance_id);
+        Ok(result)
+    }
+
+    pub fn credential_status(&self) -> Result<Value> {
+        self.credential_command(crate::credentials::CredentialRequest {
+            schema_version: 1,
+            expected_runtime_id: self.instance_id.clone(),
+            command: crate::credentials::CredentialCommand::Show,
+        })
+    }
+
     pub fn save_configuration(&self, mut value: Value) -> Result<()> {
+        if !value.is_object() || !value["node"].is_object() {
+            bail!("configuration and node settings must be objects")
+        }
         self.config.edit_for_restart(|saved| {
+            // Dedicated owner commands own authentication changes. Generic
+            // settings saves must not provision/revoke/drop node credentials.
+            if let Some(policy) = saved.pointer("/node/authentication") {
+                value["node"]["authentication"] = policy.clone();
+            } else if let Some(node) = value.get_mut("node").and_then(Value::as_object_mut) {
+                node.remove("authentication");
+            }
             if value.pointer("/node/psk").and_then(Value::as_str)
                 == Some("__KEEP_EXISTING_SECRET__")
             {

@@ -1,5 +1,58 @@
 # Architecture conformance status
 
+## Unreleased: independent exact-node credential foundation (2026-10-10)
+
+Local-owner `eef credentials` commands now provision, inspect, rotate and revoke
+an exact stable node identity and explicitly enable/disable legacy sign-in.
+`eefn connection pair --code-file` applies a bounded private invitation through
+the running node service, preserving ID, permissions, models and connection-enabled
+preference while requesting an app restart. It accepts UTF-8/BOM and BOM-marked
+UTF-16 redirected command output. No JSON configuration editing or browser is
+needed for this workflow. The invitation is a reusable secret, not a one-time token.
+
+The gateway selects one independently generated key using a bounded public
+node-ID selector. Decrypted identity must match it. Wrong/unknown/revoked keys
+cannot fall back, reserve identities or poison another identity's replay cache.
+Provisioned/revoked IDs also cannot authenticate with the shared network key.
+Revoked identities retain tombstones; replacing a credential requires explicit
+rotation. Legacy compatibility remains the default for other identities until
+the owner disables it. Saved changes are not immediate revocation: coordinator
+restart is required to retire old sessions/apply keys. Local automatic pairing
+cannot silently replace independently configured trust.
+
+Status/config views redact credentials. Generic coordinator configuration saves
+preserve the latest credential policy; remote node settings cannot rewrite its
+trust or ID. Current-runtime command checks, existing local API request guards,
+independent-key/size validation and atomic config edits apply. Authentication
+timestamps reject extreme values without overflow. The existing replay cache is
+bounded and duplicate attempts no longer refresh receipt lifetime. Bounded legacy
+timestamp nonces from v0.3.2 remain compatible.
+
+This reuses existing cryptography/framing. It does **not** establish session
+message-replay fencing, forward secrecy, execution grants, acknowledged remote
+cancellation, separately authorized peer data paths or cluster safety. See
+[credential migration and limitations](NODE-CREDENTIALS.md). Physical two-PC
+migration/rollback and reviewed issuer-session security remain required gates.
+
+Validation: 233 workspace/all-target Rust tests pass with and without dashboard
+features. Protocol tests cover independent keys, cross-identity and shared-key
+impersonation denial, revoked/unknown IDs, explicit legacy denial, bidirectional
+encrypted registration/control, shutdown cleanup, replay bounds and old nonces.
+Private-file/config tests preserve owner policy and reject malformed/oversized
+invitations. Command-based two-logical-node fixtures passed in default and
+headless builds, including disabled-legacy reconnection, deferred revocation,
+explicit rotation, protected config saves, private-code redaction and PowerShell
+file encodings. These are isolated one-PC fixtures, not physical acceptance.
+Existing node-command, scoped discovery, request-review and job-shutdown fixtures
+also passed; no model download, installed-node migration, permission change,
+release-feed change, installer/signing operation or publication was performed.
+
+Latest headless command evidence: `node-credentials-SJw2Zc` and
+`node-commands-Cjv77Z`. Earlier regression runs: `peer-discovery-zGryU9`,
+`request-review-qyExIK` and `job-shutdown-FGZnrw`. Fixture paths are beneath
+the ignored `.validation/` folder and contain test-only private credentials;
+never publish those directories as diagnostics.
+
 ## Unreleased: reserved-capacity remote restart workflow (2026-10-10)
 
 The bounded control pool initially protected raw status/restart requests, but
