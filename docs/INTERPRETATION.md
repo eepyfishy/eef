@@ -3,8 +3,10 @@
 `eefn::interpretation` is a shared Rust prompt/validation module. Alpha.4
 adds `eefn requests preview --text TEXT`, backed by this
 module and an explicitly owner-selected `request_interpreter` model role. It is
-**not connected to chat auto-interpretation, coordinator submissions or workload
-execution**. No default model or automatic selection is enabled.
+**not connected to chat auto-interpretation or workload execution**. No default
+model or automatic selection is enabled. The unreleased increment after alpha.6
+adds explicit `eefn requests review` for stateless coordinator review, described
+below; older published preview behavior remains unchanged.
 
 ## Proposal, not authority
 
@@ -99,7 +101,19 @@ retry. Closing the CLI may leave bounded inference running until service timeout
 it cannot cause an action to be executed. No UI is required, and a paused or
 unconfigured coordinator connection does not prevent preview.
 
+The unreleased review command sends original text and a typed proposal through
+the existing bounded node submission mailbox, with fresh reply-routing identity
+separate from its request UUID. The gateway replaces origin and capability
+context with accepted registration snapshots for the authenticated session.
+EEF revalidates all proposal bounds and semantic consistency with the shared
+validator, without invoking its brain, planner or job store. The response retains
+original text and server-stamped context. The node service and CLI reject
+mismatched identity/text or execution flags. Capability advertisements remain
+untrusted hints, never authority. The review is ephemeral and creates no durable
+receipt, job, grant or implicit clarification answer. Losing its reply never
+causes replay. Preview still does not send text to EEF.
+
 Remaining: reviewed model/bootstrap policy, better candidate/prompt quality,
-interactive clarification/approval flow, authenticated original context, EEF
-revalidation, and explicit planning/authorization. The existing deterministic
+interactive clarification/approval flow, and explicit planning/authorization.
+Automatic input interpretation is still absent. The existing deterministic
 commands continue working without any model. See [command usage](COMMANDS.md#request-preview-development).

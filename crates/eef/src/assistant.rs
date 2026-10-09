@@ -79,6 +79,7 @@ pub struct ResponseEngine {
     rules: RwLock<Vec<ResponseRule>>,
     last_fired: Mutex<HashMap<String, Instant>>,
     firings: AtomicU64,
+    event_loss_count: AtomicU64,
 }
 
 impl ResponseEngine {
@@ -96,6 +97,7 @@ impl ResponseEngine {
             rules: RwLock::new(Vec::new()),
             last_fired: Mutex::new(HashMap::new()),
             firings: AtomicU64::new(0),
+            event_loss_count: AtomicU64::new(0),
         })
     }
 
@@ -134,14 +136,35 @@ impl ResponseEngine {
     pub fn firings(&self) -> u64 {
         self.firings.load(Ordering::Relaxed)
     }
+    pub fn event_loss_count(&self) -> u64 {
+        self.event_loss_count.load(Ordering::Relaxed)
+    }
 
     pub fn start_event_listener(self: &Arc<Self>) -> JoinHandle<()> {
-        let mut events = self.bus.subscribe();
+        self.event_listener(self.bus.subscribe())
+    }
+
+    fn event_listener(
+        self: &Arc<Self>,
+        mut events: tokio::sync::broadcast::Receiver<crate::event::Event>,
+    ) -> JoinHandle<()> {
         let engine = self.clone();
         tokio::spawn(async move {
-            while let Ok(event) = events.recv().await {
-                if event.topic != "assistant.response" {
-                    engine.on_event(&event.topic, &event.data).await;
+            loop {
+                match events.recv().await {
+                    Ok(event) if event.topic != "assistant.response" => {
+                        engine.on_event(&event.topic, &event.data).await;
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                        let _ = engine.event_loss_count.fetch_update(
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                            |value| Some(value.saturating_add(count)),
+                        );
+                        tracing::warn!(count, "assistant listener missed events; no event replay");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
         })
@@ -177,6 +200,11 @@ impl ResponseEngine {
 
     pub async fn run_cycle(&self) {
         let summary = self.world.summary().await;
+        // Missing observation is not permission to act on an apparently unchanged
+        // world. Explicit commands and event/keyword rules remain separate paths.
+        if summary["state_may_be_stale"] == true {
+            return;
+        }
         for rule in self.enabled("world") {
             self.maybe_fire(rule, summary.clone()).await;
         }
@@ -299,6 +327,62 @@ fn merge_context(mut payload: Value, context: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn event_listener_survives_lag_without_replay_and_world_rules_suspend_on_stale_state() {
+        let bus = EventBus::new(8);
+        let world = WorldState::new();
+        let world_receiver = bus.subscribe();
+        let server = eefn::NodeServer::new("isolated-test-secret", "127.0.0.1", 0).unwrap();
+        let registry = crate::capability::CapabilityRegistry::default();
+        let llm = LlmService::new(
+            crate::model::ModelRegistry::default(),
+            Default::default(),
+            server.clone(),
+            bus.clone(),
+        );
+        let dispatcher = Dispatcher::new(
+            registry.clone(),
+            crate::adapters::AdapterManager::new(registry, json!({})),
+            llm.clone(),
+            server,
+        );
+        let engine = ResponseEngine::new(bus.clone(), world.clone(), llm, dispatcher);
+        let mut rule = ResponseRule::text("fixture", "unused", "response", 0.0);
+        rule.trigger = "event".into();
+        rule.trigger_value = "fixture.fire".into();
+        engine.add_rule(rule).unwrap();
+        let mut rule = ResponseRule::text("world fixture", "unused", "world response", 0.0);
+        rule.trigger = "world".into();
+        engine.add_rule(rule).unwrap();
+        let receiver = bus.subscribe();
+        bus.publish("fixture.fire", json!({"lost":true})).await;
+        for _ in 0..600 {
+            bus.publish("noise", json!({})).await;
+        }
+        let world_task = world.event_listener(world_receiver);
+        let task = engine.event_listener(receiver);
+        bus.publish("fixture.fire", json!({"lost":false})).await;
+        let resumed = tokio::time::timeout(Duration::from_secs(1), async {
+            while engine.firings() != 1 || world.event_loss_count().await == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        engine.run_cycle().await;
+        let after_cycle = engine.firings();
+        let finished = task.is_finished();
+        task.abort();
+        world_task.abort();
+        let _ = task.await;
+        let _ = world_task.await;
+        assert!(
+            resumed.is_ok(),
+            "listener failed to resume or replayed a lost trigger"
+        );
+        assert_eq!(after_cycle, 1, "world rule ran after observation loss");
+        assert!(!finished);
+        assert!(engine.event_loss_count() > 0);
+    }
 
     #[test]
     fn dotted_world_conditions_match() {

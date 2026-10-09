@@ -11,7 +11,7 @@ use thiserror::Error;
 use tokio::io::BufReader;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot};
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::timeout;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -27,12 +27,33 @@ const AUTH_CLOCK_SKEW_MS: i64 = 5 * 60 * 1000;
 #[error("node '{0}' is not connected")]
 pub struct NodeOfflineError(pub String);
 
+#[derive(Debug, Error)]
+#[error("node '{0}' outbound queue is full; response was not queued")]
+pub struct NodeQueueFullError(pub String);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionInfo {
     pub node_id: String,
     pub source_ip: String,
     pub source_port: u16,
     pub connected_since_ms: u64,
+}
+
+/// One live gateway snapshot, without node identities or addresses.
+/// Registration here means wire validation, not scheduler/provider readiness.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct ConnectionCounts {
+    pub connected_node_count: usize,
+    pub registered_node_count: usize,
+    pub registration_pending_node_count: usize,
+}
+
+/// Latest accepted state for a live registered session. Internal reconciliation
+/// data, never a request journal or execution permission. No adapter bindings.
+#[derive(Clone, Debug)]
+pub struct NodeStateSnapshot {
+    pub registration: Value,
+    pub heartbeat: Option<Value>,
 }
 
 #[derive(Clone, Debug)]
@@ -57,8 +78,13 @@ struct Inner {
     pending: Mutex<HashMap<String, Pending>>,
     nonces: Mutex<HashMap<String, Instant>>,
     events: broadcast::Sender<NodeEvent>,
-    accept_task: Mutex<Option<JoinHandle<()>>>,
+    accept_task: Mutex<Option<GatewayTask>>,
     active_ids: std::sync::Mutex<HashSet<String>>,
+}
+
+struct GatewayTask {
+    stop: Option<oneshot::Sender<()>>,
+    task: Option<JoinHandle<()>>,
 }
 
 // Reserve identity atomically through authentication and connection cleanup.
@@ -82,6 +108,7 @@ struct Connection {
     info: ConnectionInfo,
     sender: mpsc::Sender<Value>,
     advertisement: Option<crate::network::PeerRecord>,
+    state: Option<NodeStateSnapshot>,
     last_seen: Instant,
 }
 
@@ -140,7 +167,10 @@ impl NodeServer {
 
     pub async fn start(&self) -> Result<()> {
         let mut task = self.inner.accept_task.lock().await;
-        if task.is_some() {
+        if let Some(gateway) = task.as_ref() {
+            if gateway.stop.is_none() {
+                bail!("node gateway is stopping; finish stop before restarting")
+            }
             return Ok(());
         }
         let listener = TcpListener::bind((self.inner.host.as_str(), self.port()))
@@ -151,36 +181,71 @@ impl NodeServer {
             .store(listener.local_addr()?.port(), Ordering::Relaxed);
         info!(host = %self.inner.host, port = self.port(), "node gateway listening");
         let server = self.clone();
-        *task = Some(tokio::spawn(async move {
+        let (stop, mut stopped) = oneshot::channel();
+        let handle = tokio::spawn(async move {
+            let mut sessions = JoinSet::new();
             loop {
-                match listener.accept().await {
-                    Ok((stream, peer)) => {
-                        let server = server.clone();
-                        tokio::spawn(async move {
-                            if let Err(error) = server.handle_connection(stream, peer).await {
-                                warn!(%peer, %error, "node connection ended");
-                            }
-                        });
+                tokio::select! {
+                    biased;
+                    _ = &mut stopped => break,
+                    _ = sessions.join_next(), if !sessions.is_empty() => {},
+                    accepted = listener.accept() => match accepted {
+                        Ok((stream, peer)) => {
+                            let server = server.clone();
+                            sessions.spawn(async move {
+                                if let Err(error) = server.handle_connection(stream, peer).await {
+                                    warn!(%peer, %error, "node connection ended");
+                                }
+                            });
+                        }
+                        Err(error) => {
+                            warn!(%error, "node accept failed");
+                            break;
+                        }
                     }
-                    Err(error) => {
-                        warn!(%error, "node accept failed");
-                        break;
-                    }
-                }
+                };
             }
-        }));
+            drop(listener);
+            // Own and await every session, including incomplete authentication.
+            // Aborting a handler drops both socket halves and its identity lease.
+            sessions.shutdown().await;
+        });
+        *task = Some(GatewayTask {
+            stop: Some(stop),
+            task: Some(handle),
+        });
         Ok(())
     }
 
     pub async fn stop(&self) {
-        if let Some(task) = self.inner.accept_task.lock().await.take() {
-            task.abort()
+        // Serialize stop/cleanup with start. Retain the handle if this future is
+        // cancelled so a subsequent stop can still await the same generation.
+        let mut gateway = self.inner.accept_task.lock().await;
+        if let Some(task) = gateway.as_mut() {
+            if let Some(stop) = task.stop.take() {
+                let _ = stop.send(());
+            }
+            if let Some(handle) = task.task.as_mut() {
+                let _ = handle.await;
+            }
+            task.task = None;
         }
-        self.inner.connections.write().await.clear();
+        let disconnected = self
+            .inner
+            .connections
+            .write()
+            .await
+            .drain()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        for id in disconnected {
+            let _ = self.inner.events.send(NodeEvent::Down(id));
+        }
         let mut pending = self.inner.pending.lock().await;
         for (id, request) in pending.drain() {
             let _ = request.sender.send(json!({"type": "response", "id": id, "success": false, "error": "node gateway stopped"}));
         }
+        *gateway = None;
     }
 
     pub async fn connected_nodes(&self) -> HashMap<String, ConnectionInfo> {
@@ -195,6 +260,52 @@ impl NodeServer {
 
     pub async fn registered_nodes(&self) -> HashMap<String, ConnectionInfo> {
         self.inner.routes.read().await.clone()
+    }
+
+    pub async fn connection_counts(&self) -> ConnectionCounts {
+        let connections = self.inner.connections.read().await;
+        let registered = connections
+            .values()
+            .filter(|connection| connection.advertisement.is_some())
+            .count();
+        ConnectionCounts {
+            connected_node_count: connections.len(),
+            registered_node_count: registered,
+            registration_pending_node_count: connections.len() - registered,
+        }
+    }
+
+    pub async fn node_state(&self, node_id: &str) -> Option<NodeStateSnapshot> {
+        self.inner
+            .connections
+            .read()
+            .await
+            .get(node_id)?
+            .state
+            .clone()
+    }
+
+    /// Heartbeats need only metrics, without cloning/revalidating all models.
+    pub async fn node_heartbeat(&self, node_id: &str) -> Option<Value> {
+        self.inner
+            .connections
+            .read()
+            .await
+            .get(node_id)?
+            .state
+            .as_ref()?
+            .heartbeat
+            .clone()
+    }
+
+    pub async fn node_states(&self) -> std::collections::BTreeMap<String, NodeStateSnapshot> {
+        self.inner
+            .connections
+            .read()
+            .await
+            .iter()
+            .filter_map(|(id, connection)| Some((id.clone(), connection.state.clone()?)))
+            .collect()
     }
 
     /// Returns only explicitly selected IDs; callers must authorize them first.
@@ -288,6 +399,8 @@ impl NodeServer {
         }
     }
 
+    /// Best-effort response admission, not delivery acknowledgement. Never wait
+    /// behind a saturated node: this is also called by the shared event listener.
     pub async fn send_to_node(&self, node_id: &str, message: Value) -> Result<()> {
         let connection = self
             .inner
@@ -299,9 +412,11 @@ impl NodeServer {
             .ok_or_else(|| NodeOfflineError(node_id.into()))?;
         connection
             .sender
-            .send(message)
-            .await
-            .map_err(|_| NodeOfflineError(node_id.into()).into())
+            .try_send(message)
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => NodeQueueFullError(node_id.into()).into(),
+                mpsc::error::TrySendError::Closed(_) => NodeOfflineError(node_id.into()).into(),
+            })
     }
 
     async fn handle_connection(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
@@ -368,13 +483,6 @@ impl NodeServer {
 
         let (send, mut receive) = mpsc::channel::<Value>(64);
         let crypto = self.inner.crypto.clone();
-        let writer_task = tokio::spawn(async move {
-            while let Some(message) = receive.recv().await {
-                if write_message(&crypto, &mut writer, &message).await.is_err() {
-                    break;
-                }
-            }
-        });
         let info = ConnectionInfo {
             node_id: node_id.clone(),
             source_ip: peer.ip().to_string(),
@@ -392,13 +500,23 @@ impl NodeServer {
                 info,
                 sender: send,
                 advertisement: None,
+                state: None,
                 last_seen: Instant::now(),
             },
         );
 
-        let result = self.serve(&node_id, &mut reader).await;
+        // Neither direction is detached: shutdown/cancellation of this session
+        // must release both halves, including a stalled outbound write.
+        let result = tokio::select! {
+            result = self.serve(&node_id, &mut reader) => result,
+            result = async {
+                while let Some(message) = receive.recv().await {
+                    write_message(&crypto, &mut writer, &message).await?;
+                }
+                Ok(())
+            } => result,
+        };
         self.inner.connections.write().await.remove(&node_id);
-        writer_task.abort();
         self.fail_pending_for(&node_id).await;
         let _ = self.inner.events.send(NodeEvent::Down(node_id));
         result
@@ -409,6 +527,7 @@ impl NodeServer {
         R: tokio::io::AsyncBufRead + Unpin,
     {
         let mut metadata = crate::context::NodeMetadata::default();
+        let mut interpretation_capabilities = Vec::<String>::new();
         let mut registered = false;
         while let Some(mut message) = read_message(&self.inner.crypto, reader).await? {
             match message.get("type").and_then(Value::as_str) {
@@ -435,6 +554,7 @@ impl NodeServer {
                     metadata = metadata.advertised(&capabilities);
                     message["metadata"] = json!(metadata);
                     let advertisement = crate::network::PeerRecord::from_registration(&message)?;
+                    interpretation_capabilities = capabilities;
                     if let Some(connection) = self
                         .inner
                         .connections
@@ -443,6 +563,24 @@ impl NodeServer {
                         .get_mut(authenticated_id)
                     {
                         connection.advertisement = Some(advertisement);
+                        connection.state = Some(NodeStateSnapshot {
+                            registration: state_fields(
+                                &message,
+                                &[
+                                    "node_id",
+                                    "name",
+                                    "version",
+                                    "specs",
+                                    "capabilities",
+                                    "models",
+                                    "metadata",
+                                    "network",
+                                ],
+                            ),
+                            // Old specs/metrics must not overwrite a refreshed
+                            // registration until this generation has a heartbeat.
+                            heartbeat: None,
+                        });
                         connection.last_seen = Instant::now();
                     }
                     registered = true;
@@ -462,6 +600,12 @@ impl NodeServer {
                         .get_mut(authenticated_id)
                     {
                         connection.last_seen = Instant::now();
+                        if let Some(state) = &mut connection.state {
+                            state.heartbeat = Some(state_fields(
+                                &message,
+                                &["node_id", "load", "latency_ms", "specs"],
+                            ));
+                        }
                     }
                     message["node_id"] = Value::String(authenticated_id.into());
                     let _ = self.inner.events.send(NodeEvent::Heartbeat(message));
@@ -491,6 +635,9 @@ impl NodeServer {
                         metadata.area.clone(),
                     )?;
                     message["request_context"] = json!(origin);
+                    // Overwrite caller-supplied context with the same accepted
+                    // registration snapshot as this session's origin area.
+                    message["interpretation_capabilities"] = json!(interpretation_capabilities);
                     message["node_id"] = Value::String(authenticated_id.into());
                     let _ = self.inner.events.send(NodeEvent::Submission(message));
                 }
@@ -576,6 +723,16 @@ impl NodeServer {
     }
 }
 
+fn state_fields(message: &Value, fields: &[&str]) -> Value {
+    let mut snapshot = serde_json::Map::new();
+    for field in fields {
+        if let Some(value) = message.get(*field) {
+            snapshot.insert((*field).into(), value.clone());
+        }
+    }
+    Value::Object(snapshot)
+}
+
 fn require_node_id(message: &Value, authenticated_id: &str) -> Result<()> {
     if message.get("node_id").and_then(Value::as_str) != Some(authenticated_id) {
         bail!("node id does not match authenticated connection")
@@ -586,6 +743,318 @@ fn require_node_id(message: &Value, authenticated_id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn connection_counts_distinguish_auth_registration_and_disconnect() {
+        for valid in [true, false] {
+            let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let stream = TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (accepted, peer) = listener.accept().await.unwrap();
+            let handler = server.clone();
+            let task = tokio::spawn(async move { handler.handle_connection(accepted, peer).await });
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut events = server.subscribe();
+            let crypto = &server.inner.crypto;
+            assert_eq!(
+                server.connection_counts().await,
+                ConnectionCounts::default()
+            );
+            write_message(
+                crypto,
+                &mut writer,
+                &crate::protocol::build_auth(crypto, "fixture", crate::VERSION),
+            )
+            .await
+            .unwrap();
+            let reply = timeout(Duration::from_secs(5), read_message(crypto, &mut reader))
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(reply["type"], "ok");
+            timeout(Duration::from_secs(5), async {
+                while server.connection_counts().await.connected_node_count == 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(
+                server.connection_counts().await,
+                ConnectionCounts {
+                    connected_node_count: 1,
+                    registered_node_count: 0,
+                    registration_pending_node_count: 1,
+                }
+            );
+            let registration = if valid {
+                json!({"type":"register","node_id":"fixture","capabilities":[]})
+            } else {
+                json!({"type":"register","node_id":"fixture","network":{"advertised_address":"http://invalid/path"}})
+            };
+            write_message(crypto, &mut writer, &registration)
+                .await
+                .unwrap();
+            if valid {
+                for refresh in [false, true] {
+                    if refresh {
+                        write_message(crypto, &mut writer, &registration)
+                            .await
+                            .unwrap();
+                    }
+                    assert!(matches!(
+                        timeout(Duration::from_secs(5), events.recv())
+                            .await
+                            .unwrap()
+                            .unwrap(),
+                        NodeEvent::Registered(_)
+                    ));
+                    // Even a node advertising no capabilities is registered, not work-ready.
+                    assert_eq!(
+                        server.connection_counts().await,
+                        ConnectionCounts {
+                            connected_node_count: 1,
+                            registered_node_count: 1,
+                            registration_pending_node_count: 0,
+                        }
+                    );
+                }
+            }
+            drop(writer);
+            drop(reader);
+            let result = timeout(Duration::from_secs(5), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.is_ok(), valid);
+            assert!(matches!(
+                timeout(Duration::from_secs(5), events.recv())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                NodeEvent::Down(_)
+            ));
+            assert_eq!(
+                server.registered_nodes().await.len(),
+                1,
+                "historical routes survive disconnect"
+            );
+            assert_eq!(
+                server.connection_counts().await,
+                ConnectionCounts::default()
+            );
+            assert_eq!(
+                serde_json::to_value(server.connection_counts().await).unwrap(),
+                json!({
+                    "connected_node_count":0,"registered_node_count":0,"registration_pending_node_count":0
+                }),
+                "no addresses or node identities in diagnostic counts"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_stop_clears_live_diagnostic_counts() {
+        let (server, _receiver) = queued_test_server().await;
+        assert_eq!(
+            server
+                .connection_counts()
+                .await
+                .registration_pending_node_count,
+            1
+        );
+        server.stop().await;
+        assert_eq!(
+            server.connection_counts().await,
+            ConnectionCounts::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn gateway_stop_retires_sessions_before_restarting_same_identity() {
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        let mut events = server.subscribe();
+        for _ in 0..2 {
+            server.start().await.unwrap();
+            let stream = TcpStream::connect(("127.0.0.1", server.port()))
+                .await
+                .unwrap();
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let crypto = &server.inner.crypto;
+            write_message(
+                crypto,
+                &mut writer,
+                &crate::protocol::build_auth(crypto, "fixture", crate::VERSION),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                timeout(Duration::from_secs(5), read_message(crypto, &mut reader))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap()["type"],
+                "ok"
+            );
+            write_message(
+                crypto,
+                &mut writer,
+                &json!({"type":"register","node_id":"fixture"}),
+            )
+            .await
+            .unwrap();
+            assert!(matches!(
+                timeout(Duration::from_secs(5), events.recv())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                NodeEvent::Registered(_)
+            ));
+            let caller = server.clone();
+            let pending = tokio::spawn(async move {
+                caller
+                    .invoke_remote(
+                        "fixture",
+                        "system.ping",
+                        "run",
+                        json!({}),
+                        Duration::from_secs(30),
+                    )
+                    .await
+            });
+            // Reading the request proves a waiter is present; deliberately do not reply.
+            assert_eq!(
+                timeout(Duration::from_secs(5), read_message(crypto, &mut reader))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap()["type"],
+                "request"
+            );
+            timeout(Duration::from_secs(5), server.stop())
+                .await
+                .unwrap();
+            assert!(
+                server.inner.active_ids.lock().unwrap().is_empty(),
+                "Stop must await old session identity leases"
+            );
+            assert_eq!(
+                server.connection_counts().await,
+                ConnectionCounts::default()
+            );
+            let response = timeout(Duration::from_secs(5), pending)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(response["success"], false);
+            assert!(server.inner.pending.lock().await.is_empty());
+            assert!(matches!(
+                timeout(Duration::from_secs(5), events.recv())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                NodeEvent::Down(_)
+            ));
+            assert!(
+                timeout(Duration::from_secs(5), read_message(crypto, &mut reader))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .is_none()
+            );
+            drop(writer);
+            drop(reader);
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_stop_closes_probe_sessions_waiting_for_auth() {
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        server.start().await.unwrap();
+        let stream = TcpStream::connect(("127.0.0.1", server.port()))
+            .await
+            .unwrap();
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let crypto = &server.inner.crypto;
+        write_message(
+            crypto,
+            &mut writer,
+            &json!({"type":"probe","nonce":"0123456789abcdef0123456789abcdef"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            timeout(Duration::from_secs(5), read_message(crypto, &mut reader))
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()["type"],
+            "pong"
+        );
+        timeout(Duration::from_secs(5), server.stop())
+            .await
+            .unwrap();
+        assert!(
+            timeout(Duration::from_secs(1), read_message(crypto, &mut reader))
+                .await
+                .expect("Stopped gateway must close unauthenticated sessions")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_gateway_stop_can_finish_before_starting_new_generation() {
+        let (server, _receiver) = queued_test_server().await;
+        server.start().await.unwrap();
+        // Hold cleanup at a known boundary after the accept task has exited.
+        let pending = server.inner.pending.lock().await;
+        let mut events = server.subscribe();
+        let stopping = server.clone();
+        let task = tokio::spawn(async move { stopping.stop().await });
+        assert!(matches!(
+            timeout(Duration::from_secs(5), events.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            NodeEvent::Down(_)
+        ));
+        task.abort();
+        let _ = task.await;
+        assert!(
+            server
+                .inner
+                .accept_task
+                .lock()
+                .await
+                .as_ref()
+                .unwrap()
+                .task
+                .is_none()
+        );
+        drop(pending);
+        assert!(
+            server
+                .start()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("stopping")
+        );
+        timeout(Duration::from_secs(5), server.stop())
+            .await
+            .unwrap();
+        server.start().await.unwrap();
+        server.stop().await;
+    }
+
     #[tokio::test]
     async fn peer_records_use_current_connections_and_monotonic_heartbeat_age() {
         let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
@@ -602,6 +1071,7 @@ mod tests {
                 info: info.clone(),
                 sender,
                 advertisement: None,
+                state: None,
                 last_seen: Instant::now() - Duration::from_secs(90),
             },
         );
@@ -688,9 +1158,9 @@ mod tests {
         let operation_id = uuid::Uuid::new_v4().to_string();
         let messages = [
             json!({"type":"register","node_id":"owner","capabilities":["camera.capture"],"metadata":{"area":["Home","Office"],"resources":[{"id":"camera","capability":"camera.capture","parameters":{"password":"private"}}]}}),
-            json!({"type":"submit","node_id":"owner","id":"one","request_context":{"origin_node":"forged","origin_area":["Other"]}}),
+            json!({"type":"submit","node_id":"owner","id":"one","interpretation_capabilities":["shell.admin"],"request_context":{"origin_node":"forged","origin_area":["Other"]}}),
             json!({"type":"register","node_id":"owner"}),
-            json!({"type":"submit","node_id":"owner","id":"two","operation_id":operation_id,"request_context":{"origin_node":"forged"}}),
+            json!({"type":"submit","node_id":"owner","id":"two","operation_id":operation_id,"interpretation_capabilities":["shell.admin"],"request_context":{"origin_node":"forged"}}),
         ];
         let mut wire = Vec::new();
         for message in messages {
@@ -713,6 +1183,10 @@ mod tests {
             first["request_context"],
             json!({"request_id":"one","origin_node":"owner","origin_area":["Home","Office"]})
         );
+        assert_eq!(
+            first["interpretation_capabilities"],
+            json!(["camera.capture"])
+        );
         let NodeEvent::Registered(legacy) = events.recv().await.unwrap() else {
             panic!()
         };
@@ -722,6 +1196,7 @@ mod tests {
             panic!()
         };
         assert_eq!(second["request_context"]["origin_area"], json!([]));
+        assert_eq!(second["interpretation_capabilities"], json!([]));
         assert_eq!(second["request_context"]["request_id"], operation_id);
         assert_eq!(second["request_context"]["origin_node"], "owner");
         assert_eq!(
@@ -801,10 +1276,67 @@ mod tests {
                 },
                 sender,
                 advertisement: None,
+                state: None,
                 last_seen: Instant::now(),
             },
         );
         (server, receiver)
+    }
+
+    #[tokio::test]
+    async fn reconciliation_snapshots_are_live_sanitized_latest_and_independent() {
+        let (server, _receiver) = queued_test_server().await;
+        assert!(
+            server.node_states().await.is_empty(),
+            "unregistered sessions are excluded"
+        );
+        assert!(server.node_state("owner").await.is_none());
+        let mut wire = Vec::new();
+        for value in [
+            json!({"type":"register","node_id":"owner","capabilities":["system.info"],"name":"First","psk":"PRIVATE-PSK",
+                "metadata":{"resources":[{"id":"info","capability":"system.info","parameters":{"password":"PRIVATE-BINDING"}}]}}),
+            json!({"type":"heartbeat","node_id":"owner","load":{"cpu":0.2},"latency_ms":8,"command":"PRIVATE-COMMAND"}),
+        ] {
+            write_message(&server.inner.crypto, &mut wire, &value)
+                .await
+                .unwrap();
+        }
+        server
+            .serve("owner", &mut BufReader::new(wire.as_slice()))
+            .await
+            .unwrap();
+        let old = server.node_state("owner").await.unwrap();
+        assert_eq!(old.registration["name"], "First");
+        assert_eq!(old.heartbeat.as_ref().unwrap()["load"]["cpu"], 0.2);
+        assert!(!format!("{old:?}").contains("PRIVATE"));
+        let mut wire = Vec::new();
+        for value in [
+            json!({"type":"register","node_id":"owner","capabilities":[],"name":"Second"}),
+            json!({"type":"heartbeat","node_id":"owner","load":{"cpu":0.8},"latency_ms":3}),
+        ] {
+            write_message(&server.inner.crypto, &mut wire, &value)
+                .await
+                .unwrap();
+        }
+        server
+            .serve("owner", &mut BufReader::new(wire.as_slice()))
+            .await
+            .unwrap();
+        let latest = server.node_states().await.remove("owner").unwrap();
+        assert_eq!(latest.registration["name"], "Second");
+        assert_eq!(latest.registration["capabilities"], json!([]));
+        assert_eq!(latest.heartbeat.unwrap()["load"]["cpu"], 0.8);
+        assert_eq!(
+            old.registration["name"], "First",
+            "previous snapshots never mutate"
+        );
+        assert_eq!(old.heartbeat.unwrap()["load"]["cpu"], 0.2);
+        server.inner.connections.write().await.remove("owner");
+        assert!(server.node_state("owner").await.is_none());
+        assert!(
+            server.node_states().await.is_empty(),
+            "historical routes are excluded"
+        );
     }
 
     #[tokio::test]
@@ -852,6 +1384,50 @@ mod tests {
             result
                 .expect("outbound queue must honor command deadline")
                 .is_err()
+        );
+        assert!(server.inner.pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn submission_replies_fail_promptly_when_queue_is_full_without_late_delivery() {
+        let (server, mut receiver) = queued_test_server().await;
+        server
+            .send_to_node("owner", json!({"id":"first"}))
+            .await
+            .unwrap();
+        let result = timeout(
+            Duration::from_millis(200),
+            server.send_to_node("owner", json!({"id":"rejected"})),
+        )
+        .await
+        .expect("A full response queue must not stall coordinator event processing");
+        assert!(result.unwrap_err().to_string().contains("queue is full"));
+        assert_eq!(receiver.recv().await.unwrap()["id"], "first");
+        assert!(
+            receiver.try_recv().is_err(),
+            "rejected replies must not appear later"
+        );
+        server
+            .send_to_node("owner", json!({"id":"next"}))
+            .await
+            .unwrap();
+        assert_eq!(receiver.recv().await.unwrap()["id"], "next");
+        drop(receiver);
+        assert!(
+            server
+                .send_to_node("owner", json!({}))
+                .await
+                .unwrap_err()
+                .downcast_ref::<NodeOfflineError>()
+                .is_some()
+        );
+        assert!(
+            server
+                .send_to_node("absent", json!({}))
+                .await
+                .unwrap_err()
+                .downcast_ref::<NodeOfflineError>()
+                .is_some()
         );
         assert!(server.inner.pending.lock().await.is_empty());
     }

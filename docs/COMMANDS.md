@@ -104,6 +104,41 @@ Common errors: `node_not_running`, `runtime_unavailable`, `runtime_changed`,
 `invalid_interpreter_context`, `unsupported_command`, `preview_unconfirmed`.
 Existing deterministic commands remain model-independent.
 
+### Coordinator review (unreleased after alpha.6)
+
+```powershell
+eefn requests review --text "Is this node running?" --json
+```
+
+This explicit command uses the same applied interpreter selection and bounded
+inference as preview, then sends original text and the strict proposal through
+the running node's authenticated EEF connection. EEF revalidates the schema and
+capability hints using that session's accepted registration snapshot. It stamps
+origin node/area and request identity itself; caller/model fields cannot override
+them. Advertised capabilities are context, not permission to execute.
+
+The report has `report_type: request_review`, `coordinator_acknowledged`, and a
+`coordinator_request_review` result containing `request_context` and the validated
+interpretation. It returns `review_required` or `clarification_required` with the
+model's question. A successful review is not approval, semantic verification or
+completed work. `execution_authorized`, `dispatched`, and result `persisted` are
+false: there is no plan, job, execution grant, clarification session or durable
+review receipt. Answering a question requires a new explicit request for now.
+
+An active EEF connection is required to complete review; a paused/offline node
+may still run local interpretation before reporting `coordinator_unavailable`.
+Preview remains available without EEF. Restart invalidates an in-flight review;
+EEF may already have reviewed it. No retry, chat fallback, model selection or
+download is automatic. Submission waits at most 120 seconds after bounded
+inference; the CLI deadline is 150 seconds. A lost/mismatched reply reports
+`review_unconfirmed`, with `outcome_unknown: true`; only review may have happened,
+never execution requested by this command.
+
+Local owner endpoint: `POST /api/commands/requests/review` uses the same body as
+preview. Additional errors: `coordinator_unavailable`, `review_rejected`,
+`review_unconfirmed`. Older EEF versions may reject the new submission kind;
+`unsupported_command` describes an older node's missing local endpoint.
+
 ## Added in v0.4.0a4: model download commands
 
 ```powershell
@@ -264,6 +299,13 @@ effects. Resume retains completed steps and follows the existing uncertain-work
 rules. Remove deletes only finished job history and cannot stop an active job.
 List returns the existing bounded view (first 100 visible jobs plus total).
 
+Unreleased coordinator reliability changes after alpha.6 serialize admission,
+shutdown, Stop and runner retirement. A Stop racing runner cleanup cannot leave
+`stopping` with no local runner to settle it. An uncertain exit can still produce
+`interrupted`; inspect the saved state rather than assuming remote work stopped.
+Stop cannot undo completed effects. These changes are not in published alpha.6
+installers and do not introduce automatic retries or remote execution leases.
+
 `output` explicitly returns text-model results only: at most 32 tasks and 32768
 aggregate UTF-8 content bytes with truncation flags. Pending text is null. Normal
 status still omits output; file contents, media and raw parameters are not exposed
@@ -274,7 +316,13 @@ Failures distinguish `not_sent`, coordinator `job_rejected`, and unconfirmed
 transport outcomes. Mutating errors remain conservatively uncertain unless known
 not sent: an error does not prove a checkpoint was rolled back. Inspect list/status
 before an explicit retry. Job commands are not automatically resubmitted after timeout or
-reconnection; the command operation ID is not a durable deduplication key.
+reconnection. Receipt protection for creation is limited as described below;
+other command operation IDs remain correlation only.
+
+The unreleased coordinator reply path also fails promptly if a node's bounded
+outbound queue is full, keeping shared event processing responsive. A reply may
+therefore be unconfirmed even though its job was saved or executed. This is not
+rollback or permission to replay: use receipt lookup and inspect retained status.
 
 Creation recovery in the current development build: the CLI generates a receipt
 `operation_id` before sending, including it in an unconfirmed local-reply report.
@@ -287,11 +335,32 @@ history without executing anything. Matching happens before the 100-result limit
 Lookup is not an execution receipt ledger: pause/resume/stop/remove commands do
 not become new job creations. No match can mean in-flight work, removed history,
 a different coordinator, or an older coordinator without correlation support;
-it does **not** prove that creation was never accepted. Reusing a receipt does
-not deduplicate work and may match multiple jobs. Do not automatically retry an
-uncertain mutation. Transport IDs remain independently generated, so reused
+it does **not** prove that creation was never accepted. Published alpha.6 and older
+coordinators do not deduplicate receipt reuse and may return multiple matches.
+Do not automatically retry an uncertain mutation. Transport IDs remain independently generated, so reused
 correlation cannot mix up replies. Both roles must be updated for lookup; older
 coordinators reject `jobs.find` rather than returning an unfiltered list.
+
+Unreleased after alpha.6: node-origin `jobs.create` admission uses the authenticated
+origin node plus its operation receipt. An identical normalized goal returns the
+retained job with `data.admission.reused:true`, without dispatch, resume, new history
+events or resetting results. New admission returns `reused:false`. Different
+description/template/parameters/constraints under the same receipt fail closed;
+so do ambiguous duplicate receipts left by older versions. The original origin
+area stays unchanged even if the node has since moved. Different origin nodes
+may independently use the same receipt. This applies to the existing node command
+API's `operation_id`; the CLI still creates fresh receipts and never auto-replays.
+
+The journal serializes lookup/insertion with existing shutdown admission, and
+the receipt remains durable in the job's existing context across coordinator
+restart. It is **retained-history deduplication**, not a permanent receipt ledger:
+removing history ends protection, switching/restoring databases can lose it, and
+older coordinators have no such guarantee. `admission.retention` explicitly says
+`while_job_history_exists`. Existing interrupted work stays interrupted; controls
+retain their existing semantics. No new execution lease, remote cancellation or
+exactly-once side-effect guarantee is introduced. Loopback-owner creation without
+node origin is unchanged. Lookup scans retained records under the journal lock;
+it adds no unbounded tombstone collection or separate job framework.
 
 ## Added in v0.4.0a3: model route inspection
 
@@ -543,6 +612,55 @@ not include this new coordinator command; their nodes remain compatible.
 
 ## Diagnostics and private pairing
 
+### Node request capacity (unreleased after alpha.6)
+
+```powershell
+.\eefn.exe connection limits --json
+.\eefn.exe connection limits --work 4 --control 2 --json
+.\eefn.exe restart --wait-seconds 15 --json
+```
+
+These commands contact the running node; they do not launch a second runtime.
+`limits` with no options is read-only. Specified values merge with current saved
+settings under the shared config lock, preserving identity, permissions and other
+configuration. Identical values do not rewrite the file. The response separates
+`saved_request_limits` from `applied_request_limits` and never requests restart;
+use the explicit restart command when it is safe to interrupt current work.
+
+Node configuration accepts `request_limits: {"work":16,"control":2}`. These are
+the defaults for old configurations as well. `work` supports 1-128 simultaneous
+network execution futures; `control` supports 1-8 separate ping/status/restart
+futures. The reserved operations are `system.ping` and `node.configure` actions
+`status`/`restart`. This changes admission only: restart still needs the normal
+owner approval, and every admitted request still passes the engine's permissions.
+Model installs/updates and other management actions use the work allowance.
+The reserve is per wire request, not an entire multi-stage CLI workflow: remote
+restart's existing configuration/diagnostic preflight and model controls still
+use work capacity. A received reply may still occupy its request slot briefly.
+
+Owner configuration saves (or already-approved remote configuration saves) validate
+the limits before writing. Apply changes by restarting the node. Status/diagnostics
+report `request_limits` from the last connected runtime, or null when unavailable,
+and cumulative `busy_rejections` for the service process. Saved configuration can
+differ until restart. No visual UI or new startup permission is required.
+
+Excess requests return `success:false`, `error_type:NodeBusy`, `not_started:true`;
+they are not queued or automatically replayed by node admission. Existing
+coordinator retry rules still apply to retry-safe work. Capacity is released when
+the request future ends, including failures/cancellation. A failed busy-response
+write ends the connection rather than continuing a potentially partial frame.
+This bounds incoming network request futures, not CPU/RAM, downloads started by
+other services, local API operations or remote effects that outlive cancellation.
+It is not completion of local workload resource budgets or execution grants.
+
+Remote model commands now surface confirmed capacity rejection as `node_busy`
+with `not_started:true` and `outcome_unknown:false`. `mutation_requested` says
+whether rejection happened at inspection or after a mutation was sent. No model
+change started in either confirmed rejection case, and no automatic retry is
+sent. Missing `not_started` confirmation or a lost reply remains uncertain.
+
+### Reports and pairing
+
 ```powershell
 .\eefn.exe network diagnose --json
 .\eef.exe diagnostics --json
@@ -558,6 +676,38 @@ counters, excluding machine names/addresses/paths/secrets/raw errors. Counters
 last for the node-service process: `connection_checks` counts checking events,
 `successful_connections` counts connections, and `failed_connection_attempts`
 counts disconnected-error events, not unique networks or exhaustive packet loss.
+
+Unreleased after alpha.6, coordinator diagnostics distinguish connection stages:
+`connected_node_count` counts authenticated live connections;
+`registered_node_count` counts those whose registration the gateway accepted;
+`registration_pending_node_count` counts the remainder. These three counts share
+one gateway snapshot and exclude historical/disconnected routes. Registration
+can still be awaiting scheduler processing, and a registered node may advertise
+no capabilities or models.
+
+`remote_provider_count` and `healthy_remote_provider_count` count remote
+capability/action provider entries in a separate scheduler-registry snapshot,
+not nodes. Local adapters are excluded; health is the registry's current flag,
+not a new probe, capacity reservation or permission check. `model_count` remains
+a separate model-registry count. Across these snapshots, connection/registration
+changes may still be propagating. The report's `readiness_note` makes this
+limitation explicit: no aggregate count guarantees a particular job can run.
+Check the required node/capability, model and permissions; dispatch can still fail.
+
+Unreleased after alpha.6: `node_event_loss_count` counts skipped gateway events
+since this EEF runtime started, and `node_state_reconciliation_count` counts
+completed live-state reconciliations, including listener startup. Recovery restores
+accepted registrations and metrics, not lost requests or completed effects.
+Historical routes do not re-add offline nodes. State repair itself does not replay
+connection/disconnect triggers into automation. No work is automatically resubmitted.
+
+`assistant_event_loss_count` and `world_event_loss_count` count gaps in their
+separate observer streams. Observers continue accepting later events. A world
+gap sets `world_state_may_be_stale` and `world_rules_suspended`; the equivalent
+world summary flag is `state_may_be_stale`. Automatic world-condition rules are
+suppressed for that world runtime's remaining lifetime. Node reconnection cannot
+reconstruct missed application/task/sensor state. Explicit commands and separate
+event/keyword rules are unchanged; these counters are not delivery acknowledgements.
 
 Explicit ping probes sample 1-10 `system.ping` calls with a two-second timeout
 per sample and report round-trip milliseconds, versions and failures. They do
@@ -711,5 +861,8 @@ node, restarts its coordinator, and checks durable interruption, refusal to
 resume uncertain non-retry-safe work, no replay, ignored late replies and healthy
 subsequent work. It uses no personal configuration, external service or shell
 command. Set `EEF_TEST_BINARY_DIR` to choose binaries (default `target/debug`).
+The harness waits for the required registered capability, not just an authenticated
+socket, before submitting new work. It records terminal failures without replaying
+them; reconnection alone is not proof that the scheduler has a ready provider.
 Published alpha.5 reproduces the shutdown-order failure; alpha.6 includes the
 fix required for this regression to pass.

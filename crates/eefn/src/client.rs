@@ -93,6 +93,8 @@ fn text_modality() -> String {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeClientConfig {
     #[serde(default)]
+    pub request_limits: crate::request_limits::RequestLimits,
+    #[serde(default)]
     pub network: crate::network::NetworkAdvertisement,
     #[serde(default)]
     pub metadata: crate::context::NodeMetadata,
@@ -128,6 +130,7 @@ fn default_ollama_url() -> String {
 }
 
 pub struct NodeClient {
+    request_budget: crate::request_limits::RequestBudget,
     config: NodeClientConfig,
     crypto: NodeCrypto,
     engine: Arc<NodeEngine>,
@@ -179,6 +182,7 @@ impl NodeClient {
             }
         }
         Ok(Self {
+            request_budget: crate::request_limits::RequestBudget::new(&config.request_limits)?,
             crypto: NodeCrypto::new(&config.psk)?,
             config,
             engine,
@@ -489,6 +493,7 @@ impl NodeClient {
             let mut status = self.status.lock().expect("status");
             status["models"] = json!(models);
             status["capabilities"] = json!(capabilities);
+            status["request_limits"] = json!(self.config.request_limits);
         }
 
         // Subscribe before the first refresh. A startup transition that happened
@@ -614,6 +619,28 @@ impl NodeClient {
                 .unwrap_or("run")
                 .to_owned();
             let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
+            let Some(permit) = self.request_budget.admit(&capability, &action) else {
+                {
+                    let mut status = self.status.lock().expect("status");
+                    status["busy_rejections"] = json!(
+                        status["busy_rejections"]
+                            .as_u64()
+                            .unwrap_or(0)
+                            .saturating_add(1)
+                    );
+                }
+                let response = json!({"type":"response","id":request_id,"success":false,
+                    "error":"Node request capacity is full; this request was not started",
+                    "error_type":"NodeBusy","not_started":true});
+                // A timed-out partial write ends this connection; never continue
+                // its framing or automatically replay the rejected operation.
+                timeout(Duration::from_secs(5), async {
+                    write_message(&self.crypto, &mut *writer.lock().await, &response).await
+                })
+                .await
+                .context("busy response timed out; reconnect required")??;
+                continue;
+            };
             let context = message
                 .get("request_context")
                 .cloned()
@@ -623,6 +650,7 @@ impl NodeClient {
             let crypto = self.crypto.clone();
             let status = self.status.clone();
             tasks.spawn(async move {
+                let _permit = permit;
                 {
                     let mut s = status.lock().expect("status");
                     s["last_activity"] = json!(capability);
@@ -865,6 +893,7 @@ mod tests {
             Arc::new(NodeEngine::new(false, vec![], std::env::current_dir().unwrap()).unwrap());
         let client = NodeClient::new(
             NodeClientConfig {
+                request_limits: Default::default(),
                 network: Default::default(),
                 metadata: Default::default(),
                 endpoints: parsed,

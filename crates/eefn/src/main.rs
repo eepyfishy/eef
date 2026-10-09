@@ -156,14 +156,24 @@ async fn execute_model_command(
     Ok(result)
 }
 
-async fn execute_request_preview(args: &Args, text: &str) -> Result<serde_json::Value> {
+async fn execute_request_command(
+    args: &Args,
+    text: &str,
+    review: bool,
+) -> Result<serde_json::Value> {
     use serde_json::json;
+    let action = if review { "review" } else { "preview" };
+    let report_type = if review {
+        "request_review"
+    } else {
+        "request_preview"
+    };
     eefn::interpretation::messages(text, &[])?;
     if eefn::setup::instance_lock(&args.config)?.is_some() {
         return Ok(
-            json!({"schema_version":1,"report_type":"request_preview","success":false,
+            json!({"schema_version":1,"report_type":report_type,"success":false,
             "error_code":"node_not_running","execution_authorized":false,"dispatched":false,
-            "error":"Start the node first. Preview does not start a second runtime."}),
+            "error":"Start the node first. Request commands do not start a second runtime."}),
         );
     }
     let file = load_file(&args.config)?;
@@ -183,26 +193,33 @@ async fn execute_request_preview(args: &Args, text: &str) -> Result<serde_json::
     };
     let exchange = async {
         let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
-            .post(format!("http://{address}/api/commands/requests/preview"))
-            .timeout(Duration::from_secs(25)).json(&request).send().await?;
+            .post(format!("http://{address}/api/commands/requests/{action}"))
+            .timeout(Duration::from_secs(if review {150} else {25})).json(&request).send().await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(json!({"schema_version":1,"report_type":"request_preview","success":false,
+            return Ok(json!({"schema_version":1,"report_type":report_type,"success":false,
                 "error_code":"unsupported_command","execution_authorized":false,"dispatched":false,
-                "error":"This running node does not support preview. No chat/job fallback was attempted."}));
+                "error":"This running node does not support this request command. No chat/job fallback was attempted."}));
         }
         let status = response.status();
         let report = eefn::model_manager::bounded_json(response).await?;
-        if !status.is_success() || report["schema_version"] != 1 || report["report_type"] != "request_preview"
+        if !status.is_success() || report["schema_version"] != 1 || report["report_type"] != report_type
             || report["node_id"] != file.node_id || report["request_id"] != request.request_id
             || !report["success"].is_boolean() || report["execution_authorized"] != false || report["dispatched"] != false {
-            bail!("Unrecognized request-preview response");
+            bail!("Unrecognized request-command response");
+        }
+        if review && report["success"] == true
+            && (report["coordinator_acknowledged"] != true
+                || report["automatically_retried"] != false || report["outcome_unknown"] != false
+                || !eefn::request_preview::confirmed_review(&report["result"], &file.node_id, &request.request_id, text)) {
+            bail!("Unrecognized coordinator review response");
         }
         Ok::<serde_json::Value, anyhow::Error>(report)
     }.await;
-    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"request_preview","success":false,
-        "request_id":request.request_id,"error_code":"preview_unconfirmed","execution_authorized":false,
+    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":report_type,"success":false,
+        "request_id":request.request_id,"error_code":if review {"review_unconfirmed"} else {"preview_unconfirmed"},"execution_authorized":false,
         "dispatched":false,"automatically_retried":false,
-        "error":"No confirmed preview reply. Inference may have run; no job or action was requested. No automatic retry."})))
+        "outcome_unknown":review,
+        "error":"No confirmed request reply. Inference/review may have run; no job or action was requested. No automatic retry."})))
 }
 
 async fn execute_download_command(
@@ -534,11 +551,15 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
             }
         };
     }
-    if let Commands::Requests {
-        command: eefn::request_preview::RequestAction::Preview { text },
-    } = command
-    {
-        return execute_request_preview(args, text).await;
+    if let Commands::Requests { command } = command {
+        return match command {
+            eefn::request_preview::RequestAction::Preview { text } => {
+                execute_request_command(args, text, false).await
+            }
+            eefn::request_preview::RequestAction::Review { text } => {
+                execute_request_command(args, text, true).await
+            }
+        };
     }
     let Commands::Network { command } = command else {
         unreachable!()
@@ -659,6 +680,8 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
 
 #[derive(Clone, Debug, Deserialize)]
 struct FileConfig {
+    #[serde(default)]
+    request_limits: eefn::request_limits::RequestLimits,
     #[serde(default)]
     network: eefn::network::NetworkAdvertisement,
     #[serde(default)]
@@ -1223,6 +1246,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         Some(
             NodeClient::new(
                 NodeClientConfig {
+                    request_limits: file.request_limits,
                     network: file.network,
                     metadata: file.metadata,
                     endpoints: file.endpoints,

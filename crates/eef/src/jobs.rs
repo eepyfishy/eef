@@ -44,6 +44,11 @@ pub struct JobStore {
     max_bytes: usize,
 }
 
+pub(crate) struct JobAdmission {
+    pub plan: Plan,
+    pub reused: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct AttemptJournal {
     pub store: Arc<JobStore>,
@@ -165,8 +170,68 @@ impl JobStore {
         let connection = self.connection.lock().expect("job journal");
         read(&connection, id)
     }
-    pub fn insert(&self, mut plan: Plan) -> Result<()> {
+    pub fn insert(&self, plan: Plan) -> Result<()> {
         let connection = self.connection.lock().expect("job journal");
+        self.insert_locked(&connection, plan)?;
+        Ok(())
+    }
+
+    /// Deduplicate node-origin creation while its job is retained. The same
+    /// journal lock covers lookup and insertion; no separate receipt can commit
+    /// without its job. Legacy ambiguous receipts fail closed, never pick one.
+    pub(crate) fn admit_request(&self, plan: Plan) -> Result<JobAdmission> {
+        let origin = plan
+            .goal
+            .request_context
+            .as_ref()
+            .context("Node origin is required")?;
+        let connection = self.connection.lock().expect("job journal");
+        let mut statement = connection.prepare("SELECT plan_json FROM durable_jobs")?;
+        let mut rows = statement.query([])?;
+        let mut existing: Option<Plan> = None;
+        while let Some(row) = rows.next()? {
+            let raw: String = row.get(0)?;
+            let saved: Plan =
+                serde_json::from_str(&raw).context("Damaged job record; admission refused")?;
+            if saved.goal.request_context.as_ref().is_some_and(|context| {
+                context.origin_node() == origin.origin_node()
+                    && context.request_id() == origin.request_id()
+            }) {
+                if existing.is_some() {
+                    bail!(
+                        "Operation receipt is ambiguous in retained history; inspect jobs.find before creating new work"
+                    )
+                }
+                existing = Some(saved);
+            }
+        }
+        drop(rows);
+        drop(statement);
+        if let Some(saved) = existing {
+            // Retain the original origin/area snapshot, even after a node moves.
+            // Compare input, not generated task IDs, attempts or mutable results.
+            if saved.goal.description != plan.goal.description
+                || saved.goal.template != plan.goal.template
+                || saved.goal.params != plan.goal.params
+                || saved.goal.constraints != plan.goal.constraints
+            {
+                bail!(
+                    "Operation receipt conflicts with a retained job; use jobs.find to inspect it"
+                )
+            }
+            return Ok(JobAdmission {
+                plan: saved,
+                reused: true,
+            });
+        }
+        let plan = self.insert_locked(&connection, plan)?;
+        Ok(JobAdmission {
+            plan,
+            reused: false,
+        })
+    }
+
+    fn insert_locked(&self, connection: &Connection, mut plan: Plan) -> Result<Plan> {
         validate(&plan)?;
         let count: i64 =
             connection.query_row("SELECT count(*) FROM durable_jobs", [], |r| r.get(0))?;
@@ -175,12 +240,12 @@ impl JobStore {
         }
         stamp(&mut plan, "Job saved before execution");
         let encoded = serde_json::to_string(&plan)?;
-        self.check_size(&connection, &plan.plan_id, encoded.len(), reserve(&plan))?;
+        self.check_size(connection, &plan.plan_id, encoded.len(), reserve(&plan))?;
         connection.execute(
             "INSERT INTO durable_jobs(job_id,plan_json,updated_ms,reserved_bytes) VALUES (?1,?2,?3,?4)",
             params![plan.plan_id, encoded, i64::try_from(plan.updated_at_ms)?, i64::try_from(reserve(&plan))?],
         )?;
-        Ok(())
+        Ok(plan)
     }
     pub fn change(
         &self,
@@ -429,7 +494,14 @@ impl crate::task::TaskEngine {
         if kind == "jobs.create" {
             let mut goal: crate::task::Goal = serde_json::from_value(payload)?;
             goal.request_context = origin;
-            let id = self.enqueue(crate::task::TaskPlanner.plan(goal)?)?;
+            let plan = crate::task::TaskPlanner.plan(goal)?;
+            if plan.goal.request_context.is_some() {
+                let admission = self.enqueue_request(plan)?;
+                let mut result = view(&admission.plan, true);
+                result["admission"] = json!({"reused":admission.reused,"scope":"origin_and_operation_id","retention":"while_job_history_exists"});
+                return Ok(result);
+            }
+            let id = self.enqueue(plan)?;
             return Ok(view(&self.store.get(&id)?, true));
         }
         let id = payload["id"].as_str().context("Job ID is required")?;
@@ -538,6 +610,274 @@ mod tests {
     }
     fn open(path: &Path) -> Arc<JobStore> {
         JobStore::open(path, 500, 64 * 1024 * 1024).unwrap()
+    }
+
+    fn receipt_origin(node: &str, id: &str, area: &str) -> eefn::context::RequestContext {
+        eefn::context::RequestContext::new(id.into(), node.into(), vec![area.into()]).unwrap()
+    }
+
+    fn receipt_payload() -> Value {
+        json!({"description":"receipt fixture","template":"write_file","params":{"path":"fixture","content":"once"}})
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_receipt_admission_dispatches_once_and_rejects_changed_input() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let executor = Arc::new(Counting(AtomicU32::new(0)));
+        engine.set_executor(executor.clone());
+        let receipt = uuid::Uuid::new_v4().to_string();
+        let origin = receipt_origin("owner", &receipt, "Study");
+        let barrier = Arc::new(tokio::sync::Barrier::new(32));
+        let mut tasks = Vec::new();
+        for _ in 0..32 {
+            let engine = engine.clone();
+            let origin = origin.clone();
+            let barrier = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                engine
+                    .job_request("jobs.create", receipt_payload(), Some(origin))
+                    .unwrap()
+            }));
+        }
+        let mut replies = Vec::new();
+        for task in tasks {
+            replies.push(task.await.unwrap());
+        }
+        let id = replies[0]["id"].as_str().unwrap();
+        assert!(replies.iter().all(|reply| reply["id"] == id));
+        assert_eq!(
+            replies
+                .iter()
+                .filter(|reply| reply["admission"]["reused"] == false)
+                .count(),
+            1
+        );
+        assert_eq!(settled(&engine, id).await.status, PlanStatus::Completed);
+        assert_eq!(executor.0.load(Ordering::SeqCst), 1);
+        let before = serde_json::to_value(engine.store.get(id).unwrap()).unwrap();
+        let moved = receipt_origin("owner", &receipt, "Living room");
+        let again = engine
+            .job_request("jobs.create", receipt_payload(), Some(moved))
+            .unwrap();
+        assert_eq!(again["admission"]["reused"], true);
+        assert_eq!(again["request_context"]["origin_area"], json!(["Study"]));
+        assert_eq!(
+            serde_json::to_value(engine.store.get(id).unwrap()).unwrap(),
+            before
+        );
+        for (field, value) in [
+            ("description", json!("changed")),
+            ("template", json!("read_file")),
+            ("params", json!({"path":"different"})),
+            ("constraints", json!({"node_id":"different"})),
+        ] {
+            let mut changed = receipt_payload();
+            changed[field] = value;
+            let error = engine
+                .job_request("jobs.create", changed, Some(origin.clone()))
+                .unwrap_err();
+            assert!(error.to_string().contains("conflicts"));
+        }
+        assert_eq!(engine.store.list().unwrap().len(), 1);
+        let other = engine
+            .job_request(
+                "jobs.create",
+                receipt_payload(),
+                Some(receipt_origin("other", &receipt, "Study")),
+            )
+            .unwrap();
+        assert_ne!(other["id"], id);
+        assert_eq!(other["admission"]["reused"], false);
+        settled(&engine, other["id"].as_str().unwrap()).await;
+        assert_eq!(executor.0.load(Ordering::SeqCst), 2);
+        engine.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn receipt_survives_restart_without_resuming_uncertain_work() {
+        let (_dir, path) = disk();
+        let store = open(&path);
+        let origin = receipt_origin("owner", &uuid::Uuid::new_v4().to_string(), "Study");
+        let mut goal: Goal = serde_json::from_value(receipt_payload()).unwrap();
+        goal.request_context = Some(origin.clone());
+        let admitted = store
+            .admit_request(TaskPlanner.plan(goal).unwrap())
+            .unwrap();
+        let id = admitted.plan.plan_id;
+        store
+            .change(&id, "fixture uncertain dispatch", |plan| {
+                plan.status = PlanStatus::Running;
+                plan.tasks[0].status = TaskStatus::Running;
+                plan.tasks[0].attempts = 1;
+                Ok(())
+            })
+            .unwrap();
+        drop(store);
+        let store = open(&path);
+        let before = serde_json::to_value(store.get(&id).unwrap()).unwrap();
+        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        let executor = Arc::new(Counting(AtomicU32::new(0)));
+        engine.set_executor(executor.clone());
+        let reused = engine
+            .job_request("jobs.create", receipt_payload(), Some(origin))
+            .unwrap();
+        assert_eq!(reused["id"], id);
+        assert_eq!(reused["status"], "interrupted");
+        assert_eq!(reused["admission"]["reused"], true);
+        assert_eq!(
+            serde_json::to_value(engine.store.get(&id).unwrap()).unwrap(),
+            before
+        );
+        engine.shutdown().await;
+        assert_eq!(executor.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn legacy_duplicate_receipts_fail_closed_without_modifying_history() {
+        let store = JobStore::in_memory().unwrap();
+        let job = plan("write_file");
+        let goal = job.goal.clone();
+        store.insert(job).unwrap();
+        store
+            .insert(TaskPlanner.plan(goal.clone()).unwrap())
+            .unwrap();
+        let before = serde_json::to_value(store.list().unwrap()).unwrap();
+        let result = store.admit_request(TaskPlanner.plan(goal).unwrap());
+        assert!(result.err().unwrap().to_string().contains("ambiguous"));
+        assert_eq!(serde_json::to_value(store.list().unwrap()).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn receipt_reuse_at_quota_and_shutdown_do_not_create_new_runners() {
+        let store = JobStore::initialize(Connection::open_in_memory().unwrap(), None, 1, 64 * 1024)
+            .unwrap();
+        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        let executor = Arc::new(Counting(AtomicU32::new(0)));
+        engine.set_executor(executor.clone());
+        let origin = receipt_origin("owner", &uuid::Uuid::new_v4().to_string(), "Study");
+        let first = engine
+            .job_request("jobs.create", receipt_payload(), Some(origin.clone()))
+            .unwrap();
+        let id = first["id"].as_str().unwrap();
+        settled(&engine, id).await;
+        assert_eq!(
+            engine
+                .job_request("jobs.create", receipt_payload(), Some(origin.clone()))
+                .unwrap()["admission"]["reused"],
+            true
+        );
+        let other = receipt_origin("owner", &uuid::Uuid::new_v4().to_string(), "Study");
+        assert!(
+            engine
+                .job_request("jobs.create", receipt_payload(), Some(other.clone()))
+                .is_err()
+        );
+        assert_eq!(engine.store.list().unwrap().len(), 1);
+        // History removal explicitly ends this protection; there is no hidden,
+        // unlimited tombstone ledger or claim that deleted receipts remain safe.
+        engine.store.remove_finished(id).unwrap();
+        let recreated = engine
+            .job_request("jobs.create", receipt_payload(), Some(origin.clone()))
+            .unwrap();
+        assert_ne!(recreated["id"], id);
+        assert_eq!(recreated["admission"]["reused"], false);
+        settled(&engine, recreated["id"].as_str().unwrap()).await;
+        engine.shutdown().await;
+        let before = serde_json::to_value(engine.store.list().unwrap()).unwrap();
+        assert!(
+            engine
+                .job_request("jobs.create", receipt_payload(), Some(other))
+                .is_err()
+        );
+        assert!(
+            engine
+                .job_request("jobs.create", receipt_payload(), Some(origin))
+                .is_err()
+        );
+        assert_eq!(
+            serde_json::to_value(engine.store.list().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(executor.0.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn receipt_admission_racing_shutdown_leaves_no_pending_job() {
+        for _ in 0..20 {
+            let engine = TaskEngine::new(EventBus::new(20));
+            let origin = receipt_origin("owner", &uuid::Uuid::new_v4().to_string(), "Study");
+            assert!(
+                engine
+                    .job_request("jobs.create", receipt_payload(), Some(origin.clone()))
+                    .is_err()
+            );
+            assert!(
+                engine.store.list().unwrap().is_empty(),
+                "missing executor cannot persist work"
+            );
+            let executor = Arc::new(Counting(AtomicU32::new(0)));
+            engine.set_executor(executor.clone());
+            let barrier = Arc::new(tokio::sync::Barrier::new(17));
+            let mut requests = Vec::new();
+            for _ in 0..16 {
+                let engine = engine.clone();
+                let origin = origin.clone();
+                let barrier = barrier.clone();
+                requests.push(tokio::spawn(async move {
+                    barrier.wait().await;
+                    engine.job_request("jobs.create", receipt_payload(), Some(origin))
+                }));
+            }
+            let stopping = engine.clone();
+            let stop = tokio::spawn(async move {
+                barrier.wait().await;
+                stopping.shutdown().await;
+            });
+            let mut accepted = std::collections::HashSet::new();
+            for request in requests {
+                if let Ok(reply) = request.await.unwrap() {
+                    accepted.insert(reply["id"].as_str().unwrap().to_owned());
+                }
+            }
+            tokio::time::timeout(Duration::from_secs(5), stop)
+                .await
+                .unwrap()
+                .unwrap();
+            let saved = engine.store.list().unwrap();
+            assert_eq!(saved.len(), accepted.len());
+            assert!(saved.len() <= 1);
+            assert!(
+                saved.iter().all(|job| matches!(
+                    job.status,
+                    PlanStatus::Completed | PlanStatus::Interrupted
+                ))
+            );
+            assert!(executor.0.load(Ordering::SeqCst) <= 1);
+        }
+    }
+
+    #[test]
+    fn damaged_history_refuses_receipt_admission_without_overwriting_evidence() {
+        let store = JobStore::in_memory().unwrap();
+        store.connection.lock().unwrap().execute(
+            "INSERT INTO durable_jobs(job_id,plan_json,updated_ms,reserved_bytes) VALUES ('damaged','broken',0,0)", [],
+        ).unwrap();
+        let error = store.admit_request(plan("write_file")).err().unwrap();
+        assert!(error.to_string().contains("Damaged job record"));
+        let connection = store.connection.lock().unwrap();
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM durable_jobs", [], |row| row.get(0))
+            .unwrap();
+        let raw: String = connection
+            .query_row(
+                "SELECT plan_json FROM durable_jobs WHERE job_id='damaged'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(raw, "broken");
     }
     #[test]
     fn receipt_lookup_survives_reopen_and_filters_before_the_result_limit() {
@@ -799,6 +1139,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stop_after_resume_before_first_poll_does_not_dispatch() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let executor = Arc::new(Counting(AtomicU32::new(0)));
+        engine.set_executor(executor.clone());
+        let job = plan("write_file");
+        let id = job.plan_id.clone();
+        engine.store.insert(job).unwrap();
+        engine.pause(&id).unwrap();
+        engine.resume_job(&id).unwrap();
+        assert_eq!(engine.cancel(&id).unwrap().status, PlanStatus::Stopping);
+        let saved = settled(&engine, &id).await;
+        assert_eq!(saved.status, PlanStatus::Cancelled);
+        assert_eq!(saved.tasks[0].status, TaskStatus::Cancelled);
+        assert_eq!(saved.tasks[0].attempts, 0);
+        assert_eq!(executor.0.load(Ordering::SeqCst), 0);
+        engine.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn stop_during_execution_keeps_finished_effects_and_skips_dependents() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let executor = Blocking::new();
+        engine.set_executor(executor.clone());
+        let mut job = plan("write_file");
+        let mut second = job.tasks[0].clone();
+        second.task_id = "after-stopped-batch".into();
+        second.dependencies = vec![job.tasks[0].task_id.clone()];
+        job.tasks.push(second);
+        let id = engine.enqueue(job).unwrap();
+        executor.entered().await;
+        assert_eq!(engine.cancel(&id).unwrap().status, PlanStatus::Stopping);
+        assert_eq!(
+            engine.store.get(&id).unwrap().tasks[0].status,
+            TaskStatus::Running
+        );
+        executor.release.add_permits(1);
+        let saved = settled(&engine, &id).await;
+        assert_eq!(saved.status, PlanStatus::Cancelled);
+        assert_eq!(saved.tasks[0].status, TaskStatus::Completed);
+        assert_eq!(saved.tasks[0].attempts, 1);
+        assert_eq!(saved.results[&saved.tasks[0].task_id].data, "done");
+        assert_eq!(saved.tasks[1].status, TaskStatus::Cancelled);
+        assert_eq!(saved.tasks[1].attempts, 0);
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        let before = serde_json::to_value(&saved).unwrap();
+        assert!(
+            engine
+                .cancel(&id)
+                .unwrap_err()
+                .to_string()
+                .contains("already finished")
+        );
+        assert_eq!(
+            serde_json::to_value(engine.store.get(&id).unwrap()).unwrap(),
+            before
+        );
+        engine.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn stop_paused_job_does_not_wait_or_execute_pending_steps() {
         let engine = TaskEngine::new(EventBus::new(20));
         engine.set_executor(Arc::new(Counting(AtomicU32::new(0))));
@@ -810,6 +1210,201 @@ mod tests {
         assert_eq!(stopped.status, PlanStatus::Cancelled);
         assert_eq!(stopped.tasks[0].status, TaskStatus::Cancelled);
         assert!(engine.resume_job(&id).is_err());
+    }
+
+    #[tokio::test]
+    async fn shutdown_rejects_new_jobs_without_persisting_pending_work() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let executor = Arc::new(Counting(AtomicU32::new(0)));
+        engine.set_executor(executor.clone());
+        engine.shutdown().await;
+        let before = engine.store.usage().unwrap();
+        assert!(
+            engine
+                .enqueue(plan("write_file"))
+                .unwrap_err()
+                .to_string()
+                .contains("stopping")
+        );
+        assert!(
+            engine.store.list().unwrap().is_empty(),
+            "Rejected enqueue must not save a job"
+        );
+        assert!(
+            engine
+                .run_plan(plan("write_file"))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("stopping")
+        );
+        assert!(
+            engine.store.list().unwrap().is_empty(),
+            "Rejected run_plan must not save a job"
+        );
+        assert_eq!(engine.store.usage().unwrap(), before);
+        assert_eq!(executor.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn missing_executor_rejects_both_admission_paths_without_saving() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        assert!(
+            engine
+                .enqueue(plan("read_file"))
+                .unwrap_err()
+                .to_string()
+                .contains("no executor")
+        );
+        assert!(
+            engine
+                .run_plan(plan("read_file"))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("no executor")
+        );
+        assert!(engine.store.list().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn shutdown_refuses_resume_without_changing_saved_checkpoints() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let executor = Arc::new(Counting(AtomicU32::new(0)));
+        engine.set_executor(executor.clone());
+        let mut ids = Vec::new();
+        for status in [PlanStatus::Paused, PlanStatus::Interrupted] {
+            let job = plan("read_file");
+            let id = job.plan_id.clone();
+            engine.store.insert(job).unwrap();
+            engine
+                .store
+                .change(&id, "fixture checkpoint", |p| {
+                    p.status = status;
+                    Ok(())
+                })
+                .unwrap();
+            ids.push(id);
+        }
+        let before = serde_json::to_value(engine.store.list().unwrap()).unwrap();
+        engine.shutdown().await;
+        for id in ids {
+            assert!(
+                engine
+                    .resume_job(&id)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("stopping")
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(engine.store.list().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(executor.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn shutdown_drains_admitted_jobs_before_their_first_poll() {
+        // The single-thread runtime cannot poll spawned runners before shutdown.
+        let engine = TaskEngine::new(EventBus::new(20));
+        let executor = Arc::new(Counting(AtomicU32::new(0)));
+        engine.set_executor(executor.clone());
+        let mut ids = Vec::new();
+        for _ in 0..16 {
+            ids.push(engine.enqueue(plan("write_file")).unwrap());
+        }
+        tokio::time::timeout(Duration::from_secs(3), engine.shutdown())
+            .await
+            .unwrap();
+        for id in ids {
+            let job = engine.store.get(&id).unwrap();
+            assert_eq!(job.status, PlanStatus::Interrupted);
+            assert_eq!(job.tasks[0].attempts, 0);
+        }
+        assert_eq!(executor.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_admission_and_shutdown_leave_no_orphan_pending_jobs() {
+        let engine = TaskEngine::new(EventBus::new(100));
+        let executor = Blocking::new();
+        engine.set_executor(executor.clone());
+        let initial = engine.enqueue(plan("write_file")).unwrap();
+        executor.entered().await;
+        let barrier = Arc::new(tokio::sync::Barrier::new(33));
+        let mut submissions = tokio::task::JoinSet::new();
+        for _ in 0..32 {
+            let engine = engine.clone();
+            let barrier = barrier.clone();
+            submissions.spawn(async move {
+                barrier.wait().await;
+                engine.enqueue(plan("write_file"))
+            });
+        }
+        let shutdown = tokio::spawn({
+            let engine = engine.clone();
+            async move {
+                barrier.wait().await;
+                engine.shutdown().await;
+            }
+        });
+        let mut accepted = std::collections::HashSet::from([initial]);
+        while let Some(result) = submissions.join_next().await {
+            match result.unwrap() {
+                Ok(id) => {
+                    assert!(accepted.insert(id));
+                }
+                Err(error) => assert!(error.to_string().contains("stopping"), "{error}"),
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(5), shutdown)
+            .await
+            .unwrap()
+            .unwrap();
+        let stored = engine.store.list().unwrap();
+        assert_eq!(
+            stored.len(),
+            accepted.len(),
+            "Only admitted jobs may be saved"
+        );
+        for job in stored {
+            assert!(accepted.contains(&job.plan_id));
+            assert_eq!(job.status, PlanStatus::Interrupted);
+            assert!(job.tasks[0].attempts <= 1);
+        }
+        assert!(engine.enqueue(plan("write_file")).is_err());
+        assert_eq!(engine.store.list().unwrap().len(), accepted.len());
+    }
+
+    #[tokio::test]
+    async fn failed_admission_releases_claim_without_changing_existing_jobs() {
+        let store =
+            JobStore::initialize(Connection::open_in_memory().unwrap(), None, 1, 65536).unwrap();
+        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        engine.set_executor(Arc::new(Counting(AtomicU32::new(0))));
+        let existing = plan("read_file");
+        let old_id = existing.plan_id.clone();
+        engine.store.insert(existing).unwrap();
+        engine.pause(&old_id).unwrap();
+        let before = serde_json::to_value(engine.store.get(&old_id).unwrap()).unwrap();
+        let next = plan("read_file");
+        assert!(
+            engine
+                .enqueue(next.clone())
+                .unwrap_err()
+                .to_string()
+                .contains("history is full")
+        );
+        assert_eq!(
+            serde_json::to_value(engine.store.get(&old_id).unwrap()).unwrap(),
+            before
+        );
+        engine.cancel(&old_id).unwrap();
+        engine.store.remove_finished(&old_id).unwrap();
+        let id = engine.enqueue(next).unwrap();
+        assert_eq!(settled(&engine, &id).await.status, PlanStatus::Completed);
+        engine.shutdown().await;
     }
 
     #[tokio::test]

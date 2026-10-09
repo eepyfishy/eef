@@ -522,8 +522,14 @@ pub struct TaskEngine {
     bus: EventBus,
     executor: Arc<RwLock<Option<Arc<dyn TaskExecutor>>>>,
     pub store: Arc<crate::jobs::JobStore>,
-    active: Arc<std::sync::Mutex<HashSet<String>>>,
+    active: Arc<std::sync::Mutex<ActiveJobs>>,
     stopping: tokio::sync::watch::Sender<bool>,
+}
+
+#[derive(Default)]
+struct ActiveJobs {
+    closing: bool,
+    ids: HashSet<String>,
 }
 
 struct ActiveJob {
@@ -532,14 +538,14 @@ struct ActiveJob {
 }
 impl Drop for ActiveJob {
     fn drop(&mut self) {
+        // Retire under the same gate as admission and Stop. Otherwise Stop can
+        // save "stopping" after this checkpoint but before the runner disappears,
+        // leaving no runner to settle that request. Lock order is active -> store.
+        let mut active = self.engine.active.lock().expect("active jobs");
         if let Err(error) = self.engine.store.interrupt(&self.id) {
             tracing::error!(job_id=%self.id,%error,"Could not checkpoint interrupted job");
         }
-        self.engine
-            .active
-            .lock()
-            .expect("active jobs")
-            .remove(&self.id);
+        active.ids.remove(&self.id);
     }
 }
 
@@ -564,7 +570,7 @@ impl TaskEngine {
             bus,
             store,
             executor: Arc::new(RwLock::new(None)),
-            active: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            active: Arc::new(std::sync::Mutex::new(ActiveJobs::default())),
             stopping: tokio::sync::watch::channel(false).0,
         })
     }
@@ -577,18 +583,31 @@ impl TaskEngine {
     pub fn list_plans(&self) -> Result<Vec<Plan>> {
         self.store.list()
     }
-    fn claim(&self, id: &str) -> Result<ActiveJob> {
+    fn claim(&self, id: &str, prepare: impl FnOnce() -> Result<()>) -> Result<ActiveJob> {
         let mut active = self.active.lock().expect("active jobs");
-        if *self.stopping.borrow() {
+        if active.closing {
             bail!("Coordinator is stopping; no new job execution is accepted")
         }
-        if !active.insert(id.into()) {
+        if active.ids.contains(id) {
             bail!("Job is already running")
         }
+        // Admission and shutdown share this lock. Persist before registering a
+        // runner, but never save new/resumed work after admission has closed.
+        // A failed prepare has no guard and cannot alter an existing checkpoint
+        // through ActiveJob::drop. No await or remote execution under this lock.
+        prepare()?;
+        active.ids.insert(id.into());
         Ok(ActiveJob {
             engine: self.clone(),
             id: id.into(),
         })
+    }
+    fn admit_new(&self, plan: Plan) -> Result<ActiveJob> {
+        if !self.has_executor() {
+            bail!("TaskEngine has no executor")
+        }
+        let id = plan.plan_id.clone();
+        self.claim(&id, || self.store.insert(plan))
     }
     pub fn pause(&self, id: &str) -> Result<Plan> {
         self.store
@@ -602,8 +621,11 @@ impl TaskEngine {
             })
     }
     pub fn cancel(&self, id: &str) -> Result<Plan> {
-        let active = self.active.lock().expect("active jobs").contains(id);
-        self.store.change(
+        // Keep the runner-presence decision valid through its checkpoint.
+        // No await, executor call or remote cancellation occurs under the gate.
+        let active = self.active.lock().expect("active jobs");
+        let has_runner = active.ids.contains(id);
+        let result = self.store.change(
             id,
             "Stop requested; completed actions are not undone",
             |plan| {
@@ -613,12 +635,12 @@ impl TaskEngine {
                 ) {
                     bail!("Job is already finished")
                 }
-                plan.status = if active {
+                plan.status = if has_runner {
                     PlanStatus::Stopping
                 } else {
                     PlanStatus::Cancelled
                 };
-                if !active {
+                if !has_runner {
                     for task in &mut plan.tasks {
                         if task.status == TaskStatus::Pending {
                             task.status = TaskStatus::Cancelled;
@@ -627,26 +649,24 @@ impl TaskEngine {
                 }
                 Ok(())
             },
-        )
+        );
+        drop(active);
+        result
     }
     pub fn resume_job(self: &Arc<Self>, id: &str) -> Result<()> {
         if !self.has_executor() {
             bail!("TaskEngine has no executor")
         }
-        if !matches!(
-            self.store.get(id)?.status,
-            PlanStatus::Paused | PlanStatus::Interrupted
-        ) {
-            bail!("Only paused or interrupted jobs can resume")
-        }
-        let guard = self.claim(id)?;
-        self.store.change(id,"Owner requested resume",|plan|{
+        let guard = self.claim(id, || {
+            self.store.change(id,"Owner requested resume",|plan|{
             if !matches!(plan.status,PlanStatus::Paused|PlanStatus::Interrupted) {bail!("Only paused or interrupted jobs can resume")}
             if plan.tasks.iter().any(|t|t.status==TaskStatus::Interrupted&&!retry_safe(t)) {
                 bail!("An interrupted action may already have happened. This job cannot safely resume; review it and create new work explicitly.")
             }
             for task in &mut plan.tasks {if task.status==TaskStatus::Interrupted {task.status=TaskStatus::Pending;task.result=None;plan.results.remove(&task.task_id);}}
             plan.status=PlanStatus::Pending;Ok(())
+            })?;
+            Ok(())
         })?;
         let engine = self.clone();
         let id = id.to_owned();
@@ -658,12 +678,8 @@ impl TaskEngine {
         Ok(())
     }
     pub fn enqueue(self: &Arc<Self>, plan: Plan) -> Result<String> {
-        if !self.has_executor() {
-            bail!("TaskEngine has no executor")
-        }
         let id = plan.plan_id.clone();
-        self.store.insert(plan)?;
-        let guard = self.claim(&id)?;
+        let guard = self.admit_new(plan)?;
         let engine = self.clone();
         let started = id.clone();
         tokio::spawn(async move {
@@ -673,15 +689,50 @@ impl TaskEngine {
         });
         Ok(id)
     }
+
+    pub(crate) fn enqueue_request(
+        self: &Arc<Self>,
+        plan: Plan,
+    ) -> Result<crate::jobs::JobAdmission> {
+        if !self.has_executor() {
+            bail!("TaskEngine has no executor")
+        }
+        let mut active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no new job execution is accepted")
+        }
+        let admission = self.store.admit_request(plan)?;
+        if admission.reused {
+            // Inspection only: do not claim/resume an interrupted job or touch
+            // a running/finished job's checkpoints, even after process restart.
+            return Ok(admission);
+        }
+        let id = admission.plan.plan_id.clone();
+        active.ids.insert(id.clone());
+        let guard = ActiveJob {
+            engine: self.as_ref().clone(),
+            id: id.clone(),
+        };
+        drop(active);
+        let engine = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = engine.drive(&id, guard).await {
+                tracing::error!(job_id=%id,%error,"Job needs review");
+            }
+        });
+        Ok(admission)
+    }
     pub async fn run_plan(&self, plan: Plan) -> Result<Plan> {
         let id = plan.plan_id.clone();
-        self.store.insert(plan)?;
-        let guard = self.claim(&id)?;
+        let guard = self.admit_new(plan)?;
         self.drive(&id, guard).await
     }
     pub async fn shutdown(&self) {
+        // Close admission before notifying runners. Every successfully admitted
+        // job is already tracked, including tasks that have not been polled yet.
+        self.active.lock().expect("active jobs").closing = true;
         self.stopping.send_replace(true);
-        while !self.active.lock().expect("active jobs").is_empty() {
+        while !self.active.lock().expect("active jobs").ids.is_empty() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
@@ -1021,6 +1072,55 @@ mod tests {
     impl TaskExecutor for Echo {
         async fn execute(&self, task: &Task) -> Result<Value> {
             Ok(task.params.clone())
+        }
+    }
+
+    #[test]
+    fn stop_racing_runner_retirement_never_leaves_unowned_stopping_job() {
+        // Model the interval after a runner has checkpointed Paused, but before
+        // its guard has retired. Exercise the real cancel and guard-drop paths.
+        for _ in 0..512 {
+            let engine = TaskEngine::new(EventBus::new(20));
+            engine.set_executor(Arc::new(Echo));
+            let job = TaskPlanner
+                .plan(Goal {
+                    request_context: None,
+                    description: "retiring runner fixture".into(),
+                    template: "read_file".into(),
+                    params: json!({"path":"fixture"}),
+                    constraints: json!({}),
+                })
+                .unwrap();
+            let id = job.plan_id.clone();
+            let guard = engine.admit_new(job).unwrap();
+            engine
+                .store
+                .change(&id, "Runner paused before retirement", |p| {
+                    p.status = PlanStatus::Paused;
+                    Ok(())
+                })
+                .unwrap();
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                let retirement = scope.spawn(|| {
+                    barrier.wait();
+                    drop(guard);
+                });
+                barrier.wait();
+                engine.cancel(&id).unwrap();
+                retirement.join().unwrap();
+            });
+            assert!(!engine.active.lock().unwrap().ids.contains(&id));
+            let saved = engine.store.get(&id).unwrap();
+            assert!(
+                matches!(
+                    saved.status,
+                    PlanStatus::Cancelled | PlanStatus::Interrupted
+                ),
+                "No runner remains to finish {:?}",
+                saved.status
+            );
+            assert_eq!(saved.tasks[0].attempts, 0);
         }
     }
 

@@ -54,7 +54,8 @@ pub enum JobCommand {
 pub struct JobRequest {
     pub schema_version: u32,
     pub expected_node_id: String,
-    /// Optional for older local clients. Correlation only, never a retry token.
+    /// Optional for older local clients. Creation deduplication is coordinator-
+    /// version and history-retention dependent; never automatically retry.
     #[serde(default)]
     pub operation_id: Option<String>,
     pub command: JobCommand,

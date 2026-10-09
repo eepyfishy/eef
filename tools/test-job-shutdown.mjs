@@ -25,18 +25,27 @@ try {
  const nodeConfig=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml');await writeFile(nodeConfig,JSON.stringify(config));
  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('host: 0.0.0.0','host: 127.0.0.1').replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:secret});launch('eefn',['--config',nodeConfig,'--no-ui']);
+ const providerReady=async()=>{const snapshot=await json(eef+'/api/capabilities');return snapshot.providers.some(p=>p.node_id===id&&p.capability==='http.request'&&p.healthy);};
  await until(async()=>(await json(node+'/api/diagnostics')).connection_state==='connected','fixture registration');
+ await until(providerReady,'initial HTTP capability registration');
  const before=await json(eef+'/api/diagnostics');
  const job=await json(eef+'/api/jobs',{description:'Held HTTP shutdown fixture',template:'http_request',params:{url:`http://127.0.0.1:${fixturePort}/hold`,method:'GET',timeout_seconds:30},constraints:{node_id:id}});
  await until(()=>held,'remote request reached fixture');assert.equal(dispatches,1);
  await json(eef+'/api/restart',{});
  await until(async()=>{const d=await json(eef+'/api/diagnostics');return d.runtime_id!==before.runtime_id&&d.connected_node_count===1;},'coordinator restart and reconnect');
+ // An authenticated socket is counted before registration reaches the scheduler.
+ // Observe the required provider before submitting fresh work; never resubmit a
+ // job that failed because it was sent too early.
+ const registeredAtReconnect=await providerReady();
+ await until(providerReady,'HTTP capability registration after restart');
+ await writeFile(join(scratch,'recovery-readiness.json'),JSON.stringify({registered_at_socket_reconnect:registeredAtReconnect,provider_observed_before_new_job:true},null,2));
  const interrupted=await json(eef+'/api/jobs/'+job.id);await writeFile(join(scratch,'job-after-restart.json'),JSON.stringify(interrupted,null,2));
  assert.equal(interrupted.status,'interrupted',JSON.stringify(interrupted));assert.equal(interrupted.tasks[0].status,'interrupted');assert.equal(interrupted.tasks[0].attempts,1);assert.equal(interrupted.can_resume,false);
  const denied=await response(eef+'/api/jobs/'+job.id+'/resume',{});assert.equal(denied.status,400);assert.match(denied.data.error,/cannot safely resume/);assert.equal(dispatches,1);
  held.end('late completion');await new Promise(r=>setTimeout(r,500));assert.deepEqual(await json(eef+'/api/jobs/'+job.id),interrupted,'Late response changed the interrupted checkpoint');
  const healthy=await json(eef+'/api/jobs',{description:'Healthy work after recovery',template:'http_request',params:{url:`http://127.0.0.1:${fixturePort}/healthy`,method:'GET'},constraints:{node_id:id}});
- await until(async()=>(await json(eef+'/api/jobs/'+healthy.id)).status==='completed','healthy job after recovery');assert.equal(dispatches,2);
+ const healthyResult=await until(async()=>{const p=await json(eef+'/api/jobs/'+healthy.id);return ['completed','failed','interrupted','cancelled'].includes(p.status)?p:false;},'healthy job after recovery');
+ await writeFile(join(scratch,'healthy-job.json'),JSON.stringify(healthyResult,null,2));assert.equal(healthyResult.status,'completed',JSON.stringify(healthyResult));assert.equal(dispatches,2);
  const stopped=await json(eef+'/api/jobs/'+job.id+'/stop',{});assert.equal(stopped.status,'cancelled');assert.equal(stopped.tasks[0].attempts,1);
  assert.equal(await readFile(nodeConfig,'utf8'),JSON.stringify(config));assert.equal(await readFile(eefConfig,'utf8'),yaml);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,real_process_transport:true,physical_two_pc:false,shutdown_checkpoints_before_gateway_close:true,unsafe_resume_refused:true,no_replay:true,late_response_ignored:true,healthy_after_recovery:true,configuration_unchanged:true},null,2));console.log('Job shutdown regression passed: '+scratch);

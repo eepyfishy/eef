@@ -160,9 +160,17 @@ impl NodeService {
         if request.schema_version != 1 || request.expected_node_id != self.node_id {
             bail!("connection command schema or target node does not match this instance")
         }
-        let restart_requested = !matches!(request.command, ConnectionCommand::Show {});
+        let restart_requested = matches!(
+            request.command,
+            ConnectionCommand::Pause {}
+                | ConnectionCommand::Resume {}
+                | ConnectionCommand::PairLocal {}
+        );
         match request.command {
             ConnectionCommand::Show {} => {}
+            ConnectionCommand::Limits { work, control } => {
+                return self.request_limits_command(work, control);
+            }
             ConnectionCommand::Pause {} => {
                 self.set_connection_paused(true)?;
             }
@@ -196,7 +204,44 @@ impl NodeService {
             "connection":live["connection"],"hardware":live["hardware"],"permissions":live["permissions"],"models":live["models"],
             "capabilities":live["capabilities"],"last_activity":live["last_activity"],"last_request_context":live["last_request_context"],
             "last_resource_id":live["last_resource_id"],"pending_restart":live["pending_restart"],"download":live["download"],"update":live["update"],
+            "request_limits":live["request_limits"],"busy_rejections":live["busy_rejections"].as_u64().unwrap_or(0),
             "proposal_pending":self.config_path.with_extension("proposal.json").is_file()})
+    }
+
+    fn request_limits_command(&self, work: Option<usize>, control: Option<usize>) -> Result<Value> {
+        use crate::request_limits::RequestLimits;
+        let _guard = self.config_lock.lock().expect("config lock");
+        let mut config = self.read_config()?;
+        let original: RequestLimits = serde_json::from_value(
+            config
+                .get("request_limits")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+        )?;
+        original.validate()?;
+        let limits = RequestLimits {
+            work: work.unwrap_or(original.work),
+            control: control.unwrap_or(original.control),
+        };
+        limits.validate()?;
+        let changed = limits != original;
+        if changed {
+            config["request_limits"] = json!(limits);
+            self.save_config_locked(config)?;
+        }
+        let mut live = self.live.lock().unwrap();
+        if changed {
+            live["pending_restart"] = json!(true);
+        }
+        let applied = serde_json::from_value::<RequestLimits>(live["request_limits"].clone())
+            .ok()
+            .filter(|value| value.validate().is_ok());
+        Ok(
+            json!({"schema_version":1,"success":true,"report_type":"node_request_limits","node_id":self.node_id,
+            "changed":changed,"saved_request_limits":limits,"applied_request_limits":applied,
+            "restart_requested":false,"restart_required":live["pending_restart"].as_bool().unwrap_or(false),
+            "note":"Saved limits apply after an explicit node restart. No work was stopped and no restart was requested."}),
+        )
     }
 
     pub fn save_configuration(&self, value: Value) -> Result<Value> {
@@ -424,6 +469,11 @@ impl NodeService {
     /// Explicit export only: omit names, addresses, paths, secrets and raw errors.
     pub fn diagnostics(&self) -> Value {
         let live = self.live.lock().unwrap();
+        let limits = serde_json::from_value::<crate::request_limits::RequestLimits>(
+            live["request_limits"].clone(),
+        )
+        .ok()
+        .filter(|limits| limits.validate().is_ok());
         let state = live
             .pointer("/connection/state")
             .and_then(Value::as_str)
@@ -454,6 +504,7 @@ impl NodeService {
             "pending_restart":live["pending_restart"].as_bool().unwrap_or(false),
             "model_count":live["models"].as_array().map(Vec::len).unwrap_or(0),
             "capability_count":live["capabilities"].as_array().map(Vec::len).unwrap_or(0),
+            "request_limits":limits,"busy_rejections":live["busy_rejections"].as_u64().unwrap_or(0),
             "startup_issues":startup_issues(&live),
             "privacy":"Includes stable node/runtime IDs for correlation. No automatic upload."})
     }
@@ -624,6 +675,13 @@ impl NodeService {
 }
 
 fn validate_config(value: &Value) -> Result<()> {
+    let limits: crate::request_limits::RequestLimits = serde_json::from_value(
+        value
+            .get("request_limits")
+            .cloned()
+            .unwrap_or_else(|| json!({})),
+    )?;
+    limits.validate()?;
     let network: crate::network::NetworkAdvertisement =
         serde_json::from_value(value.get("network").cloned().unwrap_or_else(|| json!({})))?;
     network.validate()?;
@@ -769,6 +827,87 @@ mod tests {
         assert_eq!(report["node_id"], "stable-node");
         assert_eq!(report["model_count"], 1);
         assert_eq!(report["successful_connections"], 2);
+        core.live.lock().unwrap()["request_limits"] =
+            json!({"work":16,"control":2,"secret":"PRIVATE"});
+        assert!(core.diagnostics()["request_limits"].is_null());
+        assert!(!core.diagnostics().to_string().contains("PRIVATE"));
+    }
+
+    #[test]
+    fn invalid_request_limits_do_not_overwrite_saved_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        let config = json!({"node_id":"stable","psk":"private-fixture","request_limits":{"work":2,"control":1},"future":{"preserved":true}});
+        crate::setup::write_json(&path, &config).unwrap();
+        let service = NodeService::new(path.clone(), "stable".into());
+        let before = std::fs::read(&path).unwrap();
+        for limits in [
+            json!({"work":0}),
+            json!({"control":9}),
+            json!({"work":"2"}),
+            json!({"unknown":true}),
+            json!(null),
+        ] {
+            let mut invalid = config.clone();
+            invalid["request_limits"] = limits;
+            assert!(service.save_configuration(invalid).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+        assert!(
+            validate_config(&json!({})).is_ok(),
+            "older configurations retain bounded defaults"
+        );
+    }
+
+    #[test]
+    fn request_limit_commands_preserve_config_distinguish_applied_and_never_restart() {
+        use crate::connection_commands::{ConnectionCommand, ConnectionRequest};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        let config = json!({"node_id":"stable","psk":"PRIVATE","request_limits":{"work":2,"control":1},"future":{"preserved":true}});
+        crate::setup::write_json(&path, &config).unwrap();
+        let service = NodeService::new(path.clone(), "stable".into());
+        service.live.lock().unwrap()["request_limits"] = json!({"work":2,"control":1});
+        let command = |work, control| ConnectionRequest {
+            schema_version: 1,
+            expected_node_id: "stable".into(),
+            command: ConnectionCommand::Limits { work, control },
+        };
+        let before = std::fs::read(&path).unwrap();
+        let shown = service.connection_command(command(None, None)).unwrap();
+        assert_eq!(shown["changed"], false);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(
+            service
+                .connection_command(command(Some(0), Some(2)))
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let mut wrong = command(Some(4), None);
+        wrong.expected_node_id = "other".into();
+        assert!(service.connection_command(wrong).is_err());
+        let changed = service.connection_command(command(Some(4), None)).unwrap();
+        assert_eq!(
+            changed["saved_request_limits"],
+            json!({"work":4,"control":1})
+        );
+        assert_eq!(
+            changed["applied_request_limits"],
+            json!({"work":2,"control":1})
+        );
+        assert_eq!(changed["restart_required"], true);
+        assert_eq!(changed["restart_requested"], false);
+        assert!(!changed.to_string().contains("PRIVATE"));
+        let saved = service.read_config().unwrap();
+        assert_eq!(saved["future"], config["future"]);
+        assert_eq!(saved["psk"], "PRIVATE");
+        assert_eq!(saved["node_id"], "stable");
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(
+            service.connection_command(command(None, Some(1))).unwrap()["changed"],
+            false
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 
     #[test]

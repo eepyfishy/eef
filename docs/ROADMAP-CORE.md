@@ -31,6 +31,12 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
+connections from gateway-accepted registration and scheduler provider counts.
+It addresses the observed reconnect-before-provider race in troubleshooting;
+it does not gate submissions, retry failed work or guarantee execution readiness.
+See [diagnostic semantics](COMMANDS.md#diagnostics-and-private-pairing).
+
 The unreleased [backend/browser boundary](BACKEND-BOUNDARY.md) now separates both
 roles' optional browser assets from their independently operable command/API adapters.
 It adds API-only startup and no-dashboard builds, node connection commands, and
@@ -84,8 +90,45 @@ authorization or clustered coordinator safety. See [commands](COMMANDS.md).
 Job creation receipts now correlate CLI attempts with persisted origin context;
 `jobs find` searches retained origin-scoped history after uncertain replies.
 Reply-routing IDs are independent and no mutation is automatically replayed.
-This is recovery inspection, not durable command deduplication or exactly-once
-execution; the planned admission/deduplication boundary remains incomplete.
+The 2026-10-06 follow-up adds atomic node-origin creation deduplication while the
+original job remains in history: identical receipts/goals reuse it, conflicting
+or legacy-ambiguous receipts fail closed, and interrupted work is never resumed
+implicitly. This survives restart but not history removal/database replacement.
+Other commands still have correlation only. A permanent receipt ledger, execution
+grants and exactly-once effects are not claimed; see [commands](COMMANDS.md).
+
+The 2026-09-26 unreleased reliability increment serializes job admission with
+engine shutdown: new-job persistence and runner registration share the closing
+gate, as does resume checkpointing. Rejected submissions cannot leave orphan
+pending jobs after shutdown. This is a single-process lifecycle boundary, not
+durable request deduplication, an execution grant or remote cancellation.
+
+The 2026-09-27 follow-up places Stop's runner-presence check/checkpoint and runner
+retirement under that same gate. A racing Stop cannot leave an unowned job stuck
+in `stopping`; uncertain exits remain interrupted. This is still local journal/
+runner coordination, not an executor acknowledgement or remote-stop guarantee.
+
+The 2026-10-06 gateway follow-up owns and drains connection handlers and their
+socket writers during shutdown, including incomplete authentication. Old identity
+leases are released before restart, pending replies fail, and interrupted cleanup
+can finish without overlapping gateway generations. This is transport retirement,
+not cancellation of remote effects or completion of execution-lease work.
+
+The 2026-10-09 reply-path follow-up rejects saturated response queues immediately
+instead of blocking the shared event listener. Missing acknowledgements remain
+uncertain; accepted work is neither rolled back nor automatically replayed.
+
+The completed node-side admission slice bounds incoming execution futures with configurable
+work/control allowances. Ping/status/approved restart have separate reserved
+capacity; excess work reports not-started without reaching the executor. Normal
+permission checks remain mandatory. This is an admission prerequisite for local
+workloads, not a CPU/RAM budget, continuous runner, grant or remote-effect limit.
+
+The 2026-10-10 follow-up reconciles live registration/model/metric state after
+gateway event loss. Observer loops survive broadcast gaps, report their losses,
+and suspend world-condition automation when its observations may be stale.
+State repair does not replay lifecycle triggers or user submissions. Full world
+reconstruction and acknowledged resource-scoped execution remain future work.
 
 Inspected source, not just the earlier proposal:
 
@@ -118,9 +161,9 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 2 | Coordinator advertisements + network view | Authenticated, bounded, fresh node listings and coordinator hints; authorized peer lookup; no automatic trust or claimed cluster election. | Scoped pull discovery, registration metadata and freshness implemented; owner grant/revoke and restart CLI added in development; no direct peer transport claim |
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned metadata/inventory and node selection commands added in development; text/vision routing filters capabilities/state and explicit owner role constraints; route inspection available; automatic role-based planning and new executors remain planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
-| 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict shared contract and bounded owner-model preview command; automatic interpretation, clarification/approval flow and EEF integration remain planned |
-| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Planned |
-| 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Planned |
+| 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview and explicit node-to-EEF stateless review with gateway-stamped context; automatic interpretation, interactive clarification/approval and planning remain planned |
+| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Reliability foundation: retained-history node creation deduplication and shutdown admission; execution grants/acknowledgements and independent credentials remain planned |
+| 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: configurable network request limits, reserved controls and command readback; pipelines, executor acknowledgements and full resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
 | 10 | Full model lifecycle + unload | Measured transitions, load cancellation, active-use pinning and configurable idle unload; scheduler considers startup cost and actual usage. | Planned |
@@ -265,6 +308,18 @@ that work never ran. Do not migrate active work to another executor before its
 old authority is known to be stopped/expired; clustering remains a later gate.
 
 ## 8-9. Peer paths, continuous work and listening
+
+Owner clarification, 2026-09-22: see [presence and supervised media sessions](PRESENCE-AND-MEDIA.md).
+EEF approves and supervises sessions; payloads may use approved peer paths or a
+user-selected bounded coordinator relay. This replaces the intermediate proposal
+to require every packet to traverse EEF, not EEF's authority over the session.
+Persistent virtual audio input/output, configurable microphone/TTS mixing,
+independent output routing and reusable lightweight presence are planned extensions
+of the existing resource/job/grant model. Presence supports welcoming, locating
+and optional handoff; it grants no new permission or assumed person identity.
+Account for concurrent sessions and aggregate resource/bandwidth limits. These
+were recorded as documentation-only requirements, not implemented features;
+existing implementation order and security prerequisites remain.
 
 EEF gives only authorized endpoints and short-lived pair/job/resource-scoped
 session credentials. Both peers authenticate each other and validate direction,

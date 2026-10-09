@@ -5,6 +5,7 @@
   "psk": "",
   "endpoints": [],
   "heartbeat_seconds": 3.0,
+  "request_limits": { "work": 16, "control": 2 },
   "allow_write": false,
   "allowed_roots": [],
   "python_plugins": [],

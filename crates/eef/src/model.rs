@@ -223,6 +223,20 @@ impl ModelRegistry {
         state.latencies.remove(node_id);
     }
 
+    /// Includes metrics-only nodes so missed disconnects cannot retain their
+    /// scheduler state indefinitely when they advertised no models.
+    pub(crate) fn node_ids(&self) -> std::collections::BTreeSet<String> {
+        let state = self.state.read().expect("model lock");
+        state
+            .models
+            .values()
+            .flatten()
+            .map(|spec| spec.node_id.clone())
+            .chain(state.loads.keys().cloned())
+            .chain(state.latencies.keys().cloned())
+            .collect()
+    }
+
     pub fn update_metrics(&self, node_id: &str, load: f64, latency: f64) {
         let mut state = self.state.write().expect("model lock");
         state.loads.insert(node_id.into(), load.clamp(0.0, 1.0));

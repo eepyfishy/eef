@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -50,6 +50,8 @@ pub struct Runtime {
     pub restart: Arc<tokio::sync::Notify>,
     pub pending_restart: AtomicBool,
     initialized: AtomicBool,
+    node_event_loss_count: AtomicU64,
+    node_state_reconciliation_count: AtomicU64,
     background: AsyncMutex<Vec<JoinHandle<()>>>,
     submissions: AsyncMutex<tokio::task::JoinSet<()>>,
 }
@@ -190,6 +192,8 @@ impl Runtime {
             restart: Arc::new(tokio::sync::Notify::new()),
             pending_restart: AtomicBool::new(false),
             initialized: AtomicBool::new(false),
+            node_event_loss_count: AtomicU64::new(0),
+            node_state_reconciliation_count: AtomicU64::new(0),
             background: AsyncMutex::new(Vec::new()),
             instance_id: uuid::Uuid::new_v4().to_string(),
             submissions: AsyncMutex::new(tokio::task::JoinSet::new()),
@@ -307,13 +311,30 @@ impl Runtime {
     }
 
     fn start_node_event_listener(self: &Arc<Self>) -> JoinHandle<()> {
+        self.node_event_listener(self.node_server.subscribe())
+    }
+
+    fn node_event_listener(
+        self: &Arc<Self>,
+        mut events: tokio::sync::broadcast::Receiver<NodeEvent>,
+    ) -> JoinHandle<()> {
         let runtime = self.clone();
-        let mut events = self.node_server.subscribe();
         tokio::spawn(async move {
+            runtime.reconcile_node_states().await;
             loop {
                 match events.recv().await {
-                    Ok(NodeEvent::Registered(message)) => runtime.on_node_register(message).await,
-                    Ok(NodeEvent::Heartbeat(message)) => runtime.on_node_heartbeat(message).await,
+                    Ok(NodeEvent::Registered(message)) => {
+                        if let Some(id) = message["node_id"].as_str() {
+                            runtime.sync_node_state(id, true).await;
+                        }
+                    }
+                    Ok(NodeEvent::Heartbeat(message)) => {
+                        if let Some(id) = message["node_id"].as_str() {
+                            if let Some(heartbeat) = runtime.node_server.node_heartbeat(id).await {
+                                runtime.on_node_heartbeat(heartbeat, true).await;
+                            }
+                        }
+                    }
                     Ok(NodeEvent::Submission(message)) => {
                         let mut submissions = runtime.submissions.lock().await;
                         while submissions.try_join_next().is_some() {}
@@ -326,9 +347,18 @@ impl Runtime {
                         let worker = runtime.clone();
                         submissions.spawn(async move { worker.on_node_submission(message).await });
                     }
-                    Ok(NodeEvent::Down(node_id)) => runtime.on_node_down(&node_id).await,
+                    Ok(NodeEvent::Down(node_id)) => runtime.sync_node_state(&node_id, true).await,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
-                        warn!(count, "node event listener lagged")
+                        let _ = runtime.node_event_loss_count.fetch_update(
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                            |value| Some(value.saturating_add(count)),
+                        );
+                        warn!(
+                            count,
+                            "node event listener lagged; reconciling live state without replaying submissions"
+                        );
+                        runtime.reconcile_node_states().await;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
@@ -336,7 +366,59 @@ impl Runtime {
         })
     }
 
-    async fn on_node_register(&self, message: Value) {
+    async fn sync_node_state(&self, node_id: &str, publish_registration: bool) {
+        match self.node_server.node_state(node_id).await {
+            Some(snapshot) => self.apply_node_state(snapshot, publish_registration).await,
+            None => self.on_node_down(node_id, publish_registration).await,
+        }
+    }
+
+    async fn apply_node_state(
+        &self,
+        snapshot: eefn::server::NodeStateSnapshot,
+        publish_registration: bool,
+    ) {
+        self.on_node_register(snapshot.registration, publish_registration)
+            .await;
+        if let Some(heartbeat) = snapshot.heartbeat {
+            self.on_node_heartbeat(heartbeat, publish_registration)
+                .await;
+        }
+    }
+
+    async fn reconcile_node_states(&self) {
+        let snapshots = self.node_server.node_states().await;
+        let mut known = self
+            .registry
+            .all_providers()
+            .into_iter()
+            .map(|p| p.node_id)
+            .chain(self.model_registry.node_ids())
+            .collect::<std::collections::BTreeSet<_>>();
+        known.remove("local");
+        for node_id in known.into_iter().filter(|id| !snapshots.contains_key(id)) {
+            // Consult live state again: a reconnect may have happened while
+            // prior observer updates yielded. Old events cannot undo new state.
+            self.sync_node_state(&node_id, false).await;
+        }
+        for node_id in snapshots.keys() {
+            self.sync_node_state(node_id, false).await;
+        }
+        let _ = self.node_state_reconciliation_count.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |value| Some(value.saturating_add(1)),
+        );
+        self.bus
+            .publish(
+                "node.state_reconciled",
+                json!({"registered_node_count":snapshots.len(),
+            "submissions_replayed":false}),
+            )
+            .await;
+    }
+
+    async fn on_node_register(&self, message: Value, publish_registration: bool) {
         let Some(node_id) = message
             .get("node_id")
             .and_then(Value::as_str)
@@ -389,15 +471,31 @@ impl Runtime {
         if let Err(error) = self.model_registry.register_remote(node_id, models) {
             warn!(%error, "invalid registered model snapshot");
         }
-        self.bus
-            .publish(
-                "node.connected",
-                json!({"node_id": node_id, "name": name, "capabilities": capabilities,"specs":message.get("specs"),"models":message.get("models"),"metadata":message.get("metadata"),"network":message.get("network")}),
-            )
-            .await;
+        self.publish_or_observe_node(
+                    "node.connected",
+                    json!({"node_id": node_id, "name": name, "capabilities": capabilities,"specs":message.get("specs"),"models":message.get("models"),"metadata":message.get("metadata"),"network":message.get("network")}),
+                    publish_registration,
+                )
+                .await;
     }
 
-    async fn on_node_heartbeat(&self, message: Value) {
+    async fn publish_or_observe_node(&self, topic: &str, data: Value, publish: bool) {
+        if publish {
+            self.bus.publish(topic, data).await;
+        } else {
+            // State repair must not replay connection/metric triggers into
+            // automation. Update the observer directly without a bus callback.
+            self.world
+                .apply(crate::event::Event {
+                    topic: topic.into(),
+                    data,
+                    timestamp_ms: eefn::protocol::now_ms(),
+                })
+                .await;
+        }
+    }
+
+    async fn on_node_heartbeat(&self, message: Value, publish: bool) {
         let Some(node_id) = message
             .get("node_id")
             .and_then(Value::as_str)
@@ -420,19 +518,18 @@ impl Runtime {
             .update_metrics(node_id, combined, latency, specs);
         self.model_registry
             .update_metrics(node_id, combined, latency);
-        self.bus
-            .publish(
-                "node.updated",
-                json!({"node_id": node_id, "load": combined, "latency_ms": latency}),
-            )
-            .await;
+        self.publish_or_observe_node(
+            "node.updated",
+            json!({"node_id": node_id, "load": combined, "latency_ms": latency}),
+            publish,
+        )
+        .await;
     }
 
-    async fn on_node_down(&self, node_id: &str) {
+    async fn on_node_down(&self, node_id: &str, publish: bool) {
         self.registry.unregister_node(node_id);
         self.model_registry.remove_node(node_id);
-        self.bus
-            .publish("node.disconnected", json!({"node_id": node_id}))
+        self.publish_or_observe_node("node.disconnected", json!({"node_id": node_id}), publish)
             .await;
     }
 
@@ -476,6 +573,20 @@ impl Runtime {
                     .await
                     .map(|reply| json!({"reply": reply,"request_context":context}))
             }
+            "requests.review" => {
+                match serde_json::from_value::<Vec<String>>(
+                    message["interpretation_capabilities"].clone(),
+                ) {
+                    Ok(capabilities) => crate::request_review::review(
+                        message["payload"].clone(),
+                        &context,
+                        &capabilities,
+                    ),
+                    Err(_) => Err(anyhow::anyhow!(
+                        "review missing gateway capability snapshot"
+                    )),
+                }
+            }
             "network.peers" => {
                 self.discovery
                     .view(
@@ -510,10 +621,25 @@ impl Runtime {
     }
 
     pub async fn diagnostics(&self) -> Value {
+        let connections = self.node_server.connection_counts().await;
+        let world_event_loss_count = self.world.event_loss_count().await;
+        let (remote_providers, healthy_remote_providers) = self.registry.remote_provider_counts();
         json!({"schema_version":1,"success":true,"report_type":"coordinator_diagnostics",
             "version":crate::VERSION,"runtime_id":self.instance_id,
             "os":std::env::consts::OS,"architecture":std::env::consts::ARCH,
-            "connected_node_count":self.node_server.connected_nodes().await.len(),
+            "connected_node_count":connections.connected_node_count,
+            "registered_node_count":connections.registered_node_count,
+            "registration_pending_node_count":connections.registration_pending_node_count,
+            "node_event_loss_count":self.node_event_loss_count.load(Ordering::Relaxed),
+            "node_state_reconciliation_count":self.node_state_reconciliation_count.load(Ordering::Relaxed),
+            "assistant_event_loss_count":self.assistant.event_loss_count(),
+            "world_event_loss_count":world_event_loss_count,
+            "world_state_may_be_stale":world_event_loss_count > 0,
+            "world_rules_suspended":world_event_loss_count > 0,
+            "node_state_recovery_note":"Reconciliation restores live registration/metrics after missed gateway events. Lost submissions are not replayed; these counters do not confirm work completion.",
+            "remote_provider_count":remote_providers,
+            "healthy_remote_provider_count":healthy_remote_providers,
+            "readiness_note":"Gateway, provider and model counts are separate snapshots, not a readiness guarantee. Connected means authenticated; registered means the gateway accepted registration. Check the required capability, model and permissions before work; execution can still fail.",
             "model_count":self.model_registry.list().len(),
             "initialized":self.initialized.load(Ordering::Relaxed),
             "pending_restart":self.pending_restart.load(Ordering::Relaxed),
@@ -666,4 +792,278 @@ fn default_rules() -> Vec<ResponseRule> {
             5.0,
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eefn::{
+        NodeCrypto,
+        protocol::{build_auth, read_message, write_message},
+    };
+    use tokio::{
+        io::BufReader,
+        net::{
+            TcpStream,
+            tcp::{OwnedReadHalf, OwnedWriteHalf},
+        },
+        time::timeout,
+    };
+
+    async fn connect(
+        runtime: &Runtime,
+        crypto: &NodeCrypto,
+        id: &str,
+    ) -> (BufReader<OwnedReadHalf>, OwnedWriteHalf) {
+        let stream = TcpStream::connect(("127.0.0.1", runtime.node_server.port()))
+            .await
+            .unwrap();
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        write_message(crypto, &mut writer, &build_auth(crypto, id, eefn::VERSION))
+            .await
+            .unwrap();
+        assert_eq!(
+            timeout(Duration::from_secs(5), read_message(crypto, &mut reader))
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()["type"],
+            "ok"
+        );
+        (reader, writer)
+    }
+    async fn wait_event(
+        events: &mut tokio::sync::broadcast::Receiver<NodeEvent>,
+        matches: impl Fn(&NodeEvent) -> bool,
+    ) {
+        timeout(Duration::from_secs(5), async {
+            loop {
+                match events.recv().await {
+                    Ok(event) if matches(&event) => break,
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(error) => panic!("{error}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+    #[tokio::test]
+    async fn lagged_gateway_events_recover_live_providers_models_and_metrics_without_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        let config = json!({"node":{"psk":"isolated-test-secret","host":"127.0.0.1","port":0},
+            "update":{"policy":"off"},"python":{"plugins":[]},
+            "firmware":{"repository":dir.path().join("firmware")}});
+        std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let config = Config::load(Some(&config_path)).unwrap();
+        let secret = std::env::var("EEF_NODE_PSK")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "isolated-test-secret".into());
+        let crypto = NodeCrypto::new(secret).unwrap();
+        let runtime = Runtime::initialize(config, dir.path().join("memory.db"), false)
+            .await
+            .unwrap();
+        let mut observer = runtime.node_server.subscribe();
+        let (a_reader, mut a_writer) = connect(&runtime, &crypto, "node-a").await;
+        write_message(
+            &crypto,
+            &mut a_writer,
+            &json!({"type":"register","node_id":"node-a","capabilities":["system.info"],
+            "models":[{"model_id":"old-model","modality":"text","backend":"ollama"}]}),
+        )
+        .await
+        .unwrap();
+        wait_event(
+            &mut observer,
+            |e| matches!(e, NodeEvent::Registered(v) if v["node_id"] == "node-a"),
+        )
+        .await;
+        timeout(Duration::from_secs(5), async {
+            while !runtime
+                .registry
+                .all_providers()
+                .iter()
+                .any(|p| p.node_id == "node-a")
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let listener = runtime.background.lock().await.remove(2);
+        listener.abort();
+        let _ = listener.await;
+        let queued = runtime.node_server.subscribe();
+        runtime.registry.register(CapabilityProvider::local(
+            "fixture.local",
+            "read",
+            json!({}),
+        ));
+        runtime
+            .model_registry
+            .update_metrics("metrics-only-disconnected", 0.4, 12.0);
+        let (mut b_reader, mut b_writer) = connect(&runtime, &crypto, "node-b").await;
+        write_message(
+            &crypto,
+            &mut b_writer,
+            &json!({"type":"register","node_id":"node-b","capabilities":["system.info"],
+            "models":[{"model_id":"new-model","modality":"text","backend":"ollama"}]}),
+        )
+        .await
+        .unwrap();
+        wait_event(
+            &mut observer,
+            |e| matches!(e, NodeEvent::Registered(v) if v["node_id"] == "node-b"),
+        )
+        .await;
+        drop(a_reader);
+        drop(a_writer);
+        wait_event(
+            &mut observer,
+            |e| matches!(e, NodeEvent::Down(id) if id == "node-a"),
+        )
+        .await;
+        // These submissions are deliberately lost, and must never be recovered
+        // from state snapshots. No command execution or automatic replay.
+        write_message(&crypto, &mut b_writer, &json!({"type":"submit","node_id":"node-b","id":"lost-request","kind":"jobs.list","payload":{}})).await.unwrap();
+        for sequence in 0..300 {
+            write_message(
+                &crypto,
+                &mut b_writer,
+                &json!({"type":"heartbeat","node_id":"node-b","sequence":sequence,
+                "load":{"cpu":0.73,"ram":0.21},"latency_ms":9}),
+            )
+            .await
+            .unwrap();
+        }
+        wait_event(
+            &mut observer,
+            |e| matches!(e, NodeEvent::Heartbeat(v) if v["sequence"] == 299),
+        )
+        .await;
+        let reconciliations_before = runtime
+            .bus
+            .history(500)
+            .await
+            .iter()
+            .filter(|event| event.topic == "node.state_reconciled")
+            .count();
+        let listener = runtime.node_event_listener(queued);
+        runtime.background.lock().await.push(listener);
+        let recovered = timeout(Duration::from_secs(3), async {
+            loop {
+                let providers = runtime.registry.all_providers();
+                let models = runtime.model_registry.list();
+                if !providers.iter().any(|p| p.node_id == "node-a")
+                    && providers
+                        .iter()
+                        .any(|p| p.node_id == "node-b" && p.load == 0.73 && p.latency_ms == 9.0)
+                    && !models.iter().any(|m| m.node_id == "node-a")
+                    && models
+                        .iter()
+                        .any(|m| m.node_id == "node-b" && m.model_id == "new-model")
+                    && !runtime
+                        .model_registry
+                        .node_ids()
+                        .contains("metrics-only-disconnected")
+                    && runtime
+                        .bus
+                        .history(500)
+                        .await
+                        .iter()
+                        .filter(|event| event.topic == "node.state_reconciled")
+                        .count()
+                        >= reconciliations_before + 2
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let world = runtime.world.summary().await;
+        assert!(
+            world["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|node| node["node_id"] == "node-a" && node["connected"] == false)
+        );
+        assert!(
+            world["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|node| node["node_id"] == "node-b" && node["connected"] == true)
+        );
+        assert!(
+            !runtime
+                .bus
+                .history(500)
+                .await
+                .iter()
+                .any(|event| event.topic == "node.connected" && event.data["node_id"] == "node-b"),
+            "repair replayed a connection trigger"
+        );
+        assert!(
+            runtime
+                .registry
+                .all_providers()
+                .iter()
+                .any(|p| p.node_id == "local" && p.capability == "fixture.local")
+        );
+        let mut provider = runtime
+            .registry
+            .all_providers()
+            .into_iter()
+            .find(|p| p.node_id == "node-b")
+            .unwrap();
+        provider.in_flight = 2;
+        provider.max_concurrent = 4;
+        provider.priority = 7;
+        runtime.registry.register(provider);
+        // An obsolete disconnect signal consults current state, rather than
+        // deleting a newly registered session. Scheduler-owned counts survive.
+        runtime.sync_node_state("node-b", true).await;
+        let provider = runtime
+            .registry
+            .all_providers()
+            .into_iter()
+            .find(|p| p.node_id == "node-b")
+            .unwrap();
+        assert_eq!(
+            (
+                provider.in_flight,
+                provider.max_concurrent,
+                provider.priority
+            ),
+            (2, 4, 7)
+        );
+        let replay = timeout(
+            Duration::from_millis(50),
+            read_message(&crypto, &mut b_reader),
+        )
+        .await;
+        drop(b_reader);
+        drop(b_writer);
+        runtime.shutdown().await;
+        assert!(
+            recovered.is_ok(),
+            "event loss left stale/missing scheduler state"
+        );
+        assert!(runtime.node_event_loss_count.load(Ordering::Relaxed) > 0);
+        assert!(
+            runtime
+                .node_state_reconciliation_count
+                .load(Ordering::Relaxed)
+                >= 3
+        );
+        assert!(
+            replay.is_err(),
+            "lost submission was automatically replayed"
+        );
+    }
 }

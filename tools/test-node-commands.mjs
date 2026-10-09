@@ -49,6 +49,12 @@ try {
   const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
   const eefConfig=join(scratch,'eef.yaml');await writeFile(eefConfig,yaml);
   launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain'],{EEF_NODE_PSK:secret});
+  await until(async()=>(await json(eef+'/api/diagnostics')).initialized===true,'coordinator initialized before node start');
+  const emptyReport=await json(eef+'/api/diagnostics');
+  for(const field of ['node_event_loss_count','assistant_event_loss_count','world_event_loss_count'])assert.equal(emptyReport[field],0,field);
+  assert(emptyReport.node_state_reconciliation_count>=1);
+  assert.equal(emptyReport.world_state_may_be_stale,false);assert.equal(emptyReport.world_rules_suspended,false);
+  for(const field of ['connected_node_count','registered_node_count','registration_pending_node_count','remote_provider_count','healthy_remote_provider_count','model_count'])assert.equal(emptyReport[field],0,field);
   launch('eefn',['--config',config,'--no-ui']);
   await until(async()=>(await json(api+'/api/status')).connection?.state==='connected','headless node connected');
   assert.equal((await fetch(api+'/')).status,404);
@@ -57,7 +63,12 @@ try {
   const nodeReport=await command(['diagnose']);assert.equal(nodeReport.report_type,'node_diagnostics');assert.equal(nodeReport.connection_state,'connected');assert(!JSON.stringify(nodeReport).includes(secret));assert(!JSON.stringify(nodeReport).includes('26.1.2.3'));
   assert.equal(nodeReport.node_id,id);assert(nodeReport.successful_connections>=1);
   const coordinatorCommand=async(args,expected=0)=>{const p=launch('eef',['--config',eefConfig,'--json',...args]);const t=setTimeout(()=>p.kill(),30000);try{const r=await p.result;assert.equal(r.code,expected,r.err);return JSON.parse(r.out);}finally{clearTimeout(t);}};
+  await until(async()=>{const r=await coordinatorCommand(['diagnostics']);return r.registered_node_count===1&&r.healthy_remote_provider_count>0;},'registration and provider diagnostics visible');
   const coreReport=await coordinatorCommand(['diagnostics']);assert.equal(coreReport.report_type,'coordinator_diagnostics');assert.equal(coreReport.connected_node_count,1);assert(!JSON.stringify(coreReport).includes(secret));
+  assert.equal(coreReport.registered_node_count,1);assert.equal(coreReport.registration_pending_node_count,0);
+  assert(coreReport.remote_provider_count>0);assert.equal(coreReport.healthy_remote_provider_count,coreReport.remote_provider_count);
+  assert.equal(coreReport.model_count,0);assert.match(coreReport.readiness_note,/not a readiness guarantee/);
+  assert(!JSON.stringify(coreReport).includes(id));assert(!JSON.stringify(coreReport).includes('26.1.2.3'));
   const inventory=await coordinatorCommand(['models','list']);assert.equal(inventory.scope,'connected_node_registrations');assert.equal(inventory.nodes.length,1);assert.equal(inventory.nodes[0].node_id,id);assert.deepEqual(inventory.nodes[0].models,[]);assert(!JSON.stringify(inventory).includes(secret));assert(!JSON.stringify(inventory).includes('26.1.2.3'));
   assert.equal((await coordinatorCommand(['models','list','--node',id])).nodes.length,1);
   await coordinatorCommand(['models','list','--node','missing-node'],1);

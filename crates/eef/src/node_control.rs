@@ -91,6 +91,14 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
         );
         return Ok(result);
     };
+    if not_started_busy(&preview) {
+        result["error_code"] = json!("node_busy");
+        result["not_started"] = json!(true);
+        result["note"] = json!(
+            "Node work capacity is full. Model inspection was rejected and no mutation was sent. No automatic retry."
+        );
+        return Ok(result);
+    }
     if !valid(&preview) {
         result["error_code"] = json!("model_commands_unavailable");
         result["note"] = json!(
@@ -114,6 +122,13 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
     result["mutation_requested"] = json!(true);
     // One send only. A lost response must never cause an automatic replay.
     match server.model_command(&command).await {
+        Ok(reply) if not_started_busy(&reply) => {
+            result["error_code"] = json!("node_busy");
+            result["not_started"] = json!(true);
+            result["note"] = json!(
+                "Node rejected this model command before execution because its work capacity is full. No selection change was started and no automatic retry was sent."
+            );
+        }
         Ok(reply) if valid(&reply) => {
             result["success"] = json!(true);
             result["acknowledged"] = json!(true);
@@ -233,12 +248,50 @@ async fn runtime_id(server: &impl NodeControl, id: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("node requires runtime-aware diagnostics"))
 }
 
+fn not_started_busy(reply: &Value) -> bool {
+    reply["success"] == false && reply["error_type"] == "NodeBusy" && reply["not_started"] == true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{collections::VecDeque, sync::Mutex};
     struct Fake(Mutex<VecDeque<(&'static str, Option<Value>)>>);
     struct ModelFake(Mutex<VecDeque<(&'static str, Option<Value>)>>);
+    #[tokio::test]
+    async fn model_capacity_rejections_are_known_not_started_without_mutation_replay() {
+        let busy = json!({"success":false,"error_type":"NodeBusy","not_started":true});
+        for after_preview in [false, true] {
+            let mut replies = VecDeque::new();
+            if after_preview {
+                replies.push_back(("show", Some(model_report(true))));
+            }
+            replies.push_back((
+                if after_preview { "provider" } else { "show" },
+                Some(busy.clone()),
+            ));
+            let fake = ModelFake(Mutex::new(replies));
+            let result = models_on(&fake, model_request(false)).await.unwrap();
+            assert_eq!(result["success"], false);
+            assert_eq!(result["error_code"], "node_busy");
+            assert_eq!(result["mutation_requested"], after_preview);
+            assert_eq!(result["outcome_unknown"], false);
+            assert_eq!(result["not_started"], true);
+            assert!(fake.0.lock().unwrap().is_empty());
+        }
+        // Missing not-started confirmation must remain uncertain after send.
+        let fake = ModelFake(Mutex::new(VecDeque::from([
+            ("show", Some(model_report(true))),
+            (
+                "provider",
+                Some(json!({"success":false,"error_type":"NodeBusy"})),
+            ),
+        ])));
+        let result = models_on(&fake, model_request(false)).await.unwrap();
+        assert_eq!(result["outcome_unknown"], true);
+        assert_eq!(result["error_code"], "model_change_unconfirmed");
+        assert!(fake.0.lock().unwrap().is_empty());
+    }
     #[async_trait::async_trait]
     impl NodeControl for ModelFake {
         async fn call(&self, _: &str, _: &str, _: Duration) -> Result<Value> {

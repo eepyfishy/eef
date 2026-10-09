@@ -1,5 +1,298 @@
 # Architecture conformance status
 
+## Unreleased: event-loss recovery and observer survival (2026-10-10)
+
+A deterministic overload test evicted registration/disconnect events from the
+gateway's 256-event channel and reproduced stale/missing scheduler entries.
+The gateway now retains only each live session's latest sanitized registration
+and metrics, with no request history or adapter bindings. EEF reconciles providers,
+models and node observations at listener start and after lag. State notifications
+consult live snapshots so old disconnects cannot delete a newer session.
+Normal heartbeats clone only metrics, without revalidating all advertised models.
+Scheduler-owned counts/limits and local adapters survive refresh. Metrics-only
+disconnected nodes are also removed. Recovery updates observations directly;
+it does not replay lifecycle triggers or lost submissions into automation.
+
+World and assistant observers previously exited permanently on broadcast lag.
+They now keep consuming later events and expose dropped-event counters. World
+observations conservatively retain `state_may_be_stale` after a gap; automatic
+world-condition rules suspend while that flag is set. Explicit commands and
+separate event/keyword rules remain available. This flag lasts for the world
+runtime's lifetime; reconnect or node reconciliation cannot prove that missing
+application/sensor/task observations were restored. No automatic work replay,
+execution lease or full world-state reconstruction is claimed.
+
+Validation: 222 workspace/all-target Rust tests passed with and without dashboard
+support. Gateway-overload and world-observer regressions failed before their
+fixes; the final gateway test verifies startup/lag reconciliation, live provider
+and model recovery, metrics-only cleanup, local adapter/counter preservation,
+observer repair without synthetic connection triggers, and no lost request replay.
+Assistant tests verify resumed listening and suspension of stale world rules.
+Sanitized snapshot tests cover latest state, independent copies and secret/binding
+redaction. Formatting, diff, JavaScript syntax and browser-boundary checks passed.
+
+Rebuilt API-only process fixtures passed request review (`request-review-Z8RKQG`),
+local preview (`request-preview-TLS7o4`), node commands/diagnostics
+(`node-commands-lFybtB`), shutdown/recovery (`job-shutdown-W21ICe`), scoped
+two-logical-node discovery (`peer-discovery-G9JUZN`) and model/job/limits controls
+(`model-metadata-SbnZB8`). These are isolated one-PC fixtures with fake inference,
+not a physical two-PC acceptance run. No installed node, model, permission,
+release-feed, installer or signing change.
+
+One combined capacity-one model fixture (`model-metadata-Ukr9mW`) received an
+unconfirmed multi-stage model-setting reply after reconnect. Capacity rejection
+was previously classified as uncertain at this boundary. EEF now preserves a
+confirmed `NodeBusy`/`not_started:true` result as `node_busy`, with no automatic
+mutation retry; missing confirmation remains uncertain. Tests cover rejection
+both before and after preflight. The successful fixture verifies real saturated
+preflight rejection without saving configuration, then restores the normal work
+budget for unrelated model-control checks. A capacity slot remains occupied
+through reply handling; receiving one reply does not guarantee immediate spare
+capacity for another command.
+
+## Unreleased: explicit node-to-coordinator request review (2026-10-10)
+
+`eefn requests review` extends bounded local interpreter preview through the
+existing authenticated node submission path. The gateway overwrites origin and
+capability context using accepted registration snapshots; EEF revalidates the
+strict schema, bounds and hint membership. Both service and CLI confirm response
+identity, original text and review-only flags. EEF returns review/clarification
+state without invoking its brain, planning, dispatching or writing a job.
+
+Review is ephemeral, not a durable receipt or approval. It has no automatic
+retry, default-model selection or chat fallback. The one-inference preview
+budget is shared; restart invalidates waits. The configured external model may
+continue computation after local cancellation. Local preview remains usable
+with EEF paused. Interactive clarification and independent execution grants
+remain planned; a model's well-formed proposal is not proof of understanding.
+
+Validation: strict-schema Rust tests and isolated headless request review
+(`request-review-MriG3f`) and preview (`request-preview-kg5qj1`) fixtures passed.
+Cases cover exact original text, gateway-stamped origin/area, clarification,
+invalid authority fields, shared inference capacity, restart invalidation,
+offline EEF, lost/corrupted replies and missing older endpoints without fallback.
+No jobs were created. Final combined verification is recorded above when complete.
+These use fake inference on one PC, not physical two-PC validation. No installed
+node, model, permission or release change.
+
+## Unreleased: bounded node request admission (2026-10-09)
+
+Incoming node requests previously spawned an unbounded number of execution
+futures. A shared node-client budget now defaults to 16 work requests and two
+separate control requests, configurable through validated `request_limits`.
+Control capacity is limited to ping and node status/restart; restart approval and
+all other normal permission checks remain in the executor. Excess work receives
+`NodeBusy`/`not_started:true` without spawning an execution future. No backlog or
+automatic node replay is added. Permits last through execution/reply handling and
+are released on completion or cancellation, including connection teardown.
+
+Diagnostics expose sanitized applied-limit snapshots and a busy-rejection counter.
+Older configs receive defaults. Invalid owner/approved-remote saves must not replace
+valid saved configuration. These are network request-future limits, not limits on
+CPU/RAM, local API actions, background downloads or effects surviving cancellation.
+The roadmap's full workload runtime and independent execution grants remain planned.
+
+`eefn connection limits` inspects or saves work/control values through the shared
+node command service, without JSON editing, a browser, a second runtime or an
+automatic restart. Atomic partial updates preserve unrelated configuration and
+no-ops do not rewrite it. Reports distinguish saved from applied limits.
+
+Validation: 212 workspace/all-target Rust tests passed in both feature modes.
+Rebuilt headless processes passed the model/job/limits command fixture
+(`model-metadata-Z2dWdz`): invalid saves leave configuration unchanged, partial
+updates preserve other fields, saved/applied values differ until restart, and
+setting limits does not restart the runtime. Saturated work rejects without
+starting inference while ping/status and permission-checked restart remain
+responsive. These are isolated local fixtures with fake inference, not physical
+two-PC validation. No installed-node, model, permission or release change.
+
+## Unreleased: saturated reply queues fail promptly (2026-10-09)
+
+A regression reproduced `send_to_node` waiting indefinitely behind a full
+outbound queue. Besides job replies, the shared coordinator event listener uses
+this path to reject excess submissions; one blocked node could therefore stall
+other registration/heartbeat/disconnect processing. Reply admission now uses the
+existing bounded queue without waiting, reports queue-full separately from an
+offline node, and never schedules rejected replies for later delivery. Ordinary
+remote invocation retains its existing bounded send/reply deadline.
+
+Queue admission is not a delivery acknowledgement. A missing job reply still
+requires inspection; already-accepted work is not rolled back or replayed.
+Validation: 207 workspace/all-target Rust tests passed with and without dashboard
+support. The queue-saturation regression failed before the fix; it now verifies
+prompt rejection, no late delivery, recovery after capacity frees, and separate
+offline handling. The full 12-test gateway group passed 20 consecutive standalone
+runs (240 test executions). Additional admission tests cover corrupt retained
+history and 20 rounds of receipt creation racing shutdown, without orphan jobs.
+
+Rebuilt headless processes passed node commands (`node-commands-PtQaP9`), job
+shutdown/recovery (`job-shutdown-iAr9JH`), model/job controls including receipt
+reuse (`model-metadata-C7NolE`) and two-logical-node scoped discovery
+(`peer-discovery-iKmjK8`). These use isolated local fixtures and fake inference,
+not a physical two-PC run. Formatting, JavaScript syntax, diff and backend/browser
+dependency checks passed. No installed-node, model, permission or release-feed
+change; no installer/signature or stable-0.4.0 readiness claim.
+
+## Unreleased: gateway session shutdown ownership (2026-10-06)
+
+New protocol regressions reproduced Stop returning with an authenticated session's
+identity lease still reserved, and a probed connection still waiting for auth.
+The listener previously spawned detached handlers and each handler spawned a
+detached socket writer. Clearing the connection map did not retire those tasks.
+
+The gateway now owns a reaped session task set. Stop signals its listener, drains
+handlers including unfinished authentication, releases their socket halves and
+identity leases, publishes disconnects for remaining live records and fails
+pending calls before allowing a new generation. Read and write futures share the
+handler lifetime. An interrupted Stop retains its handle/cleanup state so another
+Stop can finish it; Start rejects that incomplete shutdown instead of overlapping
+generations. This stops local transport, not already-dispatched remote effects.
+
+Validation: 204 Rust tests passed in both feature modes at the gateway checkpoint;
+later admission race/corruption tests raised this to 206. Protocol regressions
+cover same-ID reconnection, pending replies, incomplete authentication and
+cancelled Stop cleanup. The two lifecycle regressions failed before the fix.
+Rebuilt headless CLI (`node-commands-0BNwrq`), shutdown/recovery
+(`job-shutdown-P0g8tj`), model/job controls (`model-metadata-WBv0aW`) and two-logical-
+node discovery (`peer-discovery-Wjc9Bq`) passed. All are isolated local fixtures,
+not physical two-PC validation. No installed node or release artifact changed.
+
+## Unreleased: retained-history creation deduplication (2026-10-06)
+
+Node-origin `jobs.create` now atomically checks the authenticated origin/receipt
+against retained journal records before insertion. Identical normalized input
+returns the original job snapshot and `admission.reused:true`, without another
+runner, history mutation or implicit resume. Changed input and ambiguous legacy
+receipts fail closed. Original area context is retained across node moves; a
+different origin cannot collide with or read another node's receipt.
+
+The existing journal and admission gate are reused, with no second job framework,
+schema migration, permanent tombstone collection or automatic retry. Protection
+survives coordinator restart only while history remains. Removing that history,
+switching databases or using older coordinators ends the guarantee. Owner-local
+creation and non-creation controls retain their existing semantics. This is not
+an execution grant, a remote stop acknowledgement or exactly-once execution.
+
+Validation: 201 Rust tests passed in both dashboard/default and headless feature
+configurations at this checkpoint. Tests cover 32 simultaneous identical creates,
+one executor call, changed-input rejection, distinct owners, immutable origin area,
+reopen with uncertain work and no implicit dispatch, ambiguous legacy receipts,
+quota exhaustion, history removal and shutdown. Isolated headless protocol tests
+passed (`model-metadata-N0nlSE`), including concurrent repeated receipts while
+inference is held and reuse after completion/cancellation. The backend is a fake
+Ollama HTTP fixture, not real inference or a physical two-PC test. Shutdown/recovery
+also passed (`job-shutdown-dpq8CY`). Installed nodes and release feeds are unchanged.
+
+## Unreleased: connection-stage diagnostics (2026-10-06)
+
+The coordinator's existing CLI/API diagnostic report now distinguishes
+authenticated connections, gateway-accepted registrations and registrations
+still pending. The three counts use one live connection snapshot, never the
+historical route map. Remote provider and healthy-provider counts are taken
+separately from the scheduler registry, excluding local adapters. No node names,
+addresses, paths, capabilities, permissions or model details are added to reports.
+
+The report explicitly warns that these separate snapshots are not an execution
+readiness guarantee. Registration precedes scheduler processing; a registered
+node can advertise no capabilities/models; health does not reserve capacity or
+check permissions. This makes the reconnect race found on September 27 visible
+without changing job admission, adding retries or requiring dashboard code.
+
+Validation: 197 Rust workspace/all-target tests passed both with and without
+dashboard support. New regressions cover the encrypted authentication/register/
+disconnect lifecycle, invalid and repeated registration, empty capability
+advertisements, historical-route exclusion, gateway stop and remote-vs-local
+provider counts (including unhealthy and at-capacity providers).
+
+Rebuilt headless binaries passed command/API integration with no nodes and with
+a model-free registered node (`node-commands-tPLxCI`), including redaction checks.
+The shutdown/recovery regression also passed (`job-shutdown-2Qi0hd`). Formatting,
+JavaScript syntax, diff and backend/browser dependency checks passed. These are
+isolated local-process checks, not physical two-PC validation. This is unreleased
+source work, with no installed-node, permission or update-feed change.
+
+## Unreleased: Stop and runner-retirement coordination (2026-09-27)
+
+A concurrent regression reproduced a Stop request leaving a job in `stopping`
+after its last runner exited. Stop previously sampled runner presence separately
+from saving its state, while runner cleanup checkpointed interruption separately
+from removing that runner. Either gap could leave nobody to settle the request.
+
+Stop's presence check/checkpoint and runner cleanup/removal now use the existing
+admission gate, consistently locking runner state before the journal. No remote
+call or await is performed under this gate. Stop before execution starts still
+prevents dispatch; already-claimed work may finish, with its results retained and
+dependent steps cancelled. An uncertain runner exit remains `interrupted` for
+review, not a promise of confirmed remote cancellation. Repeating Stop on finished
+history remains an error without rewriting the saved result.
+
+This builds on the unreleased shutdown-admission fix below. It adds no execution
+lease, remote cancellation, schema/wire change or media feature. No installed
+node, release, permission, model or update feed is changed.
+
+Validation: 194 Rust workspace/all-target tests passed with and without dashboard
+support. The new race regression failed before the fix and then passed 20
+consecutive standalone runs (512 raced retirements per run). Additional tests
+verify Stop before a resumed runner's first poll, retention of a finished claimed
+step, cancellation of its dependents, and unchanged history after a rejected
+second Stop. Formatting and backend/browser boundary checks passed.
+
+The first local-process shutdown run (`job-shutdown-zBtmmz`) exposed a separate
+fixture readiness gap: its new job failed with no HTTP provider available after
+socket reconnection. Authentication is counted before registration reaches the
+scheduler. The harness now waits for the exact healthy HTTP provider before
+submitting new work, records readiness, and saves terminal failures immediately
+instead of waiting for a success-only timeout. It never retries a failed job.
+Three corrected runs passed (`job-shutdown-aszVTz`, `job-shutdown-zFa6UY`,
+`job-shutdown-6p7EqW`); each observed socket reconnection before provider readiness.
+
+Rebuilt headless node commands (`node-commands-Dw037G`) and model/job controls
+(`model-metadata-B2xIky`) passed. Model tests use a fake Ollama backend, not real
+inference. JavaScript syntax, diff and documentation-link checks passed. No new
+installer, physical two-PC deployment or remote-stop guarantee is claimed.
+
+## Unreleased: shutdown-safe job admission (2026-09-26)
+
+Backend development resumed after the documentation-only pause. A regression
+against the unchanged alpha.6 engine reproduced a rejected enqueue leaving a
+new pending job in the journal: persistence happened before the shutdown check.
+New-job persistence, resume checkpointing and runner registration now share a
+single admission/closing gate. Shutdown closes that gate before notifying and
+draining runners, including jobs not yet polled. Failed admission creates no
+runner guard, and missing-executor rejection saves no new job on either path.
+
+This is in-process coordination, not durable command deduplication, remote
+execution leases, remote cancellation or exactly-once effects. No schema/wire
+change, model download, installed-node change or release is included. The prior
+presence/media design remains planned; no UI feature work was resumed.
+
+Validation: 191 Rust workspace/all-target tests passed with and without dashboard
+support. Six new cases cover rejected enqueue/run admission, missing executors,
+unchanged rejected-resume checkpoints, shutdown before first poll, concurrent
+submission/shutdown, and failed quota admission followed by a successful retry.
+The concurrent test also passed 30 consecutive standalone runs. The original
+rejected-enqueue regression failed against the unchanged engine before the fix.
+
+Rebuilt headless binaries passed local-process shutdown/recovery
+(`job-shutdown-vXIWhf`), node commands (`node-commands-frrGFw`), and model/job
+protocol regression (`model-metadata-MzTiFh`). The latter uses a fake Ollama
+backend, not real model inference. Formatting, diff, documentation-link and
+backend/browser boundary checks passed. No physical two-PC deployment or new
+installer validation is claimed for this unreleased increment.
+
+## 2026-09-22 documentation-only direction: presence and media
+
+Recorded the owner's [presence and supervised media requirements](PRESENCE-AND-MEDIA.md):
+fixed virtual audio input/output, user-preferred microphone/TTS mixing and output
+routing, optional assistant participation, reusable lightweight presence for
+welcoming/locating/handoff, and EEF-approved peer or coordinator-relayed sessions.
+The design includes concurrent resource use, bounded bandwidth, local sensing,
+authorization expiry and explicit privacy/automation preferences.
+
+All remain planned. Development was paused at that checkpoint; no runtime code,
+installed node, configuration, permission, release, model or update feed changes
+accompanied that documentation. Alpha.6's actual validation remains recorded below.
+
 ## v0.4.0a6 release checkpoint
 
 Alpha.6 packages the shutdown-order and command-response fixes documented below.

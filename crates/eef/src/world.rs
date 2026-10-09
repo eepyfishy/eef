@@ -15,6 +15,7 @@ pub struct WorldState {
 
 #[derive(Default)]
 struct State {
+    event_loss_count: u64,
     applications: BTreeMap<String, Value>,
     nodes: BTreeMap<String, Value>,
     tasks: BTreeMap<String, Value>,
@@ -38,16 +39,30 @@ impl WorldState {
     }
 
     pub fn start(self: &Arc<Self>, bus: &EventBus) -> JoinHandle<()> {
-        let mut events = bus.subscribe();
+        self.event_listener(bus.subscribe())
+    }
+
+    pub(crate) fn event_listener(
+        self: &Arc<Self>,
+        mut events: tokio::sync::broadcast::Receiver<Event>,
+    ) -> JoinHandle<()> {
         let world = self.clone();
         tokio::spawn(async move {
-            while let Ok(event) = events.recv().await {
-                world.apply(event).await
+            loop {
+                match events.recv().await {
+                    Ok(event) => world.apply(event).await,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                        let mut state = world.state.write().await;
+                        state.event_loss_count = state.event_loss_count.saturating_add(count);
+                        tracing::warn!(count, "world observer missed events; state may be stale");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
             }
         })
     }
 
-    async fn apply(&self, event: Event) {
+    pub(crate) async fn apply(&self, event: Event) {
         let mut state = self.state.write().await;
         match event.topic.as_str() {
             "application.launched" => {
@@ -164,9 +179,15 @@ impl WorldState {
         }
     }
 
+    pub async fn event_loss_count(&self) -> u64 {
+        self.state.read().await.event_loss_count
+    }
+
     pub async fn summary(&self) -> Value {
         let state = self.state.read().await;
         json!({
+            "event_loss_count":state.event_loss_count,
+            "state_may_be_stale":state.event_loss_count > 0,
             "running_applications": state.applications.values().filter(|app| app.get("running").and_then(Value::as_bool) == Some(true)).collect::<Vec<_>>(),
             "connected_nodes": state.nodes.values().filter(|node| node.get("connected").and_then(Value::as_bool) == Some(true)).collect::<Vec<_>>(),
             "devices":state.nodes.values().collect::<Vec<_>>(),
@@ -179,5 +200,39 @@ impl WorldState {
             "network_status": state.network_status,
             "uptime": self.started.elapsed().as_secs_f64(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn observer_survives_event_loss_and_continues_with_later_updates() {
+        let bus = EventBus::new(8);
+        let receiver = bus.subscribe();
+        for _ in 0..600 {
+            bus.publish("fixture", json!({})).await;
+        }
+        let world = WorldState::new();
+        let task = world.event_listener(receiver);
+        bus.publish("network.changed", json!({"status":"online"}))
+            .await;
+        let updated = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while world.summary().await["network_status"] != "online" {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let finished = task.is_finished();
+        let report = world.summary().await;
+        task.abort();
+        let _ = task.await;
+        assert!(
+            updated.is_ok(),
+            "event loss permanently stopped world updates"
+        );
+        assert!(!finished, "observer exited after an event gap");
+        assert!(report["event_loss_count"].as_u64().unwrap() > 0);
+        assert_eq!(report["state_may_be_stale"], true);
     }
 }

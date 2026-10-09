@@ -184,6 +184,18 @@ impl CapabilityRegistry {
             .collect()
     }
 
+    /// Registry health only; not a reservation, permission check or live probe.
+    pub fn remote_provider_counts(&self) -> (usize, usize) {
+        let providers = self.providers.read().expect("registry lock");
+        providers
+            .values()
+            .flatten()
+            .filter(|provider| provider.node_id != "local")
+            .fold((0, 0), |(total, healthy), provider| {
+                (total + 1, healthy + usize::from(provider.healthy))
+            })
+    }
+
     pub fn find(&self, capability: &str, action: &str) -> Vec<CapabilityProvider> {
         self.providers
             .read()
@@ -453,6 +465,28 @@ fn type_matches(value: &Value, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostic_counts_separate_remote_providers_from_local_and_health() {
+        let registry = CapabilityRegistry::default();
+        assert_eq!(registry.remote_provider_counts(), (0, 0));
+        registry.register(CapabilityProvider::local("system.ping", "*", json!({})));
+        assert_eq!(registry.remote_provider_counts(), (0, 0));
+        let mut first = CapabilityProvider::local("http.request", "*", json!({}));
+        first.node_id = "fixture".into();
+        first.max_concurrent = 1;
+        first.in_flight = 1; // Healthy does not imply currently available capacity.
+        let mut second = first.clone();
+        second.capability = "filesystem.read".into();
+        second.healthy = false;
+        registry.refresh_node("fixture", vec![first.clone(), second]);
+        assert_eq!(registry.remote_provider_counts(), (2, 1));
+        registry.refresh_node("fixture", vec![first]);
+        assert_eq!(registry.remote_provider_counts(), (1, 1));
+        registry.unregister_node("fixture");
+        assert_eq!(registry.remote_provider_counts(), (0, 0));
+        assert_eq!(registry.all_providers().len(), 1);
+    }
 
     #[test]
     fn model_registration_refresh_retains_active_scheduler_accounting() {

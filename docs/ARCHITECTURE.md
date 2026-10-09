@@ -10,6 +10,14 @@ development slice now extracts `eefn::NodeService` and adds independent network
 advertisements plus [headless network commands](COMMANDS.md). Model management
 uses runtime-owned state instead of a dashboard-owned object.
 
+The 2026-09-22 [presence and media design record](PRESENCE-AND-MEDIA.md) adds
+planned persistent virtual audio devices, microphone/TTS mixing, independent
+input/output routes, and reusable lightweight presence. EEF authorizes and
+supervises concurrent sessions; approved peers may carry media directly, with
+an optional bounded coordinator relay. This is target architecture, not current
+alpha.6 support. Camera permission alone never enables presence-triggered call
+handoff, person identification or video sharing.
+
 This implementation keeps the coordinator and node in one Rust workspace so
 their protocol types cannot silently diverge.
 
