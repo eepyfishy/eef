@@ -4,7 +4,7 @@ import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
-import {randomBytes} from 'node:crypto';
+import {randomBytes, randomUUID} from 'node:crypto';
 const root = resolve(import.meta.dirname, '..');
 const scratch = await mkdtemp(join(root, '.validation/node-credentials-'));
 const bin = resolve(process.env.EEF_TEST_BINARY_DIR || join(root, 'target/debug'));
@@ -64,6 +64,27 @@ try {
     assert.equal(config.node_id,node.id);assert.equal(config.psk,node.credential);assert.equal(config.auth_mode,'node_credential');
     assert.equal(config.custom.preserve,true);assert.equal(config.permissions.remote_updates,false);assert.equal(config.auto_local,false);
     assert.equal((await cli('eefn',node.config,['connection','show'])).saved_auth_mode,'node_credential');
+    const proposalFile=join(scratch,node.id+'-proposal.json');
+    const proposal={schema_version:1,intent:'information',goal:'Inspect node status',context_hints:[],constraints:[],
+      suggested_capabilities:['system.info'],complexity:'simple',workload:'one_shot',needs_clarification:false,clarification:null};
+    await writeFile(proposalFile,JSON.stringify({schema_version:1,original_text:'  Inspect status\n',proposal}));
+    const reviewed=await cli('eefn',node.config,['requests','review-proposal','--file',proposalFile]);
+    assert.equal(reviewed.interpretation_source,'supplied_proposal');assert.equal(reviewed.execution_authorized,false);
+    assert.equal(reviewed.result.request_context.origin_node,node.id);assert.equal(reviewed.result.interpretation.original_text,'  Inspect status\n');
+    assert.deepEqual(reviewed.result.interpretation.proposal,proposal);assert.equal(reviewed.result.persisted,false);
+    assert.equal((await json(node.api+'/api/status')).models.length,0);
+    const question={...proposal,needs_clarification:true,clarification:'Which node should be inspected?'};
+    await writeFile(proposalFile,JSON.stringify({schema_version:1,original_text:'Inspect that node',proposal:question}));
+    const clarification=await cli('eefn',node.config,['requests','review-proposal','--file',proposalFile]);
+    assert.equal(clarification.result.interpretation.review_state,'clarification_required');
+    assert.equal(clarification.result.interpretation.proposal.clarification,question.clarification);
+    const request={schema_version:1,expected_node_id:node.id,request_id:randomUUID(),text:'Check',proposal};
+    const endpoint=node.api+'/api/commands/requests/review-proposal';
+    assert.equal((await json(endpoint,{...request,expected_node_id:'other'})).error_code,'invalid_proposal_request');
+    assert.equal((await json(endpoint,{...request,proposal:{...proposal,suggested_capabilities:['invented.capability']}})).error_code,'invalid_supplied_proposal');
+    assert.equal((await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...request,permissions:true})})).status,422);
+    assert.equal((await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(request)})).status,403);
+    const jobs=await cli('eefn',node.config,['jobs','list']);assert.equal(jobs.data.total,0);assert.deepEqual(jobs.data.jobs,[]);
     await cli('eefn',node.config,['connection','pair-local'],false);
   }
   await until(async()=>(await coordinator(['diagnostics'])).registered_node_count===2,'two registered nodes');
@@ -95,6 +116,7 @@ try {
   await cli('eefn',nodes[0].config,['connection','pair','--code-file',nodes[0].privateFile]);
   await until(async()=>(await coordinator(['diagnostics'])).registered_node_count===2,'rotated node reconnect');
   const results={passed:true,command_pairing:true,two_independent_credentials:true,legacy_disable:true,revocation_and_rotation:true,
+    model_free_structured_review:true,
     redacted_inspection:true,generic_save_preserves_policy:true,node_id_and_permissions_preserved:true,physical_two_pc:false,
     execution_grants:false,session_replay_fencing:false};
   await writeFile(join(scratch,'results.json'),JSON.stringify(results,null,2));console.log('Node credential validation passed: '+scratch);

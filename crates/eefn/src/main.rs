@@ -160,9 +160,16 @@ async fn execute_request_command(
     args: &Args,
     text: &str,
     review: bool,
+    proposal: Option<&eefn::interpretation::Proposal>,
 ) -> Result<serde_json::Value> {
     use serde_json::json;
-    let action = if review { "review" } else { "preview" };
+    let action = if proposal.is_some() {
+        "review-proposal"
+    } else if review {
+        "review"
+    } else {
+        "preview"
+    };
     let report_type = if review {
         "request_review"
     } else {
@@ -191,10 +198,14 @@ async fn execute_request_command(
         request_id: uuid::Uuid::new_v4().to_string(),
         text: text.into(),
     };
+    let mut body = serde_json::to_value(&request)?;
+    if let Some(proposal) = proposal {
+        body["proposal"] = json!(proposal);
+    }
     let exchange = async {
         let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
             .post(format!("http://{address}/api/commands/requests/{action}"))
-            .timeout(Duration::from_secs(if review {150} else {25})).json(&request).send().await?;
+            .timeout(Duration::from_secs(if review {150} else {25})).json(&body).send().await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(json!({"schema_version":1,"report_type":report_type,"success":false,
                 "error_code":"unsupported_command","execution_authorized":false,"dispatched":false,
@@ -212,6 +223,12 @@ async fn execute_request_command(
                 || report["automatically_retried"] != false || report["outcome_unknown"] != false
                 || !eefn::request_preview::confirmed_review(&report["result"], &file.node_id, &request.request_id, text)) {
             bail!("Unrecognized coordinator review response");
+        }
+        if let Some(proposal) = proposal {
+            if report["success"] == true && (report["interpretation_source"] != "supplied_proposal"
+                || report["result"]["interpretation"]["proposal"] != json!(proposal)) {
+                bail!("Supplied proposal changed in review response");
+            }
         }
         Ok::<serde_json::Value, anyhow::Error>(report)
     }.await;
@@ -554,10 +571,20 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     if let Commands::Requests { command } = command {
         return match command {
             eefn::request_preview::RequestAction::Preview { text } => {
-                execute_request_command(args, text, false).await
+                execute_request_command(args, text, false, None).await
             }
             eefn::request_preview::RequestAction::Review { text } => {
-                execute_request_command(args, text, true).await
+                execute_request_command(args, text, true, None).await
+            }
+            eefn::request_preview::RequestAction::ReviewProposal { file } => {
+                let supplied = eefn::request_preview::read_proposal(file)?;
+                execute_request_command(
+                    args,
+                    &supplied.original_text,
+                    true,
+                    Some(&supplied.proposal),
+                )
+                .await
             }
         };
     }

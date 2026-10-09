@@ -66,6 +66,9 @@ const proxy = createServer(async (req, res) => {
     if (proxyMode === 'corrupt') {
       report.result.request_context.origin_node = 'forged';
       res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(report));
+    } else if (proxyMode === 'changed-proposal') {
+      report.result.interpretation.proposal.goal = 'Different schema-valid goal';
+      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(report));
     } else res.destroy();
   } catch {res.destroy();}
 });
@@ -138,6 +141,12 @@ try {
     assert.equal(forwarded, 2); assert.equal(calls.length, beforeLoss + 2);
     proxyMode = 'old'; assert.equal((await review('Old node', false)).error_code, 'unsupported_command');
     assert.equal(calls.length, beforeLoss + 2); assert.equal(forwarded, 3);
+    const proposalFile=join(scratch,'supplied.json');
+    await writeFile(proposalFile,JSON.stringify({schema_version:1,original_text:'Original supplied goal',proposal:proposal()}));
+    proxyMode='changed-proposal';
+    const changed=await cli(['requests','review-proposal','--file',proposalFile],false);
+    assert.equal(changed.error_code,'review_unconfirmed');assert.equal(changed.automatically_retried,false);
+    assert.equal(calls.length,beforeLoss+2,'supplied review cannot call the interpreter');assert.equal(forwarded,4);
   } finally {await writeFile(marker, originalMarker);}
   await cli(['connection', 'pause']); await until(async () => (await json(node + '/api/status')).connection.state === 'paused', 'paused connection');
   const disconnected = await review('No coordinator', false);

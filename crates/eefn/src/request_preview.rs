@@ -18,6 +18,11 @@ pub enum RequestAction {
         #[arg(long)]
         text: String,
     },
+    /// Send a bounded structured proposal for review without calling a model.
+    ReviewProposal {
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -27,6 +32,49 @@ pub struct PreviewRequest {
     pub expected_node_id: String,
     pub request_id: String,
     pub text: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuppliedProposal {
+    pub schema_version: u32,
+    pub original_text: String,
+    pub proposal: crate::interpretation::Proposal,
+}
+
+pub fn read_proposal(path: &std::path::Path) -> anyhow::Result<SuppliedProposal> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(64 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > 64 * 1024 {
+        anyhow::bail!("proposal file exceeds bounds")
+    }
+    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes);
+    let value: SuppliedProposal = serde_json::from_slice(bytes)
+        .map_err(|_| anyhow::anyhow!("invalid supplied proposal schema"))?;
+    if value.schema_version != 1 {
+        anyhow::bail!("unsupported supplied proposal version")
+    }
+    // Local file shape validation only. Trusted runtime/EEF contexts independently
+    // check membership; a file cannot grant its own capabilities or authority.
+    crate::interpretation::validate(
+        &value.original_text,
+        &serde_json::to_vec(&value.proposal)?,
+        &value.proposal.suggested_capabilities,
+    )?;
+    Ok(value)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProposalReviewRequest {
+    pub schema_version: u32,
+    pub expected_node_id: String,
+    pub request_id: String,
+    pub text: String,
+    pub proposal: crate::interpretation::Proposal,
 }
 
 /// Confirm the review-only response contract in both service and CLI adapters.
@@ -128,8 +176,71 @@ impl Drop for PreviewGuard {
 
 impl NodeService {
     pub async fn review_request(&self, request: PreviewRequest) -> Value {
-        let mut generation = self.preview.generation.subscribe();
+        let generation = self.preview.generation.subscribe();
         let preview = self.preview_request(request).await;
+        self.review_prepared(preview, generation).await
+    }
+
+    pub async fn review_supplied_proposal(&self, request: ProposalReviewRequest) -> Value {
+        let generation = self.preview.generation.subscribe();
+        let canonical_id = uuid::Uuid::parse_str(&request.request_id)
+            .ok()
+            .map(|id| id.to_string())
+            .filter(|id| id == &request.request_id);
+        let mut prepared = json!({"schema_version":1,"report_type":"request_preview","success":false,
+            "node_id":self.node_id,"request_id":canonical_id,"runtime_id":null,
+            "execution_authorized":false,"dispatched":false,"automatically_retried":false,
+            "interpretation_source":"supplied_proposal"});
+        let result: Result<Value, &'static str> = (|| {
+            if request.schema_version != 1
+                || request.expected_node_id != self.node_id
+                || uuid::Uuid::parse_str(&request.request_id)
+                    .ok()
+                    .map(|id| id.to_string())
+                    .as_deref()
+                    != Some(&request.request_id)
+            {
+                return Err("invalid_proposal_request");
+            }
+            let binding = self
+                .preview
+                .binding
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or("runtime_unavailable")?;
+            let engine = binding.engine.upgrade().ok_or("runtime_unavailable")?;
+            if generation.borrow().as_ref() != Some(&binding.runtime_id) {
+                return Err("runtime_changed");
+            }
+            prepared["runtime_id"] = json!(binding.runtime_id);
+            let proposal =
+                serde_json::to_vec(&request.proposal).map_err(|_| "invalid_supplied_proposal")?;
+            let validated =
+                crate::interpretation::validate(&request.text, &proposal, &engine.capabilities())
+                    .map_err(|_| "invalid_supplied_proposal")?;
+            Ok(json!({"interpretation":validated}))
+        })();
+        match result {
+            Ok(result) => {
+                prepared["success"] = json!(true);
+                prepared["result"] = result;
+            }
+            Err(code) => {
+                prepared["error_code"] = json!(code);
+                prepared["error"] = json!(
+                    "Proposal rejected or runtime unavailable. No model inference, job or execution was requested."
+                );
+            }
+        }
+        self.review_prepared(prepared, generation).await
+    }
+
+    async fn review_prepared(
+        &self,
+        preview: Value,
+        mut generation: watch::Receiver<Option<String>>,
+    ) -> Value {
         let mut report = preview.clone();
         report["report_type"] = json!("request_review");
         report["coordinator_acknowledged"] = json!(false);
@@ -271,6 +382,112 @@ impl NodeService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn supplied() -> ProposalReviewRequest {
+        serde_json::from_value(json!({"schema_version":1,"expected_node_id":"node",
+            "request_id":uuid::Uuid::new_v4().to_string(),"text":"  Check status\n",
+            "proposal":{"schema_version":1,"intent":"information","goal":"Check status",
+                "context_hints":[],"constraints":[],"suggested_capabilities":["system.info"],
+                "complexity":"simple","workload":"one_shot","needs_clarification":false,"clarification":null}})).unwrap()
+    }
+    #[test]
+    fn supplied_files_are_strict_bounded_and_never_import_authority() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("proposal.json");
+        let request = supplied();
+        let value =
+            json!({"schema_version":1,"original_text":request.text,"proposal":request.proposal});
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(
+            read_proposal(&path).unwrap().original_text,
+            "  Check status\n"
+        );
+        for bad in [
+            "request_context",
+            "origin_node",
+            "permissions",
+            "execution_authorized",
+            "command",
+        ] {
+            let mut input = value.clone();
+            input[bad] = json!(true);
+            std::fs::write(&path, serde_json::to_vec(&input).unwrap()).unwrap();
+            assert!(read_proposal(&path).is_err());
+            let mut input = value.clone();
+            input["proposal"][bad] = json!(true);
+            std::fs::write(&path, serde_json::to_vec(&input).unwrap()).unwrap();
+            assert!(read_proposal(&path).is_err());
+        }
+        std::fs::write(&path, vec![b'x'; 64 * 1024 + 1]).unwrap();
+        assert!(read_proposal(&path).is_err());
+    }
+    #[tokio::test]
+    async fn supplied_review_needs_no_model_and_uses_same_confirmed_review_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = NodeService::new(dir.path().join("config.json"), "node".into());
+        let engine = Arc::new(NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        let _guard = service.attach_preview_runtime(&engine, "runtime".into());
+        let mut receiver = service.submissions.connect();
+        let request = supplied();
+        let id = request.request_id.clone();
+        // Holding all inference capacity cannot block the deterministic adapter.
+        let _permit = service.preview.capacity.acquire().await.unwrap();
+        let local = service.clone();
+        let pending = tokio::spawn(async move { local.review_supplied_proposal(request).await });
+        let command = receiver.recv().await.unwrap();
+        assert_eq!(command.kind, "requests.review");
+        assert_eq!(command.operation_id.as_deref(), Some(id.as_str()));
+        let validated = crate::interpretation::validate(
+            command.payload["original_text"].as_str().unwrap(),
+            &serde_json::to_vec(&command.payload["proposal"]).unwrap(),
+            &["system.info".into()],
+        )
+        .unwrap();
+        command.reply.send(Ok(json!({"schema_version":1,"report_type":"coordinator_request_review",
+            "request_context":crate::context::RequestContext::new(id,"node".into(),vec![]).unwrap(),
+            "interpretation":validated,"execution_authorized":false,"dispatched":false,"persisted":false,"note":"Review only"}))).unwrap();
+        let report = pending.await.unwrap();
+        assert_eq!(report["success"], true);
+        assert_eq!(report["coordinator_acknowledged"], true);
+        assert_eq!(report["interpretation_source"], "supplied_proposal");
+        assert_eq!(
+            report["result"]["interpretation"]["original_text"],
+            "  Check status\n"
+        );
+        assert_eq!(report["execution_authorized"], false);
+        assert_eq!(report["dispatched"], false);
+        assert!(!dir.path().join("config.json").exists());
+    }
+    #[tokio::test]
+    async fn supplied_review_rejects_identity_and_capabilities_and_does_not_replay_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = NodeService::new(dir.path().join("config.json"), "node".into());
+        let engine = Arc::new(NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        let guard = service.attach_preview_runtime(&engine, "runtime".into());
+        let mut receiver = service.submissions.connect();
+        let mut wrong = supplied();
+        wrong.expected_node_id = "other".into();
+        assert_eq!(
+            service.review_supplied_proposal(wrong).await["error_code"],
+            "invalid_proposal_request"
+        );
+        let mut wrong = supplied();
+        wrong.proposal.suggested_capabilities = vec!["invented.capability".into()];
+        assert_eq!(
+            service.review_supplied_proposal(wrong).await["error_code"],
+            "invalid_supplied_proposal"
+        );
+        assert!(receiver.try_recv().is_err());
+        let local = service.clone();
+        let pending = tokio::spawn(async move { local.review_supplied_proposal(supplied()).await });
+        let command = receiver.recv().await.unwrap();
+        drop(guard);
+        let report = pending.await.unwrap();
+        assert_eq!(report["error_code"], "runtime_changed");
+        assert_eq!(report["outcome_unknown"], true);
+        assert_eq!(report["execution_authorized"], false);
+        assert!(receiver.try_recv().is_err());
+        drop(command);
+    }
     #[test]
     fn confirmed_review_rejects_changed_identity_text_and_authority_flags() {
         let value = json!({"schema_version":1,"report_type":"coordinator_request_review",

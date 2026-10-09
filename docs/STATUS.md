@@ -1,5 +1,36 @@
 # Architecture conformance status
 
+## Unreleased: model-independent structured review adapter (2026-10-10)
+
+`eefn requests review-proposal --file` sends a supplied structured proposal to
+EEF for review without consulting an interpreter. The strict bounded UTF-8
+file contract preserves original text; CLI checks shape, the live node runtime
+checks capabilities, and EEF independently revalidates gateway-stamped context.
+Both model-generated and supplied hints use the same confirmed review service.
+The supplied adapter additionally compares its exact proposal in the final CLI
+reply and labels `interpretation_source: supplied_proposal`.
+
+This is an optional automation input adapter, not required for ordinary setup.
+It never picks/downloads/loads a model, authorizes a capability, dispatches work
+or persists a job. Files cannot supply origin, permissions, commands or grants.
+Clarification questions are returned without guessing an answer. Restart invalidates
+pending review; failed/lost/corrupted replies never trigger fallback or replay.
+Interactive clarification/approval, authoritative planning and execution grants
+remain unfinished. See [command contract](COMMANDS.md#supplied-structured-proposals-unreleased).
+
+Validation: 236 workspace/all-target Rust tests pass in both feature modes.
+Unit tests cover strict file/authority rejection, no-model review with inference
+capacity occupied, trusted capability context, original text, confirmed replies
+and no replay across runtime retirement. Headless two-logical-node integrations
+confirm independent-key review with zero selected models, clarification output,
+wrong-ID/capability/schema/cross-site denial and empty job journals. The rebuilt
+existing review regression (`request-review-lJPtPR`) also verifies that a proxy
+changing a supplied proposal's goal to another schema-valid value is rejected by
+CLI without invoking a model or replaying. Formatting, syntax and source backend/
+browser-boundary checks pass. No installed-node, permission, model, release-feed,
+installer, signing or public artifact change; physical acceptance remains pending.
+Latest combined credential/model-free review evidence: `node-credentials-KSWbSF`.
+
 ## Unreleased: independent exact-node credential foundation (2026-10-10)
 
 Local-owner `eef credentials` commands now provision, inspect, rotate and revoke

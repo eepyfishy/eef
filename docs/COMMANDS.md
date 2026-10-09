@@ -64,6 +64,35 @@ an explicit installer upgrade to a build containing this fix. Installing alpha.4
 alone does not provide these commands. Use the alpha.5 installer for that
 bootstrap; publishing a release does not automatically upgrade older nodes.
 
+## Supplied structured proposals (unreleased)
+
+Automation may submit a proposal for **review only**, without interpreter
+inference or an installed model:
+
+```powershell
+eefn requests review-proposal --file proposal.json --json
+```
+
+The UTF-8 file (optional BOM, at most 64 KiB) contains exactly `schema_version: 1`,
+`original_text`, and `proposal` from [the existing interpretation contract](INTERPRETATION.md).
+The node must already be running and connected. CLI validates file shape; the
+runtime independently validates capability hints, and EEF revalidates its accepted
+registration context. Neither a file nor a schema-valid reply supplies origin,
+permission, approval, a job, a plan or an execution grant. Original text is retained.
+
+This adapter uses the same bounded submission channel, current-runtime invalidation,
+confirmed response checks and no-replay behavior as model-based review. It reports
+`interpretation_source: supplied_proposal`; it does not claim the proposal came
+from a model or was semantically approved. New CLI checks also compare the exact
+supplied proposal with the confirmed result. Older nodes return unsupported;
+there is no inference/chat/job fallback, model selection, download or durable receipt.
+Input files may contain private user text; do not include them in public reports.
+
+Local owner endpoint: `POST /api/commands/requests/review-proposal`, with exactly
+`schema_version`, `expected_node_id`, canonical UUID `request_id`, `text`, and
+`proposal`. It remains available in no-dashboard builds. This is an additional
+deterministic input adapter, not completion of interactive clarification or planning.
+
 ## Request preview (development)
 
 Added in v0.4.0a4; requires an explicitly selected model. It is not available in

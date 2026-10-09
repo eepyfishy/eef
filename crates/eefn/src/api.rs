@@ -98,6 +98,10 @@ impl NodeService {
             .route("/api/commands/jobs", post(job_command))
             .route("/api/commands/requests/preview", post(request_preview))
             .route("/api/commands/requests/review", post(request_review))
+            .route(
+                "/api/commands/requests/review-proposal",
+                post(request_review_proposal),
+            )
             .route("/api/commands/restart", post(restart_command))
             .route("/api/config", get(config_get).put(config_save))
             .route("/api/startup", get(startup_get).put(startup_set))
@@ -254,6 +258,13 @@ async fn request_review(
     Json(request): Json<crate::request_preview::PreviewRequest>,
 ) -> Json<Value> {
     Json(state.review_request(request).await)
+}
+
+async fn request_review_proposal(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_preview::ProposalReviewRequest>,
+) -> Json<Value> {
+    Json(state.review_supplied_proposal(request).await)
 }
 
 async fn chat(
