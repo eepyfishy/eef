@@ -30,6 +30,9 @@ pub struct ClarificationAnswer {
 pub struct DraftRecord {
     pub schema_version: u32,
     pub original_text: String,
+    /// Immutable caller-supplied template input, never model-authored authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concrete_input: Option<crate::request_planning::PlanInput>,
     pub proposals: Vec<ProposalRevision>,
     pub answers: Vec<ClarificationAnswer>,
 }
@@ -44,6 +47,16 @@ impl DraftRecord {
             bail!("durable request review exceeds bounds")
         }
         let mut receipts = std::collections::HashSet::new();
+        if let Some(input) = &self.concrete_input {
+            input.validate()?;
+            if !crate::request_planning::METHOD_TEMPLATES.contains(&input.template.as_str()) {
+                bail!("Unsupported explicit one-step request template")
+            }
+            let steps = crate::request_planning::template_steps(&input.template)?;
+            if self.proposals[0].proposal.suggested_capabilities != vec![steps[0].0.to_string()] {
+                bail!("Explicit input differs from its retained capability")
+            }
+        }
         for (index, revision) in self.proposals.iter().enumerate() {
             crate::job_commands::validate_operation_id(&revision.operation_id)?;
             if !receipts.insert(&revision.operation_id) {
@@ -64,6 +77,7 @@ impl DraftRecord {
                 let source = Self {
                     schema_version: self.schema_version,
                     original_text: self.original_text.clone(),
+                    concrete_input: self.concrete_input.clone(),
                     proposals: self.proposals[..index].to_vec(),
                     answers: self.answers[..evidence.source_answer_count].to_vec(),
                 };
@@ -120,6 +134,7 @@ impl DraftRecord {
     }
     pub fn same_opening(&self, other: &Self) -> bool {
         self.original_text == other.original_text
+            && self.concrete_input == other.concrete_input
             && self.proposals.first().map(|p| &p.proposal)
                 == other.proposals.first().map(|p| &p.proposal)
     }

@@ -8,6 +8,21 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Save/compile explicit one-step input without a model; never approve/execute.
+    Submit {
+        #[arg(long)]
+        text: String,
+        #[arg(long, default_value = "Explicit request")]
+        title: String,
+        #[arg(long,required_unless_present="template",conflicts_with_all=["template","node"])]
+        file: Option<std::path::PathBuf>,
+        #[arg(long, required_unless_present = "file")]
+        template: Option<String>,
+        #[arg(long, requires = "template")]
+        node: Option<String>,
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Propose and save a source-bound method or clarification; never approve/execute.
     Prepare {
         id: String,

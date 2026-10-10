@@ -107,6 +107,7 @@ impl NodeService {
             .route("/api/commands/requests/drafts", post(request_draft_command))
             .route("/api/commands/requests/resolve", post(request_resolution))
             .route("/api/commands/requests/prepare", post(request_preparation))
+            .route("/api/commands/requests/submit", post(request_submission))
             .route("/api/commands/requests/planning", post(request_planning))
             .route(
                 "/api/commands/requests/abandon",
@@ -323,6 +324,12 @@ async fn request_preparation(
     Json(request): Json<crate::request_preparation::PrepareRequest>,
 ) -> Json<Value> {
     Json(state.prepare_request(request).await)
+}
+async fn request_submission(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_submission::ConcreteRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.concrete_request(request).await?))
 }
 async fn request_planning(
     State(state): State<Arc<NodeService>>,

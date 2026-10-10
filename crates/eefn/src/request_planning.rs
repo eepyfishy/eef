@@ -318,6 +318,14 @@ pub fn confirmed(value: &Value, node: &str, receipt: &str, command: &PlanningCom
             return false;
         }
         Some(input) => {
+            if view
+                .draft
+                .concrete_input
+                .as_ref()
+                .is_some_and(|original| original != input)
+            {
+                return false;
+            }
             if let Some(source) = &view.preparation {
                 if view.source_revision != Some(source.evidence.source_revision)
                     || !source.confirms(

@@ -12,6 +12,9 @@ The backend owns read/context/inference/checkpoint/report behavior; the dashboar
 is not required. This is **explicit preparation**, not an ambient automatic
 trigger, completed general planner or automatic execution. Existing deterministic
 `requests compile` commands and explicit inputs remain available.
+Caller-supplied `requests submit`/`jobs request-text` sources retain immutable
+concrete inputs and use deterministic compilation, not semantic preparation;
+see [explicit requests](EXPLICIT-REQUESTS.md).
 
 ## Implemented contract
 

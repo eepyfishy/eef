@@ -976,6 +976,21 @@ explicitly disabled listener is silently enabled by the new preference.
 
 ## Added in v0.4.0a3: jobs through the running node
 
+For new explicit text work, the unreleased grant-aware command is:
+
+```powershell
+eefn jobs request-text --prompt "Explain this topic" --role USER_SELECTED_ROLE --operation-id UUID --json
+eefn requests submit --text "Show status" --template system_info --operation-id UUID --json
+```
+
+It saves/compiles caller inputs, requires no interpreter and performs no inference
+until separate owner approval and origin execution. Inspect `requests plan` with
+the returned job ID. Preserve the receipt and use `jobs find` after a lost reply
+or partial compilation. Exact retries retain immutable input and never start a
+second model call or silently replace choices. See [explicit request contract](EXPLICIT-REQUESTS.md).
+The older `generate-text` command below still directly executes legacy work; it
+is not grant-enforced and is not silently reinterpreted as the new workflow.
+
 ```powershell
 .\eefn.exe jobs list --json
 .\eefn.exe jobs find --operation-id RECEIPT_UUID --json

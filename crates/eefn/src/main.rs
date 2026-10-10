@@ -425,6 +425,46 @@ async fn execute_preparation_command(
         "execution_authorized":false,"dispatched":false,"automatically_retried":false,
         "note":"No confirmed preparation reply. Inspect requests plan or reuse the exact operation ID to inspect a saved receipt. No automatic inference or checkpoint retry was sent."})))
 }
+async fn execute_concrete_command(
+    args: &Args,
+    command: eefn::request_submission::ConcreteCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.validate()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; submission never launches a runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange=async {
+        let response=reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
+            .post(format!("http://{address}/api/commands/requests/submit")).timeout(Duration::from_secs(150))
+            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"command":command})).send().await?;
+        if response.status()==reqwest::StatusCode::NOT_FOUND {
+            return Ok(json!({"schema_version":1,"report_type":"node_concrete_request","node_id":file.node_id,"command":command,
+                "success":false,"outcome_unknown":false,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
+                "error_code":"unsupported_command","note":"Running node does not support explicit submission. No legacy job, chat or inference fallback was attempted."}));
+        }
+        let ok=response.status().is_success();let value=eefn::model_manager::bounded_json(response).await?;
+        if !ok || value["schema_version"]!=1 || value["report_type"]!="node_concrete_request" || value["node_id"]!=file.node_id
+            || value["command"]!=json!(command) || !value["success"].is_boolean() || value["execution_authorized"]!=false
+            || value["dispatched"]!=false || value["automatically_retried"]!=false
+            || (value["success"]==true && !eefn::request_submission::confirmed(&value["result"],&file.node_id,&command)) {
+            bail!("Unrecognized concrete submission response")
+        }
+        Ok::<_,anyhow::Error>(value)
+    }.await;
+    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"node_concrete_request","node_id":file.node_id,"command":command,
+        "success":false,"outcome_unknown":true,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
+        "error_code":"concrete_unconfirmed","note":"No confirmed reply. Inspect jobs find with this operation ID, then requests plan; no automatic replay or legacy fallback."})))
+}
 
 async fn execute_abandonment_command(
     args: &Args,
@@ -706,7 +746,13 @@ async fn execute_job_command(
     let request = eefn::job_commands::JobRequest {
         schema_version: 1,
         expected_node_id: file.node_id.clone(),
-        operation_id: Some(uuid::Uuid::new_v4().to_string()),
+        operation_id: Some(match command {
+            eefn::job_commands::JobCommand::RequestText {
+                operation_id: Some(id),
+                ..
+            } => id.clone(),
+            _ => uuid::Uuid::new_v4().to_string(),
+        }),
         command: command.clone(),
     };
     let response = reqwest::Client::builder()
@@ -1097,6 +1143,43 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                         operation_id: operation_id
                             .clone()
                             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::Submit {
+                text,
+                title,
+                file,
+                template,
+                node,
+                operation_id,
+            } => {
+                let input = if let Some(file) = file {
+                    eefn::request_planning::read_input(file)?
+                } else {
+                    eefn::request_planning::PlanInput {
+                        schema_version: 1,
+                        template: template.clone().context("Template required")?,
+                        params: serde_json::json!({}),
+                        constraints: node
+                            .as_ref()
+                            .map(|n| serde_json::json!({"node_id":n}))
+                            .unwrap_or_else(|| serde_json::json!({})),
+                    }
+                };
+                execute_concrete_command(
+                    args,
+                    eefn::request_submission::ConcreteCommand {
+                        operation_id: operation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                        request: eefn::request_submission::ConcreteInput {
+                            schema_version: 1,
+                            original_text: text.clone(),
+                            title: title.clone(),
+                            input,
+                        },
                     },
                 )
                 .await
@@ -2117,6 +2200,41 @@ mod tests {
 
     #[test]
     fn durable_request_commands_require_explicit_revision_and_input() {
+        Args::try_parse_from([
+            "eefn",
+            "requests",
+            "submit",
+            "--text",
+            "Status",
+            "--template",
+            "system_info",
+        ])
+        .unwrap();
+        Args::try_parse_from([
+            "eefn",
+            "jobs",
+            "request-text",
+            "--prompt",
+            "Hello",
+            "--operation-id",
+            "receipt",
+        ])
+        .unwrap();
+        assert!(Args::try_parse_from(["eefn", "requests", "submit", "--text", "Status"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "requests",
+                "submit",
+                "--text",
+                "Status",
+                "--template",
+                "system_info",
+                "--file",
+                "input.json"
+            ])
+            .is_err()
+        );
         Args::try_parse_from(["eefn", "requests", "prepare", "id", "--revision", "1"]).unwrap();
         assert!(Args::try_parse_from(["eefn", "requests", "prepare", "id"]).is_err());
         assert!(

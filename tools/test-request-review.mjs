@@ -53,6 +53,7 @@ const fake = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     calls.push(JSON.parse(body));
     if (mode === 'gate') {res.write(' '); gates.add(res); res.on('close', () => gates.delete(res)); return;}
+    if (mode === 'text-execution') return res.end(JSON.stringify({message:{content:'fixture concrete grant result'},done:true,done_reason:'stop'}));
     if (mode === 'method' || mode === 'method-question' || mode === 'method-invalid' || mode === 'method-remote') {
       const value = mode === 'method-question' ? {schema_version:1,method:null,clarification:'Which node should be inspected?'}
         : {schema_version:1,method:{schema_version:1,template:'system_info',params:{},constraints:{}},clarification:null};
@@ -552,6 +553,87 @@ try {
   assert.equal(calls.length,beforeMethods+1);assert.equal(lostInspection.result.status,'awaiting_approval');
   assert.equal((await cli(prepareArgs(methodId,1,methodOperation))).result.plan_sha256,prepared.result.plan_sha256);
   assert.equal((await cli(prepareArgs(questionId,1,questionOperation))).inspection_only,true);
+  // Explicit caller inputs require neither interpreter selection nor inference.
+  // They retain source data and compile through the same EEF approval/grant path.
+  const beforeConcrete=calls.length,concreteOperation=randomUUID();
+  const concreteArgs=['requests','submit','--text','  Show system status\n','--title','Explicit status',
+    '--template','system_info','--operation-id',concreteOperation];
+  const concrete=await cli(concreteArgs);
+  assert.equal(concrete.report_type,'node_concrete_request');assert.equal(concrete.result.plan.status,'awaiting_approval');
+  assert.equal(concrete.result.plan.draft.original_text,'  Show system status\n');
+  assert.deepEqual(concrete.result.plan.draft.concrete_input,{schema_version:1,template:'system_info',params:{},constraints:{}});
+  assert.equal(concrete.result.plan.request_context.request_id,concreteOperation);
+  assert.notEqual(concrete.result.compilation_operation_id,concreteOperation);
+  assert.equal(concrete.dispatched,false);assert.equal(concrete.execution_authorized,false);assert.equal(calls.length,beforeConcrete);
+  assert.equal((await cli(concreteArgs)).result.creation_reused,true);assert.equal(calls.length,beforeConcrete);
+  assert.equal((await cli(prepareArgs(concrete.result.plan.id,2,randomUUID()),false)).error_code,'source_revision_changed');
+  const concreteUrl=node+'/api/commands/requests/submit';
+  const concreteBody={schema_version:1,expected_node_id:config.node_id,command:{operation_id:concreteOperation,request:{schema_version:1,
+    original_text:'  Show system status\n',title:'Explicit status',input:{schema_version:1,template:'system_info',params:{},constraints:{}}}}};
+  assert.equal((await fetch(concreteUrl,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(concreteBody)})).status,403);
+  assert.equal((await fetch(concreteUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...concreteBody,command:{...concreteBody.command,approved:true}})})).status,422);
+  assert.equal((await fetch(concreteUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...concreteBody,expected_node_id:'wrong'})})).status,400);
+  const textOperation=randomUUID(),textPrompt='  Exact submitted text\n';
+  const requestedTextArgs=['jobs','request-text','--prompt',textPrompt,'--role','unselected_role','--backend','ollama',
+    '--model','fixture','--target-node',config.node_id,'--operation-id',textOperation];
+  const requestedText=await cli(requestedTextArgs);const textId=requestedText.data.id;
+  assert.equal(requestedText.submission_mode,'reviewed_concrete_request');assert.equal(requestedText.creation_correlated,true);
+  assert.equal(requestedText.data.status,'awaiting_approval');assert.equal(requestedText.data.tasks[0].status,'pending');
+  assert.equal(requestedText.data.review_only,true);assert.equal(requestedText.data.can_resume,false);
+  assert.equal(requestedText.data.request_context.request_id,textOperation);assert.equal(requestedText.dispatched,false);
+  assert.equal(calls.length,beforeConcrete,'request-text must not call a backend before approval/execution');
+  const textPlan=(await cli(['requests','plan',textId])).result;
+  assert.equal(textPlan.draft.original_text,textPrompt);assert.equal(textPlan.draft.concrete_input.params.prompt,textPrompt);
+  assert.equal(textPlan.input.params.model_id,'fixture');assert.equal(textPlan.input.constraints.model_role,'unselected_role');
+  assert.equal(textPlan.bindings[0].node_id,config.node_id);
+  const textBody={schema_version:1,expected_node_id:config.node_id,operation_id:textOperation,
+    command:{operation:'request_text',prompt:textPrompt,role:'unselected_role',backend:'ollama',model:'fixture',target_node:config.node_id}};
+  const duplicates=await Promise.all(Array.from({length:6},()=>json(node+'/api/commands/jobs',textBody)));
+  assert(duplicates.every(r=>r.success&&r.data.id===textId&&r.data.admission.reused));assert.equal(calls.length,beforeConcrete);
+  assert.equal((await fetch(node+'/api/commands/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({...textBody,command:{...textBody.command,operation_id:randomUUID()}})})).status,400);
+  const conflict=await json(node+'/api/commands/jobs',{...textBody,command:{...textBody.command,prompt:'Changed same receipt'}});
+  assert.equal(conflict.success,false);assert.equal(conflict.outcome_unknown,true);assert.equal(calls.length,beforeConcrete);
+  // A compiler failure can leave the source checkpoint. Exact retries do not
+  // replace that input; jobs find + requests plan exposes partial admission.
+  const missingOperation=randomUUID();
+  const missingArgs=['jobs','request-text','--prompt','Missing selected model','--model','not-selected','--operation-id',missingOperation];
+  const missing=await cli(missingArgs,false);assert.equal(missing.outcome_unknown,true);
+  const partial=(await cli(['jobs','find','--operation-id',missingOperation])).data;
+  assert.equal(partial.total,1);const partialId=partial.jobs[0].id;
+  const partialPlan=(await cli(['requests','plan',partialId])).result;
+  assert.equal(partialPlan.status,'review');assert.equal(partialPlan.revision,1);assert.equal(partialPlan.input,null);
+  assert.equal(partialPlan.draft.concrete_input.params.model_id,'not-selected');
+  await cli(missingArgs,false);assert.equal((await cli(['jobs','find','--operation-id',missingOperation])).data.total,1);
+  const changedMissingArgs=[...missingArgs];changedMissingArgs[5]='fixture';await cli(changedMissingArgs,false);
+  assert.equal((await cli(['requests','plan',partialId])).result.draft.concrete_input.params.model_id,'not-selected');
+  const changedInput=join(scratch,'changed-explicit-input.json');
+  await writeFile(changedInput,JSON.stringify({...partialPlan.draft.concrete_input,params:{prompt:'Missing selected model',model_id:'fixture'}}));
+  await cli(['requests','compile',partialId,'--revision','1','--file',changedInput],false);
+  assert.equal((await cli(['requests','plan',partialId])).result.revision,1);await cli(['jobs','stop',partialId]);
+  // Lost reply + restart returns the original retained request, not a new job.
+  const lostConcreteOperation=randomUUID(),lostConcreteMarker=await readFile(marker,'utf8');
+  const lostConcreteArgs=['requests','submit','--text','Lost explicit reply','--template','system_info','--operation-id',lostConcreteOperation];
+  try {
+    const altered=JSON.parse(lostConcreteMarker);altered.address=`127.0.0.1:${proxyPort}`;await writeFile(marker,JSON.stringify(altered));proxyMode='drop';
+    const lost=await cli(lostConcreteArgs,false);assert.equal(lost.error_code,'concrete_unconfirmed');assert.equal(lost.outcome_unknown,true);
+  }finally{await writeFile(marker,lostConcreteMarker);}
+  const foundConcrete=(await cli(['jobs','find','--operation-id',lostConcreteOperation])).data;assert.equal(foundConcrete.total,1);
+  const beforeConcreteRestart=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+  await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==beforeConcreteRestart&&await ready(),'explicit requests reopened');
+  assert.equal((await cli(lostConcreteArgs)).result.plan.id,foundConcrete.jobs[0].id);
+  assert.equal((await cli(requestedTextArgs)).data.id,textId);assert.equal(calls.length,beforeConcrete);
+  // The same explicit text job can execute once via separate owner approval and
+  // an origin request, with a fixed model and durable nonce/lease receipts.
+  const textApproval=await coordinator(['requests','approve',textId,'--revision','2','--digest',textPlan.plan_sha256,
+    '--valid-for-ms','60000','--max-execution-ms','5000','--max-result-bytes','16384','--operation-id',randomUUID()]);
+  assert.equal(textApproval.plan.status,'approved');assert.equal(calls.length,beforeConcrete);mode='text-execution';
+  const textExecution=await cli(['requests','execute',textId,'--revision','3','--approval-digest',textApproval.plan.approval.approval_sha256,'--operation-id',randomUUID()]);
+  assert.equal(textExecution.success,true);
+  await until(async()=>(await cli(['jobs','get',textId])).data.status==='completed','granted explicit text complete');
+  assert.equal(calls.length,beforeConcrete+1);assert.equal(calls.at(-1).messages[0].content,textPrompt);
+  assert.equal((await cli(['jobs','output',textId])).data.outputs[0].content,'fixture concrete grant result');
+  assert.equal((await cli(requestedTextArgs)).data.status,'completed');assert.equal(calls.length,beforeConcrete+1);
   await writeFile(join(scratch, 'results.json'), JSON.stringify({passed: true, api_only: true, node_to_coordinator_review: true,
     original_text_preserved: true, authenticated_origin: true, clarification_returned: true, rejected_authority_fields: true,
     stateless_no_jobs_created: true, durable_inferred_review: true, lost_draft_found_without_replay: true,
@@ -568,6 +650,8 @@ try {
     method_capacity_and_restart_guards:true,stale_method_source_rejected:true,method_receipt_without_inference:true,
     lost_method_reply_inspected:true,prepared_plan_restart_persistence:true,preparation_without_execution:true,
     cross_node_method_preparation:true,method_disclosure_revocation_rechecked:true,
+    explicit_concrete_requests:true,explicit_source_inputs_immutable:true,model_free_explicit_compilation:true,
+    explicit_text_grant_execution:true,explicit_receipt_restart_recovery:true,partial_explicit_admission_inspectable:true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
 } finally {

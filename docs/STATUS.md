@@ -1,5 +1,41 @@
 # Architecture conformance status
 
+## Unreleased: explicit grant-aware submission entry (2026-10-11)
+
+`requests submit` and `jobs request-text` let callers save and compile explicit
+one-step inputs without model interpretation, JSON proposal authoring or ordinary
+RPC execution. The same service/journal/compiler retains untouched original text,
+caller template/parameters/routing choices, authenticated origin and frozen bindings.
+Requests await separate owner approval and origin execution. No inference, model
+download, workload load/reservation, grant or dispatch is initiated by submission.
+
+Source admission and compilation are separate checkpoints. Failed/unconfirmed
+compilation may leave an inspectable source; immutable `concrete_input` prevents
+same-receipt substitutions, including later compiler/model attempts. A separate
+derived compilation receipt supports one retained source/plan across exact retries
+and restart, without renewing authority. Old unmarked records retain digest bytes;
+new source fields are included in compiled definition digests. APIs/CLI enforce
+typed bounds/identity and never fall back to old chat/jobs when unsupported.
+See [contract](EXPLICIT-REQUESTS.md).
+
+This is a real grant-aware entry point and **partial migration**, not a
+grant-enforced default. Old `generate-text`, raw task/job creation, chat/rules and
+sensitive ordinary RPC remain legacy; they still need migration/retirement.
+Their existing control/recovery regressions are preserved. UI, versions, installed
+apps/physical nodes, installers and update feeds remain unchanged.
+
+Validation: **364 workspace/all-target Rust tests pass in both feature modes**;
+fresh no-dashboard binaries, JS syntax, backend/browser source boundary and diff
+checks pass. Headless `request-review-3frx6B` exercises exact generic/text admission,
+immutable model/routing/prompt choices, concurrent receipts, strict API guards,
+inspectable partial compilation, lost replies and coordinator restart. It proves
+no backend call before separate owner approval and origin execution, one granted
+text call with the original prompt, durable output and no call on later receipt
+reuse. Existing regressions pass in `request-drafts-bW3K0P`,
+`job-shutdown-mMf9gT`, `scheduling-MyDlSJ`, `model-metadata-52m1ET` and
+`node-credentials-ZDrp1e`. These use isolated local nodes and a fake backend, not
+real-model quality, physical two-PC load or release acceptance.
+
 ## Unreleased: explicit semantic preparation workflow (2026-10-11)
 
 `eefn requests prepare JOB --revision REV --operation-id UUID` now owns the full

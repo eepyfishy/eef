@@ -39,10 +39,13 @@ fn validate_question(question: &str) -> Result<()> {
 
 pub fn eligible(draft: &DraftRecord) -> Result<()> {
     draft.validate()?;
-    if draft.current().needs_clarification
+    if draft.concrete_input.is_some()
+        || draft.current().needs_clarification
         || draft.current().workload != crate::interpretation::Workload::OneShot
     {
-        bail!("Resolve the retained clarification and one-shot workload before preparation")
+        bail!(
+            "Semantic preparation requires a resolved natural-language one-shot review, not explicit template input"
+        )
     }
     Ok(())
 }
@@ -552,6 +555,7 @@ pub fn validate_question_lineage(draft: &DraftRecord, index: usize) -> Result<()
     let prefix = DraftRecord {
         schema_version: draft.schema_version,
         original_text: draft.original_text.clone(),
+        concrete_input: draft.concrete_input.clone(),
         proposals: draft.proposals[..index].to_vec(),
         answers: draft.answers[..e.source_answer_count].to_vec(),
     };

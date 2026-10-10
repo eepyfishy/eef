@@ -769,6 +769,14 @@ impl Runtime {
                     )),
                 }
             }
+            "requests.concrete" => {
+                match serde_json::from_value::<eefn::request_submission::ConcreteInput>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(input) => self.origin_concrete_request(input, &context).await,
+                    Err(_) => Err(anyhow::anyhow!("Invalid caller-supplied concrete request")),
+                }
+            }
             "network.peers" => {
                 self.discovery
                     .view(

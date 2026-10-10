@@ -34,7 +34,7 @@ pub enum JobCommand {
     Remove {
         id: String,
     },
-    /// Submit a durable text generation job, without natural-language planning.
+    /// Legacy direct text job (not grant-enforced); prefer request-text for review/approval.
     GenerateText {
         #[arg(long)]
         prompt: String,
@@ -46,6 +46,21 @@ pub enum JobCommand {
         backend: Option<String>,
         #[arg(long)]
         model: Option<String>,
+    },
+    /// Save/compile text work for separate approval/granted execution; no inference now.
+    RequestText {
+        #[arg(long)]
+        prompt: String,
+        #[arg(long)]
+        role: Option<String>,
+        #[arg(long)]
+        target_node: Option<String>,
+        #[arg(long)]
+        backend: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        operation_id: Option<String>,
     },
 }
 
@@ -77,6 +92,13 @@ impl JobCommand {
     }
 
     pub fn submission(&self) -> Result<(&'static str, Value)> {
+        if let Self::RequestText {
+            operation_id: Some(id),
+            ..
+        } = self
+        {
+            validate_operation_id(id)?;
+        }
         let identified = |kind, id: &str| {
             if id.is_empty()
                 || id.len() > 128
@@ -106,6 +128,14 @@ impl JobCommand {
                 target_node,
                 backend,
                 model,
+            }
+            | Self::RequestText {
+                prompt,
+                role,
+                target_node,
+                backend,
+                model,
+                ..
             } => {
                 if prompt.trim().is_empty() || prompt.len() > 32 * 1024 {
                     bail!("prompt must contain 1-32768 bytes")
@@ -133,6 +163,21 @@ impl JobCommand {
                         constraints[key] = json!(value);
                     }
                 }
+                if matches!(self, Self::RequestText { .. }) {
+                    let input = crate::request_submission::ConcreteInput {
+                        schema_version: 1,
+                        original_text: prompt.clone(),
+                        title: "Text generation".into(),
+                        input: crate::request_planning::PlanInput {
+                            schema_version: 1,
+                            template: "generate_text".into(),
+                            params,
+                            constraints,
+                        },
+                    };
+                    input.validate()?;
+                    return Ok(("requests.concrete", json!(input)));
+                }
                 Ok((
                     "jobs.create",
                     json!({"description":"Text generation","template":"generate_text","params":params,"constraints":constraints}),
@@ -148,10 +193,54 @@ impl crate::NodeService {
             bail!("job command schema or target node does not match this instance")
         }
         let (kind, payload) = request.command.submission()?;
+        let hint = match &request.command {
+            JobCommand::RequestText { operation_id, .. } => operation_id.as_ref(),
+            _ => None,
+        };
+        if let Some(hint) = hint {
+            validate_operation_id(hint)?;
+            if request.operation_id.as_ref().is_some_and(|id| id != hint) {
+                bail!("Conflicting job receipt IDs")
+            }
+        }
         let operation_id = request
             .operation_id
+            .clone()
+            .or_else(|| hint.cloned())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         validate_operation_id(&operation_id)?;
+        if kind == "requests.concrete" {
+            let command = crate::request_submission::ConcreteCommand {
+                operation_id: operation_id.clone(),
+                request: serde_json::from_value(payload)?,
+            };
+            let submitted = self
+                .concrete_request(crate::request_submission::ConcreteRequest {
+                    schema_version: 1,
+                    expected_node_id: self.node_id.clone(),
+                    command,
+                })
+                .await?;
+            let success = submitted["success"] == true;
+            let mut report = json!({"schema_version":1,"report_type":"node_job_command","node_id":self.node_id,
+                "operation_id":operation_id,"success":success,"acknowledged":success,"outcome_unknown":submitted["outcome_unknown"],
+                "execution_authorized":false,"dispatched":false,"automatically_retried":false,
+                "submission_mode":"reviewed_concrete_request"});
+            if success {
+                let mut job = submitted["result"]["job"].clone();
+                job["admission"] = json!({"reused":submitted["result"]["creation_reused"],"scope":"origin_and_operation_id","retention":"while_job_history_exists"});
+                report["creation_correlated"] =
+                    json!(job["request_context"]["request_id"] == operation_id);
+                report["data"] = job;
+                report["note"] = json!(
+                    "Concrete text input saved/compiled; separate owner approval and execution required. No inference was requested. Inspect requests plan with this job ID."
+                );
+            } else {
+                report["error_code"] = submitted["error_code"].clone();
+                report["note"] = submitted["note"].clone();
+            }
+            return Ok(report);
+        }
         let mut result = json!({"schema_version":1,"success":false,"report_type":"node_job_command",
             "node_id":self.node_id,"operation_id":operation_id,
             "acknowledged":false,"outcome_unknown":false});
@@ -209,6 +298,30 @@ impl crate::NodeService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reviewed_text_command_keeps_explicit_model_choices_and_never_uses_legacy_create() {
+        let command = JobCommand::RequestText {
+            prompt: "  hello\n".into(),
+            role: Some("user_role".into()),
+            target_node: Some("owner".into()),
+            backend: Some("ollama".into()),
+            model: Some("owner-model".into()),
+            operation_id: Some(uuid::Uuid::new_v4().to_string()),
+        };
+        let (kind, payload) = command.submission().unwrap();
+        assert_eq!(kind, "requests.concrete");
+        let input: crate::request_submission::ConcreteInput =
+            serde_json::from_value(payload).unwrap();
+        assert_eq!(input.original_text, "  hello\n");
+        assert_eq!(input.input.params["prompt"], input.original_text);
+        assert_eq!(input.input.params["model_id"], "owner-model");
+        assert_eq!(input.input.constraints["model_role"], "user_role");
+        let mut bad = command;
+        if let JobCommand::RequestText { operation_id, .. } = &mut bad {
+            *operation_id = Some("invalid".into());
+        }
+        assert!(bad.submission().is_err());
+    }
     #[test]
     fn typed_jobs_cannot_supply_origin_or_arbitrary_plan_authority() {
         for id in [

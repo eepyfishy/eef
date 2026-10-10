@@ -72,6 +72,13 @@ fn unbound_plan(plan: &Plan, input: &PlanInput) -> Result<Plan> {
         .as_ref()
         .context("Missing reviewed request")?;
     draft.validate()?;
+    if draft
+        .concrete_input
+        .as_ref()
+        .is_some_and(|original| original != input)
+    {
+        bail!("Explicit request input is immutable; create a new request to change it")
+    }
     if compiled.tasks.iter().any(|t| {
         !draft
             .current()

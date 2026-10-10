@@ -64,6 +64,7 @@ impl SubmissionMailbox {
                 | "requests.capabilities"
                 | "requests.planning"
                 | "requests.preparation_checkpoint"
+                | "requests.concrete"
                 | "requests.review"
                 | "requests.open"
                 | "requests.draft_get"

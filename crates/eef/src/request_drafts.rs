@@ -43,10 +43,10 @@ pub fn open(
     if input.schema_version != 1 {
         bail!("Unsupported request schema")
     }
-    let description = input.proposal.goal.clone();
     let draft = DraftRecord {
         schema_version: 1,
         original_text: input.original_text,
+        concrete_input: None,
         proposals: vec![ProposalRevision {
             operation_id: context.request_id().into(),
             proposal: input.proposal,
@@ -57,6 +57,17 @@ pub fn open(
         }],
         answers: vec![],
     };
+    let admission = store_review(engine, draft, context)?;
+    report(&admission.plan, context.request_id(), admission.reused)
+}
+
+pub(crate) fn store_review(
+    engine: &TaskEngine,
+    draft: DraftRecord,
+    context: &RequestContext,
+) -> Result<crate::jobs::JobAdmission> {
+    draft.validate()?;
+    let description = draft.proposals[0].proposal.goal.clone();
     let plan = Plan {
         execution: None,
         approval: None,
@@ -77,8 +88,7 @@ pub fn open(
         updated_at_ms: 0,
         history: vec![],
     };
-    let admission = engine.store_review_request(plan)?;
-    report(&admission.plan, context.request_id(), admission.reused)
+    engine.store_review_request(plan)
 }
 pub fn command(
     engine: &TaskEngine,
