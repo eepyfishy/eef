@@ -1,5 +1,40 @@
 # Architecture conformance status
 
+## Unreleased: cross-node interpretation vocabulary (2026-10-11)
+
+Online request interpretation now obtains a strict, read-only capability-name
+context from EEF before inference. Names come from fresh live advertisements of
+the input node and peers already authorized by applied directional discovery
+grants; default disclosure remains self-only. The input node need not implement
+the suggested feature. EEF independently recomputes membership when reviewing,
+opening or revising proposals; input/model-supplied names cannot authorize work.
+The new lookup contains no user text, peer IDs, model IDs, endpoints or bindings,
+has a five-second deadline, and is cancelled/rejected across runtime change.
+Offline preview stays local. Saved vocabulary remains historical evidence;
+inspection and clarification answers do not require a current executor.
+
+Validation: **336 workspace/all-target Rust tests pass in both feature modes**,
+with fresh no-dashboard EEF/EEFN binaries. Headless `request-review-6CbnZu`
+uses two independently paired TLS nodes and fake inference to verify actual
+prompt vocabulary when the origin lacks the peer feature, default non-disclosure,
+cross-node opening/revision, disconnect/reconnect withdrawal, applied revocation
+while inference is in flight, independent EEF rejection without replay, unchanged
+historical snapshots and local-only offline preview. No cross-node hint implicitly
+creates tasks/grants. The fixture also retains its separately owner-approved
+model-grant execution regression. Durable jobs (`request-drafts-XF3HnP`),
+credential isolation (`node-credentials-lkCREW`), model metadata
+(`model-metadata-67Au7p`), shutdown (`job-shutdown-FNIWEs`) and scheduling
+(`scheduling-K3XEKg`) pass; fixture children closed through cleanup. Source
+dependency, formatting, JavaScript syntax and diff checks pass. These are local
+isolated logical-node/fake-model checks, not physical two-PC or real-model
+acceptance. Well-shaped unknown hints now fail at EEF; malformed hints still
+fail locally. Existing rejection assertions were updated to reflect that boundary.
+
+This is interpretation context, not automatic planning, execution approval,
+peer transport, a model bootstrap solution or stable 0.4.0 acceptance. Installed
+apps, physical nodes, versions, installers and update feeds are unchanged. See
+[cross-node interpretation](INTERPRETATION.md#cross-node-interpretation-context-unreleased-after-alpha6).
+
 ## Unreleased: explicit uncertainty acknowledgement and tracking closure (2026-10-11)
 
 Owner/origin `requests abandon` now closes idle interrupted coordinator tracking

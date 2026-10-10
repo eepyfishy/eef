@@ -61,6 +61,7 @@ impl SubmissionMailbox {
         if !matches!(
             kind,
             "message"
+                | "requests.capabilities"
                 | "requests.review"
                 | "requests.open"
                 | "requests.draft_get"

@@ -86,7 +86,10 @@ try {
     const request={schema_version:1,expected_node_id:node.id,request_id:randomUUID(),text:'Check',proposal};
     const endpoint=node.api+'/api/commands/requests/review-proposal';
     assert.equal((await json(endpoint,{...request,expected_node_id:'other'})).error_code,'invalid_proposal_request');
-    assert.equal((await json(endpoint,{...request,proposal:{...proposal,suggested_capabilities:['invented.capability']}})).error_code,'invalid_supplied_proposal');
+    // Well-shaped unknown names reach EEF's fresh disclosure check; malformed
+    // names still fail locally before submission. Neither can authorize work.
+    assert.equal((await json(endpoint,{...request,proposal:{...proposal,suggested_capabilities:['invented.capability']}})).error_code,'review_rejected');
+    assert.equal((await json(endpoint,{...request,proposal:{...proposal,suggested_capabilities:['invalid name']}})).error_code,'invalid_supplied_proposal');
     assert.equal((await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...request,permissions:true})})).status,422);
     assert.equal((await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(request)})).status,403);
     const jobs=await cli('eefn',node.config,['jobs','list']);assert.equal(jobs.data.total,0);assert.deepEqual(jobs.data.jobs,[]);

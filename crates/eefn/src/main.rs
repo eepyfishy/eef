@@ -230,6 +230,9 @@ async fn execute_request_command(
             || !report["success"].is_boolean() || report["execution_authorized"] != false || report["dispatched"] != false {
             bail!("Unrecognized request-command response");
         }
+        if report["success"] == true && report["interpretation_context"] != if review {"coordinator_disclosed_network"} else {"local_node"} {
+            bail!("Unrecognized interpretation context; no fallback was attempted");
+        }
         if review && !persist && report["success"] == true
             && (report["coordinator_acknowledged"] != true
                 || report["automatically_retried"] != false || report["outcome_unknown"] != false

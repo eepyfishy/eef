@@ -588,8 +588,10 @@ eefn requests review-proposal --file proposal.json --json
 The UTF-8 file (optional BOM, at most 64 KiB) contains exactly `schema_version: 1`,
 `original_text`, and `proposal` from [the existing interpretation contract](INTERPRETATION.md).
 The node must already be running and connected. CLI validates file shape; the
-runtime independently validates capability hints, and EEF revalidates its accepted
-registration context. Neither a file nor a schema-valid reply supplies origin,
+runtime independently validates proposal shape, and EEF checks capability hints
+against fresh owner-disclosed network registrations. The input node need not
+implement the suggested feature; undisclosed/stale/disconnected peers contribute
+no vocabulary. Neither a file nor a schema-valid reply supplies origin,
 permission, approval, a job, a plan or an execution grant. Original text is retained.
 
 This adapter uses the same bounded submission channel, current-runtime invalidation,
@@ -599,6 +601,14 @@ from a model or was semantically approved. New CLI checks also compare the exact
 supplied proposal with the confirmed result. Older nodes return unsupported;
 there is no inference/chat/job fallback, model selection, download or durable receipt.
 Input files may contain private user text; do not include them in public reports.
+
+Model-based `requests review/open` now obtain the same network vocabulary before
+inference, with a five-second read-only lookup deadline and no local fallback or
+automatic replay. EEF recomputes membership after inference and on supplied
+proposal revision. Offline `requests preview` stays local. Discovery remains
+self-only until the coordinator owner grants directional peer disclosure and
+restarts EEF; this is not execution permission. See
+[cross-node interpretation context](INTERPRETATION.md#cross-node-interpretation-context-unreleased-after-alpha6).
 
 Local owner endpoint: `POST /api/commands/requests/review-proposal`, with exactly
 `schema_version`, `expected_node_id`, canonical UUID `request_id`, `text`, and

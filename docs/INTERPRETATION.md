@@ -103,8 +103,10 @@ unconfigured coordinator connection does not prevent preview.
 
 The unreleased review command sends original text and a typed proposal through
 the existing bounded node submission mailbox, with fresh reply-routing identity
-separate from its request UUID. The gateway replaces origin and capability
-context with accepted registration snapshots for the authenticated session.
+separate from its request UUID. The gateway replaces origin with accepted
+registration metadata for the authenticated session. In the latest unreleased
+increment, EEF supplies capability vocabulary from fresh live registrations
+permitted by its applied directional discovery policy, not just the input node.
 EEF revalidates all proposal bounds and semantic consistency with the shared
 validator, without invoking its brain, planner or job store. The response retains
 original text and server-stamped context. The node service and CLI reject
@@ -112,6 +114,48 @@ mismatched identity/text or execution flags. Capability advertisements remain
 untrusted hints, never authority. The review is ephemeral and creates no durable
 receipt, job, grant or implicit clarification answer. Losing its reply never
 causes replay. Preview still does not send text to EEF.
+
+### Cross-node interpretation context (unreleased after alpha.6)
+
+`requests review` and `requests open` first request a bounded read-only vocabulary
+through the running node's authenticated EEF connection. The strict response
+binds authenticated origin and a fresh correlation UUID and contains only sorted,
+distinct capability names (at most 64), the discovery freshness limit, and false
+execution/direct-access flags. It contains no peer IDs, endpoints, model IDs or
+private resource bindings. No original user text is sent for this lookup.
+
+The vocabulary is the union of the origin's and its explicitly disclosed peers'
+fresh advertisements. The origin itself must still have a fresh live registration;
+disconnected/stale peers do not contribute. Default discovery remains self-only.
+An owner can enable cross-node vocabulary through existing commands:
+
+```text
+eef discovery grant --requester ORIGIN_NODE_ID --target PEER_NODE_ID --json
+eef restart --json
+```
+
+Discovery grants are directional and not transitive, apply after EEF restart,
+and never approve work. Revocation uses `eef discovery revoke` with the same
+flags, then restart. There is no wildcard or implicit disclosure of every node.
+
+The model receives this network vocabulary but still produces only untrusted
+hints. An input node need not implement the suggested feature. EEF independently
+recomputes the current disclosed vocabulary on stateless review and new/revised
+durable proposals: names from a file, local HTTP caller, old response or model are
+never accepted as authority. If a peer or disclosure disappears during inference,
+review can reject the hint; there is no automatic inference retry, local fallback,
+executor reassignment or download. Context lookup has a five-second deadline and
+shares the preview's single-capacity and restart-invalidation boundaries.
+
+`requests preview` is deliberately still an offline-capable **local-node**
+vocabulary preview and never contacts EEF. Online preparation reports
+`interpretation_context: coordinator_disclosed_network`; preview reports
+`local_node`. Supplied-proposal adapters validate shape locally and let EEF
+check current network membership without calling a model. Saved proposal
+`allowed_capabilities` remains a historical vocabulary snapshot, not a grant;
+inspecting saved reviews/recording clarification answers does not require those
+capabilities to be currently available. Fresh executor/resource/model checks and
+separate owner approval still apply to planning and execution.
 
 The subsequent unreleased `requests open/open-proposal` commands explicitly save
 a review-only record in the same durable job journal. Origin-owned `draft`,
@@ -123,6 +167,8 @@ Stateless preview/review semantics above remain unchanged.
 See [durable review commands](COMMANDS.md#durable-request-review-and-clarification-unreleased-after-alpha6).
 
 Remaining: reviewed model/bootstrap policy, better candidate/prompt quality,
-automatic clarification resolution, owner approval, and explicit planning/authorization.
+automatic clarification resolution and automatic semantic planning. Explicit
+owner planning, approval and grant execution exist as separate commands, not
+automatic consequences of interpretation.
 Automatic input interpretation is still absent. The existing deterministic
 commands continue working without any model. See [command usage](COMMANDS.md#request-preview-development).

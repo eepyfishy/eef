@@ -166,7 +166,7 @@ pub fn confirmed_review(data: &Value, node_id: &str, request_id: &str, text: &st
         return false;
     };
     // This client-side context only checks bounded shape and internal consistency.
-    // EEF separately checked membership against gateway registration. No grant.
+    // EEF separately checked fresh owner-disclosed network names. No grant.
     let Ok(validated) =
         crate::interpretation::validate(text, &proposal, &reviewed.proposal.suggested_capabilities)
     else {
@@ -233,12 +233,12 @@ impl Drop for PreviewGuard {
 impl NodeService {
     pub async fn review_request(&self, request: PreviewRequest) -> Value {
         let generation = self.preview.generation.subscribe();
-        let preview = self.preview_request(request).await;
+        let preview = self.prepare_interpretation(request, true).await;
         self.review_prepared(preview, generation, false).await
     }
     pub async fn open_request(&self, request: PreviewRequest) -> Value {
         let generation = self.preview.generation.subscribe();
-        let preview = self.preview_request(request).await;
+        let preview = self.prepare_interpretation(request, true).await;
         self.review_prepared(preview, generation, true).await
     }
 
@@ -261,7 +261,7 @@ impl NodeService {
         let mut prepared = json!({"schema_version":1,"report_type":"request_preview","success":false,
             "node_id":self.node_id,"request_id":canonical_id,"runtime_id":null,
             "execution_authorized":false,"dispatched":false,"automatically_retried":false,
-            "interpretation_source":"supplied_proposal"});
+            "interpretation_source":"supplied_proposal","interpretation_context":"coordinator_disclosed_network"});
         let result: Result<Value, &'static str> = (|| {
             if request.schema_version != 1
                 || request.expected_node_id != self.node_id
@@ -280,16 +280,21 @@ impl NodeService {
                 .unwrap()
                 .clone()
                 .ok_or("runtime_unavailable")?;
-            let engine = binding.engine.upgrade().ok_or("runtime_unavailable")?;
+            let _engine = binding.engine.upgrade().ok_or("runtime_unavailable")?;
             if generation.borrow().as_ref() != Some(&binding.runtime_id) {
                 return Err("runtime_changed");
             }
             prepared["runtime_id"] = json!(binding.runtime_id);
             let proposal =
                 serde_json::to_vec(&request.proposal).map_err(|_| "invalid_supplied_proposal")?;
-            let validated =
-                crate::interpretation::validate(&request.text, &proposal, &engine.capabilities())
-                    .map_err(|_| "invalid_supplied_proposal")?;
+            // Shape only here: the origin need not implement the suggested
+            // feature. EEF independently checks its fresh disclosed vocabulary.
+            let validated = crate::interpretation::validate(
+                &request.text,
+                &proposal,
+                &request.proposal.suggested_capabilities,
+            )
+            .map_err(|_| "invalid_supplied_proposal")?;
             Ok(json!({"interpretation":validated}))
         })();
         match result {
@@ -432,6 +437,31 @@ impl NodeService {
     }
 
     pub async fn preview_request(&self, request: PreviewRequest) -> Value {
+        self.prepare_interpretation(request, false).await
+    }
+
+    async fn network_interpretation_context(&self) -> Result<Vec<String>, &'static str> {
+        let receipt = uuid::Uuid::new_v4().to_string();
+        let data = tokio::time::timeout(
+            Duration::from_secs(5),
+            self.submissions.request_correlated(
+                "requests.capabilities",
+                json!({}),
+                Some(receipt.clone()),
+            ),
+        )
+        .await
+        .map_err(|_| "coordinator_context_unavailable")?
+        .map_err(|_| "coordinator_context_unavailable")?;
+        let context: crate::interpretation::CapabilityContext =
+            serde_json::from_value(data).map_err(|_| "coordinator_context_unconfirmed")?;
+        if !context.confirms(&self.node_id, &receipt) {
+            return Err("coordinator_context_unconfirmed");
+        }
+        Ok(context.capabilities)
+    }
+
+    async fn prepare_interpretation(&self, request: PreviewRequest, network: bool) -> Value {
         let mut runtime_id = None;
         let result: Result<Value, &'static str> = async {
             if request.schema_version != 1 || request.expected_node_id != self.node_id
@@ -448,10 +478,22 @@ impl NodeService {
             if generation.borrow_and_update().as_ref() != Some(&binding.runtime_id) {
                 return Err("runtime_changed");
             }
+            let capabilities = if network {
+                tokio::select! {
+                    biased;
+                    _ = generation.changed() => return Err("runtime_changed"),
+                    result = self.network_interpretation_context() => result?,
+                }
+            } else {
+                let mut names = engine.capabilities();
+                names.sort();
+                names.dedup();
+                names
+            };
             let proposal = tokio::select! {
                 biased;
                 _ = generation.changed() => return Err("runtime_changed"),
-                result = tokio::time::timeout(Duration::from_secs(20), engine.preview_interpretation(&request.text)) => {
+                result = tokio::time::timeout(Duration::from_secs(20), engine.preview_interpretation(&request.text, &capabilities)) => {
                     result.map_err(|_| "interpretation_timeout")??
                 },
             };
@@ -463,7 +505,11 @@ impl NodeService {
         let mut report = match result {
             Ok(value) => json!({"success":true,"result":value}),
             Err(code) => json!({"success":false,"error_code":code,
-                "error":"Preview unavailable or rejected. No job was submitted and no action was authorized; inspect model selection/status before retrying."}),
+            "error":if code.starts_with("coordinator_context_") {
+                "EEF interpretation context unavailable or unconfirmed. Check connection and coordinator discovery policy. No model inference, job or execution was requested; no local fallback or automatic retry."
+            } else {
+                "Preview unavailable or rejected. No job was submitted and no action was authorized; inspect model selection/status before retrying."
+            }}),
         };
         report["schema_version"] = json!(1);
         report["report_type"] = json!("request_preview");
@@ -478,6 +524,11 @@ impl NodeService {
         report["execution_authorized"] = json!(false);
         report["dispatched"] = json!(false);
         report["automatically_retried"] = json!(false);
+        report["interpretation_context"] = json!(if network {
+            "coordinator_disclosed_network"
+        } else {
+            "local_node"
+        });
         report
     }
 }
@@ -609,7 +660,8 @@ mod tests {
         assert!(!dir.path().join("config.json").exists());
     }
     #[tokio::test]
-    async fn supplied_review_rejects_identity_and_capabilities_and_does_not_replay_after_restart() {
+    async fn supplied_review_rejects_identity_and_malformed_hints_and_does_not_replay_after_restart()
+     {
         let dir = tempfile::tempdir().unwrap();
         let service = NodeService::new(dir.path().join("config.json"), "node".into());
         let engine = Arc::new(NodeEngine::new(false, vec![], dir.path().into()).unwrap());
@@ -622,7 +674,7 @@ mod tests {
             "invalid_proposal_request"
         );
         let mut wrong = supplied();
-        wrong.proposal.suggested_capabilities = vec!["invented.capability".into()];
+        wrong.proposal.suggested_capabilities = vec!["invalid capability name".into()];
         assert_eq!(
             service.review_supplied_proposal(wrong).await["error_code"],
             "invalid_supplied_proposal"
@@ -678,6 +730,111 @@ mod tests {
             request_id: uuid::Uuid::new_v4().to_string(),
             text: "Check this node".into(),
         }
+    }
+    #[tokio::test]
+    async fn online_context_is_correlated_strict_and_never_falls_back_to_local_inference() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = NodeService::new(dir.path().join("config.json"), "node".into());
+        let engine = Arc::new(NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        let guard = service.attach_preview_runtime(&engine, "runtime".into());
+        let mut receiver = service.submissions.connect();
+        for mode in [
+            "valid",
+            "origin",
+            "receipt",
+            "authority",
+            "extra",
+            "duplicate",
+            "restart",
+        ] {
+            let local = service.clone();
+            let pending = tokio::spawn(async move { local.review_request(request()).await });
+            let command = receiver.recv().await.unwrap();
+            assert_eq!(command.kind, "requests.capabilities");
+            assert_eq!(command.payload, json!({}));
+            let receipt = command.operation_id.as_deref().unwrap();
+            let mut context = json!(crate::interpretation::CapabilityContext {
+                schema_version: 1,
+                report_type: "coordinator_interpretation_context".into(),
+                request_context: crate::context::RequestContext::new(
+                    receipt.into(),
+                    "node".into(),
+                    vec![]
+                )
+                .unwrap(),
+                capabilities: vec!["http.request".into(), "system.info".into()],
+                freshness_seconds: 30,
+                execution_authorized: false,
+                direct_access_authorized: false,
+            });
+            match mode {
+                "origin" => context["request_context"]["origin_node"] = json!("other"),
+                "receipt" => {
+                    context["request_context"]["request_id"] =
+                        json!(uuid::Uuid::new_v4().to_string())
+                }
+                "authority" => context["execution_authorized"] = json!(true),
+                "extra" => context["private_routes"] = json!([]),
+                "duplicate" => context["capabilities"] = json!(["http.request", "http.request"]),
+                "restart" => {
+                    let replacement = service.attach_preview_runtime(&engine, "new-runtime".into());
+                    let report = pending.await.unwrap();
+                    assert_eq!(report["error_code"], "runtime_changed");
+                    drop(replacement);
+                    break;
+                }
+                _ => {}
+            }
+            command.reply.send(Ok(context)).unwrap();
+            let report = pending.await.unwrap();
+            assert_eq!(
+                report["error_code"],
+                if mode == "valid" {
+                    "interpreter_unavailable"
+                } else {
+                    "coordinator_context_unconfirmed"
+                }
+            );
+            assert_eq!(report["execution_authorized"], false);
+            assert_eq!(report["coordinator_acknowledged"], false);
+            assert_eq!(
+                report["interpretation_context"],
+                "coordinator_disclosed_network"
+            );
+            assert!(receiver.try_recv().is_err());
+        }
+        drop(guard);
+        assert!(!dir.path().join("config.json").exists());
+    }
+    #[tokio::test]
+    async fn supplied_cross_node_hint_reaches_coordinator_without_local_feature_permission() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = NodeService::new(dir.path().join("config.json"), "node".into());
+        let engine = Arc::new(NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        assert!(!engine.capabilities().contains(&"http.request".into()));
+        let _guard = service.attach_preview_runtime(&engine, "runtime".into());
+        let mut receiver = service.submissions.connect();
+        let mut request = supplied();
+        request.proposal.suggested_capabilities = vec!["http.request".into()];
+        let local = service.clone();
+        let pending = tokio::spawn(async move { local.review_supplied_proposal(request).await });
+        let command = receiver.recv().await.unwrap();
+        assert_eq!(command.kind, "requests.review");
+        assert_eq!(
+            command.payload["proposal"]["suggested_capabilities"],
+            json!(["http.request"])
+        );
+        command
+            .reply
+            .send(Err(crate::submission::SubmissionFailure::Rejected(
+                "Undisclosed feature".into(),
+            )
+            .into()))
+            .unwrap();
+        let report = pending.await.unwrap();
+        assert_eq!(report["error_code"], "review_rejected");
+        assert_eq!(report["dispatched"], false);
+        assert!(receiver.try_recv().is_err());
     }
     #[tokio::test]
     async fn review_failure_never_enqueues_a_submission_or_starts_a_runtime() {

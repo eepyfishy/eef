@@ -22,8 +22,8 @@ function launch(name, args, extra = {}) {
   child.result = new Promise((resolve, reject) => {child.on('error', reject); child.on('close', code => resolve({code, out, err}));});
   children.push(child); return child;
 }
-async function cli(args, success = true) {
-  const child = launch('eefn', ['--config', configPath, ...args, '--json']);
+async function cli(args, success = true, nodeConfig = configPath) {
+  const child = launch('eefn', ['--config', nodeConfig, ...args, '--json']);
   const timer = setTimeout(() => child.kill(), 45000);
   try {const result = await child.result; assert.equal(result.code, success ? 0 : 1, result.out + result.err); return JSON.parse(result.out);}
   finally {clearTimeout(timer);}
@@ -42,7 +42,7 @@ async function json(url, body, method) {
 }
 async function listen(server) {await new Promise(r => server.listen(0, '127.0.0.1', r)); return server.address().port;}
 async function port() {const server = createServer(); const value = await listen(server); await new Promise(r => server.close(r)); return value;}
-let mode = 'valid', node = '', proxyMode = 'drop', forwarded = 0;
+let mode = 'valid', node = '', proxyMode = 'drop', forwarded = 0, expectedNodes = 1;
 const proposal = () => ({schema_version: 1, intent: 'information', goal: 'Inspect node status', context_hints: ['this node'],
   constraints: [], suggested_capabilities: ['system.info'], complexity: 'simple', workload: 'one_shot', needs_clarification: false, clarification: null});
 const fake = createServer(async (req, res) => {
@@ -54,6 +54,7 @@ const fake = createServer(async (req, res) => {
     calls.push(JSON.parse(body));
     if (mode === 'gate') {res.write(' '); gates.add(res); res.on('close', () => gates.delete(res)); return;}
     const value = proposal();
+    if (mode === 'remote') Object.assign(value, {goal: 'Fetch information using another node', suggested_capabilities: ['http.request']});
     if (mode === 'clarify') Object.assign(value, {needs_clarification: true, clarification: 'Which node do you mean?'});
     if (mode === 'invalid') value.permissions = ['everything'];
     return res.end(JSON.stringify({message: {content: JSON.stringify(value)}, done: true, done_reason: 'stop'}));
@@ -97,7 +98,7 @@ try {
   const ready = async () => {
     node = 'http://' + JSON.parse(await readFile(marker, 'utf8')).address;
     return (await json(node + '/api/status')).connection.state === 'connected'
-      && (await json(eef + '/api/diagnostics')).registered_node_count === 1;
+      && (await json(eef + '/api/diagnostics')).registered_node_count === expectedNodes;
   };
   await until(ready, 'registered node');
   for (const base of [node, eef]) assert.equal((await fetch(base + '/')).status, 404);
@@ -154,7 +155,7 @@ try {
   } finally {await writeFile(marker, originalMarker);}
   await cli(['connection', 'pause']); await until(async () => (await json(node + '/api/status')).connection.state === 'paused', 'paused connection');
   const disconnected = await review('No coordinator', false);
-  assert.equal(disconnected.error_code, 'coordinator_unavailable'); assert.equal(disconnected.outcome_unknown, false);
+  assert.equal(disconnected.error_code, 'coordinator_context_unavailable'); assert.equal(disconnected.outcome_unknown, false);
   assert.equal(disconnected.coordinator_acknowledged, false); assert.equal(disconnected.result, undefined);
   assert.equal((await preview('Local preview still works')).success, true);
   await cli(['connection', 'resume']); await until(ready, 'resumed connection');
@@ -249,12 +250,92 @@ try {
   await cli(['jobs','remove',modelDraft.result.id]);
   for(const id of [durable.result.id,found.jobs[0].id]) {await cli(['jobs','stop',id]);await cli(['jobs','remove',id]);}
   assert.equal((await cli(['jobs','list'])).data.total,0);
+  // The input node has no HTTP feature. Online hints may use a fresh peer's
+  // features only after the owner grants directional discovery; never execution.
+  const peerConfigPath=join(scratch,'peer.json'),peerPort=await port();
+  const peerConfig=structuredClone(config);
+  Object.assign(peerConfig,{node_id:'review-fixture-peer',name:'Peer fixture',metadata:{area:['Home','Living room']},
+    dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:peerPort},
+    models:{provider:'llamacpp',llamacpp:{slots:[]}}});
+  peerConfig.permissions.http={enabled:true,allowed_hosts:['example.invalid'],methods:['GET'],allow_private_networks:false};
+  await writeFile(peerConfigPath,JSON.stringify(peerConfig));
+  const peerInvitation=await coordinator(['credentials','provision','--node',peerConfig.node_id,'--address',`127.0.0.1:${gatewayPort}`]);
+  const peerPrivateCode=join(scratch,'PRIVATE-peer-pairing.json');await writeFile(peerPrivateCode,JSON.stringify(peerInvitation));
+  const beforePeerRuntime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+  await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==beforePeerRuntime&&await ready(),'apply independent peer credential');
+  expectedNodes=2;const peerProcess=launch('eefn',['--config',peerConfigPath,'--no-ui']);
+  await until(async()=>(await json(`http://127.0.0.1:${peerPort}/api/status`)).node_id===peerConfig.node_id,'peer owner API');
+  await cli(['connection','pair','--code-file',peerPrivateCode],true,peerConfigPath);
+  await until(ready,'second independent logical node registered');
+  assert.equal((await json(`http://127.0.0.1:${peerPort}/api/status`)).connection.transport,'pinned_tls13');
+  const self=(await cli(['network','peers'])).nodes.find(n=>n.node_id===config.node_id);
+  assert(self && !self.capabilities.includes('http.request'),'origin must not have the peer feature');
+  mode='remote';const beforeNetwork=calls.length;
+  assert.equal((await review('Fetch that information',false)).error_code,'interpretation_invalid');
+  assert(!calls.at(-1).messages[0].content.includes('http.request'),'undisclosed peer must not enter the prompt');
+  await coordinator(['discovery','grant','--requester',config.node_id,'--target',peerConfig.node_id]);
+  let contextRuntime=(await coordinator(['diagnostics'])).runtime_id;
+  await coordinator(['restart']);
+  await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==contextRuntime&&await ready(),'apply directional disclosure');
+  const cross=await cli(['requests','open','--text','  Fetch information from the other node\n']);
+  assert.equal(cross.interpretation_context,'coordinator_disclosed_network');
+  assert.equal(cross.result.request_context.origin_node,config.node_id);
+  assert.deepEqual(cross.result.request_context.origin_area,['Home','Bedroom']);
+  assert.deepEqual(cross.result.draft.proposals[0].proposal.suggested_capabilities,['http.request']);
+  assert(cross.result.draft.proposals[0].allowed_capabilities.includes('http.request'));
+  assert(calls.at(-1).messages[0].content.includes('http.request'),'network vocabulary must reach the actual interpreter prompt');
+  assert.equal(cross.dispatched,false);assert.equal(cross.execution_authorized,false);
+  assert.deepEqual((await cli(['jobs','get',cross.result.id])).data.tasks,[]);
+  const localOnly=await cli(['requests','preview','--text','Fetch information'],false);
+  assert.equal(localOnly.error_code,'interpretation_invalid');
+  assert.equal(localOnly.interpretation_context,'local_node');
+  assert(!calls.at(-1).messages[0].content.includes('http.request'),'offline preview must remain local');
+  const remoteFile=join(scratch,'remote-proposal.json');
+  await writeFile(remoteFile,JSON.stringify({schema_version:1,original_text:'Remote capability hint',proposal:{...proposal(),suggested_capabilities:['http.request']}}));
+  const suppliedCross=await cli(['requests','review-proposal','--file',remoteFile]);
+  assert.equal(suppliedCross.coordinator_acknowledged,true);
+  assert.equal(calls.length,beforeNetwork+3,'supplied proposals do not invoke a model');
+  const revisionFile=join(scratch,'remote-revision.json');
+  await writeFile(revisionFile,JSON.stringify({schema_version:1,original_text:cross.result.draft.original_text,
+    proposal:{...proposal(),goal:'Revised remote hint',suggested_capabilities:['http.request']}}));
+  const revisedCross=await cli(['requests','revise-proposal',cross.result.id,'--revision','1','--file',revisionFile]);
+  assert.equal(revisedCross.result.revision,2);
+  assert(revisedCross.result.draft.proposals[1].allowed_capabilities.includes('http.request'));
+  // Disconnect cannot leave cached availability behind, even while disclosure
+  // remains applied. Reconnection restores vocabulary, not execution authority.
+  peerProcess.kill();await peerProcess.result;expectedNodes=1;await until(ready,'peer disconnected');
+  assert.equal((await cli(['requests','review-proposal','--file',remoteFile],false)).error_code,'review_rejected');
+  expectedNodes=2;const reconnectedPeer=launch('eefn',['--config',peerConfigPath,'--no-ui']);
+  await until(ready,'peer reconnected');
+  assert.equal((await cli(['requests','review-proposal','--file',remoteFile])).coordinator_acknowledged,true);
+  // A prompt formed before policy revocation cannot grandfather its hints into
+  // EEF after inference. Finish the fake backend exactly once, then reject review.
+  mode='gate';const outdated=review('Fetch using the peer after a delayed interpretation',false);
+  await until(()=>gates.size===1,'network interpretation in flight');
+  assert(calls.at(-1).messages[0].content.includes('http.request'));
+  await coordinator(['discovery','revoke','--requester',config.node_id,'--target',peerConfig.node_id]);
+  contextRuntime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+  await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==contextRuntime&&await ready(),'apply disclosure revocation');
+  for(const res of gates) res.end(JSON.stringify({message:{content:JSON.stringify({...proposal(),suggested_capabilities:['http.request']})},done:true,done_reason:'stop'}));
+  assert.equal((await outdated).error_code,'review_rejected');
+  await until(()=>gates.size===0,'delayed interpreter released');mode='remote';
+  const revoked=await cli(['requests','review-proposal','--file',remoteFile],false);
+  assert.equal(revoked.error_code,'review_rejected');
+  assert.equal((await cli(['requests','revise-proposal',cross.result.id,'--revision','2','--file',revisionFile],false)).error_code,'draft_rejected');
+  assert.equal(calls.length,beforeNetwork+4,'EEF must independently reject the no-longer-disclosed hint without inference replay');
+  const history=(await cli(['requests','draft',cross.result.id])).result;
+  assert.deepEqual(history.draft,revisedCross.result.draft,'historical inspection cannot reinterpret a saved snapshot');
+  await cli(['jobs','stop',cross.result.id]);await cli(['jobs','remove',cross.result.id]);
+  reconnectedPeer.kill();await reconnectedPeer.result;expectedNodes=1;await until(ready,'peer disconnected again');
   await writeFile(join(scratch, 'results.json'), JSON.stringify({passed: true, api_only: true, node_to_coordinator_review: true,
     original_text_preserved: true, authenticated_origin: true, clarification_returned: true, rejected_authority_fields: true,
     stateless_no_jobs_created: true, durable_inferred_review: true, lost_draft_found_without_replay: true,
     preview_and_compilation_without_execution: true, restart_invalidates_inference: true, lost_reply_not_replayed: true,
     explicit_model_plan_without_inference:true,owner_role_binding:true,legacy_approval_denied_without_inference:true,
     pinned_model_grant_execution:true,withdrawn_role_denies_without_rebinding:true,durable_model_output:true,
+    cross_node_interpreter_vocabulary:true,origin_without_peer_feature:true,directional_disclosure_and_revocation:true,
+    offline_preview_local_only:true,historical_snapshot_preserved:true,
+    disconnect_withdraws_vocabulary:true,inflight_context_revocation_rechecked:true,cross_node_proposal_revision:true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
 } finally {

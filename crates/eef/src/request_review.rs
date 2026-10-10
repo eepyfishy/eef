@@ -13,7 +13,7 @@ struct ReviewSubmission {
 }
 
 /// Context and capability names must come from the authenticated gateway's
-/// registration snapshot, never fields supplied in this payload. Advertised
+/// fresh owner-disclosed registrations, never fields supplied in this payload. Advertised
 /// capabilities constrain hints; they do not establish execution permission.
 pub fn review(payload: Value, context: &RequestContext, capabilities: &[String]) -> Result<Value> {
     if serde_json::to_vec(&payload)?.len() > 64 * 1024 {

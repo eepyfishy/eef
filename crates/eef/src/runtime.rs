@@ -659,26 +659,33 @@ impl Runtime {
                     .map(|reply| json!({"reply": reply,"request_context":context}))
             }
             "requests.review" => {
-                match serde_json::from_value::<Vec<String>>(
-                    message["interpretation_capabilities"].clone(),
-                ) {
+                match self
+                    .discovery
+                    .interpretation_capabilities(context.origin_node(), &self.node_server)
+                    .await
+                {
                     Ok(capabilities) => crate::request_review::review(
                         message["payload"].clone(),
                         &context,
                         &capabilities,
                     ),
-                    Err(_) => Err(anyhow::anyhow!(
-                        "review missing gateway capability snapshot"
-                    )),
+                    Err(error) => Err(error),
                 }
             }
             "requests.open"
             | "requests.draft_get"
             | "requests.draft_answer"
             | "requests.draft_revise" => {
-                match serde_json::from_value::<Vec<String>>(
-                    message["interpretation_capabilities"].clone(),
-                ) {
+                // Inspection/answers do not need currently available executors.
+                // Only a new/revised proposal needs a fresh network vocabulary.
+                let capabilities = if matches!(kind, "requests.open" | "requests.draft_revise") {
+                    self.discovery
+                        .interpretation_capabilities(context.origin_node(), &self.node_server)
+                        .await
+                } else {
+                    Ok(Vec::new())
+                };
+                match capabilities {
                     Ok(capabilities) if kind == "requests.open" => crate::request_drafts::open(
                         &self.engine,
                         message["payload"].clone(),
@@ -692,7 +699,30 @@ impl Runtime {
                         &context,
                         &capabilities,
                     ),
-                    Err(_) => Err(anyhow::anyhow!("draft missing gateway capability snapshot")),
+                    Err(error) => Err(error),
+                }
+            }
+            "requests.capabilities" => {
+                #[derive(serde::Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct Empty {}
+                match serde_json::from_value::<Empty>(message["payload"].clone()) {
+                    Ok(_) => self
+                        .discovery
+                        .interpretation_capabilities(context.origin_node(), &self.node_server)
+                        .await
+                        .map(|capabilities| {
+                            json!(eefn::interpretation::CapabilityContext {
+                                schema_version: 1,
+                                report_type: "coordinator_interpretation_context".into(),
+                                request_context: context.clone(),
+                                capabilities,
+                                freshness_seconds: self.discovery.freshness_seconds,
+                                execution_authorized: false,
+                                direct_access_authorized: false,
+                            })
+                        }),
+                    Err(_) => Err(anyhow::anyhow!("Invalid interpretation context query")),
                 }
             }
             "network.peers" => {

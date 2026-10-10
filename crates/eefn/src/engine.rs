@@ -1014,6 +1014,7 @@ impl NodeEngine {
     pub(crate) async fn preview_interpretation(
         &self,
         text: &str,
+        capabilities: &[String],
     ) -> std::result::Result<Value, &'static str> {
         let has_role = |metadata: &crate::model_metadata::ModelMetadata| {
             metadata.supports("llm.infer")
@@ -1045,10 +1046,7 @@ impl NodeEngine {
             return Err("interpreter_ambiguous");
         }
         let (backend, model) = &candidates[0];
-        let mut capabilities = self.capabilities();
-        capabilities.sort();
-        capabilities.dedup();
-        let messages = crate::interpretation::messages(text, &capabilities)
+        let messages = crate::interpretation::messages(text, capabilities)
             .map_err(|_| "invalid_interpreter_context")?;
         let response = self
             .infer(
@@ -1064,9 +1062,8 @@ impl NodeEngine {
         let output = response["content"]
             .as_str()
             .ok_or("interpretation_invalid")?;
-        let interpretation =
-            crate::interpretation::validate(text, output.as_bytes(), &capabilities)
-                .map_err(|_| "interpretation_invalid")?;
+        let interpretation = crate::interpretation::validate(text, output.as_bytes(), capabilities)
+            .map_err(|_| "interpretation_invalid")?;
         Ok(json!({"model":{"backend":backend,"model_id":model},"interpretation":interpretation}))
     }
 

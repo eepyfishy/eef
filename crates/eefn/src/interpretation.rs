@@ -9,6 +9,35 @@ pub const MAX_INPUT_BYTES: usize = 32 * 1024;
 pub const MAX_PROPOSAL_BYTES: usize = 16 * 1024;
 const MAX_HINTS: usize = 8;
 
+/// Read-only vocabulary disclosed by EEF, not routes, permissions or grants.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityContext {
+    pub schema_version: u32,
+    pub report_type: String,
+    pub request_context: crate::context::RequestContext,
+    pub capabilities: Vec<String>,
+    pub freshness_seconds: u64,
+    pub execution_authorized: bool,
+    pub direct_access_authorized: bool,
+}
+impl CapabilityContext {
+    pub fn confirms(&self, origin: &str, receipt: &str) -> bool {
+        self.schema_version == 1
+            && self.report_type == "coordinator_interpretation_context"
+            && self.request_context.origin_node() == origin
+            && self.request_context.request_id() == receipt
+            && (1..=300).contains(&self.freshness_seconds)
+            && !self.execution_authorized
+            && !self.direct_access_authorized
+            && capability_set(&self.capabilities).is_ok()
+            && self
+                .capabilities
+                .windows(2)
+                .all(|names| names[0] < names[1])
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Intent {

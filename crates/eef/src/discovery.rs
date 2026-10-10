@@ -144,6 +144,44 @@ impl DiscoveryPolicy {
         }
         self.page(&query, records)
     }
+    /// Same directional disclosure grants as peer discovery. Return only the
+    /// union of fresh advertised names; no peer IDs, models or private bindings.
+    pub async fn interpretation_capabilities(
+        &self,
+        origin: &str,
+        server: &eefn::NodeServer,
+    ) -> Result<Vec<String>> {
+        let selected = self.selection(origin, &PeerQuery::default())?;
+        let records = server.peer_records(&selected).await?;
+        self.capability_names(origin, records)
+    }
+    fn capability_names(
+        &self,
+        origin: &str,
+        records: Vec<(PeerRecord, std::time::Duration)>,
+    ) -> Result<Vec<String>> {
+        let permitted = self.selection(origin, &PeerQuery::default())?;
+        let freshness = std::time::Duration::from_secs(self.freshness_seconds);
+        let mut names = BTreeSet::new();
+        let mut origin_fresh = false;
+        for (record, age) in records {
+            if !permitted.contains(&record.node_id) || age >= freshness {
+                continue;
+            }
+            origin_fresh |= record.node_id == origin;
+            names.extend(record.capabilities);
+            if names.len() > 64 {
+                bail!("interpretation capability context exceeds bounds")
+            }
+        }
+        if !origin_fresh {
+            bail!("interpretation origin unavailable or stale")
+        }
+        let names = names.into_iter().collect::<Vec<_>>();
+        // Share exactly the interpreter contract's identifier/budget limits.
+        eefn::interpretation::messages("Validate capability vocabulary", &names)?;
+        Ok(names)
+    }
     fn page(
         &self,
         query: &PeerQuery,
@@ -336,6 +374,79 @@ mod tests {
     }
     fn record(id: &str) -> PeerRecord {
         PeerRecord::from_registration(&json!({"node_id":id,"name":"Laptop","network":{"advertised_address":"26.1.2.3","coordinator":{"coordinator_id":"eef-a","address":"26.1.2.3:51335","state":"standby"}},"models":[{"model_id":"model-a","backend":"ollama","modality":"text","password":"PRIVATE"}],"metadata":{"resources":[{"parameters":{"password":"PRIVATE"}}]},"source_ip":"PRIVATE","psk":"PRIVATE"})).unwrap()
+    }
+    #[test]
+    fn interpretation_vocabulary_is_fresh_directional_bounded_and_not_local_only() {
+        let policy =
+            DiscoveryPolicy::parse(Some(&json!({"grants":{"a":["b"],"b":["c"]}}))).unwrap();
+        let entry = |id: &str, names: &[&str], seconds| {
+            let mut record = record(id);
+            record.capabilities = names.iter().map(|name| (*name).into()).collect();
+            (record, std::time::Duration::from_secs(seconds))
+        };
+        let fresh = || {
+            vec![
+                entry("a", &["system.info"], 1),
+                entry("b", &["http.request", "system.info"], 1),
+                entry("c", &["process.exec"], 1),
+            ]
+        };
+        assert_eq!(
+            policy.capability_names("a", fresh()).unwrap(),
+            vec!["http.request", "system.info"]
+        );
+        assert_eq!(
+            DiscoveryPolicy::default()
+                .capability_names("a", fresh())
+                .unwrap(),
+            vec!["system.info"]
+        );
+        assert_eq!(
+            policy
+                .capability_names(
+                    "a",
+                    vec![
+                        entry("a", &["system.info"], 0),
+                        entry("b", &["http.request"], 30)
+                    ]
+                )
+                .unwrap(),
+            vec!["system.info"]
+        );
+        assert!(
+            policy
+                .capability_names("a", vec![entry("b", &["http.request"], 0)])
+                .is_err()
+        );
+        assert!(
+            policy
+                .capability_names("a", vec![entry("a", &["system.info"], 30)])
+                .is_err()
+        );
+        assert!(
+            policy
+                .capability_names(
+                    "a",
+                    vec![
+                        entry("a", &["system.info"], 0),
+                        entry("b", &["invalid name"], 0)
+                    ]
+                )
+                .is_err()
+        );
+        let mut overflowing = record("b");
+        overflowing.capabilities = (0..64).map(|i| format!("test.{i}")).collect();
+        assert!(
+            policy
+                .capability_names(
+                    "a",
+                    vec![
+                        entry("a", &["system.info"], 0),
+                        (overflowing, std::time::Duration::ZERO)
+                    ]
+                )
+                .is_err()
+        );
     }
     #[test]
     fn default_self_only_exact_nontransitive_grants_and_query_validation() {
