@@ -215,6 +215,17 @@ pub fn validate_node_id(id: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// Remote identities cannot alias the coordinator's internal executor or a
+/// query wildcard. Never normalize signed IDs before policy lookup/signature
+/// verification: those must use exactly the same bytes.
+pub fn validate_remote_node_id(id: &str) -> Result<()> {
+    validate_node_id(id)?;
+    if matches!(id, "local" | "*") {
+        bail!("remote node identifier is reserved; use the node's stable device ID")
+    }
+    Ok(())
+}
 impl PeerQuery {
     pub fn validate(&self) -> Result<()> {
         if !(1..=32).contains(&self.limit) {
@@ -274,7 +285,7 @@ impl PeerRecord {
         }
         let node_id = field(message, "node_id", 128)?
             .ok_or_else(|| anyhow::anyhow!("registration needs node_id"))?;
-        validate_node_id(&node_id)?;
+        validate_remote_node_id(&node_id)?;
         let display_name = field(message, "name", 256)?.unwrap_or_else(|| node_id.clone());
         let network: NetworkAdvertisement = serde_json::from_value(
             message
@@ -355,6 +366,32 @@ pub struct CommandRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remote_ids_preserve_exact_bytes_but_reject_reserved_or_malformed_identities() {
+        for id in [
+            "local",
+            "*",
+            " node",
+            "node ",
+            "\u{2003}node",
+            "bad\0id",
+            "",
+        ] {
+            assert!(validate_remote_node_id(id).is_err(), "{id:?}");
+            assert!(PeerRecord::from_registration(&serde_json::json!({"node_id":id})).is_err());
+        }
+        for id in ["device-stable", "Local", "a:b", "my node", "โหนด"] {
+            validate_remote_node_id(id).unwrap();
+            assert_eq!(
+                PeerRecord::from_registration(&serde_json::json!({"node_id":id}))
+                    .unwrap()
+                    .node_id,
+                id
+            );
+        }
+        // The local scheduler namespace is separate from a remote identity.
+        validate_node_id("local").unwrap();
+    }
     #[test]
     fn versioned_models_preserve_metadata_without_private_fields() {
         let metadata = crate::model_metadata::ModelMetadata::from_legacy(Some("vlm"));

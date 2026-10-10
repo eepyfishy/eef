@@ -53,11 +53,11 @@ pub fn command(
             CredentialCommand::Show => {},
             CredentialCommand::Legacy { allow } => saved.allow_legacy = *allow,
             CredentialCommand::Revoke { node } => {
-                eefn::network::validate_node_id(node)?;
+                eefn::network::validate_remote_node_id(node)?;
                 saved.credentials.insert(node.clone(), None);
             },
             CredentialCommand::Provision { node, address, rotate } => {
-                eefn::network::validate_node_id(node)?;
+                eefn::network::validate_remote_node_id(node)?;
                 eefn::network::validate_address(address, true)?;
                 if saved.credentials.contains_key(node) && !rotate {
                     bail!("identity already provisioned or revoked; explicitly rotate to replace its credential")
@@ -122,6 +122,19 @@ mod tests {
         assert!(invite.get("private_key").is_none());
         assert_ne!(invite["psk"], "legacy-network-secret");
         let bytes = std::fs::read(config.source().unwrap()).unwrap();
+        for node in ["local", "*", " a", "a ", "bad\0id"] {
+            for invalid in [
+                CredentialCommand::Provision {
+                    node: node.into(),
+                    address: "127.0.0.1:51335".into(),
+                    rotate: false,
+                },
+                CredentialCommand::Revoke { node: node.into() },
+            ] {
+                assert!(command(&config, &applied, &invalid).is_err());
+                assert_eq!(std::fs::read(config.source().unwrap()).unwrap(), bytes);
+            }
+        }
         assert!(command(&config, &applied, &provision).is_err());
         let show = command(&config, &applied, &CredentialCommand::Show).unwrap();
         assert!(!show.to_string().contains(invite["psk"].as_str().unwrap()));

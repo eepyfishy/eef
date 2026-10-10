@@ -52,10 +52,7 @@ impl AuthenticationPolicy {
         }
         let mut keys = HashSet::new();
         for (id, key) in &self.credentials {
-            crate::network::validate_node_id(id)?;
-            if id == "*" {
-                bail!("credentials require exact node identities")
-            }
+            crate::network::validate_remote_node_id(id)?;
             if let Some(key) = key {
                 validate_credential(key)?;
                 if !keys.insert(key.to_ascii_lowercase()) {
@@ -116,10 +113,7 @@ pub async fn write_selector<W: tokio::io::AsyncWrite + Unpin>(
     node_id: &str,
 ) -> Result<()> {
     use tokio::io::AsyncWriteExt;
-    crate::network::validate_node_id(node_id)?;
-    if node_id == "*" {
-        bail!("credentials require exact node identities")
-    }
+    crate::network::validate_remote_node_id(node_id)?;
     let mut bytes = serde_json::to_vec(
         &json!({"type":"node_credential","schema_version":2,"node_id":node_id}),
     )?;
@@ -204,6 +198,7 @@ impl crate::NodeService {
             bail!("pairing invitation does not match this node")
         }
         validate_credential(&invitation.psk)?;
+        crate::network::validate_remote_node_id(&invitation.node_id)?;
         crate::tls::client_config(&invitation.coordinator_certificate)?;
         crate::network::validate_address(&invitation.address, true)?;
         self.save_credential_pair(
@@ -296,6 +291,8 @@ mod tests {
             json!({"allow_legacy":null}),
             json!({"unknown":true}),
             json!({"credentials":{"*":key}}),
+            json!({"credentials":{"local":key}}),
+            json!({"credentials":{" local":null}}),
         ] {
             assert!(AuthenticationPolicy::parse(Some(&bad)).is_err());
         }

@@ -719,6 +719,9 @@ impl NodeService {
 }
 
 fn validate_config(value: &Value) -> Result<()> {
+    if let Some(id) = value.get("node_id") {
+        crate::network::validate_remote_node_id(id.as_str().unwrap_or(""))?;
+    }
     let auth_mode: crate::authentication::AuthMode = serde_json::from_value(
         value
             .get("auth_mode")

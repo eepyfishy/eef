@@ -79,7 +79,7 @@ struct Inner {
     connections: RwLock<HashMap<String, Connection>>,
     routes: RwLock<HashMap<String, ConnectionInfo>>,
     pending: Mutex<HashMap<String, Pending>>,
-    nonces: Mutex<HashMap<String, Instant>>,
+    nonces: Mutex<HashMap<(String, String), Instant>>,
     events: broadcast::Sender<NodeEvent>,
     accept_task: Mutex<Option<GatewayTask>>,
     active_ids: std::sync::Mutex<HashSet<String>>,
@@ -463,7 +463,7 @@ impl NodeServer {
             if selector.r#type != "node_credential" || selector.schema_version != 2 {
                 bail!("invalid credential selector")
             }
-            crate::network::validate_node_id(&selector.node_id)?;
+            crate::network::validate_remote_node_id(&selector.node_id)?;
             let secret = self
                 .inner
                 .authentication
@@ -527,6 +527,10 @@ impl NodeServer {
         }
         let verification = async {
             let claimed = auth["node_id"].as_str().context("auth failed")?;
+            // Validate before consulting credentials/tombstones, and verify the
+            // same exact ID below. Trimming only after the lookup permits
+            // whitespace aliases to bypass protected/revoked legacy policy.
+            crate::network::validate_remote_node_id(claimed)?;
             match selected_id.as_deref() {
                 Some(id) if id != claimed => bail!("credential identity mismatch"),
                 None if self.inner.authentication.credentials.contains_key(claimed) => {
@@ -761,14 +765,13 @@ impl NodeServer {
             bail!("unsupported protocol")
         }
         let text = |key| auth.get(key).and_then(Value::as_str).context("auth failed");
-        let node_id = text("node_id")?.trim();
+        let node_id = text("node_id")?;
+        crate::network::validate_remote_node_id(node_id)?;
         let version = text("version")?;
         let nonce = text("nonce")?;
         let timestamp = text("timestamp")?;
         let signature = text("signature")?;
-        if node_id.is_empty()
-            || node_id.len() > 128
-            || version.len() > 128
+        if version.len() > 128
             || nonce.is_empty()
             || nonce.len() > 128
             || nonce.chars().any(char::is_control)
@@ -791,7 +794,7 @@ impl NodeServer {
         }
         let mut nonces = self.inner.nonces.lock().await;
         nonces.retain(|_, seen| seen.elapsed() < Duration::from_secs(10 * 60));
-        let receipt = format!("{node_id}:{nonce}");
+        let receipt = (node_id.to_owned(), nonce.to_owned());
         if nonces.contains_key(&receipt) {
             bail!("replayed auth")
         }
@@ -856,6 +859,54 @@ fn require_node_id(message: &Value, authenticated_id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn legacy_auth_rejects_identity_aliases_before_policy_and_replay_receipts() {
+        let policy = crate::authentication::AuthenticationPolicy {
+            credentials: std::collections::BTreeMap::from([
+                ("protected".into(), Some("a".repeat(64))),
+                ("revoked".into(), None),
+            ]),
+            ..Default::default()
+        };
+        let server =
+            NodeServer::with_authentication("legacy-secret", "127.0.0.1", 0, policy).unwrap();
+        server.start().await.unwrap();
+        for (signed, claimed) in [
+            ("protected", " protected"),
+            ("protected", "protected "),
+            ("revoked", " revoked "),
+            ("revoked", "\u{2003}revoked\u{2003}"),
+            ("local", "local"),
+            ("*", "*"),
+            ("bad\0id", "bad\0id"),
+        ] {
+            let stream = TcpStream::connect(("127.0.0.1", server.port()))
+                .await
+                .unwrap();
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let crypto = NodeCrypto::new("legacy-secret").unwrap();
+            let mut auth = crate::protocol::build_auth(&crypto, signed, crate::VERSION);
+            // Keep the signature over the canonical ID. The previous server
+            // consulted policy before trimming, then verified the trimmed ID.
+            auth["node_id"] = json!(claimed);
+            write_message(&crypto, &mut writer, &auth).await.unwrap();
+            let response = timeout(Duration::from_secs(3), read_message(&crypto, &mut reader))
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(response["type"], "denied", "claimed={claimed:?}");
+            assert_eq!(
+                server.connection_counts().await,
+                ConnectionCounts::default()
+            );
+            assert!(server.inner.active_ids.lock().unwrap().is_empty());
+            assert!(server.inner.nonces.lock().await.is_empty());
+        }
+        server.stop().await;
+    }
 
     #[tokio::test]
     async fn credential_transport_refuses_plaintext_downgrade_and_retires_partial_tls() {
@@ -1075,6 +1126,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exact_identity_nonce_pairs_cannot_collide_through_delimiters() {
+        let server = NodeServer::new("legacy-secret", "127.0.0.1", 0).unwrap();
+        for (id, nonce) in [("a:b", "c"), ("a", "b:c")] {
+            let mut auth = crate::protocol::build_auth(&server.inner.crypto, id, crate::VERSION);
+            auth["nonce"] = json!(nonce);
+            let raw = format!(
+                "{nonce}|{id}|{}|{}",
+                crate::VERSION,
+                auth["timestamp"].as_str().unwrap()
+            );
+            auth["signature"] = json!(server.inner.crypto.sign(raw.as_bytes()));
+            assert_eq!(
+                server
+                    .verify_auth_with(&server.inner.crypto, &auth)
+                    .await
+                    .unwrap(),
+                id
+            );
+            assert!(
+                server
+                    .verify_auth_with(&server.inner.crypto, &auth)
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(server.inner.nonces.lock().await.len(), 2);
+    }
+
+    #[tokio::test]
     async fn authentication_replay_cache_is_bounded_and_rejections_do_not_extend_receipts() {
         let server = NodeServer::new("legacy-secret", "127.0.0.1", 0).unwrap();
         let auth = crate::protocol::build_auth(&server.inner.crypto, "a", crate::VERSION);
@@ -1093,7 +1173,7 @@ mod tests {
         {
             let mut cache = server.inner.nonces.lock().await;
             for n in 1..MAX_AUTH_NONCES {
-                cache.insert(format!("fixture:{n}"), Instant::now());
+                cache.insert(("fixture".into(), n.to_string()), Instant::now());
             }
         }
         let fresh = crate::protocol::build_auth(&server.inner.crypto, "a", crate::VERSION);

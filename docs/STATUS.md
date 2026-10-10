@@ -1,5 +1,35 @@
 # Architecture conformance status
 
+## Unreleased: exact remote identity enforcement (2026-10-10)
+
+A real gateway regression reproduced a legacy-key bypass in the unreleased
+credential implementation: policy lookup used the supplied ID, but signature
+verification then trimmed it. A whitespace alias of a protected/revoked ID could
+therefore authenticate with the network key. The gateway now validates the exact
+remote ID before policy lookup and verifies those same bytes without trimming.
+Invalid claims do not reserve an identity, register providers or consume a replay
+receipt. Replay keys are typed `(node ID, nonce)` pairs, not delimiter strings.
+
+Remote IDs also cannot use the query wildcard or EEF's internal `local` provider
+alias. Provisioning/revocation, credential policy, TLS selector, invitation
+pairing, node client, saved settings, first-run identity and peer registration
+enforce the same rule. Existing valid IDs remain case-sensitive and unchanged;
+display names/coordinator advertisements are separate. Invalid existing IDs are
+not silently renamed or overwritten. See [migration boundaries](NODE-CREDENTIALS.md).
+
+Validation: **264 workspace/all-target Rust tests pass in both feature modes**.
+The gateway test failed on the old implementation with an actual `ok` reply for
+a whitespace-protected ID, then passes after the fix. Coverage includes protected/
+revoked aliases, Unicode boundary whitespace, reserved IDs, control characters,
+unchanged replay/connection state after denial, delimiter-distinct nonce pairs,
+both client auth modes, policy/provisioning atomic rejection, registration and
+byte-identical startup rejection. This is identity hardening, not new execution
+grants, remote cancellation acknowledgement, installer signing or stable-release
+acceptance. Headless credential, scheduling, node-command and review regressions
+pass (`node-credentials-GuOmhh`, `scheduling-X2kKqj`, `node-commands-bvleei`,
+`request-review-UfPjE3`); formatting, diff and source backend/browser-boundary
+checks pass. Installed nodes and public artifacts/feeds are unchanged.
+
 ## Unreleased: command-owned coordinator scheduling budgets (2026-10-10)
 
 The local EEF owner now has typed `scheduling show/limits/node/remove-node`

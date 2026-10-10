@@ -84,6 +84,7 @@ pub fn initialize_identity(path: &Path) -> Result<Value> {
     if id.trim().is_empty() || id == "node-example" {
         value["node_id"] = json!(format!("device-{}", uuid::Uuid::new_v4()));
     }
+    crate::network::validate_remote_node_id(value["node_id"].as_str().unwrap_or(""))?;
     let name = value["name"].as_str().unwrap_or("");
     if name.trim().is_empty() || name == "Example node" {
         value["name"] = json!(hostname());
@@ -245,6 +246,20 @@ pub fn open_dashboard(host: &str, port: u16) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn invalid_existing_identity_is_not_normalized_or_silently_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        for id in ["local", "*", " stable", "stable ", "bad\0id"] {
+            let original = serde_json::to_vec(&serde_json::json!({
+                "node_id":id,"name":"Existing node","permissions":{"remote_updates":false}
+            }))
+            .unwrap();
+            std::fs::write(&path, &original).unwrap();
+            assert!(super::initialize_identity(&path).is_err(), "{id:?}");
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        }
+    }
     use super::*;
     #[test]
     fn second_instance_is_rejected_until_lock_drops() {

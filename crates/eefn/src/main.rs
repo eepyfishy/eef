@@ -1114,6 +1114,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
     if file.node_id.is_empty() {
         file.node_id = default_node_id()
     }
+    eefn::network::validate_remote_node_id(&file.node_id)?;
     if file.name.is_empty() {
         file.name = file.node_id.clone()
     }

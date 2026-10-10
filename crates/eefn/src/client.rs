@@ -153,6 +153,7 @@ impl Drop for AbortTask {
 
 impl NodeClient {
     pub fn new(mut config: NodeClientConfig, engine: Arc<NodeEngine>) -> Result<Self> {
+        crate::network::validate_remote_node_id(&config.node_id)?;
         let tls_config = if config.auth_mode == crate::authentication::AuthMode::NodeCredential {
             Some(crate::tls::client_config(config.coordinator_certificate.as_deref()
                 .context("credential connections require an owner-paired coordinator certificate; pair again")?)?)
@@ -161,15 +162,11 @@ impl NodeClient {
         };
         if config.auth_mode == crate::authentication::AuthMode::NodeCredential {
             crate::authentication::validate_credential(&config.psk)?;
-            crate::network::validate_node_id(&config.node_id)?;
         }
         config.metadata.validate()?;
         config.network.validate()?;
         if config.endpoints.is_empty() {
             bail!("at least one coordinator endpoint is required")
-        }
-        if config.node_id.trim().is_empty() {
-            bail!("node_id must not be empty")
         }
         for endpoint in &config.endpoints {
             parse_endpoint(&endpoint.address)?;
@@ -842,6 +839,25 @@ fn advertised_capabilities(configured: &[String], models: &[Value]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_identity_validation_is_identical_for_legacy_and_credential_modes() {
+        let identity = crate::tls::CoordinatorIdentity::generate().unwrap();
+        let engine = Arc::new(NodeEngine::new(false, vec![], std::env::temp_dir()).unwrap());
+        for mode in ["legacy", "node_credential"] {
+            for id in ["local", "*", " node", "node ", "bad\0id"] {
+                let config = serde_json::from_value(json!({
+                    "endpoints":["127.0.0.1:51335"],"node_id":id,"psk":"a".repeat(64),
+                    "auth_mode":mode,"coordinator_certificate":identity.certificate,
+                }))
+                .unwrap();
+                assert!(
+                    NodeClient::new(config, engine.clone()).is_err(),
+                    "mode={mode} id={id:?}"
+                );
+            }
+        }
+    }
 
     fn probe_client(endpoint: String) -> NodeClient {
         let config: NodeClientConfig = serde_json::from_value(json!({

@@ -90,6 +90,14 @@ side effects stopped. No job or remote mutation is automatically replayed.
   or null for revocation. Duplicate credentials, network-key reuse, wildcards,
   unknown fields and malformed policy fail closed. Missing policy preserves
   legacy compatibility; it does not claim untrusted nodes are isolated.
+- Signed/selected remote IDs are exact byte strings: leading/trailing whitespace,
+  control characters, the `*` wildcard and EEF's internal `local` executor alias
+  are rejected before credential lookup, authentication receipts or registration.
+  No trimming, case folding, automatic rename or identity replacement occurs.
+  Display names and coordinator advertisement IDs use separate namespaces;
+  calling a node "local" in its display name is not forbidden. Existing malformed
+  or reserved manually assigned IDs require explicit owner correction/re-pairing,
+  not silent migration. Ordinary generated `device-*` IDs remain unchanged.
 - `node.authentication.tls` holds the persistent public DER certificate and
   private PKCS#8 key, base64 encoded. First explicit provisioning creates a random
   coordinator identity; provisioning another node, rotating a node secret and
