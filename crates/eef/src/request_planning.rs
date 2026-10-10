@@ -188,18 +188,24 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             .answers
             .iter()
             .any(|a| a.operation_id == record.operation_id)
-        || !matches!(
-            plan.status,
-            PlanStatus::AwaitingApproval | PlanStatus::Approved | PlanStatus::Cancelled
-        )
+        || (plan.execution.is_none()
+            && !matches!(
+                plan.status,
+                PlanStatus::AwaitingApproval | PlanStatus::Approved | PlanStatus::Cancelled
+            ))
         || plan.tasks.is_empty()
         || plan.tasks.len() > 128
         || record.bindings.len() != plan.tasks.len()
         || plan.goal.template != record.input.template
         || plan.goal.params != record.input.params
         || plan.goal.constraints != record.input.constraints
-        || !plan.results.is_empty()
-        || serde_json::to_vec(plan)?.len() > 1024 * 1024
+        || (plan.execution.is_none() && !plan.results.is_empty())
+        || serde_json::to_vec(plan)?.len()
+            > if plan.execution.is_some() {
+                8 * 1024 * 1024
+            } else {
+                1024 * 1024
+            }
     {
         bail!("Invalid retained concrete plan state")
     }
@@ -222,15 +228,16 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             || task.request_context != plan.goal.request_context
             || task.capability != expected.capability
             || task.action != expected.action
-            || task.status
-                != if plan.status == PlanStatus::Cancelled {
-                    TaskStatus::Cancelled
-                } else {
-                    TaskStatus::Pending
-                }
-            || task.attempts != 0
-            || task.result.is_some()
-            || !task.assignments.is_empty()
+            || (plan.execution.is_none()
+                && (task.status
+                    != if plan.status == PlanStatus::Cancelled {
+                        TaskStatus::Cancelled
+                    } else {
+                        TaskStatus::Pending
+                    }
+                    || task.attempts != 0
+                    || task.result.is_some()
+                    || !task.assignments.is_empty()))
             || task.retry_count != 0
             || task.retry_delay_ms != 0
             || task.timeout_ms != expected.timeout_ms
@@ -326,11 +333,22 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
         bail!("Concrete plan digest mismatch")
     }
     crate::request_approval::validate_retained(plan)?;
+    crate::request_execution::validate_retained(plan)?;
     Ok(())
 }
 
 #[derive(Debug, clap::Subcommand)]
 pub enum PlanningAction {
+    /// Explicitly request execution of one exact owner-approved plan; never replay.
+    Execute {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        approval_digest: String,
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Inspect private source/plan as the local coordinator owner; never executes.
     Inspect { id: String },
     /// Compile a reviewed one-shot request against live registrations; await approval.
@@ -434,7 +452,7 @@ fn report(plan: Plan, command: &PlanningCommand, runtime_id: &str, reused: bool)
     json!({"schema_version":1,"report_type":"request_planning","success":true,"runtime_id":runtime_id,"id":plan.plan_id,
         "operation_id":match command {PlanningCommand::Inspect{..}=>None,PlanningCommand::Compile{operation_id,..}|PlanningCommand::Approve{operation_id,..}=>Some(operation_id)},
         "plan":plan,"reused":reused,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
-        "note":"Private owner inspection/compilation/conditional approval only; no execution grant, reservation or runner. Durable issuance and executor revalidation remain required."})
+        "note":"Private owner inspection/compilation/conditional approval only; this command dispatches no work. The retained record may include separately requested execution and its receipts."})
 }
 pub fn confirmed_report(value: &Value, runtime_id: &str, command: &PlanningCommand) -> bool {
     if command.validate().is_err() {

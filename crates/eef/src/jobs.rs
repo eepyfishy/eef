@@ -14,6 +14,10 @@ use std::{
 // Logical quota headroom, not a promise that the physical disk cannot fill.
 const RECOVERY_RESERVE: usize = 4096;
 fn reserve(plan: &Plan) -> usize {
+    let grant_reserve = crate::request_execution::reserved_bytes(plan);
+    if grant_reserve > 0 {
+        return grant_reserve;
+    }
     match plan.status {
         PlanStatus::Pending | PlanStatus::Running => RECOVERY_RESERVE,
         PlanStatus::Pausing | PlanStatus::Stopping => 3072,
@@ -395,6 +399,11 @@ impl JobStore {
                         | PlanStatus::Pausing
                         | PlanStatus::Stopping
                 ) {
+                    if crate::request_execution::can_settle_unissued_stop(plan) {
+                        crate::request_execution::settle_unissued_stop(plan);
+                        return Ok(());
+                    }
+                    crate::request_execution::interrupt(plan);
                     plan.status = PlanStatus::Interrupted;
                     for task in &mut plan.tasks {
                         if task.status == TaskStatus::Running {
@@ -443,7 +452,7 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
             .context("Damaged review origin; retained for recovery")?;
         eefn::job_commands::validate_operation_id(context.request_id())?;
         eefn::network::validate_remote_node_id(context.origin_node())?;
-        if !plan.results.is_empty()
+        if (plan.execution.is_none() && !plan.results.is_empty())
             || context.request_id() != draft.proposals[0].operation_id
             || plan.goal.description != draft.proposals[0].proposal.goal
         {
@@ -452,6 +461,7 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
         if plan.planning.is_some() {
             crate::request_planning::validate_retained(plan)?;
         } else if plan.approval.is_some()
+            || plan.execution.is_some()
             || !matches!(plan.status, PlanStatus::Review | PlanStatus::Cancelled)
             || !plan.tasks.is_empty()
             || plan.goal.template != "request_review"
@@ -465,6 +475,7 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
         PlanStatus::Review | PlanStatus::AwaitingApproval | PlanStatus::Approved
     ) || plan.planning.is_some()
         || plan.approval.is_some()
+        || plan.execution.is_some()
     {
         bail!("Damaged review data; retained for recovery")
     }
@@ -576,14 +587,16 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
         "status": plan.status, "revision": plan.revision, "updated_at_ms": plan.updated_at_ms,
         "request_context": plan.goal.request_context, "task_count": plan.tasks.len(),
         "completed_tasks": plan.tasks.iter().filter(|t|t.status==TaskStatus::Completed).count(),
-        "can_resume": matches!(plan.status,PlanStatus::Paused|PlanStatus::Interrupted) && !plan.tasks.iter().any(|t|t.status==TaskStatus::Interrupted&&!crate::task::retry_safe(t)),
+        "can_resume": plan.request_review.is_none() && matches!(plan.status,PlanStatus::Paused|PlanStatus::Interrupted) && !plan.tasks.iter().any(|t|t.status==TaskStatus::Interrupted&&!crate::task::retry_safe(t)),
     });
     if let Some(draft) = &plan.request_review {
-        value["review_only"] = json!(true);
+        value["review_only"] = json!(plan.execution.is_none());
         value["review_state"] = json!(draft.state());
         value["answer_count"] = json!(draft.answers.len());
         value["proposal_count"] = json!(draft.proposals.len());
-        value["planning_state"] = json!(if plan.approval.is_some() {
+        value["planning_state"] = json!(if plan.execution.is_some() {
+            "execution_requested"
+        } else if plan.approval.is_some() {
             "approved_no_grant"
         } else if plan.planning.is_some() {
             "compiled_no_grant"
@@ -593,6 +606,10 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
         if let Some(approval) = &plan.approval {
             value["approval_active"] = json!(approval.active_at(plan, eefn::protocol::now_ms()));
             value["approval_expires_at_ms"] = json!(approval.expires_at_ms);
+        }
+        if let Some(execution) = &plan.execution {
+            value["grant_attempts"] = json!(execution.attempts.iter().map(|a|json!({"task_id":a.grant.task_id,"grant_id":a.grant.grant_id,
+                "state":a.state,"node_id":a.grant.executor_node,"acknowledged":a.acknowledgement.is_some(),"success":a.report.as_ref().map(|r|r.success)})).collect::<Vec<_>>());
         }
     }
     if details {
@@ -701,7 +718,9 @@ fn text_output(plan: &Plan) -> serde_json::Value {
         .collect::<Vec<_>>();
     let mut remaining = 32768usize;
     let outputs = matching.iter().take(32).map(|task| {
-        let text = task.result.as_ref().and_then(|r| r.data["content"].as_str());
+        let text = if let Some(e) = &plan.execution {
+            e.attempts.iter().find(|a|a.grant.task_id==task.task_id).and_then(|a|a.report.as_ref()).and_then(|r|r.data["content"].as_str())
+        } else {task.result.as_ref().and_then(|r| r.data["content"].as_str())};
         let mut truncated = false;
         let content = text.map(|text| {
             let mut end = text.len().min(remaining);

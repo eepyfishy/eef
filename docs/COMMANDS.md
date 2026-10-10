@@ -365,12 +365,95 @@ receipt/digest while cancelling all unstarted tasks. Other nodes cannot read it.
 Quota, concurrent revision and shutdown failures leave the prior plan unchanged;
 damaged approval records are retained and reject, not repaired or activated.
 
-Durable issuance, persisted executor ACK/completion, reviewed-plan dispatch,
-uncertainty recovery and physical two-PC acceptance remain required. This is not
+The subsequent explicit execution command below adds durable issuance and
+persisted executor ACK/completion. Automatic semantic planning, explicit
+uncertainty reconciliation and physical two-PC acceptance remain required. This is not
 the final non-coder workflow or a stable v0.4.0 release. Approval/replay protection
 depends on retaining the existing job database; deleting history is not a reset
 or proof that effects elsewhere never happened. Back up before using these new
 development states; older executables must not automatically downgrade the data.
+
+## Explicit approved request execution (unreleased after alpha.6)
+
+The originating running node can request one exact approved plan without a
+dashboard, inference for planning, port numbers or another node process:
+
+```powershell
+eefn requests execute REQUEST_ID --revision 3 --approval-digest APPROVAL_SHA256 --json
+```
+
+The approval digest/revision come from private owner approval/inspection, not the
+model's proposal. The local EEF owner has the same `eef requests execute` command.
+Both accept `--operation-id CANONICAL_UUID`; keep that receipt if the reply is
+lost. API automation uses the guarded node-local `POST /api/commands/requests/execute`
+with `schema_version: 1`, `expected_node_id` and exactly this command:
+
+```json
+{"id":"REQUEST_ID","expected_revision":3,"operation_id":"CANONICAL_UUID","approval_sha256":"APPROVAL_SHA256"}
+```
+
+The guarded EEF-local route uses `expected_runtime_id` instead of `expected_node_id`.
+Nodes submit through their existing authenticated connection; they cannot submit
+grants, overwrite the original context, or activate another origin's request.
+The executor may be a different node but does not become the request's owner.
+Receipt reports have `report_type: coordinator_request_execution`, durable ID,
+original context, source revision/approval digest, current status and
+`execution_requested: true`, `persisted: true`, `automatically_retried: false`.
+This confirms the persisted request, **not completion, a reservation or remote stop**.
+
+The existing job journal and admission/shutdown gate own this workflow. Each
+unstarted task rechecks fresh fixed providers/resources and exact installed model/
+backend/role; missing roles or changed issuer/bounds reject, never rebind. The
+existing atomic scheduling reservation includes granted inference as a provider
+future, but does not enforce physical RAM/VRAM or model-instance load budgets.
+One task/attempt is issued at a time after successful predecessors, with no
+implicit result-to-parameter/media wiring, migration, fallback or automatic retry.
+
+EEF saves the complete exact grant and one executor assignment **before dispatch**.
+The node consumes its durable receipt before acceptance/effects. A direct gateway
+observer saves matching acceptance and completion in the same EEF job record
+before confirming them to its runner; broadcast event loss cannot drop these
+checkpoints. ACK persistence is not a second distributed permission-to-start or
+an atomic transaction with remote side effects: work may already be running by
+the time EEF saves the ACK. Journal failure cannot produce confirmed success.
+Logical journal headroom is reserved before issuance for bounded result/recovery
+records; physical disk/temporary journal overhead remains additional.
+
+Normal origin job views expose bounded grant IDs/states/acknowledgement, not raw
+inputs or outputs. Explicit `jobs output` reads text-model output saved once in
+the grant report; task summaries do not duplicate large payloads. Private owner
+`requests inspect` includes full grants and results and must not be published.
+Task result duration is currently unmeasured (`duration_ms: 0`), not a latency
+measurement. Inputs/limits/definitions, original text/context, planning and approval
+digests remain frozen; extra authority fields and incompatible records reject.
+
+Exact retained command retries return the existing receipt/status without another
+runner, grant, inference, write, renewal or journal rewrite, including after
+completion or interruption. A different operation ID cannot restart the same
+request. Concurrent first submissions may be rejected during admission; inspect
+the retained receipt before retrying. There is no permanent deduplication after
+explicit finished-history removal/database replacement.
+
+Lost acceptance/completion, disconnect, shutdown, deadline or failed journal
+confirmation leave issued attempts `unknown`/`interrupted`. Restart never revives
+them, even for reads/inference. Existing pause/resume paths reject reviewed grants.
+Stop prevents further issuance and can cancel before any grant is issued; while
+one is pending it is `stopping` until a matching result or uncertainty is recorded.
+Already-completed effects are not undone. Uncertain issued work cannot be declared
+stopped or safely replayed/migrated: inspect node receipts and effects instead.
+An explicit reconciliation/abandonment command and stronger OS/backend termination
+remain pending; do not repair these states by editing JSON or erasing journals.
+
+These grants still advertise `rpc_future_only`: already-launched applications,
+blocking/native/backend work or sent network effects may outlive the future.
+Aligned clocks remain necessary. Legacy task/chat/management paths are unchanged,
+not retroactively grant-enforced; migrating remaining work paths is a release gate.
+Automatic semantic compilation, continuous pipelines, physical budgets, peer/media
+paths, cluster fencing and physical two-PC/release acceptance remain open.
+Headless fixtures cover an origin node granting a write to another node,
+unchanged owner markers after receipt reuse/restart, pending HTTP effects after
+abrupt EEF termination without replay, exact model roles and saved text output.
+Fake inference and two logical local nodes are not real model or two-PC acceptance.
 
 ## Node grant receipts (unreleased after alpha.6)
 
@@ -383,8 +466,8 @@ interrupted/uncertain; it is not authorization to repeat an operation.
 The [node execution grant boundary](EXECUTION-GRANTS.md) now validates exact
 owner-pinned issuer/session/operation scopes and durable node-side consumption.
 Normal EEF reviewed plans **still await approval**. Owner approval, persisted EEF
-issuance/ACK integration and the reviewed-plan dispatch path remain pending; legacy
-RPCs are unchanged. No grant-issuance, reset/replay or execution command is exposed
+issuance/ACK integration and fixed reviewed-plan dispatch are described above;
+legacy RPCs are unchanged. No raw grant-issuance or receipt reset/replay command is exposed
 by this receipt inspector, and no public installer/update feed includes this work yet.
 
 ## Supplied structured proposals (unreleased)

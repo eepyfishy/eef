@@ -66,6 +66,7 @@ impl SubmissionMailbox {
                 | "requests.draft_get"
                 | "requests.draft_answer"
                 | "requests.draft_revise"
+                | "requests.execute"
                 | "network.peers"
                 | "jobs.list"
                 | "jobs.find"

@@ -28,7 +28,7 @@ fn report(plan: &Plan, operation_id: &str, reused: bool) -> Result<Value> {
         "revision":plan.revision,"status":plan.status,"operation_id":operation_id,
         "request_context":plan.goal.request_context,"draft":draft,"review_state":draft.state(),
         "reused":reused,"execution_authorized":false,"dispatched":false,"persisted":true,
-        "note":"Review/compiled/conditionally approved record only. No grant was issued and no job runner was started."}),
+        "note":"Read-only request inspection; this command issued no grant or execution. The retained record may include separately requested execution and its receipts."}),
     )
 }
 pub fn open(
@@ -56,6 +56,7 @@ pub fn open(
         answers: vec![],
     };
     let plan = Plan {
+        execution: None,
         approval: None,
         planning: None,
         request_review: Some(draft),

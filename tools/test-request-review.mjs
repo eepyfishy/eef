@@ -28,6 +28,10 @@ async function cli(args, success = true) {
   try {const result = await child.result; assert.equal(result.code, success ? 0 : 1, result.out + result.err); return JSON.parse(result.out);}
   finally {clearTimeout(timer);}
 }
+async function coordinator(args) {
+  const child=launch('eef',['--config',eefConfig,'--json',...args]),timer=setTimeout(()=>child.kill(),30000);
+  try {const r=await child.result;assert.equal(r.code,0,r.out+r.err);return JSON.parse(r.out);}finally {clearTimeout(timer);}
+}
 const review = (text, success = true) => cli(['requests', 'review', '--text', text], success);
 const preview = text => cli(['requests', 'preview', '--text', text]);
 async function until(fn, label) {const deadline = Date.now() + 45000; while (Date.now() < deadline) {try {if (await fn()) return;} catch {} await new Promise(r => setTimeout(r, 100));} throw Error('Timeout: ' + label);}
@@ -205,15 +209,52 @@ try {
   assert.equal(legacyApproval.status,400);
   const afterDenied=await json(planUrl,{schema_version:1,expected_runtime_id:runtime,command:{operation:'inspect',id:modelDraft.result.id}});
   assert.deepEqual(afterDenied.plan,modelPlan.plan);assert.equal(calls.length,beforeCompile,'denied approval must not infer or execute');
-  await cli(['jobs','stop',modelDraft.result.id]);await cli(['jobs','remove',modelDraft.result.id]);
+  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), JSON.parse(before), 'review leaves config unchanged');
+  // Explicitly migrate this isolated fixture to pinned TLS, then approve/execute
+  // the already frozen model binding. Credential changes are intentional here.
+  const invitation=await coordinator(['credentials','provision','--node',config.node_id,'--address',`127.0.0.1:${gatewayPort}`]);
+  const privateCode=join(scratch,'PRIVATE-pairing.json');await writeFile(privateCode,JSON.stringify(invitation));
+  await coordinator(['credentials','legacy','--allow','false']);await coordinator(['restart']);
+  await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==runtime,'apply fixture TLS issuer');
+  await cli(['connection','pair','--code-file',privateCode]);
+  await until(async()=>await ready()&&(await json(node+'/api/status')).connection.transport==='pinned_tls13','paired model node');
+  let activeRuntime=(await json(eef+'/api/diagnostics')).runtime_id;
+  const approval=await json(planUrl,{schema_version:1,expected_runtime_id:activeRuntime,command:{operation:'approve',id:modelDraft.result.id,
+    expected_revision:2,operation_id:randomUUID(),plan_sha256:modelPlan.plan.planning.plan_sha256,valid_for_ms:60000,
+    limits:{max_execution_ms:5000,max_result_bytes:16384}}});
+  assert.equal(approval.plan.status,'approved');assert.equal(calls.length,beforeCompile);
+  const execution={id:modelDraft.result.id,expected_revision:3,operation_id:randomUUID(),approval_sha256:approval.plan.approval.approval_sha256};
+  await cli(['models','hints','--backend','ollama','--model','fixture','--role','unselected_role']);
+  await cli(['restart','--wait-seconds','15']);
+  await until(async()=>await ready()&&(await json(eef+'/api/commands/models/route?capability=llm.infer&role=request_interpreter')).candidates.length===0,'withdraw approved role');
+  const denied=await json(node+'/api/commands/requests/execute',{schema_version:1,expected_node_id:config.node_id,command:execution});
+  assert.equal(denied.success,false);assert.equal(calls.length,beforeCompile);
+  const unchanged=await json(planUrl,{schema_version:1,expected_runtime_id:activeRuntime,command:{operation:'inspect',id:modelDraft.result.id}});
+  assert.deepEqual(unchanged.plan,approval.plan,'missing role must not save issuance or rebind');
+  await cli(['models','hints','--backend','ollama','--model','fixture','--role','request_interpreter']);
+  await cli(['restart','--wait-seconds','15']);
+  await until(async()=>await ready()&&(await json(eef+'/api/commands/models/route?capability=llm.infer&role=request_interpreter')).candidates.length===1,'restore exact owner role');
+  const executing=await cli(['requests','execute',execution.id,'--revision','3','--approval-digest',execution.approval_sha256,'--operation-id',execution.operation_id]);
+  assert.equal(executing.success,true);
+  await until(async()=>(await cli(['jobs','get',execution.id])).data.status==='completed','granted model completion');
+  assert.equal(calls.length,beforeCompile+1,'one granted inference, no route fallback or extra planning call');
+  assert.equal(calls.at(-1).model,'fixture');assert.equal(calls.at(-1).messages.at(-1).content,'Summarize this text');
+  const completed=await json(planUrl,{schema_version:1,expected_runtime_id:activeRuntime,command:{operation:'inspect',id:execution.id}});
+  const modelAttempt=completed.plan.execution.attempts[0];assert.equal(modelAttempt.state,'completed');
+  assert.equal(modelAttempt.grant.model_id,'fixture');assert.equal(modelAttempt.grant.backend,'ollama');assert.equal(modelAttempt.grant.model_role,'request_interpreter');
+  assert.deepEqual(modelAttempt.acknowledgement.state,'accepted');assert.equal(modelAttempt.report.success,true);
+  const output=(await cli(['jobs','output',execution.id])).data;assert.equal(output.outputs.length,1);assert.equal(output.outputs[0].content,modelAttempt.report.data.content);
+  const repeated=await cli(['requests','execute',execution.id,'--revision','3','--approval-digest',execution.approval_sha256,'--operation-id',execution.operation_id]);
+  assert.equal(repeated.result.reused,true);assert.equal(calls.length,beforeCompile+1);
+  await cli(['jobs','remove',modelDraft.result.id]);
   for(const id of [durable.result.id,found.jobs[0].id]) {await cli(['jobs','stop',id]);await cli(['jobs','remove',id]);}
   assert.equal((await cli(['jobs','list'])).data.total,0);
-  assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), JSON.parse(before), 'review leaves config unchanged');
   await writeFile(join(scratch, 'results.json'), JSON.stringify({passed: true, api_only: true, node_to_coordinator_review: true,
     original_text_preserved: true, authenticated_origin: true, clarification_returned: true, rejected_authority_fields: true,
     stateless_no_jobs_created: true, durable_inferred_review: true, lost_draft_found_without_replay: true,
-    no_execution: true, restart_invalidates_inference: true, lost_reply_not_replayed: true,
+    preview_and_compilation_without_execution: true, restart_invalidates_inference: true, lost_reply_not_replayed: true,
     explicit_model_plan_without_inference:true,owner_role_binding:true,legacy_approval_denied_without_inference:true,
+    pinned_model_grant_execution:true,withdrawn_role_denies_without_rebinding:true,durable_model_output:true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
 } finally {

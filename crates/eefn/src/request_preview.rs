@@ -8,6 +8,16 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Ask EEF to execute one exact owner-approved request from this running node.
+    Execute {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        approval_digest: String,
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Interpret and save an origin-owned durable review; never execute it.
     Open {
         #[arg(long)]

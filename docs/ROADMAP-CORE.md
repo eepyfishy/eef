@@ -184,7 +184,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned metadata/inventory and node selection commands added in development; text/vision routing filters capabilities/state and explicit owner role constraints; route inspection available; automatic role-based planning and new executors remain planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview/stateless review and origin-owned durable review/answer/proposal commands with retained text/history and receipt/revision checks; explicit template compilation and bounded owner approval now start stage 6, while automatic clarification re-interpretation and semantic planning remain planned |
-| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: explicit one-shot compilation and owner approval retain non-executable plans with frozen digests/bindings, expiry and bounds; distinct pinned issuer/session node grant gate, durable attempt consumption, matched acceptance/completion and read-only receipt inspection added; normal reviewed requests still do not execute. Automatic semantic planning, persisted EEF issuance/ACK/dispatch integration, stronger executor termination and cluster fencing remain required |
+| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: explicit compile/approve/execute workflow with frozen bindings, pinned session grants, durable issuance/ACK/completion, node replay protection and restart-to-unknown behavior. Origin and executor may differ. Automatic semantic planning, uncertainty reconciliation, migration of legacy work paths, stronger executor termination, clock acceptance and cluster fencing remain required |
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node request limits/reserved controls and typed coordinator non-model scheduling budgets with saved/applied readback; pipelines, executor acknowledgements and full resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
@@ -303,8 +303,14 @@ expiry/execution/result limits. It rechecks fresh fixed providers and grant
 support, with no model call, download, reservation or work dispatch. Exact receipt
 retries inspect without renewal; restart, expiry and origin-owned cancellation do
 not revive execution. Legacy runners reject these records. This completes an
-explicit conditional approval slice, not durable grant issuance/ACK integration
-or the final non-coder request-to-execution workflow; see
+explicit conditional approval slice. The subsequent execution increment durably
+issues exact fixed grants and directly checkpoints matched ACK/completion in the
+same job journal. Original node input can select a different approved executor;
+only owner/origin can activate the retained request. Current admission reserves
+provider/node/global future budgets for granted model and native work, not physical
+memory or model-instance budgets. Uncertainty after restart never auto-replays,
+even for read-only work. Automatic semantic planning, reconciliation and the final
+non-coder request-to-execution workflow remain open; see
 [commands and limits](COMMANDS.md#bounded-owner-request-approval-unreleased-after-alpha6).
 
 The 2026-10-10 unreleased [scheduling command increment](COMMANDS.md#coordinator-scheduling-limits-unreleased-after-alpha6)
@@ -312,7 +318,7 @@ adds owner-configured non-model freshness and coordinator-local global/provider/
 exact-node concurrency ceilings. Atomic reservations include retired futures
 in global/node budgets until release; saving policy requires explicit EEF restart.
 This is stage 7 admission infrastructure, not physical resource enforcement,
-model inference admission, remote cancellation acknowledgement or a grant.
+legacy model inference admission, remote cancellation acknowledgement or a grant.
 Direct owner diagnostics/recovery remain usable when scheduling capacity is full.
 
 The 2026-10-10 unreleased [independent credential increment](NODE-CREDENTIALS.md)

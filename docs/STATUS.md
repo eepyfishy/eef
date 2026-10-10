@@ -1,5 +1,43 @@
 # Architecture conformance status
 
+## Unreleased: explicit reviewed execution with durable receipts (2026-10-11)
+
+Owner and origin-node `requests execute` now activate only an exact retained
+approved revision/digest, using the existing durable job lifecycle. Issuance and
+its fixed assignment are saved before dispatch; a direct observer checkpoints
+matching executor acceptance/completion before confirming them to the caller.
+Fresh pinned sessions, providers/resources, exact model/backend/role and local
+permissions are revalidated. The driver reserves existing global/node/provider
+future budgets, including granted inference, without fallback to legacy RPC,
+another executor/model or automatic retry. Input origin and executor may differ.
+
+Logical journal headroom is reserved before issuance for bounded reports and
+recovery. Results are retained once; normal job views expose metadata, not raw
+parameters or reports. Exact execution receipt retries inspect without writing or
+reissuing work. Restart/shutdown marks outstanding attempts unknown, never resumes
+them, and legacy run/resume/pause reject reviewed records. Stop prevents new
+issuance but cannot claim uncertain remote effects have stopped. Acknowledgement
+persistence is not a distributed second permission-to-start or exactly-once effect
+guarantee. See [command contract](COMMANDS.md#explicit-approved-request-execution-unreleased-after-alpha6)
+and [limitations](EXECUTION-GRANTS.md).
+
+Validation: **322 workspace/all-target Rust tests pass in both feature modes**.
+Fresh headless fixtures pass: cross-node approved writes, durable ACK/final reports,
+no replay after duplicate commands/restart, and restart during accepted HTTP work
+(`request-drafts-LDFngX`); exact model-role withdrawal denial, restoration, one
+granted fake inference and node-local output (`request-review-Atnz3o`). Additional
+credential (`node-credentials-zh6xgb`), model metadata (`model-metadata-kEhZdk`),
+shutdown (`job-shutdown-LsKLVb`) and scheduling (`scheduling-ySihAt`) regressions
+pass. These are isolated local processes/fake inference, not physical two-PC or
+real model reasoning acceptance. No model was downloaded.
+
+Stage 6 remains partial. Automatic semantic planning, explicit uncertainty
+reconciliation, migration of legacy task/chat work paths to grants, stronger
+OS/backend termination, aligned-clock physical acceptance, continuous pipelines,
+peer/media paths and model bootstrap/lifecycle remain open. Stable v0.4.0 is not
+ready. Installed apps/nodes, permissions, versions, installers and stable-only
+disabled update feeds are unchanged; no Defender/signing clearance is claimed.
+
 ## Unreleased: bounded owner approval without grant issuance (2026-10-10)
 
 EEF now supports `requests approve` through the same backend planning command/API,

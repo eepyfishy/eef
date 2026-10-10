@@ -1,0 +1,1074 @@
+//! Reviewed plans use durable issuance and a direct journal observer, never legacy RPC.
+use crate::{
+    jobs::JobStore,
+    task::{Plan, PlanStatus, TaskEngine, TaskResult, TaskStatus},
+};
+use anyhow::{Context, Result, bail};
+use eefn::{
+    grants::{ExecutionGrant, GrantObserver, GrantReport, ReceiptState},
+    request_execution::{ExecuteCommand, ExecuteReport},
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    time::Duration,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttemptState {
+    Issued,
+    Accepted,
+    Completed,
+    Rejected,
+    Unknown,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrantedAttempt {
+    pub grant: ExecutionGrant,
+    pub state: AttemptState,
+    pub acknowledgement: Option<GrantReport>,
+    pub report: Option<GrantReport>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionRecord {
+    pub schema_version: u32,
+    pub command: ExecuteCommand,
+    pub started_at_ms: u64,
+    pub attempts: Vec<GrantedAttempt>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionRequest {
+    pub schema_version: u32,
+    pub expected_runtime_id: String,
+    pub command: ExecuteCommand,
+}
+pub(crate) fn reserved_bytes(plan: &Plan) -> usize {
+    plan.execution
+        .as_ref()
+        .into_iter()
+        .flat_map(|e| &e.attempts)
+        .filter(|a| matches!(a.state, AttemptState::Issued | AttemptState::Accepted))
+        .map(|a| {
+            a.grant.limits.max_result_bytes
+                + if a.state == AttemptState::Issued {
+                    32768
+                } else {
+                    16384
+                }
+        })
+        .sum()
+}
+pub(crate) fn interrupt(plan: &mut Plan) {
+    if let Some(e) = &mut plan.execution {
+        for a in &mut e.attempts {
+            if matches!(a.state, AttemptState::Issued | AttemptState::Accepted) {
+                a.state = AttemptState::Unknown;
+            }
+        }
+    }
+}
+pub(crate) fn can_settle_unissued_stop(plan: &Plan) -> bool {
+    plan.status == PlanStatus::Stopping
+        && plan.execution.as_ref().is_some_and(|e| {
+            e.attempts
+                .iter()
+                .all(|a| matches!(a.state, AttemptState::Completed | AttemptState::Rejected))
+        })
+}
+pub(crate) fn settle_unissued_stop(plan: &mut Plan) {
+    plan.status = PlanStatus::Cancelled;
+    cancel_pending(plan);
+}
+pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
+    let Some(e) = &plan.execution else {
+        return Ok(());
+    };
+    e.command.validate()?;
+    let approval = plan
+        .approval
+        .as_ref()
+        .context("Execution lacks owner approval")?;
+    let planning = plan
+        .planning
+        .as_ref()
+        .context("Execution lacks concrete plan")?;
+    let draft = plan
+        .request_review
+        .as_ref()
+        .context("Execution lacks review")?;
+    if e.schema_version != 1
+        || e.command.id != plan.plan_id
+        || e.command.approval_sha256 != approval.approval_sha256
+        || e.command.expected_revision <= approval.source_revision
+        || e.command.expected_revision >= plan.revision
+        || e.started_at_ms < approval.approved_at_ms
+        || e.started_at_ms >= approval.expires_at_ms
+        || e.command.operation_id == approval.operation_id
+        || e.command.operation_id == planning.operation_id
+        || draft
+            .proposals
+            .iter()
+            .any(|p| p.operation_id == e.command.operation_id)
+        || draft
+            .answers
+            .iter()
+            .any(|a| a.operation_id == e.command.operation_id)
+        || !matches!(
+            plan.status,
+            PlanStatus::Running
+                | PlanStatus::Stopping
+                | PlanStatus::Completed
+                | PlanStatus::Failed
+                | PlanStatus::Interrupted
+                | PlanStatus::Cancelled
+        )
+        || e.attempts.len() > plan.tasks.len()
+    {
+        bail!("Damaged execution receipt; retained without replay")
+    }
+    let mut grants = BTreeSet::new();
+    let mut results = BTreeMap::new();
+    for (index, task) in plan.tasks.iter().enumerate() {
+        let Some(a) = e.attempts.get(index) else {
+            if !matches!(task.status, TaskStatus::Pending | TaskStatus::Cancelled)
+                || task.attempts != 0
+                || task.result.is_some()
+                || !task.assignments.is_empty()
+            {
+                bail!("Unissued reviewed task has execution state")
+            }
+            continue;
+        };
+        let g = &a.grant;
+        g.validate()?;
+        let mut expected = crate::request_approval::scope(plan, index, approval)?;
+        expected.grant_id = g.grant_id.clone();
+        expected.session_id = g.session_id.clone();
+        expected.issued_at_ms = g.issued_at_ms;
+        expected.expires_at_ms = g.expires_at_ms;
+        if *g != expected
+            || g.issued_at_ms < e.started_at_ms
+            || g.expires_at_ms > approval.expires_at_ms
+            || g.expires_at_ms
+                != g.issued_at_ms
+                    .checked_add(g.limits.max_execution_ms)
+                    .context("Grant time overflow")?
+                    .min(approval.expires_at_ms)
+            || !grants.insert(&g.grant_id)
+            || g.grant_id == e.command.operation_id
+            || g.grant_id == approval.operation_id
+            || g.grant_id == planning.operation_id
+            || task.attempts != 1
+            || task.assignments.len() != 1
+            || (index > 0
+                && (e.attempts[index - 1].state != AttemptState::Completed
+                    || e.attempts[index - 1]
+                        .report
+                        .as_ref()
+                        .is_none_or(|r| !r.success)))
+        {
+            bail!("Grant differs from its fixed approved definition or predecessor")
+        }
+        let assignment = &task.assignments[0];
+        if assignment.attempt != 1
+            || assignment.node_id != g.executor_node
+            || assignment.resource_id != g.resource_id
+            || assignment.model_id != g.model_id
+            || assignment.backend != g.backend
+            || assignment.assigned_at_ms != g.issued_at_ms
+        {
+            bail!("Grant assignment changed")
+        }
+        if let Some(ack) = &a.acknowledgement {
+            if ack.state != ReceiptState::Accepted || !ack.confirms(g) {
+                bail!("Invalid durable grant acknowledgement")
+            }
+        }
+        if let Some(r) = &a.report {
+            if !r.confirms(g) || r.state == ReceiptState::Accepted {
+                bail!("Invalid scoped completion")
+            }
+        }
+        let (status, report) = match a.state {
+            AttemptState::Issued if a.acknowledgement.is_none() && a.report.is_none() => {
+                (TaskStatus::Running, None)
+            }
+            AttemptState::Accepted if a.acknowledgement.is_some() && a.report.is_none() => {
+                (TaskStatus::Running, None)
+            }
+            AttemptState::Completed
+                if a.acknowledgement.is_some()
+                    && a.report
+                        .as_ref()
+                        .is_some_and(|r| r.state == ReceiptState::Completed) =>
+            {
+                (
+                    if a.report.as_ref().unwrap().success {
+                        TaskStatus::Completed
+                    } else {
+                        TaskStatus::Failed
+                    },
+                    a.report.as_ref(),
+                )
+            }
+            AttemptState::Rejected
+                if a.acknowledgement.is_none()
+                    && a.report
+                        .as_ref()
+                        .is_some_and(|r| r.state == ReceiptState::Rejected) =>
+            {
+                (TaskStatus::Failed, a.report.as_ref())
+            }
+            AttemptState::Unknown
+                if a.report
+                    .as_ref()
+                    .is_none_or(|r| r.state == ReceiptState::Unknown)
+                    && (a.report.is_none() || a.acknowledgement.is_some()) =>
+            {
+                (TaskStatus::Interrupted, a.report.as_ref())
+            }
+            _ => bail!("Grant lifecycle is inconsistent"),
+        };
+        if task.status != status {
+            bail!("Task does not match its grant lifecycle")
+        }
+        if let Some(report) = report {
+            let expected = result(g, report);
+            if task
+                .result
+                .as_ref()
+                .is_none_or(|r| json!(r) != json!(expected))
+            {
+                bail!("Task result differs from the scoped receipt")
+            }
+            results.insert(task.task_id.clone(), expected);
+        } else if task.result.is_some() {
+            bail!("Unconfirmed task has a result")
+        }
+    }
+    if json!(results) != json!(plan.results)
+        || (!matches!(plan.status, PlanStatus::Running | PlanStatus::Stopping)
+            && e.attempts
+                .iter()
+                .any(|a| matches!(a.state, AttemptState::Issued | AttemptState::Accepted)))
+        || (plan.status == PlanStatus::Completed
+            && plan.tasks.iter().any(|t| t.status != TaskStatus::Completed))
+        || (plan.status == PlanStatus::Failed
+            && !plan.tasks.iter().any(|t| t.status == TaskStatus::Failed))
+        || (plan.status == PlanStatus::Cancelled
+            && plan.tasks.iter().any(|t| {
+                matches!(
+                    t.status,
+                    TaskStatus::Pending | TaskStatus::Running | TaskStatus::Interrupted
+                )
+            }))
+        || (matches!(plan.status, PlanStatus::Running | PlanStatus::Stopping)
+            && plan
+                .tasks
+                .iter()
+                .any(|t| matches!(t.status, TaskStatus::Interrupted | TaskStatus::Failed)))
+        || (e
+            .attempts
+            .iter()
+            .filter(|a| matches!(a.state, AttemptState::Issued | AttemptState::Accepted))
+            .count()
+            > 1)
+    {
+        bail!("Reviewed execution/result state is inconsistent")
+    }
+    Ok(())
+}
+fn result(g: &ExecutionGrant, r: &GrantReport) -> TaskResult {
+    TaskResult {
+        task_id: g.task_id.clone(),
+        success: r.success,
+        data: Value::Null,
+        error: r.error_code.clone().unwrap_or_default(),
+        error_type: if r.success {
+            String::new()
+        } else {
+            "GrantExecution".into()
+        },
+        duration_ms: 0,
+        attempts: 1,
+    }
+}
+fn cancel_pending(plan: &mut Plan) {
+    for task in &mut plan.tasks {
+        if task.status == TaskStatus::Pending {
+            task.status = TaskStatus::Cancelled;
+        }
+    }
+}
+
+pub(crate) struct AttemptJournal {
+    pub store: Arc<JobStore>,
+    pub job_id: String,
+    pub grant_id: String,
+}
+impl GrantObserver for AttemptJournal {
+    fn record(&self, report: &GrantReport) -> Result<()> {
+        self.store.edit(
+            &self.job_id,
+            "Scoped node grant report durably saved",
+            |p| {
+                let e = p.execution.as_mut().context("Missing issuance")?;
+                let a = e
+                    .attempts
+                    .iter_mut()
+                    .find(|a| a.grant.grant_id == self.grant_id)
+                    .context("Unknown issued grant")?;
+                if !report.confirms(&a.grant) {
+                    bail!("Report does not confirm issued authority")
+                }
+                if a.acknowledgement
+                    .as_ref()
+                    .is_some_and(|old| json!(old) == json!(report))
+                    || a.report
+                        .as_ref()
+                        .is_some_and(|old| json!(old) == json!(report))
+                {
+                    return Ok(false);
+                }
+                if !matches!(p.status, PlanStatus::Running | PlanStatus::Stopping) {
+                    bail!("No live reviewed attempt")
+                }
+                if report.state == ReceiptState::Accepted {
+                    if a.state != AttemptState::Issued {
+                        bail!("Attempt already acknowledged or unresolved")
+                    }
+                    a.state = AttemptState::Accepted;
+                    a.acknowledgement = Some(report.clone());
+                    return Ok(true);
+                }
+                if !(a.state == AttemptState::Issued && report.state == ReceiptState::Rejected
+                    || a.state == AttemptState::Accepted
+                        && matches!(
+                            report.state,
+                            ReceiptState::Completed | ReceiptState::Unknown
+                        ))
+                {
+                    bail!("Completion lacks the matching saved acceptance")
+                }
+                a.state = match report.state {
+                    ReceiptState::Completed => AttemptState::Completed,
+                    ReceiptState::Rejected => AttemptState::Rejected,
+                    _ => AttemptState::Unknown,
+                };
+                a.report = Some(report.clone());
+                let g = a.grant.clone();
+                let task = p
+                    .tasks
+                    .iter_mut()
+                    .find(|t| t.task_id == g.task_id)
+                    .context("Unknown task")?;
+                task.status = match report.state {
+                    ReceiptState::Unknown => TaskStatus::Interrupted,
+                    _ => {
+                        if report.success {
+                            TaskStatus::Completed
+                        } else {
+                            TaskStatus::Failed
+                        }
+                    }
+                };
+                let r = result(&g, report);
+                task.result = Some(r.clone());
+                p.results.insert(g.task_id.clone(), r);
+                if report.state == ReceiptState::Unknown {
+                    p.status = PlanStatus::Interrupted;
+                } else if !report.success {
+                    p.status = PlanStatus::Failed;
+                    cancel_pending(p);
+                } else if p.status == PlanStatus::Stopping {
+                    p.status = PlanStatus::Cancelled;
+                    cancel_pending(p);
+                } else if p.tasks.iter().all(|t| t.status == TaskStatus::Completed) {
+                    p.status = PlanStatus::Completed;
+                }
+                Ok(true)
+            },
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct Driver {
+    engine: Arc<TaskEngine>,
+    server: eefn::NodeServer,
+    registry: crate::capability::CapabilityRegistry,
+    models: crate::model::ModelRegistry,
+    tiers: BTreeMap<String, Vec<String>>,
+}
+impl Driver {
+    pub(crate) fn new(runtime: &crate::Runtime) -> Self {
+        Self {
+            engine: runtime.engine.clone(),
+            server: runtime.node_server.clone(),
+            registry: runtime.registry.clone(),
+            models: runtime.model_registry.clone(),
+            tiers: crate::runtime::model_tiers(&runtime.config),
+        }
+    }
+    pub(crate) async fn session(&self, p: &Plan, index: usize) -> Result<Value> {
+        let t = &p.tasks[index];
+        let b = &p
+            .planning
+            .as_ref()
+            .context("Missing compiled plan")?
+            .bindings[index];
+        let peer = crate::request_planning::live_peer(
+            &self.server,
+            &b.node_id,
+            &t.capability,
+            self.registry.scheduling_policy().freshness_seconds,
+        )
+        .await?;
+        let session = self.server.grant_session(&b.node_id).await?;
+        if b.model_id.is_some() {
+            let candidates = self.models.route(
+                &crate::model::ModelRequest {
+                    modality: if t.capability == "vlm.analyze" {
+                        crate::model::Modality::Vlm
+                    } else {
+                        crate::model::Modality::Text
+                    },
+                    tier: t.params["tier"].as_str().map(str::to_owned),
+                    model_id: b.model_id.clone(),
+                    constraints: t.constraints.clone(),
+                },
+                &self.tiers,
+            );
+            if !candidates.iter().any(|s| {
+                s.node_id == b.node_id
+                    && Some(&s.model_id) == b.model_id.as_ref()
+                    && Some(&s.backend) == b.backend.as_ref()
+                    && peer
+                        .models
+                        .iter()
+                        .any(|m| crate::request_planning::current_model_matches(m, s))
+            }) {
+                bail!("Exact approved model/backend/role is not current")
+            }
+        } else {
+            let provider = self
+                .registry
+                .find_best_with_context(
+                    &t.capability,
+                    &t.action,
+                    &t.constraints,
+                    t.request_context.as_ref(),
+                )
+                .context("Exact approved provider unavailable")?;
+            if provider.node_id != b.node_id
+                || provider.properties["selected_resource_id"].as_str() != b.resource_id.as_deref()
+            {
+                bail!("Approved resource changed")
+            }
+            crate::capability::CapabilityRegistry::validate_provider_params(&provider, &t.params)?;
+        }
+        Ok(session)
+    }
+    async fn drive(&self, id: &str) -> Result<()> {
+        loop {
+            let p = self.engine.store.get(id)?;
+            if p.status == PlanStatus::Stopping {
+                self.engine.store.change(
+                    id,
+                    "Stop settled before further grant issuance",
+                    |p| {
+                        p.status = PlanStatus::Cancelled;
+                        cancel_pending(p);
+                        Ok(())
+                    },
+                )?;
+                return Ok(());
+            }
+            if p.status != PlanStatus::Running {
+                return Ok(());
+            }
+            let index = p
+                .execution
+                .as_ref()
+                .context("Missing execution receipt")?
+                .attempts
+                .len();
+            if index >= p.tasks.len() {
+                bail!("No task remains but execution has no terminal checkpoint")
+            }
+            let session = self.session(&p, index).await?;
+            let t = &p.tasks[index];
+            let approval = p.approval.as_ref().unwrap();
+            let policy: eefn::grants::GrantPolicy =
+                serde_json::from_value(session["limits"].clone())?;
+            policy.validate()?;
+            if session["issuer_id"] != json!(approval.issuer_id)
+                || approval.limits.max_execution_ms > policy.max_duration_ms
+                || approval.limits.max_result_bytes > policy.max_result_bytes
+            {
+                bail!("Approved issuer or node bounds changed")
+            }
+            let reservation = self
+                .registry
+                .reserve_best_with_context(
+                    &t.capability,
+                    &t.action,
+                    &t.constraints,
+                    t.request_context.as_ref(),
+                )
+                .context("Approved provider has no scheduling capacity")?;
+            if reservation.provider().node_id
+                != p.planning.as_ref().unwrap().bindings[index].node_id
+            {
+                bail!("Reservation cannot rebind a reviewed grant")
+            }
+            let now = eefn::protocol::now_ms();
+            if now < approval.approved_at_ms || now >= approval.expires_at_ms {
+                bail!("Owner approval expired or clock changed")
+            }
+            let mut grant = crate::request_approval::scope(&p, index, approval)?;
+            grant.grant_id = uuid::Uuid::new_v4().to_string();
+            grant.session_id = session["session_id"]
+                .as_str()
+                .context("No grant session")?
+                .into();
+            grant.issued_at_ms = now;
+            grant.expires_at_ms = now
+                .checked_add(grant.limits.max_execution_ms)
+                .context("Grant time overflow")?
+                .min(approval.expires_at_ms);
+            grant.validate()?;
+            let revision = p.revision;
+            self.engine.edit_review_checkpoint(
+                id,
+                "Exact execution grant saved before dispatch",
+                |p| {
+                    if p.status != PlanStatus::Running || p.revision != revision {
+                        bail!("Execution state changed before issuance")
+                    }
+                    issue(p, index, grant.clone())?;
+                    Ok(true)
+                },
+            )?;
+            let observer = Arc::new(AttemptJournal {
+                store: self.engine.store.clone(),
+                job_id: id.into(),
+                grant_id: grant.grant_id.clone(),
+            });
+            // This caller never retries an issued lease or falls back to ordinary RPC.
+            let wait = Duration::from_millis(
+                grant.expires_at_ms.saturating_sub(eefn::protocol::now_ms()) + 5000,
+            );
+            let reply = self
+                .server
+                .invoke_grant_observed(grant.clone(), wait, observer)
+                .await;
+            drop(reservation);
+            let valid = reply
+                .as_ref()
+                .ok()
+                .and_then(|v| serde_json::from_value::<GrantReport>(v["grant"].clone()).ok())
+                .is_some_and(|r| r.confirms(&grant));
+            if !valid {
+                bail!(
+                    "Issued work has no confirmed durable completion; inspect receipt/effects, never replay"
+                )
+            }
+        }
+    }
+}
+fn issue(p: &mut Plan, index: usize, g: ExecutionGrant) -> Result<()> {
+    if p.status != PlanStatus::Running {
+        bail!("Issuance requires the active reviewed execution")
+    }
+    let e = p.execution.as_mut().context("Missing execution receipt")?;
+    if e.attempts.len() != index
+        || p.tasks[index].status != TaskStatus::Pending
+        || p.tasks[index].attempts != 0
+        || (index > 0
+            && e.attempts[index - 1]
+                .report
+                .as_ref()
+                .is_none_or(|r| !r.success))
+    {
+        bail!("Task already issued or dependencies unresolved")
+    }
+    p.tasks[index].status = TaskStatus::Running;
+    p.tasks[index].attempts = 1;
+    p.tasks[index].assignments.push(crate::jobs::Assignment {
+        attempt: 1,
+        node_id: g.executor_node.clone(),
+        resource_id: g.resource_id.clone(),
+        model_id: g.model_id.clone(),
+        backend: g.backend.clone(),
+        assigned_at_ms: g.issued_at_ms,
+    });
+    e.attempts.push(GrantedAttempt {
+        grant: g,
+        state: AttemptState::Issued,
+        acknowledgement: None,
+        report: None,
+    });
+    Ok(())
+}
+fn start(p: &mut Plan, command: &ExecuteCommand, now: u64) -> Result<()> {
+    command.validate()?;
+    let a = p.approval.as_ref().context("Owner approval missing")?;
+    if p.execution.is_some()
+        || p.plan_id != command.id
+        || p.revision != command.expected_revision
+        || a.approval_sha256 != command.approval_sha256
+        || !a.active_at(p, now)
+    {
+        bail!("Execution state/approval changed")
+    }
+    p.execution = Some(ExecutionRecord {
+        schema_version: 1,
+        command: command.clone(),
+        started_at_ms: now,
+        attempts: vec![],
+    });
+    p.status = PlanStatus::Running;
+    Ok(())
+}
+impl crate::Runtime {
+    pub async fn execution_command(&self, request: ExecutionRequest) -> Result<Value> {
+        if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
+            bail!("Execution schema/runtime changed")
+        }
+        self.execute_reviewed(request.command, None).await
+    }
+    pub(crate) async fn execute_reviewed(
+        &self,
+        command: ExecuteCommand,
+        origin: Option<&str>,
+    ) -> Result<Value> {
+        command.validate()?;
+        let p = self.engine.store.get(&command.id)?;
+        if origin.is_some_and(|node| {
+            p.goal
+                .request_context
+                .as_ref()
+                .is_none_or(|c| c.origin_node() != node)
+        }) {
+            bail!("Request not found for this origin")
+        }
+        if let Some(e) = &p.execution {
+            if e.command == command {
+                return report(self, &p, true);
+            }
+            bail!("Execution already requested; inspect existing receipts, never replay or migrate")
+        }
+        let approval = p.approval.as_ref().context("Owner approval required")?;
+        if p.revision != command.expected_revision
+            || approval.approval_sha256 != command.approval_sha256
+            || !approval.active_at(&p, eefn::protocol::now_ms())
+        {
+            bail!("Exact owner approval/revision is not active")
+        }
+        let driver = Driver::new(self);
+        for index in 0..p.tasks.len() {
+            let s = driver.session(&p, index).await?;
+            if s["issuer_id"] != json!(approval.issuer_id) {
+                bail!("Owner approval issuer changed")
+            }
+        }
+        let mut saved = None;
+        let guard = self.engine.claim(&command.id, || {
+            saved = Some(self.engine.store.edit(
+                &command.id,
+                "Owner-approved execution requested; grants require a separate durable checkpoint",
+                |p| {
+                    start(p, &command, eefn::protocol::now_ms())?;
+                    Ok(true)
+                },
+            )?);
+            Ok(())
+        })?;
+        let saved = saved.unwrap();
+        let id = command.id.clone();
+        let mut closing = self.engine.shutdown_receiver();
+        tokio::spawn(async move {
+            let _guard = guard;
+            if *closing.borrow() {
+                return;
+            }
+            tokio::select! {biased;
+                _=closing.changed()=>{},
+                outcome=driver.drive(&id)=>{if let Err(error)=outcome {tracing::warn!(job_id=%id,%error,"Reviewed grant execution needs inspection; no replay");}}
+            }
+        });
+        report(self, &saved, false)
+    }
+}
+fn report(runtime: &crate::Runtime, p: &Plan, reused: bool) -> Result<Value> {
+    let e = p.execution.as_ref().context("No execution receipt")?;
+    Ok(json!(ExecuteReport {schema_version:1,report_type:"coordinator_request_execution".into(),success:true,runtime_id:runtime.instance_id.clone(),
+        id:p.plan_id.clone(),operation_id:e.command.operation_id.clone(),source_revision:e.command.expected_revision,approval_sha256:e.command.approval_sha256.clone(),
+        revision:p.revision,status:serde_json::to_value(p.status)?.as_str().unwrap().into(),request_context:p.goal.request_context.clone().context("No origin")?,
+        reused,persisted:true,execution_requested:true,automatically_retried:false,note:"Durable request receipt, not completion or remote-stop confirmation. Inspect job and grant receipts after uncertainty; no implicit replay, renewal or migration.".into()}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{event::EventBus, request_approval::tests as approval};
+    fn approved(engine: &TaskEngine) -> Plan {
+        let p = approval::compiled(engine);
+        let cmd = approval::command(&p);
+        approval::save(engine, &p, &cmd, approval::record(&cmd)).unwrap()
+    }
+    fn requested(engine: &TaskEngine) -> Plan {
+        let p = approved(engine);
+        let command = ExecuteCommand {
+            id: p.plan_id.clone(),
+            expected_revision: p.revision,
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            approval_sha256: p.approval.as_ref().unwrap().approval_sha256.clone(),
+        };
+        engine
+            .store
+            .change(&p.plan_id, "Explicit test execution receipt", |p| {
+                start(p, &command, eefn::protocol::now_ms())
+            })
+            .unwrap()
+    }
+    fn grant(p: &Plan) -> ExecutionGrant {
+        let mut g = crate::request_approval::scope(p, 0, p.approval.as_ref().unwrap()).unwrap();
+        g.grant_id = uuid::Uuid::new_v4().to_string();
+        g.session_id = uuid::Uuid::new_v4().to_string();
+        g.issued_at_ms = eefn::protocol::now_ms();
+        g.expires_at_ms = g.issued_at_ms + g.limits.max_execution_ms;
+        g
+    }
+    fn issued(engine: &TaskEngine) -> (Plan, ExecutionGrant, AttemptJournal) {
+        let p = requested(engine);
+        let g = grant(&p);
+        let p = engine
+            .store
+            .change(&p.plan_id, "Issuance before dispatch", |p| {
+                issue(p, 0, g.clone())
+            })
+            .unwrap();
+        let journal = AttemptJournal {
+            store: engine.store.clone(),
+            job_id: p.plan_id.clone(),
+            grant_id: g.grant_id.clone(),
+        };
+        (p, g, journal)
+    }
+    fn ack(g: &ExecutionGrant) -> GrantReport {
+        GrantReport::new(g, ReceiptState::Accepted, Value::Null, None)
+    }
+    fn done(g: &ExecutionGrant) -> GrantReport {
+        GrantReport::new(
+            g,
+            ReceiptState::Completed,
+            json!({"private":"unique-output-marker"}),
+            None,
+        )
+    }
+    #[test]
+    fn saved_issuance_precedes_ack_and_completion_is_scope_bound_and_idempotent() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, j) = issued(&engine);
+        let before = json!(p);
+        assert!(j.record(&done(&g)).is_err());
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), before);
+        let mut wrong = ack(&g);
+        wrong.grant_sha256 = "f".repeat(64);
+        assert!(j.record(&wrong).is_err());
+        j.record(&ack(&g)).unwrap();
+        let accepted = engine.store.get(&p.plan_id).unwrap();
+        assert_eq!(
+            accepted.execution.as_ref().unwrap().attempts[0].state,
+            AttemptState::Accepted
+        );
+        j.record(&ack(&g)).unwrap();
+        assert_eq!(
+            json!(engine.store.get(&p.plan_id).unwrap()),
+            json!(accepted)
+        );
+        j.record(&done(&g)).unwrap();
+        let completed = engine.store.get(&p.plan_id).unwrap();
+        assert_eq!(completed.status, PlanStatus::Completed);
+        assert_eq!(completed.tasks[0].status, TaskStatus::Completed);
+        assert_eq!(completed.tasks[0].assignments.len(), 1);
+        assert_eq!(completed.tasks[0].attempts, 1);
+        assert_eq!(
+            completed.tasks[0].result.as_ref().unwrap().data,
+            Value::Null
+        );
+        assert!(
+            !serde_json::to_string(&crate::jobs::view(&completed, true))
+                .unwrap()
+                .contains("unique-output-marker")
+        );
+        j.record(&done(&g)).unwrap();
+        assert_eq!(
+            json!(engine.store.get(&p.plan_id).unwrap()),
+            json!(completed)
+        );
+        let mut another = g.clone();
+        another.grant_id = uuid::Uuid::new_v4().to_string();
+        assert!(
+            engine
+                .store
+                .change(&p.plan_id, "Must not replay", |p| issue(p, 0, another))
+                .is_err()
+        );
+        assert_eq!(
+            json!(engine.store.get(&p.plan_id).unwrap()),
+            json!(completed)
+        );
+    }
+    #[tokio::test]
+    async fn restart_fences_issued_or_accepted_attempts_without_resuming_even_read_only_work() {
+        struct Never(std::sync::atomic::AtomicUsize);
+        #[async_trait::async_trait]
+        impl crate::task::TaskExecutor for Never {
+            async fn execute(&self, _: &crate::task::Task) -> Result<Value> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(Value::Null)
+            }
+        }
+        for accepted in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("jobs.db");
+            drop(rusqlite::Connection::open(&path).unwrap());
+            let store = JobStore::open(&path, 500, 64 * 1024 * 1024).unwrap();
+            let engine = TaskEngine::with_store(EventBus::new(20), store.clone());
+            let (p, g, j) = issued(&engine);
+            if accepted {
+                j.record(&ack(&g)).unwrap();
+            }
+            drop(j);
+            drop(engine);
+            drop(store);
+            let store = JobStore::open(&path, 500, 64 * 1024 * 1024).unwrap();
+            let engine = TaskEngine::with_store(EventBus::new(20), store);
+            let interrupted = engine.store.get(&p.plan_id).unwrap();
+            assert_eq!(interrupted.status, PlanStatus::Interrupted);
+            assert_eq!(interrupted.tasks[0].status, TaskStatus::Interrupted);
+            let a = &interrupted.execution.as_ref().unwrap().attempts[0];
+            assert_eq!(a.state, AttemptState::Unknown);
+            assert_eq!(a.grant, g);
+            assert_eq!(a.acknowledgement.is_some(), accepted);
+            let never = Arc::new(Never(std::sync::atomic::AtomicUsize::new(0)));
+            engine.set_executor(never.clone());
+            assert!(engine.resume_job(&p.plan_id).is_err());
+            assert!(engine.pause(&p.plan_id).is_err());
+            assert!(engine.cancel(&p.plan_id).is_err());
+            assert!(engine.run_plan(interrupted.clone()).await.is_err());
+            assert_eq!(never.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(crate::jobs::view(&interrupted, true)["can_resume"], false);
+            let j = AttemptJournal {
+                store: engine.store.clone(),
+                job_id: p.plan_id.clone(),
+                grant_id: g.grant_id.clone(),
+            };
+            assert!(j.record(&done(&g)).is_err());
+            assert_eq!(
+                json!(engine.store.get(&p.plan_id).unwrap()),
+                json!(interrupted)
+            );
+        }
+    }
+    #[test]
+    fn rejected_and_unknown_results_do_not_fake_success_or_start_new_attempts() {
+        for (state, accepted, expected) in [
+            (ReceiptState::Rejected, false, PlanStatus::Failed),
+            (ReceiptState::Unknown, true, PlanStatus::Interrupted),
+        ] {
+            let engine = TaskEngine::new(EventBus::new(20));
+            let (p, g, j) = issued(&engine);
+            if accepted {
+                j.record(&ack(&g)).unwrap();
+            }
+            let r = GrantReport::new(
+                &g,
+                state,
+                Value::Null,
+                Some("local_policy_denied_or_changed".into()),
+            );
+            j.record(&r).unwrap();
+            let terminal = engine.store.get(&p.plan_id).unwrap();
+            assert_eq!(terminal.status, expected);
+            assert!(!terminal.tasks[0].result.as_ref().unwrap().success);
+            assert!(
+                engine
+                    .store
+                    .change(&p.plan_id, "No reissue", |p| issue(p, 0, g.clone()))
+                    .is_err()
+            );
+            assert_eq!(
+                json!(engine.store.get(&p.plan_id).unwrap()),
+                json!(terminal)
+            );
+        }
+    }
+    #[test]
+    fn issuance_quota_fails_before_any_grant_and_reserved_space_allows_receipts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.db");
+        drop(rusqlite::Connection::open(&path).unwrap());
+        let store = JobStore::open(&path, 500, 20000).unwrap();
+        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        let p = requested(&engine);
+        let g = grant(&p);
+        assert!(
+            engine
+                .store
+                .change(&p.plan_id, "Quota denies issuance", |p| issue(p, 0, g))
+                .is_err()
+        );
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(p));
+        drop(engine);
+        let path = dir.path().join("large.db");
+        drop(rusqlite::Connection::open(&path).unwrap());
+        let store = JobStore::open(&path, 500, 200000).unwrap();
+        let engine = TaskEngine::with_store(EventBus::new(20), store.clone());
+        let (p, g, j) = issued(&engine);
+        // Fill other journal capacity; ACK reduces its pre-reserved footprint.
+        loop {
+            let other = crate::task::TaskPlanner
+                .plan(crate::task::Goal {
+                    request_context: None,
+                    description: "quota filler".into(),
+                    template: "system_info".into(),
+                    params: json!({}),
+                    constraints: json!({}),
+                })
+                .unwrap();
+            if store.insert(other).is_err() {
+                break;
+            }
+        }
+        j.record(&ack(&g)).unwrap();
+        let r = GrantReport::new(
+            &g,
+            ReceiptState::Completed,
+            json!({"content":"q".repeat(65000)}),
+            None,
+        );
+        assert!(r.confirms(&g));
+        j.record(&r).unwrap();
+        assert_eq!(
+            engine.store.get(&p.plan_id).unwrap().status,
+            PlanStatus::Completed
+        );
+        assert_eq!(reserved_bytes(&engine.store.get(&p.plan_id).unwrap()), 0);
+    }
+    #[test]
+    fn immutable_authority_assignments_receipts_and_attempt_state_reject_tampering() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, j) = issued(&engine);
+        j.record(&ack(&g)).unwrap();
+        let p = engine.store.get(&p.plan_id).unwrap();
+        for (field, bad) in [
+            ("params", json!({"unapproved":true})),
+            ("attempt", json!(2)),
+            ("executor_node", json!("other")),
+            ("session_id", json!("not-a-session")),
+            ("model_id", json!("other-model")),
+            ("expires_at_ms", json!(g.expires_at_ms + 1)),
+        ] {
+            let mut bad_plan = json!(p);
+            bad_plan["execution"]["attempts"][0]["grant"][field] = bad;
+            let bad: Plan = serde_json::from_value(bad_plan).unwrap();
+            assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        }
+        let mut bad = p.clone();
+        bad.tasks[0].assignments[0].node_id = "other".into();
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        let mut bad = p.clone();
+        bad.execution.as_mut().unwrap().attempts[0].acknowledgement = None;
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        let mut bad = p.clone();
+        bad.status = PlanStatus::Interrupted;
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        let mut bad = p.clone();
+        bad.execution.as_mut().unwrap().command.approval_sha256 = "f".repeat(64);
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        let mut bad = p.clone();
+        bad.results.insert(g.task_id.clone(), result(&g, &done(&g)));
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+    }
+    #[test]
+    fn stop_without_issuance_is_cancelled_but_accepted_work_requires_a_final_receipt() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let p = requested(&engine);
+        let guard = engine.claim(&p.plan_id, || Ok(())).unwrap();
+        let stopping = engine.cancel(&p.plan_id).unwrap();
+        assert_eq!(stopping.status, PlanStatus::Stopping);
+        drop(guard);
+        assert_eq!(
+            engine.store.get(&p.plan_id).unwrap().status,
+            PlanStatus::Cancelled
+        );
+        let (p, g, j) = issued(&engine);
+        let guard = engine.claim(&p.plan_id, || Ok(())).unwrap();
+        j.record(&ack(&g)).unwrap();
+        assert_eq!(
+            engine.cancel(&p.plan_id).unwrap().status,
+            PlanStatus::Stopping
+        );
+        j.record(&done(&g)).unwrap();
+        drop(guard);
+        let settled = engine.store.get(&p.plan_id).unwrap();
+        assert_eq!(settled.status, PlanStatus::Cancelled);
+        assert_eq!(settled.tasks[0].status, TaskStatus::Completed);
+        assert_eq!(
+            settled.execution.as_ref().unwrap().attempts[0].state,
+            AttemptState::Completed
+        );
+    }
+    #[test]
+    fn start_requires_the_exact_approval_receipt_and_never_renews() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let p = approved(&engine);
+        let a = p.approval.as_ref().unwrap();
+        let good = ExecuteCommand {
+            id: p.plan_id.clone(),
+            expected_revision: p.revision,
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            approval_sha256: a.approval_sha256.clone(),
+        };
+        for (field, value) in [
+            ("id", json!(uuid::Uuid::new_v4().simple().to_string())),
+            ("expected_revision", json!(p.revision + 1)),
+            ("approval_sha256", json!("f".repeat(64))),
+        ] {
+            let mut bad = json!(good);
+            bad[field] = value;
+            let bad: ExecuteCommand = serde_json::from_value(bad).unwrap();
+            assert!(start(&mut p.clone(), &bad, a.approved_at_ms).is_err());
+        }
+        assert!(start(&mut p.clone(), &good, a.expires_at_ms).is_err());
+        assert!(start(&mut p.clone(), &good, a.approved_at_ms - 1).is_err());
+        let started = engine
+            .store
+            .change(&p.plan_id, "start once", |p| {
+                start(p, &good, eefn::protocol::now_ms())
+            })
+            .unwrap();
+        assert!(
+            engine
+                .store
+                .change(&p.plan_id, "cannot start again", |p| start(
+                    p,
+                    &good,
+                    eefn::protocol::now_ms()
+                ))
+                .is_err()
+        );
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(started));
+    }
+}

@@ -12,6 +12,11 @@ use std::{
 };
 
 pub const MAX_DURATION_MS: u64 = 30_000;
+/// Durable coordinator journal hook. Called on validated, session-bound reports
+/// before acknowledging them to the RPC caller; never relies on broadcast events.
+pub trait GrantObserver: Send + Sync {
+    fn record(&self, report: &GrantReport) -> Result<()>;
+}
 pub fn journal_path(config: &Path) -> std::path::PathBuf {
     let mut name = config.as_os_str().to_os_string();
     name.push(".grant-receipts.sqlite3");

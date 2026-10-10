@@ -66,7 +66,7 @@ impl ApprovalRecord {
 
 /// Validate the *shape* of each fixed operation with the node's exact contract.
 /// Temporary validation values are never persisted, sent or returned as grants.
-fn scope(plan: &Plan, index: usize, record: &ApprovalRecord) -> Result<ExecutionGrant> {
+pub(crate) fn scope(plan: &Plan, index: usize, record: &ApprovalRecord) -> Result<ExecutionGrant> {
     let task = &plan.tasks[index];
     let binding = &plan
         .planning
@@ -130,7 +130,8 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
     if uuid::Uuid::parse_str(&record.operation_id)?.is_nil()
         || record.schema_version != 1
         || !hex_digest(&record.issuer_id)
-        || !matches!(plan.status, PlanStatus::Approved | PlanStatus::Cancelled)
+        || (plan.execution.is_none()
+            && !matches!(plan.status, PlanStatus::Approved | PlanStatus::Cancelled))
         || record.source_revision <= planning.source_revision
         || record.source_revision >= plan.revision
         || record.approved_at_ms < planning.compiled_at_ms
@@ -238,16 +239,9 @@ pub(crate) async fn approve(
         limits: limits.clone(),
         approval_sha256: String::new(),
     };
-    for (index, task) in saved.tasks.iter().enumerate() {
-        let binding = &saved.planning.as_ref().unwrap().bindings[index];
-        let peer = crate::request_planning::live_peer(
-            &runtime.node_server,
-            &binding.node_id,
-            &task.capability,
-            runtime.registry.scheduling_policy().freshness_seconds,
-        )
-        .await?;
-        let session = runtime.node_server.grant_session(&binding.node_id).await?;
+    let driver = crate::request_execution::Driver::new(runtime);
+    for index in 0..saved.tasks.len() {
+        let session = driver.session(&saved, index).await?;
         let issuer = session["issuer_id"]
             .as_str()
             .context("Missing grant issuer")?;
@@ -265,52 +259,6 @@ pub(crate) async fn approve(
             bail!("Approval exceeds the selected node's advertised grant bounds")
         }
         scope(&saved, index, &record)?;
-        if binding.model_id.is_some() {
-            let candidates = runtime.model_registry.route(
-                &crate::model::ModelRequest {
-                    modality: if task.capability == "vlm.analyze" {
-                        crate::model::Modality::Vlm
-                    } else {
-                        crate::model::Modality::Text
-                    },
-                    tier: task.params["tier"].as_str().map(str::to_owned),
-                    model_id: binding.model_id.clone(),
-                    constraints: task.constraints.clone(),
-                },
-                &crate::runtime::model_tiers(&runtime.config),
-            );
-            if !candidates.iter().any(|spec| {
-                spec.node_id == binding.node_id
-                    && Some(&spec.model_id) == binding.model_id.as_ref()
-                    && Some(&spec.backend) == binding.backend.as_ref()
-                    && peer
-                        .models
-                        .iter()
-                        .any(|m| crate::request_planning::current_model_matches(m, spec))
-            }) {
-                bail!("The exact planned model/backend/role is no longer current")
-            }
-        } else {
-            let provider = runtime
-                .registry
-                .find_best_with_context(
-                    &task.capability,
-                    &task.action,
-                    &task.constraints,
-                    task.request_context.as_ref(),
-                )
-                .context("The exact planned provider is no longer available")?;
-            if provider.node_id != binding.node_id
-                || provider.properties["selected_resource_id"].as_str()
-                    != binding.resource_id.as_deref()
-            {
-                bail!("The planned executor/resource changed; never silently rebind an approval")
-            }
-            crate::capability::CapabilityRegistry::validate_provider_params(
-                &provider,
-                &task.params,
-            )?;
-        }
     }
     record.approval_sha256 = digest(&record)?;
     let mut candidate = saved.clone();
@@ -335,11 +283,11 @@ pub(crate) async fn approve(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{event::EventBus, jobs::JobStore, request_planning, task::TaskEngine};
     use serde_json::{Value, json};
-    fn compiled(engine: &TaskEngine) -> Plan {
+    pub(crate) fn compiled(engine: &TaskEngine) -> Plan {
         let saved = request_planning::tests::review(engine);
         let candidate = request_planning::tests::compiled(&saved);
         engine
@@ -352,7 +300,7 @@ mod tests {
             })
             .unwrap()
     }
-    fn command(plan: &Plan) -> PlanningCommand {
+    pub(crate) fn command(plan: &Plan) -> PlanningCommand {
         PlanningCommand::Approve {
             id: plan.plan_id.clone(),
             expected_revision: plan.revision,
@@ -365,7 +313,7 @@ mod tests {
             },
         }
     }
-    fn record(command: &PlanningCommand) -> ApprovalRecord {
+    pub(crate) fn record(command: &PlanningCommand) -> ApprovalRecord {
         let PlanningCommand::Approve {
             expected_revision,
             operation_id,
@@ -393,7 +341,7 @@ mod tests {
         r.approval_sha256 = digest(&r).unwrap();
         r
     }
-    fn save(
+    pub(crate) fn save(
         engine: &TaskEngine,
         plan: &Plan,
         cmd: &PlanningCommand,

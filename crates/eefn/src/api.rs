@@ -106,6 +106,10 @@ impl NodeService {
             )
             .route("/api/commands/requests/drafts", post(request_draft_command))
             .route(
+                "/api/commands/requests/execute",
+                post(request_execute_command),
+            )
+            .route(
                 "/api/commands/requests/review-proposal",
                 post(request_review_proposal),
             )
@@ -296,6 +300,12 @@ async fn request_draft_command(
     Json(request): Json<crate::request_drafts::DraftRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.draft_command(request).await?))
+}
+async fn request_execute_command(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_execution::ExecuteRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.execute_command(request).await?))
 }
 
 async fn chat(

@@ -4,6 +4,7 @@ import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
+import {createServer as createHTTPServer} from 'node:http';
 import {randomBytes, randomUUID} from 'node:crypto';
 const root=resolve(import.meta.dirname,'..');
 const scratch=await mkdtemp(join(root,'.validation/request-drafts-'));
@@ -33,18 +34,25 @@ async function json(url,body) {const r=await response(url,body);assert(r.status>
 const proposal={schema_version:1,intent:'information',goal:'Inspect node status',context_hints:[],constraints:[],
   suggested_capabilities:['system.info'],complexity:'simple',workload:'one_shot',needs_clarification:true,clarification:'Which node?'};
 const original='  Inspect that node\n';
+const coordinatorSecret=randomBytes(24).toString('hex');
+let eefProcess,gateRequests=0;
+const gatedResponses=new Set();
+const gateServer=createHTTPServer((req,res)=>{gateRequests++;gatedResponses.add(res);res.on('close',()=>gatedResponses.delete(res));});
 try {
+  await new Promise(r=>gateServer.listen(0,'127.0.0.1',r));
   const [web,gateway]=await Promise.all([port(),port()]),base=`http://127.0.0.1:${web}`;
   const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
   await writeFile(eefConfig,yaml);
-  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:randomBytes(24).toString('hex')});
+  eefProcess=launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:coordinatorSecret});
   await until(async()=>(await json(base+'/api/diagnostics')).initialized,'coordinator startup');
   const nodes=[];
   for(const name of ['a','b']) {
     const config=join(scratch,name+'.json'),apiPort=await port(),id='draft-fixture-'+name;
     await writeFile(config,JSON.stringify({node_id:id,name:'Draft fixture '+name,psk:'',endpoints:[],auto_local:false,local_pairing:false,
       dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:apiPort},metadata:{area:['Home',name==='a'?'Bedroom':'Living room']},
-      heartbeat_seconds:1,permissions:{remote_updates:false},models:{provider:'llamacpp',llamacpp:{slots:[]}},update:{policy:'off'}}));
+      heartbeat_seconds:1,permissions:{remote_updates:false,filesystem:{read:true,write:true,roots:[scratch]},
+        http:{enabled:true,allowed_hosts:['127.0.0.1'],allow_private_networks:true}},
+      models:{provider:'llamacpp',llamacpp:{slots:[]}},update:{policy:'off'}}));
     launch('eefn',['--config',config,'--no-ui']);const api=`http://127.0.0.1:${apiPort}`;
     await until(async()=>(await json(api+'/api/status')).node_id===id,'node startup');
     const invitation=await coordinator(['credentials','provision','--node',id,'--address',`127.0.0.1:${gateway}`]);
@@ -192,13 +200,72 @@ try {
   assert.equal(cancelledRetry.reused,true);assert.deepEqual(cancelledRetry.plan,cancelled.plan);
   await bad(['requests','revise-proposal',id,'--revision',String(stopped.revision),'--file',file]);
   await node(['jobs','remove',id]);assert.equal((await node(['jobs','list'])).data.total,0);
+  // Explicitly approved node-origin execution uses a durable grant, not legacy RPC.
+  async function prepared(template,capability,params,maxExecution=5000,target=owner) {
+    await writeFile(file,JSON.stringify({schema_version:1,original_text:'Execute fixture '+template,
+      proposal:{...revision,suggested_capabilities:[capability]}}));
+    const draft=(await node(['requests','open-proposal','--file',file])).result;
+    await writeFile(planFile,JSON.stringify({schema_version:1,template,params,constraints:{node_id:target.id}}));
+    const p=(await coordinator(['requests','compile',draft.id,'--revision','1','--file',planFile])).plan;
+    const a=(await coordinator(['requests','approve',draft.id,'--revision','2','--digest',p.planning.plan_sha256,
+      '--valid-for-ms','60000','--max-execution-ms',String(maxExecution),'--max-result-bytes','16384'])).plan;
+    return {plan:a,command:{id:a.plan_id,expected_revision:3,operation_id:randomUUID(),approval_sha256:a.approval.approval_sha256}};
+  }
+  const effectFile=join(scratch,'granted-write.txt');
+  const writeJob=await prepared('write_file','filesystem',{path:effectFile,content:'one authorized write'},5000,other);
+  const executeUrl=owner.api+'/api/commands/requests/execute';
+  const executeRequest={schema_version:1,expected_node_id:owner.id,command:writeJob.command};
+  assert.equal((await response(executeUrl,executeRequest,'https://untrusted.example')).status,403);
+  assert.equal((await response(executeUrl,{...executeRequest,command:{...writeJob.command,retry:true}})).status,422);
+  assert.equal((await response(other.api+'/api/commands/requests/execute',{...executeRequest,expected_node_id:other.id})).value.success,false);
+  const executing=await node(['requests','execute',writeJob.command.id,'--revision','3','--approval-digest',writeJob.command.approval_sha256,'--operation-id',writeJob.command.operation_id]);
+  assert.equal(executing.success,true);assert.equal(executing.coordinator_acknowledged,true);assert.equal(executing.result.reused,false);
+  await until(async()=>(await node(['jobs','get',writeJob.command.id])).data.status==='completed','durable granted write completion');
+  assert.equal(await readFile(effectFile,'utf8'),'one authorized write');
+  const completed=(await coordinator(['requests','inspect',writeJob.command.id])).plan;
+  assert.equal(completed.execution.attempts.length,1);const attempt=completed.execution.attempts[0];
+  assert.equal(attempt.state,'completed');assert.equal(attempt.acknowledgement.state,'accepted');assert.equal(attempt.report.state,'completed');
+  assert.equal(attempt.report.success,true);assert.equal(attempt.grant.executor_node,other.id);assert.equal(attempt.grant.attempt,1);
+  assert.deepEqual(attempt.grant.request_context,writeJob.plan.goal.request_context);assert.equal(attempt.grant.plan_sha256,writeJob.plan.planning.plan_sha256);
+  assert.equal((await cli('eefn',other.config,['grants','receipt','--id',attempt.grant.grant_id])).receipt.state,'completed');
+  assert.equal((await cli('eefn',other.config,['jobs','get',writeJob.command.id],false)).success,false,'executor must not become request owner');
+  await writeFile(effectFile,'external owner marker');
+  const duplicate=await json(executeUrl,executeRequest);assert.equal(duplicate.result.reused,true);
+  const ownerDuplicate=await coordinator(['requests','execute',writeJob.command.id,'--revision','3','--approval-digest',writeJob.command.approval_sha256,'--operation-id',writeJob.command.operation_id]);
+  assert.equal(ownerDuplicate.reused,true);assert.equal(await readFile(effectFile,'utf8'),'external owner marker');
+  await bad(['requests','execute',writeJob.command.id,'--revision','3','--approval-digest',writeJob.command.approval_sha256]);
+  await bad(['jobs','resume',writeJob.command.id]);
+  assert.deepEqual((await coordinator(['requests','inspect',writeJob.command.id])).plan,completed,'duplicate execution cannot rewrite receipts');
+  // Lose the coordinator while the real node has an accepted, still-pending HTTP operation.
+  const uncertain=await prepared('http_request','http.request',{url:`http://127.0.0.1:${gateServer.address().port}/uncertain`,method:'GET',timeout_seconds:20},15000);
+  const start=await node(['requests','execute',uncertain.command.id,'--revision','3','--approval-digest',uncertain.command.approval_sha256,'--operation-id',uncertain.command.operation_id]);
+  assert.equal(start.success,true);
+  await until(async()=>gateRequests===1&&(await node(['jobs','get',uncertain.command.id])).data.grant_attempts?.[0]?.state==='accepted','node HTTP effect and persisted EEF acceptance');
+  const accepted=(await coordinator(['requests','inspect',uncertain.command.id])).plan;
+  eefProcess.kill();await eefProcess.result;
+  eefProcess=launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:coordinatorSecret});
+  await until(async()=>{const d=await coordinator(['diagnostics']);return d.initialized&&d.registered_node_count===2;},'reopen uncertain issuance without replay');
+  const interrupted=(await coordinator(['requests','inspect',uncertain.command.id])).plan;
+  assert.equal(interrupted.status,'interrupted');assert.equal(interrupted.execution.attempts[0].state,'unknown');
+  assert.deepEqual(interrupted.execution.attempts[0].grant,accepted.execution.attempts[0].grant);assert.equal(interrupted.tasks[0].status,'interrupted');
+  assert.equal((await node(['jobs','get',uncertain.command.id])).data.can_resume,false);
+  const uncertaintyReuse=await json(executeUrl,{schema_version:1,expected_node_id:owner.id,command:uncertain.command});
+  assert.equal(uncertaintyReuse.result.reused,true);assert.equal(uncertaintyReuse.result.status,'interrupted');assert.equal(gateRequests,1);
+  await bad(['jobs','resume',uncertain.command.id]);await bad(['jobs','stop',uncertain.command.id]);
+  await bad(['requests','execute',uncertain.command.id,'--revision','3','--approval-digest',uncertain.command.approval_sha256]);
+  assert.equal((await node(['grants','receipt','--id',interrupted.execution.attempts[0].grant.grant_id])).receipt.state,'accepted');
+  for(const res of gatedResponses)res.end('late data is not completion authority');
+  assert.equal(gateRequests,1);assert.equal(await readFile(effectFile,'utf8'),'external owner marker');
+  assert.deepEqual((await coordinator(['requests','inspect',writeJob.command.id])).plan,completed,'completed grants must survive EEF restart unchanged');
   await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,two_logical_nodes:true,pinned_tls13:true,api_only:true,
     model_free:true,origin_owned:true,immutable_original:true,clarification_answers:true,proposal_history:true,
-    receipt_deduplication:true,revision_checks:true,restart_persistence:true,no_executor:true,no_automatic_replay:true,
+    receipt_deduplication:true,revision_checks:true,restart_persistence:true,no_automatic_replay:true,
     physical_two_pc:false,explicit_concrete_planning:true,compiled_without_dispatch:true,immutable_plan_digest:true,
-    bounded_owner_approval:true,approved_without_grant_or_dispatch:true,approval_restart_and_cancellation:true,execution_grants:false},null,2));
+    bounded_owner_approval:true,approved_without_grant_or_dispatch:true,approval_restart_and_cancellation:true,
+    execution_grants:true,durable_issuance_and_ack:true,origin_execution:true,separate_origin_and_executor:true,uncertain_restart_no_replay:true},null,2));
   console.log('Durable request validation passed: '+scratch);
 } finally {
+  for(const res of gatedResponses)res.destroy();gateServer.closeAllConnections();await new Promise(r=>gateServer.close(r));
   for(const child of children)if(child.exitCode===null)child.kill();
   await Promise.allSettled(children.map(c=>c.result));
 }

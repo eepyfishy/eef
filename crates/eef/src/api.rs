@@ -142,6 +142,7 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
         .route("/api/status", get(status))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/commands/requests/planning", post(request_planning))
+        .route("/api/commands/requests/execute", post(request_execute))
         .route("/api/diagnostics/probe", post(diagnostic_probe))
         .route("/api/commands/models", get(model_inventory))
         .route("/api/commands/models/route", get(model_route_preview))
@@ -224,6 +225,12 @@ async fn request_planning(
     Json(request): Json<crate::request_planning::PlanningRequest>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.planning_command(request).await?))
+}
+async fn request_execute(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::request_execution::ExecutionRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.execution_command(request).await?))
 }
 async fn diagnostic_probe(
     State(runtime): State<Arc<Runtime>>,

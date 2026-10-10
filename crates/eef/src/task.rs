@@ -130,6 +130,8 @@ pub struct TaskResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<crate::request_execution::ExecutionRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<crate::request_approval::ApprovalRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planning: Option<crate::request_planning::PlanningRecord>,
@@ -287,6 +289,7 @@ impl TaskPlanner {
             });
         }
         Ok(Plan {
+            execution: None,
             approval: None,
             planning: None,
             request_review: None,
@@ -541,7 +544,7 @@ struct ActiveJobs {
     ids: HashSet<String>,
 }
 
-struct ActiveJob {
+pub(crate) struct ActiveJob {
     engine: TaskEngine,
     id: String,
 }
@@ -592,7 +595,11 @@ impl TaskEngine {
     pub fn list_plans(&self) -> Result<Vec<Plan>> {
         self.store.list()
     }
-    fn claim(&self, id: &str, prepare: impl FnOnce() -> Result<()>) -> Result<ActiveJob> {
+    pub(crate) fn claim(
+        &self,
+        id: &str,
+        prepare: impl FnOnce() -> Result<()>,
+    ) -> Result<ActiveJob> {
         let mut active = self.active.lock().expect("active jobs");
         if active.closing {
             bail!("Coordinator is stopping; no new job execution is accepted")
@@ -624,6 +631,7 @@ impl TaskEngine {
     pub fn pause(&self, id: &str) -> Result<Plan> {
         self.store
             .change(id, "Pause requested; current batch may finish", |plan| {
+                if plan.request_review.is_some() { bail!("Reviewed grant execution has no pause acknowledgement; use Stop and inspect") }
                 plan.status = match plan.status {
                     PlanStatus::Running => PlanStatus::Pausing,
                     PlanStatus::Pending | PlanStatus::Paused => PlanStatus::Paused,
@@ -641,6 +649,9 @@ impl TaskEngine {
             id,
             "Stop requested; completed actions are not undone",
             |plan| {
+                if plan.execution.as_ref().is_some_and(|e|e.attempts.iter().any(|a|a.state==crate::request_execution::AttemptState::Unknown)) {
+                    bail!("Issued work is uncertain; inspect grant receipts/effects before claiming remote stop. It will not replay or migrate.")
+                }
                 if matches!(
                     plan.status,
                     PlanStatus::Completed | PlanStatus::Failed | PlanStatus::Cancelled
@@ -671,6 +682,7 @@ impl TaskEngine {
         }
         let guard = self.claim(id, || {
             self.store.change(id,"Owner requested resume",|plan|{
+            if plan.request_review.is_some() {bail!("Reviewed grants cannot resume or replay through legacy runners; inspect uncertain effects")}
             if !matches!(plan.status,PlanStatus::Paused|PlanStatus::Interrupted) {bail!("Only paused or interrupted jobs can resume")}
             if plan.tasks.iter().any(|t|t.status==TaskStatus::Interrupted&&!retry_safe(t)) {
                 bail!("An interrupted action may already have happened. This job cannot safely resume; review it and create new work explicitly.")
@@ -760,6 +772,9 @@ impl TaskEngine {
         while !self.active.lock().expect("active jobs").ids.is_empty() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+    }
+    pub(crate) fn shutdown_receiver(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.stopping.subscribe()
     }
     pub(crate) fn edit_review_plan(
         &self,

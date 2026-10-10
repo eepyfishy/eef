@@ -1,12 +1,14 @@
 # Execution grant boundary (unreleased after alpha.6)
 
-This is a node-side prerequisite for roadmap stages 6-7, **not a completed
-approval/execution workflow or a stable release**. The subsequent EEF
+This is an explicit one-shot boundary for roadmap stages 6-7, **not a completed
+automatic request workflow or a stable release**. The EEF
 [bounded owner approval command](COMMANDS.md#bounded-owner-request-approval-unreleased-after-alpha6)
-retains `approved` without issuing a grant or starting work; normal reviewed
-requests remain non-executable. Durable issuance/ACK integration in the existing
-job journal, executor dispatch, reconciliation and
-physical two-PC acceptance remain required. No public API lets a proposal or LM
+retains `approved` without issuing a grant or starting work. A subsequent
+[explicit execution command](COMMANDS.md#explicit-approved-request-execution-unreleased-after-alpha6)
+durably issues fixed grants in the existing job journal and checkpoints matching
+acceptance/completion before confirming them. Automatic semantic planning,
+uncertainty reconciliation and physical two-PC acceptance remain required.
+No public API lets a proposal or LM
 directly manufacture these grants. Existing legacy task/chat and management RPCs
 are unchanged and are **not** claimed to be grant-enforced.
 
@@ -67,8 +69,14 @@ Completion confirms the same grant and scope digest, issuer/session/executor,
 job/task/attempt and plan digest. The gateway accepts completion only after that
 session's matching acceptance. Forged/duplicate ACKs, unpersisted success, ordinary
 RPC responses and attempts to undo an ACK with a later `rejected` reply cannot
-confirm granted execution. Node acceptance currently has a scoped gateway event;
-persisting it into EEF's owner-approved job lifecycle is still pending.
+confirm granted execution. The reviewed execution path uses a direct journal
+observer, not a broadcast listener: issuance is saved before dispatch, and matching
+acceptance/final reports are saved before the RPC waiter receives confirmation.
+Journal failure cannot yield confirmed success. This is not a distributed second
+permission-to-start: effects can begin after the node sends acceptance, before EEF
+checkpoints it. Results are bounded and stored once; ordinary job views redact
+parameters and raw reports. Exact retained command retries inspect without issuing
+another grant. Restart marks outstanding attempts unknown and never resumes them.
 
 If acceptance cannot be sent, no operation starts, but its receipt remains consumed
 and uncertain. Disconnect/restart does not revive it or an old lease. Lost replies
@@ -124,7 +132,10 @@ inspection is not permission to replay. Output has `report_type: node_grant_rece
 Equivalent guarded node-local API: `POST /api/commands/grants/receipt` with exactly
 `schema_version: 1`, `expected_node_id` and `grant_id`. Wrong nodes/schemas, extra
 authority fields, missing/damaged receipts and cross-site callers reject. No receipt
-erase, replay, reset, recovery execution or remote grant-issuance command is exposed.
+erase, replay, reset or recovery execution command is exposed. The separate
+`requests execute` command accepts only an exact approved retained plan, never a
+caller-supplied raw grant. Uncertain attempts cannot be hidden by Stop or resumed
+through legacy job runners; explicit reconciliation remains a later boundary.
 
 Tests include real pinned-TLS client/gateway file-write execution, acceptance and
 completion scope checks, unchanged owner markers after replay and node restart,

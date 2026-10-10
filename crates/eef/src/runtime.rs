@@ -425,7 +425,7 @@ impl Runtime {
                         submissions.spawn(async move { worker.on_node_submission(message).await });
                     }
                     Ok(NodeEvent::Down(node_id)) => runtime.sync_node_state(&node_id, true).await,
-                    Ok(NodeEvent::GrantAccepted(_)) => {} // Journal integration follows explicit owner approval; never dispatch here.
+                    Ok(NodeEvent::GrantAccepted(_)) => {} // Direct durable observers own grant checkpoints; this broadcast is informational only.
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
                         let _ = runtime.node_event_loss_count.fetch_update(
                             Ordering::Relaxed,
@@ -701,6 +701,19 @@ impl Runtime {
                         &self.node_server,
                     )
                     .await
+            }
+            "requests.execute" => {
+                match serde_json::from_value::<eefn::request_execution::ExecuteCommand>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(command) if command.operation_id == context.request_id() => {
+                        self.execute_reviewed(command, Some(context.origin_node()))
+                            .await
+                    }
+                    _ => Err(anyhow::anyhow!(
+                        "Execution receipt does not match authenticated origin context"
+                    )),
+                }
             }
             kind if kind.starts_with("jobs.") => {
                 self.engine

@@ -293,6 +293,66 @@ async fn execute_draft_command(
         "outcome_unknown":command.mutates(),"error_code":"draft_unconfirmed",
         "error":"No confirmed draft reply. Inspect the draft/jobs.find before retrying. No fallback or automatic replay."})))
 }
+async fn execute_reviewed_command(
+    args: &Args,
+    command: eefn::request_execution::ExecuteCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.validate()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; execution commands never launch another runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!("http://{address}/api/commands/requests/execute"))
+            .timeout(Duration::from_secs(150))
+            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"command":command}))
+            .send()
+            .await?;
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok
+            || value["schema_version"] != 1
+            || value["report_type"] != "request_execution"
+            || value["node_id"] != file.node_id
+            || value["id"] != command.id
+            || value["operation_id"] != command.operation_id
+            || value["automatically_retried"] != false
+            || !value["success"].is_boolean()
+        {
+            bail!("Unrecognized execution report")
+        }
+        if value["success"] == true
+            && (value["coordinator_acknowledged"] != true
+                || value["outcome_unknown"] != false
+                || !eefn::request_execution::confirmed(
+                    &value["result"],
+                    &command,
+                    Some(&file.node_id),
+                    None,
+                ))
+        {
+            bail!("Unconfirmed coordinator execution receipt")
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"request_execution","success":false,"node_id":file.node_id,
+        "id":command.id,"operation_id":command.operation_id,"coordinator_acknowledged":false,"outcome_unknown":true,"automatically_retried":false,
+        "error_code":"execution_unconfirmed","note":"Inspect jobs/request draft before retrying. No fallback, replay or renewal."})))
+}
 
 async fn execute_download_command(
     args: &Args,
@@ -673,6 +733,25 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 execute_draft_command(
                     args,
                     eefn::request_drafts::DraftCommand::Get { id: id.clone() },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::Execute {
+                id,
+                revision,
+                approval_digest,
+                operation_id,
+            } => {
+                execute_reviewed_command(
+                    args,
+                    eefn::request_execution::ExecuteCommand {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                        approval_sha256: approval_digest.clone(),
+                        operation_id: operation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    },
                 )
                 .await
             }

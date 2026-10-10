@@ -278,7 +278,38 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .build()?;
     let response = match command {
         Command::Requests { command } => {
+            if let eef::request_planning::PlanningAction::Execute {
+                id,
+                revision,
+                approval_digest,
+                operation_id,
+            } = command
+            {
+                let command = eefn::request_execution::ExecuteCommand {
+                    id: id.clone(),
+                    expected_revision: *revision,
+                    approval_sha256: approval_digest.clone(),
+                    operation_id: operation_id
+                        .clone()
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                };
+                command.validate()?;
+                let state =
+                    command_response(client.get(format!("{base}/api/diagnostics")).send().await?)
+                        .await?;
+                let runtime = state["runtime_id"].as_str().context("Missing runtime ID")?;
+                let exchange=async {
+                    let result=command_response(client.post(format!("{base}/api/commands/requests/execute"))
+                        .json(&json!({"schema_version":1,"expected_runtime_id":runtime,"command":command})).send().await?).await?;
+                    if !eefn::request_execution::confirmed(&result,&command,None,Some(runtime)) {bail!("Unconfirmed execution receipt")}
+                    Ok::<_,anyhow::Error>(result)
+                }.await;
+                return Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"request_execution","success":false,
+                    "id":command.id,"operation_id":command.operation_id,"outcome_unknown":true,"automatically_retried":false,
+                    "error_code":"execution_unconfirmed","note":"Inspect the request/job and receipts before retrying; no fallback, replay or automatic renewal."})));
+            }
             let command = match command {
+                eef::request_planning::PlanningAction::Execute { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Inspect { id } => {
                     eef::request_planning::PlanningCommand::Inspect { id: id.clone() }
                 }

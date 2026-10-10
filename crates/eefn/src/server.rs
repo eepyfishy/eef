@@ -119,6 +119,7 @@ struct Connection {
 }
 
 struct Pending {
+    observer: Option<Arc<dyn crate::grants::GrantObserver>>,
     grant: Option<crate::grants::ExecutionGrant>,
     acknowledged: bool,
     node_id: String,
@@ -380,7 +381,7 @@ impl NodeServer {
         wait: Duration,
         context: Option<&crate::context::RequestContext>,
     ) -> Result<Value> {
-        self.invoke_message(node_id,json!({"type":"request","capability":capability,"action":action,"params":params,"request_context":context}),wait,None).await
+        self.invoke_message(node_id,json!({"type":"request","capability":capability,"action":action,"params":params,"request_context":context}),wait,None,None).await
     }
 
     /// Issuer/session selection only, never an execution approval. The caller
@@ -428,6 +429,24 @@ impl NodeServer {
             json!({"type":"execute_grant","grant":grant}),
             wait,
             Some(grant),
+            None,
+        )
+        .await
+    }
+    pub async fn invoke_grant_observed(
+        &self,
+        grant: crate::grants::ExecutionGrant,
+        wait: Duration,
+        observer: Arc<dyn crate::grants::GrantObserver>,
+    ) -> Result<Value> {
+        grant.validate()?;
+        let node = grant.executor_node.clone();
+        self.invoke_message(
+            &node,
+            json!({"type":"execute_grant","grant":grant}),
+            wait,
+            Some(grant),
+            Some(observer),
         )
         .await
     }
@@ -437,6 +456,7 @@ impl NodeServer {
         mut message: Value,
         wait: Duration,
         grant: Option<crate::grants::ExecutionGrant>,
+        observer: Option<Arc<dyn crate::grants::GrantObserver>>,
     ) -> Result<Value> {
         // Hold the routing read guard until the waiter is registered. Session
         // cleanup removes the route before draining that session's waiters.
@@ -463,6 +483,7 @@ impl NodeServer {
         self.inner.pending.lock().await.insert(
             request_id.clone(),
             Pending {
+                observer,
                 grant,
                 acknowledged: false,
                 node_id: node_id.into(),
@@ -971,6 +992,15 @@ impl NodeServer {
             return;
         }
         if let Some(pending) = requests.remove(&id) {
+            if let Some(observer) = &pending.observer {
+                let report =
+                    serde_json::from_value::<crate::grants::GrantReport>(message["grant"].clone())
+                        .expect("validated grant report");
+                if observer.record(&report).is_err() {
+                    let _ = pending.sender.send(json!({"success":false,"error_type":"GrantJournalError","error":"Grant completion checkpoint failed; effects may have happened"}));
+                    return;
+                }
+            }
             let _ = pending.sender.send(message);
         }
     }
@@ -991,6 +1021,12 @@ impl NodeServer {
             return;
         };
         if r.state == crate::grants::ReceiptState::Accepted && r.confirms(g) {
+            if p.observer.as_ref().is_some_and(|o| o.record(&r).is_err()) {
+                if let Some(p) = pending.remove(id) {
+                    let _ = p.sender.send(json!({"success":false,"error_type":"GrantJournalError","error":"Grant acceptance checkpoint failed; effects may have happened"}));
+                }
+                return;
+            }
             p.acknowledged = true;
             let _ = self.inner.events.send(NodeEvent::GrantAccepted(json!(r)));
         }
@@ -1908,6 +1944,7 @@ mod tests {
             "request".into(),
             Pending {
                 node_id: "owner".into(),
+                observer: None,
                 grant: None,
                 acknowledged: false,
                 session_id: Uuid::nil(),
@@ -1940,6 +1977,7 @@ mod tests {
             "wire-id".into(),
             Pending {
                 node_id: "owner".into(),
+                observer: None,
                 session_id: session,
                 grant: Some(g.clone()),
                 acknowledged: false,
@@ -2006,6 +2044,112 @@ mod tests {
         );
         assert!(queue.try_recv().is_err());
         assert!(server.inner.pending.lock().await.is_empty());
+    }
+    #[tokio::test]
+    async fn durable_observer_failures_never_confirm_ack_or_completion_via_broadcast() {
+        use crate::grants::{GrantObserver, GrantReport, ReceiptState};
+        struct Observer {
+            fail: ReceiptState,
+            saved: std::sync::Mutex<Vec<ReceiptState>>,
+        }
+        impl GrantObserver for Observer {
+            fn record(&self, r: &GrantReport) -> Result<()> {
+                if r.state == self.fail {
+                    bail!("test storage is full")
+                }
+                self.saved.lock().unwrap().push(r.state);
+                Ok(())
+            }
+        }
+        for fail in [ReceiptState::Accepted, ReceiptState::Completed] {
+            let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+            let mut events = server.subscribe();
+            let g = crate::grants::tests::grant();
+            let session = Uuid::parse_str(&g.session_id).unwrap();
+            let observer = Arc::new(Observer {
+                fail,
+                saved: std::sync::Mutex::new(vec![]),
+            });
+            let (sender, mut receiver) = oneshot::channel();
+            server.inner.pending.lock().await.insert(
+                "wire".into(),
+                Pending {
+                    observer: Some(observer.clone()),
+                    grant: Some(g.clone()),
+                    acknowledged: false,
+                    node_id: "owner".into(),
+                    session_id: session,
+                    sender,
+                },
+            );
+            let ack = json!({"type":"grant_ack","id":"wire","grant":GrantReport::new(&g,ReceiptState::Accepted,Value::Null,None)});
+            server.resolve_grant_ack("owner", session, ack).await;
+            if fail == ReceiptState::Completed {
+                assert!(events.try_recv().is_ok());
+                assert!(receiver.try_recv().is_err());
+                server
+                    .resolve_response(
+                        "owner",
+                        session,
+                        json!({"type":"response","id":"wire","success":true,
+                    "grant":GrantReport::new(&g,ReceiptState::Completed,json!({"ok":true}),None)}),
+                    )
+                    .await;
+                assert_eq!(
+                    *observer.saved.lock().unwrap(),
+                    vec![ReceiptState::Accepted]
+                );
+            } else {
+                assert!(events.try_recv().is_err());
+                assert!(observer.saved.lock().unwrap().is_empty());
+            }
+            let value = receiver.await.unwrap();
+            assert_eq!(value["success"], false);
+            assert_eq!(value["error_type"], "GrantJournalError");
+            assert!(!server.inner.pending.lock().await.contains_key("wire"));
+        }
+    }
+    #[tokio::test]
+    async fn observer_checkpoints_reports_before_the_waiter_is_confirmed_without_event_listeners() {
+        use crate::grants::{GrantObserver, GrantReport, ReceiptState};
+        struct Observer(std::sync::Mutex<Vec<ReceiptState>>);
+        impl GrantObserver for Observer {
+            fn record(&self, r: &GrantReport) -> Result<()> {
+                self.0.lock().unwrap().push(r.state);
+                Ok(())
+            }
+        }
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        let g = crate::grants::tests::grant();
+        let session = Uuid::parse_str(&g.session_id).unwrap();
+        let observer = Arc::new(Observer(std::sync::Mutex::new(vec![])));
+        let (sender, receiver) = oneshot::channel();
+        server.inner.pending.lock().await.insert(
+            "wire".into(),
+            Pending {
+                observer: Some(observer.clone()),
+                grant: Some(g.clone()),
+                acknowledged: false,
+                node_id: "owner".into(),
+                session_id: session,
+                sender,
+            },
+        );
+        let ack = json!({"type":"grant_ack","id":"wire","grant":GrantReport::new(&g,ReceiptState::Accepted,Value::Null,None)});
+        server
+            .resolve_grant_ack("owner", session, ack.clone())
+            .await;
+        server.resolve_grant_ack("owner", session, ack).await;
+        assert_eq!(*observer.0.lock().unwrap(), vec![ReceiptState::Accepted]);
+        let reply = json!({"type":"response","id":"wire","success":true,"grant":GrantReport::new(&g,ReceiptState::Completed,json!({"ok":true}),None)});
+        server
+            .resolve_response("owner", session, reply.clone())
+            .await;
+        assert_eq!(receiver.await.unwrap(), reply);
+        assert_eq!(
+            *observer.0.lock().unwrap(),
+            vec![ReceiptState::Accepted, ReceiptState::Completed]
+        );
     }
 
     async fn queued_test_server() -> (NodeServer, mpsc::Receiver<Value>) {

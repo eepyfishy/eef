@@ -211,7 +211,15 @@ pub fn confirmed_report(value: &Value, node: &str, operation_id: &str, id: Optio
         && report.revision > 0
         && matches!(
             report.status.as_str(),
-            "review" | "awaiting_approval" | "approved" | "cancelled"
+            "review"
+                | "awaiting_approval"
+                | "approved"
+                | "cancelled"
+                | "running"
+                | "stopping"
+                | "completed"
+                | "failed"
+                | "interrupted"
         )
         && report.operation_id == operation_id
         && report.request_context.origin_node() == node
