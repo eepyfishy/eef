@@ -1,4 +1,105 @@
 //! Origin-scoped planning input and views. No approval, grants or local execution.
+
+/// The authoritative existing template/action/parameter vocabulary shared with
+/// interpretation. Entries are not grants, resource bindings or executable plans.
+pub fn template_steps(
+    template: &str,
+) -> Result<Vec<(&'static str, &'static str, &'static [&'static str])>> {
+    Ok(match template {
+        "system_info" => vec![("system.info", "run", &[])],
+        "generate_text" => vec![(
+            "llm.infer",
+            "run",
+            &[
+                "prompt",
+                "messages",
+                "model_id",
+                "tier",
+                "max_tokens",
+                "temperature",
+            ],
+        )],
+        "analyze_image" => vec![(
+            "vlm.analyze",
+            "run",
+            &[
+                "prompt",
+                "messages",
+                "images",
+                "model_id",
+                "tier",
+                "max_tokens",
+                "temperature",
+            ],
+        )],
+        "launch_application" => {
+            vec![("application.control", "launch", &["application", "args"])]
+        }
+        "read_sensor" => vec![("sensor", "read", &["name"])],
+        "write_file" => vec![("filesystem", "write", &["path", "content"])],
+        "read_file" => vec![("filesystem", "read", &["path"])],
+        "list_directory" => vec![("filesystem", "list", &["path"])],
+        "type_text" => vec![("input.control", "type", &["text", "interval"])],
+        "press_key" => vec![("input.control", "press", &["key"])],
+        "capture_screen" => vec![("screen.capture", "capture", &[])],
+        "capture_camera" => vec![(
+            "camera.capture",
+            "capture",
+            &["device", "width", "height", "quality"],
+        )],
+        "record_audio" => vec![(
+            "audio.capture",
+            "record",
+            &["device", "duration_seconds", "sample_rate", "channels"],
+        )],
+        "play_audio" => vec![("audio.play", "play", &["data_base64"])],
+        "speak_text" => vec![("tts.speak", "speak", &["text", "voice", "rate", "volume"])],
+        "transcribe_audio" => vec![(
+            "stt.transcribe",
+            "transcribe",
+            &["audio_base64", "audio_path", "filename"],
+        )],
+        "execute_process" => vec![(
+            "process.exec",
+            "run",
+            &["program", "args", "cwd", "timeout_seconds"],
+        )],
+        "http_request" => vec![(
+            "http.request",
+            "send",
+            &["url", "method", "headers", "body", "timeout_seconds"],
+        )],
+        "wake_computer" => vec![("network.wol", "wake", &["mac", "broadcast", "port"])],
+        "observe_room" => vec![
+            ("camera.capture", "capture", &["device"]),
+            ("vlm.analyze", "analyze", &["prompt"]),
+        ],
+        _ => bail!("no template '{template}'"),
+    })
+}
+/// All current one-step method templates. Compound wiring is intentionally not
+/// advertised as a semantic method or a local continuous pipeline.
+pub const METHOD_TEMPLATES: &[&str] = &[
+    "system_info",
+    "generate_text",
+    "analyze_image",
+    "launch_application",
+    "read_sensor",
+    "write_file",
+    "read_file",
+    "list_directory",
+    "type_text",
+    "press_key",
+    "capture_screen",
+    "capture_camera",
+    "record_audio",
+    "play_audio",
+    "speak_text",
+    "transcribe_audio",
+    "execute_process",
+    "http_request",
+    "wake_computer",
+];
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

@@ -1,5 +1,33 @@
 # Architecture conformance status
 
+## Unreleased: source-bound semantic method candidate core (2026-10-11)
+
+The selected node interpreter can now produce a bounded untrusted method candidate
+or clarification from an exact retained review, preserving original text and full
+proposal/question/answer history. Source evidence pins job/revision/full digest/
+counts and reported backend/model identity; it does not attest inference or semantic
+truth. A single authoritative template/action/parameter catalogue is shared with
+EEF's existing planner. Candidate hints cannot invent node/model/resource bindings,
+permissions, roles, backends or compute limits; EEF validation/approval remain
+mandatory. Existing interpretation prompts/output and explicit template behavior
+are preserved.
+
+This is a core schema/prompt/inference increment, **not a new user command, saved
+plan, automatic trigger or completed semantic compiler**. Fresh context, service
+capacity/generation guards, atomic EEF source verification/checkpointing, saved
+receipt inspection and durable new-question handling still need integration.
+See [contract and remaining workflow](SEMANTIC-PREPARATION.md).
+Installed apps/physical nodes, versions, installers and update feeds are unchanged.
+
+Validation: **354 workspace/all-target Rust tests pass in both feature modes**,
+with fresh no-dashboard binaries. New units cover the complete history prompt,
+strict method/question validation, exact source evidence and fake selected-backend
+inference without journal or native effects. Headless `request-drafts-Nhj9oe`,
+`request-review-IZkZo2`, `node-credentials-8UgHti`, `job-shutdown-wmSlSj` and
+`scheduling-wj2K4l` retain passing results; `model-metadata-I4ZstF` passed on a
+fresh verification run after its earlier terminal output was unavailable. These
+are local logical-node regressions, not physical two-PC or real-model acceptance.
+
 ## Unreleased: origin-node concrete planning commands (2026-10-11)
 
 The input node can now invoke EEF's existing compiler and inspect its own private

@@ -1039,6 +1039,58 @@ impl NodeEngine {
         capabilities: &[String],
         messages: Value,
     ) -> std::result::Result<Value, &'static str> {
+        let response = self.selected_interpreter_response(messages, 512).await?;
+        let output = response["output"]
+            .as_str()
+            .ok_or("interpretation_invalid")?;
+        let interpretation = crate::interpretation::validate(text, output.as_bytes(), capabilities)
+            .map_err(|_| "interpretation_invalid")?;
+        Ok(json!({"model":response["model"],"interpretation":interpretation}))
+    }
+
+    /// Produce only a bounded untrusted method/clarification candidate. Callers
+    /// still need runtime invalidation, fresh context and atomic EEF checkpointing.
+    pub async fn prepare_method_candidate(
+        &self,
+        job: &str,
+        revision: u64,
+        draft: &crate::request_drafts::DraftRecord,
+        capabilities: &[String],
+    ) -> std::result::Result<crate::request_preparation::PreparedMethod, &'static str> {
+        crate::request_drafts::validate_id(job).map_err(|_| "invalid_preparation_source")?;
+        if revision == 0
+            || revision == u64::MAX
+            || revision < (draft.proposals.len() + draft.answers.len()) as u64
+        {
+            return Err("invalid_preparation_source");
+        }
+        let messages = crate::request_preparation::messages(draft, capabilities)
+            .map_err(|_| "invalid_preparation_context")?;
+        let response = self.selected_interpreter_response(messages, 1024).await?;
+        crate::request_preparation::PreparedMethod::from_selected(
+            job,
+            revision,
+            draft,
+            capabilities,
+            response["output"]
+                .as_str()
+                .ok_or("interpretation_invalid")?
+                .as_bytes(),
+            response["model"]["backend"]
+                .as_str()
+                .ok_or("interpretation_invalid")?,
+            response["model"]["model_id"]
+                .as_str()
+                .ok_or("interpretation_invalid")?,
+        )
+        .map_err(|_| "method_proposal_invalid")
+    }
+
+    async fn selected_interpreter_response(
+        &self,
+        messages: Value,
+        max_tokens: u64,
+    ) -> std::result::Result<Value, &'static str> {
         let has_role = |metadata: &crate::model_metadata::ModelMetadata| {
             metadata.supports("llm.infer")
                 && metadata
@@ -1073,7 +1125,7 @@ impl NodeEngine {
             .infer(
                 "llm.infer",
                 json!({"backend":backend,"model":model,"messages":messages,
-            "temperature":0,"max_tokens":512,"timeout":30}),
+            "temperature":0,"max_tokens":max_tokens,"timeout":30}),
             )
             .await
             .map_err(|_| "interpreter_backend_failed")?;
@@ -1083,9 +1135,10 @@ impl NodeEngine {
         let output = response["content"]
             .as_str()
             .ok_or("interpretation_invalid")?;
-        let interpretation = crate::interpretation::validate(text, output.as_bytes(), capabilities)
-            .map_err(|_| "interpretation_invalid")?;
-        Ok(json!({"model":{"backend":backend,"model_id":model},"interpretation":interpretation}))
+        if output.len() > crate::interpretation::MAX_PROPOSAL_BYTES {
+            return Err("interpretation_invalid");
+        }
+        Ok(json!({"model":{"backend":backend,"model_id":model},"output":output}))
     }
 
     async fn ollama(&self, params: &Value) -> Result<Value> {
