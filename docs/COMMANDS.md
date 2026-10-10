@@ -4,6 +4,18 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Explicit interrupted-result reconciliation (unreleased after alpha.6)
+
+`eefn requests recover-result JOB_ID --revision REV --grant-id GRANT_UUID
+--operation-id RECOVERY_UUID --json` explicitly settles one interrupted reviewed
+attempt from the exact executor's retained completed evidence. EEF's local owner
+uses the same `eef requests recover-result ...` form. Inspect the current job
+first and keep the entire receipt. No replay, fabricated wire ACK, implicit
+remaining-step dispatch or remote stop is authorized. Exact same-actor receipt
+reuse is read-only and needs no live executor. A missing/unconfirmed reply can
+mean a committed decision: inspect before reusing that exact command. See
+[reconciliation contract](RESULT-RECOVERY.md) for scope, storage and limits.
+
 ## Explicit retained executor output (unreleased after alpha.6)
 
 `eefn requests result JOB_ID --grant-id GRANT_UUID --json` reads a bounded saved

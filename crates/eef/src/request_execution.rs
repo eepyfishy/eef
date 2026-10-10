@@ -32,6 +32,16 @@ pub struct GrantedAttempt {
     pub state: AttemptState,
     pub acknowledgement: Option<GrantReport>,
     pub report: Option<GrantReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<eefn::request_recovery::RecoveryRecord>,
+}
+impl GrantedAttempt {
+    pub(crate) fn final_report(&self) -> Option<&GrantReport> {
+        self.recovery
+            .as_ref()
+            .and_then(|r| r.result.report.as_ref())
+            .or(self.report.as_ref())
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -114,7 +124,7 @@ pub(crate) fn abandon(
     p.status = PlanStatus::Abandoned;
     Ok(true)
 }
-fn operation_used(p: &Plan, id: &str) -> bool {
+pub(crate) fn operation_used(p: &Plan, id: &str) -> bool {
     p.execution.as_ref().is_some_and(|e| {
         e.command.operation_id == id || e.attempts.iter().any(|a| a.grant.grant_id == id)
     }) || p.approval.as_ref().is_some_and(|a| a.operation_id == id)
@@ -124,7 +134,7 @@ fn operation_used(p: &Plan, id: &str) -> bool {
                 || r.answers.iter().any(|a| a.operation_id == id)
         })
 }
-fn receipt_attempt<'a>(
+pub(crate) fn receipt_attempt<'a>(
     plan: &'a Plan,
     command: &eefn::request_receipt::ReceiptCommand,
     origin: Option<&str>,
@@ -272,8 +282,7 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             || (index > 0
                 && (e.attempts[index - 1].state != AttemptState::Completed
                     || e.attempts[index - 1]
-                        .report
-                        .as_ref()
+                        .final_report()
                         .is_none_or(|r| !r.success)))
         {
             bail!("Grant differs from its fixed approved definition or predecessor")
@@ -298,6 +307,7 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
                 bail!("Invalid scoped completion")
             }
         }
+        crate::request_recovery::validate_record(plan, a)?;
         let (status, report) = match a.state {
             AttemptState::Issued if a.acknowledgement.is_none() && a.report.is_none() => {
                 (TaskStatus::Running, None)
@@ -306,18 +316,17 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
                 (TaskStatus::Running, None)
             }
             AttemptState::Completed
-                if a.acknowledgement.is_some()
-                    && a.report
-                        .as_ref()
+                if (a.acknowledgement.is_some() || a.recovery.is_some())
+                    && a.final_report()
                         .is_some_and(|r| r.state == ReceiptState::Completed) =>
             {
                 (
-                    if a.report.as_ref().unwrap().success {
+                    if a.final_report().unwrap().success {
                         TaskStatus::Completed
                     } else {
                         TaskStatus::Failed
                     },
-                    a.report.as_ref(),
+                    a.final_report(),
                 )
             }
             AttemptState::Rejected
@@ -416,7 +425,7 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
     }
     Ok(())
 }
-fn result(g: &ExecutionGrant, r: &GrantReport) -> TaskResult {
+pub(crate) fn result(g: &ExecutionGrant, r: &GrantReport) -> TaskResult {
     TaskResult {
         task_id: g.task_id.clone(),
         success: r.success,
@@ -431,7 +440,7 @@ fn result(g: &ExecutionGrant, r: &GrantReport) -> TaskResult {
         attempts: 1,
     }
 }
-fn cancel_pending(plan: &mut Plan) {
+pub(crate) fn cancel_pending(plan: &mut Plan) {
     for task in &mut plan.tasks {
         if task.status == TaskStatus::Pending {
             task.status = TaskStatus::Cancelled;
@@ -750,6 +759,7 @@ fn issue(p: &mut Plan, index: usize, g: ExecutionGrant) -> Result<()> {
         state: AttemptState::Issued,
         acknowledgement: None,
         report: None,
+        recovery: None,
     });
     Ok(())
 }
@@ -1206,6 +1216,412 @@ mod tests {
             json!({"private":"unique-output-marker"}),
             None,
         )
+    }
+    fn retained(g: &ExecutionGrant, report: GrantReport) -> eefn::request_result::RetainedResult {
+        eefn::request_result::RetainedResult {
+            schema_version: 1,
+            receipt: eefn::request_receipt::ConsumedReceipt {
+                schema_version: 1,
+                node_id: g.executor_node.clone(),
+                issuer_id: g.issuer_id.clone(),
+                grant_id: g.grant_id.clone(),
+                grant_sha256: eefn::grants::definition_digest(&json!(g)).unwrap(),
+                job_id: g.job_id.clone(),
+                task_id: g.task_id.clone(),
+                attempt: g.attempt,
+                state: if report.state == ReceiptState::Completed {
+                    "completed"
+                } else {
+                    "unknown"
+                }
+                .into(),
+                // Deliberately different node wall clock; do not compare to issuer time.
+                accepted_at_ms: 1,
+                updated_at_ms: 2,
+            },
+            max_result_bytes: g.limits.max_result_bytes,
+            availability: "retained_final_report".into(),
+            report_sha256: Some(eefn::grants::definition_digest(&json!(report)).unwrap()),
+            report: Some(report),
+        }
+    }
+    fn recovery_command(p: &Plan) -> eefn::request_recovery::RecoverCommand {
+        eefn::request_recovery::RecoverCommand {
+            id: p.plan_id.clone(),
+            expected_revision: p.revision,
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            grant_id: p
+                .execution
+                .as_ref()
+                .unwrap()
+                .attempts
+                .last()
+                .unwrap()
+                .grant
+                .grant_id
+                .clone(),
+        }
+    }
+    #[test]
+    fn recovery_preserves_real_ack_and_unknown_report_without_replay_and_survives_restart() {
+        for acknowledgement in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("jobs.db");
+            drop(rusqlite::Connection::open(&path).unwrap());
+            let store = JobStore::open(&path, 500, 64 * 1024 * 1024).unwrap();
+            let engine = TaskEngine::with_store(EventBus::new(20), store);
+            let (p, g, journal) = issued(&engine);
+            if acknowledgement {
+                journal.record(&ack(&g)).unwrap();
+                journal
+                    .record(&GrantReport::new(
+                        &g,
+                        ReceiptState::Unknown,
+                        Value::Null,
+                        Some("completion_missing".into()),
+                    ))
+                    .unwrap();
+            } else {
+                engine.store.interrupt(&p.plan_id).unwrap();
+            }
+            let source = engine.store.get(&p.plan_id).unwrap();
+            let cmd = recovery_command(&source);
+            let origin = source.goal.request_context.as_ref().unwrap().origin_node();
+            let original = &source.execution.as_ref().unwrap().attempts[0];
+            let evidence = retained(&g, done(&g));
+            let (saved, reused) = engine
+                .recover_reviewed(&cmd, Some(origin), &evidence)
+                .unwrap();
+            assert!(!reused);
+            assert_eq!(saved.revision, source.revision + 1);
+            assert_eq!(saved.status, PlanStatus::Completed);
+            let a = &saved.execution.as_ref().unwrap().attempts[0];
+            assert_eq!(json!(a.acknowledgement), json!(original.acknowledgement));
+            assert_eq!(json!(a.report), json!(original.report));
+            assert_eq!(a.grant, original.grant);
+            assert_eq!(saved.goal.request_context, source.goal.request_context);
+            assert_eq!(saved.tasks[0].assignments.len(), 1);
+            assert_eq!(saved.tasks[0].attempts, 1);
+            assert!(saved.tasks[0].result.as_ref().unwrap().data.is_null());
+            let view = crate::jobs::view(&saved, true);
+            assert_eq!(view["grant_attempts"][0]["acknowledged"], acknowledgement);
+            assert_eq!(view["grant_attempts"][0]["success"], true);
+            assert_eq!(view["recovery"]["reconciled"], true);
+            assert!(
+                !serde_json::to_string(&view)
+                    .unwrap()
+                    .contains("unique-output-marker")
+            );
+            assert!(engine.resume_job(&p.plan_id).is_err());
+            assert!(engine.cancel(&p.plan_id).is_err());
+            // Original late ACK/completion cannot replace evidence or revive work.
+            assert!(journal.record(&done(&g)).is_err());
+            let (same, reused) = engine
+                .recover_reviewed(&cmd, Some(origin), &evidence)
+                .unwrap();
+            assert!(reused);
+            assert_eq!(json!(same), json!(saved));
+            assert!(
+                engine.recovery_source(&cmd, None).is_err(),
+                "actor cannot change on receipt reuse"
+            );
+            drop(journal);
+            drop(engine);
+            let reopened = JobStore::open(&path, 500, 64 * 1024 * 1024).unwrap();
+            assert_eq!(json!(reopened.get(&p.plan_id).unwrap()), json!(saved));
+            let engine = TaskEngine::with_store(EventBus::new(20), reopened);
+            assert!(engine.recovery_source(&cmd, Some(origin)).unwrap().1);
+            assert!(engine.resume_job(&p.plan_id).is_err());
+        }
+    }
+    #[test]
+    fn recovery_rejects_wrong_origin_revision_scope_unfinished_and_damaged_evidence_without_writes()
+    {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, _) = issued(&engine);
+        let live = engine.store.get(&p.plan_id).unwrap();
+        let live_cmd = recovery_command(&live);
+        let good = retained(&g, done(&g));
+        assert!(engine.recover_reviewed(&live_cmd, None, &good).is_err());
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let source = engine.store.get(&p.plan_id).unwrap();
+        let cmd = recovery_command(&source);
+        assert!(
+            engine
+                .recover_reviewed(&cmd, Some("other-origin"), &good)
+                .is_err()
+        );
+        for operation in [
+            g.grant_id.clone(),
+            source
+                .execution
+                .as_ref()
+                .unwrap()
+                .command
+                .operation_id
+                .clone(),
+            source.approval.as_ref().unwrap().operation_id.clone(),
+            source.planning.as_ref().unwrap().operation_id.clone(),
+            source.request_review.as_ref().unwrap().proposals[0]
+                .operation_id
+                .clone(),
+        ] {
+            let mut bad = cmd.clone();
+            bad.operation_id = operation;
+            assert!(engine.recover_reviewed(&bad, None, &good).is_err());
+        }
+        let mut bad_cmd = cmd.clone();
+        bad_cmd.expected_revision -= 1;
+        assert!(engine.recover_reviewed(&bad_cmd, None, &good).is_err());
+        let mut bad_cmd = cmd.clone();
+        bad_cmd.grant_id = uuid::Uuid::new_v4().to_string();
+        assert!(engine.recover_reviewed(&bad_cmd, None, &good).is_err());
+        let unknown = retained(
+            &g,
+            GrantReport::new(
+                &g,
+                ReceiptState::Unknown,
+                Value::Null,
+                Some("execution_unknown".into()),
+            ),
+        );
+        unknown.validate().unwrap();
+        assert!(engine.recover_reviewed(&cmd, None, &unknown).is_err());
+        let mut legacy = good.clone();
+        legacy.max_result_bytes = 0;
+        legacy.availability = "legacy_metadata_only".into();
+        legacy.report = None;
+        legacy.report_sha256 = None;
+        legacy.validate().unwrap();
+        assert!(engine.recover_reviewed(&cmd, None, &legacy).is_err());
+        let mut pending = good.clone();
+        pending.receipt.state = "accepted".into();
+        pending.availability = "no_final_checkpoint".into();
+        pending.report = None;
+        pending.report_sha256 = None;
+        pending.validate().unwrap();
+        assert!(engine.recover_reviewed(&cmd, None, &pending).is_err());
+        let mut wrong = g.clone();
+        wrong.session_id = uuid::Uuid::new_v4().to_string();
+        assert!(
+            engine
+                .recover_reviewed(&cmd, None, &retained(&wrong, done(&wrong)))
+                .is_err()
+        );
+        for field in [
+            "issuer_id",
+            "executor_node",
+            "task_id",
+            "plan_sha256",
+            "session_id",
+            "grant_sha256",
+        ] {
+            let mut value = json!(good);
+            value["report"][field] = json!("changed");
+            let bad = serde_json::from_value(value).unwrap();
+            assert!(engine.recover_reviewed(&cmd, None, &bad).is_err());
+        }
+        let mut damaged = good.clone();
+        damaged.report.as_mut().unwrap().data = json!({"modified":true});
+        assert!(engine.recover_reviewed(&cmd, None, &damaged).is_err());
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(source));
+    }
+    #[test]
+    fn recovered_failure_is_failed_not_success_and_cached_receipt_can_be_reused_without_evidence() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, _) = issued(&engine);
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let cmd = recovery_command(&engine.store.get(&p.plan_id).unwrap());
+        let error = retained(
+            &g,
+            GrantReport::new(
+                &g,
+                ReceiptState::Completed,
+                Value::Null,
+                Some("operation_failed".into()),
+            ),
+        );
+        let (saved, _) = engine.recover_reviewed(&cmd, None, &error).unwrap();
+        assert_eq!(saved.status, PlanStatus::Failed);
+        assert_eq!(saved.tasks[0].status, TaskStatus::Failed);
+        assert!(!saved.tasks[0].result.as_ref().unwrap().success);
+        assert_eq!(
+            saved.tasks[0].result.as_ref().unwrap().error,
+            "operation_failed"
+        );
+        assert!(engine.recovery_source(&cmd, None).unwrap().1);
+        let mut changed = cmd.clone();
+        changed.operation_id = uuid::Uuid::new_v4().to_string();
+        assert!(engine.recovery_source(&changed, None).is_err());
+        let mut changed = cmd.clone();
+        changed.expected_revision = saved.revision;
+        assert!(engine.recovery_source(&changed, None).is_err());
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(saved));
+    }
+    #[test]
+    fn concurrent_recovery_and_abandonment_have_exactly_one_winner() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, _) = issued(&engine);
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let source = engine.store.get(&p.plan_id).unwrap();
+        let recover = recovery_command(&source);
+        let abandon = abandonment_command(&source);
+        let evidence = retained(&g, done(&g));
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let a = {
+            let engine = engine.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                engine.recover_reviewed(&recover, None, &evidence).is_ok()
+            })
+        };
+        let b = {
+            let engine = engine.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                engine.abandon_reviewed(&abandon, None).is_ok()
+            })
+        };
+        barrier.wait();
+        assert_ne!(a.join().unwrap(), b.join().unwrap());
+        let saved = engine.store.get(&p.plan_id).unwrap();
+        assert_eq!(saved.revision, source.revision + 1);
+        assert!(matches!(
+            saved.status,
+            PlanStatus::Completed | PlanStatus::Abandoned
+        ));
+    }
+    #[test]
+    fn recovery_validation_rejects_changed_record_or_fabricated_wire_history() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, _) = issued(&engine);
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let cmd = recovery_command(&engine.store.get(&p.plan_id).unwrap());
+        let (saved, _) = engine
+            .recover_reviewed(&cmd, None, &retained(&g, done(&g)))
+            .unwrap();
+        for (path, value) in [
+            ("schema_version", json!(2)),
+            ("decided_at_ms", json!(0)),
+            (
+                "command",
+                json!({"id":cmd.id,"grant_id":cmd.grant_id,"operation_id":cmd.operation_id,"expected_revision":saved.revision}),
+            ),
+        ] {
+            let mut raw = json!(saved);
+            raw["execution"]["attempts"][0]["recovery"][path] = value;
+            let bad = serde_json::from_value(raw).unwrap();
+            assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        }
+        let mut bad = saved.clone();
+        bad.execution.as_mut().unwrap().attempts[0].report = Some(done(&g));
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        let mut bad = saved.clone();
+        bad.execution.as_mut().unwrap().attempts[0].recovery = None;
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        let mut bad = saved.clone();
+        bad.status = PlanStatus::Running;
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        let mut bad = saved.clone();
+        bad.execution.as_mut().unwrap().attempts[0]
+            .recovery
+            .as_mut()
+            .unwrap()
+            .result
+            .report
+            .as_mut()
+            .unwrap()
+            .data = json!("changed");
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+    }
+    #[tokio::test]
+    async fn active_runner_and_shutdown_reject_new_recovery_but_allow_exact_saved_inspection() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, _) = issued(&engine);
+        let guard = engine.claim(&p.plan_id, || Ok(())).unwrap();
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let source = engine.store.get(&p.plan_id).unwrap();
+        let cmd = recovery_command(&source);
+        let evidence = retained(&g, done(&g));
+        assert!(engine.recovery_source(&cmd, None).is_err());
+        assert!(engine.recover_reviewed(&cmd, None, &evidence).is_err());
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(source));
+        drop(guard);
+        let source = engine.store.get(&p.plan_id).unwrap();
+        let cmd = recovery_command(&source);
+        let (saved, _) = engine.recover_reviewed(&cmd, None, &evidence).unwrap();
+        engine.shutdown().await;
+        assert!(engine.recovery_source(&cmd, None).unwrap().1);
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(saved));
+        let closed = TaskEngine::new(EventBus::new(20));
+        let (p, g, _) = issued(&closed);
+        closed.store.interrupt(&p.plan_id).unwrap();
+        let source = closed.store.get(&p.plan_id).unwrap();
+        let cmd = recovery_command(&source);
+        closed.recovery_source(&cmd, None).unwrap();
+        closed.shutdown().await;
+        assert!(
+            closed
+                .recover_reviewed(&cmd, None, &retained(&g, done(&g)))
+                .is_err()
+        );
+        assert_eq!(json!(closed.store.get(&p.plan_id).unwrap()), json!(source));
+    }
+    #[test]
+    fn journal_quota_failure_leaves_uncertainty_and_cached_evidence_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.db");
+        drop(rusqlite::Connection::open(&path).unwrap());
+        let store = JobStore::open(&path, 500, 64 * 1024 * 1024).unwrap();
+        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        let (p, g, journal) = issued(&engine);
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let source = engine.store.get(&p.plan_id).unwrap();
+        let cmd = recovery_command(&source);
+        let evidence = retained(
+            &g,
+            GrantReport::new(
+                &g,
+                ReceiptState::Completed,
+                json!({"private":"x".repeat(40000)}),
+                None,
+            ),
+        );
+        evidence.validate().unwrap();
+        drop(journal);
+        drop(engine);
+        let store = JobStore::open(
+            &path,
+            500,
+            serde_json::to_vec(&source).unwrap().len() + 1024,
+        )
+        .unwrap();
+        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        assert!(engine.recover_reviewed(&cmd, None, &evidence).is_err());
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(source));
+        assert!(evidence.confirms(&g));
+        assert!(engine.resume_job(&p.plan_id).is_err());
+    }
+    #[test]
+    fn source_revision_change_between_result_inspection_and_commit_does_not_reconcile() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, _) = issued(&engine);
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let source = engine.store.get(&p.plan_id).unwrap();
+        let cmd = recovery_command(&source);
+        assert!(!engine.recovery_source(&cmd, None).unwrap().1);
+        let changed = engine
+            .store
+            .change(&p.plan_id, "Fixture concurrent checkpoint", |_| Ok(()))
+            .unwrap();
+        assert!(
+            engine
+                .recover_reviewed(&cmd, None, &retained(&g, done(&g)))
+                .is_err()
+        );
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(changed));
     }
     #[test]
     fn saved_issuance_precedes_ack_and_completion_is_scope_bound_and_idempotent() {

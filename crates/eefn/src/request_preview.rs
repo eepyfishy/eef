@@ -8,6 +8,17 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Reconcile one uncertain origin-owned attempt from retained completion; never resume.
+    RecoverResult {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        grant_id: String,
+        /// Keep this exact receipt after an uncertain reply; no automatic retry.
+        #[arg(long)]
+        operation_id: String,
+    },
     /// Save/compile explicit one-step input without a model; never approve/execute.
     Submit {
         #[arg(long)]

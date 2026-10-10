@@ -36,6 +36,7 @@ pub mod request_planning;
 pub mod request_preparation;
 pub mod request_preview;
 pub mod request_receipt;
+pub mod request_recovery;
 pub mod request_resolution;
 pub mod request_result;
 pub mod request_submission;

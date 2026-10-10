@@ -649,7 +649,12 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
                         )
                 );
             value["grant_attempts"] = json!(execution.attempts.iter().map(|a|json!({"task_id":a.grant.task_id,"grant_id":a.grant.grant_id,
-                "state":a.state,"node_id":a.grant.executor_node,"acknowledged":a.acknowledgement.is_some(),"success":a.report.as_ref().map(|r|r.success)})).collect::<Vec<_>>());
+                "state":a.state,"node_id":a.grant.executor_node,"acknowledged":a.acknowledgement.is_some(),"success":a.final_report().map(|r|r.success)})).collect::<Vec<_>>());
+            if let Some(r) = execution.attempts.iter().find_map(|a| a.recovery.as_ref()) {
+                value["recovery"] = json!({"operation_id":r.command.operation_id,"grant_id":r.command.grant_id,
+                    "actor":r.actor,"applied_revision":r.command.expected_revision+1,"result_sha256":r.result.report_sha256,
+                    "reconciled":true,"execution_requested":false,"automatically_retried":false,"remote_stop_confirmed":false});
+            }
         }
     }
     if details {
@@ -759,7 +764,7 @@ fn text_output(plan: &Plan) -> serde_json::Value {
     let mut remaining = 32768usize;
     let outputs = matching.iter().take(32).map(|task| {
         let text = if let Some(e) = &plan.execution {
-            e.attempts.iter().find(|a|a.grant.task_id==task.task_id).and_then(|a|a.report.as_ref()).and_then(|r|r.data["content"].as_str())
+            e.attempts.iter().find(|a|a.grant.task_id==task.task_id).and_then(|a|a.final_report()).and_then(|r|r.data["content"].as_str())
         } else {task.result.as_ref().and_then(|r| r.data["content"].as_str())};
         let mut truncated = false;
         let content = text.map(|text| {

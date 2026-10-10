@@ -325,6 +325,17 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum PlanningAction {
+    /// Reconcile one uncertain attempt from authenticated retained completion; never resume.
+    RecoverResult {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        grant_id: String,
+        /// Keep this exact receipt to inspect a checkpoint after an uncertain reply.
+        #[arg(long)]
+        operation_id: String,
+    },
     /// Close local tracking of an uncertain attempt; acknowledge that remote effects may continue.
     Abandon {
         id: String,

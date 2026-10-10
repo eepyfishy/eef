@@ -639,6 +639,24 @@ pub struct AcceptedGrant {
     deadline: Instant,
     accepted: Instant,
     accepted_wall: u64,
+    final_checkpoint_attempted: bool,
+}
+impl Drop for AcceptedGrant {
+    fn drop(&mut self) {
+        if !self.final_checkpoint_attempted {
+            // Connection/task cancellation is not remote/backend termination.
+            // Retain uncertainty and consumption while releasing unfinished
+            // output reservations when possible. No replay or second write
+            // attempt after an explicit final checkpoint failure.
+            let report = GrantReport::new(
+                &self.grant,
+                ReceiptState::Unknown,
+                Value::Null,
+                Some("grant_runtime_dropped_effects_unknown"),
+            );
+            let _ = self.ledger.finish(&self.grant, &report);
+        }
+    }
 }
 impl AcceptedGrant {
     /// Aligned-wall-clock adapter is test-only; release builds require an
@@ -712,12 +730,13 @@ impl AcceptedGrant {
             deadline,
             accepted,
             accepted_wall,
+            final_checkpoint_attempted: false,
         })
     }
     pub fn acknowledgement(&self) -> GrantReport {
         GrantReport::new(&self.grant, ReceiptState::Accepted, Value::Null, None)
     }
-    pub async fn run(self, engine: &crate::NodeEngine) -> GrantReport {
+    pub async fn run(mut self, engine: &crate::NodeEngine) -> GrantReport {
         let g = &self.grant;
         let mut params = g.params.clone();
         if let Some(model) = &g.model_id {
@@ -772,6 +791,7 @@ impl AcceptedGrant {
                 Some("completion_after_deadline"),
             );
         }
+        self.final_checkpoint_attempted = true;
         if self.ledger.finish(g, &result).is_err() {
             result = GrantReport::new(
                 g,
@@ -788,6 +808,103 @@ impl AcceptedGrant {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[tokio::test]
+    async fn dropped_grant_retains_uncertainty_without_replay_and_never_overwrites_completed_evidence()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("receipts.db");
+        let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        let g = grant();
+        let engine = engine(dir.path());
+        let accepted = AcceptedGrant::prepare(
+            g.clone(),
+            ledger.clone(),
+            &engine,
+            &g.issuer_id,
+            &g.session_id,
+            "owner",
+        )
+        .unwrap();
+        assert_eq!(
+            ledger
+                .result(
+                    &g.issuer_id,
+                    &g.grant_id,
+                    &definition_digest(&json!(g)).unwrap()
+                )
+                .unwrap()["availability"],
+            "no_final_checkpoint"
+        );
+        drop(accepted);
+        let unknown: crate::request_result::RetainedResult = serde_json::from_value(
+            ledger
+                .result(
+                    &g.issuer_id,
+                    &g.grant_id,
+                    &definition_digest(&json!(g)).unwrap(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(unknown.receipt.state, "unknown");
+        assert!(unknown.confirms(&g));
+        let report = unknown.report.as_ref().unwrap();
+        assert!(!report.success);
+        assert!(report.data.is_null());
+        assert_eq!(
+            report.error_code.as_deref(),
+            Some("grant_runtime_dropped_effects_unknown")
+        );
+        assert!(
+            AcceptedGrant::prepare(
+                g.clone(),
+                ledger.clone(),
+                &engine,
+                &g.issuer_id,
+                &g.session_id,
+                "owner"
+            )
+            .is_err()
+        );
+        let completed = grant();
+        let accepted = AcceptedGrant::prepare(
+            completed.clone(),
+            ledger.clone(),
+            &engine,
+            &completed.issuer_id,
+            &completed.session_id,
+            "owner",
+        )
+        .unwrap();
+        let report = accepted.run(&engine).await;
+        assert!(report.success);
+        let saved = ledger
+            .result(
+                &completed.issuer_id,
+                &completed.grant_id,
+                &definition_digest(&json!(completed)).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            saved["report"],
+            json!(report),
+            "normal completion must not run the dropped-runtime checkpoint"
+        );
+        drop(ledger);
+        let reopened = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        assert_eq!(
+            json!(
+                reopened
+                    .result(
+                        &g.issuer_id,
+                        &g.grant_id,
+                        &definition_digest(&json!(g)).unwrap()
+                    )
+                    .unwrap()
+            ),
+            json!(unknown)
+        );
+    }
     pub(crate) fn grant() -> ExecutionGrant {
         let now = crate::protocol::now_ms();
         ExecutionGrant {

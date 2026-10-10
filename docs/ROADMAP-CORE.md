@@ -31,6 +31,14 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
+an idle interrupted reviewed attempt from exact retained completed evidence,
+preserving original uncertainty/ACKs and preventing implicit continuation. It
+extends the existing durable job system, not a parallel runtime. Read-only result
+inspection remains unchanged. Automatic reconciliation, full safe continuation,
+strong termination and legacy grant migration are still open; localhost tests
+do not replace physical acceptance or complete the roadmap.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

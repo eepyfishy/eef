@@ -151,6 +151,39 @@ enum ModelsCommand {
 mod credential_cli_tests {
     use super::*;
     #[test]
+    fn recovery_requires_saved_revision_grant_and_operation_without_retry_or_evidence_flags() {
+        let args = [
+            "eef",
+            "requests",
+            "recover-result",
+            "job-id",
+            "--revision",
+            "8",
+            "--grant-id",
+            "grant",
+            "--operation-id",
+            "receipt",
+        ];
+        assert!(Args::try_parse_from(args).is_ok());
+        for index in [4, 6, 8] {
+            let mut missing = args.to_vec();
+            missing.drain(index..index + 2);
+            assert!(Args::try_parse_from(missing).is_err());
+        }
+        for flag in [
+            "--retry",
+            "--renew",
+            "--execute",
+            "--report",
+            "--resume",
+            "--auto-approve",
+        ] {
+            let mut bad = args.to_vec();
+            bad.push(flag);
+            assert!(Args::try_parse_from(bad).is_err());
+        }
+    }
+    #[test]
     fn planning_requires_an_explicit_revision_and_input_file() {
         assert!(Args::try_parse_from(["eef", "requests", "inspect", "draft-id"]).is_ok());
         assert!(Args::try_parse_from(["eef", "requests", "compile", "draft-id"]).is_err());
@@ -311,6 +344,37 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     "automatically_retried":false,"remote_stop_confirmed":false,"remote_effects_unknown":true,
                     "error_code":"abandonment_unconfirmed","note":"Inspect the request and reuse only the exact receipt; no fallback, stop or retry was authorized."})));
             }
+            if let eef::request_planning::PlanningAction::RecoverResult {
+                id,
+                revision,
+                grant_id,
+                operation_id,
+            } = command
+            {
+                let command = eefn::request_recovery::RecoverCommand {
+                    id: id.clone(),
+                    expected_revision: *revision,
+                    grant_id: grant_id.clone(),
+                    operation_id: operation_id.clone(),
+                };
+                command.validate()?;
+                let state =
+                    command_response(client.get(format!("{base}/api/diagnostics")).send().await?)
+                        .await?;
+                let runtime = state["runtime_id"].as_str().context("Missing runtime ID")?;
+                let exchange = async {
+                    let value = command_response(client.post(format!("{base}/api/commands/requests/recover-result"))
+                        .json(&json!({"schema_version":1,"expected_runtime_id":runtime,"command":command})).send().await?).await?;
+                    if !eefn::request_recovery::confirmed(&value, &command, eefn::request_recovery::RecoveryActor::CoordinatorOwner, None, Some(runtime)) {
+                        bail!("Unconfirmed recovery receipt")
+                    }
+                    Ok::<_,anyhow::Error>(value)
+                }.await;
+                return Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"request_recovery","success":false,
+                    "command":command,"outcome_unknown":true,"execution_requested":false,"automatically_retried":false,
+                    "remote_stop_confirmed":false,"error_code":"recovery_unconfirmed",
+                    "note":"Inspect the request and reuse only this exact receipt. No replay, continuation, renewal or fallback."})));
+            }
             if let eef::request_planning::PlanningAction::Receipt { id, grant_id }
             | eef::request_planning::PlanningAction::Result { id, grant_id } = command
             {
@@ -370,6 +434,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     "error_code":"execution_unconfirmed","note":"Inspect the request/job and receipts before retrying; no fallback, replay or automatic renewal."})));
             }
             let command = match command {
+                eef::request_planning::PlanningAction::RecoverResult { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Abandon { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Receipt { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Result { .. } => unreachable!(),

@@ -820,6 +820,19 @@ impl Runtime {
                     Err(_) => Err(anyhow::anyhow!("Invalid retained result query")),
                 }
             }
+            "requests.recover_result" => {
+                match serde_json::from_value::<eefn::request_recovery::RecoverCommand>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(command) if command.operation_id == context.request_id() => {
+                        self.recover_request(command, Some(context.origin_node()))
+                            .await
+                    }
+                    _ => Err(anyhow::anyhow!(
+                        "Recovery receipt does not match authenticated origin"
+                    )),
+                }
+            }
             "requests.execute" => {
                 match serde_json::from_value::<eefn::request_execution::ExecuteCommand>(
                     message["payload"].clone(),

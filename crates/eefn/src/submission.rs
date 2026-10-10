@@ -74,6 +74,7 @@ impl SubmissionMailbox {
                 | "requests.execute"
                 | "requests.receipt"
                 | "requests.result"
+                | "requests.recover_result"
                 | "requests.abandon"
                 | "network.peers"
                 | "jobs.list"

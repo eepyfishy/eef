@@ -466,6 +466,49 @@ async fn execute_concrete_command(
         "error_code":"concrete_unconfirmed","note":"No confirmed reply. Inspect jobs find with this operation ID, then requests plan; no automatic replay or legacy fallback."})))
 }
 
+async fn execute_recovery_command(
+    args: &Args,
+    command: eefn::request_recovery::RecoverCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.validate()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; recovery never launches another runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!(
+                "http://{address}/api/commands/requests/recover-result"
+            ))
+            .timeout(Duration::from_secs(25))
+            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"command":command}))
+            .send()
+            .await?;
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok || !eefn::request_recovery::confirmed_node(&value, &command, &file.node_id) {
+            bail!("Unrecognized recovery reply")
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"request_recovery","node_id":file.node_id,
+        "command":command,"success":false,"coordinator_acknowledged":false,"outcome_unknown":true,
+        "execution_requested":false,"automatically_retried":false,"remote_stop_confirmed":false,
+        "error_code":"recovery_unconfirmed","note":"No confirmed reply. Inspect the request and reuse only this exact receipt; no replay, continuation or fallback."})))
+}
 async fn execute_abandonment_command(
     args: &Args,
     command: eefn::request_abandon::AbandonCommand,
@@ -1067,6 +1110,23 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 execute_draft_command(
                     args,
                     eefn::request_drafts::DraftCommand::Get { id: id.clone() },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::RecoverResult {
+                id,
+                revision,
+                grant_id,
+                operation_id,
+            } => {
+                execute_recovery_command(
+                    args,
+                    eefn::request_recovery::RecoverCommand {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                        grant_id: grant_id.clone(),
+                        operation_id: operation_id.clone(),
+                    },
                 )
                 .await
             }
@@ -2167,6 +2227,39 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovery_requires_saved_revision_grant_and_operation_without_retry_or_evidence_flags() {
+        let args = [
+            "eefn",
+            "requests",
+            "recover-result",
+            "job-id",
+            "--revision",
+            "8",
+            "--grant-id",
+            "grant",
+            "--operation-id",
+            "receipt",
+        ];
+        assert!(Args::try_parse_from(args).is_ok());
+        for index in [4, 6, 8] {
+            let mut missing = args.to_vec();
+            missing.drain(index..index + 2);
+            assert!(Args::try_parse_from(missing).is_err());
+        }
+        for flag in [
+            "--retry",
+            "--renew",
+            "--execute",
+            "--report",
+            "--resume",
+            "--auto-approve",
+        ] {
+            let mut bad = args.to_vec();
+            bad.push(flag);
+            assert!(Args::try_parse_from(bad).is_err());
+        }
+    }
     #[test]
     fn receipt_command_requires_an_id_and_has_no_replay_switch() {
         for command in ["receipt", "result"] {

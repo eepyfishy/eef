@@ -1,5 +1,62 @@
 # Architecture conformance status
 
+## Unreleased: explicit interrupted-result reconciliation (2026-10-11)
+
+Origin/EEF-owner `requests recover-result` now reconciles an exact idle
+interrupted reviewed attempt from its authenticated executor's retained completed
+report. The existing job journal saves a separate bounded recovery receipt;
+original grant, request context, assignment, attempt count, actual ACK and
+missing/unknown report remain unchanged. Completed errors fail rather than
+silently succeed. Exact same-actor command reuse inspects its durable decision
+without another remote lookup or checkpoint. Restarts never launch a runner.
+Routine status is redacted; explicit text-output inspection includes recovered
+output. See [contract and limits](RESULT-RECOVERY.md).
+
+Both admissions share the existing runner/shutdown gate, with no lock held
+across remote inspection. Wrong origin/grant/session, stale revisions, competing
+abandonment, damaged/non-completed evidence and journal quota/write failure deny
+new decisions without changing the saved job. No synthetic ACK, replay,
+remaining-step dispatch, lease renewal, legacy fallback or remote-stop claim is
+made. Safe continuation and implicit compound input wiring remain open.
+
+The real local disconnect test found that dropping the client connection cancels
+in-flight Rust futures, not necessarily external effects. Accepted runtime drop
+now best-effort checkpoints null-output uncertainty and releases unfinished output
+reservations while preserving consumption. It never retries a failed final write.
+Unknown evidence cannot reconcile as completed; crashes/write failure may still
+leave only accepted metadata. Strong process/backend termination is still open.
+
+Validation: **385 workspace/all-target Rust tests pass in both feature modes**,
+with fresh no-dashboard binaries. New units cover scope/actor/receipt contracts,
+real/missing ACK preservation, restart, failed evidence, damaged records, runner
+and shutdown admission, source-revision races, competing abandonment, quota
+rollback, command flags and dropped-runtime uncertainty. Remaining-step policy
+has a unit test, not compound-pipeline acceptance.
+
+`request-review-RJutzG` passes both-role public-command recovery after deliberately
+failed coordinator completion checkpoints, recovery-write rollback, dropped HTTP
+reply receipt reuse, executor-offline saved-owner inspection, strict API guards,
+origin/actor denial, status redaction and no backend replay. A separate real local
+disconnect returns unknown, refuses recovery and permits only explicit uncertainty
+acknowledgement. The earlier new fixture incorrectly expected unfinished work to
+complete across disconnect; it now tests that boundary honestly. Its initial
+60-second grant was also corrected to the existing 30-second protocol cap without
+widening production limits or test deadlines.
+
+Final baselines pass in `job-shutdown-pUQnYw`, `scheduling-Vkua3P`,
+`request-drafts-WuxHKs`, `model-metadata-jtgKVn` and the isolated
+`node-credentials-9MMTXJ`. The durable-request regression
+now requires the new unknown/null-output cancellation report and still verifies
+no replay after restart, abandonment or EEF history removal. Formatter, JS syntax,
+backend/browser source-boundary and diff checks pass. The fake-model/headless
+fixtures explicitly report `real_inference:false` and `physical_two_pc:false`.
+
+No release version, installer, installed app/physical node, update feed or UI
+change is made. Stable-only automatic updates remain unchanged. Legacy execution
+migration, default-LM quality/bootstrap, automatic request policies, strong
+termination, continuous/direct data paths, model lifecycle, physical acceptance
+and signing/Defender review remain release/backlog work, not completed features.
+
 ## Unreleased: bounded retained executor reports (2026-10-11)
 
 Granted operations atomically checkpoint bounded final reports/output in the

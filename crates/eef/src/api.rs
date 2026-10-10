@@ -145,6 +145,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
         .route("/api/commands/requests/execute", post(request_execute))
         .route("/api/commands/requests/receipt", post(request_receipt))
         .route("/api/commands/requests/result", post(request_result))
+        .route(
+            "/api/commands/requests/recover-result",
+            post(request_recovery),
+        )
         .route("/api/commands/requests/abandon", post(request_abandon))
         .route("/api/diagnostics/probe", post(diagnostic_probe))
         .route("/api/commands/models", get(model_inventory))
@@ -246,6 +250,12 @@ async fn request_result(
     Json(request): Json<crate::request_execution::ReceiptInspectionRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(runtime.request_result_command(request).await?))
+}
+async fn request_recovery(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::request_recovery::RecoveryRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(runtime.request_recovery_command(request).await?))
 }
 async fn request_execute(
     State(runtime): State<Arc<Runtime>>,

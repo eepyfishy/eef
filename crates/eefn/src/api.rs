@@ -120,6 +120,10 @@ impl NodeService {
             )
             .route("/api/commands/requests/result", post(request_result))
             .route(
+                "/api/commands/requests/recover-result",
+                post(request_recovery),
+            )
+            .route(
                 "/api/commands/requests/execute",
                 post(request_execute_command),
             )
@@ -226,6 +230,12 @@ async fn request_result(
     Json(request): Json<crate::request_result::ResultRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.request_result(request).await?))
+}
+async fn request_recovery(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_recovery::RecoverRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.recover_request_command(request).await?))
 }
 
 async fn config_get(State(state): State<Arc<NodeService>>) -> Result<Json<Value>, ApiError> {

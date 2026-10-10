@@ -28,7 +28,9 @@ Availability is `retained_final_report` (inspect terminal state/success/error),
 `legacy_metadata_only` (no saved output/success evidence). Migration never invents
 results. Responses set `execution_requested`, `automatically_retried`, `reconciled`
 to false. EEF state/revision remains an unchanged snapshot even when node evidence
-reports completion. Explicit journal reconciliation is still open. Completion is
+reports completion. Separate explicit journal reconciliation is available through
+[recover-result](RESULT-RECOVERY.md); this read command still never reconciles.
+Automatic recovery and safe remaining-step continuation are still open. Completion is
 not proof of external termination, rollback, exactly-once effects or model truth.
 
 Final reports may contain private text/results. They are stored in plaintext
@@ -53,8 +55,12 @@ The checkpoint also saves a canonical SHA-256 report checksum, checked on reads
 and startup. It detects changed cached bytes, not malicious-owner/node tampering
 when the checksum can also be replaced; it is not a signature or attestation.
 Existing configurable receipt-count/journal-byte/result bounds apply, with fewer
-grants potentially fitting now that outputs consume the same budget. There is no
-unlimited cache or automatic pruning. Deleting/replacing the journal loses replay protection.
+grants potentially fitting now that outputs consume the same budget. Dropped
+accepted runtimes best-effort retain null-output uncertainty and release unfinished
+reservations, never success/remote-stop evidence; process crashes and failed
+writes may still leave no final checkpoint. See [recovery limits](RESULT-RECOVERY.md).
+There is no unlimited cache or automatic pruning. Deleting/replacing the journal
+loses replay protection.
 
 Logical reservations/page caps are not physical free-disk guarantees; rollback
 journal overhead is additional. A failed final write cannot confirm success: the

@@ -300,10 +300,14 @@ try {
   assert.equal(uncertaintyReuse.result.reused,true);assert.equal(uncertaintyReuse.result.status,'interrupted');assert.equal(gateRequests,1);
   await bad(['jobs','resume',uncertain.command.id]);await bad(['jobs','stop',uncertain.command.id]);
   await bad(['requests','execute',uncertain.command.id,'--revision','3','--approval-digest',uncertain.command.approval_sha256]);
-  assert.equal((await node(['grants','receipt','--id',interrupted.execution.attempts[0].grant.grant_id])).receipt.state,'accepted');
+  assert.equal((await node(['grants','receipt','--id',interrupted.execution.attempts[0].grant.grant_id])).receipt.state,'unknown');
   const recoveredInspection=(await node(['requests','receipt',uncertain.command.id,'--grant-id',uncertainGrant])).result;
-  assert.equal(recoveredInspection.coordinator_attempt_state,'unknown');assert.equal(recoveredInspection.receipt.state,'accepted');
+  assert.equal(recoveredInspection.coordinator_attempt_state,'unknown');assert.equal(recoveredInspection.receipt.state,'unknown');
   assert.equal(recoveredInspection.reconciled,false);assert.equal(recoveredInspection.execution_requested,false);
+  const droppedResult=(await node(['requests','result',uncertain.command.id,'--grant-id',uncertainGrant])).result.result;
+  assert.equal(droppedResult.report.state,'unknown');assert.equal(droppedResult.report.data,null);assert.equal(droppedResult.report.success,false);
+  assert.equal(droppedResult.report.error_code,'grant_runtime_dropped_effects_unknown');
+  await bad(['requests','recover-result',uncertain.command.id,'--revision',String(interrupted.revision),'--grant-id',uncertainGrant,'--operation-id',randomUUID()]);
   assert.deepEqual((await coordinator(['requests','inspect',uncertain.command.id])).plan,interrupted,'evidence must not resolve uncertainty or authorize a new attempt');
   const abandonCommand={id:uncertain.command.id,expected_revision:interrupted.revision,grant_id:uncertainGrant,
     operation_id:randomUUID(),acknowledge_effects_may_continue:true};
@@ -342,7 +346,7 @@ try {
   assert.equal((await node(abandonArgs)).result.reused,true);assert.equal(gateRequests,1);
   // Removal is a separate explicit owner action, not automatic cleanup or journal erasure.
   await node(['jobs','remove',uncertain.command.id]);
-  assert.equal((await node(['grants','receipt','--id',uncertainGrant])).receipt.state,'accepted','node nonce ledger must survive coordinator history removal');
+  assert.equal((await node(['grants','receipt','--id',uncertainGrant])).receipt.state,'unknown','consumed uncertain node receipt must survive coordinator history removal');
   await bad(abandonArgs);
   // The coordinator owner can separately abandon known uncertainty after a bounded node deadline.
   const ownerUnknown=await prepared('http_request','http.request',{url:`http://127.0.0.1:${gateServer.address().port}/owner-uncertain`,method:'GET',timeout_seconds:20},1500);

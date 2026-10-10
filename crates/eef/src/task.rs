@@ -564,6 +564,46 @@ impl TaskEngine {
         })?;
         Ok((plan, !changed))
     }
+    pub(crate) fn recovery_source(
+        &self,
+        command: &eefn::request_recovery::RecoverCommand,
+        origin: Option<&str>,
+    ) -> Result<(Plan, bool)> {
+        let active = self.active.lock().expect("active jobs");
+        let p = self.store.get(&command.id)?;
+        let reused = crate::request_recovery::eligible(
+            &p,
+            command,
+            origin,
+            active.closing || active.ids.contains(&command.id),
+        )?;
+        Ok((p, reused))
+    }
+    pub(crate) fn recover_reviewed(
+        &self,
+        command: &eefn::request_recovery::RecoverCommand,
+        origin: Option<&str>,
+        evidence: &eefn::request_result::RetainedResult,
+    ) -> Result<(Plan, bool)> {
+        let active = self.active.lock().expect("active jobs");
+        let mut changed = false;
+        let p = self.store.edit(
+            &command.id,
+            "Explicit retained-completion reconciliation; no replay or remaining-step dispatch",
+            |p| {
+                changed = crate::request_recovery::apply(
+                    p,
+                    command,
+                    origin,
+                    active.closing || active.ids.contains(&command.id),
+                    evidence,
+                    eefn::protocol::now_ms(),
+                )?;
+                Ok(changed)
+            },
+        )?;
+        Ok((p, !changed))
+    }
     fn admit_new(&self, plan: Plan) -> Result<ActiveJob> {
         if plan.status != PlanStatus::Pending || plan.request_review.is_some() {
             bail!("Review records are not executable plans")

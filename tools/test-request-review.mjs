@@ -6,11 +6,12 @@ import {resolve, join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 import {randomUUID, randomBytes} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
 const root = resolve(import.meta.dirname, '..');
 const scratch = await mkdtemp(join(root, '.validation/request-review-'));
 const bin = resolve(process.env.EEF_TEST_BINARY_DIR || join(root, 'target/debug'));
 const configPath = join(scratch, 'node.json'), eefConfig = join(scratch, 'eef.yaml');
-const marker = configPath + '.api.json', children = [], calls = [], gates = new Set();
+const marker = configPath + '.api.json', children = [], calls = [], gates = new Set(), recoveryGates = new Set();
 const env = {...process.env, EEF_NODE_PSK: '', APPDATA: join(scratch, 'appdata'),
   EEF_DISCOVERY_DIR: join(scratch, 'discovery'), PATH: join(root, '.tooling/llvm-mingw-20260616-ucrt-x86_64/bin') + ';' + process.env.PATH};
 function launch(name, args, extra = {}) {
@@ -53,6 +54,7 @@ const fake = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     calls.push(JSON.parse(body));
     if (mode === 'gate') {res.write(' '); gates.add(res); res.on('close', () => gates.delete(res)); return;}
+    if (mode === 'recovery-gate') {res.write(' '); recoveryGates.add(res); res.on('close', () => recoveryGates.delete(res)); return;}
     if (mode === 'text-execution') return res.end(JSON.stringify({message:{content:'fixture concrete grant result'},done:true,done_reason:'stop'}));
     if (mode === 'method' || mode === 'method-question' || mode === 'method-invalid' || mode === 'method-remote') {
       const value = mode === 'method-question' ? {schema_version:1,method:null,clarification:'Which node should be inspected?'}
@@ -665,6 +667,108 @@ try {
   assert.deepEqual((await cli(resultArgs)).result.result,savedResult.result.result);
   assert.deepEqual((await cli(['jobs','get',textId])).data,textCompleted);
   assert.equal(calls.length,beforeConcrete+1,'result inspection must never repeat inference');
+  // A real disconnect cancels the node's in-flight Rust future. It is not a
+  // completed result or evidence the external backend stopped. Preserve unknown
+  // consumption, deny result recovery, and close tracking only by explicit ack.
+  {
+    const count=calls.length,request=await cli(['jobs','request-text','--prompt','Disconnect while running','--role','unselected_role',
+      '--backend','ollama','--model','fixture','--target-node',config.node_id,'--operation-id',randomUUID()]);
+    const id=request.data.id,plan=(await cli(['requests','plan',id])).result;
+    const approval=await coordinator(['requests','approve',id,'--revision','2','--digest',plan.plan_sha256,
+      '--valid-for-ms','120000','--max-execution-ms','30000','--max-result-bytes','16384']);
+    mode='recovery-gate';await cli(['requests','execute',id,'--revision','3','--approval-digest',approval.plan.approval.approval_sha256,'--operation-id',randomUUID()]);
+    await until(async()=>recoveryGates.size===1&&(await cli(['jobs','get',id])).data.grant_attempts[0].state==='accepted','in-flight request before disconnect');
+    const runtime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+    await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==runtime&&await ready(),'disconnect while request runs');
+    const source=(await cli(['jobs','get',id])).data,grant=source.grant_attempts[0].grant_id;
+    const result=(await cli(['requests','result',id,'--grant-id',grant])).result.result;
+    assert.equal(result.receipt.state,'unknown');assert.equal(result.report.error_code,'grant_runtime_dropped_effects_unknown');
+    assert.equal(result.report.success,false);assert.equal(result.report.data,null);
+    const denied=await cli(['requests','recover-result',id,'--revision',String(source.revision),'--grant-id',grant,'--operation-id',randomUUID()],false);
+    assert.equal(denied.error_code,'recovery_unconfirmed');assert.deepEqual((await cli(['jobs','get',id])).data,source);
+    const closed=await cli(['requests','abandon',id,'--revision',String(source.revision),'--grant-id',grant,
+      '--operation-id',randomUUID(),'--acknowledge-effects-may-continue']);
+    assert.equal(closed.result.status,'abandoned');assert.equal(closed.result.remote_stop_confirmed,false);
+    assert.equal(closed.result.remote_effects_unknown,true);assert.equal(calls.length,count+1);
+    mode='text-execution';
+  }
+  // Deliberately fail only this isolated EEF job's completion checkpoint. The
+  // node finishes/checkpoints once; EEF stays interrupted until explicit recovery.
+  for (const recoveryActor of ['origin','owner']) {
+    const count=calls.length,operation=randomUUID();
+    const request=await cli(['jobs','request-text','--prompt','Recover '+recoveryActor,'--role','unselected_role',
+      '--backend','ollama','--model','fixture','--target-node',config.node_id,'--operation-id',operation]);
+    const id=request.data.id,plan=(await cli(['requests','plan',id])).result;
+    const approved=await coordinator(['requests','approve',id,'--revision','2','--digest',plan.plan_sha256,
+      '--valid-for-ms','120000','--max-execution-ms','30000','--max-result-bytes','16384']);
+    const fault=new DatabaseSync(join(scratch,'eef.db'));
+    try {fault.exec(`CREATE TRIGGER eef_fixture_block_completion BEFORE UPDATE OF plan_json ON durable_jobs
+      WHEN json_extract(NEW.plan_json,'$.plan_id')='${id}' AND json_extract(NEW.plan_json,'$.execution.attempts[0].state')='completed'
+      BEGIN SELECT RAISE(FAIL,'fixture coordinator completion failure'); END;`);}finally{fault.close();}
+    mode='text-execution';
+    await cli(['requests','execute',id,'--revision','3','--approval-digest',approved.plan.approval.approval_sha256,
+      '--operation-id',randomUUID()]);
+    await until(async()=>calls.length===count+1 && (await cli(['jobs','get',id])).data.status==='interrupted','lost coordinator completion checkpoint');
+    const runtime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+    await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==runtime&&await ready(),'restart with retained completed node evidence');
+    const source=(await cli(['jobs','get',id])).data,grant=source.grant_attempts[0].grant_id;
+    assert.equal(source.status,'interrupted');assert.equal(source.grant_attempts[0].state,'unknown');
+    const command={id,expected_revision:source.revision,grant_id:grant,operation_id:randomUUID()};
+    const args=['requests','recover-result',id,'--revision',String(source.revision),'--grant-id',grant,'--operation-id',command.operation_id];
+    assert.equal((await cli(['requests','result',id,'--grant-id',grant])).result.result.availability,'retained_final_report');
+    const pending=await cli(args,false);assert.equal(pending.error_code,'recovery_unconfirmed');
+    assert.deepEqual((await cli(['jobs','get',id])).data,source,'failed recovery checkpoint cannot mutate source');
+    const body={schema_version:1,expected_node_id:config.node_id,command},url=node+'/api/commands/requests/recover-result';
+    assert.equal((await fetch(url,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(body)})).status,403);
+    assert.equal((await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,command:{...command,result:{completed:true}}})})).status,422);
+    assert.equal((await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,expected_node_id:'other'})})).status,400);
+    const removeFault=new DatabaseSync(join(scratch,'eef.db'));try{removeFault.exec('DROP TRIGGER eef_fixture_block_completion');}finally{removeFault.close();}
+    const evidence=(await cli(['requests','result',id,'--grant-id',grant])).result.result;
+    assert.equal(evidence.report.data.content,'fixture concrete grant result');
+    assert.deepEqual((await cli(['jobs','get',id])).data,source,'cached final result does not automatically reconcile');
+    assert.equal((await cli(args,false,peerConfigPath)).error_code,'recovery_unconfirmed');
+    const staleArgs=[...args];staleArgs[4]=String(source.revision-1);
+    assert.equal((await cli(staleArgs,false)).error_code,'recovery_unconfirmed');
+    if(recoveryActor==='origin') {
+      // Drop the HTTP reply only after the command committed. Reuse inspects
+      // the exact saved receipt rather than fetching or applying evidence twice.
+      const originalMarker=await readFile(marker,'utf8');
+      try {
+        const altered=JSON.parse(originalMarker);altered.address=`127.0.0.1:${proxyPort}`;
+        await writeFile(marker,JSON.stringify(altered));proxyMode='drop';
+        const lost=await cli(args,false);assert.equal(lost.outcome_unknown,true);assert.equal(lost.error_code,'recovery_unconfirmed');
+      }finally{await writeFile(marker,originalMarker);}
+    }
+    const recovered=recoveryActor==='origin'?(await cli(args)).result:await coordinator(args);
+    assert.equal(recovered.reconciled,true);assert.equal(recovered.execution_requested,false);
+    assert.equal(recovered.automatically_retried,false);assert.equal(recovered.remote_stop_confirmed,false);
+    assert.equal(recovered.result_sha256,evidence.report_sha256);assert.equal(recovered.applied_revision,source.revision+1);
+    assert.equal(recovered.reused,recoveryActor==='origin');
+    const saved=(await cli(['jobs','get',id])).data;
+    assert.equal(saved.status,'completed');assert.equal(saved.revision,source.revision+1);
+    assert.equal(saved.grant_attempts[0].acknowledged,source.grant_attempts[0].acknowledged);
+    assert.equal(saved.grant_attempts[0].success,true);assert.equal(saved.can_resume,false);
+    assert.equal(saved.recovery.reconciled,true);assert(!JSON.stringify(saved).includes('fixture concrete grant result'));
+    assert.equal((await cli(['jobs','output',id])).data.outputs[0].content,'fixture concrete grant result');
+    const privatePlan=(await coordinator(['requests','inspect',id])).plan;
+    assert.equal(privatePlan.execution.attempts[0].report,null,'do not invent original completion');
+    assert.deepEqual(privatePlan.execution.attempts[0].recovery.result,evidence);
+    await cli(['jobs','resume',id],false);
+    const beforeRestart=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+    await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==beforeRestart&&await ready(),'retained reconciliation reopened');
+    await cli(['restart','--wait-seconds','15']);await until(ready,'recovered executor session replaced');
+    const same=recoveryActor==='origin'?(await cli(args)).result:await coordinator(args);
+    assert.equal(same.reused,true);assert.deepEqual((await cli(['jobs','get',id])).data,saved);
+    const changed=[...args];changed[8]=randomUUID();assert.equal((await cli(changed,false)).error_code,'recovery_unconfirmed');
+    if(recoveryActor==='owner') {
+      assert.equal((await cli(args,false)).error_code,'recovery_unconfirmed','origin cannot reuse coordinator-owner receipt');
+      await cli(['connection','pause']);
+      await until(async()=>(await json(eef+'/api/diagnostics')).registered_node_count===1,'executor disconnected for receipt reuse');
+      assert.equal((await coordinator(args)).reused,true,'exact saved owner receipt needs no live executor');
+      await cli(['connection','resume']);await until(ready,'restore executor after read-only reuse');
+    }
+    assert.equal(calls.length,count+1,'evidence recovery must not replay backend work');
+  }
   await writeFile(join(scratch, 'results.json'), JSON.stringify({passed: true, api_only: true, node_to_coordinator_review: true,
     original_text_preserved: true, authenticated_origin: true, clarification_returned: true, rejected_authority_fields: true,
     stateless_no_jobs_created: true, durable_inferred_review: true, lost_draft_found_without_replay: true,
@@ -684,10 +788,14 @@ try {
     explicit_concrete_requests:true,explicit_source_inputs_immutable:true,model_free_explicit_compilation:true,
     explicit_text_grant_execution:true,explicit_receipt_restart_recovery:true,partial_explicit_admission_inspectable:true,
     retained_executor_results:true,explicit_origin_owner_result_reads:true,result_restart_recovery:true,result_reads_no_replay_or_reconciliation:true,
+    explicit_result_reconciliation:true,lost_coordinator_checkpoint_recovered_after_restart:true,recovery_no_replay_or_fake_ack:true,
+    actual_local_disconnect_retains_unknown:true,unknown_result_does_not_reconcile:true,recovery_write_failure_preserves_source:true,
+    recovery_origin_and_owner_scope:true,recovery_lost_reply_receipt_reuse:true,recovery_without_live_executor:true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
 } finally {
   for (const response of gates) response.destroy();
+  for (const response of recoveryGates) response.destroy();
   for (const child of children) if (child.exitCode === null) child.kill();
   await Promise.allSettled(children.map(c => c.result));
   for (const server of [fake, proxy]) {server.closeAllConnections(); await new Promise(r => server.close(r));}

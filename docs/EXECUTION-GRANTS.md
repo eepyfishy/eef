@@ -185,6 +185,9 @@ output/success; schema-1 receipts cannot supply them. The separate explicit
 Missing evidence cannot prove no effects, and observed terminal state cannot prove
 every external effect stopped. Inspection performs no reconciliation; local tracking
 abandonment is a separate explicit command, not lost-output or execution recovery.
+The separate [recover-result command](RESULT-RECOVERY.md) now saves exact retained
+completed evidence in EEF's interrupted job journal. It preserves original
+ACK/uncertainty and cannot dispatch unissued steps, renew authority or replay work.
 See [command contract](COMMANDS.md#executor-receipt-inspection-through-eef-unreleased-after-alpha6).
 
 Tests include real pinned-TLS client/gateway file-write execution, acceptance and
