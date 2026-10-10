@@ -106,6 +106,10 @@ impl NodeService {
             )
             .route("/api/commands/requests/drafts", post(request_draft_command))
             .route(
+                "/api/commands/requests/receipt",
+                post(request_receipt_command),
+            )
+            .route(
                 "/api/commands/requests/execute",
                 post(request_execute_command),
             )
@@ -300,6 +304,12 @@ async fn request_draft_command(
     Json(request): Json<crate::request_drafts::DraftRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.draft_command(request).await?))
+}
+async fn request_receipt_command(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_receipt::ReceiptRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.request_receipt(request).await?))
 }
 async fn request_execute_command(
     State(state): State<Arc<NodeService>>,

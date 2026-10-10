@@ -50,7 +50,7 @@ try {
     const config=join(scratch,name+'.json'),apiPort=await port(),id='draft-fixture-'+name;
     await writeFile(config,JSON.stringify({node_id:id,name:'Draft fixture '+name,psk:'',endpoints:[],auto_local:false,local_pairing:false,
       dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:apiPort},metadata:{area:['Home',name==='a'?'Bedroom':'Living room']},
-      heartbeat_seconds:1,permissions:{remote_updates:false,filesystem:{read:true,write:true,roots:[scratch]},
+      heartbeat_seconds:1,request_limits:{work:1,control:1},permissions:{remote_updates:false,filesystem:{read:true,write:true,roots:[scratch]},
         http:{enabled:true,allowed_hosts:['127.0.0.1'],allow_private_networks:true}},
       models:{provider:'llamacpp',llamacpp:{slots:[]}},update:{policy:'off'}}));
     launch('eefn',['--config',config,'--no-ui']);const api=`http://127.0.0.1:${apiPort}`;
@@ -229,6 +229,23 @@ try {
   assert.deepEqual(attempt.grant.request_context,writeJob.plan.goal.request_context);assert.equal(attempt.grant.plan_sha256,writeJob.plan.planning.plan_sha256);
   assert.equal((await cli('eefn',other.config,['grants','receipt','--id',attempt.grant.grant_id])).receipt.state,'completed');
   assert.equal((await cli('eefn',other.config,['jobs','get',writeJob.command.id],false)).success,false,'executor must not become request owner');
+  const query={id:writeJob.command.id,grant_id:attempt.grant.grant_id};
+  const queryBody={schema_version:1,expected_node_id:owner.id,request_id:randomUUID(),command:query};
+  const queryUrl=owner.api+'/api/commands/requests/receipt';
+  const executorReceiptBefore=await readFile(other.config+'.grant-receipts.sqlite3');
+  const inspected=(await node(['requests','receipt',query.id,'--grant-id',query.grant_id])).result;
+  assert.equal(inspected.report_type,'coordinator_request_receipt');assert.equal(inspected.receipt.node_id,other.id);
+  assert.equal(inspected.receipt.state,'completed');assert.equal(inspected.coordinator_attempt_state,'completed');
+  assert.deepEqual(inspected.request_context,writeJob.plan.goal.request_context);
+  assert.equal(inspected.execution_requested,false);assert.equal(inspected.automatically_retried,false);assert.equal(inspected.reconciled,false);
+  assert(!('success' in inspected.receipt));assert(!('output' in inspected.receipt));assert(!('params' in inspected.receipt));
+  assert.equal((await response(queryUrl,queryBody,'https://untrusted.example')).status,403);
+  assert.equal((await response(queryUrl,{...queryBody,command:{...query,retry:true}})).status,422);
+  assert.equal((await cli('eefn',other.config,['requests','receipt',query.id,'--grant-id',query.grant_id],false)).success,false);
+  await bad(['requests','receipt',query.id,'--grant-id',randomUUID()]);
+  assert.deepEqual((await coordinator(['requests','receipt',query.id,'--grant-id',query.grant_id])).receipt,inspected.receipt);
+  assert.deepEqual(await readFile(other.config+'.grant-receipts.sqlite3'),executorReceiptBefore,'inspection cannot rewrite node receipts');
+  assert.deepEqual((await coordinator(['requests','inspect',query.id])).plan,completed,'inspection cannot reconcile or rewrite the job');
   await writeFile(effectFile,'external owner marker');
   const duplicate=await json(executeUrl,executeRequest);assert.equal(duplicate.result.reused,true);
   const ownerDuplicate=await coordinator(['requests','execute',writeJob.command.id,'--revision','3','--approval-digest',writeJob.command.approval_sha256,'--operation-id',writeJob.command.operation_id]);
@@ -242,6 +259,11 @@ try {
   assert.equal(start.success,true);
   await until(async()=>gateRequests===1&&(await node(['jobs','get',uncertain.command.id])).data.grant_attempts?.[0]?.state==='accepted','node HTTP effect and persisted EEF acceptance');
   const accepted=(await coordinator(['requests','inspect',uncertain.command.id])).plan;
+  const uncertainGrant=accepted.execution.attempts[0].grant.grant_id;
+  const pendingInspection=(await node(['requests','receipt',uncertain.command.id,'--grant-id',uncertainGrant])).result;
+  assert.equal(pendingInspection.receipt.state,'accepted');assert.equal(pendingInspection.coordinator_attempt_state,'accepted');
+  assert.equal(gateRequests,1,'inspection during saturated workload must not execute anything');
+  assert.deepEqual((await coordinator(['requests','inspect',uncertain.command.id])).plan,accepted);
   eefProcess.kill();await eefProcess.result;
   eefProcess=launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:coordinatorSecret});
   await until(async()=>{const d=await coordinator(['diagnostics']);return d.initialized&&d.registered_node_count===2;},'reopen uncertain issuance without replay');
@@ -254,6 +276,10 @@ try {
   await bad(['jobs','resume',uncertain.command.id]);await bad(['jobs','stop',uncertain.command.id]);
   await bad(['requests','execute',uncertain.command.id,'--revision','3','--approval-digest',uncertain.command.approval_sha256]);
   assert.equal((await node(['grants','receipt','--id',interrupted.execution.attempts[0].grant.grant_id])).receipt.state,'accepted');
+  const recoveredInspection=(await node(['requests','receipt',uncertain.command.id,'--grant-id',uncertainGrant])).result;
+  assert.equal(recoveredInspection.coordinator_attempt_state,'unknown');assert.equal(recoveredInspection.receipt.state,'accepted');
+  assert.equal(recoveredInspection.reconciled,false);assert.equal(recoveredInspection.execution_requested,false);
+  assert.deepEqual((await coordinator(['requests','inspect',uncertain.command.id])).plan,interrupted,'evidence must not resolve uncertainty or authorize a new attempt');
   for(const res of gatedResponses)res.end('late data is not completion authority');
   assert.equal(gateRequests,1);assert.equal(await readFile(effectFile,'utf8'),'external owner marker');
   assert.deepEqual((await coordinator(['requests','inspect',writeJob.command.id])).plan,completed,'completed grants must survive EEF restart unchanged');
@@ -262,7 +288,8 @@ try {
     receipt_deduplication:true,revision_checks:true,restart_persistence:true,no_automatic_replay:true,
     physical_two_pc:false,explicit_concrete_planning:true,compiled_without_dispatch:true,immutable_plan_digest:true,
     bounded_owner_approval:true,approved_without_grant_or_dispatch:true,approval_restart_and_cancellation:true,
-    execution_grants:true,durable_issuance_and_ack:true,origin_execution:true,separate_origin_and_executor:true,uncertain_restart_no_replay:true},null,2));
+    execution_grants:true,durable_issuance_and_ack:true,origin_execution:true,separate_origin_and_executor:true,uncertain_restart_no_replay:true,
+    authenticated_remote_receipt_inspection:true,reserved_receipt_controls:true,receipt_inspection_without_job_changes_or_replay:true},null,2));
   console.log('Durable request validation passed: '+scratch);
 } finally {
   for(const res of gatedResponses)res.destroy();gateServer.closeAllConnections();await new Promise(r=>gateServer.close(r));

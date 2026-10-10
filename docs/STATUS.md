@@ -1,5 +1,44 @@
 # Architecture conformance status
 
+## Unreleased: authenticated executor receipt inspection (2026-10-11)
+
+Original-node and local EEF-owner `requests receipt` commands now inspect the
+exact retained executor grant through the current independently authenticated,
+owner-pinned TLS session. Complete scope digests and bounded issuer/node/job/task/
+attempt/state/timestamp fields must match. A replacement session can inspect old
+evidence but cannot reactivate its lease. Other origins, changed issuers/scopes,
+missing/damaged records and unavailable controls reject without legacy fallback.
+Local `grants receipt` now validates the same strict metadata and journal owner/version.
+
+The distinct read-only wire query uses reserved control capacity, retained through
+the bounded read/response even while workload capacity is full. A partial failed
+response retires the framed connection. It dispatches no executable capability,
+calls no model and does not create, repair, prune or change a journal. Reports retain
+the original context and coordinator revision snapshot, explicitly setting
+`execution_requested: false`, `automatically_retried: false`, `reconciled: false`.
+Inspection success is not execution success. Consumed/completed cannot recover lost
+output or prove external effects stopped; missing evidence cannot prove no effects.
+Unknown jobs remain unknown and non-resumable. This supplies recovery evidence,
+not the still-required explicit uncertainty resolution policy. See
+[command contract](COMMANDS.md#executor-receipt-inspection-through-eef-unreleased-after-alpha6).
+
+Validation: **327 workspace/all-target Rust tests pass in both feature modes**.
+Fresh headless fixture `request-drafts-7W3HPD` passes owner/origin inspection of a
+different executor, scope matching, unchanged node/job journals, wrong-origin and
+cross-site denial, control availability during a saturated HTTP operation, and
+inspection of retained uncertainty after EEF restart without replay. Fake-model
+review/granted inference (`request-review-omnDyt`), credentials
+(`node-credentials-HsWAOc`), model metadata (`model-metadata-0jhX3K`), shutdown
+(`job-shutdown-di5Xic`) and scheduling (`scheduling-edXRhi`) regressions pass.
+Source backend/browser dependency, formatting, syntax and diff checks pass.
+These are local isolated processes/fake inference, not physical two-PC or real
+reasoning acceptance. All fixture children closed through cleanup.
+
+Stable v0.4.0 remains incomplete; the release gates listed below still apply.
+Installed apps, the physical remote node, model downloads/selections, permissions,
+versions, installers and disabled stable-only feeds are unchanged. No signing or
+Defender-clearance claim is made.
+
 ## Unreleased: explicit reviewed execution with durable receipts (2026-10-11)
 
 Owner and origin-node `requests execute` now activate only an exact retained

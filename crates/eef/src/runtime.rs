@@ -702,6 +702,17 @@ impl Runtime {
                     )
                     .await
             }
+            "requests.receipt" => {
+                match serde_json::from_value::<eefn::request_receipt::ReceiptCommand>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(command) => {
+                        self.inspect_request_receipt(command, Some(context.origin_node()))
+                            .await
+                    }
+                    Err(_) => Err(anyhow::anyhow!("Invalid receipt query")),
+                }
+            }
             "requests.execute" => {
                 match serde_json::from_value::<eefn::request_execution::ExecuteCommand>(
                     message["payload"].clone(),

@@ -8,6 +8,12 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Inspect a retained request's executor receipt through EEF; never replay or reconcile.
+    Receipt {
+        id: String,
+        #[arg(long)]
+        grant_id: String,
+    },
     /// Ask EEF to execute one exact owner-approved request from this running node.
     Execute {
         id: String,

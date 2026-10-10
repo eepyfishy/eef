@@ -50,6 +50,10 @@ impl RequestBudget {
         let pool = if control { &self.control } else { &self.work };
         pool.clone().try_acquire_owned().ok()
     }
+    /// Distinct authenticated read-only wire query, not an executable capability.
+    pub fn admit_receipt(&self) -> Option<OwnedSemaphorePermit> {
+        self.control.clone().try_acquire_owned().ok()
+    }
 }
 
 #[cfg(test)]
@@ -104,8 +108,16 @@ mod tests {
             assert!(budget.admit(capability, action).is_none());
         }
         let ping = budget.admit("system.ping", "run").unwrap();
+        assert!(budget.admit_receipt().is_none());
         assert!(budget.admit("node.configure", "restart").is_none());
         drop(ping);
+        let receipt = budget.admit_receipt().unwrap();
+        assert!(budget.admit("node.configure", "status").is_none());
+        assert!(
+            budget.admit("grants.receipt", "read").is_none(),
+            "ordinary RPC cannot claim the distinct control path"
+        );
+        drop(receipt);
         let restart = budget.admit("node.configure", "restart").unwrap();
         assert!(budget.admit("node.configure", "status").is_none());
         drop(work);

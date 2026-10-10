@@ -137,6 +137,24 @@ erase, replay, reset or recovery execution command is exposed. The separate
 caller-supplied raw grant. Uncertain attempts cannot be hidden by Stop or resumed
 through legacy job runners; explicit reconciliation remains a later boundary.
 
+The original request node and local EEF owner can additionally use
+`requests receipt JOB_ID --grant-id GRANT_UUID --json` through EEF. It selects only
+the exact retained issuance and reads the independently authenticated executor's
+journal under the same pinned issuer, including after session replacement.
+The complete scope digest and bounded identity/timestamp metadata must match.
+This uses a distinct reserved-control wire query, not an executable capability or
+shared-secret fallback. Other origins, changed issuers/scopes, unavailable controls
+and missing/damaged journals fail closed. Local read-only inspection validates the
+same strict metadata. Neither read path creates, repairs, prunes or changes receipts.
+
+`coordinator_request_receipt` reports explicitly set `execution_requested: false`,
+`automatically_retried: false`, `reconciled: false`. Coordinator state is a revision
+snapshot, not a write or resumed lease. Even `completed` cannot recover output or
+its success status: the node ledger stores consumption/terminal state only.
+Missing evidence cannot prove no effects, and observed terminal state cannot prove
+every external effect stopped. Explicit uncertainty reconciliation remains pending.
+See [command contract](COMMANDS.md#executor-receipt-inspection-through-eef-unreleased-after-alpha6).
+
 Tests include real pinned-TLS client/gateway file-write execution, acceptance and
 completion scope checks, unchanged owner markers after replay and node restart,
 24 competing claims through independent journal handles, permission revocation

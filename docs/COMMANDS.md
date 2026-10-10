@@ -470,6 +470,55 @@ issuance/ACK integration and fixed reviewed-plan dispatch are described above;
 legacy RPCs are unchanged. No raw grant-issuance or receipt reset/replay command is exposed
 by this receipt inspector, and no public installer/update feed includes this work yet.
 
+## Executor receipt inspection through EEF (unreleased after alpha.6)
+
+The original input node or local EEF owner can inspect the exact executor's
+consumed receipt without visiting that executor, dispatching work or rewriting a job:
+
+```powershell
+eefn requests receipt JOB_ID --grant-id GRANT_UUID --json
+eef requests receipt JOB_ID --grant-id GRANT_UUID --json
+```
+
+Obtain the grant UUID from the original node's `jobs get` metadata or private owner
+`requests inspect`. This is distinct from `eefn grants receipt`, which reads the
+local node's own journal and also works while it is stopped. The network command
+requires the origin node/EEF and exact executor to be running and connected using
+independent credentials and the same owner-pinned TLS issuer. A new authenticated
+session can inspect an old session's receipt but cannot reactivate its lease.
+Issuer replacement, unsupported nodes, missing/damaged receipts or busy controls
+fail without legacy fallback or automatic retry. No caller chooses a different
+executor, issuer, attempt, parameters or grant scope. An executor does not thereby
+gain ownership of another node's original request.
+
+Equivalent guarded APIs: `POST /api/commands/requests/receipt`.
+EEF accepts exactly `schema_version: 1`, `expected_runtime_id` and
+`command: {"id":"JOB_ID","grant_id":"GRANT_UUID"}`. The node adapter accepts
+exactly `schema_version: 1`, `expected_node_id`, canonical `request_id` and the same
+command. Extra authority fields and cross-site callers reject. Node forwarding
+reuses the existing authenticated submission path; EEF checks retained origin and
+issuance before reading the executor. The distinct wire query uses reserved
+node control capacity, not workload admission. Its bounded read/response retains
+that permit; a failed partial response retires the framed connection. Shared-secret
+connections cannot use this query, and it is not an executable capability.
+
+A confirmed `coordinator_request_receipt` report includes the original context,
+coordinator revision/attempt-state snapshot and strict bounded node/issuer/grant/
+scope-digest/job/task/attempt/state/timestamp metadata. The executor scope digest
+must match the complete retained issuance. Local inspection now validates the same
+metadata and journal owner/version. There are no parameters, original text, model
+output or media in a consumed receipt. Report `success` means the **inspection**
+was confirmed, not that the underlying operation succeeded.
+
+All reports set `execution_requested: false`, `automatically_retried: false` and
+`reconciled: false`. `accepted` may mean running or interrupted; `completed` means
+a terminal node checkpoint, which does not recover lost output or its success
+status. Even a completed receipt cannot prove all external effects stopped.
+A missing receipt does not prove nothing happened. Inspection never changes the
+coordinator revision/status, returns an unknown attempt to a runner, cancels remote
+effects, issues another grant, prunes receipts or supplies a recovery authorization.
+The separate explicit reconciliation/recovery policy remains required.
+
 ## Supplied structured proposals (unreleased)
 
 Automation may submit a proposal for **review only**, without interpreter

@@ -278,6 +278,23 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .build()?;
     let response = match command {
         Command::Requests { command } => {
+            if let eef::request_planning::PlanningAction::Receipt { id, grant_id } = command {
+                let command = eefn::request_receipt::ReceiptCommand {
+                    id: id.clone(),
+                    grant_id: grant_id.clone(),
+                };
+                command.validate()?;
+                let state =
+                    command_response(client.get(format!("{base}/api/diagnostics")).send().await?)
+                        .await?;
+                let runtime = state["runtime_id"].as_str().context("Missing runtime ID")?;
+                let result = command_response(client.post(format!("{base}/api/commands/requests/receipt"))
+                    .json(&json!({"schema_version":1,"expected_runtime_id":runtime,"command":command})).send().await?).await?;
+                if !eefn::request_receipt::confirmed(&result, &command, None, Some(runtime)) {
+                    bail!("Unconfirmed receipt inspection; no fallback or recovery")
+                }
+                return Ok(result);
+            }
             if let eef::request_planning::PlanningAction::Execute {
                 id,
                 revision,
@@ -309,6 +326,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     "error_code":"execution_unconfirmed","note":"Inspect the request/job and receipts before retrying; no fallback, replay or automatic renewal."})));
             }
             let command = match command {
+                eef::request_planning::PlanningAction::Receipt { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Execute { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Inspect { id } => {
                     eef::request_planning::PlanningCommand::Inspect { id: id.clone() }

@@ -293,6 +293,38 @@ async fn execute_draft_command(
         "outcome_unknown":command.mutates(),"error_code":"draft_unconfirmed",
         "error":"No confirmed draft reply. Inspect the draft/jobs.find before retrying. No fallback or automatic replay."})))
 }
+async fn execute_request_receipt_command(
+    args: &Args,
+    command: eefn::request_receipt::ReceiptCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.validate()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; receipt commands never launch another runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let exchange = async {
+        let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
+            .post(format!("http://{address}/api/commands/requests/receipt")).timeout(Duration::from_secs(25))
+            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"request_id":request_id,"command":command})).send().await?;
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok || !eefn::request_receipt::confirmed_node(&value, &command, &file.node_id, &request_id) { bail!("Unconfirmed receipt inspection") }
+        Ok::<_,anyhow::Error>(value)
+    }.await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"request_receipt","node_id":file.node_id,"request_id":request_id,
+        "id":command.id,"grant_id":command.grant_id,"success":false,"execution_requested":false,"automatically_retried":false,"reconciled":false,
+        "error_code":"receipt_unavailable","note":"Inspection unconfirmed; no fallback, job change or recovery performed. Missing evidence does not prove no effects."})))
+}
 async fn execute_reviewed_command(
     args: &Args,
     command: eefn::request_execution::ExecuteCommand,
@@ -733,6 +765,16 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 execute_draft_command(
                     args,
                     eefn::request_drafts::DraftCommand::Get { id: id.clone() },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::Receipt { id, grant_id } => {
+                execute_request_receipt_command(
+                    args,
+                    eefn::request_receipt::ReceiptCommand {
+                        id: id.clone(),
+                        grant_id: grant_id.clone(),
+                    },
                 )
                 .await
             }

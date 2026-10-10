@@ -48,6 +48,39 @@ pub struct ExecutionRequest {
     pub expected_runtime_id: String,
     pub command: ExecuteCommand,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReceiptInspectionRequest {
+    pub schema_version: u32,
+    pub expected_runtime_id: String,
+    pub command: eefn::request_receipt::ReceiptCommand,
+}
+fn receipt_attempt<'a>(
+    plan: &'a Plan,
+    command: &eefn::request_receipt::ReceiptCommand,
+    origin: Option<&str>,
+) -> Result<&'a GrantedAttempt> {
+    command.validate()?;
+    if plan.plan_id != command.id
+        || origin.is_some_and(|node| {
+            plan.goal
+                .request_context
+                .as_ref()
+                .is_none_or(|c| c.origin_node() != node)
+        })
+    {
+        bail!("Request not found for this origin")
+    }
+    validate_retained(plan)?;
+    plan.execution
+        .as_ref()
+        .and_then(|e| {
+            e.attempts
+                .iter()
+                .find(|a| a.grant.grant_id == command.grant_id)
+        })
+        .context("Issued attempt not found for this request")
+}
 pub(crate) fn reserved_bytes(plan: &Plan) -> usize {
     plan.execution
         .as_ref()
@@ -639,6 +672,39 @@ fn start(p: &mut Plan, command: &ExecuteCommand, now: u64) -> Result<()> {
     Ok(())
 }
 impl crate::Runtime {
+    pub async fn request_receipt_command(
+        &self,
+        request: ReceiptInspectionRequest,
+    ) -> Result<Value> {
+        if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
+            bail!("Receipt query schema/runtime changed")
+        }
+        self.inspect_request_receipt(request.command, None).await
+    }
+    pub(crate) async fn inspect_request_receipt(
+        &self,
+        command: eefn::request_receipt::ReceiptCommand,
+        origin: Option<&str>,
+    ) -> Result<Value> {
+        let plan = self.engine.store.get(&command.id)?;
+        let attempt = receipt_attempt(&plan, &command, origin)?;
+        let receipt = self
+            .node_server
+            .inspect_grant_receipt(&attempt.grant)
+            .await?;
+        let coordinator_attempt_state = serde_json::to_value(attempt.state)?
+            .as_str()
+            .unwrap()
+            .into();
+        Ok(json!(eefn::request_receipt::ReceiptReport {
+            schema_version: 1, report_type: "coordinator_request_receipt".into(), success: true,
+            runtime_id: self.instance_id.clone(), id: plan.plan_id, revision: plan.revision,
+            request_context: plan.goal.request_context.context("Request context missing")?,
+            coordinator_attempt_state, receipt,
+            execution_requested: false, automatically_retried: false, reconciled: false,
+            note: "Read-only executor evidence. Coordinator state is a revision snapshot and remains unchanged. Consumed/completed does not recover output or prove success/termination; missing receipts do not prove no effects. No retry or fallback.".into(),
+        }))
+    }
     pub async fn execution_command(&self, request: ExecutionRequest) -> Result<Value> {
         if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
             bail!("Execution schema/runtime changed")
@@ -720,6 +786,38 @@ fn report(runtime: &crate::Runtime, p: &Plan, reused: bool) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::{event::EventBus, request_approval::tests as approval};
+    #[test]
+    fn receipt_selection_requires_original_origin_and_exact_retained_issuance_without_mutation() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, journal) = issued(&engine);
+        let command = eefn::request_receipt::ReceiptCommand {
+            id: p.plan_id.clone(),
+            grant_id: g.grant_id.clone(),
+        };
+        let origin = p.goal.request_context.as_ref().unwrap().origin_node();
+        assert_eq!(
+            receipt_attempt(&p, &command, Some(origin)).unwrap().grant,
+            g
+        );
+        assert!(receipt_attempt(&p, &command, Some("different-origin")).is_err());
+        let mut wrong = command.clone();
+        wrong.grant_id = uuid::Uuid::new_v4().to_string();
+        assert!(receipt_attempt(&p, &wrong, None).is_err());
+        let unissued = requested(&engine);
+        let no_grant = eefn::request_receipt::ReceiptCommand {
+            id: unissued.plan_id.clone(),
+            grant_id: g.grant_id.clone(),
+        };
+        assert!(receipt_attempt(&unissued, &no_grant, None).is_err());
+        journal.record(&ack(&g)).unwrap();
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let unknown = engine.store.get(&p.plan_id).unwrap();
+        assert_eq!(
+            receipt_attempt(&unknown, &command, None).unwrap().state,
+            AttemptState::Unknown
+        );
+        assert_eq!(json!(unknown), json!(engine.store.get(&p.plan_id).unwrap()));
+    }
     fn approved(engine: &TaskEngine) -> Plan {
         let p = approval::compiled(engine);
         let cmd = approval::command(&p);

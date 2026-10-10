@@ -450,6 +450,26 @@ impl NodeServer {
         )
         .await
     }
+    /// Read the current authenticated executor's journal for a previously issued grant.
+    /// Older sessions/issuers and missing or mismatched receipts never imply effects did not occur.
+    pub async fn inspect_grant_receipt(
+        &self,
+        grant: &crate::grants::ExecutionGrant,
+    ) -> Result<crate::request_receipt::ConsumedReceipt> {
+        grant.validate()?;
+        let response = self.invoke_message(&grant.executor_node,
+            json!({"type":"grant_receipt","grant_id":grant.grant_id,"expected_node_id":grant.executor_node,"expected_issuer_id":grant.issuer_id}),
+            Duration::from_secs(10), None, None).await?;
+        if response["success"] != true {
+            bail!("Consumed receipt unavailable; effects remain unresolved")
+        }
+        let receipt: crate::request_receipt::ConsumedReceipt =
+            serde_json::from_value(response["data"].clone())?;
+        if !receipt.confirms(grant) {
+            bail!("Receipt does not match the exact issued grant")
+        }
+        Ok(receipt)
+    }
     async fn invoke_message(
         &self,
         node_id: &str,
@@ -465,6 +485,19 @@ impl NodeServer {
             .get(node_id)
             .cloned()
             .ok_or_else(|| NodeOfflineError(node_id.into()))?;
+        if message["type"] == "grant_receipt" {
+            self.check_grant_connection(&connection)?;
+            let issuer = self
+                .inner
+                .authentication
+                .tls
+                .as_ref()
+                .context("Receipt issuer unavailable")?
+                .fingerprint()?;
+            if message["expected_issuer_id"] != issuer || message["expected_node_id"] != node_id {
+                bail!("Receipt issuer or node changed; use local owner inspection")
+            }
+        }
         if let Some(g) = &grant {
             self.check_grant_connection(&connection)?;
             let issuer = self

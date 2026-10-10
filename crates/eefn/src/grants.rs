@@ -86,29 +86,8 @@ impl crate::NodeService {
         // Never create, repair or initialize a database during inspection.
         let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         db.busy_timeout(Duration::from_millis(200))?;
-        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version != 1 {
-            bail!("Unknown grant receipt journal version")
-        }
-        let owner: String = db.query_row(
-            "SELECT node_id FROM execution_receipt_owner WHERE owner='node'",
-            [],
-            |r| r.get(0),
-        )?;
-        if owner != self.node_id {
-            bail!("Grant journal belongs to a different node")
-        }
-        let value=db.query_row("SELECT issuer_id,job_id,task_id,attempt,state,accepted_ms,updated_ms FROM execution_receipts WHERE grant_id=?1",[&request.grant_id],|r|Ok(json!({
-            "issuer_id":r.get::<_,String>(0)?,"job_id":r.get::<_,String>(1)?,"task_id":r.get::<_,String>(2)?,"attempt":r.get::<_,u32>(3)?,
-            "state":r.get::<_,String>(4)?,"accepted_at_ms":r.get::<_,i64>(5)?,"updated_at_ms":r.get::<_,i64>(6)?}))).optional()?.context("Grant receipt not found")?;
-        if !hex_digest(value["issuer_id"].as_str().unwrap_or(""))
-            || !matches!(
-                value["state"].as_str(),
-                Some("accepted" | "completed" | "unknown")
-            )
-        {
-            bail!("Damaged receipt; retained for recovery")
-        }
+        let value =
+            crate::request_receipt::read_consumed(&db, &self.node_id, None, &request.grant_id)?;
         Ok(
             json!({"schema_version":1,"report_type":"node_grant_receipt","success":true,"node_id":self.node_id,"grant_id":request.grant_id,
             "receipt":value,"execution_requested":false,"automatically_retried":false,
@@ -561,11 +540,12 @@ impl GrantLedger {
             .connection
             .lock()
             .map_err(|_| anyhow::anyhow!("Grant journal lock unavailable"))?;
-        db.query_row("SELECT job_id,task_id,attempt,state,accepted_ms,updated_ms FROM execution_receipts WHERE issuer_id=?1 AND grant_id=?2",params![issuer,grant_id],|r|{
-            Ok(json!({"grant_id":grant_id,"job_id":r.get::<_,String>(0)?,"task_id":r.get::<_,String>(1)?,"attempt":r.get::<_,u32>(2)?,
-                "state":r.get::<_,String>(3)?,"accepted_at_ms":r.get::<_,i64>(4)?,"updated_at_ms":r.get::<_,i64>(5)?,
-                "note":"Consumed receipt only; accepted after disconnect/restart is uncertain, never permission to replay. No output retained."}))
-        }).optional()?.context("Grant receipt not found for this issuer")
+        Ok(json!(crate::request_receipt::read_consumed(
+            &db,
+            &self.node_id,
+            Some(issuer),
+            grant_id
+        )?))
     }
 }
 pub struct AcceptedGrant {

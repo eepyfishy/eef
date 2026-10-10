@@ -185,7 +185,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview/stateless review and origin-owned durable review/answer/proposal commands with retained text/history and receipt/revision checks; explicit template compilation and bounded owner approval now start stage 6, while automatic clarification re-interpretation and semantic planning remain planned |
 | 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: explicit compile/approve/execute workflow with frozen bindings, pinned session grants, durable issuance/ACK/completion, node replay protection and restart-to-unknown behavior. Origin and executor may differ. Automatic semantic planning, uncertainty reconciliation, migration of legacy work paths, stronger executor termination, clock acceptance and cluster fencing remain required |
-| 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node request limits/reserved controls and typed coordinator non-model scheduling budgets with saved/applied readback; pipelines, executor acknowledgements and full resource budgets remain planned |
+| 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node work/reserved-control limits and coordinator budgets, including granted model futures. Fixed one-shot ACK/completion and authenticated read-only recovery evidence implemented; pipelines, explicit uncertainty reconciliation, strong termination and physical resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
 | 10 | Full model lifecycle + unload | Measured transitions, load cancellation, active-use pinning and configurable idle unload; scheduler considers startup cost and actual usage. | Planned |
@@ -312,6 +312,14 @@ memory or model-instance budgets. Uncertainty after restart never auto-replays,
 even for read-only work. Automatic semantic planning, reconciliation and the final
 non-coder request-to-execution workflow remain open; see
 [commands and limits](COMMANDS.md#bounded-owner-request-approval-unreleased-after-alpha6).
+
+The next read-only recovery increment adds origin/owner `requests receipt`, using
+the exact retained issuance and the executor's same pinned issuer. Scope digests
+and strict identity/timestamp metadata match; reserved controls remain available
+while workload slots are full. It works across session replacement without
+reviving old authority, changing the job, inferring success or authorizing replay.
+This supplies recovery evidence, **not** automatic or owner-directed uncertainty
+resolution, lost-output recovery or proof that external effects stopped.
 
 The 2026-10-10 unreleased [scheduling command increment](COMMANDS.md#coordinator-scheduling-limits-unreleased-after-alpha6)
 adds owner-configured non-model freshness and coordinator-local global/provider/

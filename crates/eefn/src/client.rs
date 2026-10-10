@@ -593,6 +593,8 @@ impl NodeClient {
 
         let mut tasks = tokio::task::JoinSet::new();
         let mut local = self.submissions.connect();
+        // A timed-out partial response must retire this framed connection.
+        let (receipt_write_failed, mut receipt_write_failure) = tokio::sync::watch::channel(false);
         let mut replies: std::collections::HashMap<
             String,
             tokio::sync::oneshot::Sender<Result<Value>>,
@@ -604,6 +606,7 @@ impl NodeClient {
             tokio::pin!(incoming);
             let message = loop {
                 tokio::select! {
+                    _ = receipt_write_failure.changed() => bail!("Receipt response delivery failed; reconnect required"),
                     message = &mut incoming => break message?,
                     _ = async {
                         if let Some(changes) = &mut model_changes { let _ = changes.changed().await; }
@@ -663,6 +666,53 @@ impl NodeClient {
                     };
                     let _ = reply.send(result);
                 }
+                continue;
+            }
+            if message["type"] == "grant_receipt" {
+                let request_id = message["id"].as_str().unwrap_or("").to_owned();
+                let query = serde_json::from_value::<crate::request_receipt::WireRequest>(message);
+                let prepared = match (
+                    query,
+                    self.request_budget.admit_receipt(),
+                    self.grant_ledger.clone(),
+                    grant_issuer.clone(),
+                ) {
+                    (Ok(query), Some(permit), Some(ledger), Some(issuer))
+                        if query.validate(&self.config.node_id, &issuer).is_ok() =>
+                    {
+                        Some((query, permit, ledger, issuer))
+                    }
+                    _ => None,
+                };
+                let Some((query, permit, ledger, issuer)) = prepared else {
+                    let response = json!({"type":"response","id":request_id,"success":false,"error_type":"GrantReceiptUnavailable","error":"Authenticated receipt inspection unavailable; no execution or recovery performed"});
+                    timeout(Duration::from_secs(5), async {
+                        write_message(&self.crypto, &mut *writer.lock().await, &response).await
+                    })
+                    .await
+                    .context("receipt rejection write timed out")??;
+                    continue;
+                };
+                let writer = writer.clone();
+                let crypto = self.crypto.clone();
+                let write_failed = receipt_write_failed.clone();
+                tasks.spawn(async move {
+                    let read = tokio::task::spawn_blocking(move || {
+                        let result = ledger.receipt(&issuer, &query.grant_id);
+                        (result, permit)
+                    }).await;
+                    let (result, _permit) = match read {
+                        Ok((result, permit)) => (result, Some(permit)),
+                        Err(_) => (Err(anyhow::anyhow!("Receipt reader unavailable")), None),
+                    };
+                    let response = match result {
+                        Ok(data) => success_response(&request_id, data),
+                        Err(_) => json!({"type":"response","id":request_id,"success":false,"error_type":"GrantReceiptUnavailable","error":"Consumed receipt unavailable; no execution, fallback or recovery performed"}),
+                    };
+                    if !matches!(timeout(Duration::from_secs(5), async {
+                        write_message(&crypto, &mut *writer.lock().await, &response).await
+                    }).await, Ok(Ok(()))) { let _ = write_failed.send(true); }
+                });
                 continue;
             }
             if message["type"] == "execute_grant" {
@@ -1073,6 +1123,15 @@ mod tests {
         assert_eq!(ack["grant_id"], g.grant_id);
         assert_eq!(ack["persisted"], true);
         assert_eq!(ack["execution_may_have_started"], false);
+        let inspected = server.inspect_grant_receipt(&g).await.unwrap();
+        assert_eq!(inspected.state, "completed");
+        assert!(inspected.confirms(&g));
+        let mut wrong = g.clone();
+        wrong.params["content"] = json!("forged different scope");
+        assert!(server.inspect_grant_receipt(&wrong).await.is_err());
+        let mut wrong = g.clone();
+        wrong.issuer_id = "d".repeat(64);
+        assert!(server.inspect_grant_receipt(&wrong).await.is_err());
         std::fs::write(&out, "owner marker").unwrap();
         let duplicate = server
             .invoke_grant(g.clone(), Duration::from_secs(5))
@@ -1096,6 +1155,11 @@ mod tests {
         let node = start();
         let replacement = wait_ready().await;
         assert_ne!(replacement["session_id"], session["session_id"]);
+        assert_eq!(
+            server.inspect_grant_receipt(&g).await.unwrap(),
+            inspected,
+            "read-only evidence survives session replacement without reviving the old lease"
+        );
         assert!(
             server
                 .invoke_grant(g.clone(), Duration::from_secs(1))

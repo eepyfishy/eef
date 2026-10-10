@@ -339,6 +339,12 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum PlanningAction {
+    /// Inspect one issued attempt's current authenticated executor receipt; never replay or reconcile.
+    Receipt {
+        id: String,
+        #[arg(long)]
+        grant_id: String,
+    },
     /// Explicitly request execution of one exact owner-approved plan; never replay.
     Execute {
         id: String,
