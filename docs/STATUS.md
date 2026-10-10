@@ -1,5 +1,39 @@
 # Architecture conformance status
 
+## Unreleased: one executor assignment per durable attempt (2026-10-10)
+
+The journal now admits at most one executor assignment for a durable task
+attempt, under its existing store lock. Identical duplicates, conflicting
+executors/backends, stale attempts and no-longer-active jobs fail without
+changing the checkpoint. A policy-permitted retry needs a new recorded attempt.
+Current claimed batches still follow existing pause/stop semantics.
+
+Durable model jobs select one provider per attempt rather than traversing a
+fallback chain inside it. Model assignment records include the exact selected
+node/backend/model ID. Existing records without a backend remain unknown;
+history is neither guessed nor rewritten. Assignment happens before the remote
+invocation; a journal error does not mark an unattempted backend unavailable.
+Legacy non-job interactive chat retains its existing fallback behavior.
+See [job command semantics](COMMANDS.md#added-in-v040a3-jobs-through-the-running-node).
+
+This is coordinator journal integrity, not an execution grant, node-side durable
+replay fencing, acknowledged remote stop, expiry or safe active-work migration.
+Existing retry-safe policy remains in effect; a local attempt ending does not
+prove remote work stopped. Those remaining stage 6 authorization boundaries
+are still required before stable-release acceptance.
+
+Validation: **268 workspace/all-target Rust tests pass in both feature modes**.
+New tests race 24 assignment writers against one attempt, reject identical and
+conflicting reassignments/stale attempts atomically, retain unknown legacy
+backends, preserve selected backend after real database reopen without replay,
+and prove one journaled model failure leaves the next provider unassigned and
+available until a separately recorded attempt. Headless fake-Ollama fixture
+`model-metadata-op6vDJ` confirms the backend/node/model assignment through the
+real API and retains model/selection/job/pause/restart regressions; it is not
+real inference. Shutdown recovery passes (`job-shutdown-YL3xTP`). Formatting,
+syntax, diff and source backend/browser-boundary checks pass. No installed-node,
+model download, permission, installer or public update-feed change.
+
 ## Unreleased: exact remote identity enforcement (2026-10-10)
 
 A real gateway regression reproduced a legacy-key bypass in the unreleased

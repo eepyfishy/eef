@@ -27,6 +27,9 @@ pub struct Assignment {
     pub node_id: String,
     pub resource_id: Option<String>,
     pub model_id: Option<String>,
+    /// Unknown for older development records; never infer a backend from an ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
     pub assigned_at_ms: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,8 +61,38 @@ pub struct AttemptJournal {
 }
 impl AttemptJournal {
     pub fn assign(&self, node: &str, resource: Option<&str>, model: Option<&str>) -> Result<()> {
+        self.assign_with_backend(node, resource, model, None)
+    }
+    pub fn assign_model(&self, node: &str, backend: &str, model: &str) -> Result<()> {
+        if backend.is_empty() || backend.len() > 64 || backend.chars().any(char::is_control) {
+            bail!("Invalid model backend assignment")
+        }
+        self.assign_with_backend(node, None, Some(model), Some(backend))
+    }
+    fn assign_with_backend(
+        &self,
+        node: &str,
+        resource: Option<&str>,
+        model: Option<&str>,
+        backend: Option<&str>,
+    ) -> Result<()> {
+        eefn::network::validate_node_id(node)?;
+        if node == "*" || self.attempt == 0 {
+            bail!("Assignments require an exact executor and a nonzero attempt")
+        }
+        for value in resource.into_iter().chain(model) {
+            if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+                bail!("Invalid resource/model assignment")
+            }
+        }
         self.store
             .change(&self.job_id, "Executor assigned", |plan| {
+                if !matches!(
+                    plan.status,
+                    PlanStatus::Running | PlanStatus::Pausing | PlanStatus::Stopping
+                ) {
+                    bail!("Job no longer owns an active execution attempt")
+                }
                 let task = plan
                     .tasks
                     .iter_mut()
@@ -67,6 +100,11 @@ impl AttemptJournal {
                     .context("Unknown task")?;
                 if task.status != TaskStatus::Running || task.attempts != self.attempt {
                     bail!("Stale execution attempt")
+                }
+                // An assignment is not authority to replay. Reject even an
+                // identical second assignment; retries need a new attempt.
+                if task.assignments.iter().any(|a| a.attempt == self.attempt) {
+                    bail!("Execution attempt already assigned; do not replay or migrate it")
                 }
                 if task.assignments.len() >= 128 {
                     bail!("Task assignment history limit reached")
@@ -76,6 +114,7 @@ impl AttemptJournal {
                     node_id: node.into(),
                     resource_id: resource.map(str::to_owned),
                     model_id: model.map(str::to_owned),
+                    backend: backend.map(str::to_owned),
                     assigned_at_ms: eefn::protocol::now_ms(),
                 });
                 Ok(())
@@ -574,6 +613,124 @@ mod tests {
     }
 
     #[test]
+    fn an_attempt_has_one_atomic_assignment_and_rejects_replay_or_migration() {
+        let store = JobStore::in_memory().unwrap();
+        let job = plan("generate_text");
+        let id = job.plan_id.clone();
+        let task_id = job.tasks[0].task_id.clone();
+        store.insert(job).unwrap();
+        store
+            .change(&id, "fixture attempt", |p| {
+                p.status = PlanStatus::Running;
+                p.tasks[0].status = TaskStatus::Running;
+                p.tasks[0].attempts = 1;
+                Ok(())
+            })
+            .unwrap();
+        let journal = AttemptJournal {
+            store: store.clone(),
+            job_id: id.clone(),
+            task_id,
+            attempt: 1,
+        };
+        let barrier = std::sync::Barrier::new(24);
+        let winners = std::thread::scope(|scope| {
+            let contenders = (0..24)
+                .map(|n| {
+                    let journal = &journal;
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        journal
+                            .assign_model(&format!("node-{n}"), "ollama", "same-id")
+                            .is_ok()
+                    })
+                })
+                .collect::<Vec<_>>();
+            contenders
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .filter(|won| *won)
+                .count()
+        });
+        assert_eq!(winners, 1);
+        let saved = store.get(&id).unwrap();
+        assert_eq!(saved.tasks[0].assignments.len(), 1);
+        let assignment = &saved.tasks[0].assignments[0];
+        assert_eq!(assignment.backend.as_deref(), Some("ollama"));
+        let before = json!(saved);
+        assert!(
+            journal
+                .assign_model(&assignment.node_id, "ollama", "same-id")
+                .is_err()
+        );
+        assert!(
+            journal
+                .assign_model("another-node", "llamacpp", "same-id")
+                .is_err()
+        );
+        assert_eq!(json!(store.get(&id).unwrap()), before);
+        store
+            .change(&id, "fixture next attempt", |p| {
+                p.tasks[0].attempts = 2;
+                Ok(())
+            })
+            .unwrap();
+        let before = json!(store.get(&id).unwrap());
+        assert!(
+            journal
+                .assign_model("stale-node", "ollama", "same-id")
+                .is_err()
+        );
+        assert_eq!(json!(store.get(&id).unwrap()), before);
+        AttemptJournal {
+            attempt: 2,
+            ..journal.clone()
+        }
+        .assign_model("next-node", "llamacpp", "same-id")
+        .unwrap();
+        assert_eq!(store.get(&id).unwrap().tasks[0].assignments.len(), 2);
+    }
+
+    #[test]
+    fn old_assignments_keep_backend_unknown_and_bad_assignments_do_not_change_history() {
+        let old = json!({"attempt":1,"node_id":"node","resource_id":null,"model_id":"same-id","assigned_at_ms":1});
+        let assignment: Assignment = serde_json::from_value(old.clone()).unwrap();
+        assert!(assignment.backend.is_none());
+        assert_eq!(json!(assignment), old);
+        let store = JobStore::in_memory().unwrap();
+        let job = plan("generate_text");
+        let id = job.plan_id.clone();
+        let task_id = job.tasks[0].task_id.clone();
+        store.insert(job).unwrap();
+        store
+            .change(&id, "fixture stopped attempt", |p| {
+                p.status = PlanStatus::Interrupted;
+                p.tasks[0].status = TaskStatus::Running;
+                p.tasks[0].attempts = 1;
+                Ok(())
+            })
+            .unwrap();
+        let journal = AttemptJournal {
+            store: store.clone(),
+            job_id: id.clone(),
+            task_id,
+            attempt: 1,
+        };
+        let before = json!(store.get(&id).unwrap());
+        assert!(journal.assign_model("node", "ollama", "same-id").is_err());
+        for (node, backend, model) in [
+            ("*", "ollama", "same-id"),
+            (" node", "ollama", "same-id"),
+            ("node", "", "same-id"),
+            ("node", "ollama", ""),
+        ] {
+            assert!(journal.assign_model(node, backend, model).is_err());
+        }
+        assert_eq!(json!(store.get(&id).unwrap()), before);
+    }
+
+    #[test]
     fn explicit_text_output_is_bounded_utf8_and_does_not_export_files_or_parameters() {
         let mut job = plan("generate_text");
         let result = crate::task::TaskResult {
@@ -610,6 +767,42 @@ mod tests {
     }
     fn open(path: &Path) -> Arc<JobStore> {
         JobStore::open(path, 500, 64 * 1024 * 1024).unwrap()
+    }
+
+    #[test]
+    fn model_assignment_backend_survives_database_reopen_without_reassignment() {
+        let (_dir, path) = disk();
+        let store = open(&path);
+        let job = plan("generate_text");
+        let id = job.plan_id.clone();
+        let task_id = job.tasks[0].task_id.clone();
+        store.insert(job).unwrap();
+        store
+            .change(&id, "fixture attempt", |p| {
+                p.status = PlanStatus::Running;
+                p.tasks[0].status = TaskStatus::Running;
+                p.tasks[0].attempts = 1;
+                Ok(())
+            })
+            .unwrap();
+        let journal = AttemptJournal {
+            store: store.clone(),
+            job_id: id.clone(),
+            task_id,
+            attempt: 1,
+        };
+        journal
+            .assign_model("selected-node", "llamacpp", "same-id")
+            .unwrap();
+        let assignment = json!(store.get(&id).unwrap().tasks[0].assignments[0]);
+        drop(journal);
+        drop(store);
+        let reopened = open(&path);
+        let restored = reopened.get(&id).unwrap();
+        assert_eq!(restored.status, PlanStatus::Interrupted);
+        assert_eq!(json!(restored.tasks[0].assignments[0]), assignment);
+        assert_eq!(restored.tasks[0].assignments.len(), 1);
+        assert_eq!(restored.tasks[0].attempts, 1);
     }
 
     fn receipt_origin(node: &str, id: &str, area: &str) -> eefn::context::RequestContext {

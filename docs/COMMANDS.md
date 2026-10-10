@@ -391,6 +391,21 @@ shutdown, Stop and runner retirement. A Stop racing runner cleanup cannot leave
 Stop cannot undo completed effects. These changes are not in published alpha.6
 installers and do not introduce automatic retries or remote execution leases.
 
+The unreleased assignment follow-up allows only one executor assignment per
+durable task attempt, including concurrent/repeated calls. Model jobs select one
+provider for that attempt; they no longer silently traverse a fallback chain
+inside it. A policy-permitted retry needs a new recorded attempt. The assignment
+includes the selected `node_id`, `model_id` and `backend`; old records without a
+backend keep it unknown rather than guessing. Duplicate/stale/reassigned writes
+fail without altering the checkpoint. An assignment failure does not mark an
+unchosen model backend unavailable. Legacy non-job interactive chat retains its
+old fallback behavior; it does not have durable-job/grant semantics.
+
+This is coordinator-side journal integrity, not node-side replay fencing, an
+execution grant or proof a previous remote attempt stopped. Existing retry-safe
+policy remains; uncertain remote work still needs the roadmap's expiry and
+acknowledged-stop boundaries before safe active-work migration can be claimed.
+
 `output` explicitly returns text-model results only: at most 32 tasks and 32768
 aggregate UTF-8 content bytes with truncation flags. Pending text is null. Normal
 status still omits output; file contents, media and raw parameters are not exposed

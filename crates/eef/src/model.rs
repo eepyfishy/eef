@@ -446,7 +446,22 @@ impl LlmService {
             ));
         }
         let mut last = None;
-        for spec in chain.into_iter().filter(|spec| spec.node_id != "local") {
+        // Durable jobs get exactly one selected executor per recorded attempt.
+        // Interactive legacy chat may still use its existing fallback chain;
+        // it is not a durable job/grant or an acknowledged migration.
+        let attempts = if options.journal.is_some() {
+            1
+        } else {
+            usize::MAX
+        };
+        for spec in chain
+            .into_iter()
+            .filter(|spec| spec.node_id != "local")
+            .take(attempts)
+        {
+            if let Some(journal) = &options.journal {
+                journal.assign_model(&spec.node_id, &spec.backend, &spec.model_id)?;
+            }
             let result = self.remote_chat(&spec, modality, &messages, &options).await;
             match result {
                 Ok(content) if !content.is_empty() => {
@@ -489,9 +504,6 @@ impl LlmService {
         options: &ChatOptions,
     ) -> Result<String> {
         let mut messages = messages.clone();
-        if let Some(journal) = &options.journal {
-            journal.assign(&spec.node_id, None, Some(&spec.model_id))?;
-        }
         if !options.system_prompt.is_empty() {
             messages
                 .as_array_mut()
@@ -555,6 +567,139 @@ impl Default for ChatOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn journaled_inference_records_backend_and_never_falls_back_inside_one_attempt() {
+        use crate::task::{Goal, PlanStatus, TaskPlanner, TaskStatus};
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let job = TaskPlanner
+            .plan(Goal {
+                request_context: None,
+                description: "assignment fixture".into(),
+                template: "generate_text".into(),
+                params: json!({"prompt":"fixture"}),
+                constraints: json!({}),
+            })
+            .unwrap();
+        let id = job.plan_id.clone();
+        let task_id = job.tasks[0].task_id.clone();
+        store.insert(job).unwrap();
+        store
+            .change(&id, "fixture attempt", |p| {
+                p.status = PlanStatus::Running;
+                p.tasks[0].status = TaskStatus::Running;
+                p.tasks[0].attempts = 1;
+                Ok(())
+            })
+            .unwrap();
+        let registry = ModelRegistry::default();
+        for (node, backend, status) in [
+            ("first", "ollama", ModelStatus::Warm),
+            ("next", "llamacpp", ModelStatus::Unloaded),
+        ] {
+            registry.register(ModelSpec {
+                model_id: "same-id".into(),
+                modality: Modality::Text,
+                family: String::new(),
+                quality_tier: String::new(),
+                vram_needed_mb: 0,
+                backend: backend.into(),
+                hardware: "cpu".into(),
+                node_id: node.into(),
+                status,
+                size_bytes: 0,
+                model_metadata: None,
+            });
+        }
+        // No sockets/models are started. Offline first provider must leave the
+        // second untouched, rather than assigning both within the same attempt.
+        let service = LlmService::new(
+            registry.clone(),
+            BTreeMap::new(),
+            NodeServer::new("fixture-secret", "127.0.0.1", 0).unwrap(),
+            EventBus::new(20),
+        );
+        let journal = crate::jobs::AttemptJournal {
+            store: store.clone(),
+            job_id: id.clone(),
+            task_id,
+            attempt: 1,
+        };
+        let options = ChatOptions {
+            journal: Some(journal.clone()),
+            ..Default::default()
+        };
+        assert!(
+            service
+                .chat(
+                    json!([{ "role":"user","content":"fixture"}]),
+                    options.clone()
+                )
+                .await
+                .is_err()
+        );
+        let saved = store.get(&id).unwrap();
+        let assignments = &saved.tasks[0].assignments;
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[0].node_id, "first");
+        assert_eq!(assignments[0].backend.as_deref(), Some("ollama"));
+        assert_eq!(
+            registry
+                .list()
+                .iter()
+                .find(|s| s.node_id == "next")
+                .unwrap()
+                .status,
+            ModelStatus::Unloaded
+        );
+        let before = json!(saved);
+        assert!(
+            service
+                .chat(json!([]), options)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("already assigned")
+        );
+        assert_eq!(json!(store.get(&id).unwrap()), before);
+        assert_eq!(
+            registry
+                .list()
+                .iter()
+                .find(|s| s.node_id == "next")
+                .unwrap()
+                .status,
+            ModelStatus::Unloaded
+        );
+        store
+            .change(&id, "fixture next attempt", |p| {
+                p.tasks[0].attempts = 2;
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            service
+                .chat(
+                    json!([]),
+                    ChatOptions {
+                        journal: Some(crate::jobs::AttemptJournal {
+                            attempt: 2,
+                            ..journal
+                        }),
+                        ..Default::default()
+                    }
+                )
+                .await
+                .is_err()
+        );
+        let saved = store.get(&id).unwrap();
+        assert_eq!(saved.tasks[0].assignments.len(), 2);
+        assert_eq!(saved.tasks[0].assignments[1].node_id, "next");
+        assert_eq!(
+            saved.tasks[0].assignments[1].backend.as_deref(),
+            Some("llamacpp")
+        );
+    }
 
     #[test]
     fn role_and_backend_constraints_never_fall_back_to_unlabelled_models() {

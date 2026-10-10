@@ -154,6 +154,8 @@ try{
   assert.equal((await fetch(eef+'/api/commands/models/route?capability=llm.infer',{headers:{Origin:'https://untrusted.example'}})).status,403);
   const job=await json(eef+'/api/jobs',{description:'role-routing fixture',template:'generate_text',params:{prompt:'fixture only'},constraints:{model_role:'request_interpreter',node_id:id}});
   await until(async()=>(await json(eef+'/api/jobs/'+job.id)).status==='completed','role-constrained model job');
+  const assignment=(await json(eef+'/api/jobs/'+job.id)).tasks[0].assignment;
+  assert.equal(assignment.node_id,id);assert.equal(assignment.model_id,'fixture-vision');assert.equal(assignment.backend,'ollama');
   assert.equal(requests.length,2);assert.equal(requests.at(-1).model,'fixture-vision');
   const missing=await json(eef+'/api/jobs',{description:'missing role fixture',template:'generate_text',params:{prompt:'must not execute'},constraints:{model_role:'missing',node_id:id}});
   await until(async()=>(await json(eef+'/api/jobs/'+missing.id)).status==='failed','missing role does not fall back');
