@@ -1,5 +1,37 @@
 # Architecture conformance status
 
+## Unreleased: gateway-session-bound reply ownership (2026-10-10)
+
+RPC waiters now retain the exact authenticated connection generation, not just
+a stable node ID. Registration of a waiter holds the routing read guard until
+its pending entry exists; route retirement then drains only that session's
+waiters. Response completion checks both identities. Old cleanup cannot fail
+a replacement session's request, nor can the replacement confirm an old waiter.
+
+Accepted submissions get a gateway-owned routing generation, replacing any
+caller field. Completed/busy EEF replies require that original live session and
+matching transport ID; they never follow the node ID onto its latest connection.
+Missing, malformed, stale generations and saturated queues reject without late
+delivery or replay. No wire requirement, persisted identity or job origin changes.
+See [reply semantics](COMMANDS.md#reply-ownership-across-reconnect-unreleased-after-alpha6).
+
+This is ephemeral response ownership and retirement integrity, not durable
+issuer epochs, an execution grant, node-side attempt fencing, exactly-once effects
+or remote cancellation. Work accepted before disconnect may still be saved/running;
+the existing uncertain-receipt inspection path remains mandatory.
+
+Validation: **284 workspace/all-target Rust tests pass in both feature modes**.
+New tests reject cross-session completion/cleanup, preserve replacement waiters,
+serialize waiter insertion with cleanup, replace forged generation fields and
+exercise an actual TCP reconnect that deliberately reuses a transport ID.
+The real gateway refuses to reroute a previous completion and delivers only the
+current session's reply. Headless pinned-TLS draft/credential, fake-inferred
+review/model-job and shutdown fixtures pass (`request-drafts-F8UCJq`,
+`node-credentials-Vu7iw9`, `request-review-bf0g4i`, `model-metadata-BQP1Ap`,
+`job-shutdown-4OEs6b`). Formatting, diff, syntax and source backend/browser-boundary
+checks pass. No installed-node, permission, model download, installer or public
+update-feed change; no physical two-PC or stable-release acceptance claimed.
+
 ## Unreleased: durable origin-owned request review (2026-10-10)
 
 Nodes now have command/API-only `requests open/open-proposal/draft/answer/revise-proposal`

@@ -418,9 +418,7 @@ impl Runtime {
                         let mut submissions = runtime.submissions.lock().await;
                         while submissions.try_join_next().is_some() {}
                         if submissions.len() >= 128 {
-                            if let Some(node_id) = message["node_id"].as_str() {
-                                let _=runtime.node_server.send_to_node(node_id,json!({"type":"submission_result","id":message["id"],"success":false,"error":"Network is busy. This request was not started."})).await;
-                            }
+                            let _=runtime.node_server.send_submission_reply(&message,json!({"type":"submission_result","id":message["id"],"success":false,"error":"Network is busy. This request was not started."})).await;
                             continue;
                         }
                         let worker = runtime.clone();
@@ -718,7 +716,11 @@ impl Runtime {
                 "error": error.to_string(), "error_type": "SubmissionError"
             }),
         };
-        if let Err(error) = self.node_server.send_to_node(&node_id, response).await {
+        if let Err(error) = self
+            .node_server
+            .send_submission_reply(&message, response)
+            .await
+        {
             warn!(%node_id, %error, "could not return submission result to originating node");
         }
     }

@@ -120,6 +120,13 @@ The 2026-10-09 reply-path follow-up rejects saturated response queues immediatel
 instead of blocking the shared event listener. Missing acknowledgements remain
 uncertain; accepted work is neither rolled back nor automatically replayed.
 
+The subsequent session-binding checkpoint ties RPC waiters, response matching,
+disconnect cleanup and originating submission replies to a gateway-owned
+connection generation. A replacement connection with the same node ID cannot
+receive an old completion, even if it deliberately reuses a transport ID.
+Waiter registration is serialized with route retirement. This is ephemeral reply
+ownership, not durable execution grants, issuer epochs or node-side replay fencing.
+
 The completed node-side admission slice bounds incoming execution futures with configurable
 work/control allowances. Ping/status/approved restart have separate reserved
 capacity; excess work reports not-started without reaching the executor. Normal

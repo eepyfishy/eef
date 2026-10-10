@@ -108,6 +108,7 @@ impl Drop for IdentityLease {
 
 #[derive(Clone)]
 struct Connection {
+    session_id: Uuid,
     info: ConnectionInfo,
     sender: mpsc::Sender<Value>,
     advertisement: Option<crate::network::PeerRecord>,
@@ -117,6 +118,7 @@ struct Connection {
 
 struct Pending {
     node_id: String,
+    session_id: Uuid,
     sender: oneshot::Sender<Value>,
 }
 
@@ -374,11 +376,10 @@ impl NodeServer {
         wait: Duration,
         context: Option<&crate::context::RequestContext>,
     ) -> Result<Value> {
-        let connection = self
-            .inner
-            .connections
-            .read()
-            .await
+        // Hold the routing read guard until the waiter is registered. Session
+        // cleanup removes the route before draining that session's waiters.
+        let connections = self.inner.connections.read().await;
+        let connection = connections
             .get(node_id)
             .cloned()
             .ok_or_else(|| NodeOfflineError(node_id.into()))?;
@@ -388,9 +389,11 @@ impl NodeServer {
             request_id.clone(),
             Pending {
                 node_id: node_id.into(),
+                session_id: connection.session_id,
                 sender,
             },
         );
+        drop(connections);
         let _cleanup = PendingCleanup {
             inner: self.inner.clone(),
             request_id: request_id.clone(),
@@ -436,6 +439,43 @@ impl NodeServer {
         connection
             .sender
             .try_send(message)
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => NodeQueueFullError(node_id.into()).into(),
+                mpsc::error::TrySendError::Closed(_) => NodeOfflineError(node_id.into()).into(),
+            })
+    }
+
+    /// Reply only to the authenticated session that originally submitted input.
+    /// A reconnect with the same node ID is not the same response destination.
+    pub async fn send_submission_reply(&self, submission: &Value, response: Value) -> Result<()> {
+        if submission["type"] != "submit"
+            || response["type"] != "submission_result"
+            || submission["id"]
+                .as_str()
+                .is_none_or(|id| id.is_empty() || id.len() > 128)
+            || response["id"] != submission["id"]
+        {
+            bail!("Submission reply does not match its input")
+        }
+        let node_id = submission["node_id"]
+            .as_str()
+            .context("Missing submission origin")?;
+        let session_id = submission["gateway_session_id"]
+            .as_str()
+            .context("Missing gateway session")?;
+        let parsed = Uuid::parse_str(session_id)?;
+        if parsed.is_nil() || parsed.to_string() != session_id {
+            bail!("Invalid gateway session")
+        }
+        let session_id = parsed;
+        let connections = self.inner.connections.read().await;
+        let connection = connections
+            .get(node_id)
+            .filter(|c| c.session_id == session_id)
+            .ok_or_else(|| NodeOfflineError(node_id.into()))?;
+        connection
+            .sender
+            .try_send(response)
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => NodeQueueFullError(node_id.into()).into(),
                 mpsc::error::TrySendError::Closed(_) => NodeOfflineError(node_id.into()).into(),
@@ -576,6 +616,7 @@ impl NodeServer {
         .await?;
 
         let (send, mut receive) = mpsc::channel::<Value>(64);
+        let session_id = Uuid::new_v4();
         let info = ConnectionInfo {
             node_id: node_id.clone(),
             source_ip: peer.ip().to_string(),
@@ -590,6 +631,7 @@ impl NodeServer {
         self.inner.connections.write().await.insert(
             node_id.clone(),
             Connection {
+                session_id,
                 info,
                 sender: send,
                 advertisement: None,
@@ -601,7 +643,7 @@ impl NodeServer {
         // Neither direction is detached: shutdown/cancellation of this session
         // must release both halves, including a stalled outbound write.
         let result = tokio::select! {
-            result = self.serve(&node_id, &crypto, &mut reader) => result,
+            result = self.serve_session(&node_id, session_id, &crypto, &mut reader) => result,
             result = async {
                 while let Some(message) = receive.recv().await {
                     write_message(&crypto, &mut writer, &message).await?;
@@ -610,14 +652,24 @@ impl NodeServer {
             } => result,
         };
         self.inner.connections.write().await.remove(&node_id);
-        self.fail_pending_for(&node_id).await;
+        self.fail_pending_for(&node_id, session_id).await;
         let _ = self.inner.events.send(NodeEvent::Down(node_id));
         result
     }
 
-    async fn serve<R>(
+    #[cfg(test)]
+    async fn serve<R>(&self, node_id: &str, crypto: &NodeCrypto, reader: &mut R) -> Result<()>
+    where
+        R: tokio::io::AsyncBufRead + Unpin,
+    {
+        self.serve_session(node_id, Uuid::nil(), crypto, reader)
+            .await
+    }
+
+    async fn serve_session<R>(
         &self,
         authenticated_id: &str,
+        session_id: Uuid,
         crypto: &NodeCrypto,
         reader: &mut R,
     ) -> Result<()>
@@ -743,9 +795,13 @@ impl NodeServer {
                     // registration snapshot as this session's origin area.
                     message["interpretation_capabilities"] = json!(interpretation_capabilities);
                     message["node_id"] = Value::String(authenticated_id.into());
+                    message["gateway_session_id"] = json!(session_id.to_string());
                     let _ = self.inner.events.send(NodeEvent::Submission(message));
                 }
-                Some("response") => self.resolve_response(authenticated_id, message).await,
+                Some("response") => {
+                    self.resolve_response(authenticated_id, session_id, message)
+                        .await
+                }
                 Some("announce") => {}
                 Some(kind) => warn!(
                     node_id = authenticated_id,
@@ -805,15 +861,14 @@ impl NodeServer {
         Ok(node_id.into())
     }
 
-    async fn resolve_response(&self, authenticated_id: &str, message: Value) {
+    async fn resolve_response(&self, authenticated_id: &str, session_id: Uuid, message: Value) {
         let Some(id) = message.get("id").and_then(Value::as_str).map(str::to_owned) else {
             return;
         };
         let mut requests = self.inner.pending.lock().await;
-        if !requests
-            .get(&id)
-            .is_some_and(|pending| pending.node_id == authenticated_id)
-        {
+        if !requests.get(&id).is_some_and(|pending| {
+            pending.node_id == authenticated_id && pending.session_id == session_id
+        }) {
             return;
         }
         if let Some(pending) = requests.remove(&id) {
@@ -821,11 +876,11 @@ impl NodeServer {
         }
     }
 
-    async fn fail_pending_for(&self, node_id: &str) {
+    async fn fail_pending_for(&self, node_id: &str, session_id: Uuid) {
         let mut pending = self.inner.pending.lock().await;
         let ids = pending
             .iter()
-            .filter(|(_, request)| request.node_id == node_id)
+            .filter(|(_, request)| request.node_id == node_id && request.session_id == session_id)
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
         for id in ids {
@@ -1522,6 +1577,7 @@ mod tests {
         server.inner.connections.write().await.insert(
             "node-a".into(),
             Connection {
+                session_id: Uuid::nil(),
                 info: info.clone(),
                 sender,
                 advertisement: None,
@@ -1624,7 +1680,7 @@ mod tests {
         let operation_id = uuid::Uuid::new_v4().to_string();
         let messages = [
             json!({"type":"register","node_id":"owner","capabilities":["camera.capture"],"metadata":{"area":["Home","Office"],"resources":[{"id":"camera","capability":"camera.capture","parameters":{"password":"private"}}]}}),
-            json!({"type":"submit","node_id":"owner","id":"one","interpretation_capabilities":["shell.admin"],"request_context":{"origin_node":"forged","origin_area":["Other"]}}),
+            json!({"type":"submit","node_id":"owner","id":"one","gateway_session_id":"forged","interpretation_capabilities":["shell.admin"],"request_context":{"origin_node":"forged","origin_area":["Other"]}}),
             json!({"type":"register","node_id":"owner"}),
             json!({"type":"submit","node_id":"owner","id":"two","operation_id":operation_id,"interpretation_capabilities":["shell.admin"],"request_context":{"origin_node":"forged"}}),
         ];
@@ -1649,6 +1705,11 @@ mod tests {
         let NodeEvent::Submission(first) = events.recv().await.unwrap() else {
             panic!()
         };
+        assert_eq!(
+            first["gateway_session_id"],
+            Uuid::nil().to_string(),
+            "the gateway replaces caller-authored routing generations"
+        );
         assert_eq!(
             first["request_context"],
             json!({"request_id":"one","origin_node":"owner","origin_area":["Home","Office"]})
@@ -1726,17 +1787,22 @@ mod tests {
             "request".into(),
             Pending {
                 node_id: "owner".into(),
+                session_id: Uuid::nil(),
                 sender,
             },
         );
         let response = json!({"type":"response","id":"request","success":true});
-        server.resolve_response("other", response.clone()).await;
+        server
+            .resolve_response("other", Uuid::nil(), response.clone())
+            .await;
         assert!(matches!(
             receiver.try_recv(),
             Err(oneshot::error::TryRecvError::Empty)
         ));
         assert!(server.inner.pending.lock().await.contains_key("request"));
-        server.resolve_response("owner", response.clone()).await;
+        server
+            .resolve_response("owner", Uuid::nil(), response.clone())
+            .await;
         assert_eq!(receiver.await.unwrap(), response);
     }
 
@@ -1746,6 +1812,7 @@ mod tests {
         server.inner.connections.write().await.insert(
             "owner".into(),
             Connection {
+                session_id: Uuid::nil(),
                 info: ConnectionInfo {
                     node_id: "owner".into(),
                     source_ip: "127.0.0.1".into(),
@@ -1855,6 +1922,261 @@ mod tests {
         assert_eq!(server.inner.pending.lock().await.len(), 1);
         task.abort();
         let _ = task.await;
+        assert!(server.inner.pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn same_identity_different_session_cannot_confirm_or_fail_an_old_waiter() {
+        let (server, mut receiver) = queued_test_server().await;
+        let old = Uuid::new_v4();
+        let new = Uuid::new_v4();
+        server
+            .inner
+            .connections
+            .write()
+            .await
+            .get_mut("owner")
+            .unwrap()
+            .session_id = old;
+        let caller = server.clone();
+        let task = tokio::spawn(async move {
+            caller
+                .invoke_remote(
+                    "owner",
+                    "system.ping",
+                    "run",
+                    json!({}),
+                    Duration::from_secs(3),
+                )
+                .await
+        });
+        let request = receiver.recv().await.unwrap();
+        let id = request["id"].as_str().unwrap();
+        let response = json!({"type":"response","id":id,"success":true});
+        server
+            .resolve_response("owner", new, response.clone())
+            .await;
+        server.fail_pending_for("owner", new).await;
+        assert!(!task.is_finished());
+        assert_eq!(server.inner.pending.lock().await[id].session_id, old);
+        server
+            .resolve_response("owner", old, response.clone())
+            .await;
+        assert_eq!(task.await.unwrap().unwrap(), response);
+        assert!(server.inner.pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn real_reconnect_cannot_receive_a_previous_submissions_reply_even_with_reused_wire_id() {
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        server.start().await.unwrap();
+        let mut events = server.subscribe();
+        let mut previous: Option<Value> = None;
+        for n in 0..2 {
+            let stream = TcpStream::connect(("127.0.0.1", server.port()))
+                .await
+                .unwrap();
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            write_message(
+                &server.inner.crypto,
+                &mut writer,
+                &crate::protocol::build_auth(&server.inner.crypto, "owner", crate::VERSION),
+            )
+            .await
+            .unwrap();
+            let reply = timeout(
+                Duration::from_secs(3),
+                read_message(&server.inner.crypto, &mut reader),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+            assert_eq!(reply["type"], "ok");
+            write_message(
+                &server.inner.crypto,
+                &mut writer,
+                &json!({"type":"register","node_id":"owner"}),
+            )
+            .await
+            .unwrap();
+            write_message(
+                &server.inner.crypto,
+                &mut writer,
+                &json!({"type":"submit","node_id":"owner","id":"reused-wire-id","kind":"jobs.list",
+                "payload":{},"gateway_session_id":"forged"}),
+            )
+            .await
+            .unwrap();
+            let current = timeout(Duration::from_secs(3), async {
+                loop {
+                    if let NodeEvent::Submission(value) = events.recv().await.unwrap() {
+                        break value;
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            let session = current["gateway_session_id"].as_str().unwrap();
+            assert!(!Uuid::parse_str(session).unwrap().is_nil());
+            if let Some(old) = &previous {
+                assert_ne!(old["gateway_session_id"], current["gateway_session_id"]);
+                assert!(server.send_submission_reply(old,json!({"type":"submission_result","id":"reused-wire-id","success":true,"data":"STALE"})).await.is_err());
+            }
+            server.send_submission_reply(&current,json!({"type":"submission_result","id":"reused-wire-id","success":true,"data":n})).await.unwrap();
+            let reply = timeout(
+                Duration::from_secs(3),
+                read_message(&server.inner.crypto, &mut reader),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                reply["data"], n,
+                "no stale reply is routed to the replacement connection"
+            );
+            previous = Some(current);
+            drop(reader);
+            drop(writer);
+            timeout(Duration::from_secs(3), async {
+                loop {
+                    if matches!(events.recv().await.unwrap(), NodeEvent::Down(_)) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            timeout(Duration::from_secs(3), async {
+                while server.inner.active_ids.lock().unwrap().contains("owner") {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        server.stop().await;
+    }
+    #[tokio::test]
+    async fn old_cleanup_does_not_remove_replacement_waiters_or_deliver_old_submission_reply() {
+        let (server, mut queue) = queued_test_server().await;
+        let old = Uuid::new_v4();
+        let current = Uuid::new_v4();
+        server
+            .inner
+            .connections
+            .write()
+            .await
+            .get_mut("owner")
+            .unwrap()
+            .session_id = current;
+        let caller = server.clone();
+        let task = tokio::spawn(async move {
+            caller
+                .invoke_remote(
+                    "owner",
+                    "system.ping",
+                    "run",
+                    json!({}),
+                    Duration::from_secs(3),
+                )
+                .await
+        });
+        let request = queue.recv().await.unwrap();
+        server.fail_pending_for("owner", old).await;
+        assert!(!task.is_finished());
+        let source = json!({"type":"submit","id":"old-reply","node_id":"owner","gateway_session_id":old.to_string()});
+        let response = json!({"type":"submission_result","id":"old-reply"});
+        assert!(
+            server
+                .send_submission_reply(&source, response.clone())
+                .await
+                .is_err()
+        );
+        assert!(queue.try_recv().is_err());
+        for source in [
+            json!({"type":"submit","id":"old-reply","node_id":"owner"}),
+            json!({"type":"submit","id":"old-reply","node_id":"owner","gateway_session_id":"forged"}),
+            json!({"type":"submit","id":"old-reply","node_id":"owner","gateway_session_id":Uuid::nil().to_string()}),
+            json!({"type":"submit","id":"different","node_id":"owner","gateway_session_id":current.to_string()}),
+        ] {
+            assert!(
+                server
+                    .send_submission_reply(&source, response.clone())
+                    .await
+                    .is_err()
+            );
+            assert!(queue.try_recv().is_err());
+        }
+        server
+            .send_submission_reply(
+                &json!({"type":"submit","id":"old-reply","node_id":"owner","gateway_session_id":current.to_string()}),
+                response.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(queue.recv().await.unwrap(), response);
+        server.fail_pending_for("owner", current).await;
+        let failed = task.await.unwrap().unwrap();
+        assert_eq!(failed["id"], request["id"]);
+        assert_eq!(failed["success"], false);
+        assert!(server.inner.pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn waiter_registration_cannot_run_after_its_session_cleanup_has_drained() {
+        let (server, _queue) = queued_test_server().await;
+        let generation = Uuid::new_v4();
+        server
+            .inner
+            .connections
+            .write()
+            .await
+            .get_mut("owner")
+            .unwrap()
+            .session_id = generation;
+        let pending = server.inner.pending.lock().await;
+        let caller = server.clone();
+        let task = tokio::spawn(async move {
+            caller
+                .invoke_remote(
+                    "owner",
+                    "system.ping",
+                    "run",
+                    json!({}),
+                    Duration::from_secs(3),
+                )
+                .await
+        });
+        timeout(Duration::from_secs(3), async {
+            loop {
+                if server.inner.connections.try_write().is_err() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let retired = server.clone();
+        let cleanup = tokio::spawn(async move {
+            retired.inner.connections.write().await.remove("owner");
+            retired.fail_pending_for("owner", generation).await;
+        });
+        tokio::task::yield_now().await;
+        assert!(!cleanup.is_finished());
+        drop(pending);
+        timeout(Duration::from_secs(3), cleanup)
+            .await
+            .unwrap()
+            .unwrap();
+        let result = timeout(Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.is_err() || result.unwrap()["success"] == false);
         assert!(server.inner.pending.lock().await.is_empty());
     }
 

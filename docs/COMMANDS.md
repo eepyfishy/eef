@@ -4,6 +4,26 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Reply ownership across reconnect (unreleased after alpha.6)
+
+Remote RPC waiters now belong to the exact authenticated gateway session as well
+as the stable node ID. Registering a waiter and retiring its route are serialized;
+cleanup cannot drain the old session before its waiter is recorded. Response
+matching and disconnect failure check both IDs, so a different session cannot
+confirm/fail the waiter simply by using the same persistent node ID.
+
+The gateway also stamps a private routing generation on accepted submissions,
+overwriting any caller field. EEF's completed/busy replies use that original
+session and matching transport ID, never the latest connection for the node.
+If the original session ended or its queue is full, the reply is not rerouted,
+queued for reconnect or replayed. Accepted work may still have been saved or run;
+use the existing receipt/history inspection rather than assuming cancellation.
+
+This is internal reply routing; it changes no node wire requirement, persisted
+node identity or job origin. Published legacy clients remain compatible with the
+updated coordinator. The generation is not an execution grant, durable issuer
+epoch, node-side attempt fence, executor acknowledgement or exactly-once promise.
+
 ## Coordinator scheduling limits (unreleased after alpha.6)
 
 The local EEF owner can inspect/save non-model admission policy without a
@@ -143,6 +163,10 @@ exact original text, proposal revisions and clarification answers. No tasks,
 runner, dispatch, approval or execution grant are created. The record stays
 `review` after restart, not interrupted/resumed work. Existing job quotas and
 recovery headroom apply; full/damaged storage rejects instead of replacing history.
+Existing ordinary job records need no rewrite. Older coordinators do not understand
+the new `review` status: do not downgrade a database containing these records to
+an old build. Keep a backup before testing a development build; there is no lossy
+automatic downgrade or conversion to executable jobs.
 
 Only the authenticated original node can read or mutate the full draft. Later
 commands cannot change its original text, original origin/area or opening receipt.
