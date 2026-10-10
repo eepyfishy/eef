@@ -155,6 +155,25 @@ impl DiscoveryPolicy {
         let records = server.peer_records(&selected).await?;
         self.capability_names(origin, records)
     }
+    /// Fresh executor candidates for origin-scoped compilation. Disclosure is
+    /// not approval; historical plan inspection performs no new peer lookup.
+    pub async fn planning_nodes(
+        &self,
+        origin: &str,
+        server: &eefn::NodeServer,
+    ) -> Result<BTreeSet<String>> {
+        let selected = self.selection(origin, &PeerQuery::default())?;
+        let records = server.peer_records(&selected).await?;
+        let fresh = records
+            .into_iter()
+            .filter(|(_, age)| age.as_millis() < u128::from(self.freshness_seconds) * 1000)
+            .map(|(peer, _)| peer.node_id)
+            .collect::<BTreeSet<_>>();
+        if !fresh.contains(origin) {
+            bail!("Origin registration is stale or unavailable")
+        }
+        Ok(fresh)
+    }
     fn capability_names(
         &self,
         origin: &str,

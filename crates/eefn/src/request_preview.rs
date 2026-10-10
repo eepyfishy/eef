@@ -8,6 +8,23 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Inspect this origin's retained concrete plan without contacting an executor.
+    Plan { id: String },
+    /// Ask EEF to compile a reviewed request; separate owner approval is required.
+    Compile {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long,required_unless_present="template",conflicts_with_all=["template","node"])]
+        file: Option<std::path::PathBuf>,
+        /// Parameter-free template (e.g. system_info). Use --file for other inputs.
+        #[arg(long, required_unless_present = "file")]
+        template: Option<String>,
+        #[arg(long, requires = "template")]
+        node: Option<String>,
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Close this origin's local tracking of uncertain work, not remote effects.
     Abandon {
         id: String,

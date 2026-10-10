@@ -296,6 +296,48 @@ async fn execute_draft_command(
         "outcome_unknown":command.mutates(),"error_code":"draft_unconfirmed",
         "error":"No confirmed draft reply. Inspect the draft/jobs.find before retrying. No fallback or automatic replay."})))
 }
+async fn execute_node_planning_command(
+    args: &Args,
+    command: eefn::request_planning::PlanningCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.validate()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; planning never launches another runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let receipt = match &command {
+        eefn::request_planning::PlanningCommand::Compile { operation_id, .. } => {
+            operation_id.clone()
+        }
+        _ => uuid::Uuid::new_v4().to_string(),
+    };
+    let exchange=async {
+        let response=reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
+            .post(format!("http://{address}/api/commands/requests/planning")).timeout(Duration::from_secs(150))
+            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"request_id":receipt,"command":command})).send().await?;
+        let ok=response.status().is_success();
+        let value=eefn::model_manager::bounded_json(response).await?;
+        if !ok || value["schema_version"]!=1 || value["report_type"]!="node_request_planning" || value["node_id"]!=file.node_id
+            || value["request_id"]!=receipt || value["command"]!=json!(command) || !value["success"].is_boolean()
+            || value["execution_authorized"]!=false || value["dispatched"]!=false || value["automatically_retried"]!=false
+            || (value["success"]==true && (value["coordinator_acknowledged"]!=true || value["outcome_unknown"]!=false
+                || !eefn::request_planning::confirmed(&value["result"],&file.node_id,&receipt,&command))) {bail!("Unconfirmed node planning reply")}
+        Ok::<_,anyhow::Error>(value)
+    }.await;
+    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"node_request_planning","node_id":file.node_id,
+        "request_id":receipt,"command":command,"success":false,"coordinator_acknowledged":false,"outcome_unknown":command.mutates(),
+        "execution_authorized":false,"dispatched":false,"automatically_retried":false,"error_code":"planning_unconfirmed",
+        "note":"Inspect the retained plan before reusing the exact compile receipt; no fallback, approval or automatic replay."})))
+}
 async fn execute_resolution_command(
     args: &Args,
     command: eefn::request_resolution::ResolveCommand,
@@ -842,6 +884,46 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     }
     if let Commands::Requests { command } = command {
         return match command {
+            eefn::request_preview::RequestAction::Plan { id } => {
+                execute_node_planning_command(
+                    args,
+                    eefn::request_planning::PlanningCommand::Inspect { id: id.clone() },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::Compile {
+                id,
+                revision,
+                file,
+                template,
+                node,
+                operation_id,
+            } => {
+                let input = match file {
+                    Some(path) => eefn::request_planning::read_input(path)?,
+                    None => eefn::request_planning::PlanInput {
+                        schema_version: 1,
+                        template: template.clone().context("Template required")?,
+                        params: serde_json::json!({}),
+                        constraints: node
+                            .as_ref()
+                            .map(|id| serde_json::json!({"node_id":id}))
+                            .unwrap_or_else(|| serde_json::json!({})),
+                    },
+                };
+                execute_node_planning_command(
+                    args,
+                    eefn::request_planning::PlanningCommand::Compile {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                        operation_id: operation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                        input,
+                    },
+                )
+                .await
+            }
             eefn::request_preview::RequestAction::Preview { text } => {
                 execute_request_command(args, text, false, None, false).await
             }
@@ -2023,5 +2105,79 @@ mod tests {
             .is_err()
         );
         assert!(Args::try_parse_from(["eefn", "requests", "open"]).is_err());
+        for command in [
+            vec!["eefn", "requests", "plan", "id"],
+            vec![
+                "eefn",
+                "requests",
+                "compile",
+                "id",
+                "--revision",
+                "1",
+                "--template",
+                "system_info",
+            ],
+            vec![
+                "eefn",
+                "requests",
+                "compile",
+                "id",
+                "--revision",
+                "1",
+                "--template",
+                "system_info",
+                "--node",
+                "owner",
+            ],
+            vec![
+                "eefn",
+                "requests",
+                "compile",
+                "id",
+                "--revision",
+                "1",
+                "--file",
+                "plan.json",
+            ],
+        ] {
+            Args::try_parse_from(command).unwrap();
+        }
+        for command in [
+            vec!["eefn", "requests", "compile", "id", "--revision", "1"],
+            vec![
+                "eefn",
+                "requests",
+                "compile",
+                "id",
+                "--template",
+                "system_info",
+            ],
+            vec![
+                "eefn",
+                "requests",
+                "compile",
+                "id",
+                "--revision",
+                "1",
+                "--template",
+                "system_info",
+                "--file",
+                "plan.json",
+            ],
+            vec![
+                "eefn",
+                "requests",
+                "compile",
+                "id",
+                "--revision",
+                "1",
+                "--file",
+                "plan.json",
+                "--node",
+                "owner",
+            ],
+        ] {
+            assert!(Args::try_parse_from(command).is_err());
+        }
     }
 }

@@ -10,58 +10,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PlanInput {
-    pub schema_version: u32,
-    pub template: String,
-    pub params: Value,
-    pub constraints: Value,
-}
-impl PlanInput {
-    pub fn validate(&self) -> Result<()> {
-        identifier(&self.template)?;
-        if self.schema_version != 1
-            || !self.params.is_object()
-            || !self.constraints.is_object()
-            || serde_json::to_vec(self)?.len() > 64 * 1024
-        {
-            bail!("Invalid or oversized concrete plan input")
-        }
-        for (key, value) in self.constraints.as_object().unwrap() {
-            match key.as_str() {
-                "node_id" => eefn::network::validate_remote_node_id(
-                    value.as_str().context("node_id must be text")?,
-                )?,
-                "backend" | "model_role" | "gpu" => {
-                    identifier(value.as_str().context("routing identifier must be text")?)?
-                }
-                "gpu_vram_min_mb" | "vram_min_mb" => {
-                    value
-                        .as_u64()
-                        .context("VRAM constraint must be unsigned integer")?;
-                }
-                "node_name" => {
-                    let s = value.as_str().context("node_name must be text")?;
-                    if s.is_empty() || s.len() > 256 || s.chars().any(char::is_control) {
-                        bail!("Invalid node name constraint")
-                    }
-                }
-                "area" => eefn::context::validate_area(&serde_json::from_value::<Vec<String>>(
-                    value.clone(),
-                )?)?,
-                "resource_id" => {
-                    let s = value.as_str().context("resource_id must be text")?;
-                    if s.is_empty() || s.len() > 256 || s.chars().any(char::is_control) {
-                        bail!("Invalid resource ID")
-                    }
-                }
-                _ => bail!("Unsupported concrete planning constraint '{key}'"),
-            }
-        }
-        Ok(())
-    }
-}
+pub use eefn::request_planning::{PlanInput, read_input};
 fn identifier(value: &str) -> Result<()> {
     if value.is_empty()
         || value.len() > 64
@@ -72,20 +21,6 @@ fn identifier(value: &str) -> Result<()> {
         bail!("Expected a bounded ASCII identifier")
     }
     Ok(())
-}
-pub fn read_input(path: &std::path::Path) -> Result<PlanInput> {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)?
-        .take(64 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > 64 * 1024 {
-        bail!("Plan input exceeds 64 KiB")
-    }
-    let input: PlanInput =
-        serde_json::from_slice(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes))?;
-    input.validate()?;
-    Ok(input)
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -551,15 +486,34 @@ pub fn confirmed_report(value: &Value, runtime_id: &str, command: &PlanningComma
 
 impl crate::Runtime {
     pub async fn planning_command(&self, request: PlanningRequest) -> Result<Value> {
+        self.planning_command_scoped(request, None).await
+    }
+    async fn planning_command_scoped(
+        &self,
+        request: PlanningRequest,
+        origin: Option<&str>,
+    ) -> Result<Value> {
         if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
             bail!("Planning schema/runtime changed; inspect before retrying")
         }
         request.command.validate()?;
         let saved = self.engine.store.get(request.command.id())?;
+        if origin.is_some_and(|node| {
+            saved
+                .goal
+                .request_context
+                .as_ref()
+                .is_none_or(|c| c.origin_node() != node)
+        }) {
+            bail!("Request unavailable or not owned by this origin")
+        }
         if saved.request_review.is_none() {
             bail!("Not a reviewed request")
         }
         if matches!(request.command, PlanningCommand::Approve { .. }) {
+            if origin.is_some() {
+                bail!("Only the coordinator owner may approve work")
+            }
             let (plan, reused) =
                 crate::request_approval::approve(self, saved, &request.command).await?;
             return Ok(report(plan, &request.command, &self.instance_id, reused));
@@ -593,6 +547,10 @@ impl crate::Runtime {
             bail!("Continuous/unknown workloads require the future local pipeline compiler")
         }
         let mut compiled = unbound_plan(&saved, input)?;
+        let permitted = match origin {
+            Some(node) => Some(self.disclosed_planning_nodes(node).await?),
+            None => None,
+        };
         let mut record = PlanningRecord {
             schema_version: 1,
             operation_id: operation_id.clone(),
@@ -610,6 +568,7 @@ impl crate::Runtime {
             &self.model_registry,
             &self.node_server,
             &crate::runtime::model_tiers(&self.config),
+            permitted.as_ref(),
         )
         .await?;
         compiled.plan_id = saved.plan_id.clone();
@@ -645,6 +604,110 @@ impl crate::Runtime {
         })?;
         Ok(report(result, &request.command, &self.instance_id, reused))
     }
+
+    pub async fn origin_planning_command(
+        &self,
+        command: eefn::request_planning::PlanningCommand,
+        context: &eefn::context::RequestContext,
+    ) -> Result<Value> {
+        use eefn::request_planning::{PlannedTask, PlanningCommand as NodeCommand, PlanningView};
+        command.validate()?;
+        let owner_command = match &command {
+            NodeCommand::Inspect { id } => PlanningCommand::Inspect { id: id.clone() },
+            NodeCommand::Compile {
+                id,
+                expected_revision,
+                operation_id,
+                input,
+            } => {
+                if operation_id != context.request_id() {
+                    bail!("Planning receipt does not match authenticated origin")
+                }
+                PlanningCommand::Compile {
+                    id: id.clone(),
+                    expected_revision: *expected_revision,
+                    operation_id: operation_id.clone(),
+                    input: input.clone(),
+                }
+            }
+        };
+        let result = self
+            .planning_command_scoped(
+                PlanningRequest {
+                    schema_version: 1,
+                    expected_runtime_id: self.instance_id.clone(),
+                    command: owner_command,
+                },
+                Some(context.origin_node()),
+            )
+            .await?;
+        let plan: Plan = serde_json::from_value(result["plan"].clone())?;
+        crate::jobs::validate_retained_review(&plan)?;
+        let planning = plan.planning.as_ref();
+        let view = PlanningView {
+            schema_version: 1,
+            report_type: "coordinator_node_planning".into(),
+            runtime_id: self.instance_id.clone(),
+            id: plan.plan_id.clone(),
+            operation_id: context.request_id().into(),
+            revision: plan.revision,
+            status: serde_json::to_value(plan.status)?
+                .as_str()
+                .context("Invalid plan state")?
+                .into(),
+            request_context: plan
+                .goal
+                .request_context
+                .clone()
+                .context("Missing immutable origin")?,
+            draft: plan
+                .request_review
+                .clone()
+                .context("Missing retained review")?,
+            input: planning.map(|p| p.input.clone()),
+            planning_operation_id: planning.map(|p| p.operation_id.clone()),
+            source_revision: planning.map(|p| p.source_revision),
+            plan_sha256: planning.map(|p| p.plan_sha256.clone()),
+            bindings: planning
+                .map(|p| serde_json::from_value(json!(p.bindings)))
+                .transpose()?
+                .unwrap_or_default(),
+            tasks: plan
+                .tasks
+                .iter()
+                .map(|t| {
+                    Ok(PlannedTask {
+                        task_id: t.task_id.clone(),
+                        capability: t.capability.clone(),
+                        action: t.action.clone(),
+                        params: t.params.clone(),
+                        constraints: t.constraints.clone(),
+                        dependencies: t.dependencies.clone(),
+                        timeout_ms: t.timeout_ms,
+                        status: serde_json::to_value(t.status)?
+                            .as_str()
+                            .context("Invalid task state")?
+                            .into(),
+                    })
+                })
+                .collect::<Result<_>>()?,
+            reused: result["reused"] == true,
+            persisted: true,
+            execution_authorized: false,
+            dispatched: false,
+            automatically_retried: false,
+        };
+        let value = json!(view);
+        if !eefn::request_planning::confirmed(
+            &value,
+            context.origin_node(),
+            context.request_id(),
+            &command,
+        ) {
+            bail!("Retained node planning view failed validation")
+        }
+        Ok(value)
+    }
 }
 
 pub(crate) async fn live_peer(
@@ -673,6 +736,7 @@ async fn bind_tasks(
     models: &ModelRegistry,
     server: &eefn::NodeServer,
     tiers: &BTreeMap<String, Vec<String>>,
+    permitted: Option<&BTreeSet<String>>,
 ) -> Result<()> {
     let freshness = registry.scheduling_policy().freshness_seconds;
     for task in &mut plan.tasks {
@@ -696,19 +760,23 @@ async fn bind_tasks(
                 bail!("Model planning currently supports exact node/backend/role constraints only")
             }
             validate_model_input(&task.params, task.capability == "vlm.analyze")?;
-            let candidates = models.route(
-                &ModelRequest {
-                    modality: if task.capability == "vlm.analyze" {
-                        Modality::Vlm
-                    } else {
-                        Modality::Text
+            let candidates = models
+                .route(
+                    &ModelRequest {
+                        modality: if task.capability == "vlm.analyze" {
+                            Modality::Vlm
+                        } else {
+                            Modality::Text
+                        },
+                        tier: task.params["tier"].as_str().map(str::to_owned),
+                        model_id: task.params["model_id"].as_str().map(str::to_owned),
+                        constraints: constraints.clone(),
                     },
-                    tier: task.params["tier"].as_str().map(str::to_owned),
-                    model_id: task.params["model_id"].as_str().map(str::to_owned),
-                    constraints: constraints.clone(),
-                },
-                tiers,
-            );
+                    tiers,
+                )
+                .into_iter()
+                .filter(|spec| permitted.is_none_or(|nodes| nodes.contains(&spec.node_id)))
+                .collect::<Vec<_>>();
             if candidates.len() > 256 {
                 bail!("Too many planning candidates; constrain the model route")
             }
@@ -743,11 +811,12 @@ async fn bind_tasks(
                 constraints["resource_id"] = resource.clone();
             }
             let provider = registry
-                .find_best_with_context(
+                .find_best_scoped(
                     &task.capability,
                     &task.action,
                     &constraints,
                     task.request_context.as_ref(),
+                    permitted,
                 )
                 .context("No current provider matches the concrete plan")?;
             live_peer(server, &provider.node_id, &task.capability, freshness).await?;

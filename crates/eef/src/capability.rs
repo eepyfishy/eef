@@ -368,9 +368,25 @@ impl CapabilityRegistry {
         constraints: &Value,
         context: Option<&eefn::context::RequestContext>,
     ) -> Option<CapabilityProvider> {
+        self.find_best_scoped(capability, action, constraints, context, None)
+    }
+
+    /// Apply owner-disclosed executor scope before ranking, never after selecting
+    /// an undisclosed best provider. No permission or reservation is implied.
+    pub fn find_best_scoped(
+        &self,
+        capability: &str,
+        action: &str,
+        constraints: &Value,
+        context: Option<&eefn::context::RequestContext>,
+        permitted: Option<&std::collections::BTreeSet<String>>,
+    ) -> Option<CapabilityProvider> {
         let state = self.providers.read().expect("registry lock");
         select_provider(
-            self.eligible(&state, capability, action),
+            self.eligible(&state, capability, action)
+                .into_iter()
+                .filter(|p| permitted.is_none_or(|nodes| nodes.contains(&p.node_id)))
+                .collect(),
             capability,
             constraints,
             context,
@@ -668,6 +684,56 @@ fn type_matches(value: &Value, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn origin_scope_filters_before_ranking_without_widening_exact_constraints() {
+        let registry = CapabilityRegistry::default();
+        let mut preferred = CapabilityProvider::local("system.info", "run", json!({}));
+        preferred.node_id = "hidden".into();
+        preferred.last_heartbeat_ms = eefn::protocol::now_ms();
+        preferred.priority = 100;
+        let mut own = preferred.clone();
+        own.node_id = "owner".into();
+        own.priority = 0;
+        registry.register(preferred);
+        registry.register(own);
+        assert_eq!(
+            registry
+                .find_best("system.info", "run", &json!({}))
+                .unwrap()
+                .node_id,
+            "hidden"
+        );
+        let scope = std::collections::BTreeSet::from(["owner".to_string()]);
+        assert_eq!(
+            registry
+                .find_best_scoped("system.info", "run", &json!({}), None, Some(&scope))
+                .unwrap()
+                .node_id,
+            "owner"
+        );
+        assert!(
+            registry
+                .find_best_scoped(
+                    "system.info",
+                    "run",
+                    &json!({"node_id":"hidden"}),
+                    None,
+                    Some(&scope)
+                )
+                .is_none()
+        );
+        assert!(
+            registry
+                .find_best_scoped(
+                    "system.info",
+                    "run",
+                    &json!({}),
+                    None,
+                    Some(&std::collections::BTreeSet::new())
+                )
+                .is_none()
+        );
+    }
 
     #[test]
     fn aggregate_global_capacity_is_atomic_and_retirement_does_not_free_owned_futures() {

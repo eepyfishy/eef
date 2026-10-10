@@ -1,5 +1,50 @@
 # Architecture conformance status
 
+## Unreleased: origin-node concrete planning commands (2026-10-11)
+
+The input node can now invoke EEF's existing compiler and inspect its own private
+plan via `requests compile/plan` and a guarded local command API, without a
+dashboard or coordinator port. Shared typed inputs retain old owner file/API
+contracts. A simple parameter-free CLI mode needs no JSON file; advanced inputs
+still use explicit data. EEF checks immutable origin before reading/compiling,
+then filters fresh executor candidates to applied self/directional owner-disclosed
+scope before existing capability/model ranking. No hidden-provider fallback,
+inference, permission widening, model load/download, approval or dispatch occurs.
+
+Plans use the same journal, revisions, exact receipt reuse, digest and frozen
+bindings. The new strict private snapshot includes original review, inputs and
+tasks/bindings, not credentials, endpoints, raw adapter bindings, results or grant
+authority. Other origins—including the selected executor—cannot inspect it.
+Historical own inspection/exact receipt reuse does not need fresh executor lookup
+and cannot renew authority. Unconfirmed mutation replies remain uncertain unless
+known not sent, including generic rejection after possible checkpointing.
+Approval remains a separate coordinator-owner operation. Automatic semantic
+planning, delegated owner approval, grant migration and the complete non-coder
+workflow remain required; this is a stage 5-6 command/workflow increment only.
+
+Validation: **349 workspace/all-target Rust tests pass in both feature modes**,
+with fresh no-dashboard EEF/EEFN binaries. Added units cover pre-ranking scope
+filtering, strict origin/receipt/revision/input/view contracts, malformed graphs,
+binding changes, duplicate fields, authority widening, file bounds and disconnected
+operation without configuration/journal creation. Rejected/corrupt confirmation
+cannot manufacture an absent-save claim or trigger a retry; CLI tests cover
+required/conflicting input options. Headless `request-drafts-0otUw3` covers actual
+node CLI compilation without JSON, private plan inspection, cross-site/extra-field/
+wrong-node denial, undisclosed target denial, exact receipt reuse, other-origin
+compile/inspection denial, owner compatibility, restart, separate approval and
+the existing native grant/nonce/recovery regressions. `request-review-0niux0`
+checks origin inspection of a model-bound plan without inference, actual disclosed
+peer compilation when the origin lacks that feature, selected-executor inspection
+denial, historical lookup after peer withdrawal and rejection of a new compilation
+without journal mutation; prior interpretation/model-grant regressions remain green.
+Credential isolation (`node-credentials-zgDDCN`), model metadata
+(`model-metadata-cFhMm5`), shutdown (`job-shutdown-jaUYww`) and scheduling
+(`scheduling-d6lUmN`) pass. Source-boundary, syntax, formatting and diff checks pass;
+fixture children closed. These are isolated local logical-node/fake-model tests,
+not physical two-PC or real-model semantic acceptance.
+
+Installed apps/physical nodes, versions, installers and update feeds are unchanged.
+
 ## Unreleased: clock-independent fresh grant leases (2026-10-11)
 
 Reviewed execution now anchors the coordinator's monotonic lease before durable

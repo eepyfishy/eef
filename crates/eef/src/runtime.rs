@@ -618,6 +618,15 @@ impl Runtime {
             .await;
     }
 
+    pub(crate) async fn disclosed_planning_nodes(
+        &self,
+        origin: &str,
+    ) -> Result<std::collections::BTreeSet<String>> {
+        self.discovery
+            .planning_nodes(origin, &self.node_server)
+            .await
+    }
+
     async fn on_node_submission(&self, message: Value) {
         let Some(node_id) = message
             .get("node_id")
@@ -727,6 +736,16 @@ impl Runtime {
                             })
                         }),
                     Err(_) => Err(anyhow::anyhow!("Invalid interpretation context query")),
+                }
+            }
+            "requests.planning" => {
+                match serde_json::from_value::<eefn::request_planning::PlanningCommand>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(command) => self.origin_planning_command(command, &context).await,
+                    Err(_) => Err(anyhow::anyhow!(
+                        "Invalid origin planning command; approval is not available"
+                    )),
                 }
             }
             "network.peers" => {

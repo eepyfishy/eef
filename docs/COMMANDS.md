@@ -375,6 +375,62 @@ restart, receipt/revision conflicts and non-executing cancellation.
 without invoking its fake inference provider. These remain local fixtures, not
 physical two-PC or real model acceptance.
 
+### Planning through the input node (unreleased after alpha.6)
+
+The running input node can now request the same EEF compiler and inspect its own
+retained plan without a dashboard or coordinator port:
+
+```powershell
+eefn requests plan DRAFT_ID --json
+eefn requests compile DRAFT_ID --revision 4 --template system_info --node EXACT_NODE_ID --operation-id UUID --json
+eefn requests compile DRAFT_ID --revision 4 --file concrete-plan.json --operation-id UUID --json
+```
+
+Choose `--template` or `--file`, never both. Template mode supplies empty parameters
+and optional exact `--node`, so basic system-info compilation needs no JSON file.
+Parameter-bearing templates still use the bounded input file above; the selected
+interpreter does not yet produce concrete inputs automatically. Omitting the
+operation ID generates one, returned in the report. Reuse only that exact receipt,
+revision and input after inspection, not a new UUID to replace a retained plan.
+
+EEF stamps authenticated origin, checks ownership before any private view and
+filters candidates **before ranking** to fresh origin/owner-disclosed peers under
+its applied directional discovery policy. Default is self-only; a faster hidden
+provider cannot be selected or exposed. Exact constraints remain exact; no hidden
+executor fallback or local coordinator adapter. Existing capability/model ranking,
+fresh registration checks, resource ownership, parameter validation, durable
+revision/digest checkpoint and zero-retry definitions remain authoritative.
+Discovery is not execution permission. Owner API compilation retains its broader
+owner visibility; new node compilation does not gain those privileges.
+
+New guarded node-local API: `POST /api/commands/requests/planning`, with exactly
+`schema_version: 1`, `expected_node_id`, canonical UUID `request_id`, and `command`.
+Inspect uses `{"operation":"inspect","id":"DRAFT_ID"}`. Compile uses the same
+`id`, `expected_revision`, `operation_id` and `input` shape as owner compilation;
+`operation_id` must equal `request_id`. No node `approve` operation exists.
+Wrong origins/nodes, extra authority fields, cross-site callers, ambiguous input
+options and conflicting revisions/receipts reject. This adapter starts no second
+node, interpreter/model, runner or executor probe.
+
+Node reports use `report_type: node_request_planning`; the acknowledged result is
+a strict `coordinator_node_planning` snapshot, bound to origin/job/receipt/runtime.
+It includes retained original text/review history, exact input, digest, task inputs,
+dependencies and bindings, not grant authority, outputs, credentials, endpoints or
+private resource adapter configuration. Treat it as private. Ordinary jobs/draft
+views remain redacted; selected executors and other origins cannot inspect it.
+Historical own snapshots and exact receipt inspection do not perform a new peer
+lookup, including after withdrawal/restart; they never renew or dispatch anything.
+
+Every report sets `execution_authorized`, `dispatched`, `automatically_retried`
+false: compilation only saves `awaiting_approval`. Retained status may reflect a
+separately requested later approval/execution, not authority from this command.
+Unconfirmed compile replies—including generic coordinator errors that could occur
+after a checkpoint—leave `outcome_unknown: true`; only a known not-sent mutation
+can report no uncertain save. Inspect the retained plan before an explicit retry.
+Read-only inspection never has a mutation outcome to reconcile. Approval remains
+the separate coordinator-owner command below. Automatic semantic compilation,
+delegated owner approval and the complete non-coder workflow remain later work.
+
 ## Bounded owner request approval (unreleased after alpha.6)
 
 After inspecting the exact private plan, the local EEF owner can retain a

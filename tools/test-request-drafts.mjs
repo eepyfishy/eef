@@ -128,6 +128,20 @@ try {
   const planFile=join(scratch,'concrete-plan.json');
   const planInput={schema_version:1,template:'system_info',params:{},constraints:{node_id:owner.id}};
   await writeFile(planFile,JSON.stringify(planInput));
+  const nodePlanningEndpoint=owner.api+'/api/commands/requests/planning',nodePlanningReceipt=randomUUID();
+  const nodePlanningRequest={schema_version:1,expected_node_id:owner.id,request_id:nodePlanningReceipt,
+    command:{operation:'compile',id,expected_revision:4,operation_id:nodePlanningReceipt,input:planInput}};
+  const originBefore=(await node(['requests','plan',id])).result;
+  assert.equal(originBefore.status,'review');assert.equal(originBefore.input,null);assert.deepEqual(originBefore.tasks,[]);
+  await cli('eefn',other.config,['requests','plan',id],false);
+  assert.equal((await response(nodePlanningEndpoint,nodePlanningRequest,'https://untrusted.example')).status,403);
+  assert.equal((await response(nodePlanningEndpoint,{...nodePlanningRequest,approved:true})).status,422);
+  assert.equal((await response(nodePlanningEndpoint,{...nodePlanningRequest,expected_node_id:other.id})).status,400);
+  assert.equal((await response(nodePlanningEndpoint,{...nodePlanningRequest,request_id:randomUUID()})).status,400);
+  assert.equal((await response(nodePlanningEndpoint,{...nodePlanningRequest,command:{operation:'approve',id}})).status,422);
+  const undisclosed=await json(nodePlanningEndpoint,{...nodePlanningRequest,command:{...nodePlanningRequest.command,input:{...planInput,constraints:{node_id:other.id}}}});
+  assert.equal(undisclosed.success,false);assert.equal(undisclosed.outcome_unknown,true);
+  assert.equal((await node(['requests','draft',id])).result.revision,4);
   const planningEndpoint=base+'/api/commands/requests/planning';
   runtime=(await coordinator(['diagnostics'])).runtime_id;
   const planningRequest={schema_version:1,expected_runtime_id:runtime,command:{operation:'compile',id,expected_revision:4,operation_id:randomUUID(),input:planInput}};
@@ -137,7 +151,11 @@ try {
   assert.equal((await response(planningEndpoint,{...planningRequest,command:{...planningRequest.command,input:{...planInput,params:{ignored_permission:true}}}})).status,400);
   assert.equal((await response(planningEndpoint,{...planningRequest,command:{...planningRequest.command,input:{...planInput,constraints:{node_id:'missing-node'}}}})).status,400);
   assert.equal((await node(['requests','draft',id])).result.revision,4);
-  const compiled=await coordinator(['requests','compile',id,'--revision','4','--file',planFile]);
+  const originCompiled=await node(['requests','compile',id,'--revision','4','--template','system_info','--node',owner.id,'--operation-id',nodePlanningReceipt]);
+  assert.equal(originCompiled.coordinator_acknowledged,true);assert.equal(originCompiled.outcome_unknown,false);
+  assert.equal(originCompiled.result.status,'awaiting_approval');assert.equal(originCompiled.result.plan_sha256.length,64);
+  assert.equal(originCompiled.execution_authorized,false);assert.equal(originCompiled.dispatched,false);
+  const compiled=await coordinator(['requests','inspect',id]);
   assert.equal(compiled.execution_authorized,false);assert.equal(compiled.dispatched,false);assert.equal(compiled.reused,false);
   assert.equal(compiled.plan.status,'awaiting_approval');assert.equal(compiled.plan.revision,5);
   assert.deepEqual(compiled.plan.request_review,after.draft);assert.deepEqual(compiled.plan.goal.request_context,context);
@@ -148,8 +166,14 @@ try {
   const ownDraft=(await node(['requests','draft',id])).result;assert.equal(ownDraft.status,'awaiting_approval');assert(!('planning' in ownDraft));
   await cli('eefn',other.config,['requests','draft',id],false);
   const inspection=await coordinator(['requests','inspect',id]);assert.deepEqual(inspection.plan,compiled.plan);
-  const retry={...planningRequest,command:{...planningRequest.command,operation_id:compiled.operation_id}};
+  const retry={...planningRequest,command:{...planningRequest.command,operation_id:compiled.plan.planning.operation_id}};
   const reused=await json(planningEndpoint,retry);assert.equal(reused.reused,true);assert.deepEqual(reused.plan,compiled.plan);
+  const originReused=await json(nodePlanningEndpoint,nodePlanningRequest);
+  assert.equal(originReused.result.reused,true);assert.equal(originReused.result.plan_sha256,compiled.plan.planning.plan_sha256);
+  await cli('eefn',other.config,['requests','compile',id,'--revision','4','--file',planFile],false);
+  const originInspection=(await node(['requests','plan',id])).result;
+  assert.equal(originInspection.reused,false);assert.deepEqual(originInspection.bindings,compiled.plan.planning.bindings);
+  assert.deepEqual(originInspection.input,planInput);assert.deepEqual(originInspection.draft,compiled.plan.request_review);
   assert.equal((await response(planningEndpoint,planningRequest)).status,400);
   assert.equal((await response(planningEndpoint,{...retry,command:{...retry.command,input:{...planInput,constraints:{node_id:other.id}}}})).status,400);
   await cli('eef',eefConfig,['requests','compile',id,'--revision','4','--file',planFile],false);
@@ -186,7 +210,7 @@ try {
   const approvedView=(await node(['jobs','get',id])).data;assert.equal(approvedView.planning_state,'approved_no_grant');
   assert.equal(approvedView.approval_active,true);assert(!('approval' in approvedView));assert(!('planning' in approvedView));
   await bad(['jobs','pause',id]);await bad(['jobs','resume',id]);
-  assert.equal((await response(other.api+'/api/commands/requests/planning',approvalRequest)).status,404);
+  assert.equal((await response(other.api+'/api/commands/requests/planning',approvalRequest)).status,422);
   runtime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
   await until(async()=>{const d=await coordinator(['diagnostics']);return d.runtime_id!==runtime&&d.registered_node_count===2;},'approved plan reopen without issuance');
   assert.deepEqual((await coordinator(['requests','inspect',id])).plan,approved.plan);

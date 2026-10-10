@@ -200,6 +200,11 @@ try {
   assert.equal(modelPlan.plan.status,'awaiting_approval');assert.equal(modelPlan.execution_authorized,false);assert.equal(modelPlan.dispatched,false);
   assert.equal(modelPlan.plan.tasks[0].params.model_id,'fixture');assert.equal(modelPlan.plan.tasks[0].constraints.backend,'ollama');
   assert.deepEqual(modelPlan.plan.planning.bindings[0],{task_id:modelPlan.plan.tasks[0].task_id,node_id:config.node_id,resource_id:null,model_id:'fixture',backend:'ollama'});
+  const nodeModelView=await cli(['requests','plan',modelDraft.result.id]);
+  assert.equal(nodeModelView.result.plan_sha256,modelPlan.plan.planning.plan_sha256);
+  assert.deepEqual(nodeModelView.result.bindings,modelPlan.plan.planning.bindings);
+  assert.deepEqual(nodeModelView.result.input,planInput);
+  assert.equal(nodeModelView.execution_authorized,false);assert.equal(nodeModelView.dispatched,false);
   assert.equal(calls.length,beforeCompile,'compilation must not invoke inference');
   const modelReused=await json(planUrl,planRequest);assert.equal(modelReused.reused,true);assert.deepEqual(modelReused.plan,modelPlan.plan);
   // A legacy shared-secret route cannot satisfy the owner approval/grant contract.
@@ -377,6 +382,19 @@ try {
   const suppliedCross=await cli(['requests','review-proposal','--file',remoteFile]);
   assert.equal(suppliedCross.coordinator_acknowledged,true);
   assert.equal(calls.length,beforeNetwork+3,'supplied proposals do not invoke a model');
+  const peerPlanDraft=await cli(['requests','open-proposal','--file',remoteFile]);
+  const peerPlanFile=join(scratch,'peer-plan.json');
+  await writeFile(peerPlanFile,JSON.stringify({schema_version:1,template:'http_request',params:{url:'https://example.invalid/info',method:'GET'},constraints:{}}));
+  const beforePeerPlanning=calls.length;
+  const peerPlanned=await cli(['requests','compile',peerPlanDraft.result.id,'--revision','1','--file',peerPlanFile]);
+  assert.equal(peerPlanned.coordinator_acknowledged,true);assert.equal(peerPlanned.result.status,'awaiting_approval');
+  assert.equal(peerPlanned.result.bindings[0].node_id,peerConfig.node_id,'origin without HTTP must compile against its disclosed live peer');
+  assert.equal(peerPlanned.result.tasks[0].capability,'http.request');assert.equal(peerPlanned.result.tasks[0].status,'pending');
+  assert.equal(peerPlanned.execution_authorized,false);assert.equal(peerPlanned.dispatched,false);
+  assert.equal(calls.length,beforePeerPlanning,'deterministic compilation must not invoke the interpreter/model');
+  const deniedPeerInspection=await cli(['requests','plan',peerPlanDraft.result.id],false,peerConfigPath);
+  assert.equal(deniedPeerInspection.success,false,'selected executor cannot inspect another origin private plan');
+  const withdrawPlanDraft=await cli(['requests','open-proposal','--file',remoteFile]);
   const revisionFile=join(scratch,'remote-revision.json');
   await writeFile(revisionFile,JSON.stringify({schema_version:1,original_text:cross.result.draft.original_text,
     proposal:{...proposal(),goal:'Revised remote hint',suggested_capabilities:['http.request']}}));
@@ -386,6 +404,12 @@ try {
   // Disconnect cannot leave cached availability behind, even while disclosure
   // remains applied. Reconnection restores vocabulary, not execution authority.
   peerProcess.kill();await peerProcess.result;expectedNodes=1;await until(ready,'peer disconnected');
+  const historicalPeerPlan=await cli(['requests','plan',peerPlanDraft.result.id]);
+  assert.equal(historicalPeerPlan.result.plan_sha256,peerPlanned.result.plan_sha256,'history remains inspectable without fresh executor lookup');
+  const withdrawnCompilation=await cli(['requests','compile',withdrawPlanDraft.result.id,'--revision','1','--file',peerPlanFile],false);
+  assert.equal(withdrawnCompilation.success,false);assert.equal(withdrawnCompilation.outcome_unknown,true);
+  const withdrawnHistory=(await cli(['requests','plan',withdrawPlanDraft.result.id])).result;
+  assert.equal(withdrawnHistory.status,'review');assert.equal(withdrawnHistory.revision,1);assert.deepEqual(withdrawnHistory.tasks,[]);
   assert.equal((await cli(['requests','review-proposal','--file',remoteFile],false)).error_code,'review_rejected');
   expectedNodes=2;const reconnectedPeer=launch('eefn',['--config',peerConfigPath,'--no-ui']);
   await until(ready,'peer reconnected');

@@ -62,6 +62,7 @@ impl SubmissionMailbox {
             kind,
             "message"
                 | "requests.capabilities"
+                | "requests.planning"
                 | "requests.review"
                 | "requests.open"
                 | "requests.draft_get"
