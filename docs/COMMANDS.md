@@ -377,6 +377,30 @@ physical two-PC or real model acceptance.
 
 ### Planning through the input node (unreleased after alpha.6)
 
+Explicit selected-interpreter preparation can produce the concrete input or save
+a new clarification without editing JSON:
+
+```powershell
+eefn requests prepare DRAFT_ID --revision SOURCE_REVISION --operation-id UUID --json
+eefn requests plan DRAFT_ID --json
+```
+
+It requires a resolved one-shot review and an explicitly selected interpreter.
+A method saves as `awaiting_approval`; a question saves as an answerable review
+proposal. Use `requests answer`, then `requests resolve`, then a new preparation
+operation against the new revision. Nothing is approved or executed by preparation.
+Full original/proposal/question/answer history, exact source evidence and immutable
+origin are retained. Invalid/stale output cannot replace a concurrent edit.
+
+The guarded node API is `POST /api/commands/requests/prepare`, with exactly
+`schema_version:1`, `expected_node_id`, and `command:{id,expected_revision,operation_id}`.
+Successful `request_preparation` reports include `checkpoint_saved`; an exact
+saved receipt returns `inspection_only:true`, with no inference or saving attempt,
+even after later compilation or withdrawal of the interpreter role. Unconfirmed
+mutations remain uncertain unless known not sent: inspect `requests plan` or reuse
+the exact source revision and operation ID. No model/file/chat fallback, implicit
+approval, new runtime or automatic retry. See [preparation contract](SEMANTIC-PREPARATION.md).
+
 The running input node can now request the same EEF compiler and inspect its own
 retained plan without a dashboard or coordinator port:
 
@@ -388,8 +412,8 @@ eefn requests compile DRAFT_ID --revision 4 --file concrete-plan.json --operatio
 
 Choose `--template` or `--file`, never both. Template mode supplies empty parameters
 and optional exact `--node`, so basic system-info compilation needs no JSON file.
-Parameter-bearing templates still use the bounded input file above; the selected
-interpreter does not yet produce concrete inputs automatically. Omitting the
+Parameter-bearing explicit templates use the bounded input file above; selected
+interpreter preparation is available separately below. Omitting the
 operation ID generates one, returned in the report. Reuse only that exact receipt,
 revision and input after inspection, not a new UUID to replace a retained plan.
 

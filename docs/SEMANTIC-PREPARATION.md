@@ -1,10 +1,17 @@
 # Source-bound semantic method preparation (unreleased after alpha.6)
 
-This is a working core candidate/schema/prompt/inference primitive, **not yet a
-user command or automatic compiler**. Existing `requests compile` still accepts
-explicit concrete inputs; no new HTTP endpoint, saved job transition or ambient
-trigger is enabled by this increment. The remaining integration below is required
-before claiming users can prepare a concrete plan without authoring its inputs.
+The running input node can explicitly propose and save a one-step method or an
+answerable clarification without authoring JSON inputs:
+
+```text
+eefn requests prepare JOB_ID --revision SOURCE_REVISION --operation-id UUID --json
+eefn requests plan JOB_ID --json
+```
+
+The backend owns read/context/inference/checkpoint/report behavior; the dashboard
+is not required. This is **explicit preparation**, not an ambient automatic
+trigger, completed general planner or automatic execution. Existing deterministic
+`requests compile` commands and explicit inputs remain available.
 
 ## Implemented contract
 
@@ -29,7 +36,7 @@ caller-supplied fresh vocabulary. Model routing hints may use user-described are
 or display names, never node/resource/model IDs, roles, backends or compute limits.
 Unused parameters and model/device/resource-selection parameters reject. Other
 parameter values are untrusted request data, not proof of semantic correctness,
-file/device existence, ownership or permissions. Future EEF compilation must still
+file/device existence, ownership or permissions. EEF compilation must still
 apply live provider/model/parameter/resource validation and separate owner approval.
 
 The prompt retains unchanged original text and the complete review/proposal/question/
@@ -44,25 +51,50 @@ model attribution. Evidence binds compact job ID, exact positive source revision
 full canonical review digest and exact proposal/answer counts. It cannot attest a
 remote model call or model understanding. The candidate itself cannot supply its
 attribution, origin, permission or grants. No journal, configuration, grant receipt,
-file effect or workload runner is created by this primitive.
+file effect or workload runner is created by the candidate primitive itself.
 
-## Required integration, still pending
+## Checkpoint workflow
 
-1. A shared node command must inspect the origin-owned retained source and any
-   exact saved receipt before inference, then obtain fresh EEF-disclosed context.
-2. It must share single-capacity/runtime-generation guards and bounded cancellation
-   with existing node interpretation. The core primitive alone does not fetch that
-   context or provide service-level capacity/restart invalidation.
-3. EEF must verify authenticated origin, full source digest/revision/counts and
-   unchanged request context atomically while compiling against fresh allowed
-   executors. It—not model parameters—owns bindings and the final concrete plan.
-4. Retain evidence and compilation in the existing job journal/definition digest;
-   exact retries inspect rather than infer/save again. Never silently overwrite a
-   concurrent answer/proposal, rebind an approved plan or hide an uncertain reply.
-5. A new question must be durably source-pinned before becoming an answerable
-   clarification; returning a question from the primitive is not that checkpoint.
-6. Expose CLI/API only after the complete read/context/infer/checkpoint/report path
-   is tested without a dashboard, including lost replies and runtime restart.
+The shared command inspects origin-owned history and the exact operation ID/source
+revision before taking inference capacity or requiring a model. A saved plan or
+question is inspected without inference, save, provider lookup or authority
+renewal, even after later answers/compilation or a withdrawn model role. Conflicting
+receipts or an already-retained different plan reject. No saved receipt means a
+new explicit inference attempt; this is not an exactly-once model-call claim.
+
+New attempts share interpreter capacity, applied runtime generation and a
+20-second inference deadline. Prompts use fresh EEF-disclosed capability names.
+Runtime replacement invalidates an in-flight attempt. No second node, fallback
+model, automatic download or retry starts.
+
+EEF authenticates origin and correlation receipt, validates fresh capability
+scope, immutable saved request context, full review digest/counts and exact
+revision. The final journal edit checks the source again under its existing gate.
+Fresh self/directionally disclosed executor filtering precedes ranking; EEF owns
+final resource/model bindings.
+
+A method stores source evidence in the existing planning record and definition
+digest, with `awaiting_approval`, no approval/grant/executor-model load/dispatch. Legacy explicit
+records omit the marker and retain original digest bytes. A question appends one
+source-pinned proposal changing only clarification fields; original semantics,
+earlier proposals/answers and origin remain intact. It can be answered with
+`requests answer`, explicitly reinterpreted with `requests resolve`, then prepared
+again. Lineage is validated on read/restart; corrupt evidence is not repaired or
+replayed automatically.
+Older binaries cannot read new source-marker records; preserve backups and do not
+downgrade a journal containing prepared plans/questions. Marker-free old records
+remain compatible with the new reader and keep their old definition digest.
+
+Guarded local API: `POST /api/commands/requests/prepare`, with exactly
+`schema_version:1`, `expected_node_id`, and `command:{id,expected_revision,operation_id}`.
+It accepts no caller method, permission, approval or model-binding fields.
+Unconfirmed save replies remain uncertain unless known not sent. Runtime changes
+after submission may still leave valid EEF checkpoints; inspect or reuse the
+exact receipt. No automatic replay or native-effects termination claim.
+
+Automatic open/answer-trigger policy, delegated approval, compound/continuous
+methods, semantic quality, complete uncertainty reconciliation and first-time
+bootstrap remain unfinished requirements.
 
 Heavier coordinator-assisted planning must use separately approved granted model
 work, not a sensitive ordinary-RPC bypass. Default interpreter/bootstrap quality,

@@ -53,6 +53,7 @@ pub fn open(
             allowed_capabilities: capabilities.to_vec(),
             at_ms: eefn::protocol::now_ms(),
             resolution: None,
+            preparation: None,
         }],
         answers: vec![],
     };
@@ -183,7 +184,7 @@ pub fn command(
                             .iter()
                             .find(|p| p.operation_id == context.request_id())
                         {
-                            if revision.proposal != *proposal || revision.resolution != resolution {
+                            if revision.proposal != *proposal || revision.resolution != resolution || revision.preparation.is_some() {
                                 bail!("Proposal receipt conflicts with retained review")
                             }
                             reused = true;
@@ -216,6 +217,7 @@ pub fn command(
                             allowed_capabilities: capabilities.to_vec(),
                             at_ms: eefn::protocol::now_ms(),
                             resolution,
+                            preparation: None,
                         });
                     }
                     DraftCommand::Get { .. } => unreachable!(),

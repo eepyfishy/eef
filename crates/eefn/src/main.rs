@@ -381,6 +381,50 @@ async fn execute_resolution_command(
         "execution_authorized":false,"dispatched":false,"automatically_retried":false,
         "note":"No confirmed resolution reply. Inspect the draft or repeat the same operation ID to inspect a retained resolution; no automatic inference or save replay. No execution was requested."})))
 }
+async fn execute_preparation_command(
+    args: &Args,
+    command: eefn::request_preparation::PrepareCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.validate()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; preparation never launches another runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
+            .post(format!("http://{address}/api/commands/requests/prepare")).timeout(Duration::from_secs(70))
+            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"command":command})).send().await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(json!({"schema_version":1,"report_type":"request_preparation","node_id":file.node_id,
+                "command":command,"success":false,"outcome_unknown":false,"error_code":"unsupported_command",
+                "execution_authorized":false,"dispatched":false,"automatically_retried":false,
+                "note":"The running node does not support preparation. No inference, chat, file or job fallback was attempted."}));
+        }
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok || value["schema_version"] != 1 || value["report_type"] != "request_preparation"
+            || value["node_id"] != file.node_id || value["command"] != json!(command)
+            || !value["success"].is_boolean() || value["execution_authorized"] != false
+            || value["dispatched"] != false || value["automatically_retried"] != false
+            || (value["success"] == true && !eefn::request_preparation::confirmed(&value, &file.node_id, &command)) {
+            bail!("Unrecognized preparation response")
+        }
+        Ok::<_,anyhow::Error>(value)
+    }.await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"request_preparation","node_id":file.node_id,
+        "command":command,"success":false,"outcome_unknown":true,"error_code":"preparation_unconfirmed",
+        "execution_authorized":false,"dispatched":false,"automatically_retried":false,
+        "note":"No confirmed preparation reply. Inspect requests plan or reuse the exact operation ID to inspect a saved receipt. No automatic inference or checkpoint retry was sent."})))
+}
 
 async fn execute_abandonment_command(
     args: &Args,
@@ -1031,6 +1075,23 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 execute_resolution_command(
                     args,
                     eefn::request_resolution::ResolveCommand {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                        operation_id: operation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::Prepare {
+                id,
+                revision,
+                operation_id,
+            } => {
+                execute_preparation_command(
+                    args,
+                    eefn::request_preparation::PrepareCommand {
                         id: id.clone(),
                         expected_revision: *revision,
                         operation_id: operation_id
@@ -2056,6 +2117,21 @@ mod tests {
 
     #[test]
     fn durable_request_commands_require_explicit_revision_and_input() {
+        Args::try_parse_from(["eefn", "requests", "prepare", "id", "--revision", "1"]).unwrap();
+        assert!(Args::try_parse_from(["eefn", "requests", "prepare", "id"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "requests",
+                "prepare",
+                "id",
+                "--revision",
+                "1",
+                "--template",
+                "system_info"
+            ])
+            .is_err()
+        );
         for args in [
             vec!["eefn", "requests", "open", "--text", "Check"],
             vec![

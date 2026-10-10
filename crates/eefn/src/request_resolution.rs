@@ -226,6 +226,7 @@ mod tests {
                 allowed_capabilities: vec!["system.info".into()],
                 at_ms: 3,
                 resolution: Some(proof),
+                preparation: None,
             });
         retained.validate().unwrap();
         assert!(!retained.resolvable());
@@ -296,6 +297,7 @@ mod tests {
                 allowed_capabilities: vec!["system.info".into()],
                 at_ms: 3,
                 resolution: Some(proof),
+                preparation: None,
             });
         let value = json!({"schema_version":1,"report_type":"request_resolution","node_id":"node","runtime_id":uuid::Uuid::new_v4().to_string(),
             "command":command,"success":true,"coordinator_acknowledged":true,"execution_authorized":false,"dispatched":false,

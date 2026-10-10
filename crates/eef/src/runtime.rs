@@ -618,6 +618,14 @@ impl Runtime {
             .await;
     }
 
+    pub(crate) async fn disclosed_interpretation_capabilities(
+        &self,
+        origin: &str,
+    ) -> Result<Vec<String>> {
+        self.discovery
+            .interpretation_capabilities(origin, &self.node_server)
+            .await
+    }
     pub(crate) async fn disclosed_planning_nodes(
         &self,
         origin: &str,
@@ -745,6 +753,19 @@ impl Runtime {
                     Ok(command) => self.origin_planning_command(command, &context).await,
                     Err(_) => Err(anyhow::anyhow!(
                         "Invalid origin planning command; approval is not available"
+                    )),
+                }
+            }
+            "requests.preparation_checkpoint" => {
+                match serde_json::from_value::<eefn::request_preparation::PreparationCheckpoint>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(checkpoint) => {
+                        self.origin_preparation_checkpoint(checkpoint, &context)
+                            .await
+                    }
+                    Err(_) => Err(anyhow::anyhow!(
+                        "Invalid source-bound preparation checkpoint"
                     )),
                 }
             }

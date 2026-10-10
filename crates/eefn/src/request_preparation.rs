@@ -25,6 +25,17 @@ fn required_question<'de, D: serde::Deserializer<'de>>(
 ) -> std::result::Result<Option<String>, D::Error> {
     Option::<String>::deserialize(d)
 }
+fn validate_question(question: &str) -> Result<()> {
+    if question.trim().is_empty()
+        || question.len() > 1024
+        || question
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        bail!("Invalid method clarification")
+    }
+    Ok(())
+}
 
 pub fn eligible(draft: &DraftRecord) -> Result<()> {
     draft.validate()?;
@@ -52,14 +63,7 @@ pub fn validate(
         bail!("Exactly one method or clarification is required")
     }
     if let Some(question) = &proposal.clarification {
-        if question.trim().is_empty()
-            || question.len() > 1024
-            || question
-                .chars()
-                .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
-        {
-            bail!("Invalid method clarification")
-        }
+        validate_question(question)?;
     }
     if let Some(input) = &proposal.method {
         input.validate()?;
@@ -140,7 +144,10 @@ impl PreparationEvidence {
             && eligible(draft).is_ok()
             && self.job_id == job
             && self.source_revision == revision
-            && self.source_proposal_count == draft.proposals.len()
+            && self.matches_identity(draft)
+    }
+    fn matches_identity(&self, draft: &DraftRecord) -> bool {
+        self.source_proposal_count == draft.proposals.len()
             && self.source_answer_count == draft.answers.len()
             && crate::grants::definition_digest(&json!(draft))
                 .is_ok_and(|d| d == self.source_sha256)
@@ -217,6 +224,357 @@ pub fn messages(draft: &DraftRecord, capabilities: &[String]) -> Result<Value> {
     Ok(messages)
 }
 
+/// Retained origin-reported attribution and immutable source context. Neither
+/// this marker nor a checkpoint is a model attestation or execution authority.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparationSource {
+    pub evidence: PreparationEvidence,
+    #[serde(deserialize_with = "strict_source_context")]
+    pub request_context: crate::context::RequestContext,
+}
+fn strict_source_context<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<crate::context::RequestContext, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Context {
+        request_id: String,
+        origin_node: String,
+        origin_area: crate::context::AreaPath,
+    }
+    let context = Context::deserialize(d)?;
+    crate::context::RequestContext::new(
+        context.request_id,
+        context.origin_node,
+        context.origin_area,
+    )
+    .map_err(serde::de::Error::custom)
+}
+impl PreparationSource {
+    pub fn validate(&self) -> Result<()> {
+        self.evidence.validate()?;
+        crate::job_commands::validate_operation_id(self.request_context.request_id())?;
+        crate::network::validate_remote_node_id(self.request_context.origin_node())?;
+        Ok(())
+    }
+    pub fn confirms(
+        &self,
+        job: &str,
+        revision: u64,
+        draft: &DraftRecord,
+        context: &crate::context::RequestContext,
+    ) -> bool {
+        self.validate().is_ok()
+            && json!(self.request_context) == json!(context)
+            && draft
+                .proposals
+                .first()
+                .is_some_and(|p| p.operation_id == self.request_context.request_id())
+            && self.evidence.confirms(job, revision, draft)
+    }
+}
+
+/// Private authenticated node-to-EEF checkpoint data, not public command input.
+/// EEF revalidates the source and candidate before saving; it never infers here.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparationCheckpoint {
+    pub schema_version: u32,
+    pub operation_id: String,
+    pub source: PreparationSource,
+    pub proposal: MethodProposal,
+}
+impl PreparationCheckpoint {
+    pub fn validate(&self) -> Result<()> {
+        if self.schema_version != 1
+            || serde_json::to_vec(self)?.len() > 32 * 1024
+            || self.proposal.schema_version != 1
+            || self.proposal.method.is_some() == self.proposal.clarification.is_some()
+        {
+            bail!("Invalid preparation checkpoint schema or size")
+        }
+        crate::job_commands::validate_operation_id(&self.operation_id)?;
+        self.source.validate()?;
+        // Shape and authority restrictions require the actual saved draft and
+        // fresh vocabulary, checked separately inside the coordinator workflow.
+        Ok(())
+    }
+    pub fn confirms_source(
+        &self,
+        draft: &DraftRecord,
+        context: &crate::context::RequestContext,
+        capabilities: &[String],
+    ) -> Result<()> {
+        self.validate()?;
+        let e = &self.source.evidence;
+        if !self
+            .source
+            .confirms(&e.job_id, e.source_revision, draft, context)
+        {
+            bail!("Preparation source changed")
+        }
+        validate(draft, capabilities, &serde_json::to_vec(&self.proposal)?)?;
+        Ok(())
+    }
+}
+
+/// Validate an exact checkpoint reply, including immutable source and candidate.
+/// Reused historical receipts do not require fresh provider lookup or inference.
+pub fn confirmed_checkpoint(value: &Value, node: &str, checkpoint: &PreparationCheckpoint) -> bool {
+    if checkpoint.validate().is_err() {
+        return false;
+    }
+    let mut inspection = value.clone();
+    inspection["reused"] = json!(false);
+    let command = crate::request_planning::PlanningCommand::Inspect {
+        id: checkpoint.source.evidence.job_id.clone(),
+    };
+    if !crate::request_planning::confirmed(&inspection, node, &checkpoint.operation_id, &command) {
+        return false;
+    }
+    let Ok(view) = serde_json::from_value::<crate::request_planning::PlanningView>(value.clone())
+    else {
+        return false;
+    };
+    if view.request_context != checkpoint.source.request_context
+        || view.revision <= checkpoint.source.evidence.source_revision
+    {
+        return false;
+    }
+    let matches = if let Some(input) = &checkpoint.proposal.method {
+        view.planning_operation_id.as_deref() == Some(&checkpoint.operation_id)
+            && view.input.as_ref() == Some(input)
+            && view.preparation.as_ref() == Some(&checkpoint.source)
+    } else {
+        view.draft.proposals.iter().any(|p| {
+            p.operation_id == checkpoint.operation_id
+                && p.preparation.as_ref() == Some(&checkpoint.source)
+                && p.proposal.clarification == checkpoint.proposal.clarification
+        })
+    };
+    matches
+        && (view.reused
+            || (view.revision == checkpoint.source.evidence.source_revision + 1
+                && if checkpoint.proposal.method.is_some() {
+                    view.status == "awaiting_approval"
+                } else {
+                    view.status == "review"
+                }))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareCommand {
+    pub id: String,
+    pub expected_revision: u64,
+    pub operation_id: String,
+}
+impl PrepareCommand {
+    pub fn validate(&self) -> Result<()> {
+        crate::request_drafts::validate_id(&self.id)?;
+        crate::job_commands::validate_operation_id(&self.operation_id)?;
+        if self.expected_revision == 0 || self.expected_revision == u64::MAX {
+            bail!("Preparation requires an exact positive source revision")
+        }
+        Ok(())
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareRequest {
+    pub schema_version: u32,
+    pub expected_node_id: String,
+    pub command: PrepareCommand,
+}
+
+pub fn saved_checkpoint(
+    view: &crate::request_planning::PlanningView,
+    command: &PrepareCommand,
+) -> Result<Option<PreparationCheckpoint>> {
+    command.validate()?;
+    let candidate = if view.planning_operation_id.as_deref() == Some(&command.operation_id) {
+        Some((
+            view.preparation
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Receipt is not semantic preparation"))?,
+            MethodProposal {
+                schema_version: 1,
+                method: view.input.clone(),
+                clarification: None,
+            },
+        ))
+    } else if let Some(p) = view
+        .draft
+        .proposals
+        .iter()
+        .find(|p| p.operation_id == command.operation_id)
+    {
+        Some((
+            p.preparation
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Receipt belongs to another proposal"))?,
+            MethodProposal {
+                schema_version: 1,
+                method: None,
+                clarification: p.proposal.clarification.clone(),
+            },
+        ))
+    } else {
+        if view
+            .draft
+            .answers
+            .iter()
+            .any(|a| a.operation_id == command.operation_id)
+        {
+            bail!("Receipt belongs to an answer")
+        }
+        None
+    };
+    candidate
+        .map(|(source, proposal)| {
+            let checkpoint = PreparationCheckpoint {
+                schema_version: 1,
+                operation_id: command.operation_id.clone(),
+                source,
+                proposal,
+            };
+            checkpoint.validate()?;
+            if checkpoint.source.evidence.job_id != command.id
+                || checkpoint.source.evidence.source_revision != command.expected_revision
+                || checkpoint.source.request_context != view.request_context
+            {
+                bail!("Saved preparation source/receipt conflict")
+            }
+            Ok(checkpoint)
+        })
+        .transpose()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrepareReport {
+    schema_version: u32,
+    report_type: String,
+    node_id: String,
+    runtime_id: Option<String>,
+    command: PrepareCommand,
+    success: bool,
+    coordinator_acknowledged: bool,
+    execution_authorized: bool,
+    dispatched: bool,
+    automatically_retried: bool,
+    outcome_unknown: bool,
+    checkpoint_saved: bool,
+    inspection_only: bool,
+    model_inference_requested: bool,
+    saving_attempted: bool,
+    coordinator_operation_id: Option<String>,
+    result: Option<Value>,
+    error_code: Option<String>,
+    note: String,
+}
+pub fn confirmed(report: &Value, node: &str, command: &PrepareCommand) -> bool {
+    let Ok(r) = serde_json::from_value::<PrepareReport>(report.clone()) else {
+        return false;
+    };
+    let (Some(data), Some(receipt), Some(runtime)) =
+        (&r.result, &r.coordinator_operation_id, &r.runtime_id)
+    else {
+        return false;
+    };
+    if r.schema_version != 1
+        || r.report_type != "request_preparation"
+        || r.node_id != node
+        || r.command != *command
+        || command.validate().is_err()
+        || !r.success
+        || !r.coordinator_acknowledged
+        || !r.checkpoint_saved
+        || r.execution_authorized
+        || r.dispatched
+        || r.automatically_retried
+        || r.outcome_unknown
+        || r.error_code.is_some()
+        || r.note.len() > 2048
+        || crate::job_commands::validate_operation_id(runtime).is_err()
+    {
+        return false;
+    }
+    let Ok(view) = serde_json::from_value::<crate::request_planning::PlanningView>(data.clone())
+    else {
+        return false;
+    };
+    let Ok(Some(checkpoint)) = saved_checkpoint(&view, command) else {
+        return false;
+    };
+    if r.inspection_only {
+        !r.saving_attempted
+            && !r.model_inference_requested
+            && receipt != &command.operation_id
+            && crate::request_planning::confirmed(
+                data,
+                node,
+                receipt,
+                &crate::request_planning::PlanningCommand::Inspect {
+                    id: command.id.clone(),
+                },
+            )
+            && view.revision > command.expected_revision
+    } else {
+        r.saving_attempted
+            && r.model_inference_requested
+            && receipt == &command.operation_id
+            && confirmed_checkpoint(data, node, &checkpoint)
+    }
+}
+
+/// Validate an appended method clarification against its exact retained prefix.
+/// A question may only change clarification fields, never semantic hints/authority.
+pub fn validate_question_lineage(draft: &DraftRecord, index: usize) -> Result<()> {
+    let revision = draft
+        .proposals
+        .get(index)
+        .ok_or_else(|| anyhow::anyhow!("Missing preparation revision"))?;
+    let source = revision
+        .preparation
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Missing preparation source"))?;
+    source.validate()?;
+    let e = &source.evidence;
+    if revision.resolution.is_some()
+        || e.source_proposal_count != index
+        || e.source_answer_count > draft.answers.len()
+        || index == 0
+    {
+        bail!("Invalid preparation question lineage")
+    }
+    let prefix = DraftRecord {
+        schema_version: draft.schema_version,
+        original_text: draft.original_text.clone(),
+        proposals: draft.proposals[..index].to_vec(),
+        answers: draft.answers[..e.source_answer_count].to_vec(),
+    };
+    // The outer DraftRecord validation checks every earlier proposal and answer.
+    // Do not recursively validate prefixes (which would multiply work per marker).
+    if prefix.current().needs_clarification
+        || prefix.current().workload != crate::interpretation::Workload::OneShot
+        || prefix.proposals[0].operation_id != source.request_context.request_id()
+        || prefix.answers.iter().any(|a| a.proposal_index >= index)
+        || !e.matches_identity(&prefix)
+    {
+        bail!("Preparation question source changed")
+    }
+    let mut expected = prefix.current().clone();
+    expected.needs_clarification = true;
+    expected.clarification = revision.proposal.clarification.clone();
+    if expected.clarification.is_none() || revision.proposal != expected {
+        bail!("Preparation question widened the reviewed interpretation")
+    }
+    validate_question(expected.clarification.as_deref().unwrap())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +591,162 @@ mod tests {
     }
     fn method() -> Value {
         json!({"schema_version":1,"method":{"schema_version":1,"template":"system_info","params":{},"constraints":{}},"clarification":null})
+    }
+    #[test]
+    fn preparation_reports_pin_receipt_source_and_read_only_or_saving_behavior() {
+        let draft = draft();
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let operation = uuid::Uuid::new_v4().to_string();
+        let task = uuid::Uuid::new_v4().simple().to_string();
+        let context = crate::context::RequestContext::new(
+            draft.proposals[0].operation_id.clone(),
+            "owner".into(),
+            vec![],
+        )
+        .unwrap();
+        let prepared = PreparedMethod::from_selected(
+            &id,
+            3,
+            &draft,
+            &["system.info".into()],
+            &serde_json::to_vec(&method()).unwrap(),
+            "ollama",
+            "fixture",
+        )
+        .unwrap();
+        let source = PreparationSource {
+            evidence: prepared.evidence,
+            request_context: context.clone(),
+        };
+        let command = PrepareCommand {
+            id: id.clone(),
+            expected_revision: 3,
+            operation_id: operation.clone(),
+        };
+        let checkpoint = PreparationCheckpoint {
+            schema_version: 1,
+            operation_id: operation.clone(),
+            source: source.clone(),
+            proposal: prepared.proposal,
+        };
+        let data = json!({"schema_version":1,"report_type":"coordinator_node_planning","runtime_id":uuid::Uuid::new_v4().to_string(),
+            "id":id,"operation_id":operation,"revision":4,"status":"awaiting_approval","request_context":context,"draft":draft,
+            "input":checkpoint.proposal.method,"planning_operation_id":operation,"source_revision":3,"plan_sha256":"a".repeat(64),
+            "preparation":source,"bindings":[{"task_id":task,"node_id":"owner","resource_id":null,"model_id":null,"backend":null}],
+            "tasks":[{"task_id":task,"capability":"system.info","action":"run","params":{},"constraints":{"node_id":"owner"},
+                "dependencies":[],"timeout_ms":30000,"status":"pending"}],"reused":false,"persisted":true,
+            "execution_authorized":false,"dispatched":false,"automatically_retried":false});
+        assert!(confirmed_checkpoint(&data, "owner", &checkpoint));
+        let report = json!({"schema_version":1,"report_type":"request_preparation","node_id":"owner","runtime_id":uuid::Uuid::new_v4().to_string(),
+            "command":command,"success":true,"coordinator_acknowledged":true,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
+            "outcome_unknown":false,"checkpoint_saved":true,"inspection_only":false,"model_inference_requested":true,"saving_attempted":true,
+            "coordinator_operation_id":operation,"result":data,"error_code":null,"note":"Await approval"});
+        assert!(confirmed(&report, "owner", &command));
+        for (pointer, value) in [
+            ("/execution_authorized", json!(true)),
+            ("/outcome_unknown", json!(true)),
+            ("/inspection_only", json!(true)),
+            ("/saving_attempted", json!(false)),
+            (
+                "/result/preparation/evidence/job_id",
+                json!(uuid::Uuid::new_v4().simple().to_string()),
+            ),
+            (
+                "/result/preparation/evidence/source_sha256",
+                json!("b".repeat(64)),
+            ),
+            ("/result/source_revision", json!(2)),
+            ("/result/input/constraints", json!({"node_id":"owner"})),
+        ] {
+            let mut bad = report.clone();
+            *bad.pointer_mut(pointer).unwrap() = value;
+            assert!(!confirmed(&bad, "owner", &command), "{pointer}");
+        }
+        let mut inspection = report.clone();
+        let receipt = uuid::Uuid::new_v4().to_string();
+        inspection["inspection_only"] = json!(true);
+        inspection["saving_attempted"] = json!(false);
+        inspection["model_inference_requested"] = json!(false);
+        inspection["coordinator_operation_id"] = json!(receipt);
+        inspection["result"]["operation_id"] = json!(receipt);
+        inspection["result"]["revision"] = json!(5);
+        inspection["result"]["status"] = json!("approved");
+        assert!(confirmed(&inspection, "owner", &command));
+        let mut bad = json!(source);
+        bad["request_context"]["permissions"] = json!(true);
+        assert!(serde_json::from_value::<PreparationSource>(bad).is_err());
+        let mut bad = json!(command);
+        bad["approve"] = json!(true);
+        assert!(serde_json::from_value::<PrepareCommand>(bad).is_err());
+    }
+    #[test]
+    fn full_question_lineage_is_bounded_without_recursive_prefix_validation() {
+        let mut retained = draft();
+        retained.proposals.truncate(1);
+        retained.answers.clear();
+        retained.proposals[0].proposal.needs_clarification = false;
+        retained.proposals[0].proposal.clarification = None;
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let context = crate::context::RequestContext::new(
+            retained.proposals[0].operation_id.clone(),
+            "owner".into(),
+            vec![],
+        )
+        .unwrap();
+        for _ in 0..8 {
+            let prepared = PreparedMethod::from_selected(
+                &id,
+                retained.proposals.len() as u64,
+                &retained,
+                &["system.info".into()],
+                br#"{"schema_version":1,"method":null,"clarification":"Which node?"}"#,
+                "ollama",
+                "fixture",
+            )
+            .unwrap();
+            let mut proposal = retained.current().clone();
+            proposal.needs_clarification = true;
+            proposal.clarification = prepared.proposal.clarification;
+            retained
+                .proposals
+                .push(crate::request_drafts::ProposalRevision {
+                    operation_id: uuid::Uuid::new_v4().to_string(),
+                    proposal,
+                    allowed_capabilities: vec!["system.info".into()],
+                    at_ms: 3,
+                    resolution: None,
+                    preparation: Some(PreparationSource {
+                        evidence: prepared.evidence,
+                        request_context: context.clone(),
+                    }),
+                });
+            retained.validate().unwrap();
+            let mut proposal = retained.current().clone();
+            proposal.needs_clarification = false;
+            proposal.clarification = None;
+            retained
+                .proposals
+                .push(crate::request_drafts::ProposalRevision {
+                    operation_id: uuid::Uuid::new_v4().to_string(),
+                    proposal,
+                    allowed_capabilities: vec!["system.info".into()],
+                    at_ms: 4,
+                    resolution: None,
+                    preparation: None,
+                });
+            retained.validate().unwrap();
+        }
+        assert_eq!(retained.proposals.len(), 17);
+        assert_eq!(
+            retained
+                .proposals
+                .iter()
+                .filter(|p| p.preparation.is_some())
+                .count(),
+            8
+        );
+        retained.proposals[0].proposal.goal.push_str(" changed");
+        assert!(retained.validate().is_err());
     }
     #[test]
     fn prompt_preserves_original_and_full_questions_answers_and_refuses_truncation() {

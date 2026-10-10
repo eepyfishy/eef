@@ -461,6 +461,18 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
             .request_context
             .as_ref()
             .context("Damaged review origin; retained for recovery")?;
+        for source in draft
+            .proposals
+            .iter()
+            .filter_map(|p| p.preparation.as_ref())
+        {
+            if source.evidence.job_id != plan.plan_id
+                || source.evidence.source_revision >= plan.revision
+                || json!(source.request_context) != json!(context)
+            {
+                bail!("Damaged preparation origin/revision; retained for recovery")
+            }
+        }
         eefn::job_commands::validate_operation_id(context.request_id())?;
         eefn::network::validate_remote_node_id(context.origin_node())?;
         if (plan.execution.is_none() && !plan.results.is_empty())

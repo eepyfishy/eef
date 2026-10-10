@@ -8,6 +8,14 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Propose and save a source-bound method or clarification; never approve/execute.
+    Prepare {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Inspect this origin's retained concrete plan without contacting an executor.
     Plan { id: String },
     /// Ask EEF to compile a reviewed request; separate owner approval is required.
@@ -256,6 +264,111 @@ impl Drop for PreviewGuard {
 }
 
 impl NodeService {
+    pub async fn prepare_request(
+        &self,
+        request: crate::request_preparation::PrepareRequest,
+    ) -> Value {
+        use crate::request_planning::{PlanningCommand, PlanningView};
+        use crate::request_preparation::{PreparationCheckpoint, PreparationSource};
+        let command = &request.command;
+        let mut report = json!({"schema_version":1,"report_type":"request_preparation","node_id":self.node_id,
+            "runtime_id":null,"command":command,"success":false,"coordinator_acknowledged":false,
+            "execution_authorized":false,"dispatched":false,"automatically_retried":false,"outcome_unknown":false,
+            "checkpoint_saved":false,"inspection_only":false,"model_inference_requested":false,"saving_attempted":false,
+            "coordinator_operation_id":null,"result":null,"error_code":null,
+            "note":"Explicit source-bound preparation only. Inspect the retained plan or reuse this exact operation ID after a lost reply. A saved method awaits separate owner approval; a saved question is answerable. No execution or automatic replay."});
+        let result: Result<(), &'static str> = async {
+            if request.schema_version != 1 || request.expected_node_id != self.node_id || command.validate().is_err() {
+                return Err("invalid_preparation_request");
+            }
+            let mut generation = self.preview.generation.subscribe();
+            let binding = self.preview.binding.lock().unwrap().clone().ok_or("runtime_unavailable")?;
+            let engine = binding.engine.upgrade().ok_or("runtime_unavailable")?;
+            report["runtime_id"] = json!(binding.runtime_id);
+            if generation.borrow_and_update().as_ref() != Some(&binding.runtime_id) {return Err("runtime_changed");}
+            let inspection_id = uuid::Uuid::new_v4().to_string();
+            let inspect = PlanningCommand::Inspect {id: command.id.clone()};
+            let source = tokio::select! {
+                biased;
+                _ = generation.changed() => return Err("runtime_changed"),
+                result = tokio::time::timeout(Duration::from_secs(5), self.submissions.request_correlated(
+                    "requests.planning", json!(inspect), Some(inspection_id.clone()),
+                )) => result.map_err(|_| "source_unavailable")?.map_err(|_| "source_unavailable")?,
+            };
+            if !crate::request_planning::confirmed(&source, &self.node_id, &inspection_id, &inspect) {
+                return Err("source_unconfirmed");
+            }
+            let view: PlanningView = serde_json::from_value(source.clone()).map_err(|_| "source_unconfirmed")?;
+            if crate::request_preparation::saved_checkpoint(&view, command).map_err(|_| "preparation_receipt_conflict")?.is_some() {
+                report["inspection_only"] = json!(true);
+                report["coordinator_operation_id"] = json!(inspection_id);
+                report["result"] = source;
+            } else {
+                if view.input.is_some() || view.status != "review" || view.revision != command.expected_revision {
+                    return Err("source_revision_changed");
+                }
+                crate::request_preparation::messages(&view.draft, &view.draft.current().suggested_capabilities)
+                    .map_err(|_| "invalid_preparation_context")?;
+                let _permit = self.preview.capacity.try_acquire().map_err(|_| "interpreter_busy")?;
+                let capabilities = tokio::select! {
+                    biased;
+                    _ = generation.changed() => return Err("runtime_changed"),
+                    result = self.network_interpretation_context() => result?,
+                };
+                report["model_inference_requested"] = json!(true);
+                let prepared = tokio::select! {
+                    biased;
+                    _ = generation.changed() => return Err("runtime_changed"),
+                    result = tokio::time::timeout(Duration::from_secs(20), engine.prepare_method_candidate(
+                        &command.id, command.expected_revision, &view.draft, &capabilities,
+                    )) => result.map_err(|_| "preparation_timeout")??,
+                };
+                let checkpoint = PreparationCheckpoint {schema_version:1, operation_id: command.operation_id.clone(),
+                    source: PreparationSource {evidence: prepared.evidence, request_context: view.request_context.clone()},
+                    proposal: prepared.proposal};
+                checkpoint.confirms_source(&view.draft, &view.request_context, &capabilities).map_err(|_| "method_proposal_invalid")?;
+                if checkpoint.proposal.clarification.is_some() && view.draft.proposals.len() >= 17 {
+                    return Err("proposal_history_full");
+                }
+                report["saving_attempted"] = json!(true);
+                report["outcome_unknown"] = json!(true);
+                let saved = tokio::select! {
+                    biased;
+                    _ = generation.changed() => return Err("runtime_changed"),
+                    result = tokio::time::timeout(Duration::from_secs(30), self.submissions.request_correlated(
+                        "requests.preparation_checkpoint", json!(checkpoint), Some(command.operation_id.clone()),
+                    )) => match result {
+                        Ok(Ok(value)) => value,
+                        Ok(Err(error)) if matches!(error.downcast_ref::<crate::submission::SubmissionFailure>(), Some(crate::submission::SubmissionFailure::NotSent(_))) => {
+                            report["outcome_unknown"] = json!(false); return Err("preparation_not_sent");
+                        }
+                        _ => return Err("preparation_unconfirmed"),
+                    },
+                };
+                if !crate::request_preparation::confirmed_checkpoint(&saved, &self.node_id, &checkpoint) {
+                    return Err("preparation_unconfirmed");
+                }
+                report["coordinator_operation_id"] = json!(command.operation_id);
+                report["result"] = saved;
+                report["outcome_unknown"] = json!(false);
+            }
+            report["success"] = json!(true);
+            report["coordinator_acknowledged"] = json!(true);
+            report["checkpoint_saved"] = json!(true);
+            if !crate::request_preparation::confirmed(&report, &self.node_id, command) {
+                report["success"] = json!(false); report["coordinator_acknowledged"] = json!(false);
+                report["checkpoint_saved"] = json!(false); report["result"] = Value::Null;
+                report["outcome_unknown"] = report["saving_attempted"].clone();
+                return Err("preparation_unconfirmed");
+            }
+            Ok(())
+        }.await;
+        if let Err(code) = result {
+            report["error_code"] = json!(code);
+        }
+        report
+    }
+
     pub async fn resolve_request(
         &self,
         request: crate::request_resolution::ResolveRequest,

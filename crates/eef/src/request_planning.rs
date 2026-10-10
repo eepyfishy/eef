@@ -42,15 +42,20 @@ pub struct PlanningRecord {
     pub input: PlanInput,
     pub bindings: Vec<PlannedBinding>,
     pub plan_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation: Option<eefn::request_preparation::PreparationSource>,
 }
 fn digest(plan: &Plan, record: &PlanningRecord) -> Result<String> {
     let tasks=plan.tasks.iter().map(|t|json!({"id":t.task_id,"request_context":t.request_context,"capability":t.capability,"action":t.action,
         "params":t.params,"constraints":t.constraints,"dependencies":t.dependencies,"timeout_ms":t.timeout_ms,"retry_count":t.retry_count,"retry_delay_ms":t.retry_delay_ms})).collect::<Vec<_>>();
-    let bytes = serde_json::to_vec(
-        &json!({"schema_version":1,"id":plan.plan_id,"goal":plan.goal,"tasks":tasks,
+    let mut definition = json!({"schema_version":1,"id":plan.plan_id,"goal":plan.goal,"tasks":tasks,
         "request_review":plan.request_review,"operation_id":record.operation_id,"source_revision":record.source_revision,
-        "proposal_index":record.proposal_index,"compiled_at_ms":record.compiled_at_ms,"input":record.input,"bindings":record.bindings}),
-    )?;
+        "proposal_index":record.proposal_index,"compiled_at_ms":record.compiled_at_ms,"input":record.input,"bindings":record.bindings});
+    // Preserve the exact legacy definition when no semantic source is present.
+    if let Some(source) = &record.preparation {
+        definition["preparation"] = json!(source);
+    }
+    let bytes = serde_json::to_vec(&definition)?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 fn unbound_plan(plan: &Plan, input: &PlanInput) -> Result<Plan> {
@@ -96,6 +101,39 @@ fn unbound_plan(plan: &Plan, input: &PlanInput) -> Result<Plan> {
     }
     Ok(compiled)
 }
+fn validate_preparation(
+    plan: &Plan,
+    input: &PlanInput,
+    source: &eefn::request_preparation::PreparationSource,
+) -> Result<()> {
+    let draft = plan
+        .request_review
+        .as_ref()
+        .context("Missing preparation review")?;
+    let context = plan
+        .goal
+        .request_context
+        .as_ref()
+        .context("Missing preparation origin")?;
+    if !source.confirms(
+        &plan.plan_id,
+        source.evidence.source_revision,
+        draft,
+        context,
+    ) {
+        bail!("Preparation source/context differs from retained review")
+    }
+    eefn::request_preparation::validate(
+        draft,
+        &draft.current().suggested_capabilities,
+        &serde_json::to_vec(&eefn::request_preparation::MethodProposal {
+            schema_version: 1,
+            method: Some(input.clone()),
+            clarification: None,
+        })?,
+    )?;
+    Ok(())
+}
 pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
     let record = plan
         .planning
@@ -108,6 +146,12 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
         .as_ref()
         .context("Missing reviewed request")?;
     draft.validate()?;
+    if let Some(source) = &record.preparation {
+        if source.evidence.source_revision != record.source_revision {
+            bail!("Preparation/planning source revisions differ")
+        }
+        validate_preparation(plan, &record.input, source)?;
+    }
     if record.schema_version != 1
         || record.source_revision == 0
         || record.source_revision >= plan.revision
@@ -486,12 +530,13 @@ pub fn confirmed_report(value: &Value, runtime_id: &str, command: &PlanningComma
 
 impl crate::Runtime {
     pub async fn planning_command(&self, request: PlanningRequest) -> Result<Value> {
-        self.planning_command_scoped(request, None).await
+        self.planning_command_scoped(request, None, None).await
     }
-    async fn planning_command_scoped(
+    pub(crate) async fn planning_command_scoped(
         &self,
         request: PlanningRequest,
         origin: Option<&str>,
+        preparation: Option<&eefn::request_preparation::PreparationSource>,
     ) -> Result<Value> {
         if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
             bail!("Planning schema/runtime changed; inspect before retrying")
@@ -531,6 +576,7 @@ impl crate::Runtime {
             if record.operation_id == *operation_id
                 && record.source_revision == *expected_revision
                 && record.input == *input
+                && record.preparation.as_ref() == preparation
             {
                 return Ok(report(saved, &request.command, &self.instance_id, true));
             }
@@ -538,6 +584,12 @@ impl crate::Runtime {
         }
         if saved.status != PlanStatus::Review || saved.revision != *expected_revision {
             bail!("Request state/revision changed")
+        }
+        if let Some(source) = preparation {
+            validate_preparation(&saved, input, source)?;
+            if source.evidence.source_revision != *expected_revision {
+                bail!("Preparation revision changed")
+            }
         }
         let draft = saved.request_review.as_ref().unwrap();
         if draft.current().needs_clarification {
@@ -560,6 +612,7 @@ impl crate::Runtime {
             input: input.clone(),
             bindings: vec![],
             plan_sha256: String::new(),
+            preparation: preparation.cloned(),
         };
         bind_tasks(
             &mut compiled,
@@ -587,6 +640,7 @@ impl crate::Runtime {
                 if record.operation_id == *operation_id
                     && record.source_revision == *expected_revision
                     && record.input == *input
+                    && record.preparation.as_ref() == preparation
                 {
                     reused = true;
                     return Ok(false);
@@ -595,6 +649,14 @@ impl crate::Runtime {
             }
             if plan.status != PlanStatus::Review || plan.revision != *expected_revision {
                 bail!("Request state/revision changed before checkpoint")
+            }
+            if plan.goal.request_context != saved.goal.request_context
+                || json!(plan.request_review) != json!(saved.request_review)
+            {
+                bail!("Request source/context changed before checkpoint")
+            }
+            if let Some(source) = preparation {
+                validate_preparation(plan, input, source)?;
             }
             plan.goal = compiled.goal;
             plan.tasks = compiled.tasks;
@@ -610,7 +672,7 @@ impl crate::Runtime {
         command: eefn::request_planning::PlanningCommand,
         context: &eefn::context::RequestContext,
     ) -> Result<Value> {
-        use eefn::request_planning::{PlannedTask, PlanningCommand as NodeCommand, PlanningView};
+        use eefn::request_planning::PlanningCommand as NodeCommand;
         command.validate()?;
         let owner_command = match &command {
             NodeCommand::Inspect { id } => PlanningCommand::Inspect { id: id.clone() },
@@ -639,10 +701,31 @@ impl crate::Runtime {
                     command: owner_command,
                 },
                 Some(context.origin_node()),
+                None,
             )
             .await?;
         let plan: Plan = serde_json::from_value(result["plan"].clone())?;
         crate::jobs::validate_retained_review(&plan)?;
+        let value = self.node_planning_view(&plan, context, result["reused"] == true)?;
+        if !eefn::request_planning::confirmed(
+            &value,
+            context.origin_node(),
+            context.request_id(),
+            &command,
+        ) {
+            bail!("Retained node planning view failed validation")
+        }
+        Ok(value)
+    }
+
+    pub(crate) fn node_planning_view(
+        &self,
+        plan: &Plan,
+        context: &eefn::context::RequestContext,
+        reused: bool,
+    ) -> Result<Value> {
+        use eefn::request_planning::{PlannedTask, PlanningView};
+        crate::jobs::validate_retained_review(plan)?;
         let planning = plan.planning.as_ref();
         let view = PlanningView {
             schema_version: 1,
@@ -668,6 +751,7 @@ impl crate::Runtime {
             planning_operation_id: planning.map(|p| p.operation_id.clone()),
             source_revision: planning.map(|p| p.source_revision),
             plan_sha256: planning.map(|p| p.plan_sha256.clone()),
+            preparation: planning.and_then(|p| p.preparation.clone()),
             bindings: planning
                 .map(|p| serde_json::from_value(json!(p.bindings)))
                 .transpose()?
@@ -691,22 +775,13 @@ impl crate::Runtime {
                     })
                 })
                 .collect::<Result<_>>()?,
-            reused: result["reused"] == true,
+            reused,
             persisted: true,
             execution_authorized: false,
             dispatched: false,
             automatically_retried: false,
         };
-        let value = json!(view);
-        if !eefn::request_planning::confirmed(
-            &value,
-            context.origin_node(),
-            context.request_id(),
-            &command,
-        ) {
-            bail!("Retained node planning view failed validation")
-        }
-        Ok(value)
+        Ok(json!(view))
     }
 }
 
@@ -975,6 +1050,7 @@ pub(crate) mod tests {
                 })
                 .collect(),
             plan_sha256: String::new(),
+            preparation: None,
         };
         r.plan_sha256 = digest(&p, &r).unwrap();
         p.planning = Some(r);
@@ -1016,6 +1092,71 @@ pub(crate) mod tests {
         }
         assert!(validate_model_input(&json!({"prompt":"x"}), true).is_err());
         assert!(validate_model_input(&json!({"prompt":"x","images":["img"]}), true).is_ok());
+    }
+    #[test]
+    fn semantic_source_is_digest_bound_and_old_explicit_definitions_keep_their_digest() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let saved = review(&engine);
+        let legacy = compiled(&saved);
+        let legacy_json = json!(legacy.clone());
+        assert!(legacy_json["planning"].get("preparation").is_none());
+        let parsed: Plan = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(
+            digest(&parsed, parsed.planning.as_ref().unwrap()).unwrap(),
+            legacy.planning.as_ref().unwrap().plan_sha256
+        );
+        let mut p = legacy.clone();
+        p.goal.constraints = json!({});
+        let draft = saved.request_review.as_ref().unwrap();
+        let r = p.planning.as_mut().unwrap();
+        r.input.constraints = json!({});
+        r.preparation = Some(eefn::request_preparation::PreparationSource {
+            request_context: saved.goal.request_context.clone().unwrap(),
+            evidence: eefn::request_preparation::PreparationEvidence {
+                schema_version: 1,
+                job_id: saved.plan_id.clone(),
+                source_revision: 1,
+                source_sha256: eefn::grants::definition_digest(&json!(draft)).unwrap(),
+                source_proposal_count: 1,
+                source_answer_count: 0,
+                backend: "ollama".into(),
+                model_id: "fixture".into(),
+            },
+        });
+        let hash = digest(&p, p.planning.as_ref().unwrap()).unwrap();
+        p.planning.as_mut().unwrap().plan_sha256 = hash;
+        validate_retained(&p).unwrap();
+        for field in ["digest", "job", "revision", "context", "model", "routing"] {
+            let mut bad = p.clone();
+            let record = bad.planning.as_mut().unwrap();
+            let source = record.preparation.as_mut().unwrap();
+            match field {
+                "digest" => source.evidence.source_sha256 = "a".repeat(64),
+                "job" => source.evidence.job_id = uuid::Uuid::new_v4().simple().to_string(),
+                "revision" => source.evidence.source_revision = 2,
+                "context" => {
+                    source.request_context = eefn::context::RequestContext::new(
+                        source.request_context.request_id().into(),
+                        "owner".into(),
+                        vec!["Changed".into()],
+                    )
+                    .unwrap()
+                }
+                "model" => source.evidence.model_id = "".into(),
+                "routing" => {
+                    record.input.constraints = json!({"node_id":"owner"});
+                    bad.goal.constraints = record.input.constraints.clone();
+                }
+                _ => unreachable!(),
+            }
+            // Rehashing altered source cannot repair broken lineage or authority.
+            let hash = digest(&bad, bad.planning.as_ref().unwrap()).unwrap();
+            bad.planning.as_mut().unwrap().plan_sha256 = hash;
+            assert!(validate_retained(&bad).is_err(), "{field}");
+        }
+        let mut stripped = p.clone();
+        stripped.planning.as_mut().unwrap().preparation = None;
+        assert!(validate_retained(&stripped).is_err());
     }
     #[tokio::test]
     async fn compiled_checkpoint_survives_restart_without_execution_and_can_cancel() {

@@ -1,5 +1,51 @@
 # Architecture conformance status
 
+## Unreleased: explicit semantic preparation workflow (2026-10-11)
+
+`eefn requests prepare JOB --revision REV --operation-id UUID` now owns the full
+read/context/infer/checkpoint/report path in the backend. No dashboard, JSON
+method input or coordinator port is needed. It preserves complete review history
+and uses the selected interpreter with shared single-capacity, generation and
+inference-deadline guards. Existing explicit deterministic compilation remains.
+
+EEF revalidates authenticated origin, immutable context, exact source revision,
+full review digest/counts and fresh disclosed vocabulary. Source is checked again
+inside the journal edit. A method uses existing scoped compiler/bindings and saves
+as awaiting approval; a question saves as an answerable, source-pinned proposal
+changing only clarification fields. Checkpointing never approves, loads executor
+models or executes tasks; interpretation itself calls the selected model backend.
+Method evidence is included in the definition digest; old marker-free definitions
+retain their digest bytes. Question lineage and immutable context are checked on
+read/restart. Same-receipt conflicts reject instead of replacing retained work.
+
+Saved receipt inspection precedes model selection/capacity and needs no inference,
+save or fresh executor lookup. Unconfirmed mutations stay uncertain unless known
+not sent. Lost replies and runtime invalidation never trigger automatic replay.
+Automatic answer/open triggers, delegated approval, semantic/bootstrap quality,
+compound/continuous work, reconciliation, legacy grant migration, physical two-PC
+acceptance and other roadmap stages remain unfinished. No stable release claim.
+Installed apps/physical nodes, versions, installers and update feeds are unchanged.
+
+Validation: **359 workspace/all-target Rust tests pass in both feature modes**,
+with fresh no-dashboard binaries. Added tests cover strict preparation reports,
+digest-bound method evidence with legacy digest compatibility, source-pinned
+answerable questions, exact read-only reuse, changed context/source denial,
+shutdown, restart and retained corrupt-record recovery. Full bounded question
+history is validated without recursive prefix expansion. CLI parsing, formatter,
+JS syntax, source backend boundary and diff checks pass.
+
+Headless `request-review-1Remyh` exercises actual CLI/API read/context/infer/save
+with a fake selected backend: same-node and disclosed cross-node methods, durable
+questions and answer-to-plan history, separate approval/no execution, strict
+cross-site/extra-field/wrong-node denial, source races, shared capacity, runtime
+invalidation, disclosure revocation, lost replies, journal restart and saved receipt
+inspection without a selected role or fresh peer. Existing regressions pass in
+`request-drafts-yVg2bi`, `job-shutdown-3GQXAQ`, `scheduling-EQ2iEh`,
+`model-metadata-qP5yuH` and `node-credentials-napfcT`. A parallel credential run hit
+its existing five-second HTTP deadline; the isolated verification passed without
+widening deadlines. Cause is not established; no physical load, real-model semantic
+or two-PC acceptance is claimed.
+
 ## Unreleased: source-bound semantic method candidate core (2026-10-11)
 
 The selected node interpreter can now produce a bounded untrusted method candidate

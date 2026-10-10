@@ -13,6 +13,8 @@ pub struct ProposalRevision {
     pub at_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<crate::request_resolution::ResolutionEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation: Option<crate::request_preparation::PreparationSource>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,6 +70,9 @@ impl DraftRecord {
                 if !evidence.confirms_source(&source) {
                     bail!("resolution source digest or clarification evidence changed")
                 }
+            }
+            if revision.preparation.is_some() {
+                crate::request_preparation::validate_question_lineage(self, index)?;
             }
         }
         for answer in &self.answers {

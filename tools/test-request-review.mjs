@@ -53,6 +53,13 @@ const fake = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     calls.push(JSON.parse(body));
     if (mode === 'gate') {res.write(' '); gates.add(res); res.on('close', () => gates.delete(res)); return;}
+    if (mode === 'method' || mode === 'method-question' || mode === 'method-invalid' || mode === 'method-remote') {
+      const value = mode === 'method-question' ? {schema_version:1,method:null,clarification:'Which node should be inspected?'}
+        : {schema_version:1,method:{schema_version:1,template:'system_info',params:{},constraints:{}},clarification:null};
+      if (mode === 'method-invalid') value.method.constraints.node_id='invented';
+      if (mode === 'method-remote') value.method={schema_version:1,template:'http_request',params:{url:'https://example.invalid/info',method:'GET'},constraints:{}};
+      return res.end(JSON.stringify({message:{content:JSON.stringify(value)},done:true,done_reason:'stop'}));
+    }
     const value = proposal();
     if (mode === 'remote') Object.assign(value, {goal: 'Fetch information using another node', suggested_capabilities: ['http.request']});
     if (mode === 'clarify') Object.assign(value, {needs_clarification: true, clarification: 'Which node do you mean?'});
@@ -432,7 +439,119 @@ try {
   const history=(await cli(['requests','draft',cross.result.id])).result;
   assert.deepEqual(history.draft,revisedCross.result.draft,'historical inspection cannot reinterpret a saved snapshot');
   await cli(['jobs','stop',cross.result.id]);await cli(['jobs','remove',cross.result.id]);
+  // Semantic preparation also uses EEF's disclosed cross-node compiler, never
+  // direct peer execution or hidden-provider fallback.
+  await coordinator(['discovery','grant','--requester',config.node_id,'--target',peerConfig.node_id]);
+  contextRuntime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+  await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==contextRuntime&&await ready(),'restore method peer disclosure');
+  mode='remote';const peerMethodDraft=await cli(['requests','open','--text','Fetch information using the peer']);
+  const peerMethodOperation=randomUUID(),peerMethodArgs=['requests','prepare',peerMethodDraft.result.id,'--revision','1','--operation-id',peerMethodOperation];
+  mode='method-remote';const peerMethod=await cli(peerMethodArgs);
+  assert.equal(peerMethod.result.bindings[0].node_id,peerConfig.node_id);assert.equal(peerMethod.result.status,'awaiting_approval');
+  assert.equal(peerMethod.result.tasks[0].status,'pending');assert.equal(peerMethod.execution_authorized,false);assert.equal(peerMethod.dispatched,false);
+  assert.equal((await cli(peerMethodArgs,false,peerConfigPath)).error_code,'source_unavailable');
+  mode='remote';const revokedMethodDraft=await cli(['requests','open','--text','Peer method revoked during inference']);mode='gate';
+  const revokedMethodArgs=['requests','prepare',revokedMethodDraft.result.id,'--revision','1','--operation-id',randomUUID()];
+  const revokedMethod=cli(revokedMethodArgs,false);await until(()=>gates.size===1,'peer method inference gated');
+  await coordinator(['discovery','revoke','--requester',config.node_id,'--target',peerConfig.node_id]);
+  contextRuntime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+  await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==contextRuntime&&await ready(),'method disclosure revoked');
+  for(const res of gates)res.end(JSON.stringify({message:{content:JSON.stringify({schema_version:1,
+    method:{schema_version:1,template:'http_request',params:{url:'https://example.invalid/info',method:'GET'},constraints:{}},clarification:null})},done:true,done_reason:'stop'}));
+  assert.equal((await revokedMethod).success,false);
+  const deniedMethodHistory=(await cli(['requests','plan',revokedMethodDraft.result.id])).result;
+  assert.equal(deniedMethodHistory.revision,1);assert.equal(deniedMethodHistory.input,null);assert.deepEqual(deniedMethodHistory.tasks,[]);
+  await until(()=>gates.size===0,'peer method inference released');
   reconnectedPeer.kill();await reconnectedPeer.result;expectedNodes=1;await until(ready,'peer disconnected again');
+  const peerMethodCalls=calls.length;assert.equal((await cli(peerMethodArgs)).inspection_only,true);
+  assert.equal(calls.length,peerMethodCalls,'historical method receipt requires neither fresh peer lookup nor inference');
+  // Complete preparation is a backend command, not browser logic or execution.
+  const prepareArgs=(id,revision,operation)=>['requests','prepare',id,'--revision',String(revision),'--operation-id',operation];
+  const methodResult={schema_version:1,method:{schema_version:1,template:'system_info',params:{},constraints:{}},clarification:null};
+  mode='valid';const methodDraft=await cli(['requests','open','--text','  Inspect this node\n']);
+  const methodId=methodDraft.result.id,methodOperation=randomUUID();mode='method';let beforeMethods=calls.length;
+  const prepared=await cli(prepareArgs(methodId,1,methodOperation));
+  assert.equal(calls.length,beforeMethods+1);assert.equal(prepared.report_type,'request_preparation');
+  assert.equal(prepared.checkpoint_saved,true);assert.equal(prepared.inspection_only,false);
+  assert.equal(prepared.saving_attempted,true);assert.equal(prepared.model_inference_requested,true);
+  assert.equal(prepared.execution_authorized,false);assert.equal(prepared.dispatched,false);
+  assert.equal(prepared.result.status,'awaiting_approval');assert.equal(prepared.result.revision,2);
+  assert.equal(prepared.result.preparation.evidence.source_revision,1);
+  assert.equal(prepared.result.preparation.evidence.job_id,methodId);
+  assert.equal(prepared.result.preparation.evidence.backend,'ollama');
+  assert.deepEqual(prepared.result.request_context,methodDraft.result.request_context);
+  assert.deepEqual(prepared.result.draft,methodDraft.result.draft);
+  assert.equal(prepared.result.bindings[0].node_id,config.node_id);
+  assert.equal(prepared.result.tasks[0].status,'pending');assert.equal(calls.at(-1).options.num_predict,1024);
+  assert.equal(calls.at(-1).messages[1].content,methodDraft.result.draft.original_text);
+  const preparedOwner=(await coordinator(['requests','inspect',methodId])).plan;
+  assert.equal(preparedOwner.approval ?? null,null);assert.equal(preparedOwner.execution ?? null,null);
+  assert.equal((await cli(prepareArgs(methodId,1,methodOperation))).inspection_only,true);
+  assert.equal(calls.length,beforeMethods+1);
+  assert.equal((await cli(prepareArgs(methodId,1,randomUUID()),false)).error_code,'source_revision_changed');
+  assert.equal((await cli(prepareArgs(methodId,2,methodOperation),false)).error_code,'preparation_receipt_conflict');
+  const prepareUrl=node+'/api/commands/requests/prepare';
+  const body={schema_version:1,expected_node_id:config.node_id,command:{id:methodId,expected_revision:1,operation_id:methodOperation}};
+  assert.equal((await fetch(prepareUrl,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(body)})).status,403);
+  assert.equal((await fetch(prepareUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,command:{...body.command,approved:true}})})).status,422);
+  assert.equal((await json(prepareUrl,{...body,expected_node_id:'wrong-node'})).error_code,'invalid_preparation_request');
+  // A method clarification is durably answerable, not a stateless suggestion.
+  mode='valid';const questionDraft=await cli(['requests','open','--text','Inspect status with the node I mean']);
+  const questionId=questionDraft.result.id,questionOperation=randomUUID();mode='method-question';
+  const asked=await cli(prepareArgs(questionId,1,questionOperation));
+  assert.equal(asked.result.status,'review');assert.equal(asked.result.revision,2);assert.equal(asked.result.input,null);
+  assert.equal(asked.result.draft.proposals[1].proposal.clarification,'Which node should be inspected?');
+  assert.equal(asked.result.draft.proposals[1].preparation.evidence.source_revision,1);
+  const answeredMethod=await cli(['requests','answer',questionId,'--revision','2','--text','This node']);
+  assert.equal(answeredMethod.result.revision,3);assert.equal(answeredMethod.result.draft.answers[0].question,'Which node should be inspected?');
+  mode='valid';await cli(['requests','resolve',questionId,'--revision','3','--operation-id',randomUUID()]);mode='method';
+  const answeredPlan=await cli(prepareArgs(questionId,4,randomUUID()));
+  assert.equal(answeredPlan.result.revision,5);assert.equal(answeredPlan.result.preparation.evidence.source_answer_count,1);
+  const fullHistory=JSON.parse(calls.at(-1).messages[2].content).retained_review;
+  assert.deepEqual(fullHistory,answeredPlan.result.draft);assert.equal(fullHistory.answers[0].text,'This node');
+  const oldQuestion=await cli(prepareArgs(questionId,1,questionOperation));
+  assert.equal(oldQuestion.inspection_only,true);assert.equal(oldQuestion.result.status,'awaiting_approval');
+  // Invalid output and stale source cannot mutate a review or dispatch anything.
+  mode='valid';const invalidMethod=await cli(['requests','open','--text','Invalid candidate check']);mode='method-invalid';
+  const untouched=(await cli(['requests','plan',invalidMethod.result.id])).result;
+  const rejectedMethod=await cli(prepareArgs(invalidMethod.result.id,1,randomUUID()),false);
+  assert.equal(rejectedMethod.error_code,'method_proposal_invalid');assert.equal(rejectedMethod.saving_attempted,false);
+  assert.deepEqual((await cli(['requests','plan',invalidMethod.result.id])).result.draft,untouched.draft);
+  mode='gate';const racingOperation=randomUUID(),racing=cli(prepareArgs(invalidMethod.result.id,1,racingOperation),false);
+  await until(()=>gates.size===1,'method inference gated');beforeMethods=calls.length;
+  assert.equal((await cli(prepareArgs(invalidMethod.result.id,1,randomUUID()),false)).error_code,'interpreter_busy');
+  assert.equal(calls.length,beforeMethods);
+  const methodRevision=join(scratch,'method-revision.json');await writeFile(methodRevision,JSON.stringify({schema_version:1,
+    original_text:untouched.draft.original_text,proposal:{...proposal(),goal:'Explicit concurrent revision'}}));
+  await cli(['requests','revise-proposal',invalidMethod.result.id,'--revision','1','--file',methodRevision]);
+  for(const res of gates)res.end(JSON.stringify({message:{content:JSON.stringify(methodResult)},done:true,done_reason:'stop'}));
+  const racedMethod=await racing;assert.equal(racedMethod.success,false);assert.equal(racedMethod.saving_attempted,true);assert.equal(racedMethod.outcome_unknown,true);
+  const afterRace=(await cli(['requests','plan',invalidMethod.result.id])).result;
+  assert.equal(afterRace.revision,2);assert.equal(afterRace.input,null);assert.deepEqual(afterRace.tasks,[]);
+  await until(()=>gates.size===0,'method race released');mode='gate';
+  const restartMethod=cli(prepareArgs(invalidMethod.result.id,2,randomUUID()),false);
+  await until(()=>gates.size===1,'method restart gated');await cli(['restart','--wait-seconds','15']);
+  const invalidated=await restartMethod;assert.equal(invalidated.error_code,'runtime_changed');assert.equal(invalidated.saving_attempted,false);
+  for(const res of gates)res.destroy();await until(ready,'method runtime replaced');
+  assert.equal((await cli(['requests','plan',invalidMethod.result.id])).result.revision,2);
+  // A lost local reply is recovered by receipt inspection, without a selected role.
+  mode='valid';const lostMethodDraft=await cli(['requests','open','--text','Lost method reply']);mode='method';
+  const lostMethodOperation=randomUUID(),methodMarker=await readFile(marker,'utf8');beforeMethods=calls.length;
+  try {
+    const altered=JSON.parse(methodMarker);altered.address=`127.0.0.1:${proxyPort}`;await writeFile(marker,JSON.stringify(altered));proxyMode='drop';
+    const lost=await cli(prepareArgs(lostMethodDraft.result.id,1,lostMethodOperation),false);
+    assert.equal(lost.error_code,'preparation_unconfirmed');assert.equal(lost.outcome_unknown,true);
+  }finally{await writeFile(marker,methodMarker);}
+  assert.equal(calls.length,beforeMethods+1);
+  const beforePrepareReopen=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+  await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==beforePrepareReopen&&await ready(),'prepared plans reopened');
+  await cli(['models','hints','--backend','ollama','--model','fixture','--role','unselected_role']);await cli(['restart','--wait-seconds','15']);
+  await until(ready,'missing method interpreter role applied');
+  const lostInspection=await cli(prepareArgs(lostMethodDraft.result.id,1,lostMethodOperation));
+  assert.equal(lostInspection.inspection_only,true);assert.equal(lostInspection.model_inference_requested,false);assert.equal(lostInspection.saving_attempted,false);
+  assert.equal(calls.length,beforeMethods+1);assert.equal(lostInspection.result.status,'awaiting_approval');
+  assert.equal((await cli(prepareArgs(methodId,1,methodOperation))).result.plan_sha256,prepared.result.plan_sha256);
+  assert.equal((await cli(prepareArgs(questionId,1,questionOperation))).inspection_only,true);
   await writeFile(join(scratch, 'results.json'), JSON.stringify({passed: true, api_only: true, node_to_coordinator_review: true,
     original_text_preserved: true, authenticated_origin: true, clarification_returned: true, rejected_authority_fields: true,
     stateless_no_jobs_created: true, durable_inferred_review: true, lost_draft_found_without_replay: true,
@@ -445,6 +564,10 @@ try {
     explicit_answer_reinterpretation:true,source_revision_race_rejected:true,source_digest_retained:true,
     invalid_resolution_no_save:true,resolution_restart_invalidation:true,resolution_receipt_without_inference:true,
     lost_resolution_reply_inspected:true,
+    source_bound_method_preparation:true,durable_method_questions:true,method_answer_history_preserved:true,
+    method_capacity_and_restart_guards:true,stale_method_source_rejected:true,method_receipt_without_inference:true,
+    lost_method_reply_inspected:true,prepared_plan_restart_persistence:true,preparation_without_execution:true,
+    cross_node_method_preparation:true,method_disclosure_revocation_rechecked:true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
 } finally {

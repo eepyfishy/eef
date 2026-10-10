@@ -261,6 +261,8 @@ pub struct PlanningView {
     pub planning_operation_id: Option<String>,
     pub source_revision: Option<u64>,
     pub plan_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation: Option<crate::request_preparation::PreparationSource>,
     pub bindings: Vec<PlannedBinding>,
     pub tasks: Vec<PlannedTask>,
     pub reused: bool,
@@ -309,12 +311,36 @@ pub fn confirmed(value: &Value, node: &str, receipt: &str, command: &PlanningCom
         None if view.planning_operation_id.is_some()
             || view.source_revision.is_some()
             || view.plan_sha256.is_some()
+            || view.preparation.is_some()
             || !view.bindings.is_empty()
             || !view.tasks.is_empty() =>
         {
             return false;
         }
         Some(input) => {
+            if let Some(source) = &view.preparation {
+                if view.source_revision != Some(source.evidence.source_revision)
+                    || !source.confirms(
+                        &view.id,
+                        source.evidence.source_revision,
+                        &view.draft,
+                        &view.request_context,
+                    )
+                    || crate::request_preparation::validate(
+                        &view.draft,
+                        &view.draft.current().suggested_capabilities,
+                        &serde_json::to_vec(&crate::request_preparation::MethodProposal {
+                            schema_version: 1,
+                            method: Some(input.clone()),
+                            clarification: None,
+                        })
+                        .unwrap_or_default(),
+                    )
+                    .is_err()
+                {
+                    return false;
+                }
+            }
             if input.validate().is_err()
                 || view
                     .planning_operation_id
@@ -403,6 +429,19 @@ pub fn confirmed(value: &Value, node: &str, receipt: &str, command: &PlanningCom
             }
         }
         None => {}
+    }
+    if view
+        .draft
+        .proposals
+        .iter()
+        .filter_map(|p| p.preparation.as_ref())
+        .any(|source| {
+            source.evidence.job_id != view.id
+                || source.evidence.source_revision >= view.revision
+                || source.request_context != view.request_context
+        })
+    {
+        return false;
     }
     match command {
         PlanningCommand::Inspect { .. } => !view.reused,
