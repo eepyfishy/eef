@@ -661,6 +661,7 @@ impl Driver {
             {
                 bail!("Reservation cannot rebind a reviewed grant")
             }
+            let issued_mono = std::time::Instant::now();
             let now = eefn::protocol::now_ms();
             if now < approval.approved_at_ms || now >= approval.expires_at_ms {
                 bail!("Owner approval expired or clock changed")
@@ -677,6 +678,8 @@ impl Driver {
                 .context("Grant time overflow")?
                 .min(approval.expires_at_ms);
             grant.validate()?;
+            let lease_deadline =
+                issued_mono + Duration::from_millis(grant.expires_at_ms - grant.issued_at_ms);
             let revision = p.revision;
             self.engine.edit_review_checkpoint(
                 id,
@@ -700,7 +703,7 @@ impl Driver {
             );
             let reply = self
                 .server
-                .invoke_grant_observed(grant.clone(), wait, observer)
+                .invoke_grant_observed(grant.clone(), wait, observer, lease_deadline)
                 .await;
             drop(reservation);
             let valid = reply

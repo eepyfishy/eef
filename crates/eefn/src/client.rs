@@ -210,7 +210,7 @@ impl NodeClient {
     pub fn with_status(mut self, status: Arc<std::sync::Mutex<Value>>) -> Self {
         self.status = status;
         self.status.lock().expect("status")["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
-            "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only"});
+            "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE});
         self
     }
     pub fn with_grants(
@@ -300,7 +300,7 @@ impl NodeClient {
         message["metadata"] = json!(self.config.metadata.advertised(capabilities));
         message["network"] = json!(self.config.network);
         message["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
-            "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only"});
+            "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE});
         message
     }
 
@@ -592,6 +592,7 @@ impl NodeClient {
         }));
 
         let mut tasks = tokio::task::JoinSet::new();
+        let lease_requests = Arc::new(crate::grant_time::LeaseRequests::default());
         let mut local = self.submissions.connect();
         // A timed-out partial response must retire this framed connection.
         let (receipt_write_failed, mut receipt_write_failure) = tokio::sync::watch::channel(false);
@@ -651,6 +652,10 @@ impl NodeClient {
                 break;
             };
             while tasks.try_join_next().is_some() {}
+            if message["type"] == "grant_lease" {
+                lease_requests.complete(message);
+                continue;
+            }
             if message["type"] == "submission_result" {
                 if let Some(reply) = message["id"].as_str().and_then(|id| replies.remove(id)) {
                     let result = if message["success"] == true {
@@ -743,14 +748,19 @@ impl NodeClient {
                 };
                 let admission = self.request_budget.admit(&grant.capability, &grant.action);
                 let prepared = if admission.is_some() {
-                    crate::grants::AcceptedGrant::prepare(
-                        grant.clone(),
-                        ledger,
-                        &self.engine,
-                        issuer,
-                        session,
-                        &self.config.node_id,
-                    )
+                    grant
+                        .validate()
+                        .map_err(|_| crate::grants::GrantDenied("invalid_grant_scope").into())
+                        .and_then(|_| {
+                            if grant.matches_session(issuer, session, &self.config.node_id) {
+                                self.engine.check_grant_policy(&grant).map_err(|_| {
+                                    crate::grants::GrantDenied("local_policy_denied_or_changed")
+                                        .into()
+                                })
+                            } else {
+                                Err(crate::grants::GrantDenied("grant_identity_changed").into())
+                            }
+                        })
                 } else {
                     Err(crate::grants::GrantDenied("node_grant_capacity_full").into())
                 };
@@ -769,25 +779,58 @@ impl NodeClient {
                         .await
                         .context("grant rejection write timed out")??;
                     }
-                    Ok(accepted) => {
-                        let ack = json!({"type":"grant_ack","id":request_id,"grant":accepted.acknowledgement()});
-                        // Receipt already durable. If ACK cannot be sent, no effects
-                        // start; its accepted receipt remains uncertain, never replayable.
-                        timeout(Duration::from_secs(5), async {
-                            write_message(&self.crypto, &mut *writer.lock().await, &ack).await
-                        })
-                        .await
-                        .context("grant acceptance write timed out")??;
+                    Ok(()) => {
                         let engine = self.engine.clone();
                         let writer = writer.clone();
                         let crypto = self.crypto.clone();
                         let status = self.status.clone();
+                        let issuer = issuer.to_owned();
+                        let session = session.to_owned();
+                        let node_id = self.config.node_id.clone();
+                        let leases = lease_requests.clone();
+                        let write_failed = receipt_write_failed.clone();
                         tasks.spawn(async move {
                             let _permit=admission;
-                            let report=accepted.run(&engine).await;
+                            let lease = leases.request(&grant, &request_id, |query| {
+                                let writer=&writer;
+                                let crypto=&crypto;
+                                let write_failed=&write_failed;
+                                async move {
+                                let mut output=writer.lock().await;
+                                let mut guard=crate::grant_time::WriteGuard::new(write_failed.clone());
+                                let result=write_message(&crypto,&mut *output,&query).await;
+                                if result.is_ok(){guard.complete()}
+                                result
+                            }}).await;
+                            let prepared=lease.map_err(|_| crate::grants::GrantDenied("grant_lease_unavailable").into())
+                                .and_then(|lease| crate::grants::AcceptedGrant::prepare_with_lease(
+                                    grant.clone(),ledger,&engine,&issuer,&session,&node_id,lease));
+                            let report=match prepared {
+                                Err(error)=>crate::grants::GrantReport::new(&grant,crate::grants::ReceiptState::Rejected,Value::Null,Some(crate::grants::denial_code(&error))),
+                                Ok(accepted)=>{
+                                    // Claim is durable. Failed/cancelled ACK writes
+                                    // retire the connection and retain uncertainty;
+                                    // no effects start and no rejected receipt is invented.
+                                    let ack=json!({"type":"grant_ack","id":request_id,"grant":accepted.acknowledgement()});
+                                    if !matches!(timeout(Duration::from_secs(5),async {
+                                        let mut output=writer.lock().await;
+                                        let mut guard=crate::grant_time::WriteGuard::new(write_failed.clone());
+                                        let result=write_message(&crypto,&mut *output,&ack).await;
+                                        if result.is_ok(){guard.complete()}
+                                        result
+                                    }).await,Ok(Ok(()))){let _=write_failed.send(true);return}
+                                    accepted.run(&engine).await
+                                }
+                            };
                             status.lock().expect("status")["last_grant"]=json!({"grant_id":report.grant_id,"state":report.state,"persisted":report.persisted,"success":report.success});
                             let response=json!({"type":"response","id":request_id,"success":report.success,"grant":report});
-                            let _=write_message(&crypto,&mut *writer.lock().await,&response).await;
+                            if !matches!(timeout(Duration::from_secs(5),async {
+                                let mut output=writer.lock().await;
+                                let mut guard=crate::grant_time::WriteGuard::new(write_failed.clone());
+                                let result=write_message(&crypto,&mut *output,&response).await;
+                                if result.is_ok(){guard.complete()}
+                                result
+                            }).await,Ok(Ok(()))){let _=write_failed.send(true);}
                         });
                     }
                 }

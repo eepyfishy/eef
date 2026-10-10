@@ -12,6 +12,7 @@ pub mod crypto;
 pub mod dashboard;
 pub mod engine;
 pub mod firmware;
+pub mod grant_time;
 pub mod grants;
 pub mod interpretation;
 pub mod job_commands;

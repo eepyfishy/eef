@@ -184,7 +184,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned metadata/inventory and node selection commands added in development; text/vision routing filters capabilities/state and explicit owner role constraints; route inspection available; automatic role-based planning and new executors remain planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview/stateless review and origin-owned durable review/answer/proposal commands; fresh cross-node vocabulary and explicit selected-model clarification resolution with pinned source lineage; offline preview stays local; automatic answer-triggered resolution and semantic planning remain planned |
-| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: explicit compile/approve/execute, fixed grants, durable issuance/ACK/completion, node replay protection, restart-to-unknown and explicit tracking abandonment. Origin and executor may differ. Automatic semantic planning, lost-output/execution reconciliation, legacy-path grant migration, stronger termination, clock acceptance and cluster fencing remain required |
+| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: explicit compile/approve/execute, fixed grants, durable issuance/ACK/completion, node replay protection, restart-to-unknown, explicit tracking abandonment and fresh clock-independent lease challenges. Origin and executor may differ. Automatic semantic planning, lost-output/execution reconciliation, legacy-path grant migration, stronger termination, physical clock acceptance and cluster fencing remain required |
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node work/reserved-control limits and coordinator budgets, including granted model futures. Fixed one-shot ACK/completion and authenticated read-only recovery evidence implemented; pipelines, explicit uncertainty reconciliation, strong termination and physical resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
@@ -387,6 +387,15 @@ cannot be undone. Revocation on a partition is bounded by the granted duration:
 no immediate remote-stop claim while disconnected. Use monotonic execution
 deadlines; reject unsafe clock/expiry conditions. Check limits within local loops
 and terminate bounded child work where supported; mark unsupported guarantees.
+
+The unreleased fresh issuer lease challenge now removes cross-PC wall-clock
+comparison from grant admission/execution. Its exact scope and live-session proof
+cannot renew authority; mint-time journaling, whole round-trip time and durable
+claim/ACK consume one monotonic budget. Missing-mode nodes cannot receive new
+grants; no fallback or implicit update is permitted. Local clock discontinuity
+checks remain, and the timer margin is conservative engineering, not hardware
+attestation or a hard real-time bound. See [timing contract](EXECUTION-GRANTS.md#limits-and-honest-termination).
+Physical two-PC acceptance, strong termination and cluster fencing remain open.
 
 After disconnect, permit only the already-authorized work until its bounded
 expiry/policy requires stopping. After restart, do not revive old leases or

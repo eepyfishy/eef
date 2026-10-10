@@ -509,12 +509,21 @@ Stop prevents further issuance and can cancel before any grant is issued; while
 one is pending it is `stopping` until a matching result or uncertainty is recorded.
 Already-completed effects are not undone. Uncertain issued work cannot be declared
 stopped or safely replayed/migrated: inspect node receipts and effects instead.
-An explicit reconciliation/abandonment command and stronger OS/backend termination
-remain pending; do not repair these states by editing JSON or erasing journals.
+The explicit `requests abandon` command can close idle local tracking while
+retaining acknowledged uncertainty; it does not stop remote effects or reconcile
+execution/output. Reconciliation and stronger OS/backend termination remain
+pending; do not repair these states by editing JSON or erasing journals.
 
 These grants still advertise `rpc_future_only`: already-launched applications,
 blocking/native/backend work or sent network effects may outlive the future.
-Aligned clocks remain necessary. Legacy task/chat/management paths are unchanged,
+Updated roles use the fresh `issuer_lease_challenge_v1` advertised timing mode,
+not comparisons between the PCs' wall clocks. New grants require updated EEF and
+EEFN; no clock/legacy fallback is available. Challenges expire after two seconds,
+including queue/network time, and cannot renew a grant. Missing/expired proof
+denies execution; uncertainty after consumption still requires receipt inspection.
+No new command, NTP configuration or automatic update is implied. See
+[lease timing and limits](EXECUTION-GRANTS.md#limits-and-honest-termination).
+Legacy task/chat/management paths are unchanged,
 not retroactively grant-enforced; migrating remaining work paths is a release gate.
 Automatic semantic compilation, continuous pipelines, physical budgets, peer/media
 paths, cluster fencing and physical two-PC/release acceptance remain open.

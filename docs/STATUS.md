@@ -1,5 +1,47 @@
 # Architecture conformance status
 
+## Unreleased: clock-independent fresh grant leases (2026-10-11)
+
+Reviewed execution now anchors the coordinator's monotonic lease before durable
+issuance. The exact pinned-session node must obtain one fresh nonce-bound challenge
+reply for that pending issuance and complete grant digest before durable consumption.
+Its local deadline starts at challenge send, subtracting the whole round trip plus
+a conservative timer margin. Journal, queue and ACK delays cannot restart the budget;
+expired/mismatched/unanswered proof cannot start effects. An ACK without fresh proof
+or after issuer expiry cannot confirm acceptance. Cancelled/failed partial node writes
+retire the framed session; accepted receipts remain uncertain, never replayed.
+
+This removes independent-PC wall-clock comparison, not local clock-change checks,
+owner approval expiry or replay protection. New advertised timing mode is required
+for new grants; no old-clock/ordinary-RPC fallback exists. Read-only inspection of
+compatible old receipts remains available without reactivating authority. The node's
+local clock baseline precedes its durable claim, detecting changes during that write.
+No NTP, hardware drift attestation, hard real-time, suspend safety, strong process/
+backend termination or safe coordinator cluster is claimed. Physical clock/network
+acceptance remains required; see [timing contract](EXECUTION-GRANTS.md#limits-and-honest-termination).
+
+Validation: **344 workspace/all-target Rust tests pass in both feature modes**,
+with fresh no-dashboard EEF/EEFN binaries. Added units exercise synthetic issuer
+timestamps offset by +/-48 hours, exact nonce/session/digest matching, expired and
+widened replies, full round-trip deduction, local clock changes, cancellation
+cleanup and partial-write retirement. Expired proof cannot claim a receipt;
+expiry while awaiting ACK prevents native file effects after durable consumption,
+retains unknown state and rejects a fresh-proof replay. Gateway tests deny unproved
+or expired ACKs, stale sessions, unknown fields and second/renewal challenges.
+Headless `request-drafts-IYQNGx` verifies real pinned-TLS native cross-node writes,
+HTTP/deadline/uncertainty, nonce and receipt recovery paths with the new timing mode.
+Fake-model `request-review-N3ShiH` verifies pinned model-grant execution and the
+existing interpretation/clarification regressions. Credential isolation
+(`node-credentials-OvVJOX`), model metadata (`model-metadata-0TJ5wp`), shutdown
+(`job-shutdown-uzq7hr`) and scheduling (`scheduling-rjRq7J`) pass. Source-boundary,
+JavaScript syntax, formatting and diff checks pass; fixture children are closed.
+These are local logical-node/synthetic clock/fake-model checks, not actual OS
+clock adjustments, physical two-PC acceptance or real-model semantic evaluation.
+
+Installed apps/physical nodes, versions, installers and update feeds remain unchanged.
+This is a stage 6 reliability increment, not automatic semantic planning, legacy
+grant migration, continuous workloads or stable v0.4.0 acceptance.
+
 ## Unreleased: explicit model-assisted clarification resolution (2026-10-11)
 
 Node `requests resolve` now owns a command/API-only read/context/inference/save

@@ -67,6 +67,7 @@ try {
     await until(async()=>(await json(n.api+'/api/status')).connection?.state==='connected','pinned node connected');
     assert.equal((await json(n.api+'/api/status')).connection.transport,'pinned_tls13');
     assert.equal((await json(n.api+'/api/status')).execution_grants.available,true);
+    assert.equal((await json(n.api+'/api/status')).execution_grants.timing_mode,'issuer_lease_challenge_v1');
     assert.equal((await fetch(n.api+'/')).status,404);
   }
   await until(async()=>(await coordinator(['diagnostics'])).registered_node_count===2,'registered pair');

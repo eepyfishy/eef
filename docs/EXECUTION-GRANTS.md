@@ -93,15 +93,35 @@ future. No immediate remote-stop, rollback, exactly-once effects, process-tree
 termination, paused pipeline, cluster epoch or safe active/standby guarantee is
 claimed by this increment.
 
-Expiry/future-clock conditions reject on admission. A monotonic deadline starts
-before the durable claim/ACK; execution cannot gain more time while waiting for an
-ACK. Pending work checks local policy and wall-clock discontinuities. Results that
-arrive after the deadline, execution errors, policy revocation or failed completion
-checkpoints are reported conservatively as unknown. Oversized results are omitted;
-the operation may already have completed and must not be repeated to retrieve them.
-Receipt timestamps cannot move behind their acceptance timestamp during correction.
-Coordinators/nodes currently need aligned clocks; the strict clock gate is a physical
-acceptance item, not an automatic time-synchronization feature.
+Reviewed issuance anchors a monotonic deadline before the coordinator's durable
+issuance write. Before consuming a grant, the node sends a fresh nonce-bearing
+`grant_lease_probe` through its pinned authenticated session. The gateway replies
+only for the exact pending issuance, executor, session and complete grant digest,
+at most once. Its bounded `remaining_ms` cannot renew or change authority.
+The two-second challenge timeout includes writer/queue delay. The node anchors
+its deadline at local challenge **send**, not reply receipt, deducting the entire
+round trip plus a conservative 5 ms + 1% remaining-budget margin. The durable
+claim, ACK and execution share that fixed deadline. Queue residence, journal
+writes and waiting for ACK cannot grant a fresh duration. An expired, late,
+mismatched or unanswered proof denies admission before consumption/effects.
+The gateway does not accept an ACK before issuing proof or after its deadline.
+
+Updated nodes advertise `timing_mode: issuer_lease_challenge_v1`; missing or other
+modes cannot receive new grants from updated EEF. There is no wall-clock or legacy
+RPC fallback. Read-only inspection of existing compatible receipts does not require
+the new mode and cannot reactivate a lease. Existing schema-1 grant/receipt journals
+remain intact; update both roles before testing new execution on physical PCs.
+
+Independent coordinator/node wall clocks no longer need alignment. Absolute grant
+timestamps remain issuer-side audit/approval evidence; the executor never compares
+them with its wall clock. Pending work still checks local policy and its own clock
+discontinuities (over one second against monotonic elapsed time). This is not time
+synchronization, hardware drift attestation, a suspend/resume guarantee or hard
+real-time termination. Physical two-PC/clock acceptance remains a release gate.
+Results after the deadline, execution errors, policy revocation or failed completion
+checkpoints are conservatively unknown. Oversized results are omitted; effects may
+already have completed and must not be repeated to retrieve them. Receipt timestamps
+cannot move behind their acceptance timestamp during correction.
 
 Optional node configuration, validated through the existing backend settings API:
 
@@ -168,3 +188,8 @@ completion scope checks, unchanged owner markers after replay and node restart,
 before effects, expired/future/incorrect grants, quotas, damaged/future journal
 retention and read-only inspection. These are isolated local processes, not a
 physical two-PC release acceptance or proof that an adversarial node obeys policy.
+Fresh-lease units additionally cover synthetic +/-48-hour issuer offsets, exact
+scope, expired/mismatched/widened replies, round-trip deduction, nonce replay,
+local clock changes, cancellation and no native writes after ACK-wait expiry.
+Gateway tests reject unproved/expired ACKs and renewal/old-session probes. They do
+not change either PC's OS clock or prove safe suspend/partition/cluster behavior.

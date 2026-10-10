@@ -45,12 +45,18 @@ pub struct GrantAdvertisement {
     pub available: bool,
     pub limits: Option<GrantPolicy>,
     pub deadline_guarantee: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing_mode: Option<String>,
 }
 impl GrantAdvertisement {
     pub fn validate(&self) -> Result<()> {
         if self.schema_version != 1
             || self.deadline_guarantee != "rpc_future_only"
             || (self.available && self.limits.is_none())
+            || self
+                .timing_mode
+                .as_deref()
+                .is_some_and(|mode| mode != crate::grant_time::MODE)
         {
             bail!("Invalid grant support advertisement")
         }
@@ -556,6 +562,9 @@ pub struct AcceptedGrant {
     accepted_wall: u64,
 }
 impl AcceptedGrant {
+    /// Aligned-wall-clock adapter is test-only; release builds require an
+    /// authenticated fresh lease proof and expose no timestamp fallback.
+    #[cfg(test)]
     pub fn prepare(
         g: ExecutionGrant,
         ledger: Arc<GrantLedger>,
@@ -564,14 +573,44 @@ impl AcceptedGrant {
         session: &str,
         node: &str,
     ) -> Result<Self> {
+        let now = crate::protocol::now_ms();
+        if now < g.issued_at_ms || now >= g.expires_at_ms {
+            return Err(GrantDenied("grant_clock_or_expiry_invalid").into());
+        }
+        let deadline = Instant::now()
+            + Duration::from_millis(g.limits.max_execution_ms.min(g.expires_at_ms - now));
+        Self::prepare_deadline(g, ledger, engine, issuer, session, node, deadline)
+    }
+    pub fn prepare_with_lease(
+        g: ExecutionGrant,
+        ledger: Arc<GrantLedger>,
+        engine: &crate::NodeEngine,
+        issuer: &str,
+        session: &str,
+        node: &str,
+        lease: crate::grant_time::GrantLease,
+    ) -> Result<Self> {
+        let deadline = lease
+            .deadline(&g)
+            .map_err(|_| GrantDenied("grant_lease_changed_or_expired"))?;
+        Self::prepare_deadline(g, ledger, engine, issuer, session, node, deadline)
+    }
+    fn prepare_deadline(
+        g: ExecutionGrant,
+        ledger: Arc<GrantLedger>,
+        engine: &crate::NodeEngine,
+        issuer: &str,
+        session: &str,
+        node: &str,
+        deadline: Instant,
+    ) -> Result<Self> {
         g.validate()
             .map_err(|_| GrantDenied("invalid_grant_scope"))?;
         if !g.matches_session(issuer, session, node) {
             return Err(GrantDenied("grant_identity_changed").into());
         }
-        let now = crate::protocol::now_ms();
-        if now < g.issued_at_ms || now >= g.expires_at_ms {
-            return Err(GrantDenied("grant_clock_or_expiry_invalid").into());
+        if Instant::now() >= deadline {
+            return Err(GrantDenied("grant_lease_changed_or_expired").into());
         }
         if g.limits.max_execution_ms > ledger.policy.max_duration_ms
             || g.limits.max_result_bytes > ledger.policy.max_result_bytes
@@ -582,15 +621,18 @@ impl AcceptedGrant {
             .check_grant_policy(&g)
             .map_err(|_| GrantDenied("local_policy_denied_or_changed"))?;
         let accepted = Instant::now();
-        let deadline =
-            accepted + Duration::from_millis(g.limits.max_execution_ms.min(g.expires_at_ms - now));
+        // Pair both local clocks before the durable claim. Its I/O consumes
+        // the existing lease and a clock jump during it must not be hidden
+        // by taking a new wall-clock baseline after the write.
+        let accepted_wall = crate::protocol::now_ms();
+        let deadline = deadline.min(accepted + Duration::from_millis(g.limits.max_execution_ms));
         ledger.claim(&g)?;
         Ok(Self {
             grant: g,
             ledger,
             deadline,
             accepted,
-            accepted_wall: now,
+            accepted_wall,
         })
     }
     pub fn acknowledgement(&self) -> GrantReport {
@@ -616,10 +658,7 @@ impl AcceptedGrant {
                     .try_into()
                     .unwrap_or(u64::MAX),
             );
-            if Instant::now() >= self.deadline
-                || now >= g.expires_at_ms
-                || now.abs_diff(expected) > 1000
-            {
+            if Instant::now() >= self.deadline || now.abs_diff(expected) > 1000 {
                 break GrantReport::new(
                     g,
                     ReceiptState::Unknown,
@@ -646,9 +685,7 @@ impl AcceptedGrant {
                 }
             }
         };
-        if result.state == ReceiptState::Completed
-            && (Instant::now() >= self.deadline || crate::protocol::now_ms() >= g.expires_at_ms)
-        {
+        if result.state == ReceiptState::Completed && Instant::now() >= self.deadline {
             result = GrantReport::new(
                 g,
                 ReceiptState::Unknown,

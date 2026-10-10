@@ -122,6 +122,8 @@ struct Pending {
     observer: Option<Arc<dyn crate::grants::GrantObserver>>,
     grant: Option<crate::grants::ExecutionGrant>,
     acknowledged: bool,
+    lease_deadline: Option<Instant>,
+    lease_probe_id: Option<String>,
     node_id: String,
     session_id: Uuid,
     sender: oneshot::Sender<Value>,
@@ -385,7 +387,7 @@ impl NodeServer {
         wait: Duration,
         context: Option<&crate::context::RequestContext>,
     ) -> Result<Value> {
-        self.invoke_message(node_id,json!({"type":"request","capability":capability,"action":action,"params":params,"request_context":context}),wait,None,None).await
+        self.invoke_message(node_id,json!({"type":"request","capability":capability,"action":action,"params":params,"request_context":context}),wait,None,None,None).await
     }
 
     /// Issuer/session selection only, never an execution approval. The caller
@@ -396,6 +398,7 @@ impl NodeServer {
             .get(node_id)
             .context("Grant node is not connected")?;
         self.check_grant_connection(c)?;
+        self.check_lease_connection(c)?;
         let issuer = self
             .inner
             .authentication
@@ -405,7 +408,7 @@ impl NodeServer {
             .fingerprint()?;
         Ok(
             json!({"issuer_id":issuer,"session_id":c.session_id.to_string(),"executor_node":node_id,
-            "limits":c.state.as_ref().unwrap().registration["execution_grants"]["limits"]}),
+            "limits":c.state.as_ref().unwrap().registration["execution_grants"]["limits"],"timing_mode":crate::grant_time::MODE}),
         )
     }
     fn check_grant_connection(&self, c: &Connection) -> Result<()> {
@@ -418,6 +421,14 @@ impl NodeServer {
             bail!(
                 "Node requires an independent credential, pinned TLS and available grant receipt journal"
             )
+        }
+        Ok(())
+    }
+    fn check_lease_connection(&self, c: &Connection) -> Result<()> {
+        if c.state.as_ref().is_none_or(|s| {
+            s.registration["execution_grants"]["timing_mode"] != crate::grant_time::MODE
+        }) {
+            bail!("Node requires fresh issuer lease challenges; no wall-clock fallback")
         }
         Ok(())
     }
@@ -434,6 +445,7 @@ impl NodeServer {
             wait,
             Some(grant),
             None,
+            None,
         )
         .await
     }
@@ -442,6 +454,7 @@ impl NodeServer {
         grant: crate::grants::ExecutionGrant,
         wait: Duration,
         observer: Arc<dyn crate::grants::GrantObserver>,
+        lease_deadline: Instant,
     ) -> Result<Value> {
         grant.validate()?;
         let node = grant.executor_node.clone();
@@ -451,6 +464,7 @@ impl NodeServer {
             wait,
             Some(grant),
             Some(observer),
+            Some(lease_deadline),
         )
         .await
     }
@@ -463,7 +477,7 @@ impl NodeServer {
         grant.validate()?;
         let response = self.invoke_message(&grant.executor_node,
             json!({"type":"grant_receipt","grant_id":grant.grant_id,"expected_node_id":grant.executor_node,"expected_issuer_id":grant.issuer_id}),
-            Duration::from_secs(10), None, None).await?;
+            Duration::from_secs(10), None, None, None).await?;
         if response["success"] != true {
             bail!("Consumed receipt unavailable; effects remain unresolved")
         }
@@ -481,7 +495,26 @@ impl NodeServer {
         wait: Duration,
         grant: Option<crate::grants::ExecutionGrant>,
         observer: Option<Arc<dyn crate::grants::GrantObserver>>,
+        lease_deadline: Option<Instant>,
     ) -> Result<Value> {
+        // Start before routing/queue waits. The reviewed driver also supplies
+        // its mint-time monotonic deadline, before durable issuance journal I/O.
+        let lease_deadline = if let Some(g) = &grant {
+            let started = Instant::now();
+            let now = now_ms();
+            if now < g.issued_at_ms || now >= g.expires_at_ms {
+                bail!("Issuer grant clock or expiry invalid")
+            }
+            let local = started
+                + Duration::from_millis(g.limits.max_execution_ms.min(g.expires_at_ms - now));
+            let deadline = lease_deadline.unwrap_or(local).min(local);
+            if deadline <= Instant::now() {
+                bail!("Issued monotonic lease already expired")
+            }
+            Some(deadline)
+        } else {
+            None
+        };
         // Hold the routing read guard until the waiter is registered. Session
         // cleanup removes the route before draining that session's waiters.
         let connections = self.inner.connections.read().await;
@@ -504,6 +537,7 @@ impl NodeServer {
         }
         if let Some(g) = &grant {
             self.check_grant_connection(&connection)?;
+            self.check_lease_connection(&connection)?;
             let issuer = self
                 .inner
                 .authentication
@@ -523,6 +557,8 @@ impl NodeServer {
                 observer,
                 grant,
                 acknowledged: false,
+                lease_deadline,
+                lease_probe_id: None,
                 node_id: node_id.into(),
                 session_id: connection.session_id,
                 sender,
@@ -946,6 +982,13 @@ impl NodeServer {
                     self.resolve_grant_ack(authenticated_id, session_id, message)
                         .await
                 }
+                Some("grant_lease_probe") => {
+                    if !registered {
+                        bail!("register before requesting a grant lease")
+                    }
+                    self.reply_grant_lease(authenticated_id, session_id, message)
+                        .await?;
+                }
                 Some("response") => {
                     self.resolve_response(authenticated_id, session_id, message)
                         .await
@@ -1009,6 +1052,48 @@ impl NodeServer {
         Ok(node_id.into())
     }
 
+    async fn reply_grant_lease(&self, node: &str, session: Uuid, message: Value) -> Result<()> {
+        let query: crate::grant_time::LeaseQuery = serde_json::from_value(message)?;
+        query.validate()?;
+        if query.node_id != node || query.session_id != session.to_string() {
+            bail!("Lease query identity changed")
+        }
+        let connections = self.inner.connections.read().await;
+        let connection = connections
+            .get(node)
+            .filter(|c| c.session_id == session)
+            .context("Lease session retired")?;
+        self.check_grant_connection(connection)?;
+        self.check_lease_connection(connection)?;
+        let mut pending = self.inner.pending.lock().await;
+        let request = pending
+            .get_mut(&query.request_id)
+            .context("Lease issuance no longer pending")?;
+        if request.node_id != node
+            || request.session_id != session
+            || request.acknowledged
+            || request.lease_probe_id.is_some()
+            || !request.grant.as_ref().is_some_and(|g| query.confirms(g))
+        {
+            bail!("Lease query mismatched or already used")
+        }
+        let deadline = request
+            .lease_deadline
+            .context("Pending request has no issued lease")?;
+        let remaining_ms = deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+            .min(crate::grants::MAX_DURATION_MS as u128) as u64;
+        let reply = crate::grant_time::LeaseReply::new(&query, remaining_ms);
+        // One proof only, never renewal. Queue residence is included in the
+        // node's complete measured round trip and cannot extend this deadline.
+        request.lease_probe_id = Some(query.id.clone());
+        connection
+            .sender
+            .try_send(json!(reply))
+            .context("Lease reply queue unavailable")?;
+        Ok(())
+    }
     async fn resolve_response(&self, authenticated_id: &str, session_id: Uuid, message: Value) {
         let Some(id) = message.get("id").and_then(Value::as_str).map(str::to_owned) else {
             return;
@@ -1062,7 +1147,12 @@ impl NodeServer {
         else {
             return;
         };
-        if r.state == crate::grants::ReceiptState::Accepted && r.confirms(g) {
+        if r.state == crate::grants::ReceiptState::Accepted
+            && r.confirms(g)
+            && p.lease_probe_id.is_some()
+            && p.lease_deadline
+                .is_some_and(|deadline| Instant::now() < deadline)
+        {
             if p.observer.as_ref().is_some_and(|o| o.record(&r).is_err()) {
                 if let Some(p) = pending.remove(id) {
                     let _ = p.sender.send(json!({"success":false,"error_type":"GrantJournalError","error":"Grant acceptance checkpoint failed; effects may have happened"}));
@@ -2021,6 +2111,8 @@ mod tests {
                 observer: None,
                 grant: None,
                 acknowledged: false,
+                lease_deadline: None,
+                lease_probe_id: None,
                 session_id: Uuid::nil(),
                 sender,
             },
@@ -2055,6 +2147,8 @@ mod tests {
                 session_id: session,
                 grant: Some(g.clone()),
                 acknowledged: false,
+                lease_deadline: Some(Instant::now() + Duration::from_secs(10)),
+                lease_probe_id: Some(Uuid::new_v4().to_string()),
                 sender,
             },
         );
@@ -2151,6 +2245,8 @@ mod tests {
                     observer: Some(observer.clone()),
                     grant: Some(g.clone()),
                     acknowledged: false,
+                    lease_deadline: Some(Instant::now() + Duration::from_secs(10)),
+                    lease_probe_id: Some(Uuid::new_v4().to_string()),
                     node_id: "owner".into(),
                     session_id: session,
                     sender,
@@ -2204,6 +2300,8 @@ mod tests {
                 observer: Some(observer.clone()),
                 grant: Some(g.clone()),
                 acknowledged: false,
+                lease_deadline: Some(Instant::now() + Duration::from_secs(10)),
+                lease_probe_id: Some(Uuid::new_v4().to_string()),
                 node_id: "owner".into(),
                 session_id: session,
                 sender,
@@ -2247,6 +2345,151 @@ mod tests {
             },
         );
         (server, receiver)
+    }
+
+    #[tokio::test]
+    async fn fresh_lease_queries_require_live_exact_issuance_and_never_renew_or_accept_unproved_ack()
+     {
+        use crate::grant_time::{LeaseQuery, LeaseReply};
+        let (server, mut queue) = queued_test_server().await;
+        let g = crate::grants::tests::grant();
+        let session = Uuid::parse_str(&g.session_id).unwrap();
+        {
+            let mut connections = server.inner.connections.write().await;
+            let c = connections.get_mut("owner").unwrap();
+            c.session_id = session;
+            c.credential_transport = true;
+            c.state = Some(NodeStateSnapshot {
+                registration: json!({"execution_grants":{"schema_version":1,"available":true,"timing_mode":crate::grant_time::MODE}}),
+                heartbeat: None,
+            });
+        }
+        let wire = Uuid::new_v4().simple().to_string();
+        let (sender, _receiver) = oneshot::channel();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        server.inner.pending.lock().await.insert(
+            wire.clone(),
+            Pending {
+                observer: None,
+                grant: Some(g.clone()),
+                acknowledged: false,
+                lease_deadline: Some(deadline),
+                lease_probe_id: None,
+                node_id: "owner".into(),
+                session_id: session,
+                sender,
+            },
+        );
+        let q = LeaseQuery {
+            kind: "grant_lease_probe".into(),
+            schema_version: 1,
+            id: Uuid::new_v4().to_string(),
+            request_id: wire.clone(),
+            node_id: "owner".into(),
+            session_id: g.session_id.clone(),
+            grant_id: g.grant_id.clone(),
+            grant_sha256: crate::grants::definition_digest(&json!(g)).unwrap(),
+        };
+        let ack = json!({"type":"grant_ack","id":wire,"grant":crate::grants::GrantReport::new(&g,crate::grants::ReceiptState::Accepted,Value::Null,None)});
+        server
+            .resolve_grant_ack("owner", session, ack.clone())
+            .await;
+        assert!(!server.inner.pending.lock().await[&wire].acknowledged);
+        for key in [
+            "node_id",
+            "session_id",
+            "grant_id",
+            "grant_sha256",
+            "request_id",
+        ] {
+            let mut bad = json!(q);
+            bad[key] = json!("other");
+            assert!(
+                server
+                    .reply_grant_lease("owner", session, bad)
+                    .await
+                    .is_err()
+            );
+            assert!(queue.try_recv().is_err());
+            assert!(
+                server.inner.pending.lock().await[&wire]
+                    .lease_probe_id
+                    .is_none()
+            );
+        }
+        let mut extra = json!(q);
+        extra["extend_ms"] = json!(30000);
+        assert!(
+            server
+                .reply_grant_lease("owner", session, extra)
+                .await
+                .is_err()
+        );
+        server
+            .reply_grant_lease("owner", session, json!(q))
+            .await
+            .unwrap();
+        let reply: LeaseReply = serde_json::from_value(queue.recv().await.unwrap()).unwrap();
+        assert!(reply.remaining_ms > 0 && reply.remaining_ms <= 1000);
+        assert_eq!(reply.grant_sha256, q.grant_sha256);
+        assert_eq!(
+            server.inner.pending.lock().await[&wire].lease_deadline,
+            Some(deadline)
+        );
+        assert!(
+            server
+                .reply_grant_lease("owner", session, json!(q))
+                .await
+                .is_err()
+        );
+        let mut renewal = q.clone();
+        renewal.id = Uuid::new_v4().to_string();
+        assert!(
+            server
+                .reply_grant_lease("owner", session, json!(renewal))
+                .await
+                .is_err()
+        );
+        assert!(queue.try_recv().is_err());
+        server
+            .resolve_grant_ack("owner", session, ack.clone())
+            .await;
+        assert!(server.inner.pending.lock().await[&wire].acknowledged);
+        {
+            let mut pending = server.inner.pending.lock().await;
+            let p = pending.get_mut(&wire).unwrap();
+            p.lease_deadline = Some(Instant::now() - Duration::from_secs(1));
+            p.lease_probe_id = None;
+            p.acknowledged = false;
+        }
+        server
+            .reply_grant_lease("owner", session, json!(renewal))
+            .await
+            .unwrap();
+        assert_eq!(queue.recv().await.unwrap()["remaining_ms"], 0);
+        server.resolve_grant_ack("owner", session, ack).await;
+        assert!(!server.inner.pending.lock().await[&wire].acknowledged);
+        server
+            .inner
+            .connections
+            .write()
+            .await
+            .get_mut("owner")
+            .unwrap()
+            .session_id = Uuid::new_v4();
+        assert!(
+            server
+                .reply_grant_lease("owner", session, json!(q))
+                .await
+                .is_err()
+        );
+        let mut connections = server.inner.connections.write().await;
+        let c = connections.get_mut("owner").unwrap();
+        c.state.as_mut().unwrap().registration["execution_grants"]
+            .as_object_mut()
+            .unwrap()
+            .remove("timing_mode");
+        assert!(server.check_lease_connection(c).is_err());
     }
 
     #[tokio::test]

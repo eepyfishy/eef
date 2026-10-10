@@ -219,6 +219,7 @@ try {
   await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==runtime,'apply fixture TLS issuer');
   await cli(['connection','pair','--code-file',privateCode]);
   await until(async()=>await ready()&&(await json(node+'/api/status')).connection.transport==='pinned_tls13','paired model node');
+  assert.equal((await json(node+'/api/status')).execution_grants.timing_mode,'issuer_lease_challenge_v1');
   let activeRuntime=(await json(eef+'/api/diagnostics')).runtime_id;
   const approval=await json(planUrl,{schema_version:1,expected_runtime_id:activeRuntime,command:{operation:'approve',id:modelDraft.result.id,
     expected_revision:2,operation_id:randomUUID(),plan_sha256:modelPlan.plan.planning.plan_sha256,valid_for_ms:60000,
