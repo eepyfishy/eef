@@ -642,11 +642,11 @@ impl Runtime {
                 json!({"node_id": node_id, "id": id, "kind": message.get("kind"),"request_context":context}),
             )
             .await;
-        let result = match message
+        let kind = message
             .get("kind")
             .and_then(Value::as_str)
-            .unwrap_or("message")
-        {
+            .unwrap_or("message");
+        let result = match kind {
             "message" => {
                 let text = message
                     .pointer("/payload/text")
@@ -669,6 +669,29 @@ impl Runtime {
                     Err(_) => Err(anyhow::anyhow!(
                         "review missing gateway capability snapshot"
                     )),
+                }
+            }
+            "requests.open"
+            | "requests.draft_get"
+            | "requests.draft_answer"
+            | "requests.draft_revise" => {
+                match serde_json::from_value::<Vec<String>>(
+                    message["interpretation_capabilities"].clone(),
+                ) {
+                    Ok(capabilities) if kind == "requests.open" => crate::request_drafts::open(
+                        &self.engine,
+                        message["payload"].clone(),
+                        &context,
+                        &capabilities,
+                    ),
+                    Ok(capabilities) => crate::request_drafts::command(
+                        &self.engine,
+                        kind,
+                        message["payload"].clone(),
+                        &context,
+                        &capabilities,
+                    ),
+                    Err(_) => Err(anyhow::anyhow!("draft missing gateway capability snapshot")),
                 }
             }
             "network.peers" => {

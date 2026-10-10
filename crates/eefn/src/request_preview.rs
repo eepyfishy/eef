@@ -8,6 +8,34 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Interpret and save an origin-owned durable review; never execute it.
+    Open {
+        #[arg(long)]
+        text: String,
+    },
+    /// Save a supplied proposal as a durable review without calling a model.
+    OpenProposal {
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
+    /// Inspect a durable review owned by this node, including original text/answers.
+    Draft { id: String },
+    /// Record a clarification answer against the inspected revision; never guess a resolution.
+    Answer {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        text: String,
+    },
+    /// Append a revised supplied proposal, preserving the original request and answers.
+    ReviseProposal {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        file: std::path::PathBuf,
+    },
     /// Inspect an untrusted proposal from the selected interpreter; never execute it.
     Preview {
         #[arg(long)]
@@ -178,10 +206,25 @@ impl NodeService {
     pub async fn review_request(&self, request: PreviewRequest) -> Value {
         let generation = self.preview.generation.subscribe();
         let preview = self.preview_request(request).await;
-        self.review_prepared(preview, generation).await
+        self.review_prepared(preview, generation, false).await
+    }
+    pub async fn open_request(&self, request: PreviewRequest) -> Value {
+        let generation = self.preview.generation.subscribe();
+        let preview = self.preview_request(request).await;
+        self.review_prepared(preview, generation, true).await
     }
 
     pub async fn review_supplied_proposal(&self, request: ProposalReviewRequest) -> Value {
+        self.prepare_supplied_proposal(request, false).await
+    }
+    pub async fn open_supplied_proposal(&self, request: ProposalReviewRequest) -> Value {
+        self.prepare_supplied_proposal(request, true).await
+    }
+    async fn prepare_supplied_proposal(
+        &self,
+        request: ProposalReviewRequest,
+        persist: bool,
+    ) -> Value {
         let generation = self.preview.generation.subscribe();
         let canonical_id = uuid::Uuid::parse_str(&request.request_id)
             .ok()
@@ -233,16 +276,21 @@ impl NodeService {
                 );
             }
         }
-        self.review_prepared(prepared, generation).await
+        self.review_prepared(prepared, generation, persist).await
     }
 
     async fn review_prepared(
         &self,
         preview: Value,
         mut generation: watch::Receiver<Option<String>>,
+        persist: bool,
     ) -> Value {
         let mut report = preview.clone();
-        report["report_type"] = json!("request_review");
+        report["report_type"] = json!(if persist {
+            "request_draft"
+        } else {
+            "request_review"
+        });
         report["coordinator_acknowledged"] = json!(false);
         report["outcome_unknown"] = json!(false);
         report.as_object_mut().unwrap().remove("result");
@@ -263,20 +311,35 @@ impl NodeService {
                 report["success"] = json!(false);
                 report["error_code"] = json!("runtime_changed");
                 report["outcome_unknown"] = json!(true);
-                report["note"] = json!("Node runtime changed while awaiting review. EEF may have reviewed the proposal; no execution was requested and no automatic replay was sent.");
+                report["note"] = json!(if persist {
+                    "Node runtime changed while awaiting save. EEF may have persisted the draft; inspect jobs.find with this receipt. No execution or automatic replay was requested."
+                } else {
+                    "Node runtime changed while awaiting review. EEF may have reviewed the proposal; no execution was requested and no automatic replay was sent."
+                });
                 return report;
             }
-            result = self.submissions.request_correlated("requests.review", payload,
+            result = self.submissions.request_correlated(if persist {"requests.open"} else {"requests.review"}, payload,
                 preview["request_id"].as_str().map(str::to_owned)) => result,
         };
         match result {
             Ok(data)
-                if confirmed_review(
-                    &data,
-                    &self.node_id,
-                    preview["request_id"].as_str().unwrap(),
-                    interpretation["original_text"].as_str().unwrap(),
-                ) && data["interpretation"] == *interpretation =>
+                if if persist {
+                    crate::request_drafts::confirmed_report(
+                        &data,
+                        &self.node_id,
+                        preview["request_id"].as_str().unwrap(),
+                        None,
+                    ) && data["request_context"]["request_id"] == preview["request_id"]
+                        && data["draft"]["original_text"] == interpretation["original_text"]
+                        && data["draft"]["proposals"][0]["proposal"] == interpretation["proposal"]
+                } else {
+                    confirmed_review(
+                        &data,
+                        &self.node_id,
+                        preview["request_id"].as_str().unwrap(),
+                        interpretation["original_text"].as_str().unwrap(),
+                    ) && data["interpretation"] == *interpretation
+                } =>
             {
                 report["coordinator_acknowledged"] = json!(true);
                 report["result"] = data;
@@ -295,6 +358,13 @@ impl NodeService {
                     _ => "review_rejected",
                 });
                 report["error"] = json!(error.to_string());
+                report["outcome_unknown"] = json!(
+                    persist
+                        && !matches!(
+                            error.downcast_ref::<crate::submission::SubmissionFailure>(),
+                            Some(crate::submission::SubmissionFailure::NotSent(_))
+                        )
+                );
             }
             _ => {
                 report["success"] = json!(false);
@@ -304,6 +374,11 @@ impl NodeService {
                     "No confirmed review reply. EEF may have reviewed the proposal; no execution was requested and no automatic replay was sent."
                 );
             }
+        }
+        if persist {
+            report["note"] = json!(
+                "Durable review only, never executable work. After an unconfirmed save inspect jobs.find with this request ID; do not replay automatically."
+            );
         }
         report
     }
@@ -455,6 +530,54 @@ mod tests {
         );
         assert_eq!(report["execution_authorized"], false);
         assert_eq!(report["dispatched"], false);
+        assert!(!dir.path().join("config.json").exists());
+    }
+    #[tokio::test]
+    async fn durable_open_uses_one_bound_mailbox_save_and_rejects_changed_proposal() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = NodeService::new(dir.path().join("config.json"), "node".into());
+        let engine = Arc::new(NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        let guard = service.attach_preview_runtime(&engine, "runtime".into());
+        let mut receiver = service.submissions.connect();
+        let _permit = service.preview.capacity.acquire().await.unwrap();
+        for mode in ["good", "changed", "lost"] {
+            let request = supplied();
+            let id = request.request_id.clone();
+            let local = service.clone();
+            let future = tokio::spawn(async move { local.open_supplied_proposal(request).await });
+            let command = receiver.recv().await.unwrap();
+            assert_eq!(command.kind, "requests.open");
+            assert_eq!(command.operation_id.as_deref(), Some(id.as_str()));
+            let mut proposal = command.payload["proposal"].clone();
+            if mode == "changed" {
+                proposal["goal"] = json!("Other valid goal");
+            }
+            if mode == "lost" {
+                drop(command.reply);
+            } else {
+                command.reply.send(Ok(json!({"schema_version":1,"report_type":"coordinator_request_draft","id":uuid::Uuid::new_v4().simple().to_string(),
+                    "revision":1,"status":"review","operation_id":id,"request_context":{"request_id":id,"origin_node":"node","origin_area":[]},
+                    "draft":{"schema_version":1,"original_text":command.payload["original_text"],"proposals":[{"operation_id":id,"proposal":proposal,
+                        "allowed_capabilities":["system.info"],"at_ms":1}],"answers":[]},
+                    "review_state":"review_required","reused":false,"execution_authorized":false,"dispatched":false,"persisted":true,"note":"Review only"}))).unwrap();
+            }
+            let report = future.await.unwrap();
+            assert_eq!(report["report_type"], "request_draft");
+            assert_eq!(report["success"], mode == "good");
+            assert_eq!(report["outcome_unknown"], mode != "good");
+            assert_eq!(report["execution_authorized"], false);
+            assert!(receiver.try_recv().is_err());
+        }
+        let local = service.clone();
+        let future = tokio::spawn(async move { local.open_supplied_proposal(supplied()).await });
+        let command = receiver.recv().await.unwrap();
+        drop(guard);
+        let result = future.await.unwrap();
+        assert_eq!(result["error_code"], "runtime_changed");
+        assert_eq!(result["outcome_unknown"], true);
+        assert!(result["note"].as_str().unwrap().contains("persisted"));
+        assert!(receiver.try_recv().is_err());
+        drop(command);
         assert!(!dir.path().join("config.json").exists());
     }
     #[tokio::test]

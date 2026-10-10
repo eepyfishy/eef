@@ -62,6 +62,10 @@ impl SubmissionMailbox {
             kind,
             "message"
                 | "requests.review"
+                | "requests.open"
+                | "requests.draft_get"
+                | "requests.draft_answer"
+                | "requests.draft_revise"
                 | "network.peers"
                 | "jobs.list"
                 | "jobs.find"

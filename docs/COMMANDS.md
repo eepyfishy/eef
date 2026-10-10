@@ -116,6 +116,93 @@ an explicit installer upgrade to a build containing this fix. Installing alpha.4
 alone does not provide these commands. Use the alpha.5 installer for that
 bootstrap; publishing a release does not automatically upgrade older nodes.
 
+## Durable request review and clarification (unreleased after alpha.6)
+
+Save a request through the running node, then inspect/answer it without a
+dashboard. These commands are not in the published alpha.6 installers.
+
+```powershell
+eefn requests open --text "Inspect that node" --json
+eefn requests open-proposal --file proposal.json --json
+eefn requests draft DRAFT_ID --json
+eefn requests answer DRAFT_ID --revision 1 --text "The bedroom node" --json
+eefn requests revise-proposal DRAFT_ID --revision 2 --file resolved-proposal.json --json
+eefn jobs find --operation-id OPENING_REQUEST_UUID --json
+eefn jobs stop DRAFT_ID --json
+eefn jobs remove DRAFT_ID --json
+```
+
+`open` uses the existing explicitly selected interpreter. `open-proposal` and
+`revise-proposal` take the same strict UTF-8 file as `review-proposal` below and
+need no model. Missing/ambiguous interpreter selection fails before saving;
+there is no automatic model install, chat fallback or command inference.
+
+EEF stores a **non-executable review record** in the existing durable job journal,
+with one stable ID, status `review`, gateway-stamped original node/area/receipt,
+exact original text, proposal revisions and clarification answers. No tasks,
+runner, dispatch, approval or execution grant are created. The record stays
+`review` after restart, not interrupted/resumed work. Existing job quotas and
+recovery headroom apply; full/damaged storage rejects instead of replacing history.
+
+Only the authenticated original node can read or mutate the full draft. Later
+commands cannot change its original text, original origin/area or opening receipt.
+An answer records the exact current question, proposal index and supplied text;
+`answer_recorded` does **not** mean model uncertainty has been resolved. An
+explicit proposal revision can change hints and clarification state, but still
+requires review and never grants execution authority. EEF validates its capability
+hints against that session's accepted registration, not file-authored permissions.
+
+Inspect the returned `revision` before each answer/revision; the command must
+specify it. Concurrent edits have one committed winner; stale attempts do not
+overwrite it. History permits at most 16 answers and 16 appended proposal revisions;
+answers are at most 8192 UTF-8 bytes, and the complete review record at most 512 KiB.
+Existing interpretation text/proposal bounds also apply. Increasing these bounds
+is not an owner permission flag. Stop cancels a review immediately; it cannot be
+paused/resumed into execution. Removal is explicit and only after cancellation.
+
+Node responses use schema 1 / `report_type: request_draft`. Successful replies
+confirm the exact origin/operation/ID/revision/requested delta with
+`coordinator_acknowledged: true`, `execution_authorized: false`, `dispatched: false`
+and `automatically_retried: false`. The result is `coordinator_request_draft`.
+Lost/corrupt mutation replies are unconfirmed and may have saved data. Inspect
+`jobs find` with the opening UUID, or `requests draft` with the known ID, before
+deciding whether to retry; inspection cannot infer or resubmit a request.
+
+Within the retained record, repeating the opening receipt with the same original
+text/initial proposal, or an answer/revision receipt with the same content, returns
+the retained record without another write. Receipt/content conflicts fail. A reused
+receipt acknowledges its **past** change even if the draft was later revised or
+cancelled; it does not apply the change again or undo cancellation. This is not a
+permanent/global receipt ledger, exactly-once effects, or node execution fencing.
+Removing history/database replacement removes this receipt protection.
+
+Local loopback/Host/Origin-guarded routes are
+`POST /api/commands/requests/open`, `/open-proposal`, and `/drafts`.
+Opening requests have exactly `schema_version`, `expected_node_id`, canonical UUID
+`request_id`, `text`, plus `proposal` for supplied input. Draft commands have the
+same first three fields and `command`, with one of:
+
+```json
+{"operation":"get","id":"lowercase-compact-uuid"}
+{"operation":"answer","id":"lowercase-compact-uuid","expected_revision":1,"text":"Bedroom"}
+{"operation":"revise","id":"lowercase-compact-uuid","expected_revision":2,"original_text":"Exact original","proposal":{}}
+```
+
+The final example needs a complete valid proposal, not an empty object. Extra
+authority/context fields, wrong targets, invalid IDs and cross-site callers fail.
+Commands use the existing authenticated submission connection; no second node
+runtime or browser is needed. `jobs list/get/find` expose bounded review state/counts,
+not raw proposals/answers; explicit draft inspection includes private user content.
+Do not publish those snapshots. Authoritative planning, owner approval, execution
+grants and executor acknowledgements remain required stage 6 work.
+
+`node tools/test-request-drafts.mjs` tests two logical, independently credentialed
+nodes with pinned TLS 1.3, no browser or model: ownership, immutable origin/text,
+answers/revisions, stale/duplicate/conflicting receipts, restart retention and
+stop/removal. `test-request-review.mjs` additionally checks fake-inferred durable
+review and receipt lookup after a lost save reply. Neither is physical two-PC
+acceptance or real model reasoning.
+
 ## Supplied structured proposals (unreleased)
 
 Automation may submit a proposal for **review only**, without interpreter

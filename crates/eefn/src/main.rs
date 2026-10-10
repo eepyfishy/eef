@@ -161,16 +161,23 @@ async fn execute_request_command(
     text: &str,
     review: bool,
     proposal: Option<&eefn::interpretation::Proposal>,
+    persist: bool,
 ) -> Result<serde_json::Value> {
     use serde_json::json;
-    let action = if proposal.is_some() {
+    let action = if persist && proposal.is_some() {
+        "open-proposal"
+    } else if persist {
+        "open"
+    } else if proposal.is_some() {
         "review-proposal"
     } else if review {
         "review"
     } else {
         "preview"
     };
-    let report_type = if review {
+    let report_type = if persist {
+        "request_draft"
+    } else if review {
         "request_review"
     } else {
         "request_preview"
@@ -218,15 +225,20 @@ async fn execute_request_command(
             || !report["success"].is_boolean() || report["execution_authorized"] != false || report["dispatched"] != false {
             bail!("Unrecognized request-command response");
         }
-        if review && report["success"] == true
+        if review && !persist && report["success"] == true
             && (report["coordinator_acknowledged"] != true
                 || report["automatically_retried"] != false || report["outcome_unknown"] != false
                 || !eefn::request_preview::confirmed_review(&report["result"], &file.node_id, &request.request_id, text)) {
             bail!("Unrecognized coordinator review response");
         }
+        if persist && report["success"]==true && (report["coordinator_acknowledged"]!=true
+            || report["automatically_retried"]!=false || report["outcome_unknown"]!=false
+            || !eefn::request_drafts::confirmed_report(&report["result"],&file.node_id,&request.request_id,None)
+            || report["result"]["request_context"]["request_id"]!=request.request_id
+            || report["result"]["draft"]["original_text"]!=text) {bail!("Unconfirmed durable request save")}
         if let Some(proposal) = proposal {
             if report["success"] == true && (report["interpretation_source"] != "supplied_proposal"
-                || report["result"]["interpretation"]["proposal"] != json!(proposal)) {
+                || if persist {report["result"]["draft"]["proposals"][0]["proposal"]!=json!(proposal)} else {report["result"]["interpretation"]["proposal"] != json!(proposal)}) {
                 bail!("Supplied proposal changed in review response");
             }
         }
@@ -236,7 +248,45 @@ async fn execute_request_command(
         "request_id":request.request_id,"error_code":if review {"review_unconfirmed"} else {"preview_unconfirmed"},"execution_authorized":false,
         "dispatched":false,"automatically_retried":false,
         "outcome_unknown":review,
-        "error":"No confirmed request reply. Inference/review may have run; no job or action was requested. No automatic retry."})))
+        "error":if persist {"No confirmed durable review reply. Inspect jobs.find with this request ID; a review may have been saved. No execution or automatic replay was requested."} else {"No confirmed request reply. Inference/review may have run; no job or action was requested. No automatic retry."}})))
+}
+
+async fn execute_draft_command(
+    args: &Args,
+    command: eefn::request_drafts::DraftCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.submission()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; draft commands do not launch another runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let result=async {
+        let response=reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
+            .post(format!("http://{address}/api/commands/requests/drafts")).timeout(Duration::from_secs(150))
+            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"request_id":request_id,"command":command})).send().await?;
+        if response.status()==reqwest::StatusCode::NOT_FOUND {bail!("Draft commands unavailable; no fallback or replay")}
+        let ok=response.status().is_success();let value=eefn::model_manager::bounded_json(response).await?;
+        if !ok || value["schema_version"]!=1 || value["report_type"]!="request_draft" || value["node_id"]!=file.node_id
+            || value["request_id"]!=request_id || !value["success"].is_boolean() || value["execution_authorized"]!=false
+            || value["dispatched"]!=false || value["automatically_retried"]!=false {bail!("Unrecognized draft reply")}
+        if value["success"]==true && (value["coordinator_acknowledged"]!=true || value["outcome_unknown"]!=false
+            || !eefn::request_drafts::confirmed_command(&value["result"],&file.node_id,&request_id,&command)) {bail!("Unconfirmed draft result")}
+        Ok::<_,anyhow::Error>(value)
+    }.await;
+    Ok(result.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"request_draft","node_id":file.node_id,"request_id":request_id,
+        "success":false,"execution_authorized":false,"dispatched":false,"automatically_retried":false,"coordinator_acknowledged":false,
+        "outcome_unknown":command.mutates(),"error_code":"draft_unconfirmed",
+        "error":"No confirmed draft reply. Inspect the draft/jobs.find before retrying. No fallback or automatic replay."})))
 }
 
 async fn execute_download_command(
@@ -571,10 +621,10 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     if let Commands::Requests { command } = command {
         return match command {
             eefn::request_preview::RequestAction::Preview { text } => {
-                execute_request_command(args, text, false, None).await
+                execute_request_command(args, text, false, None, false).await
             }
             eefn::request_preview::RequestAction::Review { text } => {
-                execute_request_command(args, text, true, None).await
+                execute_request_command(args, text, true, None, false).await
             }
             eefn::request_preview::RequestAction::ReviewProposal { file } => {
                 let supplied = eefn::request_preview::read_proposal(file)?;
@@ -583,6 +633,52 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                     &supplied.original_text,
                     true,
                     Some(&supplied.proposal),
+                    false,
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::Open { text } => {
+                execute_request_command(args, text, true, None, true).await
+            }
+            eefn::request_preview::RequestAction::OpenProposal { file } => {
+                let input = eefn::request_preview::read_proposal(file)?;
+                execute_request_command(
+                    args,
+                    &input.original_text,
+                    true,
+                    Some(&input.proposal),
+                    true,
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::Draft { id } => {
+                execute_draft_command(
+                    args,
+                    eefn::request_drafts::DraftCommand::Get { id: id.clone() },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::Answer { id, revision, text } => {
+                execute_draft_command(
+                    args,
+                    eefn::request_drafts::DraftCommand::Answer {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                        text: text.clone(),
+                    },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::ReviseProposal { id, revision, file } => {
+                let input = eefn::request_preview::read_proposal(file)?;
+                execute_draft_command(
+                    args,
+                    eefn::request_drafts::DraftCommand::Revise {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                        original_text: input.original_text,
+                        proposal: input.proposal,
+                    },
                 )
                 .await
             }
@@ -1566,5 +1662,58 @@ mod tests {
         assert_eq!(selected.model_id, "owner/model:tag");
         assert_eq!(selected.modality, "vlm");
         assert!(parse_selected_model("unnamed").is_err());
+    }
+
+    #[test]
+    fn durable_request_commands_require_explicit_revision_and_input() {
+        for args in [
+            vec!["eefn", "requests", "open", "--text", "Check"],
+            vec![
+                "eefn",
+                "requests",
+                "open-proposal",
+                "--file",
+                "proposal.json",
+            ],
+            vec!["eefn", "requests", "draft", "id"],
+            vec![
+                "eefn",
+                "requests",
+                "answer",
+                "id",
+                "--revision",
+                "1",
+                "--text",
+                "Bedroom",
+            ],
+            vec![
+                "eefn",
+                "requests",
+                "revise-proposal",
+                "id",
+                "--revision",
+                "2",
+                "--file",
+                "proposal.json",
+            ],
+        ] {
+            Args::try_parse_from(args).unwrap();
+        }
+        assert!(
+            Args::try_parse_from(["eefn", "requests", "answer", "id", "--text", "Bedroom"])
+                .is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "requests",
+                "revise-proposal",
+                "id",
+                "--file",
+                "proposal.json"
+            ])
+            .is_err()
+        );
+        assert!(Args::try_parse_from(["eefn", "requests", "open"]).is_err());
     }
 }

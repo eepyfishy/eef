@@ -37,7 +37,7 @@ pub enum Complexity {
 
 /// Model-authored hints only. Origin, target IDs, resource bindings, permissions,
 /// executable commands and execution grants are deliberately absent.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Proposal {
     pub schema_version: u32,

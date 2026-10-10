@@ -1,5 +1,5 @@
 // API-only node -> EEF review, using fake inference and isolated local data.
-// No plan, job, execution grant, model download or installed-node mutation.
+// Stateless review, then durable review-only records; no executor/grant/download.
 import assert from 'node:assert/strict';
 import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
@@ -155,10 +155,35 @@ try {
   assert.equal((await preview('Local preview still works')).success, true);
   await cli(['connection', 'resume']); await until(ready, 'resumed connection');
   const jobs = await cli(['jobs', 'list']); assert.deepEqual(jobs.data.jobs, []); assert.equal(jobs.data.total, 0);
+  // The optional natural-language adapter can retain a proposal, never execute it.
+  mode='clarify';
+  const durable=await cli(['requests','open','--text','  Inspect that node\n']);
+  assert.equal(durable.report_type,'request_draft');assert.equal(durable.coordinator_acknowledged,true);
+  assert.equal(durable.result.status,'review');assert.equal(durable.result.review_state,'clarification_required');
+  assert.equal(durable.result.draft.original_text,'  Inspect that node\n');
+  assert.equal(durable.result.draft.proposals[0].proposal.clarification,'Which node do you mean?');
+  assert.equal(durable.execution_authorized,false);assert.equal(durable.dispatched,false);
+  const uncertainMarker=await readFile(marker,'utf8'),beforeDurableLoss=calls.length,beforeForwarded=forwarded;
+  let lostDraft;
+  try {
+    const altered=JSON.parse(uncertainMarker);altered.address=`127.0.0.1:${proxyPort}`;await writeFile(marker,JSON.stringify(altered));
+    proxyMode='drop';lostDraft=await cli(['requests','open','--text','Lost durable reply'],false);
+    assert.equal(lostDraft.error_code,'review_unconfirmed');assert.equal(lostDraft.outcome_unknown,true);
+    assert.equal(lostDraft.automatically_retried,false);assert.equal(calls.length,beforeDurableLoss+1);assert.equal(forwarded,beforeForwarded+1);
+  } finally {await writeFile(marker,uncertainMarker);}
+  const found=(await cli(['jobs','find','--operation-id',lostDraft.request_id])).data;
+  assert.equal(found.total,1);assert.equal(found.jobs[0].status,'review');assert.equal(found.jobs[0].review_only,true);
+  const retained=(await cli(['requests','draft',found.jobs[0].id])).result;
+  assert.equal(retained.draft.original_text,'Lost durable reply');assert.equal(retained.request_context.request_id,lostDraft.request_id);
+  assert.deepEqual((await cli(['jobs','get',found.jobs[0].id])).data.tasks,[]);
+  assert.equal(calls.length,beforeDurableLoss+1,'receipt inspection must not infer or resubmit');
+  for(const id of [durable.result.id,found.jobs[0].id]) {await cli(['jobs','stop',id]);await cli(['jobs','remove',id]);}
+  assert.equal((await cli(['jobs','list'])).data.total,0);
   assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), JSON.parse(before), 'review leaves config unchanged');
   await writeFile(join(scratch, 'results.json'), JSON.stringify({passed: true, api_only: true, node_to_coordinator_review: true,
     original_text_preserved: true, authenticated_origin: true, clarification_returned: true, rejected_authority_fields: true,
-    no_jobs_created: true, no_execution: true, restart_invalidates_inference: true, lost_reply_not_replayed: true,
+    stateless_no_jobs_created: true, durable_inferred_review: true, lost_draft_found_without_replay: true,
+    no_execution: true, restart_invalidates_inference: true, lost_reply_not_replayed: true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
 } finally {

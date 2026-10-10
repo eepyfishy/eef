@@ -113,7 +113,16 @@ untrusted hints, never authority. The review is ephemeral and creates no durable
 receipt, job, grant or implicit clarification answer. Losing its reply never
 causes replay. Preview still does not send text to EEF.
 
+The subsequent unreleased `requests open/open-proposal` commands explicitly save
+a review-only record in the same durable job journal. Origin-owned `draft`,
+`answer` and `revise-proposal` commands retain original text, questions, answers,
+proposal history and revision/receipt checks across restart. They do not run tasks
+or grant approval. Answers are facts for a future resolver, not an implicit model
+re-interpretation; even a revised confident proposal still requires review.
+Stateless preview/review semantics above remain unchanged.
+See [durable review commands](COMMANDS.md#durable-request-review-and-clarification-unreleased-after-alpha6).
+
 Remaining: reviewed model/bootstrap policy, better candidate/prompt quality,
-interactive clarification/approval flow, and explicit planning/authorization.
+automatic clarification resolution, owner approval, and explicit planning/authorization.
 Automatic input interpretation is still absent. The existing deterministic
 commands continue working without any model. See [command usage](COMMANDS.md#request-preview-development).

@@ -30,6 +30,8 @@ pub enum TaskStatus {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PlanStatus {
+    /// Durable review only. Never admitted to a task runner.
+    Review,
     Pending,
     Running,
     Completed,
@@ -123,6 +125,8 @@ pub struct TaskResult {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_review: Option<eefn::request_drafts::DraftRecord>,
     #[serde(default = "short_id")]
     pub plan_id: String,
     pub goal: Goal,
@@ -274,6 +278,7 @@ impl TaskPlanner {
             });
         }
         Ok(Plan {
+            request_review: None,
             plan_id: short_id(),
             goal,
             tasks,
@@ -596,6 +601,9 @@ impl TaskEngine {
         })
     }
     fn admit_new(&self, plan: Plan) -> Result<ActiveJob> {
+        if plan.status != PlanStatus::Pending || plan.request_review.is_some() {
+            bail!("Review records are not executable plans")
+        }
         if !self.has_executor() {
             bail!("TaskEngine has no executor")
         }
@@ -687,6 +695,9 @@ impl TaskEngine {
         self: &Arc<Self>,
         plan: Plan,
     ) -> Result<crate::jobs::JobAdmission> {
+        if plan.status != PlanStatus::Pending || plan.request_review.is_some() {
+            bail!("Review records are not executable plans")
+        }
         if !self.has_executor() {
             bail!("TaskEngine has no executor")
         }
@@ -719,6 +730,16 @@ impl TaskEngine {
         let id = plan.plan_id.clone();
         let guard = self.admit_new(plan)?;
         self.drive(&id, guard).await
+    }
+    pub(crate) fn store_review_request(&self, plan: Plan) -> Result<crate::jobs::JobAdmission> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no new request review is accepted")
+        }
+        if plan.status != PlanStatus::Review || plan.request_review.is_none() {
+            bail!("Expected a review-only request")
+        }
+        self.store.admit_request(plan)
     }
     pub async fn shutdown(&self) {
         // Close admission before notifying runners. Every successfully admitted

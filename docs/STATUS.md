@@ -1,5 +1,46 @@
 # Architecture conformance status
 
+## Unreleased: durable origin-owned request review (2026-10-10)
+
+Nodes now have command/API-only `requests open/open-proposal/draft/answer/revise-proposal`
+operations. Optional natural-language opening reuses the bounded interpreter;
+supplied proposals, inspection and answers need no model. EEF saves non-executable
+`review` records in the existing durable job journal with stable identity, exact
+original text/context, proposal history and clarification answers. Original
+origin/area/text are immutable, explicit revisions protect concurrent edits, and
+retained operation receipts deduplicate exact openings/answers/proposals without
+rewriting checkpoints. Revision overflow now rejects rather than reusing a number.
+See [commands and privacy/bounds](COMMANDS.md#durable-request-review-and-clarification-unreleased-after-alpha6).
+
+Only the authenticated origin node can access the full record; ordinary job views
+expose bounded state/counts instead of raw review content. Existing journal quotas
+and recovery headroom apply. Restart retains review state without admitting a
+runner. Pause/resume/execution entry points reject it; stop cancels it, and removal
+is explicit. Corrupt review state is retained for recovery, not silently rewritten
+or activated. CLI/service confirmation checks origin, receipt, identity, requested
+delta, revision and false execution flags. Lost replies never cause replay; receipt
+lookup finds an uncertain opening without another inference or save.
+
+An answer records a fact, not a model resolution or approval. Even a confident
+revised proposal still requires review. This advances stage 5's durable clarification
+foundation, **not** authoritative planning, owner approval, execution grants,
+executor acknowledgement, node-side replay fencing or stable-release acceptance.
+The receipt protection lasts only while that record remains in the journal.
+
+Validation: **280 workspace/all-target Rust tests pass in both feature modes**.
+New coverage includes 24 racing opens/answers, retained-history deduplication,
+stale/conflicting edits, wrong-origin denial, journal reopen, quota rollback,
+damaged-state retention, non-executable entry points, strict report/bounds checks,
+runtime invalidation and lost/corrupt mailbox replies without replay. Headless
+two-logical-node pinned-TLS fixture `request-drafts-rXjH4Z` passes without models;
+fake-Ollama fixture `request-review-LGzXQc` verifies inferred review and receipt
+lookup after a deliberately dropped save reply. Credential and shutdown
+regressions pass (`node-credentials-91Y1Dm`, `job-shutdown-5y5Bxh`), as do model/job
+and scheduling checks (`model-metadata-LYlSYh`, `scheduling-XU717q`); formatting,
+syntax, diff and source backend/browser-boundary checks pass. These are isolated
+local processes, not physical two-PC acceptance or real model reasoning.
+Installed apps, permissions, models, installers and public update feeds are unchanged.
+
 ## Unreleased: one executor assignment per durable attempt (2026-10-10)
 
 The journal now admits at most one executor assignment for a durable task

@@ -94,7 +94,9 @@ The 2026-10-06 follow-up adds atomic node-origin creation deduplication while th
 original job remains in history: identical receipts/goals reuse it, conflicting
 or legacy-ambiguous receipts fail closed, and interrupted work is never resumed
 implicitly. This survives restart but not history removal/database replacement.
-Other commands still have correlation only. A permanent receipt ledger, execution
+Durable request-review openings and answer/proposal receipts now reuse this same
+journal, retaining original text/context and clarification history without a
+runner. Other commands still have correlation only. A permanent receipt ledger, execution
 grants and exactly-once effects are not claimed; see [commands](COMMANDS.md).
 
 The 2026-09-26 unreleased reliability increment serializes job admission with
@@ -174,7 +176,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 2 | Coordinator advertisements + network view | Authenticated, bounded, fresh node listings and coordinator hints; authorized peer lookup; no automatic trust or claimed cluster election. | Scoped pull discovery, registration metadata and freshness implemented; owner grant/revoke and restart CLI added in development; no direct peer transport claim |
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned metadata/inventory and node selection commands added in development; text/vision routing filters capabilities/state and explicit owner role constraints; route inspection available; automatic role-based planning and new executors remain planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
-| 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview and node-to-EEF stateless review of inferred or supplied proposals with gateway-stamped context; automatic interpretation, interactive clarification/approval and planning remain planned |
+| 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview/stateless review and origin-owned durable review/answer/proposal commands with retained text/history and receipt/revision checks; automatic clarification re-interpretation, approval and authoritative planning remain planned |
 | 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Reliability foundation: retained-history deduplication, shutdown admission, single-executor durable attempts and exact credentials with owner-pinned TLS 1.3; grants/acknowledgements and node-side issuer/attempt replay fencing remain planned |
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node request limits/reserved controls and typed coordinator non-model scheduling budgets with saved/applied readback; pipelines, executor acknowledgements and full resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |

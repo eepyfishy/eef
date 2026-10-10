@@ -3,6 +3,7 @@ use crate::task::{Plan, PlanStatus, TaskStatus};
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     fs::File,
     path::Path,
@@ -16,7 +17,7 @@ fn reserve(plan: &Plan) -> usize {
     match plan.status {
         PlanStatus::Pending | PlanStatus::Running => RECOVERY_RESERVE,
         PlanStatus::Pausing | PlanStatus::Stopping => 3072,
-        PlanStatus::Paused | PlanStatus::Interrupted => 1024,
+        PlanStatus::Review | PlanStatus::Paused | PlanStatus::Interrupted => 1024,
         _ => 0,
     }
 }
@@ -202,7 +203,12 @@ impl JobStore {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows.into_iter()
-            .map(|s| serde_json::from_str(&s).context("Damaged job record; retained for recovery"))
+            .map(|s| {
+                let plan: Plan = serde_json::from_str(&s)
+                    .context("Damaged job record; retained for recovery")?;
+                validate_retained_review(&plan)?;
+                Ok(plan)
+            })
             .collect()
     }
     pub fn get(&self, id: &str) -> Result<Plan> {
@@ -219,6 +225,7 @@ impl JobStore {
     /// journal lock covers lookup and insertion; no separate receipt can commit
     /// without its job. Legacy ambiguous receipts fail closed, never pick one.
     pub(crate) fn admit_request(&self, plan: Plan) -> Result<JobAdmission> {
+        validate(&plan)?;
         let origin = plan
             .goal
             .request_context
@@ -232,6 +239,7 @@ impl JobStore {
             let raw: String = row.get(0)?;
             let saved: Plan =
                 serde_json::from_str(&raw).context("Damaged job record; admission refused")?;
+            validate_retained_review(&saved)?;
             if saved.goal.request_context.as_ref().is_some_and(|context| {
                 context.origin_node() == origin.origin_node()
                     && context.request_id() == origin.request_id()
@@ -253,6 +261,11 @@ impl JobStore {
                 || saved.goal.template != plan.goal.template
                 || saved.goal.params != plan.goal.params
                 || saved.goal.constraints != plan.goal.constraints
+                || match (&saved.request_review, &plan.request_review) {
+                    (None, None) => false,
+                    (Some(a), Some(b)) => !a.same_opening(b),
+                    _ => true,
+                }
             {
                 bail!(
                     "Operation receipt conflicts with a retained job; use jobs.find to inspect it"
@@ -277,7 +290,12 @@ impl JobStore {
         if usize::try_from(count)? >= self.max_count {
             bail!("Job history is full. Remove finished jobs or increase jobs.max_count.")
         }
-        stamp(&mut plan, "Job saved before execution");
+        let event = if plan.status == PlanStatus::Review {
+            "Request review saved; no execution authorized"
+        } else {
+            "Job saved before execution"
+        };
+        stamp(&mut plan, event)?;
         let encoded = serde_json::to_string(&plan)?;
         self.check_size(connection, &plan.plan_id, encoded.len(), reserve(&plan))?;
         connection.execute(
@@ -292,10 +310,24 @@ impl JobStore {
         event: &str,
         change: impl FnOnce(&mut Plan) -> Result<()>,
     ) -> Result<Plan> {
+        self.edit(id, event, |plan| {
+            change(plan)?;
+            Ok(true)
+        })
+    }
+    pub(crate) fn edit(
+        &self,
+        id: &str,
+        event: &str,
+        edit: impl FnOnce(&mut Plan) -> Result<bool>,
+    ) -> Result<Plan> {
         let connection = self.connection.lock().expect("job journal");
         let mut plan = read(&connection, id)?;
-        change(&mut plan)?;
-        stamp(&mut plan, event);
+        if !edit(&mut plan)? {
+            return Ok(plan);
+        }
+        validate_retained_review(&plan)?;
+        stamp(&mut plan, event)?;
         let encoded = serde_json::to_string(&plan)?;
         self.check_size(&connection, id, encoded.len(), reserve(&plan))?;
         connection.execute(
@@ -392,10 +424,42 @@ fn read(connection: &Connection, id: &str) -> Result<Plan> {
             |row| row.get(0),
         )
         .context("Job not found")?;
-    serde_json::from_str(&raw).context("Damaged job record; retained for recovery")
+    let plan: Plan =
+        serde_json::from_str(&raw).context("Damaged job record; retained for recovery")?;
+    validate_retained_review(&plan)?;
+    Ok(plan)
 }
-fn stamp(plan: &mut Plan, event: &str) {
-    plan.revision = plan.revision.saturating_add(1);
+fn validate_retained_review(plan: &Plan) -> Result<()> {
+    if let Some(draft) = &plan.request_review {
+        draft.validate()?;
+        let context = plan
+            .goal
+            .request_context
+            .as_ref()
+            .context("Damaged review origin; retained for recovery")?;
+        eefn::job_commands::validate_operation_id(context.request_id())?;
+        eefn::network::validate_remote_node_id(context.origin_node())?;
+        if !matches!(plan.status, PlanStatus::Review | PlanStatus::Cancelled)
+            || !plan.tasks.is_empty()
+            || !plan.results.is_empty()
+            || context.request_id() != draft.proposals[0].operation_id
+            || plan.goal.template != "request_review"
+            || plan.goal.description != draft.proposals[0].proposal.goal
+            || plan.goal.params != json!({})
+            || plan.goal.constraints != json!({})
+        {
+            bail!("Damaged review state; retained for recovery")
+        }
+    } else if plan.status == PlanStatus::Review {
+        bail!("Damaged review data; retained for recovery")
+    }
+    Ok(())
+}
+fn stamp(plan: &mut Plan, event: &str) -> Result<()> {
+    plan.revision = plan
+        .revision
+        .checked_add(1)
+        .context("Job revision exhausted; checkpoint unchanged")?;
     plan.updated_at_ms = eefn::protocol::now_ms();
     plan.history.push(JobEvent {
         revision: plan.revision,
@@ -405,14 +469,39 @@ fn stamp(plan: &mut Plan, event: &str) {
     if plan.history.len() > 128 {
         plan.history.remove(0);
     }
+    Ok(())
 }
 fn validate(plan: &Plan) -> Result<()> {
-    if plan.status != PlanStatus::Pending
+    if !matches!(plan.status, PlanStatus::Pending | PlanStatus::Review)
         || !plan.results.is_empty()
         || plan.revision != 0
         || !plan.history.is_empty()
     {
         bail!("New jobs must have fresh pending state")
+    }
+    if let Some(draft) = &plan.request_review {
+        validate_retained_review(plan)?;
+        draft.validate()?;
+        if plan.status != PlanStatus::Review
+            || !plan.tasks.is_empty()
+            || draft.proposals.len() != 1
+            || !draft.answers.is_empty()
+            || plan
+                .goal
+                .request_context
+                .as_ref()
+                .is_none_or(|ctx| ctx.request_id() != draft.proposals[0].operation_id)
+        {
+            bail!("New review records must be fresh, origin-bound and non-executable")
+        }
+        if plan.plan_id.len() != 32 {
+            bail!("Invalid review identity")
+        }
+        eefn::request_drafts::validate_id(&plan.plan_id)?;
+        return Ok(());
+    }
+    if plan.status == PlanStatus::Review {
+        bail!("Review record is missing its validated proposal")
     }
     if plan.plan_id.is_empty()
         || plan.plan_id.len() > 128
@@ -472,6 +561,12 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
         "completed_tasks": plan.tasks.iter().filter(|t|t.status==TaskStatus::Completed).count(),
         "can_resume": matches!(plan.status,PlanStatus::Paused|PlanStatus::Interrupted) && !plan.tasks.iter().any(|t|t.status==TaskStatus::Interrupted&&!crate::task::retry_safe(t)),
     });
+    if let Some(draft) = &plan.request_review {
+        value["review_only"] = json!(true);
+        value["review_state"] = json!(draft.state());
+        value["answer_count"] = json!(draft.answers.len());
+        value["proposal_count"] = json!(draft.proposals.len());
+    }
     if details {
         value["tasks"] =
             json!(plan.tasks.iter().map(|t|json!({
@@ -610,6 +705,35 @@ mod tests {
             "params":{"path":"fixture","content":"private output"},
             "request_context":{"request_id":"origin-request","origin_node":"owner","origin_area":["Home","Study"]}
         })).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn exhausted_revision_rejects_mutation_without_reusing_a_checkpoint_number() {
+        let store = JobStore::in_memory().unwrap();
+        let job = plan("generate_text");
+        let id = job.plan_id.clone();
+        store.insert(job).unwrap();
+        let mut exhausted = store.get(&id).unwrap();
+        exhausted.revision = u64::MAX;
+        let raw = serde_json::to_string(&exhausted).unwrap();
+        store
+            .connection
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE durable_jobs SET plan_json=?2 WHERE job_id=?1",
+                params![id, raw],
+            )
+            .unwrap();
+        assert!(
+            store
+                .change(&id, "must not commit", |p| {
+                    p.status = PlanStatus::Cancelled;
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(json!(store.get(&id).unwrap()), json!(exhausted));
     }
 
     #[test]

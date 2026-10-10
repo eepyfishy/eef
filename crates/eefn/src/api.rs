@@ -98,6 +98,12 @@ impl NodeService {
             .route("/api/commands/jobs", post(job_command))
             .route("/api/commands/requests/preview", post(request_preview))
             .route("/api/commands/requests/review", post(request_review))
+            .route("/api/commands/requests/open", post(request_open))
+            .route(
+                "/api/commands/requests/open-proposal",
+                post(request_open_proposal),
+            )
+            .route("/api/commands/requests/drafts", post(request_draft_command))
             .route(
                 "/api/commands/requests/review-proposal",
                 post(request_review_proposal),
@@ -265,6 +271,24 @@ async fn request_review_proposal(
     Json(request): Json<crate::request_preview::ProposalReviewRequest>,
 ) -> Json<Value> {
     Json(state.review_supplied_proposal(request).await)
+}
+async fn request_open(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_preview::PreviewRequest>,
+) -> Json<Value> {
+    Json(state.open_request(request).await)
+}
+async fn request_open_proposal(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_preview::ProposalReviewRequest>,
+) -> Json<Value> {
+    Json(state.open_supplied_proposal(request).await)
+}
+async fn request_draft_command(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_drafts::DraftRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.draft_command(request).await?))
 }
 
 async fn chat(
