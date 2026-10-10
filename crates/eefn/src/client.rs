@@ -1056,7 +1056,7 @@ mod tests {
         let identity = crate::tls::CoordinatorIdentity::generate().unwrap();
         let key = crate::authentication::generate_credential();
         let server = crate::NodeServer::with_authentication(
-            "legacy-test-secret",
+            "",
             "127.0.0.1",
             0,
             crate::authentication::AuthenticationPolicy {

@@ -9,6 +9,7 @@ const root = resolve(import.meta.dirname, '..');
 const scratch = await mkdtemp(join(root, '.validation/node-credentials-'));
 const bin = resolve(process.env.EEF_TEST_BINARY_DIR || join(root, 'target/debug'));
 const children = [], eefConfig = join(scratch, 'eef.yaml');
+let coordinatorProcess;
 const secret = randomBytes(24).toString('hex');
 const env = {...process.env, EEF_NODE_PSK:'', APPDATA:join(scratch,'appdata'),
   EEF_DISCOVERY_DIR:join(scratch,'discovery'), PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
@@ -30,7 +31,7 @@ try {
   const [webPort,gatewayPort]=await Promise.all([port(),port()]);const base=`http://127.0.0.1:${webPort}`;
   const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
   await writeFile(eefConfig,yaml);
-  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:secret});
+  coordinatorProcess=launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:secret});
   await until(async()=>(await json(base+'/api/diagnostics')).initialized,'coordinator startup');
   const nodes=[];
   for(const name of ['a','b']) {
@@ -118,6 +119,18 @@ try {
   let old=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
   await until(async()=>{const d=await coordinator(['diagnostics']);return d.runtime_id!==old&&d.registered_node_count===2;},'independent reconnect with legacy disabled');
   const policy=await coordinator(['credentials','show']);assert.equal(policy.applied_policy.allow_legacy,false);
+  assert.equal(JSON.parse(await readFile(join(scratch,'discovery/local-eef.json'),'utf8')).psk,'','disabled legacy must not advertise a shared fallback');
+  // Independent credentials and persisted TLS must boot without an unused legacy PSK/env override.
+  const credentialOnly=await json(base+'/api/config');credentialOnly.config.node.psk='';
+  await json(base+'/api/config',{config:credentialOnly.config},'PUT');
+  coordinatorProcess.kill();await coordinatorProcess.result;
+  coordinatorProcess=launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui']);
+  await until(async()=>{const d=await coordinator(['diagnostics']);return d.initialized&&d.runtime_id!==old&&d.registered_node_count===2;},'credential-only cold boot without legacy secret');
+  assert.equal(JSON.parse(await readFile(join(scratch,'discovery/local-eef.json'),'utf8')).psk,'');
+  const beforeEnable=await readFile(eefConfig);
+  await coordinator(['credentials','legacy','--allow','true'],false);
+  assert.deepEqual(await readFile(eefConfig),beforeEnable,'missing legacy secret must reject enable atomically');
+  assert.equal((await coordinator(['credentials','show'])).saved_policy.allow_legacy,false);
   await coordinator(['invite','--address',`127.0.0.1:${gatewayPort}`],false);
   await coordinator(['credentials','revoke','--node',nodes[0].id]);
   assert.equal((await coordinator(['diagnostics','--node',nodes[0].id,'--samples','1'])).passed,1,'saved revocation is not immediate');
@@ -140,6 +153,7 @@ try {
     redacted_inspection:true,generic_save_preserves_policy:true,node_id_and_permissions_preserved:true,physical_two_pc:false,
     execution_grants:false,execution_attempt_replay_fencing:false};
   results.pinned_tls13=true;results.persistent_coordinator_identity=true;
+  results.credential_only_boot_without_legacy_secret=true;results.invalid_legacy_reenable_rejected_atomically=true;
   results.non_model_dispatch_and_rejected_constraints=true;
   await writeFile(join(scratch,'results.json'),JSON.stringify(results,null,2));console.log('Node credential validation passed: '+scratch);
 } finally {

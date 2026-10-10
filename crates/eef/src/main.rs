@@ -839,10 +839,16 @@ async fn main() -> Result<()> {
             eefn::setup::open_dashboard(&host, port);
             open_dashboard = false;
         }
-        let local_secret = std::env::var("EEF_NODE_PSK")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| runtime.config.string("node.psk", ""));
+        // Clear legacy local pairing advertisements while that transport is disabled;
+        // independent node credentials are never published as a shared fallback.
+        let local_secret = if runtime.node_server.authentication_policy().allow_legacy {
+            std::env::var("EEF_NODE_PSK")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| runtime.config.string("node.psk", ""))
+        } else {
+            String::new()
+        };
         eefn::setup::publish_local(
             runtime.node_server.port(),
             port,

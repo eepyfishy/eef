@@ -81,6 +81,9 @@ No plan, job or execution authority is created by saving scheduling limits.
 Unreleased exact-node pairing and credential migration commands are documented
 in [independent node credentials](NODE-CREDENTIALS.md). They are not in the
 published alpha.6 installers and never grant feature permissions.
+Credential-only startup with legacy access disabled now needs no dummy legacy
+secret and advertises no shared-key local fallback. Re-enablement still requires
+a valid effective legacy secret; see the migration contract above.
 
 Added in v0.4.0a5.
 

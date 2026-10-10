@@ -1,5 +1,32 @@
 # Architecture conformance status
 
+## Unreleased: credential-only startup without a legacy secret (2026-10-11)
+
+EEF no longer requires an unused shared secret when the owner has explicitly
+disabled legacy authentication. The gateway constructs no legacy key in that mode;
+independent credential/certificate validation and explicit provisioning remain
+mandatory for connections. A missing TLS identity leaves owner commands available,
+not an implicit identity or network trust. Default legacy-enabled setup keeps its
+existing non-placeholder secret requirement. Explicit legacy re-enablement rejects
+atomically without a valid effective secret distinct from node credentials.
+Disabled legacy access also clears the local shared-key pairing advertisement;
+saved old keys are not automatically erased. See [migration contract](NODE-CREDENTIALS.md).
+
+Validation: **329 workspace/all-target Rust tests pass in both feature modes**.
+The real pinned-TLS grant/receipt unit fixture now uses no legacy gateway secret.
+Fresh headless `node-credentials-WI587I` proves a cold EEF restart with no config/env
+legacy secret, two independent reconnects, unchanged certificate identity, blank
+shared-key advertisement and atomic denial of invalid legacy re-enablement.
+Granted request/receipt/restart checks (`request-drafts-7vE282`) and fake-model
+review/execution checks (`request-review-cc9dfh`) pass. Source boundary, formatting,
+syntax and diff checks pass; all fixture child processes closed through cleanup.
+
+This is an authentication/setup reliability fix, not automatic pairing, physical
+two-PC acceptance, credential ESP support or completion of stable v0.4.0. The
+remaining roadmap/release gates below still apply. Installed apps/remote nodes,
+models, permissions, versions, installers and disabled stable-only update feeds
+are unchanged. No Defender/signing clearance is claimed.
+
 ## Unreleased: authenticated executor receipt inspection (2026-10-11)
 
 Original-node and local EEF-owner `requests receipt` commands now inspect the

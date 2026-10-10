@@ -321,6 +321,13 @@ reviving old authority, changing the job, inferring success or authorizing repla
 This supplies recovery evidence, **not** automatic or owner-directed uncertainty
 resolution, lost-output recovery or proof that external effects stopped.
 
+The credential-only startup follow-up removes the unused legacy PSK requirement
+when legacy authentication is explicitly disabled. No legacy key is constructed
+or advertised; independent TLS identity/credential checks still apply, and owner
+re-enablement requires a valid distinct legacy secret. Cold restart and two logical
+node reconnects pass without a config/env legacy secret. This improves setup
+reliability, not automatic pairing, credential ESP support or physical acceptance.
+
 The 2026-10-10 unreleased [scheduling command increment](COMMANDS.md#coordinator-scheduling-limits-unreleased-after-alpha6)
 adds owner-configured non-model freshness and coordinator-local global/provider/
 exact-node concurrency ceilings. Atomic reservations include retired futures

@@ -74,7 +74,7 @@ pub struct NodeServer {
 struct Inner {
     host: String,
     port: AtomicU16,
-    crypto: NodeCrypto,
+    crypto: Option<NodeCrypto>,
     authentication: crate::authentication::AuthenticationPolicy,
     tls_config: Option<Arc<tokio_rustls::rustls::ServerConfig>>,
     connections: RwLock<HashMap<String, Connection>>,
@@ -167,7 +167,11 @@ impl NodeServer {
             inner: Arc::new(Inner {
                 host: host.into(),
                 port: AtomicU16::new(port),
-                crypto: NodeCrypto::new(psk)?,
+                crypto: if authentication.allow_legacy {
+                    Some(NodeCrypto::new(psk)?)
+                } else {
+                    None
+                },
                 tls_config: authentication
                     .tls
                     .as_ref()
@@ -655,11 +659,16 @@ impl NodeServer {
             if !self.inner.authentication.allow_legacy {
                 bail!("legacy authentication disabled")
             }
+            let crypto = self
+                .inner
+                .crypto
+                .as_ref()
+                .context("Legacy authentication key unavailable")?;
             (
-                self.inner.crypto.clone(),
+                crypto.clone(),
                 None,
                 Box::new(reader) as crate::tls::NodeStream,
-                Some(crate::protocol::decode_line(&self.inner.crypto, &first)?),
+                Some(crate::protocol::decode_line(crypto, &first)?),
             )
         };
         let (reader, mut writer) = tokio::io::split(stream);
@@ -1103,6 +1112,27 @@ fn require_node_id(message: &Value, authenticated_id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disabled_legacy_transport_has_no_key_and_does_not_require_a_dummy_secret() {
+        let policy = crate::authentication::AuthenticationPolicy {
+            allow_legacy: false,
+            ..Default::default()
+        };
+        for unused in ["", "CHANGE_ME", "short"] {
+            let server =
+                NodeServer::with_authentication(unused, "127.0.0.1", 0, policy.clone()).unwrap();
+            assert!(server.inner.crypto.is_none());
+        }
+        assert!(NodeServer::new("", "127.0.0.1", 0).is_err());
+        let mut invalid = policy;
+        invalid
+            .credentials
+            .insert("owner".into(), Some("weak".into()));
+        assert!(
+            NodeServer::with_authentication("", "127.0.0.1", 0, invalid).is_err(),
+            "disabled legacy is not a credential validation bypass"
+        );
+    }
 
     #[tokio::test]
     async fn legacy_auth_rejects_identity_aliases_before_policy_and_replay_receipts() {
@@ -1332,11 +1362,15 @@ mod tests {
     async fn extreme_auth_timestamps_fail_closed_without_panicking() {
         let server = NodeServer::new("legacy-secret", "127.0.0.1", 0).unwrap();
         for timestamp in [i64::MIN, i64::MAX] {
-            let mut auth = crate::protocol::build_auth(&server.inner.crypto, "a", crate::VERSION);
+            let mut auth = crate::protocol::build_auth(
+                server.inner.crypto.as_ref().unwrap(),
+                "a",
+                crate::VERSION,
+            );
             auth["timestamp"] = json!(timestamp.to_string());
             assert!(
                 server
-                    .verify_auth_with(&server.inner.crypto, &auth)
+                    .verify_auth_with(server.inner.crypto.as_ref().unwrap(), &auth)
                     .await
                     .is_err()
             );
@@ -1346,24 +1380,25 @@ mod tests {
     #[tokio::test]
     async fn bounded_legacy_timestamp_nonces_remain_compatible() {
         let server = NodeServer::new("legacy-secret", "127.0.0.1", 0).unwrap();
-        let mut auth = crate::protocol::build_auth(&server.inner.crypto, "old-node", "0.3.2");
+        let mut auth =
+            crate::protocol::build_auth(server.inner.crypto.as_ref().unwrap(), "old-node", "0.3.2");
         auth["nonce"] = json!(crate::protocol::now_ms().to_string());
         let raw = format!(
             "{}|old-node|0.3.2|{}",
             auth["nonce"].as_str().unwrap(),
             auth["timestamp"].as_str().unwrap()
         );
-        auth["signature"] = json!(server.inner.crypto.sign(raw.as_bytes()));
+        auth["signature"] = json!(server.inner.crypto.as_ref().unwrap().sign(raw.as_bytes()));
         assert_eq!(
             server
-                .verify_auth_with(&server.inner.crypto, &auth)
+                .verify_auth_with(server.inner.crypto.as_ref().unwrap(), &auth)
                 .await
                 .unwrap(),
             "old-node"
         );
         assert!(
             server
-                .verify_auth_with(&server.inner.crypto, &auth)
+                .verify_auth_with(server.inner.crypto.as_ref().unwrap(), &auth)
                 .await
                 .is_err()
         );
@@ -1373,24 +1408,28 @@ mod tests {
     async fn exact_identity_nonce_pairs_cannot_collide_through_delimiters() {
         let server = NodeServer::new("legacy-secret", "127.0.0.1", 0).unwrap();
         for (id, nonce) in [("a:b", "c"), ("a", "b:c")] {
-            let mut auth = crate::protocol::build_auth(&server.inner.crypto, id, crate::VERSION);
+            let mut auth = crate::protocol::build_auth(
+                server.inner.crypto.as_ref().unwrap(),
+                id,
+                crate::VERSION,
+            );
             auth["nonce"] = json!(nonce);
             let raw = format!(
                 "{nonce}|{id}|{}|{}",
                 crate::VERSION,
                 auth["timestamp"].as_str().unwrap()
             );
-            auth["signature"] = json!(server.inner.crypto.sign(raw.as_bytes()));
+            auth["signature"] = json!(server.inner.crypto.as_ref().unwrap().sign(raw.as_bytes()));
             assert_eq!(
                 server
-                    .verify_auth_with(&server.inner.crypto, &auth)
+                    .verify_auth_with(server.inner.crypto.as_ref().unwrap(), &auth)
                     .await
                     .unwrap(),
                 id
             );
             assert!(
                 server
-                    .verify_auth_with(&server.inner.crypto, &auth)
+                    .verify_auth_with(server.inner.crypto.as_ref().unwrap(), &auth)
                     .await
                     .is_err()
             );
@@ -1401,15 +1440,16 @@ mod tests {
     #[tokio::test]
     async fn authentication_replay_cache_is_bounded_and_rejections_do_not_extend_receipts() {
         let server = NodeServer::new("legacy-secret", "127.0.0.1", 0).unwrap();
-        let auth = crate::protocol::build_auth(&server.inner.crypto, "a", crate::VERSION);
+        let auth =
+            crate::protocol::build_auth(server.inner.crypto.as_ref().unwrap(), "a", crate::VERSION);
         server
-            .verify_auth_with(&server.inner.crypto, &auth)
+            .verify_auth_with(server.inner.crypto.as_ref().unwrap(), &auth)
             .await
             .unwrap();
         let original = server.inner.nonces.lock().await.clone();
         assert!(
             server
-                .verify_auth_with(&server.inner.crypto, &auth)
+                .verify_auth_with(server.inner.crypto.as_ref().unwrap(), &auth)
                 .await
                 .is_err()
         );
@@ -1420,10 +1460,11 @@ mod tests {
                 cache.insert(("fixture".into(), n.to_string()), Instant::now());
             }
         }
-        let fresh = crate::protocol::build_auth(&server.inner.crypto, "a", crate::VERSION);
+        let fresh =
+            crate::protocol::build_auth(server.inner.crypto.as_ref().unwrap(), "a", crate::VERSION);
         assert!(
             server
-                .verify_auth_with(&server.inner.crypto, &fresh)
+                .verify_auth_with(server.inner.crypto.as_ref().unwrap(), &fresh)
                 .await
                 .is_err()
         );
@@ -1436,7 +1477,7 @@ mod tests {
             .values_mut()
             .for_each(|seen| *seen = Instant::now() - Duration::from_secs(601));
         server
-            .verify_auth_with(&server.inner.crypto, &fresh)
+            .verify_auth_with(server.inner.crypto.as_ref().unwrap(), &fresh)
             .await
             .unwrap();
         assert_eq!(server.inner.nonces.lock().await.len(), 1);
@@ -1456,7 +1497,7 @@ mod tests {
             let (reader, mut writer) = stream.into_split();
             let mut reader = BufReader::new(reader);
             let mut events = server.subscribe();
-            let crypto = &server.inner.crypto;
+            let crypto = server.inner.crypto.as_ref().unwrap();
             assert_eq!(
                 server.connection_counts().await,
                 ConnectionCounts::default()
@@ -1583,7 +1624,7 @@ mod tests {
                 .unwrap();
             let (reader, mut writer) = stream.into_split();
             let mut reader = BufReader::new(reader);
-            let crypto = &server.inner.crypto;
+            let crypto = server.inner.crypto.as_ref().unwrap();
             write_message(
                 crypto,
                 &mut writer,
@@ -1680,7 +1721,7 @@ mod tests {
             .unwrap();
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
-        let crypto = &server.inner.crypto;
+        let crypto = server.inner.crypto.as_ref().unwrap();
         write_message(
             crypto,
             &mut writer,
@@ -1778,12 +1819,12 @@ mod tests {
         let ids = std::collections::BTreeSet::from(["node-a".into()]);
         assert!(server.peer_records(&ids).await.unwrap().is_empty());
         let mut wire = Vec::new();
-        write_message(&server.inner.crypto,&mut wire,&json!({"type":"register","node_id":"node-a","network":{"advertised_address":"26.1.2.3"}})).await.unwrap();
-        write_message(&server.inner.crypto,&mut wire,&json!({"type":"heartbeat","node_id":"node-a","network":{"advertised_address":"attacker"}})).await.unwrap();
+        write_message(server.inner.crypto.as_ref().unwrap(),&mut wire,&json!({"type":"register","node_id":"node-a","network":{"advertised_address":"26.1.2.3"}})).await.unwrap();
+        write_message(server.inner.crypto.as_ref().unwrap(),&mut wire,&json!({"type":"heartbeat","node_id":"node-a","network":{"advertised_address":"attacker"}})).await.unwrap();
         server
             .serve(
                 "node-a",
-                &server.inner.crypto,
+                server.inner.crypto.as_ref().unwrap(),
                 &mut BufReader::new(wire.as_slice()),
             )
             .await
@@ -1804,7 +1845,7 @@ mod tests {
         assert!(server.peer_records(&ids).await.unwrap().is_empty());
         let mut wire = Vec::new();
         write_message(
-            &server.inner.crypto,
+            server.inner.crypto.as_ref().unwrap(),
             &mut wire,
             &json!({"type":"heartbeat","node_id":"node-a"}),
         )
@@ -1814,7 +1855,7 @@ mod tests {
             server
                 .serve(
                     "node-a",
-                    &server.inner.crypto,
+                    server.inner.crypto.as_ref().unwrap(),
                     &mut BufReader::new(wire.as_slice())
                 )
                 .await
@@ -1840,13 +1881,13 @@ mod tests {
             let message =
                 json!({"type":"register","node_id":"stable","name":"Laptop","network":network});
             let mut wire = Vec::new();
-            write_message(&server.inner.crypto, &mut wire, &message)
+            write_message(server.inner.crypto.as_ref().unwrap(), &mut wire, &message)
                 .await
                 .unwrap();
             let result = server
                 .serve(
                     "stable",
-                    &server.inner.crypto,
+                    server.inner.crypto.as_ref().unwrap(),
                     &mut BufReader::new(wire.as_slice()),
                 )
                 .await;
@@ -1876,14 +1917,14 @@ mod tests {
         ];
         let mut wire = Vec::new();
         for message in messages {
-            write_message(&server.inner.crypto, &mut wire, &message)
+            write_message(server.inner.crypto.as_ref().unwrap(), &mut wire, &message)
                 .await
                 .unwrap();
         }
         server
             .serve(
                 "owner",
-                &server.inner.crypto,
+                server.inner.crypto.as_ref().unwrap(),
                 &mut BufReader::new(wire.as_slice()),
             )
             .await
@@ -1933,14 +1974,14 @@ mod tests {
             json!({"type":"register","node_id":"forged"}),
         ] {
             let mut wire = Vec::new();
-            write_message(&server.inner.crypto, &mut wire, &invalid)
+            write_message(server.inner.crypto.as_ref().unwrap(), &mut wire, &invalid)
                 .await
                 .unwrap();
             assert!(
                 server
                     .serve(
                         "owner",
-                        &server.inner.crypto,
+                        server.inner.crypto.as_ref().unwrap(),
                         &mut BufReader::new(wire.as_slice())
                     )
                     .await
@@ -1953,7 +1994,7 @@ mod tests {
                 json!({"type":"register","node_id":"owner"}),
                 json!({"type":"submit","node_id":"owner","id":"three","operation_id":invalid}),
             ] {
-                write_message(&server.inner.crypto, &mut wire, &message)
+                write_message(server.inner.crypto.as_ref().unwrap(), &mut wire, &message)
                     .await
                     .unwrap();
             }
@@ -1961,7 +2002,7 @@ mod tests {
                 server
                     .serve(
                         "owner",
-                        &server.inner.crypto,
+                        server.inner.crypto.as_ref().unwrap(),
                         &mut BufReader::new(wire.as_slice())
                     )
                     .await
@@ -2222,14 +2263,14 @@ mod tests {
                 "metadata":{"resources":[{"id":"info","capability":"system.info","parameters":{"password":"PRIVATE-BINDING"}}]}}),
             json!({"type":"heartbeat","node_id":"owner","load":{"cpu":0.2},"latency_ms":8,"command":"PRIVATE-COMMAND","gateway_received_ms":u64::MAX}),
         ] {
-            write_message(&server.inner.crypto, &mut wire, &value)
+            write_message(server.inner.crypto.as_ref().unwrap(), &mut wire, &value)
                 .await
                 .unwrap();
         }
         server
             .serve(
                 "owner",
-                &server.inner.crypto,
+                server.inner.crypto.as_ref().unwrap(),
                 &mut BufReader::new(wire.as_slice()),
             )
             .await
@@ -2249,14 +2290,14 @@ mod tests {
             json!({"type":"register","node_id":"owner","capabilities":[],"name":"Second"}),
             json!({"type":"heartbeat","node_id":"owner","load":{"cpu":0.8},"latency_ms":3}),
         ] {
-            write_message(&server.inner.crypto, &mut wire, &value)
+            write_message(server.inner.crypto.as_ref().unwrap(), &mut wire, &value)
                 .await
                 .unwrap();
         }
         server
             .serve(
                 "owner",
-                &server.inner.crypto,
+                server.inner.crypto.as_ref().unwrap(),
                 &mut BufReader::new(wire.as_slice()),
             )
             .await
@@ -2359,15 +2400,19 @@ mod tests {
             let (reader, mut writer) = stream.into_split();
             let mut reader = BufReader::new(reader);
             write_message(
-                &server.inner.crypto,
+                server.inner.crypto.as_ref().unwrap(),
                 &mut writer,
-                &crate::protocol::build_auth(&server.inner.crypto, "owner", crate::VERSION),
+                &crate::protocol::build_auth(
+                    server.inner.crypto.as_ref().unwrap(),
+                    "owner",
+                    crate::VERSION,
+                ),
             )
             .await
             .unwrap();
             let reply = timeout(
                 Duration::from_secs(3),
-                read_message(&server.inner.crypto, &mut reader),
+                read_message(server.inner.crypto.as_ref().unwrap(), &mut reader),
             )
             .await
             .unwrap()
@@ -2375,14 +2420,14 @@ mod tests {
             .unwrap();
             assert_eq!(reply["type"], "ok");
             write_message(
-                &server.inner.crypto,
+                server.inner.crypto.as_ref().unwrap(),
                 &mut writer,
                 &json!({"type":"register","node_id":"owner"}),
             )
             .await
             .unwrap();
             write_message(
-                &server.inner.crypto,
+                server.inner.crypto.as_ref().unwrap(),
                 &mut writer,
                 &json!({"type":"submit","node_id":"owner","id":"reused-wire-id","kind":"jobs.list",
                 "payload":{},"gateway_session_id":"forged"}),
@@ -2407,7 +2452,7 @@ mod tests {
             server.send_submission_reply(&current,json!({"type":"submission_result","id":"reused-wire-id","success":true,"data":n})).await.unwrap();
             let reply = timeout(
                 Duration::from_secs(3),
-                read_message(&server.inner.crypto, &mut reader),
+                read_message(server.inner.crypto.as_ref().unwrap(), &mut reader),
             )
             .await
             .unwrap()

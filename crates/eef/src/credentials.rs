@@ -74,6 +74,12 @@ pub fn command(
             },
         }
         saved.validate()?;
+        if matches!(request, CredentialCommand::Legacy { allow: true }) {
+            let secret = std::env::var("EEF_NODE_PSK").ok().filter(|s| !s.is_empty())
+                .unwrap_or_else(|| value.pointer("/node/psk").and_then(Value::as_str).unwrap_or("").into());
+            crate::runtime::validate_secret(&secret)?;
+            saved.validate_legacy_key(&secret)?;
+        }
         saved.validate_legacy_key(&config.string("node.psk", ""))?;
         let changed = saved != before;
         if changed { value["node"]["authentication"] = serde_json::to_value(&saved)?; }

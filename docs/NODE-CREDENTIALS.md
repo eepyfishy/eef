@@ -57,6 +57,19 @@ This also makes the old shared-key `eef invite` unavailable. Older nodes require
 an explicit compatible upgrade; there is no credential downgrade/fallback.
 Local owner controls remain usable even if every outgoing node connection fails.
 
+Credential-only startup no longer requires a dummy legacy `node.psk` or
+`EEF_NODE_PSK`: with `allow_legacy: false`, the gateway constructs no legacy key.
+Independent credentials, certificate validation and explicit pairing still apply;
+no identity/credential is silently created to bypass missing setup. The local
+shared-key pairing advertisement is cleared while legacy access is disabled,
+even if an old key remains saved or in the process environment. Existing saved
+keys are not automatically erased. Only an owner setting may re-enable legacy,
+and that command rejects atomically without a valid non-placeholder effective
+legacy secret (at least 12 characters, distinct from node credentials). Default
+legacy-enabled installations retain their existing secret requirement. These
+changes do not add credential transport to legacy ESP firmware or complete peer
+authorization/release acceptance.
+
 ### Migration from the earlier unreleased credential build
 
 Private invitations and public selectors now use schema **2**. Schema 1's raw
