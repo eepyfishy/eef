@@ -710,6 +710,8 @@ struct FileConfig {
     #[serde(default)]
     auth_mode: eefn::authentication::AuthMode,
     #[serde(default)]
+    coordinator_certificate: Option<String>,
+    #[serde(default)]
     request_limits: eefn::request_limits::RequestLimits,
     #[serde(default)]
     network: eefn::network::NetworkAdvertisement,
@@ -1276,6 +1278,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
             NodeClient::new(
                 NodeClientConfig {
                     auth_mode: file.auth_mode,
+                    coordinator_certificate: file.coordinator_certificate,
                     request_limits: file.request_limits,
                     network: file.network,
                     metadata: file.metadata,

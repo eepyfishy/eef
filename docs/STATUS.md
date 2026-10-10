@@ -1,5 +1,50 @@
 # Architecture conformance status
 
+## Unreleased: owner-pinned TLS credential transport (2026-10-10)
+
+Independent credentials now require standard Rustls/Tokio Rustls TLS 1.3 around
+the existing encrypted frames. First explicit provisioning creates a persistent
+coordinator certificate/private key; schema-2 invitations contain only the public
+certificate and exact-node secret. Nodes use only that owner-paired trust root and
+additionally compare the verified leaf bytes. There is no public-root pool, TOFU,
+insecure verifier, TLS 1.2, early data, resumption, silent certificate replacement
+or credential downgrade. Existing ring dependencies are reused; rcgen generates
+the self-signed identity within the workspace's Rust 1.88 requirement.
+
+Coordinator restart/provisioning another node/node-key rotation preserve its TLS
+identity. Status distinguishes `pinned_tls13` from `legacy_shared_key`; inspection
+shows a public fingerprint and redacts node secrets and the coordinator private
+key. Generic coordinator saves preserve the full latest credential/TLS policy;
+remote node settings cannot replace trust. Selector/ClientHello and probe/auth
+read-ahead bytes are retained, including coalesced and fragmented delivery. Gateway
+shutdown owns incomplete TLS handshakes, not just authenticated sockets.
+
+Earlier **unreleased** schema-1 credential builds require explicit owner rotation
+and pairing again; raw credential frames are refused even with the correct key.
+A policy without a TLS identity cannot accept credential sessions; local owner
+controls remain available for provisioning/recovery. Legacy shared-key behavior
+for other identities remains compatible until explicitly disabled. See
+[migration and security boundaries](NODE-CREDENTIALS.md).
+
+TLS record replay is rejected within/across sessions. This is not persisted
+logical-command/attempt replay protection, execution grants, stale-leader fencing,
+remote cancellation acknowledgement or an authorized peer data service. The TLS
+certificate is not Windows installer code signing. Physical two-PC migration,
+external security review and release acceptance remain pending.
+
+Validation: **243 workspace/all-target Rust tests pass in both feature modes**.
+Tests cover wrong/missing pins, wrong keys/IDs, schema-1 and raw-frame downgrade,
+TLS 1.2/ALPN denial, malformed/bounded/mismatched certificate material, same/cross-
+session ciphertext replay, 64 KiB fragmented streams, coalesced read-ahead and
+partial-handshake shutdown. Headless public-command two-logical-node fixture
+`node-credentials-AJUEB3` confirms persistent identity across restart and rotation,
+disabled-legacy reconnect, deferred revocation, private-key redaction, preserved
+permissions and no-model structured review. Existing command/review regressions
+passed (`node-commands-y49XEl`, `request-review-gMrzWH`); formatting, syntax and
+source backend/browser-boundary checks pass. Scoped discovery and job-shutdown
+regressions also passed (`peer-discovery-VvHb02`, `job-shutdown-KsdcfP`). No installed node, model download,
+permission, release feed, installer, signing or public artifact was changed.
+
 ## Unreleased: model-independent structured review adapter (2026-10-10)
 
 `eefn requests review-proposal --file` sends a supplied structured proposal to

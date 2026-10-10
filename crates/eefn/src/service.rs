@@ -97,6 +97,11 @@ impl NodeService {
                 value["auth_mode"] = mode.clone();
             }
         }
+        if value.get("coordinator_certificate").is_none() {
+            if let Some(certificate) = old.get("coordinator_certificate") {
+                value["coordinator_certificate"] = certificate.clone();
+            }
+        }
         if let Some(id) = old.get("node_id") {
             value["node_id"] = id.clone();
         }
@@ -199,6 +204,8 @@ impl NodeService {
             "auto_local":config["auto_local"].as_bool().unwrap_or(true),
             "local_pairing":config["local_pairing"].as_bool().unwrap_or(true),
             "saved_auth_mode":config["auth_mode"].as_str().unwrap_or("legacy"),
+            "saved_coordinator_fingerprint":config["coordinator_certificate"].as_str()
+                .and_then(|certificate|crate::tls::certificate_fingerprint(certificate).ok()),
             "connection":live["connection"],"restart_requested":restart_requested,
             "note":"Saved connection policy is not completed reconnection. Local commands remain available; the requested node runtime restart also applies pending settings."}),
         )
@@ -287,11 +294,17 @@ impl NodeService {
         Ok(json!({"saved":true,"restart_required":true}))
     }
 
-    pub(crate) fn save_credential_pair(&self, address: &str, secret: &str) -> Result<()> {
+    pub(crate) fn save_credential_pair(
+        &self,
+        address: &str,
+        secret: &str,
+        certificate: &str,
+    ) -> Result<()> {
         let _guard = self.config_lock.lock().expect("config lock");
         let mut config = self.read_config()?;
         config["auth_mode"] = json!("node_credential");
         config["psk"] = json!(secret);
+        config["coordinator_certificate"] = json!(certificate);
         config["endpoints"] = json!([{"address":address,"priority":100}]);
         config["auto_local"] = json!(false);
         config["local_pairing"] = json!(false);
@@ -715,6 +728,7 @@ fn validate_config(value: &Value) -> Result<()> {
     .map_err(|_| anyhow::anyhow!("invalid node authentication mode"))?;
     if auth_mode == crate::authentication::AuthMode::NodeCredential {
         crate::authentication::validate_credential(value["psk"].as_str().unwrap_or(""))?;
+        crate::tls::client_config(value["coordinator_certificate"].as_str().unwrap_or(""))?;
     }
     let limits: crate::request_limits::RequestLimits = serde_json::from_value(
         value

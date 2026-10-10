@@ -47,9 +47,11 @@ try {
     await writeFile(privateFile,name==='b'?Buffer.concat([Buffer.from([0xff,0xfe]),Buffer.from(JSON.stringify(invitation),'utf16le')]):'\ufeff'+JSON.stringify(invitation));
     assert.equal(invitation.private,true);assert.equal(invitation.restart_required,true);
     const decoded=JSON.parse(Buffer.from(invitation.code,'base64'));assert.equal(decoded.node_id,id);assert.notEqual(decoded.psk,secret);
-    nodes.push({id,config,api,privateFile,credential:decoded.psk});
+    assert.equal(decoded.schema_version,2);assert.equal(typeof decoded.coordinator_certificate,'string');assert(!('private_key' in decoded));
+    nodes.push({id,config,api,privateFile,credential:decoded.psk,certificate:decoded.coordinator_certificate});
   }
   assert.notEqual(nodes[0].credential,nodes[1].credential);
+  assert.equal(nodes[0].certificate,nodes[1].certificate,'persistent coordinator identity must not change per node');
   const show=await coordinator(['credentials','show']);assert.equal(show.saved_policy.identities.length,2);assert.equal(show.applied_policy.identities.length,0);
   for(const node of nodes) assert(!JSON.stringify(show).includes(node.credential));
   const previous=(await coordinator(['diagnostics'])).runtime_id;
@@ -62,6 +64,8 @@ try {
     await until(async()=>(await json(node.api+'/api/status')).connection?.state==='connected','credential node connected');
     const config=JSON.parse(await readFile(node.config,'utf8'));
     assert.equal(config.node_id,node.id);assert.equal(config.psk,node.credential);assert.equal(config.auth_mode,'node_credential');
+    assert.equal(config.coordinator_certificate,node.certificate);
+    assert.equal((await json(node.api+'/api/status')).connection.transport,'pinned_tls13');
     assert.equal(config.custom.preserve,true);assert.equal(config.permissions.remote_updates,false);assert.equal(config.auto_local,false);
     assert.equal((await cli('eefn',node.config,['connection','show'])).saved_auth_mode,'node_credential');
     const proposalFile=join(scratch,node.id+'-proposal.json');
@@ -90,6 +94,9 @@ try {
   await until(async()=>(await coordinator(['diagnostics'])).registered_node_count===2,'two registered nodes');
   for(const node of nodes) assert.equal((await coordinator(['diagnostics','--node',node.id,'--samples','1'])).passed,1);
   const configView=await json(base+'/api/config');
+  const privatePolicy=await readFile(eefConfig,'utf8');
+  assert(!privatePolicy.includes('__KEEP_EXISTING_SECRET__'),'saved keys must not be replaced with redaction placeholders');
+  assert.equal(configView.config.node.authentication.tls.private_key,'__KEEP_EXISTING_SECRET__');
   for(const node of nodes) assert(!JSON.stringify(configView).includes(node.credential));
   // A stale generic configuration client cannot drop the authentication policy.
   delete configView.config.node.authentication;
@@ -110,6 +117,7 @@ try {
   // Re-provision is explicit rotation, followed by independent restart/pairing.
   const rotated=await coordinator(['credentials','provision','--node',nodes[0].id,'--address',`127.0.0.1:${gatewayPort}`,'--rotate']);
   const decoded=JSON.parse(Buffer.from(rotated.code,'base64'));assert.notEqual(decoded.psk,nodes[0].credential);
+  assert.equal(decoded.coordinator_certificate,nodes[0].certificate,'credential rotation must not replace coordinator trust');
   await writeFile(nodes[0].privateFile,JSON.stringify(rotated));
   old=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
   await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==old,'rotation apply');
@@ -118,7 +126,8 @@ try {
   const results={passed:true,command_pairing:true,two_independent_credentials:true,legacy_disable:true,revocation_and_rotation:true,
     model_free_structured_review:true,
     redacted_inspection:true,generic_save_preserves_policy:true,node_id_and_permissions_preserved:true,physical_two_pc:false,
-    execution_grants:false,session_replay_fencing:false};
+    execution_grants:false,execution_attempt_replay_fencing:false};
+  results.pinned_tls13=true;results.persistent_coordinator_identity=true;
   await writeFile(join(scratch,'results.json'),JSON.stringify(results,null,2));console.log('Node credential validation passed: '+scratch);
 } finally {
   for(const child of children)if(child.exitCode===null)child.kill();

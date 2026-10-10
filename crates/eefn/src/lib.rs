@@ -33,6 +33,7 @@ pub mod service;
 pub mod setup;
 pub mod startup;
 pub mod submission;
+pub mod tls;
 pub mod updater;
 
 pub use client::{

@@ -1,8 +1,9 @@
 # Independent node credentials (unreleased)
 
 This development increment introduces opt-in exact-node credentials alongside
-the legacy network key. It does not complete execution grants, session replay
-fencing, direct peer authorization or coordinator clustering. Published alpha.6
+the legacy network key. Independent credentials now require owner-pinned TLS 1.3.
+It does not complete execution grants, durable application replay fencing,
+direct peer authorization or coordinator clustering. Published alpha.6
 installers do not contain these commands.
 
 ## Command-based migration
@@ -29,7 +30,10 @@ eefn connection pair --code-file private-pairing.json --json
 eefn connection show --json
 ```
 
-Pairing saves the selected endpoint/key and requests a node **app** restart.
+Pairing saves the selected endpoint/key and public coordinator certificate,
+then requests a node **app** restart. `connection show` reports the saved
+certificate SHA-256 fingerprint; a connected credential session reports
+`transport: pinned_tls13`. These are transport facts, not model/job readiness.
 It preserves the stable ID, permissions, connection-enabled preference, models
 and other settings. It turns off automatic shared-key local pairing. Restart
 acknowledgement is not completed connection or model readiness; inspect status
@@ -53,6 +57,17 @@ This also makes the old shared-key `eef invite` unavailable. Older nodes require
 an explicit compatible upgrade; there is no credential downgrade/fallback.
 Local owner controls remain usable even if every outgoing node connection fails.
 
+### Migration from the earlier unreleased credential build
+
+Private invitations and public selectors now use schema **2**. Schema 1's raw
+credential transport is refused, even with the correct secret. Already provisioned
+development nodes need an explicit `--rotate` invitation and pairing again; do not
+change IDs, reset permissions, enable legacy fallback or bypass certificate checks.
+An older credential policy without a TLS identity keeps the local owner service
+available but cannot accept credential connections. Explicit provisioning creates
+the identity, and coordinator restart applies it. Existing shared-key legacy nodes
+are unchanged until the owner migrates them.
+
 ## Revocation and rotation
 
 ```powershell
@@ -75,24 +90,42 @@ side effects stopped. No job or remote mutation is automatically replayed.
   or null for revocation. Duplicate credentials, network-key reuse, wildcards,
   unknown fields and malformed policy fail closed. Missing policy preserves
   legacy compatibility; it does not claim untrusted nodes are isolated.
-- A bounded **plaintext node-ID selector** chooses the associated key before the
-  normal encrypted reachability probe and authentication. It is public metadata,
+- `node.authentication.tls` holds the persistent public DER certificate and
+  private PKCS#8 key, base64 encoded. First explicit provisioning creates a random
+  coordinator identity; provisioning another node, rotating a node secret and
+  ordinary app restarts preserve it. Keep the config/backups private. Invitations
+  include only its public certificate, never the coordinator private key.
+- A bounded **plaintext node-ID selector** chooses the associated key before a
+  mandatory TLS 1.3 handshake, encrypted probe and node authentication. It is public metadata,
   not identity proof. The decrypted authentication must match the selected ID.
   Unknown/revoked/wrong-key selectors cannot fall back or reserve a live identity.
 - Provisioned and revoked IDs cannot authenticate with the network key, even
   while legacy access remains enabled for other IDs. Independent pairing does
   not confer any device-feature permission or trust additional coordinators.
-- The existing AES-GCM/HKDF/HMAC implementation and bounded framing are reused;
-  no new cryptographic primitive/construction or transport dependency is added.
-  The existing timestamp/nonce check is not session-level message replay fencing,
-  forward secrecy or proof of a durable execution grant. Captured frames and
-  coordinator restarts require a separately reviewed session-security increment
-  before scoped grants/peer workloads are declared safe.
-- Credential status/configuration responses redact keys. Only an explicit
+- [Rustls](https://docs.rs/rustls/0.23.43/rustls/) and
+  [Tokio Rustls](https://docs.rs/tokio-rustls/0.26.4/tokio_rustls/) provide standard
+  TLS 1.3, using the existing ring backend; [rcgen](https://docs.rs/rcgen/0.14.10/rcgen/)
+  generates the persistent self-signed identity. There is no custom TLS verifier:
+  the node's root store contains only the owner-paired certificate, and the
+  verified leaf must additionally match its exact bytes. System public roots,
+  trust-on-first-use, silent certificate replacement, TLS 1.2, early data,
+  resumption and session tickets are disabled for this path. The fixed protocol
+  server-name and ALPN identify EEF's protocol, not a deployment-specific host.
+  Handshake/probe deadlines and bounded existing frames still apply. Certificate
+  verification failure means inspect pairing/clock; never bypass verification.
+- Existing AES-GCM/HKDF/HMAC frames run **inside** TLS and exact-node HMAC proof
+  remains mandatory; this is not mutual-certificate authentication. TLS protects
+  session transport records against replay and provides ephemeral key exchange.
+  Legacy framing alone does not gain those guarantees. Transport security does
+  not authorize an application operation, prevent an authorized issuer from
+  resending a logical command, persist grant/attempt replay state, constrain a
+  stale leader or stop a remote side effect. Those grant/ownership gates remain.
+- Credential status/configuration responses redact node keys and the coordinator
+  private key. The certificate and fingerprint are public. Only an explicit
   provisioning operation returns a private code. Generic coordinator settings
   saves preserve the latest credential policy under its existing config lock;
   dedicated owner commands manage it. Remote node settings cannot change its
-  identity/key/authentication mode, and automatic local pairing never replaces
+  identity/key/authentication mode/certificate, and automatic local pairing never replaces
   independently paired trust.
 - Coordinator command mutations bind the current runtime ID. Node pairing binds
   the running stable node ID. These commands are local-owner operations, protected
@@ -101,4 +134,8 @@ side effects stopped. No job or remote mutation is automatically replayed.
 
 Validation uses unit/protocol tests and `tools/test-node-credentials.mjs`, with
 two logical nodes on one PC. Physical two-PC migration/rollback, reviewed session
-security, grants and peer paths remain separate acceptance gates.
+authorization, grants and peer paths remain separate acceptance gates. TLS tests
+exercise exact-pin rejection, same/cross-session record replay, TLS 1.2/ALPN denial,
+large fragmented streams, coalesced selector/ClientHello read-ahead and shutdown
+during incomplete handshakes. This TLS certificate is **not Windows code signing**
+and does not resolve installer Defender detections.

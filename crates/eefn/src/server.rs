@@ -75,6 +75,7 @@ struct Inner {
     port: AtomicU16,
     crypto: NodeCrypto,
     authentication: crate::authentication::AuthenticationPolicy,
+    tls_config: Option<Arc<tokio_rustls::rustls::ServerConfig>>,
     connections: RwLock<HashMap<String, Connection>>,
     routes: RwLock<HashMap<String, ConnectionInfo>>,
     pending: Mutex<HashMap<String, Pending>>,
@@ -160,6 +161,11 @@ impl NodeServer {
                 host: host.into(),
                 port: AtomicU16::new(port),
                 crypto: NodeCrypto::new(psk)?,
+                tls_config: authentication
+                    .tls
+                    .as_ref()
+                    .map(|v| v.server_config())
+                    .transpose()?,
                 authentication,
                 connections: RwLock::new(HashMap::new()),
                 routes: RwLock::new(HashMap::new()),
@@ -437,8 +443,7 @@ impl NodeServer {
     }
 
     async fn handle_connection(&self, stream: TcpStream, peer: SocketAddr) -> Result<()> {
-        let (reader, mut writer) = stream.into_split();
-        let mut reader = BufReader::new(reader);
+        let mut reader = BufReader::new(stream);
         // The selector is untrusted and public. It chooses an exact key only;
         // it never reserves an identity or permits fallback to the network key.
         let first = timeout(
@@ -448,14 +453,14 @@ impl NodeServer {
         .await
         .context("auth timed out")??
         .context("connection closed before auth")?;
-        let (crypto, selected_id, mut auth) = if first.first() == Some(&b'{') {
+        let (crypto, selected_id, stream, initial_auth) = if first.first() == Some(&b'{') {
             if first.len() > 1024 {
                 bail!("credential selector exceeds bounds")
             }
             let selector: crate::authentication::CredentialSelector =
                 serde_json::from_slice(&first)
                     .map_err(|_| anyhow::anyhow!("invalid credential selector"))?;
-            if selector.r#type != "node_credential" || selector.schema_version != 1 {
+            if selector.r#type != "node_credential" || selector.schema_version != 2 {
                 bail!("invalid credential selector")
             }
             crate::network::validate_node_id(&selector.node_id)?;
@@ -467,11 +472,17 @@ impl NodeServer {
                 .and_then(Option::as_ref)
                 .context("node credential unavailable")?;
             let crypto = NodeCrypto::new(secret)?;
-            let auth = timeout(AUTH_TIMEOUT, read_message(&crypto, &mut reader))
+            let config = self
+                .inner
+                .tls_config
+                .as_ref()
+                .context("credential TLS identity unavailable; owner provisioning required")?;
+            // Keep the buffered reader: selector and TLS ClientHello may arrive
+            // together, and dropping prefetched bytes would break the upgrade.
+            let stream = timeout(AUTH_TIMEOUT, crate::tls::accept(reader, config.clone()))
                 .await
-                .context("credential auth timed out")??
-                .context("connection closed before credential auth")?;
-            (crypto, Some(selector.node_id), auth)
+                .context("credential TLS timed out")??;
+            (crypto, Some(selector.node_id), stream, None)
         } else {
             if !self.inner.authentication.allow_legacy {
                 bail!("legacy authentication disabled")
@@ -479,8 +490,19 @@ impl NodeServer {
             (
                 self.inner.crypto.clone(),
                 None,
-                crate::protocol::decode_line(&self.inner.crypto, &first)?,
+                Box::new(reader) as crate::tls::NodeStream,
+                Some(crate::protocol::decode_line(&self.inner.crypto, &first)?),
             )
+        };
+        let (reader, mut writer) = tokio::io::split(stream);
+        let mut reader = BufReader::new(reader);
+        let mut auth = if let Some(auth) = initial_auth {
+            auth
+        } else {
+            timeout(AUTH_TIMEOUT, read_message(&crypto, &mut reader))
+                .await
+                .context("credential auth timed out")??
+                .context("connection closed before credential auth")?
         };
         // A bounded, encrypted service probe does not register or replace a node.
         if auth["type"] == "probe" {
@@ -827,6 +849,67 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn credential_transport_refuses_plaintext_downgrade_and_retires_partial_tls() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let key = "a".repeat(64);
+        let identity = crate::tls::CoordinatorIdentity::generate().unwrap();
+        let policy = crate::authentication::AuthenticationPolicy {
+            credentials: std::collections::BTreeMap::from([("a".into(), Some(key.clone()))]),
+            tls: Some(identity),
+            ..Default::default()
+        };
+        let server =
+            NodeServer::with_authentication("legacy-secret", "127.0.0.1", 0, policy).unwrap();
+        server.start().await.unwrap();
+        for version in [1, 2] {
+            let mut stream = TcpStream::connect(("127.0.0.1", server.port()))
+                .await
+                .unwrap();
+            let line = format!(
+                "{{\"type\":\"node_credential\",\"schema_version\":{version},\"node_id\":\"a\"}}\n"
+            );
+            stream.write_all(line.as_bytes()).await.unwrap();
+            // Static-key framing must not be accepted outside TLS, even though
+            // the correct independent secret can authenticate that inner frame.
+            let crypto = NodeCrypto::new(&key).unwrap();
+            let _ = write_message(
+                &crypto,
+                &mut stream,
+                &crate::protocol::build_auth(&crypto, "a", crate::VERSION),
+            )
+            .await;
+            let mut response = Vec::new();
+            let _ = timeout(Duration::from_secs(3), stream.read_to_end(&mut response))
+                .await
+                .unwrap();
+            assert_eq!(
+                server.connection_counts().await,
+                ConnectionCounts::default()
+            );
+            assert!(server.inner.nonces.lock().await.is_empty());
+        }
+        let mut stream = TcpStream::connect(("127.0.0.1", server.port()))
+            .await
+            .unwrap();
+        crate::authentication::write_selector(&mut stream, "a")
+            .await
+            .unwrap();
+        // Shutdown owns a TLS handshake too; no detached task/identity may linger.
+        timeout(Duration::from_secs(3), server.stop())
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        let _ = timeout(Duration::from_secs(3), stream.read_to_end(&mut response))
+            .await
+            .unwrap();
+        assert!(server.inner.active_ids.lock().unwrap().is_empty());
+        assert_eq!(
+            server.connection_counts().await,
+            ConnectionCounts::default()
+        );
+    }
+
+    #[tokio::test]
     async fn independent_keys_enforce_identity_and_never_downgrade() {
         let key_a = "a".repeat(64);
         let key_b = "b".repeat(64);
@@ -843,8 +926,10 @@ mod tests {
             (None, "old-node", "legacy-secret", true, true),
             (None, "old-node", "legacy-secret", false, false),
         ] {
+            let identity = crate::tls::CoordinatorIdentity::generate().unwrap();
             let policy = crate::authentication::AuthenticationPolicy {
                 allow_legacy,
+                tls: Some(identity.clone()),
                 credentials: std::collections::BTreeMap::from([
                     ("a".into(), Some(key_a.clone())),
                     ("b".into(), Some(key_b.clone())),
@@ -855,17 +940,36 @@ mod tests {
                 NodeServer::with_authentication("legacy-secret", "127.0.0.1", 0, policy).unwrap();
             let mut events = server.subscribe();
             server.start().await.unwrap();
-            let stream = TcpStream::connect(("127.0.0.1", server.port()))
+            let mut stream = TcpStream::connect(("127.0.0.1", server.port()))
                 .await
                 .unwrap();
-            let (reader, mut writer) = stream.into_split();
-            let mut reader = BufReader::new(reader);
-            let crypto = NodeCrypto::new(secret).unwrap();
-            if let Some(id) = selector {
-                crate::authentication::write_selector(&mut writer, id)
+            let stream: crate::tls::NodeStream = if let Some(id) = selector {
+                crate::authentication::write_selector(&mut stream, id)
                     .await
                     .unwrap();
-            }
+                let secured = crate::tls::connect(
+                    stream,
+                    &identity.certificate,
+                    crate::tls::client_config(&identity.certificate).unwrap(),
+                )
+                .await;
+                if matches!(id, "unknown" | "revoked") {
+                    assert!(secured.is_err());
+                    assert_eq!(
+                        server.connection_counts().await,
+                        ConnectionCounts::default()
+                    );
+                    assert!(server.inner.nonces.lock().await.is_empty());
+                    server.stop().await;
+                    continue;
+                }
+                secured.unwrap()
+            } else {
+                Box::new(stream)
+            };
+            let (reader, mut writer) = tokio::io::split(stream);
+            let mut reader = BufReader::new(reader);
+            let crypto = NodeCrypto::new(secret).unwrap();
             // Send auth without a probe to exercise both supported entry paths.
             let _ = write_message(
                 &crypto,

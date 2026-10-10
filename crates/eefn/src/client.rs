@@ -95,6 +95,8 @@ pub struct NodeClientConfig {
     #[serde(default)]
     pub auth_mode: crate::authentication::AuthMode,
     #[serde(default)]
+    pub coordinator_certificate: Option<String>,
+    #[serde(default)]
     pub request_limits: crate::request_limits::RequestLimits,
     #[serde(default)]
     pub network: crate::network::NetworkAdvertisement,
@@ -132,6 +134,7 @@ fn default_ollama_url() -> String {
 }
 
 pub struct NodeClient {
+    tls_config: Option<Arc<tokio_rustls::rustls::ClientConfig>>,
     request_budget: crate::request_limits::RequestBudget,
     config: NodeClientConfig,
     crypto: NodeCrypto,
@@ -150,6 +153,12 @@ impl Drop for AbortTask {
 
 impl NodeClient {
     pub fn new(mut config: NodeClientConfig, engine: Arc<NodeEngine>) -> Result<Self> {
+        let tls_config = if config.auth_mode == crate::authentication::AuthMode::NodeCredential {
+            Some(crate::tls::client_config(config.coordinator_certificate.as_deref()
+                .context("credential connections require an owner-paired coordinator certificate; pair again")?)?)
+        } else {
+            None
+        };
         if config.auth_mode == crate::authentication::AuthMode::NodeCredential {
             crate::authentication::validate_credential(&config.psk)?;
             crate::network::validate_node_id(&config.node_id)?;
@@ -188,6 +197,7 @@ impl NodeClient {
             }
         }
         Ok(Self {
+            tls_config,
             request_budget: crate::request_limits::RequestBudget::new(&config.request_limits)?,
             crypto: NodeCrypto::new(&config.psk)?,
             config,
@@ -219,8 +229,8 @@ impl NodeClient {
         if let Some(key) = counter {
             status[key] = json!(status[key].as_u64().unwrap_or(0).saturating_add(1));
         }
-        status["connection"] =
-            json!({"state":state,"address":address,"last_error":error,"retry_seconds":retry});
+        status["connection"] = json!({"state":state,"address":address,"last_error":error,"retry_seconds":retry,
+                "auth_mode":self.config.auth_mode,"transport":if self.tls_config.is_some(){"pinned_tls13"}else{"legacy_shared_key"}});
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -298,11 +308,11 @@ impl NodeClient {
 
     async fn submit_to_endpoint(
         &self,
-        stream: TcpStream,
+        stream: crate::tls::NodeStream,
         text: &str,
         wait: Duration,
     ) -> Result<Value> {
-        let (reader, mut writer) = stream.into_split();
+        let (reader, mut writer) = tokio::io::split(stream);
         let mut reader = BufReader::new(reader);
         write_message(
             &self.crypto,
@@ -398,16 +408,29 @@ impl NodeClient {
 
     /// Probe the encrypted EEF service before authenticating/registering this node.
     /// Reuse the probed connection. ICMP reachability is neither required nor trusted.
-    async fn probe_endpoint(&self, endpoint: &CoordinatorEndpoint) -> Result<TcpStream> {
+    async fn probe_endpoint(
+        &self,
+        endpoint: &CoordinatorEndpoint,
+    ) -> Result<crate::tls::NodeStream> {
         self.connection_status("checking", &endpoint.address, None, 0.0);
         let (host, port) = parse_endpoint(&endpoint.address)?;
         let stream = timeout(Duration::from_secs(5), async {
-            let stream = TcpStream::connect((host.as_str(), port)).await?;
+            let mut stream = TcpStream::connect((host.as_str(), port)).await?;
+            let stream: crate::tls::NodeStream = if let Some(config) = &self.tls_config {
+                crate::authentication::write_selector(&mut stream, &self.config.node_id).await?;
+                crate::tls::connect(
+                    stream,
+                    self.config
+                        .coordinator_certificate
+                        .as_deref()
+                        .context("paired certificate missing")?,
+                    config.clone(),
+                )
+                .await?
+            } else {
+                Box::new(stream)
+            };
             let mut connection = BufReader::new(stream);
-            if self.config.auth_mode == crate::authentication::AuthMode::NodeCredential {
-                crate::authentication::write_selector(connection.get_mut(), &self.config.node_id)
-                    .await?;
-            }
             let nonce = Uuid::new_v4().simple().to_string();
             write_message(
                 &self.crypto,
@@ -422,7 +445,8 @@ impl NodeClient {
                 && reply["nonce"] == nonce
                 && reply["protocol"] == crate::PROTOCOL_VERSION
             {
-                return Ok(connection.into_inner());
+                // Preserve any read-ahead bytes across probe/authentication.
+                return Ok(Box::new(connection) as crate::tls::NodeStream);
             }
             // 0.3.x answers this encrypted probe with an auth denial and closes.
             // This proves service reachability only. Normal authentication remains
@@ -431,9 +455,8 @@ impl NodeClient {
                 && reply["type"] == "denied"
                 && reply["error"] == "auth failed"
             {
-                return TcpStream::connect((host.as_str(), port))
-                    .await
-                    .map_err(Into::into);
+                return Ok(Box::new(TcpStream::connect((host.as_str(), port)).await?)
+                    as crate::tls::NodeStream);
             }
             bail!("EEF returned an invalid reachability response")
         })
@@ -446,7 +469,7 @@ impl NodeClient {
     async fn serve_endpoint(&self, endpoint: &CoordinatorEndpoint) -> Result<()> {
         let (host, port) = parse_endpoint(&endpoint.address)?;
         let stream = self.probe_endpoint(endpoint).await?;
-        let (reader, writer) = stream.into_split();
+        let (reader, writer) = tokio::io::split(stream);
         let mut reader = BufReader::new(reader);
         let writer = Arc::new(Mutex::new(writer));
 
@@ -833,6 +856,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn credential_probe_requires_owner_pin_and_rejects_coordinator_replacement() {
+        let identity = crate::tls::CoordinatorIdentity::generate().unwrap();
+        let key = crate::authentication::generate_credential();
+        let policy = crate::authentication::AuthenticationPolicy {
+            allow_legacy: false,
+            credentials: std::collections::BTreeMap::from([(
+                "probe-test".into(),
+                Some(key.clone()),
+            )]),
+            tls: Some(identity.clone()),
+        };
+        let server =
+            crate::NodeServer::with_authentication("test-secret", "127.0.0.1", 0, policy).unwrap();
+        server.start().await.unwrap();
+        let mut config: NodeClientConfig = serde_json::from_value(json!({
+            "endpoints":[format!("127.0.0.1:{}",server.port())],"node_id":"probe-test","psk":key,
+            "auth_mode":"node_credential"
+        }))
+        .unwrap();
+        let engine = Arc::new(NodeEngine::new(false, vec![], std::env::temp_dir()).unwrap());
+        assert!(NodeClient::new(config.clone(), engine.clone()).is_err());
+        for valid in [false, true] {
+            config.coordinator_certificate = Some(if valid {
+                identity.certificate.clone()
+            } else {
+                crate::tls::CoordinatorIdentity::generate()
+                    .unwrap()
+                    .certificate
+            });
+            let client = NodeClient::new(config.clone(), engine.clone()).unwrap();
+            let result = client.probe_endpoint(&client.config.endpoints[0]).await;
+            assert_eq!(result.is_ok(), valid);
+            drop(result);
+            assert!(server.connected_nodes().await.is_empty());
+            assert!(server.registered_nodes().await.is_empty());
+        }
+        server.stop().await;
+    }
+
+    #[tokio::test]
     async fn probe_succeeds_without_registering_a_node() {
         let server = crate::NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
         server.start().await.unwrap();
@@ -907,6 +970,7 @@ mod tests {
         let client = NodeClient::new(
             NodeClientConfig {
                 auth_mode: Default::default(),
+                coordinator_certificate: None,
                 request_limits: Default::default(),
                 network: Default::default(),
                 metadata: Default::default(),

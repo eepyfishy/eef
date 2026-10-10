@@ -168,7 +168,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned metadata/inventory and node selection commands added in development; text/vision routing filters capabilities/state and explicit owner role constraints; route inspection available; automatic role-based planning and new executors remain planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview and node-to-EEF stateless review of inferred or supplied proposals with gateway-stamped context; automatic interpretation, interactive clarification/approval and planning remain planned |
-| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Reliability foundation: retained-history creation deduplication, shutdown admission and opt-in independent node credentials; grants/acknowledgements and reviewed issuer-session replay fencing remain planned |
+| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Reliability foundation: retained-history creation deduplication, shutdown admission and independent credentials with owner-pinned TLS 1.3; grants/acknowledgements and durable issuer/attempt replay fencing remain planned |
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: configurable network request limits, reserved controls and command readback; pipelines, executor acknowledgements and full resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
@@ -284,9 +284,11 @@ Do not present the small classifier/interpreter as a heavy reasoning model.
 The 2026-10-10 unreleased [independent credential increment](NODE-CREDENTIALS.md)
 adds exact-node provisioning, pairing, rotation, revoked-ID tombstones and an
 explicit legacy migration switch. Credential changes apply after coordinator
-restart. The existing encrypted protocol is reused: session replay fencing and
-reviewed issuer-session authorization remain required before safe execution
-grants/peer paths. This is a stage 6 prerequisite, not stage 6 completion.
+restart. The subsequent TLS increment puts credential framing inside standard,
+owner-certificate-pinned TLS 1.3, with no downgrade, early data or resumption.
+TLS record replay protection does not implement durable logical-command replay
+state or scoped issuer-session authorization; those remain required before safe
+execution grants/peer paths. This is a stage 6 prerequisite, not stage 6 completion.
 
 EEF uses the structured goal plus actual capabilities, models, freshness/load,
 reachability, priority, ownership and resource limits to build the authoritative

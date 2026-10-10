@@ -1,5 +1,5 @@
-//! Opt-in exact-node credentials. Reuses the existing encrypted protocol;
-//! this is not a session-scoped execution grant or peer-session protocol.
+//! Opt-in exact-node credentials require owner-pinned TLS around the existing
+//! encrypted protocol; this is not an execution grant or peer-session protocol.
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -20,6 +20,8 @@ pub struct AuthenticationPolicy {
     pub allow_legacy: bool,
     /// Null is a revoked identity, not permission to use the legacy key.
     pub credentials: BTreeMap<String, Option<String>>,
+    /// Persistent coordinator identity, installed only through explicit provisioning.
+    pub tls: Option<crate::tls::CoordinatorIdentity>,
 }
 fn legacy_allowed() -> bool {
     true
@@ -29,6 +31,7 @@ impl Default for AuthenticationPolicy {
         Self {
             allow_legacy: true,
             credentials: BTreeMap::new(),
+            tls: None,
         }
     }
 }
@@ -41,6 +44,9 @@ impl AuthenticationPolicy {
         Ok(policy)
     }
     pub fn validate(&self) -> Result<()> {
+        if let Some(identity) = &self.tls {
+            identity.server_config()?;
+        }
         if self.credentials.len() > 256 {
             bail!("authentication identity limit reached")
         }
@@ -71,11 +77,15 @@ impl AuthenticationPolicy {
         Ok(())
     }
     pub fn summary(&self) -> Value {
-        json!({"allow_legacy":self.allow_legacy,"identities":self.credentials.iter()
+        json!({"allow_legacy":self.allow_legacy,"tls_configured":self.tls.is_some(),
+            "coordinator_fingerprint":self.tls.as_ref().and_then(|v|v.fingerprint().ok()),"identities":self.credentials.iter()
             .map(|(id,key)| json!({"node_id":id,"state":if key.is_some(){"provisioned"}else{"revoked"}}))
             .collect::<Vec<_>>()})
     }
     pub fn redact(value: &mut Value) {
+        if let Some(key) = value.pointer_mut("/node/authentication/tls/private_key") {
+            *key = json!(crate::service::SECRET_PLACEHOLDER);
+        }
         if let Some(keys) = value
             .pointer_mut("/node/authentication/credentials")
             .and_then(Value::as_object_mut)
@@ -111,7 +121,7 @@ pub async fn write_selector<W: tokio::io::AsyncWrite + Unpin>(
         bail!("credentials require exact node identities")
     }
     let mut bytes = serde_json::to_vec(
-        &json!({"type":"node_credential","schema_version":1,"node_id":node_id}),
+        &json!({"type":"node_credential","schema_version":2,"node_id":node_id}),
     )?;
     bytes.push(b'\n');
     writer.write_all(&bytes).await?;
@@ -139,6 +149,7 @@ impl crate::NodeService {
             address: String,
             auth_mode: AuthMode,
             psk: String,
+            coordinator_certificate: String,
         }
         let mut bytes = Vec::new();
         std::fs::File::open(path)?
@@ -186,15 +197,20 @@ impl crate::NodeService {
             .map_err(|_| anyhow::anyhow!("invalid pairing code"))?;
         let invitation: Invitation = serde_json::from_slice(&decoded)
             .map_err(|_| anyhow::anyhow!("invalid pairing invitation"))?;
-        if invitation.schema_version != 1
+        if invitation.schema_version != 2
             || invitation.node_id != self.node_id
             || invitation.auth_mode != AuthMode::NodeCredential
         {
             bail!("pairing invitation does not match this node")
         }
         validate_credential(&invitation.psk)?;
+        crate::tls::client_config(&invitation.coordinator_certificate)?;
         crate::network::validate_address(&invitation.address, true)?;
-        self.save_credential_pair(&invitation.address, &invitation.psk)
+        self.save_credential_pair(
+            &invitation.address,
+            &invitation.psk,
+            &invitation.coordinator_certificate,
+        )
     }
 }
 
@@ -214,8 +230,9 @@ mod tests {
             )
             .unwrap();
         let key = generate_credential();
-        let invitation = json!({"schema_version":1,"node_id":"stable","address":"127.0.0.1:51335",
-            "auth_mode":"node_credential","psk":key});
+        let identity = crate::tls::CoordinatorIdentity::generate().unwrap();
+        let invitation = json!({"schema_version":2,"node_id":"stable","address":"127.0.0.1:51335",
+            "auth_mode":"node_credential","psk":key,"coordinator_certificate":identity.certificate});
         let file = dir.path().join("private-code.json");
         for bad in [
             json!({"node_id":"wrong"}),
@@ -223,6 +240,8 @@ mod tests {
             json!({"auth_mode":"legacy"}),
             json!({"permissions":true}),
             json!({"address":"http://bad/path"}),
+            json!({"schema_version":1}),
+            json!({"coordinator_certificate":"invalid"}),
         ] {
             let mut value = invitation.clone();
             for (key, field) in bad.as_object().unwrap() {
@@ -247,6 +266,7 @@ mod tests {
         assert_eq!(saved["auto_local"], false);
         assert_eq!(saved["auth_mode"], "node_credential");
         assert_eq!(saved["psk"], key);
+        assert_eq!(saved["coordinator_certificate"], identity.certificate);
         assert!(!service.configuration().unwrap().to_string().contains(&key));
         assert!(!crate::setup::pair_local(&path).unwrap());
         assert!(service.pair_with_local_coordinator().is_err());
@@ -259,12 +279,16 @@ mod tests {
         assert!(AuthenticationPolicy::parse(None).unwrap().allow_legacy);
         let key = "a".repeat(64);
         let mut value = json!({"node":{"authentication":{"credentials":{"a":key,"b":null}}}});
+        let identity = crate::tls::CoordinatorIdentity::generate().unwrap();
+        value["node"]["authentication"]["tls"] = serde_json::to_value(&identity).unwrap();
         let saved = value.clone();
         let policy = AuthenticationPolicy::parse(value.pointer("/node/authentication")).unwrap();
         assert!(policy.validate_legacy_key(&key).is_err());
         assert!(!policy.summary().to_string().contains(&key));
+        assert!(!policy.summary().to_string().contains(&identity.private_key));
         AuthenticationPolicy::redact(&mut value);
         assert!(!value.to_string().contains(&key));
+        assert!(!value.to_string().contains(&identity.private_key));
         assert_eq!(saved["node"]["authentication"]["credentials"]["a"], key);
         for bad in [
             json!({"credentials":{"a":key,"b":key}}),

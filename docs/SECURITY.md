@@ -13,8 +13,11 @@ artifact scans; a clean scan does not constitute a malware-free guarantee.
   is not identity proof. Provisioned/revoked identities never fall back to the
   network key; disabling all legacy access is an explicit owner migration.
   Credential changes/revocation apply only after coordinator restart. Existing
-  framing still lacks session message-replay fencing and forward secrecy;
-  execution grants and authenticated peer paths are not completed by this change.
+  credential transport now requires owner-pinned TLS 1.3 around existing frames,
+  with no insecure fallback, early data, resumption or automatic trust changes.
+  This protects TLS records, not durable logical-command/grant replay. Legacy
+  framing still lacks session record protection and forward secrecy; execution
+  grants, stale-leader fencing and authenticated peer paths remain unfinished.
 - `EEF_NODE_PSK` must be a non-placeholder value of at least 12 characters. A
   randomly generated 32-byte value is preferable. Keep it identical on the
   coordinator and nodes, and do not commit it.

@@ -63,8 +63,12 @@ pub fn command(
                     bail!("identity already provisioned or revoked; explicitly rotate to replace its credential")
                 }
                 let secret = eefn::authentication::generate_credential();
-                let invitation = json!({"schema_version":1,"node_id":node,"address":address,
-                    "auth_mode":"node_credential","psk":secret});
+                if saved.tls.is_none() {
+                    saved.tls = Some(eefn::tls::CoordinatorIdentity::generate()?);
+                }
+                let invitation = json!({"schema_version":2,"node_id":node,"address":address,
+                    "auth_mode":"node_credential","psk":secret,
+                    "coordinator_certificate":saved.tls.as_ref().expect("generated identity").certificate});
                 saved.credentials.insert(node.clone(), Some(secret));
                 code = Some(base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&invitation)?));
             },
@@ -111,6 +115,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(invite["node_id"], "a");
+        assert_eq!(invite["schema_version"], 2);
+        assert!(
+            eefn::tls::client_config(invite["coordinator_certificate"].as_str().unwrap()).is_ok()
+        );
+        assert!(invite.get("private_key").is_none());
         assert_ne!(invite["psk"], "legacy-network-secret");
         let bytes = std::fs::read(config.source().unwrap()).unwrap();
         assert!(command(&config, &applied, &provision).is_err());
@@ -126,6 +135,15 @@ mod tests {
         let latest = crate::config::Config::load(config.source()).unwrap();
         assert_eq!(latest.get("custom"), Some(&json!(42)));
         let policy = AuthenticationPolicy::parse(latest.get("node.authentication")).unwrap();
+        assert_eq!(
+            policy.tls.as_ref().unwrap().certificate,
+            invite["coordinator_certificate"].as_str().unwrap()
+        );
+        assert!(
+            !show
+                .to_string()
+                .contains(&policy.tls.as_ref().unwrap().private_key)
+        );
         assert_eq!(policy.credentials.get("a"), Some(&None));
         assert!(command(&config, &applied, &provision).is_err());
         command(
