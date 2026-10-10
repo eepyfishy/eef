@@ -85,7 +85,9 @@ impl Runtime {
             config.u64("memory.max_working_items", 100) as usize,
         )));
         let world = WorldState::new();
-        let registry = CapabilityRegistry::default();
+        let registry = CapabilityRegistry::with_policy(
+            crate::scheduling::SchedulingPolicy::parse(config.get("scheduling"))?,
+        )?;
         let policy = Value::Object(config.object("capability_policy"));
         let adapters = AdapterManager::new(registry.clone(), policy);
         let coordinator_id = config.string("coordinator.id", "").trim().to_owned();
@@ -301,11 +303,49 @@ impl Runtime {
         })
     }
 
+    pub fn scheduling_command(
+        &self,
+        request: crate::scheduling::SchedulingRequest,
+    ) -> Result<Value> {
+        if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
+            bail!("scheduling command schema or runtime does not match")
+        }
+        let mut result = crate::scheduling::command(
+            &self.config,
+            self.registry.scheduling_policy(),
+            &request.command,
+        )?;
+        if result["changed"] == true {
+            self.pending_restart.store(true, Ordering::Relaxed);
+        }
+        result["runtime_id"] = json!(self.instance_id);
+        result["admission"] = self.registry.admission_snapshot();
+        Ok(result)
+    }
+
+    pub fn scheduling_status(&self) -> Result<Value> {
+        self.scheduling_command(crate::scheduling::SchedulingRequest {
+            schema_version: 1,
+            expected_runtime_id: self.instance_id.clone(),
+            command: crate::scheduling::SchedulingCommand::Show {},
+        })
+    }
+
     pub fn save_configuration(&self, mut value: Value) -> Result<()> {
         if !value.is_object() || !value["node"].is_object() {
             bail!("configuration and node settings must be objects")
         }
         self.config.edit_for_restart(|saved| {
+            // Scheduling policy is owned by its typed commands too; stale
+            // generic settings clients must not drop or rewrite applied limits.
+            if let Some(policy) = saved.get("scheduling") {
+                value["scheduling"] = policy.clone();
+            } else {
+                value
+                    .as_object_mut()
+                    .expect("validated object")
+                    .remove("scheduling");
+            }
             // Dedicated owner commands own authentication changes. Generic
             // settings saves must not provision/revoke/drop node credentials.
             if let Some(policy) = saved.pointer("/node/authentication") {

@@ -176,7 +176,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview and node-to-EEF stateless review of inferred or supplied proposals with gateway-stamped context; automatic interpretation, interactive clarification/approval and planning remain planned |
 | 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Reliability foundation: retained-history creation deduplication, shutdown admission and independent credentials with owner-pinned TLS 1.3; grants/acknowledgements and durable issuer/attempt replay fencing remain planned |
-| 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: configurable network request limits, reserved controls and command readback; pipelines, executor acknowledgements and full resource budgets remain planned |
+| 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node request limits/reserved controls and typed coordinator non-model scheduling budgets with saved/applied readback; pipelines, executor acknowledgements and full resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
 | 10 | Full model lifecycle + unload | Measured transitions, load cancellation, active-use pinning and configurable idle unload; scheduler considers startup cost and actual usage. | Planned |
@@ -287,6 +287,14 @@ Neither natural language nor an LM-generated plan is executable shell code.
 Do not present the small classifier/interpreter as a heavy reasoning model.
 
 ## 6-7. Plans, grants and deterministic execution
+
+The 2026-10-10 unreleased [scheduling command increment](COMMANDS.md#coordinator-scheduling-limits-unreleased-after-alpha6)
+adds owner-configured non-model freshness and coordinator-local global/provider/
+exact-node concurrency ceilings. Atomic reservations include retired futures
+in global/node budgets until release; saving policy requires explicit EEF restart.
+This is stage 7 admission infrastructure, not physical resource enforcement,
+model inference admission, remote cancellation acknowledgement or a grant.
+Direct owner diagnostics/recovery remain usable when scheduling capacity is full.
 
 The 2026-10-10 unreleased [independent credential increment](NODE-CREDENTIALS.md)
 adds exact-node provisioning, pairing, rotation, revoked-ID tombstones and an

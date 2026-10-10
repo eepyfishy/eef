@@ -131,6 +131,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
         .route("/api/restart", post(restart))
         .route("/api/network/invite", post(invite))
         .route(
+            "/api/commands/scheduling",
+            get(scheduling_status).post(scheduling_command),
+        )
+        .route(
             "/api/commands/credentials",
             get(credential_status).post(credential_command),
         )
@@ -281,6 +285,15 @@ async fn discovery_status(State(runtime): State<Arc<Runtime>>) -> ApiResult<Valu
 
 async fn credential_status(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
     Ok(Json(runtime.credential_status()?))
+}
+async fn scheduling_status(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
+    Ok(Json(runtime.scheduling_status()?))
+}
+async fn scheduling_command(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::scheduling::SchedulingRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.scheduling_command(request)?))
 }
 async fn credential_command(
     State(runtime): State<Arc<Runtime>>,

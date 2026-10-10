@@ -4,6 +4,58 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Coordinator scheduling limits (unreleased after alpha.6)
+
+The local EEF owner can inspect/save non-model admission policy without a
+dashboard, LM or permission changes. These commands require the running
+coordinator; they never launch another instance, edit a file as fallback or
+retry a mutation. Installed alpha.6 builds do not implement them.
+
+```powershell
+eef scheduling show --json
+eef scheduling limits --freshness-seconds 25 --max-in-flight 8 --per-provider-concurrency 2 --json
+eef scheduling node --node NODE_ID --max-in-flight 3 --json
+eef scheduling remove-node --node NODE_ID --json
+eef restart --json
+eef scheduling show --json
+```
+
+Use an exact ID from diagnostics/network inspection, not a node name or wildcard.
+Limits are saved atomically under the existing configuration lock and apply only
+after an **explicit coordinator restart**. Inspection reports `saved_policy`,
+`applied_policy`, `restart_required`, the current `runtime_id`, and a bounded
+`admission` snapshot. An unchanged save does not rewrite the file. Generic
+settings saves preserve the latest scheduling policy; typed commands own edits.
+
+| Policy | Default | Supported values | Scope |
+| --- | --- | --- | --- |
+| `freshness_seconds` | 10 | 1-300 | Coordinator-received non-model provider heartbeat age |
+| `max_in_flight` | 0 | 0-4096 | Aggregate coordinator-owned non-model dispatch futures |
+| `per_provider_concurrency` | 0 | 0-4096 | Additional ceiling per current capability/action registration |
+| `node_limits` | Empty | Up to 256 exact IDs, each 0-4096 | Aggregate owned futures across one node's non-model providers |
+
+`limits` needs at least one value. Zero removes only that additional ceiling;
+it does not widen an executor's existing limit, local feature permissions or
+node request-admission policy. Applicable nonzero ceilings intersect. Global
+and exact-node budgets retain outstanding futures when their registration is
+removed/replaced; late release cannot decrement a replacement's counters.
+
+`admission` includes `total_in_flight`, `retired_in_flight`, up to 256 exact-node
+counts and 512 current providers, with explicit truncation flags. Counts are
+observational, not execution acknowledgements. These limits do **not** constrain
+physical CPU/RAM, the dedicated `llm.infer`/`vlm.analyze` route, or direct owner
+diagnostics/recovery controls. Remote effects may continue after a local timeout;
+releasing a future does not prove remote cancellation. Pipelines, execution
+grants, executor acknowledgements and continuous resource budgets remain planned.
+
+Local command routes are `GET/POST /api/commands/scheduling`. Mutations require
+strict schema 1, the observed `expected_runtime_id` and a typed `command`.
+Cross-site/remote browser callers, stale runtime IDs, extra fields, invalid limits
+and wildcard IDs fail closed. CLI confirms report identity, safety flags, applied
+policy and the requested saved delta. A lost or inconsistent mutation reply is
+unconfirmed, never permission to replay; inspect `scheduling show` before retrying.
+No plan, job or execution authority is created by saving scheduling limits.
+
 ## Explicit remote updates
 
 Unreleased exact-node pairing and credential migration commands are documented

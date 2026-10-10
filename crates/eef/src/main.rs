@@ -31,6 +31,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect/save non-model scheduler limits as the local coordinator owner.
+    Scheduling {
+        #[command(subcommand)]
+        command: eef::scheduling::SchedulingCommand,
+    },
     /// Local-owner node credential provisioning and migration (not execution grants).
     Credentials {
         #[command(subcommand)]
@@ -141,6 +146,23 @@ enum ModelsCommand {
 mod credential_cli_tests {
     use super::*;
     #[test]
+    fn scheduling_commands_require_explicit_node_limits_and_preserve_zero() {
+        assert!(Args::try_parse_from(["eef", "scheduling", "show"]).is_ok());
+        assert!(Args::try_parse_from(["eef", "scheduling", "node", "--node", "a"]).is_err());
+        assert!(Args::try_parse_from(["eef", "scheduling", "remove-node"]).is_err());
+        let args =
+            Args::try_parse_from(["eef", "scheduling", "limits", "--max-in-flight", "0"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Command::Scheduling {
+                command: eef::scheduling::SchedulingCommand::Limits {
+                    max_in_flight: Some(0),
+                    ..
+                }
+            })
+        ));
+    }
+    #[test]
     fn legacy_policy_requires_an_explicit_value_and_rotation_is_opt_in() {
         assert!(Args::try_parse_from(["eef", "credentials", "legacy"]).is_err());
         assert!(Args::try_parse_from(["eef", "credentials", "legacy", "--allow", "false"]).is_ok());
@@ -181,6 +203,47 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::Scheduling { command } => {
+            let response = client
+                .get(format!("{base}/api/commands/scheduling"))
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                bail!(
+                    "coordinator scheduling commands unavailable; no fallback or retry was attempted"
+                )
+            }
+            let state = eefn::model_manager::bounded_json(response).await?;
+            if !eef::scheduling::confirmed_report(
+                &state,
+                None,
+                &eef::scheduling::SchedulingCommand::Show {},
+            ) {
+                bail!("coordinator returned an invalid scheduling report")
+            }
+            if matches!(command, eef::scheduling::SchedulingCommand::Show {}) {
+                return Ok(state);
+            }
+            let runtime_id = state["runtime_id"]
+                .as_str()
+                .context("coordinator returned no runtime ID")?;
+            let response = client
+                .post(format!("{base}/api/commands/scheduling"))
+                .json(
+                    &json!({"schema_version":1,"expected_runtime_id":runtime_id,"command":command}),
+                )
+                .send()
+                .await?;
+            let result = command_response(response).await?;
+            if !eef::scheduling::confirmed_report(&result, Some(runtime_id), command)
+                || result["applied_policy"] != state["applied_policy"]
+            {
+                bail!(
+                    "scheduling outcome unconfirmed; inspect scheduling show before retrying. No fallback or replay was attempted"
+                )
+            }
+            return Ok(result);
+        }
         Command::Credentials { command } => {
             let response = client
                 .get(format!("{base}/api/commands/credentials"))

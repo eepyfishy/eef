@@ -1,5 +1,47 @@
 # Architecture conformance status
 
+## Unreleased: command-owned coordinator scheduling budgets (2026-10-10)
+
+The local EEF owner now has typed `scheduling show/limits/node/remove-node`
+commands for non-model freshness and global/per-provider/exact-node concurrency
+ceilings. Validated, atomic edits preserve latest unrelated configuration and
+report saved/applied separation. The running registry uses immutable applied
+policy; an explicit coordinator restart is required. Generic settings clients
+cannot drop or replace this command-owned policy. Zero preserves compatibility
+by removing an additional ceiling, not executor limits or local permissions.
+See [command contract and bounds](COMMANDS.md#coordinator-scheduling-limits-unreleased-after-alpha6).
+
+Global/exact-node budgets now retain reservations for removed/replaced providers
+until the owned future ends. Retired futures remain observable; late release
+cannot decrement a replacement. Read-only selection and atomic dispatch use
+the same effective limits. Owner inspection bounds node/provider collections
+and omits parameters, context, secrets and dedicated model inference providers.
+CLI checks report identity, safety flags and the requested saved delta; corrupt
+or lost replies do not cause retry or fallback. Runtime/schema/cross-site/extra
+field checks reject unauthorized or ambiguous command mutations.
+
+These are coordinator-local non-model future budgets, **not** physical resource
+limits, remote cancellation acknowledgements or execution grants. Dedicated
+model routing and direct owner diagnostics/recovery remain separate. This
+supersedes the previous entry's pending owner scheduling-configuration item,
+not the remaining planning/grant/runtime acceptance work.
+
+Validation: **259 workspace/all-target Rust tests pass in both feature modes**.
+New coverage includes concurrent aggregate admission, retained retired-future
+accounting, executor-limit intersection, configurable freshness, strict policy
+bounds, byte-identical no-op saves, CLI syntax and report confirmation. Headless
+two-logical-node TLS fixture `scheduling-dunSG5` proves saved limits leave the old
+runtime unchanged, restart applies them, full budgets block scheduling while
+owner diagnostics remain available, finished requests release capacity, stale
+generation/cross-site/extra fields fail, generic saves preserve limits, and a
+corrupted persisted save is unconfirmed without replay. No model/job is created.
+Credential, node-command, review, scoped-discovery and shutdown regressions also
+pass (`node-credentials-HA0qhS`, `node-commands-XDYHnp`, `request-review-zcU9x2`,
+`peer-discovery-pZKAqT`, `job-shutdown-pyAksO`); formatting, syntax, diff and source
+backend/browser-boundary checks pass.
+Physical two-PC acceptance is not established; installers, installed nodes,
+models, feature permissions and release feeds are unchanged.
+
 ## Unreleased: atomic provider reservation and truthful freshness (2026-10-10)
 
 Non-model dispatch now chooses its executor and increments coordinator in-flight

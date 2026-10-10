@@ -17,6 +17,7 @@ pub mod model_inventory;
 pub mod node_control;
 pub mod request_review;
 pub mod runtime;
+pub mod scheduling;
 pub mod task;
 pub mod update;
 #[cfg(feature = "dashboard")]

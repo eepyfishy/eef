@@ -10,7 +10,6 @@ const W_LOAD: f64 = 0.3;
 const W_CAPABILITY: f64 = 0.2;
 const W_POWER: f64 = 0.1;
 const W_PRIORITY: f64 = 0.1;
-const STALE_HEARTBEAT_MS: u64 = 10_000;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NodeSpecs {
@@ -109,14 +108,12 @@ impl CapabilityProvider {
     fn accepts(&self, action: &str) -> bool {
         self.action == "*" || action == "*" || self.action == action
     }
-    fn at_capacity(&self) -> bool {
-        self.max_concurrent > 0 && self.in_flight >= self.max_concurrent
-    }
 }
 
 #[derive(Clone, Default)]
 pub struct CapabilityRegistry {
     providers: Arc<RwLock<RegistryEntries>>,
+    policy: Arc<crate::scheduling::SchedulingPolicy>,
 }
 
 type ProviderKey = (String, String, String);
@@ -131,7 +128,11 @@ fn provider_key(provider: &CapabilityProvider) -> ProviderKey {
 #[derive(Default)]
 struct RegistryEntries {
     entries: BTreeMap<String, Vec<CapabilityProvider>>,
-    reservations: BTreeMap<String, ProviderKey>,
+    reservations: BTreeMap<String, ReservationEntry>,
+}
+struct ReservationEntry {
+    key: ProviderKey,
+    current_registration: bool,
 }
 impl std::ops::Deref for RegistryEntries {
     type Target = BTreeMap<String, Vec<CapabilityProvider>>;
@@ -160,9 +161,13 @@ impl ProviderReservation {
 impl Drop for ProviderReservation {
     fn drop(&mut self) {
         let mut providers = self.registry.providers.write().expect("registry lock");
-        let Some(key) = providers.reservations.remove(&self.id) else {
+        let Some(reservation) = providers.reservations.remove(&self.id) else {
             return;
         };
+        if !reservation.current_registration {
+            return;
+        }
+        let key = reservation.key;
         if let Some(provider) = providers
             .get_mut(&key.1)
             .and_then(|values| values.iter_mut().find(|p| provider_key(p) == key))
@@ -173,12 +178,75 @@ impl Drop for ProviderReservation {
 }
 
 impl CapabilityRegistry {
+    pub fn with_policy(policy: crate::scheduling::SchedulingPolicy) -> Result<Self> {
+        policy.validate()?;
+        Ok(Self {
+            providers: Default::default(),
+            policy: Arc::new(policy),
+        })
+    }
+
+    pub fn scheduling_policy(&self) -> &crate::scheduling::SchedulingPolicy {
+        &self.policy
+    }
+
+    /// Bounded local-owner inspection, not executor acknowledgements or grants.
+    pub fn admission_snapshot(&self) -> Value {
+        let state = self.providers.read().expect("registry lock");
+        let counts = reservation_counts(&state);
+        let providers = state
+            .values()
+            .flatten()
+            .filter(|p| !matches!(p.capability.as_str(), "llm.infer" | "vlm.analyze"));
+        let provider_count = providers.clone().count();
+        json!({"total_in_flight":state.reservations.len(),
+            "retired_in_flight":state.reservations.values().filter(|r|!r.current_registration).count(),
+            "node_counts":counts.iter().take(256).map(|(node,count)|json!({"node_id":node,"in_flight":count})).collect::<Vec<_>>(),
+            "nodes_truncated":counts.len()>256,
+            "providers":providers.take(512).map(|p|json!({"node_id":p.node_id,"capability":p.capability,"action":p.action,
+                "in_flight":p.in_flight,"effective_per_provider_concurrency":provider_ceiling(p, &self.policy)})).collect::<Vec<_>>(),
+            "providers_truncated":provider_count>512})
+    }
+
+    fn eligible(
+        &self,
+        state: &RegistryEntries,
+        capability: &str,
+        action: &str,
+    ) -> Vec<CapabilityProvider> {
+        if self.policy.max_in_flight > 0
+            && state.reservations.len() >= self.policy.max_in_flight as usize
+        {
+            return Vec::new();
+        }
+        let counts = reservation_counts(state);
+        state
+            .get(capability)
+            .into_iter()
+            .flatten()
+            .filter(|p| {
+                let limit = self
+                    .policy
+                    .node_limits
+                    .get(&p.node_id)
+                    .copied()
+                    .unwrap_or(0);
+                p.healthy
+                    && p.accepts(action)
+                    && (limit == 0 || counts.get(&p.node_id).copied().unwrap_or(0) < limit as usize)
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn register(&self, provider: CapabilityProvider) {
         let mut providers = self.providers.write().expect("registry lock");
         // An explicit replacement is a new registration. A late release from
         // its predecessor must never decrement this registration's counters.
         let key = provider_key(&provider);
-        providers.reservations.retain(|_, active| *active != key);
+        for reservation in providers.reservations.values_mut().filter(|r| r.key == key) {
+            reservation.current_registration = false;
+        }
         let entries = providers.entry(provider.capability.clone()).or_default();
         entries.retain(|old| !(old.node_id == provider.node_id && old.action == provider.action));
         entries.push(provider);
@@ -186,7 +254,13 @@ impl CapabilityRegistry {
 
     pub fn unregister_node(&self, node_id: &str) {
         let mut providers = self.providers.write().expect("registry lock");
-        providers.reservations.retain(|_, key| key.0 != node_id);
+        for reservation in providers
+            .reservations
+            .values_mut()
+            .filter(|r| r.key.0 == node_id)
+        {
+            reservation.current_registration = false;
+        }
         providers.retain(|_, values| {
             values.retain(|provider| provider.node_id != node_id);
             !values.is_empty()
@@ -212,9 +286,13 @@ impl CapabilityRegistry {
             .filter(|p| p.node_id == node_id)
             .map(provider_key)
             .collect::<std::collections::BTreeSet<_>>();
-        providers
+        for reservation in providers
             .reservations
-            .retain(|_, key| key.0 != node_id || retained.contains(key));
+            .values_mut()
+            .filter(|r| r.key.0 == node_id && !retained.contains(&r.key))
+        {
+            reservation.current_registration = false;
+        }
         for mut provider in replacements.into_iter().filter(|p| p.node_id == node_id) {
             if let Some(old) = previous.get(&(provider.capability.clone(), provider.action.clone()))
             {
@@ -290,11 +368,13 @@ impl CapabilityRegistry {
         constraints: &Value,
         context: Option<&eefn::context::RequestContext>,
     ) -> Option<CapabilityProvider> {
+        let state = self.providers.read().expect("registry lock");
         select_provider(
-            self.find(capability, action),
+            self.eligible(&state, capability, action),
             capability,
             constraints,
             context,
+            &self.policy,
         )
     }
 
@@ -308,14 +388,9 @@ impl CapabilityRegistry {
         context: Option<&eefn::context::RequestContext>,
     ) -> Option<ProviderReservation> {
         let mut providers = self.providers.write().expect("registry lock");
-        let candidates = providers
-            .get(capability)
-            .into_iter()
-            .flatten()
-            .filter(|p| p.healthy && p.accepts(action))
-            .cloned()
-            .collect();
-        let mut selected = select_provider(candidates, capability, constraints, context)?;
+        let candidates = self.eligible(&providers, capability, action);
+        let mut selected =
+            select_provider(candidates, capability, constraints, context, &self.policy)?;
         let key = provider_key(&selected);
         let current = providers
             .get_mut(capability)?
@@ -324,7 +399,13 @@ impl CapabilityRegistry {
         current.in_flight = current.in_flight.checked_add(1)?;
         selected.in_flight = current.in_flight;
         let id = uuid::Uuid::new_v4().to_string();
-        providers.reservations.insert(id.clone(), key);
+        providers.reservations.insert(
+            id.clone(),
+            ReservationEntry {
+                key,
+                current_registration: true,
+            },
+        );
         Some(ProviderReservation {
             registry: self.clone(),
             id,
@@ -382,6 +463,7 @@ fn select_provider(
     capability: &str,
     constraints: &Value,
     context: Option<&eefn::context::RequestContext>,
+    policy: &crate::scheduling::SchedulingPolicy,
 ) -> Option<CapabilityProvider> {
     let now_ms = eefn::protocol::now_ms();
     let mut candidates = candidates
@@ -415,7 +497,10 @@ fn select_provider(
                 .collect()
         })
         .filter(|provider| {
-            !stale(provider, now_ms) && !provider.at_capacity() && satisfies(provider, constraints)
+            let ceiling = provider_ceiling(provider, policy);
+            !stale(provider, now_ms, policy.freshness_seconds * 1000)
+                && (ceiling == 0 || provider.in_flight < ceiling)
+                && satisfies(provider, constraints)
         })
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
@@ -527,9 +612,27 @@ fn satisfies(provider: &CapabilityProvider, constraints: &Value) -> bool {
     true
 }
 
-fn stale(provider: &CapabilityProvider, now_ms: u64) -> bool {
-    provider.node_id != "local"
-        && now_ms.saturating_sub(provider.last_heartbeat_ms) > STALE_HEARTBEAT_MS
+fn stale(provider: &CapabilityProvider, now_ms: u64, freshness_ms: u64) -> bool {
+    provider.node_id != "local" && now_ms.saturating_sub(provider.last_heartbeat_ms) > freshness_ms
+}
+
+fn provider_ceiling(
+    provider: &CapabilityProvider,
+    policy: &crate::scheduling::SchedulingPolicy,
+) -> u32 {
+    match (provider.max_concurrent, policy.per_provider_concurrency) {
+        (0, right) => right,
+        (left, 0) => left,
+        (left, right) => left.min(right),
+    }
+}
+
+fn reservation_counts(state: &RegistryEntries) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for reservation in state.reservations.values() {
+        *counts.entry(reservation.key.0.clone()).or_insert(0) += 1;
+    }
+    counts
 }
 
 fn score(provider: &CapabilityProvider) -> f64 {
@@ -565,6 +668,145 @@ fn type_matches(value: &Value, expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aggregate_global_capacity_is_atomic_and_retirement_does_not_free_owned_futures() {
+        let registry = CapabilityRegistry::with_policy(crate::scheduling::SchedulingPolicy {
+            max_in_flight: 3,
+            ..Default::default()
+        })
+        .unwrap();
+        for node in ["a", "b", "c", "d"] {
+            let mut provider = CapabilityProvider::local("work", "run", json!({}));
+            provider.node_id = node.into();
+            registry.register(provider);
+        }
+        let barrier = std::sync::Barrier::new(24);
+        let active = std::thread::scope(|scope| {
+            let threads = (0..24)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        registry.reserve_best_with_context("work", "run", &json!({}), None)
+                    })
+                })
+                .collect::<Vec<_>>();
+            threads
+                .into_iter()
+                .filter_map(|t| t.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(active.len(), 3);
+        assert_eq!(registry.admission_snapshot()["total_in_flight"], 3);
+        for node in ["a", "b", "c", "d"] {
+            registry.unregister_node(node);
+        }
+        assert_eq!(registry.admission_snapshot()["retired_in_flight"], 3);
+        registry.register(CapabilityProvider::local("work", "run", json!({})));
+        assert!(
+            registry
+                .reserve_best_with_context("work", "run", &json!({}), None)
+                .is_none()
+        );
+        drop(active);
+        assert_eq!(registry.admission_snapshot()["total_in_flight"], 0);
+        assert!(
+            registry
+                .reserve_best_with_context("work", "run", &json!({}), None)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn node_limits_span_capabilities_and_provider_ceiling_never_widens_executor_limit() {
+        let registry = CapabilityRegistry::with_policy(crate::scheduling::SchedulingPolicy {
+            node_limits: BTreeMap::from([("node".into(), 1)]),
+            per_provider_concurrency: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        for capability in ["one", "two"] {
+            let mut provider = CapabilityProvider::local(capability, "run", json!({}));
+            provider.node_id = "node".into();
+            registry.register(provider);
+        }
+        let active = registry
+            .reserve_best_with_context("one", "run", &json!({}), None)
+            .unwrap();
+        assert!(
+            registry
+                .reserve_best_with_context("two", "run", &json!({}), None)
+                .is_none()
+        );
+        registry.unregister_node("node");
+        let mut replacement = CapabilityProvider::local("two", "run", json!({}));
+        replacement.node_id = "node".into();
+        replacement.max_concurrent = 1;
+        registry.register(replacement);
+        assert!(
+            registry
+                .reserve_best_with_context("two", "run", &json!({}), None)
+                .is_none(),
+            "retired future still occupies its node budget"
+        );
+        drop(active);
+        let new = registry
+            .reserve_best_with_context("two", "run", &json!({}), None)
+            .unwrap();
+        assert!(
+            registry
+                .reserve_best_with_context("two", "run", &json!({}), None)
+                .is_none()
+        );
+        assert_eq!(
+            registry.admission_snapshot()["providers"][0]["effective_per_provider_concurrency"],
+            1
+        );
+        drop(new);
+    }
+
+    #[test]
+    fn configured_freshness_and_zero_limits_preserve_legacy_capacity_semantics() {
+        let mut provider = CapabilityProvider::local("work", "run", json!({}));
+        provider.node_id = "node".into();
+        provider.last_heartbeat_ms = eefn::protocol::now_ms() - 15_000;
+        let legacy = CapabilityRegistry::default();
+        legacy.register(provider.clone());
+        assert!(legacy.find_best("work", "run", &json!({})).is_none());
+        let configured = CapabilityRegistry::with_policy(crate::scheduling::SchedulingPolicy {
+            freshness_seconds: 30,
+            ..Default::default()
+        })
+        .unwrap();
+        configured.register(provider);
+        let one = configured
+            .reserve_best_with_context("work", "run", &json!({}), None)
+            .unwrap();
+        let two = configured
+            .reserve_best_with_context("work", "run", &json!({}), None)
+            .unwrap();
+        assert_eq!(configured.admission_snapshot()["total_in_flight"], 2);
+        drop((one, two));
+        assert_eq!(configured.admission_snapshot()["total_in_flight"], 0);
+    }
+
+    #[test]
+    fn admission_inspection_is_bounded_and_excludes_dedicated_model_routes_and_secrets() {
+        let registry = CapabilityRegistry::default();
+        for number in 0..513 {
+            registry.register(CapabilityProvider::local(
+                &format!("cap{number:04}"),
+                "run",
+                json!({"secret":"PRIVATE"}),
+            ));
+        }
+        registry.register(CapabilityProvider::local("llm.infer", "run", json!({})));
+        let value = registry.admission_snapshot();
+        assert_eq!(value["providers"].as_array().unwrap().len(), 512);
+        assert_eq!(value["providers_truncated"], true);
+        assert!(!value.to_string().contains("PRIVATE"));
+        assert!(!value.to_string().contains("llm.infer"));
+    }
 
     fn limited(registry: &CapabilityRegistry, node: &str) -> CapabilityProvider {
         let mut provider = CapabilityProvider::local("work", "run", json!({}));

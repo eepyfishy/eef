@@ -34,6 +34,7 @@ impl Config {
             defaults
         };
         validate_ui_preference(&value)?;
+        crate::scheduling::SchedulingPolicy::parse(value.get("scheduling"))?;
         eefn::authentication::AuthenticationPolicy::parse(value.pointer("/node/authentication"))?;
         Ok(Self {
             value: Arc::new(value),
@@ -126,6 +127,7 @@ impl Config {
             bail!("configuration must be a JSON/YAML object")
         }
         crate::discovery::DiscoveryPolicy::parse(value.get("discovery"))?;
+        crate::scheduling::SchedulingPolicy::parse(value.get("scheduling"))?;
         validate_ui_preference(value)?;
         eefn::authentication::AuthenticationPolicy::parse(value.pointer("/node/authentication"))?;
         for section in [
