@@ -11,6 +11,8 @@ pub struct ProposalRevision {
     pub proposal: Proposal,
     pub allowed_capabilities: Vec<String>,
     pub at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<crate::request_resolution::ResolutionEvidence>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,7 +42,7 @@ impl DraftRecord {
             bail!("durable request review exceeds bounds")
         }
         let mut receipts = std::collections::HashSet::new();
-        for revision in &self.proposals {
+        for (index, revision) in self.proposals.iter().enumerate() {
             crate::job_commands::validate_operation_id(&revision.operation_id)?;
             if !receipts.insert(&revision.operation_id) {
                 bail!("duplicate review receipt")
@@ -50,6 +52,23 @@ impl DraftRecord {
                 &serde_json::to_vec(&revision.proposal)?,
                 &revision.allowed_capabilities,
             )?;
+            if let Some(evidence) = &revision.resolution {
+                evidence.validate()?;
+                if evidence.source_proposal_count != index
+                    || evidence.source_answer_count > self.answers.len()
+                {
+                    bail!("resolution source lineage exceeds retained history")
+                }
+                let source = Self {
+                    schema_version: self.schema_version,
+                    original_text: self.original_text.clone(),
+                    proposals: self.proposals[..index].to_vec(),
+                    answers: self.answers[..evidence.source_answer_count].to_vec(),
+                };
+                if !evidence.confirms_source(&source) {
+                    bail!("resolution source digest or clarification evidence changed")
+                }
+            }
         }
         for answer in &self.answers {
             crate::job_commands::validate_operation_id(&answer.operation_id)?;
@@ -68,6 +87,15 @@ impl DraftRecord {
     }
     pub fn current(&self) -> &Proposal {
         &self.proposals.last().expect("validated draft").proposal
+    }
+    pub fn resolvable(&self) -> bool {
+        self.proposals
+            .last()
+            .is_some_and(|p| p.proposal.needs_clarification)
+            && self
+                .answers
+                .iter()
+                .any(|a| a.proposal_index.checked_add(1) == Some(self.proposals.len()))
     }
     pub fn state(&self) -> &'static str {
         let Some(current) = self.proposals.last().map(|p| &p.proposal) else {
@@ -130,11 +158,21 @@ pub enum DraftCommand {
         original_text: String,
         proposal: Proposal,
     },
+    Resolve {
+        id: String,
+        expected_revision: u64,
+        original_text: String,
+        proposal: Proposal,
+        evidence: crate::request_resolution::ResolutionEvidence,
+    },
 }
 impl DraftCommand {
     pub fn id(&self) -> &str {
         match self {
-            Self::Get { id } | Self::Answer { id, .. } | Self::Revise { id, .. } => id,
+            Self::Get { id }
+            | Self::Answer { id, .. }
+            | Self::Revise { id, .. }
+            | Self::Resolve { id, .. } => id,
         }
     }
     pub fn mutates(&self) -> bool {
@@ -169,6 +207,28 @@ impl DraftCommand {
                 Ok((
                     "requests.draft_revise",
                     json!({"id":id,"expected_revision":expected_revision,"original_text":original_text,"proposal":proposal}),
+                ))
+            }
+            Self::Resolve {
+                id,
+                expected_revision,
+                original_text,
+                proposal,
+                evidence,
+            } => {
+                evidence.validate()?;
+                if evidence.source_revision != *expected_revision {
+                    bail!("resolution source revision mismatch")
+                }
+                crate::interpretation::validate(
+                    original_text,
+                    &serde_json::to_vec(proposal)?,
+                    &proposal.suggested_capabilities,
+                )?;
+                Ok((
+                    "requests.draft_resolve",
+                    json!({"id":id,"expected_revision":expected_revision,
+                    "original_text":original_text,"proposal":proposal,"evidence":evidence}),
                 ))
             }
         }
@@ -269,6 +329,12 @@ pub fn confirmed_command(
             proposal,
             expected_revision,
             ..
+        }
+        | DraftCommand::Resolve {
+            original_text,
+            proposal,
+            expected_revision,
+            ..
         } => {
             (value["reused"] == true
                 || expected_revision
@@ -279,7 +345,14 @@ pub fn confirmed_command(
                     .as_array()
                     .is_some_and(|proposals| {
                         proposals.iter().any(|p| {
-                            p["operation_id"] == operation_id && p["proposal"] == json!(proposal)
+                            p["operation_id"] == operation_id
+                                && p["proposal"] == json!(proposal)
+                                && match command {
+                                    DraftCommand::Resolve { evidence, .. } => {
+                                        p["resolution"] == json!(evidence)
+                                    }
+                                    _ => p.get("resolution").is_none_or(Value::is_null),
+                                }
                         })
                     })
         }

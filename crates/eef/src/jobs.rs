@@ -448,6 +448,14 @@ fn read(connection: &Connection, id: &str) -> Result<Plan> {
 pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
     if let Some(draft) = &plan.request_review {
         draft.validate()?;
+        if draft
+            .proposals
+            .iter()
+            .filter_map(|p| p.resolution.as_ref())
+            .any(|e| e.source_revision >= plan.revision)
+        {
+            bail!("Damaged resolution revision; retained for recovery")
+        }
         let context = plan
             .goal
             .request_context

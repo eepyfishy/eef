@@ -33,6 +33,7 @@ pub mod request_execution;
 pub mod request_limits;
 pub mod request_preview;
 pub mod request_receipt;
+pub mod request_resolution;
 pub mod server;
 pub mod service;
 pub mod setup;

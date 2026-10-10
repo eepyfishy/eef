@@ -675,10 +675,14 @@ impl Runtime {
             "requests.open"
             | "requests.draft_get"
             | "requests.draft_answer"
-            | "requests.draft_revise" => {
+            | "requests.draft_revise"
+            | "requests.draft_resolve" => {
                 // Inspection/answers do not need currently available executors.
                 // Only a new/revised proposal needs a fresh network vocabulary.
-                let capabilities = if matches!(kind, "requests.open" | "requests.draft_revise") {
+                let capabilities = if matches!(
+                    kind,
+                    "requests.open" | "requests.draft_revise" | "requests.draft_resolve"
+                ) {
                     self.discovery
                         .interpretation_capabilities(context.origin_node(), &self.node_server)
                         .await

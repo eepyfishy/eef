@@ -250,6 +250,87 @@ try {
   await cli(['jobs','remove',modelDraft.result.id]);
   for(const id of [durable.result.id,found.jobs[0].id]) {await cli(['jobs','stop',id]);await cli(['jobs','remove',id]);}
   assert.equal((await cli(['jobs','list'])).data.total,0);
+  // Explicit clarification resolution needs no hand-edited proposal file. It
+  // pins the full source, uses one interpreter call, and saves only review data.
+  mode='clarify';const resolutionOriginal='  Inspect that node after clarification\n';
+  const resolvingDraft=await cli(['requests','open','--text',resolutionOriginal]);
+  const resolutionId=resolvingDraft.result.id,resolveId=randomUUID();
+  const resolveArgs=(id,revision,operationId)=>['requests','resolve',id,'--revision',String(revision),'--operation-id',operationId];
+  let beforeResolution=calls.length;
+  assert.equal((await cli(resolveArgs(resolutionId,1,randomUUID()),false)).error_code,'clarification_answer_required');
+  const answeredDraft=await cli(['requests','answer',resolutionId,'--revision','1','--text','The bedroom node, keep the original request']);
+  assert.equal((await cli(resolveArgs(resolutionId,1,randomUUID()),false)).error_code,'draft_revision_changed');
+  assert.equal(calls.length,beforeResolution,'no answer or stale source must not invoke inference');
+  const resolveEndpoint=node+'/api/commands/requests/resolve';
+  const resolveRequest={schema_version:1,expected_node_id:config.node_id,command:{id:resolutionId,expected_revision:2,operation_id:resolveId}};
+  assert.equal((await json(resolveEndpoint,{...resolveRequest,expected_node_id:'other'})).error_code,'invalid_resolution_request');
+  assert.equal((await fetch(resolveEndpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...resolveRequest,proposal:{}})})).status,422);
+  assert.equal((await fetch(resolveEndpoint,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(resolveRequest)})).status,403);
+  mode='invalid';const invalidResolution=await cli(resolveArgs(resolutionId,2,randomUUID()),false);
+  assert.equal(invalidResolution.error_code,'interpretation_invalid');assert.equal(invalidResolution.saving_attempted,false);
+  assert.deepEqual((await cli(['requests','draft',resolutionId])).result.draft,answeredDraft.result.draft);
+  mode='valid';const resolved=await cli(resolveArgs(resolutionId,2,resolveId));
+  assert.equal(resolved.report_type,'request_resolution');assert.equal(resolved.proposal_saved,true);
+  assert.equal(resolved.result.revision,3);assert.equal(resolved.result.status,'review');assert.equal(resolved.result.review_state,'review_required');
+  assert.equal(resolved.result.draft.original_text,resolutionOriginal);
+  assert.deepEqual(resolved.result.draft.answers,answeredDraft.result.draft.answers);
+  assert.deepEqual(resolved.result.request_context,resolvingDraft.result.request_context);
+  assert.equal(resolved.result.draft.proposals[1].resolution.source_revision,2);
+  assert.equal(resolved.result.draft.proposals[1].resolution.backend,'ollama');
+  assert.equal(resolved.result.draft.proposals[1].resolution.model_id,'fixture');
+  assert.equal(calls.length,beforeResolution+2,'one invalid attempt and one explicit successful reinterpretation');
+  assert.equal(calls.at(-1).messages[1].content,resolutionOriginal);
+  assert(calls.at(-1).messages[2].content.includes('The bedroom node, keep the original request'));
+  assert(calls.at(-1).messages[2].content.includes('Which node do you mean?'));
+  assert.deepEqual((await cli(['jobs','get',resolutionId])).data.tasks,[]);
+  assert.equal(resolved.execution_authorized,false);assert.equal(resolved.dispatched,false);
+  const reusedResolution=await cli(resolveArgs(resolutionId,2,resolveId));
+  assert.equal(reusedResolution.reused,true);assert.equal(reusedResolution.model_inference_requested,false);
+  assert.equal(reusedResolution.saving_attempted,false);assert.equal(calls.length,beforeResolution+2);
+  assert.equal((await cli(resolveArgs(resolutionId,3,resolveId),false)).error_code,'resolution_receipt_conflict');
+  // A concurrent answer invalidates the exact source, not the newly saved fact.
+  mode='clarify';const raceDraft=await cli(['requests','open','--text','Resolve an answer race']);
+  await cli(['requests','answer',raceDraft.result.id,'--revision','1','--text','First answer']);
+  mode='gate';const race=cli(resolveArgs(raceDraft.result.id,2,randomUUID()),false);
+  await until(()=>gates.size===1,'clarification interpretation in flight');
+  const newerAnswer=await cli(['requests','answer',raceDraft.result.id,'--revision','2','--text','Changed answer while inference is running']);
+  for(const res of gates)res.end(JSON.stringify({message:{content:JSON.stringify(proposal())},done:true,done_reason:'stop'}));
+  const raced=await race;assert.equal(raced.error_code,'resolution_rejected');assert.equal(raced.automatically_retried,false);
+  assert.deepEqual((await cli(['requests','draft',raceDraft.result.id])).result.draft,newerAnswer.result.draft);
+  await until(()=>gates.size===0,'raced inference released');
+  // Read-only saved receipts bypass interpreter capacity and missing roles.
+  mode='gate';const occupying=review('Occupy interpretation capacity',false);
+  await until(()=>gates.size===1,'occupied interpreter');
+  assert.equal((await cli(resolveArgs(resolutionId,2,resolveId))).reused,true);
+  const restartResolution=await cli(['restart','--wait-seconds','15']);assert.equal(restartResolution.completed,true);
+  assert.equal((await occupying).error_code,'runtime_changed');await until(()=>gates.size===0,'occupied inference cancelled');
+  mode='valid';await until(ready,'reconnected after interpretation restart');
+  // Restart during resolver inference cannot append a stale proposal.
+  mode='gate';const interruptedResolution=cli(resolveArgs(raceDraft.result.id,3,randomUUID()),false);
+  await until(()=>gates.size===1,'resolver awaiting backend');
+  await cli(['restart','--wait-seconds','15']);
+  const interrupted=await interruptedResolution;assert.equal(interrupted.error_code,'runtime_changed');assert.equal(interrupted.saving_attempted,false);
+  await until(()=>gates.size===0,'resolver backend wait cancelled');mode='valid';await until(ready,'resolver restart recovery');
+  assert.deepEqual((await cli(['requests','draft',raceDraft.result.id])).result.draft,newerAnswer.result.draft);
+  // A lost local HTTP reply can hide a saved resolution. Same operation ID
+  // inspects that retained record without asking the model or saving again.
+  const lostResolveId=randomUUID(),resolveMarker=await readFile(marker,'utf8');beforeResolution=calls.length;
+  try {
+    const altered=JSON.parse(resolveMarker);altered.address=`127.0.0.1:${proxyPort}`;await writeFile(marker,JSON.stringify(altered));proxyMode='drop';
+    const lostResolution=await cli(resolveArgs(raceDraft.result.id,3,lostResolveId),false);
+    assert.equal(lostResolution.error_code,'resolution_unconfirmed');assert.equal(lostResolution.outcome_unknown,true);
+    assert.equal(lostResolution.command.operation_id,lostResolveId);
+  }finally{await writeFile(marker,resolveMarker);}
+  assert.equal(calls.length,beforeResolution+1);
+  await cli(['models','hints','--backend','ollama','--model','fixture','--role','unselected_role']);await cli(['restart','--wait-seconds','15']);
+  await until(ready,'missing interpreter role applied');
+  const inspectedLost=await cli(resolveArgs(raceDraft.result.id,3,lostResolveId));
+  assert.equal(inspectedLost.reused,true);assert.equal(inspectedLost.result.revision,4);
+  assert.equal(calls.length,beforeResolution+1,'lost receipt inspection needs no interpreter or inference');
+  await cli(['models','hints','--backend','ollama','--model','fixture','--role','request_interpreter']);await cli(['restart','--wait-seconds','15']);
+  await until(ready,'restore interpreter after receipt inspection');
+  for(const id of [resolutionId,raceDraft.result.id]){await cli(['jobs','stop',id]);await cli(['jobs','remove',id]);}
+  assert.equal((await cli(['jobs','list'])).data.total,0);
   // The input node has no HTTP feature. Online hints may use a fresh peer's
   // features only after the owner grants directional discovery; never execution.
   const peerConfigPath=join(scratch,'peer.json'),peerPort=await port();
@@ -336,6 +417,9 @@ try {
     cross_node_interpreter_vocabulary:true,origin_without_peer_feature:true,directional_disclosure_and_revocation:true,
     offline_preview_local_only:true,historical_snapshot_preserved:true,
     disconnect_withdraws_vocabulary:true,inflight_context_revocation_rechecked:true,cross_node_proposal_revision:true,
+    explicit_answer_reinterpretation:true,source_revision_race_rejected:true,source_digest_retained:true,
+    invalid_resolution_no_save:true,resolution_restart_invalidation:true,resolution_receipt_without_inference:true,
+    lost_resolution_reply_inspected:true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
 } finally {

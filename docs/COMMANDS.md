@@ -149,7 +149,7 @@ eefn requests open --text "Inspect that node" --json
 eefn requests open-proposal --file proposal.json --json
 eefn requests draft DRAFT_ID --json
 eefn requests answer DRAFT_ID --revision 1 --text "The bedroom node" --json
-eefn requests revise-proposal DRAFT_ID --revision 2 --file resolved-proposal.json --json
+eefn requests resolve DRAFT_ID --revision 2 --json
 eefn jobs find --operation-id OPENING_REQUEST_UUID --json
 eefn jobs stop DRAFT_ID --json
 eefn jobs remove DRAFT_ID --json
@@ -159,6 +159,9 @@ eefn jobs remove DRAFT_ID --json
 `revise-proposal` take the same strict UTF-8 file as `review-proposal` below and
 need no model. Missing/ambiguous interpreter selection fails before saving;
 there is no automatic model install, chat fallback or command inference.
+As a deterministic alternative to `resolve`, use
+`eefn requests revise-proposal DRAFT_ID --revision SOURCE_REVISION --file resolved-proposal.json --json`
+with the current inspected revision; do not reuse a pre-resolution revision.
 
 EEF stores a **non-executable review record** in the existing durable job journal,
 with one stable ID, status `review`, gateway-stamped original node/area/receipt,
@@ -179,7 +182,69 @@ An answer records the exact current question, proposal index and supplied text;
 `answer_recorded` does **not** mean model uncertainty has been resolved. An
 explicit proposal revision can change hints and clarification state, but still
 requires review and never grants execution authority. EEF validates its capability
-hints against that session's accepted registration, not file-authored permissions.
+hints against fresh owner-disclosed network registrations, not file-authored permissions.
+
+### Explicit clarification reinterpretation (unreleased after alpha.6)
+
+After recording an answer, `requests resolve` reinterprets the saved original
+request and recorded questions/answers using the node's explicitly selected
+`request_interpreter` model. It removes the need to author a revised proposal
+file, not the requirement for review or separate planning/approval/execution.
+
+```text
+eefn requests resolve DRAFT_ID --revision SOURCE_REVISION --operation-id UUID --json
+```
+
+The source must still be `review`; its current proposal must ask a clarification
+and have at least one recorded answer. No answer, stale
+revision, wrong original node, oversized context, full proposal history or a
+missing/ambiguous interpreter cannot cause a fallback model, download or save.
+The prompt preserves original text as its own message and includes the current
+proposal plus all recorded questions/answers as untrusted data. The complete
+prompt is capped at 64 KiB without truncating answers, with existing 512 output
+tokens and 20-second inference/single-capacity limits. If uncertainty remains,
+the new proposal can ask another question; `resolve` does not promise semantic
+correctness or force `needs_clarification` to false.
+
+EEF atomically checks the exact source revision, full review-record digest and
+proposal/answer counts, then validates hints against fresh disclosed capability
+names. It appends one proposal and source-evidence receipt, preserving original
+identity/text, earlier proposals and all answers. The evidence retains reported
+interpreter backend/model ID; it is **origin-reported**, not model attestation,
+execution permission or proof of a correct answer. Concurrent answers, edits,
+Stop, disclosure changes and runtime replacement cannot overwrite a newer state.
+If a runtime changes after save submission, EEF may still commit that eligible
+revision; the node reports uncertainty and never automatically sends it again.
+Persisted source lineage is revalidated on read/restart; old builds without this
+field must not be used to downgrade these records.
+
+Successful schema-1 `request_resolution` replies set `proposal_saved: true` and
+`coordinator_acknowledged: true` while execution/dispatched/automatic-retry flags
+stay false. `saving_attempted` and `model_inference_requested` describe this
+adapter attempt, not proof an external model actually ran or stopped. A lost
+save/HTTP reply is uncertain: inspect `requests draft DRAFT_ID`, retaining the
+reported `command.operation_id`. Repeating the **same operation ID and source
+revision** inspects an already saved resolution without inference, renewal or
+another save, even if the interpreter is busy/unavailable or the job has since
+been compiled. The reply uses a separate fresh coordinator inspection receipt;
+it does not claim the read was the original save. If no receipt is retained and
+the exact source is still eligible, an explicitly repeated command can request
+a new inference attempt; there is no automatic replay or exactly-once inference
+claim. Removing history loses this recognition.
+
+Local owner API: `POST /api/commands/requests/resolve` with exactly
+`schema_version: 1`, `expected_node_id`, and `command: {id, expected_revision,
+operation_id}`. It remains available with the dashboard disabled. The core
+service, not browser state, owns the read/context/inference/atomic-save workflow.
+Read/context waits are bounded at five seconds each, saving at thirty seconds;
+node CLI has a sixty-five-second HTTP deadline, no redirects/proxy/retry, and
+rejects changed identity, source receipt or safety flags. Missing commands return
+unsupported without converting the request to chat or executable work.
+
+There is no automatic answer-triggered resolution, automatic semantic compiler,
+approval or execution yet; automation can invoke these explicit backend commands.
+
+### Review concurrency and retention
 
 Inspect the returned `revision` before each answer/revision; the command must
 specify it. Concurrent edits have one committed winner; stale attempts do not

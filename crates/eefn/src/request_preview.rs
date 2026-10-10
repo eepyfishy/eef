@@ -56,6 +56,14 @@ pub enum RequestAction {
         #[arg(long)]
         text: String,
     },
+    /// Reinterpret recorded clarification answers once and save a review-only proposal.
+    Resolve {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Append a revised supplied proposal, preserving the original request and answers.
     ReviseProposal {
         id: String,
@@ -231,6 +239,143 @@ impl Drop for PreviewGuard {
 }
 
 impl NodeService {
+    pub async fn resolve_request(
+        &self,
+        request: crate::request_resolution::ResolveRequest,
+    ) -> Value {
+        use crate::request_drafts::{DraftCommand, DraftRecord};
+        use crate::request_resolution::ResolutionEvidence;
+        let command = &request.command;
+        let mut report = json!({"schema_version":1,"report_type":"request_resolution","node_id":self.node_id,
+            "runtime_id":null,"command":command,"success":false,"coordinator_acknowledged":false,
+            "execution_authorized":false,"dispatched":false,"automatically_retried":false,"outcome_unknown":false,
+            "proposal_saved":false,"reused":false,"interpretation_source":"node_selected_interpreter",
+            "interpretation_context":"coordinator_disclosed_network","saving_attempted":false,"model_inference_requested":false,
+            "coordinator_operation_id":null,"result":null,"error_code":null,
+            "note":"Explicit clarification reinterpretation only. Preserve the operation ID after a lost reply and inspect the draft before retrying. No plan, approval, grant, execution or automatic replay."});
+        let result: Result<(), &'static str> = async {
+            if request.schema_version != 1 || request.expected_node_id != self.node_id || command.validate().is_err() {
+                return Err("invalid_resolution_request");
+            }
+            let mut generation = self.preview.generation.subscribe();
+            let binding = self.preview.binding.lock().unwrap().clone().ok_or("runtime_unavailable")?;
+            let engine = binding.engine.upgrade().ok_or("runtime_unavailable")?;
+            report["runtime_id"] = json!(binding.runtime_id);
+            if generation.borrow_and_update().as_ref() != Some(&binding.runtime_id) {
+                return Err("runtime_changed");
+            }
+            let inspection_id = uuid::Uuid::new_v4().to_string();
+            let source = tokio::select! {
+                biased;
+                _ = generation.changed() => return Err("runtime_changed"),
+                result = tokio::time::timeout(Duration::from_secs(5), self.submissions.request_correlated(
+                    "requests.draft_get", json!({"id":command.id}), Some(inspection_id.clone()),
+                )) => result.map_err(|_| "draft_unavailable")?.map_err(|_| "draft_unavailable")?,
+            };
+            if !crate::request_drafts::confirmed_report(&source, &self.node_id, &inspection_id, Some(&command.id)) {
+                return Err("draft_unconfirmed");
+            }
+            let draft: DraftRecord = serde_json::from_value(source["draft"].clone()).map_err(|_| "draft_unconfirmed")?;
+            if let Some(previous) = draft.proposals.iter().find(|p| p.operation_id == command.operation_id) {
+                if previous.resolution.as_ref().is_none_or(|e| e.source_revision != command.expected_revision) {
+                    return Err("resolution_receipt_conflict");
+                }
+                // Inspect a saved resolution even if the interpreter is now
+                // missing/busy or this request has since been compiled/executed.
+                report["coordinator_operation_id"] = json!(inspection_id);
+                report["result"] = source;
+                report["reused"] = json!(true);
+            } else {
+                if draft.answers.iter().any(|a| a.operation_id == command.operation_id) {
+                    return Err("resolution_receipt_conflict");
+                }
+                if source["status"] != "review" || source["revision"].as_u64() != Some(command.expected_revision) {
+                    return Err("draft_revision_changed");
+                }
+                if !draft.resolvable() {
+                    return Err("clarification_answer_required");
+                }
+                if draft.proposals.len() >= 17 {
+                    return Err("proposal_history_full");
+                }
+                // Fail oversized history before capacity, lookup or inference.
+                crate::interpretation::clarification_messages(&draft, &[]).map_err(|_| "invalid_clarification_context")?;
+                let _permit = self.preview.capacity.try_acquire().map_err(|_| "interpreter_busy")?;
+                let capabilities = tokio::select! {
+                    biased;
+                    _ = generation.changed() => return Err("runtime_changed"),
+                    result = self.network_interpretation_context() => result?,
+                };
+                report["model_inference_requested"] = json!(true);
+                let interpreted = tokio::select! {
+                    biased;
+                    _ = generation.changed() => return Err("runtime_changed"),
+                    result = tokio::time::timeout(Duration::from_secs(20), engine.resolve_interpretation(&draft, &capabilities)) =>
+                        result.map_err(|_| "interpretation_timeout")??,
+                };
+                let proposal: crate::interpretation::Proposal = serde_json::from_value(interpreted["interpretation"]["proposal"].clone())
+                    .map_err(|_| "interpretation_invalid")?;
+                let evidence = ResolutionEvidence {
+                    schema_version: 1, source_revision: command.expected_revision,
+                    source_sha256: ResolutionEvidence::source_digest(&draft).map_err(|_| "draft_unconfirmed")?,
+                    source_proposal_count: draft.proposals.len(), source_answer_count: draft.answers.len(),
+                    backend: interpreted["model"]["backend"].as_str().ok_or("interpretation_invalid")?.into(),
+                    model_id: interpreted["model"]["model_id"].as_str().ok_or("interpretation_invalid")?.into(),
+                };
+                let saving = DraftCommand::Resolve {id: command.id.clone(), expected_revision: command.expected_revision,
+                    original_text: draft.original_text.clone(), proposal, evidence};
+                let (kind, payload) = saving.submission().map_err(|_| "interpretation_invalid")?;
+                report["saving_attempted"] = json!(true);
+                report["outcome_unknown"] = json!(true);
+                let saved = tokio::select! {
+                    biased;
+                    _ = generation.changed() => return Err("runtime_changed"),
+                    result = tokio::time::timeout(Duration::from_secs(30), self.submissions.request_correlated(
+                        kind, payload, Some(command.operation_id.clone()),
+                    )) => match result {
+                        Ok(Ok(data)) => data,
+                        Ok(Err(error)) if matches!(error.downcast_ref::<crate::submission::SubmissionFailure>(), Some(crate::submission::SubmissionFailure::NotSent(_))) => {
+                            report["outcome_unknown"] = json!(false);
+                            return Err("resolution_not_sent");
+                        }
+                        Ok(Err(error)) if matches!(error.downcast_ref::<crate::submission::SubmissionFailure>(), Some(crate::submission::SubmissionFailure::Rejected(_))) => return Err("resolution_rejected"),
+                        _ => return Err("resolution_unconfirmed"),
+                    },
+                };
+                if !crate::request_drafts::confirmed_command(&saved, &self.node_id, &command.operation_id, &saving) {
+                    return Err("resolution_unconfirmed");
+                }
+                let retained: DraftRecord = serde_json::from_value(saved["draft"].clone()).map_err(|_| "resolution_unconfirmed")?;
+                if saved["request_context"] != source["request_context"]
+                    || retained.original_text != draft.original_text || json!(retained.answers) != json!(draft.answers)
+                    || retained.proposals.len() != draft.proposals.len() + 1
+                    || json!(&retained.proposals[..draft.proposals.len()]) != json!(draft.proposals)
+                {
+                    return Err("resolution_unconfirmed");
+                }
+                report["coordinator_operation_id"] = json!(command.operation_id);
+                report["result"] = saved;
+                report["outcome_unknown"] = json!(false);
+            }
+            report["success"] = json!(true);
+            report["coordinator_acknowledged"] = json!(true);
+            report["proposal_saved"] = json!(true);
+            if !crate::request_resolution::confirmed(&report, &self.node_id, command) {
+                report["success"] = json!(false);
+                report["coordinator_acknowledged"] = json!(false);
+                report["proposal_saved"] = json!(false);
+                report["result"] = Value::Null;
+                report["outcome_unknown"] = report["saving_attempted"].clone();
+                return Err("resolution_unconfirmed");
+            }
+            Ok(())
+        }.await;
+        if let Err(code) = result {
+            report["error_code"] = json!(code);
+        }
+        report
+    }
+
     pub async fn review_request(&self, request: PreviewRequest) -> Value {
         let generation = self.preview.generation.subscribe();
         let preview = self.prepare_interpretation(request, true).await;

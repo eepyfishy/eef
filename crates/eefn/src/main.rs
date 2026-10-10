@@ -296,6 +296,50 @@ async fn execute_draft_command(
         "outcome_unknown":command.mutates(),"error_code":"draft_unconfirmed",
         "error":"No confirmed draft reply. Inspect the draft/jobs.find before retrying. No fallback or automatic replay."})))
 }
+async fn execute_resolution_command(
+    args: &Args,
+    command: eefn::request_resolution::ResolveCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.validate()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; resolution never launches another runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
+            .post(format!("http://{address}/api/commands/requests/resolve"))
+            .timeout(Duration::from_secs(65))
+            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"command":command})).send().await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(json!({"schema_version":1,"report_type":"request_resolution","success":false,
+                "command":command,"error_code":"unsupported_command","execution_authorized":false,"dispatched":false,
+                "automatically_retried":false,"note":"Running node does not support resolution. No file, chat, inference or job fallback was attempted."}));
+        }
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok || value["schema_version"] != 1 || value["report_type"] != "request_resolution"
+            || value["node_id"] != file.node_id || value["command"] != json!(command)
+            || !value["success"].is_boolean() || value["execution_authorized"] != false
+            || value["dispatched"] != false || value["automatically_retried"] != false
+            || (value["success"] == true && !eefn::request_resolution::confirmed(&value, &file.node_id, &command))
+        {bail!("Unrecognized resolution response")}
+        Ok::<_,anyhow::Error>(value)
+    }.await;
+    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"request_resolution","success":false,
+        "node_id":file.node_id,"command":command,"error_code":"resolution_unconfirmed","outcome_unknown":true,
+        "execution_authorized":false,"dispatched":false,"automatically_retried":false,
+        "note":"No confirmed resolution reply. Inspect the draft or repeat the same operation ID to inspect a retained resolution; no automatic inference or save replay. No execution was requested."})))
+}
+
 async fn execute_abandonment_command(
     args: &Args,
     command: eefn::request_abandon::AbandonCommand,
@@ -893,6 +937,23 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                         id: id.clone(),
                         expected_revision: *revision,
                         text: text.clone(),
+                    },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::Resolve {
+                id,
+                revision,
+                operation_id,
+            } => {
+                execute_resolution_command(
+                    args,
+                    eefn::request_resolution::ResolveCommand {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                        operation_id: operation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                     },
                 )
                 .await

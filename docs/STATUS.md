@@ -1,5 +1,50 @@
 # Architecture conformance status
 
+## Unreleased: explicit model-assisted clarification resolution (2026-10-11)
+
+Node `requests resolve` now owns a command/API-only read/context/inference/save
+workflow for a retained origin-owned review and its current recorded answer.
+The selected interpreter receives unchanged original text, the current proposal
+and all recorded questions/answers as separate untrusted data; prompts are bounded
+at 64 KiB without truncating answers. Existing role/backend/finish/output limits,
+single-capacity and runtime invalidation remain. EEF saves one new review-only
+proposal atomically against source revision, full review digest and exact history
+counts, rechecking fresh disclosed capability names. Source lineage is validated
+on retained reads/restart. Original identity/text, proposals and answers persist;
+no task, plan, approval, grant or execution is implicit. Backend/model metadata
+is origin-reported evidence, not semantic correctness or model attestation.
+
+Same-command saved-receipt inspection avoids inference/save and works without an
+available interpreter, including after a lost local HTTP reply. It uses a fresh
+read receipt rather than pretending it is the original save. Absent retained
+evidence can permit a new **explicit** attempt against an unchanged eligible
+source; no automatic replay or exactly-once model call is claimed. See
+[resolution commands and limits](COMMANDS.md#explicit-clarification-reinterpretation-unreleased-after-alpha6).
+
+Validation: **339 workspace/all-target Rust tests pass in both feature modes**,
+with fresh no-dashboard EEF/EEFN binaries. New unit tests cover bounded unchanged
+original/QA prompts, strict result contracts, full source lineage and corruption
+rejection, origin/revision/digest conflicts, atomic receipt reuse and durable
+reopening without executable work. Headless `request-review-NtBv6u` covers
+no-answer/stale/invalid-model rejection without saving; exact model prompt QA;
+one explicit save; concurrent answer preservation and stale-inference denial;
+runtime cancellation; cross-site/widened request denial; saved receipt inspection
+while inference is busy; lost local save reply inspection after the interpreter
+role is removed; and no implicit tasks/grants. Its earlier pinned model-grant and
+two-node disclosure regressions also pass. Durable requests
+(`request-drafts-uex9If`), credential isolation (`node-credentials-MHjkh3`),
+model metadata (`model-metadata-HHTRx6`), shutdown (`job-shutdown-tH494u`) and
+scheduling (`scheduling-qAhyeH`) pass.
+These are isolated local logical-node/fake-model checks, not real-model semantics
+or physical two-PC acceptance. Source boundary, syntax, formatting and diff checks
+pass; fixture children are closed through cleanup.
+
+This removes manual proposal-file authoring for explicit clarification resolution,
+not the automatic answer-triggering policy, default model/bootstrap quality gate,
+automatic semantic compiler, complete non-coder request-to-execution workflow,
+physical reliability or stable release gates. Installed apps/physical nodes,
+versions, installers and update feeds remain unchanged.
+
 ## Unreleased: cross-node interpretation vocabulary (2026-10-11)
 
 Online request interpretation now obtains a strict, read-only capability-name

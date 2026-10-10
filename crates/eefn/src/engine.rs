@@ -1016,6 +1016,29 @@ impl NodeEngine {
         text: &str,
         capabilities: &[String],
     ) -> std::result::Result<Value, &'static str> {
+        let messages = crate::interpretation::messages(text, capabilities)
+            .map_err(|_| "invalid_interpreter_context")?;
+        self.interpretation_response(text, capabilities, messages)
+            .await
+    }
+
+    pub(crate) async fn resolve_interpretation(
+        &self,
+        draft: &crate::request_drafts::DraftRecord,
+        capabilities: &[String],
+    ) -> std::result::Result<Value, &'static str> {
+        let messages = crate::interpretation::clarification_messages(draft, capabilities)
+            .map_err(|_| "invalid_clarification_context")?;
+        self.interpretation_response(&draft.original_text, capabilities, messages)
+            .await
+    }
+
+    async fn interpretation_response(
+        &self,
+        text: &str,
+        capabilities: &[String],
+        messages: Value,
+    ) -> std::result::Result<Value, &'static str> {
         let has_role = |metadata: &crate::model_metadata::ModelMetadata| {
             metadata.supports("llm.infer")
                 && metadata
@@ -1046,8 +1069,6 @@ impl NodeEngine {
             return Err("interpreter_ambiguous");
         }
         let (backend, model) = &candidates[0];
-        let messages = crate::interpretation::messages(text, capabilities)
-            .map_err(|_| "invalid_interpreter_context")?;
         let response = self
             .infer(
                 "llm.infer",

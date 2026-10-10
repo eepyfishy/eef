@@ -105,6 +105,7 @@ impl NodeService {
                 post(request_open_proposal),
             )
             .route("/api/commands/requests/drafts", post(request_draft_command))
+            .route("/api/commands/requests/resolve", post(request_resolution))
             .route(
                 "/api/commands/requests/abandon",
                 post(request_abandon_command),
@@ -308,6 +309,12 @@ async fn request_draft_command(
     Json(request): Json<crate::request_drafts::DraftRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.draft_command(request).await?))
+}
+async fn request_resolution(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_resolution::ResolveRequest>,
+) -> Json<Value> {
+    Json(state.resolve_request(request).await)
 }
 async fn request_abandon_command(
     State(state): State<Arc<NodeService>>,

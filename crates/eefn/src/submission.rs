@@ -67,6 +67,7 @@ impl SubmissionMailbox {
                 | "requests.draft_get"
                 | "requests.draft_answer"
                 | "requests.draft_revise"
+                | "requests.draft_resolve"
                 | "requests.execute"
                 | "requests.receipt"
                 | "requests.abandon"

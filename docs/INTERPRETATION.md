@@ -161,13 +161,17 @@ The subsequent unreleased `requests open/open-proposal` commands explicitly save
 a review-only record in the same durable job journal. Origin-owned `draft`,
 `answer` and `revise-proposal` commands retain original text, questions, answers,
 proposal history and revision/receipt checks across restart. They do not run tasks
-or grant approval. Answers are facts for a future resolver, not an implicit model
-re-interpretation; even a revised confident proposal still requires review.
+or grant approval. Answers are recorded facts, not an implicit model call. The
+new explicit `requests resolve` command can reinterpret those facts once through
+the node's selected interpreter and append a revision against a source digest
+and exact revision. Original text and all questions/answers remain retained;
+invalid output, stale source or restart cannot silently replace them. This is
+still review-only, including when the new proposal has no clarification question.
 Stateless preview/review semantics above remain unchanged.
 See [durable review commands](COMMANDS.md#durable-request-review-and-clarification-unreleased-after-alpha6).
 
 Remaining: reviewed model/bootstrap policy, better candidate/prompt quality,
-automatic clarification resolution and automatic semantic planning. Explicit
+automatic answer-triggered clarification resolution and automatic semantic planning. Explicit
 owner planning, approval and grant execution exist as separate commands, not
 automatic consequences of interpretation.
 Automatic input interpretation is still absent. The existing deterministic

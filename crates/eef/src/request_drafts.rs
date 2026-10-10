@@ -52,6 +52,7 @@ pub fn open(
             proposal: input.proposal,
             allowed_capabilities: capabilities.to_vec(),
             at_ms: eefn::protocol::now_ms(),
+            resolution: None,
         }],
         answers: vec![],
     };
@@ -96,6 +97,7 @@ pub fn command(
         "requests.draft_get" => "get",
         "requests.draft_answer" => "answer",
         "requests.draft_revise" => "revise",
+        "requests.draft_resolve" => "resolve",
         _ => bail!("Unsupported draft command"),
     });
     let command: DraftCommand = serde_json::from_value(payload)?;
@@ -171,7 +173,8 @@ pub fn command(
                         original_text,
                         proposal,
                         ..
-                    } => {
+                    } | DraftCommand::Resolve {expected_revision, original_text, proposal, ..} => {
+                        let resolution = match &command {DraftCommand::Resolve {evidence,..} => Some(evidence.clone()), _ => None};
                         if original_text != &draft.original_text {
                             bail!("Original request text is immutable")
                         }
@@ -180,7 +183,7 @@ pub fn command(
                             .iter()
                             .find(|p| p.operation_id == context.request_id())
                         {
-                            if revision.proposal != *proposal {
+                            if revision.proposal != *proposal || revision.resolution != resolution {
                                 bail!("Proposal receipt conflicts with retained review")
                             }
                             reused = true;
@@ -197,6 +200,11 @@ pub fn command(
                         {
                             bail!("Draft state or revision changed; inspect it before retrying")
                         }
+                        if let Some(evidence) = &resolution {
+                            if !evidence.confirms_source(draft) {
+                                bail!("Clarification resolution source changed or has no recorded answer")
+                            }
+                        }
                         eefn::interpretation::validate(
                             original_text,
                             &serde_json::to_vec(proposal)?,
@@ -207,6 +215,7 @@ pub fn command(
                             proposal: proposal.clone(),
                             allowed_capabilities: capabilities.to_vec(),
                             at_ms: eefn::protocol::now_ms(),
+                            resolution,
                         });
                     }
                     DraftCommand::Get { .. } => unreachable!(),
@@ -243,6 +252,145 @@ mod tests {
     }
     fn draft(engine: &TaskEngine, ctx: &RequestContext) -> Value {
         open(engine, input(), ctx, &caps()).unwrap()
+    }
+    #[tokio::test]
+    async fn resolution_pins_full_answer_history_atomically_and_is_non_executable_after_reopen() {
+        use eefn::request_resolution::ResolutionEvidence;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.db");
+        drop(rusqlite::Connection::open(&path).unwrap());
+        let store = crate::jobs::JobStore::open(&path, 500, 64 * 1024 * 1024).unwrap();
+        let engine = TaskEngine::with_store(crate::event::EventBus::new(20), store.clone());
+        let opening = context("owner");
+        let created = draft(&engine, &opening);
+        let id = created["id"].as_str().unwrap();
+        let answered = command(
+            &engine,
+            "requests.draft_answer",
+            json!({"id":id,"expected_revision":1,"text":"Bedroom"}),
+            &context("owner"),
+            &caps(),
+        )
+        .unwrap();
+        let source: DraftRecord = serde_json::from_value(answered["draft"].clone()).unwrap();
+        let evidence = ResolutionEvidence {
+            schema_version: 1,
+            source_revision: 2,
+            source_sha256: ResolutionEvidence::source_digest(&source).unwrap(),
+            source_proposal_count: 1,
+            source_answer_count: 1,
+            backend: "ollama".into(),
+            model_id: "fixture".into(),
+        };
+        let mut proposal = source.current().clone();
+        proposal.needs_clarification = false;
+        proposal.clarification = None;
+        let payload = json!({"id":id,"expected_revision":2,"original_text":source.original_text,"proposal":proposal,"evidence":evidence});
+        let before = json!(store.get(id).unwrap());
+        for (who, bad) in [
+            (context("other"), payload.clone()),
+            (context("owner"), {
+                let mut bad = payload.clone();
+                bad["evidence"]["source_sha256"] = json!("a".repeat(64));
+                bad
+            }),
+            (context("owner"), {
+                let mut bad = payload.clone();
+                bad["expected_revision"] = json!(1);
+                bad
+            }),
+            (context("owner"), {
+                let mut bad = payload.clone();
+                bad["original_text"] = json!("changed");
+                bad
+            }),
+            (context("owner"), {
+                let mut bad = payload.clone();
+                bad["permissions"] = json!(true);
+                bad
+            }),
+        ] {
+            assert!(command(&engine, "requests.draft_resolve", bad, &who, &caps()).is_err());
+            assert_eq!(json!(store.get(id).unwrap()), before);
+        }
+        let ctx = context("owner");
+        let saved = command(
+            &engine,
+            "requests.draft_resolve",
+            payload.clone(),
+            &ctx,
+            &caps(),
+        )
+        .unwrap();
+        assert_eq!(saved["revision"], 3);
+        assert_eq!(saved["status"], "review");
+        assert_eq!(saved["review_state"], "review_required");
+        assert_eq!(saved["draft"]["answers"], answered["draft"]["answers"]);
+        assert_eq!(saved["request_context"], created["request_context"]);
+        assert_eq!(
+            saved["draft"]["proposals"][1]["resolution"],
+            json!(evidence)
+        );
+        let plan = store.get(id).unwrap();
+        assert!(plan.tasks.is_empty());
+        assert!(engine.run_plan(plan.clone()).await.is_err());
+        assert_eq!(
+            command(
+                &engine,
+                "requests.draft_resolve",
+                payload.clone(),
+                &ctx,
+                &[]
+            )
+            .unwrap()["reused"],
+            true
+        );
+        assert_eq!(json!(store.get(id).unwrap()), json!(plan));
+        let mut conflicting = payload.clone();
+        conflicting["evidence"]["model_id"] = json!("other");
+        assert!(
+            command(
+                &engine,
+                "requests.draft_resolve",
+                conflicting,
+                &ctx,
+                &caps()
+            )
+            .is_err()
+        );
+        let mut manual = payload;
+        manual.as_object_mut().unwrap().remove("evidence");
+        assert!(command(&engine, "requests.draft_revise", manual, &ctx, &caps()).is_err());
+        for field in ["digest", "answer", "future_revision"] {
+            let mut bad = plan.clone();
+            let draft = bad.request_review.as_mut().unwrap();
+            match field {
+                "digest" => {
+                    draft.proposals[1]
+                        .resolution
+                        .as_mut()
+                        .unwrap()
+                        .source_sha256 = "a".repeat(64)
+                }
+                "answer" => draft.answers[0].text.push_str("changed"),
+                "future_revision" => {
+                    draft.proposals[1]
+                        .resolution
+                        .as_mut()
+                        .unwrap()
+                        .source_revision = 3
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                crate::jobs::validate_retained_review(&bad).is_err(),
+                "{field}"
+            );
+        }
+        drop(engine);
+        drop(store);
+        let reopened = crate::jobs::JobStore::open(&path, 500, 64 * 1024 * 1024).unwrap();
+        assert_eq!(json!(reopened.get(id).unwrap()), json!(plan));
     }
     #[tokio::test]
     async fn durable_review_is_non_executable_origin_owned_and_retained_after_restart() {
