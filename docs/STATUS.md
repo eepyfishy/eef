@@ -1,5 +1,49 @@
 # Architecture conformance status
 
+## Unreleased: atomic provider reservation and truthful freshness (2026-10-10)
+
+Non-model dispatch now chooses its executor and increments coordinator in-flight
+accounting under one registry lock. Owned reservations release on every local
+exit, including cancellation, journal assignment failure and disconnected remote
+requests. Explicit registration replacement, node removal and removed capabilities
+retire old reservation IDs; late releases cannot decrement their replacement's
+counter. In-place refresh preserves reservations for unchanged capabilities.
+Locality/resource/health/priority selection remains shared with read-only lookup.
+
+Stale non-model providers are excluded rather than merely ranked last. Gateway
+registration/heartbeat snapshots carry coordinator-stamped receipt times; a
+node cannot forge them and cached reconciliation cannot make old state fresh.
+Known target/hardware constraints with incorrect types cannot silently widen
+selection; unknown VRAM does not satisfy a positive minimum. Malformed constraint
+containers are rejected before resource merging. Dispatch checks the selected
+remote provider's parameter schema, and local adapters check their own schema,
+not whichever provider happens to appear first in inventory.
+
+These reservations bound **coordinator-local in-flight futures**, not physical
+CPU/RAM, remotely continuing effects, execution grants or remote acknowledgements.
+`max_concurrent: 0` still means no per-provider ceiling. Remote node admission
+limits remain a separate service. Model inference uses its existing dedicated
+route and has not gained these reservation/freshness guarantees. The structured
+review adapter remains review-only; authoritative plan/grant issuance is pending.
+Owner command-based coordinator scheduling-limit configuration is still pending;
+the existing node request-limit commands are not a coordinator provider policy.
+No new visual UI, installed-node change or release is implied.
+
+Validation: 251 workspace/all-target Rust tests pass in both feature modes.
+New tests hold 24 simultaneous callers against one slot, verify release after
+cancellation/journal failure/offline dispatch, prevent late-release interference
+after replacement/removal, preserve in-place refresh accounting, reject malformed
+targets and prove cached reconciliation cannot renew receipt freshness. Existing
+gateway snapshot tests reject forged timestamps while retaining sanitized state.
+Headless integration evidence: `node-credentials-3mzw6W` validates real non-model
+dispatch over TLS, malformed-target rejection and released counters;
+`peer-discovery-jwkW2p` verifies stale-node exclusion with fresh-node dispatch and
+direct owner diagnostics still available. Command/review/shutdown regressions
+passed (`node-commands-rZeTiE`, `request-review-ORwzfX`, `job-shutdown-8vfCHe`).
+Formatting, syntax, diff and source backend/browser-boundary checks pass. Test
+fixtures contain only isolated logical nodes and do not establish physical
+two-PC acceptance. No installed-node, model, permission or release-feed change.
+
 ## Unreleased: owner-pinned TLS credential transport (2026-10-10)
 
 Independent credentials now require standard Rustls/Tokio Rustls TLS 1.3 around

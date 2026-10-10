@@ -124,6 +124,13 @@ capacity; excess work reports not-started without reaching the executor. Normal
 permission checks remain mandatory. This is an admission prerequisite for local
 workloads, not a CPU/RAM budget, continuous runner, grant or remote-effect limit.
 
+The subsequent coordinator reservation slice makes non-model provider selection
+and in-flight accounting atomic. Registration retirement isolates late releases;
+cached gateway receipt times no longer become fresh during reconciliation. Stale
+providers and malformed known targets are rejected, and dispatch validates the
+selected provider's schema. This is coordinator-local admission, not a remote
+execution acknowledgement, model-route reservation, physical budget or grant.
+
 The 2026-10-10 follow-up reconciles live registration/model/metric state after
 gateway event loss. Observer loops survive broadcast gaps, report their losses,
 and suspend world-condition automation when its observations may be stale.

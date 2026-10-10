@@ -649,6 +649,8 @@ impl NodeServer {
                     message["metadata"] = json!(metadata);
                     let advertisement = crate::network::PeerRecord::from_registration(&message)?;
                     interpretation_capabilities = capabilities;
+                    let received_at_ms = now_ms();
+                    message["gateway_received_ms"] = json!(received_at_ms);
                     if let Some(connection) = self
                         .inner
                         .connections
@@ -670,6 +672,7 @@ impl NodeServer {
                                     "metadata",
                                     "network",
                                 ],
+                                received_at_ms,
                             ),
                             // Old specs/metrics must not overwrite a refreshed
                             // registration until this generation has a heartbeat.
@@ -686,6 +689,8 @@ impl NodeServer {
                     if !registered {
                         bail!("register before sending heartbeats")
                     }
+                    let received_at_ms = now_ms();
+                    message["gateway_received_ms"] = json!(received_at_ms);
                     if let Some(connection) = self
                         .inner
                         .connections
@@ -698,6 +703,7 @@ impl NodeServer {
                             state.heartbeat = Some(state_fields(
                                 &message,
                                 &["node_id", "load", "latency_ms", "specs"],
+                                received_at_ms,
                             ));
                         }
                     }
@@ -827,13 +833,16 @@ impl NodeServer {
     }
 }
 
-fn state_fields(message: &Value, fields: &[&str]) -> Value {
+fn state_fields(message: &Value, fields: &[&str], received_at_ms: u64) -> Value {
     let mut snapshot = serde_json::Map::new();
     for field in fields {
         if let Some(value) = message.get(*field) {
             snapshot.insert((*field).into(), value.clone());
         }
     }
+    // Gateway receipt time, never a node-authored timestamp. Reconciliation
+    // must preserve original freshness instead of making cached state new.
+    snapshot.insert("gateway_received_ms".into(), json!(received_at_ms));
     Value::Object(snapshot)
 }
 
@@ -1682,9 +1691,9 @@ mod tests {
         assert!(server.node_state("owner").await.is_none());
         let mut wire = Vec::new();
         for value in [
-            json!({"type":"register","node_id":"owner","capabilities":["system.info"],"name":"First","psk":"PRIVATE-PSK",
+            json!({"type":"register","node_id":"owner","capabilities":["system.info"],"name":"First","psk":"PRIVATE-PSK","gateway_received_ms":1,
                 "metadata":{"resources":[{"id":"info","capability":"system.info","parameters":{"password":"PRIVATE-BINDING"}}]}}),
-            json!({"type":"heartbeat","node_id":"owner","load":{"cpu":0.2},"latency_ms":8,"command":"PRIVATE-COMMAND"}),
+            json!({"type":"heartbeat","node_id":"owner","load":{"cpu":0.2},"latency_ms":8,"command":"PRIVATE-COMMAND","gateway_received_ms":u64::MAX}),
         ] {
             write_message(&server.inner.crypto, &mut wire, &value)
                 .await
@@ -1701,6 +1710,12 @@ mod tests {
         let old = server.node_state("owner").await.unwrap();
         assert_eq!(old.registration["name"], "First");
         assert_eq!(old.heartbeat.as_ref().unwrap()["load"]["cpu"], 0.2);
+        let registration_time = old.registration["gateway_received_ms"].as_u64().unwrap();
+        let heartbeat_time = old.heartbeat.as_ref().unwrap()["gateway_received_ms"]
+            .as_u64()
+            .unwrap();
+        assert!(registration_time > 1);
+        assert!(heartbeat_time >= registration_time && heartbeat_time <= now_ms());
         assert!(!format!("{old:?}").contains("PRIVATE"));
         let mut wire = Vec::new();
         for value in [
@@ -1722,6 +1737,11 @@ mod tests {
         let latest = server.node_states().await.remove("owner").unwrap();
         assert_eq!(latest.registration["name"], "Second");
         assert_eq!(latest.registration["capabilities"], json!([]));
+        assert_eq!(old.registration["gateway_received_ms"], registration_time);
+        assert_eq!(
+            old.heartbeat.as_ref().unwrap()["gateway_received_ms"],
+            heartbeat_time
+        );
         assert_eq!(latest.heartbeat.unwrap()["load"]["cpu"], 0.8);
         assert_eq!(
             old.registration["name"], "First",

@@ -64,7 +64,6 @@ impl AdapterManager {
 
     pub async fn invoke(&self, capability: &str, action: &str, params: Value) -> Result<Value> {
         self.check_allowed(capability, action)?;
-        self.registry.validate_params(capability, action, &params)?;
         let adapter = self
             .adapters
             .read()
@@ -72,6 +71,7 @@ impl AdapterManager {
             .get(capability)
             .cloned()
             .with_context(|| format!("no local adapter for '{capability}'"))?;
+        CapabilityRegistry::validate_properties_params(&adapter.properties(), &params)?;
         adapter.invoke(action, params).await
     }
 

@@ -498,7 +498,7 @@ impl Runtime {
                 healthy: true,
                 in_flight: 0,
                 max_concurrent: 0,
-                last_heartbeat_ms: eefn::protocol::now_ms(),
+                last_heartbeat_ms: message["gateway_received_ms"].as_u64().unwrap_or(0),
             });
         }
         self.registry.refresh_node(node_id, providers);
@@ -553,8 +553,13 @@ impl Runtime {
             .and_then(Value::as_f64)
             .unwrap_or(0.0);
         let specs = message.get("specs").map(|value| node_specs(Some(value)));
-        self.registry
-            .update_metrics(node_id, combined, latency, specs);
+        self.registry.update_metrics_at(
+            node_id,
+            combined,
+            latency,
+            specs,
+            message["gateway_received_ms"].as_u64().unwrap_or(0),
+        );
         self.model_registry
             .update_metrics(node_id, combined, latency);
         self.publish_or_observe_node(
@@ -887,6 +892,67 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cached_state_reconciliation_does_not_renew_scheduler_freshness() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "node":{"psk":"isolated-test-secret","host":"127.0.0.1","port":0},
+                "update":{"policy":"off"},"python":{"plugins":[]},
+                "firmware":{"repository":dir.path().join("firmware")}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let runtime = Runtime::initialize(
+            Config::load(Some(&path)).unwrap(),
+            dir.path().join("memory.db"),
+            false,
+        )
+        .await
+        .unwrap();
+        let received = eefn::protocol::now_ms() - 60_000;
+        let snapshot = eefn::server::NodeStateSnapshot {
+            registration: json!({"node_id":"fixture","name":"Fixture","capabilities":["system.info"],
+                "gateway_received_ms":received}),
+            heartbeat: Some(json!({"node_id":"fixture","gateway_received_ms":received+1,
+                "load":{"cpu":0.3},"latency_ms":5})),
+        };
+        for _ in 0..3 {
+            runtime.apply_node_state(snapshot.clone(), false).await;
+        }
+        let provider = runtime.registry.find("system.info", "run")[0].clone();
+        assert_eq!(provider.last_heartbeat_ms, received + 1);
+        assert!(
+            runtime
+                .registry
+                .find_best("system.info", "run", &json!({}))
+                .is_none()
+        );
+        assert!(
+            runtime
+                .registry
+                .reserve_best_with_context("system.info", "run", &json!({}), None)
+                .is_none()
+        );
+        runtime
+            .on_node_heartbeat(
+                json!({"node_id":"fixture","gateway_received_ms":eefn::protocol::now_ms()}),
+                false,
+            )
+            .await;
+        assert!(
+            runtime
+                .registry
+                .find_best("system.info", "run", &json!({}))
+                .is_some()
+        );
+        assert!(runtime.engine.list_plans().unwrap().is_empty());
+        runtime.shutdown().await;
     }
     #[tokio::test]
     async fn lagged_gateway_events_recover_live_providers_models_and_metrics_without_replay() {

@@ -93,6 +93,18 @@ try {
   }
   await until(async()=>(await coordinator(['diagnostics'])).registered_node_count===2,'two registered nodes');
   for(const node of nodes) assert.equal((await coordinator(['diagnostics','--node',node.id,'--samples','1'])).passed,1);
+  // Exercise the actual non-model dispatcher over the pinned TLS sessions.
+  for(const node of nodes) {
+    const data=await json(base+'/api/assistant/execute',{capability:'system.info',action:'run',params:{},constraints:{node_id:node.id}});
+    assert.equal(data.success,true);
+  }
+  for(const constraints of [false,{node_id:null},{gpu_vram_min_mb:'4096'}]) {
+    const r=await fetch(base+'/api/assistant/execute',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({capability:'system.info',action:'run',params:{},constraints})});
+    assert.equal(r.status,400);assert.equal((await r.json()).success,false);
+  }
+  const providers=(await json(base+'/api/capabilities')).providers.filter(p=>p.node_id===nodes[0].id||p.node_id===nodes[1].id);
+  assert(providers.length>0);assert(providers.every(p=>p.in_flight===0));
   const configView=await json(base+'/api/config');
   const privatePolicy=await readFile(eefConfig,'utf8');
   assert(!privatePolicy.includes('__KEEP_EXISTING_SECRET__'),'saved keys must not be replaced with redaction placeholders');
@@ -128,6 +140,7 @@ try {
     redacted_inspection:true,generic_save_preserves_policy:true,node_id_and_permissions_preserved:true,physical_two_pc:false,
     execution_grants:false,execution_attempt_replay_fencing:false};
   results.pinned_tls13=true;results.persistent_coordinator_identity=true;
+  results.non_model_dispatch_and_rejected_constraints=true;
   await writeFile(join(scratch,'results.json'),JSON.stringify(results,null,2));console.log('Node credential validation passed: '+scratch);
 } finally {
   for(const child of children)if(child.exitCode===null)child.kill();

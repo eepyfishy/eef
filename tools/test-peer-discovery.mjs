@@ -78,6 +78,17 @@ try {
  // observed state instead of assuming a fixed sleep starts after that heartbeat.
  let stale;await until(async()=>{stale=await peers('node-a',['--node','node-b']);return stale.nodes[0].status==='stale';},'node B becomes stale without another heartbeat');
  assert.equal(stale.nodes[0].network.advertised_address,null);assert.equal(stale.nodes[0].network.coordinator,null);assert.equal(stale.nodes[0].remaining_fresh_ms,0);
+ // Coordinator scheduling must also refuse stale providers, even though their
+ // socket remains available for direct diagnostic/recovery commands.
+ await until(async()=>{
+  const p=(await json(eef+'/api/capabilities')).providers.find(p=>p.node_id==='node-b'&&p.capability==='system.info');
+  return p&&Date.now()-p.last_heartbeat_ms>10500;
+ },'node B becomes stale for non-model scheduling');
+ const rejected=await fetch(eef+'/api/assistant/execute',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({capability:'system.info',action:'run',params:{},constraints:{node_id:'node-b'}})});
+ assert.equal(rejected.status,400);assert((await rejected.json()).error.includes('no provider available'));
+ assert.equal((await json(eef+'/api/assistant/execute',{capability:'system.info',action:'run',params:{},constraints:{node_id:'node-a'}})).success,true);
+ assert.equal((await coordinator(['diagnostics','--node','node-b','--samples','1'])).passed,1,'stale scheduling must not disable owner diagnostics');
  const revokedCommand=await discovery(['revoke','--requester','node-a','--target','node-b']);assert.equal(revokedCommand.restart_required,true);assert.deepEqual(revokedCommand.saved_policy.grants,{});
  await peers('node-a',['--node','node-b']); // still applied until restart
  await restart();
@@ -89,6 +100,6 @@ try {
  await peers('node-a',['--node','node-b'],false);
  assert.deepEqual((await peers('node-a')).nodes.map(n=>n.node_id),['node-a']);
  await coordinator(['models','list','--node','node-b'],false);
- const report={passed:true,logical_nodes:2,physical_two_pc:false,no_ui_or_models:true,self_only_default:true,owner_scoped_directional_grants:true,owner_grant_revoke_commands:true,config_preserved:true,stale_runtime_and_origin_rejected:true,pagination:true,forged_origin_rejected:true,stale_endpoints_redacted:true,restart_applies_revocation:true,disconnect_removes_advertisement:true};
+ const report={passed:true,logical_nodes:2,physical_two_pc:false,no_ui_or_models:true,self_only_default:true,owner_scoped_directional_grants:true,owner_grant_revoke_commands:true,config_preserved:true,stale_runtime_and_origin_rejected:true,pagination:true,forged_origin_rejected:true,stale_endpoints_redacted:true,stale_non_model_providers_excluded:true,owner_diagnostics_on_stale_node:true,restart_applies_revocation:true,disconnect_removes_advertisement:true};
  await writeFile(join(scratch,'results.json'),JSON.stringify(report,null,2));console.log('Peer discovery validation passed: '+scratch);
 }finally{for(const child of children)if(child.exitCode===null)child.kill();await Promise.allSettled(children.map(c=>c.result));}

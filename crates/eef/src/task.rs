@@ -407,6 +407,9 @@ impl Dispatcher {
         journal: Option<crate::jobs::AttemptJournal>,
     ) -> Result<Value> {
         let mut constraints = task.constraints.clone();
+        if !constraints.is_null() && !constraints.is_object() {
+            bail!("task scheduling constraints must be an object")
+        }
         if let Some(resource) = task.params.get("resource_id") {
             if !constraints.is_object() {
                 constraints = json!({});
@@ -445,15 +448,16 @@ impl Dispatcher {
             ).await?;
             return Ok(json!({"content": content}));
         }
-        let provider = self
+        let reservation = self
             .registry
-            .find_best_with_context(
+            .reserve_best_with_context(
                 &task.capability,
                 &task.action,
                 &constraints,
                 task.request_context.as_ref(),
             )
             .ok_or_else(|| anyhow::anyhow!("no provider available for '{}'", task.capability))?;
+        let provider = reservation.provider();
         if let Some(journal) = &journal {
             journal.assign(
                 &provider.node_id,
@@ -461,26 +465,15 @@ impl Dispatcher {
                 None,
             )?;
         }
-        self.registry.acquire(&provider);
-        // Release capacity even when timeout/shutdown drops the invocation future.
-        struct Capacity<'a>(
-            &'a CapabilityRegistry,
-            &'a crate::capability::CapabilityProvider,
-        );
-        impl Drop for Capacity<'_> {
-            fn drop(&mut self) {
-                self.0.release(self.1);
-            }
-        }
-        let _capacity = Capacity(&self.registry, &provider);
+        // The reservation releases on every exit, including journal failure,
+        // timeout, cancellation and a registration replacement during dispatch.
         let result = async {
             if provider.node_id == "local" {
                 self.adapters
                     .invoke(&task.capability, &task.action, task.params.clone())
                     .await
             } else {
-                self.registry
-                    .validate_params(&task.capability, &task.action, &task.params)?;
+                CapabilityRegistry::validate_provider_params(provider, &task.params)?;
                 let mut params = task.params.clone();
                 if let Some(resource) = provider.properties.get("selected_resource_id") {
                     if !params.is_object() {
@@ -1018,6 +1011,127 @@ impl<T> ContextOption<T> for Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct HeldAdapter {
+        entered: tokio::sync::Semaphore,
+        calls: std::sync::atomic::AtomicU32,
+    }
+    #[async_trait]
+    impl crate::adapters::CapabilityAdapter for HeldAdapter {
+        fn capability(&self) -> &str {
+            "fixture.work"
+        }
+        fn actions(&self) -> &[&str] {
+            &["run"]
+        }
+        async fn invoke(&self, _: &str, _: Value) -> Result<Value> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.entered.add_permits(1);
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatcher_releases_capacity_on_cancellation_and_journal_failure() {
+        let registry = CapabilityRegistry::default();
+        let adapters = AdapterManager::new(registry.clone(), json!({}));
+        let adapter = Arc::new(HeldAdapter {
+            entered: tokio::sync::Semaphore::new(0),
+            calls: std::sync::atomic::AtomicU32::new(0),
+        });
+        adapters.load(adapter.clone()).await.unwrap();
+        let mut provider = registry.find("fixture.work", "run")[0].clone();
+        provider.max_concurrent = 1;
+        registry.register(provider);
+        let server = eefn::NodeServer::new("fixture-secret", "127.0.0.1", 0).unwrap();
+        let llm = LlmService::new(
+            crate::model::ModelRegistry::default(),
+            BTreeMap::new(),
+            server.clone(),
+            EventBus::new(20),
+        );
+        let dispatcher = Dispatcher::new(registry.clone(), adapters, llm, server);
+        let caller = dispatcher.clone();
+        let active = tokio::spawn(async move {
+            caller
+                .run_capability("fixture.work", "run", json!({}), json!({}))
+                .await
+        });
+        timeout(Duration::from_secs(3), adapter.entered.acquire())
+            .await
+            .unwrap()
+            .unwrap()
+            .forget();
+        assert!(
+            dispatcher
+                .run_capability("fixture.work", "run", json!({}), json!({}))
+                .await
+                .is_err()
+        );
+        assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        active.abort();
+        let _ = active.await;
+        assert_eq!(registry.find("fixture.work", "run")[0].in_flight, 0);
+        let mut task = TaskPlanner
+            .plan(Goal {
+                request_context: None,
+                description: "fixture".into(),
+                template: "read_file".into(),
+                params: json!({}),
+                constraints: json!({}),
+            })
+            .unwrap()
+            .tasks
+            .remove(0);
+        task.capability = "fixture.work".into();
+        task.action = "run".into();
+        let journal = crate::jobs::AttemptJournal {
+            store: crate::jobs::JobStore::in_memory().unwrap(),
+            job_id: "missing-job".into(),
+            task_id: task.task_id.clone(),
+            attempt: 1,
+        };
+        assert!(dispatcher.execute_journaled(&task, journal).await.is_err());
+        assert_eq!(registry.find("fixture.work", "run")[0].in_flight, 0);
+        assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn dispatcher_releases_failed_remote_reservations_and_rejects_malformed_constraints() {
+        let registry = CapabilityRegistry::default();
+        let mut provider =
+            crate::capability::CapabilityProvider::local("fixture.work", "run", json!({}));
+        provider.node_id = "offline".into();
+        provider.max_concurrent = 1;
+        registry.register(provider);
+        let adapters = AdapterManager::new(registry.clone(), json!({}));
+        let server = eefn::NodeServer::new("fixture-secret", "127.0.0.1", 0).unwrap();
+        let llm = LlmService::new(
+            crate::model::ModelRegistry::default(),
+            BTreeMap::new(),
+            server.clone(),
+            EventBus::new(20),
+        );
+        let dispatcher = Dispatcher::new(registry.clone(), adapters, llm, server);
+        assert!(
+            dispatcher
+                .run_capability("fixture.work", "run", json!({}), json!({}))
+                .await
+                .is_err()
+        );
+        assert_eq!(registry.find("fixture.work", "run")[0].in_flight, 0);
+        let error = dispatcher
+            .run_capability(
+                "fixture.work",
+                "run",
+                json!({"resource_id":"offline::resource"}),
+                json!(false),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("constraints must be an object"));
+        assert_eq!(registry.find("fixture.work", "run")[0].in_flight, 0);
+    }
 
     #[test]
     fn planner_retains_origin_and_applies_resource_only_to_physical_step() {
