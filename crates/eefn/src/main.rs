@@ -293,6 +293,71 @@ async fn execute_draft_command(
         "outcome_unknown":command.mutates(),"error_code":"draft_unconfirmed",
         "error":"No confirmed draft reply. Inspect the draft/jobs.find before retrying. No fallback or automatic replay."})))
 }
+async fn execute_abandonment_command(
+    args: &Args,
+    command: eefn::request_abandon::AbandonCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.validate()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; abandonment commands never launch another runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!("http://{address}/api/commands/requests/abandon"))
+            .timeout(Duration::from_secs(150))
+            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"command":command}))
+            .send()
+            .await?;
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok
+            || value["schema_version"] != 1
+            || value["report_type"] != "request_abandonment"
+            || value["node_id"] != file.node_id
+            || value["id"] != command.id
+            || value["operation_id"] != command.operation_id
+            || !value["success"].is_boolean()
+            || value["execution_requested"] != false
+            || value["automatically_retried"] != false
+            || value["remote_stop_confirmed"] != false
+            || value["remote_effects_unknown"] != true
+        {
+            bail!("Unrecognized abandonment report")
+        }
+        if value["success"] == true
+            && (value["coordinator_acknowledged"] != true
+                || value["outcome_unknown"] != false
+                || !eefn::request_abandon::confirmed(
+                    &value["result"],
+                    &command,
+                    eefn::request_abandon::AbandonActor::OriginNode,
+                    Some(&file.node_id),
+                    None,
+                ))
+        {
+            bail!("Unconfirmed abandonment receipt")
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"request_abandonment","success":false,"node_id":file.node_id,
+        "id":command.id,"operation_id":command.operation_id,"coordinator_acknowledged":false,"outcome_unknown":true,
+        "execution_requested":false,"automatically_retried":false,"remote_stop_confirmed":false,"remote_effects_unknown":true,
+        "error_code":"abandonment_unconfirmed","note":"Inspect retained state and reuse only this exact receipt; no fallback, stop or retry authorized."})))
+}
 async fn execute_request_receipt_command(
     args: &Args,
     command: eefn::request_receipt::ReceiptCommand,
@@ -765,6 +830,27 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 execute_draft_command(
                     args,
                     eefn::request_drafts::DraftCommand::Get { id: id.clone() },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::Abandon {
+                id,
+                revision,
+                grant_id,
+                acknowledge_effects_may_continue,
+                operation_id,
+            } => {
+                execute_abandonment_command(
+                    args,
+                    eefn::request_abandon::AbandonCommand {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                        grant_id: grant_id.clone(),
+                        acknowledge_effects_may_continue: *acknowledge_effects_may_continue,
+                        operation_id: operation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    },
                 )
                 .await
             }

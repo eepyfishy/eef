@@ -184,7 +184,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned metadata/inventory and node selection commands added in development; text/vision routing filters capabilities/state and explicit owner role constraints; route inspection available; automatic role-based planning and new executors remain planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview/stateless review and origin-owned durable review/answer/proposal commands with retained text/history and receipt/revision checks; explicit template compilation and bounded owner approval now start stage 6, while automatic clarification re-interpretation and semantic planning remain planned |
-| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: explicit compile/approve/execute workflow with frozen bindings, pinned session grants, durable issuance/ACK/completion, node replay protection and restart-to-unknown behavior. Origin and executor may differ. Automatic semantic planning, uncertainty reconciliation, migration of legacy work paths, stronger executor termination, clock acceptance and cluster fencing remain required |
+| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: explicit compile/approve/execute, fixed grants, durable issuance/ACK/completion, node replay protection, restart-to-unknown and explicit tracking abandonment. Origin and executor may differ. Automatic semantic planning, lost-output/execution reconciliation, legacy-path grant migration, stronger termination, clock acceptance and cluster fencing remain required |
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node work/reserved-control limits and coordinator budgets, including granted model futures. Fixed one-shot ACK/completion and authenticated read-only recovery evidence implemented; pipelines, explicit uncertainty reconciliation, strong termination and physical resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
@@ -320,6 +320,16 @@ while workload slots are full. It works across session replacement without
 reviving old authority, changing the job, inferring success or authorizing replay.
 This supplies recovery evidence, **not** automatic or owner-directed uncertainty
 resolution, lost-output recovery or proof that external effects stopped.
+
+The explicit `requests abandon` recovery branch now permits owner/origin closure
+of idle interrupted tracking, with exact revision/grant, an acknowledged effects-
+may-continue flag and durable decision receipt. It preserves the unknown issued
+attempt and original context under distinct `abandoned`, never success/remote Stop.
+Live runners and closing admission deny; exact same-actor retries inspect; restart,
+legacy runners and fresh execution commands cannot revive it. Optional history
+removal is separate and does not erase node nonce protection. This is one explicit
+recovery decision, not lost-output recovery, safe replay/migration or strong
+executor termination. Those remaining stage 6-7 boundaries still apply.
 
 The credential-only startup follow-up removes the unused legacy PSK requirement
 when legacy authentication is explicitly disabled. No legacy key is constructed

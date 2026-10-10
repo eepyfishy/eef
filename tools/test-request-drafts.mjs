@@ -280,8 +280,64 @@ try {
   assert.equal(recoveredInspection.coordinator_attempt_state,'unknown');assert.equal(recoveredInspection.receipt.state,'accepted');
   assert.equal(recoveredInspection.reconciled,false);assert.equal(recoveredInspection.execution_requested,false);
   assert.deepEqual((await coordinator(['requests','inspect',uncertain.command.id])).plan,interrupted,'evidence must not resolve uncertainty or authorize a new attempt');
+  const abandonCommand={id:uncertain.command.id,expected_revision:interrupted.revision,grant_id:uncertainGrant,
+    operation_id:randomUUID(),acknowledge_effects_may_continue:true};
+  const abandonBody={schema_version:1,expected_node_id:owner.id,command:abandonCommand};
+  const abandonUrl=owner.api+'/api/commands/requests/abandon';
+  assert.equal((await response(abandonUrl,abandonBody,'https://untrusted.example')).status,403);
+  assert.equal((await response(abandonUrl,{...abandonBody,command:{...abandonCommand,retry:true}})).status,422);
+  assert.equal((await response(abandonUrl,{...abandonBody,command:{...abandonCommand,acknowledge_effects_may_continue:false}})).status,400);
+  assert.equal((await json(other.api+'/api/commands/requests/abandon',{...abandonBody,expected_node_id:other.id})).success,false);
+  assert.equal((await json(abandonUrl,{...abandonBody,command:{...abandonCommand,expected_revision:interrupted.revision-1}})).success,false);
+  const abandonArgs=['requests','abandon',uncertain.command.id,'--revision',String(interrupted.revision),'--grant-id',uncertainGrant,
+    '--acknowledge-effects-may-continue','--operation-id',abandonCommand.operation_id];
+  const abandonedResult=(await node(abandonArgs)).result;
+  assert.equal(abandonedResult.status,'abandoned');assert.equal(abandonedResult.tracking_abandoned,true);
+  assert.equal(abandonedResult.remote_stop_confirmed,false);assert.equal(abandonedResult.remote_effects_unknown,true);
+  assert.equal(abandonedResult.execution_requested,false);assert.equal(abandonedResult.automatically_retried,false);
+  assert.equal(abandonedResult.abandonment.actor,'origin_node');assert.deepEqual(abandonedResult.abandonment.command,abandonCommand);
+  const abandoned=(await coordinator(['requests','inspect',uncertain.command.id])).plan;
+  assert.equal(abandoned.status,'abandoned');assert.equal(abandoned.revision,interrupted.revision+1);
+  assert.deepEqual(abandoned.execution.attempts,interrupted.execution.attempts);assert.deepEqual(abandoned.tasks,interrupted.tasks);
+  assert.deepEqual(abandoned.goal,interrupted.goal);assert.equal(gateRequests,1);
+  assert.equal((await node(abandonArgs)).result.reused,true);
+  assert.deepEqual((await coordinator(['requests','inspect',uncertain.command.id])).plan,abandoned,'receipt reuse cannot rewrite or revive tracking');
+  const abandonedView=(await node(['jobs','get',uncertain.command.id])).data;
+  assert.equal(abandonedView.can_resume,false);assert.equal(abandonedView.can_abandon_tracking,false);
+  assert.equal(abandonedView.tracking_abandoned,true);assert.equal(abandonedView.remote_effects_unknown,true);
+  await bad(['jobs','resume',uncertain.command.id]);await bad(['jobs','stop',uncertain.command.id]);
+  const abandonedExecutionReuse=await json(executeUrl,{schema_version:1,expected_node_id:owner.id,command:uncertain.command});
+  assert.equal(abandonedExecutionReuse.result.reused,true);assert.equal(abandonedExecutionReuse.result.status,'abandoned');
+  assert.equal((await node(['requests','receipt',uncertain.command.id,'--grant-id',uncertainGrant])).result.coordinator_attempt_state,'unknown');
+  await cli('eef',eefConfig,abandonArgs,false);
+  await bad([...abandonArgs.slice(0,-2),'--operation-id',randomUUID()]);
+  runtime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+  await until(async()=>{const d=await coordinator(['diagnostics']);return d.runtime_id!==runtime&&d.registered_node_count===2;},'abandoned tracking reopen');
+  assert.deepEqual((await coordinator(['requests','inspect',uncertain.command.id])).plan,abandoned);
+  assert.equal((await node(abandonArgs)).result.reused,true);assert.equal(gateRequests,1);
+  // Removal is a separate explicit owner action, not automatic cleanup or journal erasure.
+  await node(['jobs','remove',uncertain.command.id]);
+  assert.equal((await node(['grants','receipt','--id',uncertainGrant])).receipt.state,'accepted','node nonce ledger must survive coordinator history removal');
+  await bad(abandonArgs);
+  // The coordinator owner can separately abandon known uncertainty after a bounded node deadline.
+  const ownerUnknown=await prepared('http_request','http.request',{url:`http://127.0.0.1:${gateServer.address().port}/owner-uncertain`,method:'GET',timeout_seconds:20},1500);
+  await node(['requests','execute',ownerUnknown.command.id,'--revision','3','--approval-digest',ownerUnknown.command.approval_sha256,'--operation-id',ownerUnknown.command.operation_id]);
+  await until(async()=>gateRequests===2&&(await node(['jobs','get',ownerUnknown.command.id])).data.status==='interrupted','bounded node deadline with uncertain effects');
+  const ownerInterrupted=(await coordinator(['requests','inspect',ownerUnknown.command.id])).plan;
+  assert.equal(ownerInterrupted.execution.attempts[0].report.state,'unknown');
+  const ownerDecisionOperation=randomUUID();
+  const ownerDecisionArgs=['requests','abandon',ownerInterrupted.plan_id,'--revision',String(ownerInterrupted.revision),
+    '--grant-id',ownerInterrupted.execution.attempts[0].grant.grant_id,'--acknowledge-effects-may-continue','--operation-id',ownerDecisionOperation];
+  const ownerDecision=await coordinator(ownerDecisionArgs);
+  assert.equal(ownerDecision.abandonment.actor,'coordinator_owner');assert.equal(ownerDecision.remote_effects_unknown,true);
+  assert.equal(ownerDecision.remote_stop_confirmed,false);assert.equal(ownerDecision.execution_requested,false);
+  assert.equal((await coordinator(ownerDecisionArgs)).reused,true);
+  assert.equal((await node(['jobs','get',ownerInterrupted.plan_id])).data.status,'abandoned');
+  await bad(ownerDecisionArgs);
+  assert.equal((await node(['requests','receipt',ownerInterrupted.plan_id,'--grant-id',ownerInterrupted.execution.attempts[0].grant.grant_id])).result.receipt.state,'unknown');
+  assert.deepEqual((await coordinator(['requests','inspect',ownerInterrupted.plan_id])).plan.execution.attempts,ownerInterrupted.execution.attempts);
   for(const res of gatedResponses)res.end('late data is not completion authority');
-  assert.equal(gateRequests,1);assert.equal(await readFile(effectFile,'utf8'),'external owner marker');
+  assert.equal(gateRequests,2);assert.equal(await readFile(effectFile,'utf8'),'external owner marker');
   assert.deepEqual((await coordinator(['requests','inspect',writeJob.command.id])).plan,completed,'completed grants must survive EEF restart unchanged');
   await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,two_logical_nodes:true,pinned_tls13:true,api_only:true,
     model_free:true,origin_owned:true,immutable_original:true,clarification_answers:true,proposal_history:true,
@@ -289,7 +345,9 @@ try {
     physical_two_pc:false,explicit_concrete_planning:true,compiled_without_dispatch:true,immutable_plan_digest:true,
     bounded_owner_approval:true,approved_without_grant_or_dispatch:true,approval_restart_and_cancellation:true,
     execution_grants:true,durable_issuance_and_ack:true,origin_execution:true,separate_origin_and_executor:true,uncertain_restart_no_replay:true,
-    authenticated_remote_receipt_inspection:true,reserved_receipt_controls:true,receipt_inspection_without_job_changes_or_replay:true},null,2));
+    authenticated_remote_receipt_inspection:true,reserved_receipt_controls:true,receipt_inspection_without_job_changes_or_replay:true,
+    explicit_tracking_abandonment:true,abandonment_without_remote_stop_or_retry:true,abandonment_reopen_and_receipt_reuse:true,
+    owner_and_origin_abandonment:true,deadline_unknown_not_success:true},null,2));
   console.log('Durable request validation passed: '+scratch);
 } finally {
   for(const res of gatedResponses)res.destroy();gateServer.closeAllConnections();await new Promise(r=>gateServer.close(r));

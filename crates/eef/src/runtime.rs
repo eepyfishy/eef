@@ -704,6 +704,18 @@ impl Runtime {
                     )
                     .await
             }
+            "requests.abandon" => {
+                match serde_json::from_value::<eefn::request_abandon::AbandonCommand>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(command) if command.operation_id == context.request_id() => {
+                        self.abandon_request(command, Some(context.origin_node()))
+                    }
+                    _ => Err(anyhow::anyhow!(
+                        "Abandonment receipt does not match authenticated origin"
+                    )),
+                }
+            }
             "requests.receipt" => {
                 match serde_json::from_value::<eefn::request_receipt::ReceiptCommand>(
                     message["payload"].clone(),

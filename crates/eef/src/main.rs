@@ -278,6 +278,39 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .build()?;
     let response = match command {
         Command::Requests { command } => {
+            if let eef::request_planning::PlanningAction::Abandon {
+                id,
+                revision,
+                grant_id,
+                acknowledge_effects_may_continue,
+                operation_id,
+            } = command
+            {
+                let command = eefn::request_abandon::AbandonCommand {
+                    id: id.clone(),
+                    expected_revision: *revision,
+                    grant_id: grant_id.clone(),
+                    acknowledge_effects_may_continue: *acknowledge_effects_may_continue,
+                    operation_id: operation_id
+                        .clone()
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                };
+                command.validate()?;
+                let state =
+                    command_response(client.get(format!("{base}/api/diagnostics")).send().await?)
+                        .await?;
+                let runtime = state["runtime_id"].as_str().context("Missing runtime ID")?;
+                let exchange = async {
+                    let value = command_response(client.post(format!("{base}/api/commands/requests/abandon"))
+                        .json(&json!({"schema_version":1,"expected_runtime_id":runtime,"command":command})).send().await?).await?;
+                    if !eefn::request_abandon::confirmed(&value, &command, eefn::request_abandon::AbandonActor::CoordinatorOwner, None, Some(runtime)) { bail!("Unconfirmed abandonment receipt") }
+                    Ok::<_,anyhow::Error>(value)
+                }.await;
+                return Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"request_abandonment","success":false,
+                    "id":command.id,"operation_id":command.operation_id,"outcome_unknown":true,"execution_requested":false,
+                    "automatically_retried":false,"remote_stop_confirmed":false,"remote_effects_unknown":true,
+                    "error_code":"abandonment_unconfirmed","note":"Inspect the request and reuse only the exact receipt; no fallback, stop or retry was authorized."})));
+            }
             if let eef::request_planning::PlanningAction::Receipt { id, grant_id } = command {
                 let command = eefn::request_receipt::ReceiptCommand {
                     id: id.clone(),
@@ -326,6 +359,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     "error_code":"execution_unconfirmed","note":"Inspect the request/job and receipts before retrying; no fallback, replay or automatic renewal."})));
             }
             let command = match command {
+                eef::request_planning::PlanningAction::Abandon { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Receipt { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Execute { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Inspect { id } => {

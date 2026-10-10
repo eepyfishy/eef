@@ -421,7 +421,10 @@ impl JobStore {
         let plan = read(&connection, id)?;
         if !matches!(
             plan.status,
-            PlanStatus::Completed | PlanStatus::Failed | PlanStatus::Cancelled
+            PlanStatus::Completed
+                | PlanStatus::Failed
+                | PlanStatus::Cancelled
+                | PlanStatus::Abandoned
         ) {
             bail!("Only finished jobs can be removed")
         }
@@ -472,7 +475,10 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
         }
     } else if matches!(
         plan.status,
-        PlanStatus::Review | PlanStatus::AwaitingApproval | PlanStatus::Approved
+        PlanStatus::Review
+            | PlanStatus::AwaitingApproval
+            | PlanStatus::Approved
+            | PlanStatus::Abandoned
     ) || plan.planning.is_some()
         || plan.approval.is_some()
         || plan.execution.is_some()
@@ -608,6 +614,20 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
             value["approval_expires_at_ms"] = json!(approval.expires_at_ms);
         }
         if let Some(execution) = &plan.execution {
+            value["tracking_abandoned"] = json!(execution.abandonment.is_some());
+            value["remote_effects_unknown"] = json!(
+                execution
+                    .attempts
+                    .iter()
+                    .any(|a| a.state == crate::request_execution::AttemptState::Unknown)
+            );
+            value["can_abandon_tracking"] = json!(
+                    plan.status == PlanStatus::Interrupted
+                        && execution.abandonment.is_none()
+                        && execution.attempts.last().is_some_and(
+                            |a| a.state == crate::request_execution::AttemptState::Unknown
+                        )
+                );
             value["grant_attempts"] = json!(execution.attempts.iter().map(|a|json!({"task_id":a.grant.task_id,"grant_id":a.grant.grant_id,
                 "state":a.state,"node_id":a.grant.executor_node,"acknowledged":a.acknowledgement.is_some(),"success":a.report.as_ref().map(|r|r.success)})).collect::<Vec<_>>());
         }

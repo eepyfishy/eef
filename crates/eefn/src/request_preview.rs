@@ -8,6 +8,18 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Close this origin's local tracking of uncertain work, not remote effects.
+    Abandon {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        grant_id: String,
+        #[arg(long, required = true)]
+        acknowledge_effects_may_continue: bool,
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Inspect a retained request's executor receipt through EEF; never replay or reconcile.
     Receipt {
         id: String,

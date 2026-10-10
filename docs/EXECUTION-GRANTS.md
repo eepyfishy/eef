@@ -135,7 +135,13 @@ authority fields, missing/damaged receipts and cross-site callers reject. No rec
 erase, replay, reset or recovery execution command is exposed. The separate
 `requests execute` command accepts only an exact approved retained plan, never a
 caller-supplied raw grant. Uncertain attempts cannot be hidden by Stop or resumed
-through legacy job runners; explicit reconciliation remains a later boundary.
+through legacy job runners. The explicit `requests abandon` recovery branch can
+close idle local tracking with an exact revision/grant and acknowledged uncertainty,
+not by relabelling unknown effects as stopped/successful. Its `abandoned` state
+retains issued authority and receipts, cannot resume/replay and survives restart.
+The authenticated owner/origin decision is durable and idempotent. Separate explicit
+history removal does not erase node nonce receipts. Lost-output/execution
+reconciliation and strong remote termination remain later boundaries.
 
 The original request node and local EEF owner can additionally use
 `requests receipt JOB_ID --grant-id GRANT_UUID --json` through EEF. It selects only
@@ -152,7 +158,8 @@ same strict metadata. Neither read path creates, repairs, prunes or changes rece
 snapshot, not a write or resumed lease. Even `completed` cannot recover output or
 its success status: the node ledger stores consumption/terminal state only.
 Missing evidence cannot prove no effects, and observed terminal state cannot prove
-every external effect stopped. Explicit uncertainty reconciliation remains pending.
+every external effect stopped. Inspection performs no reconciliation; local tracking
+abandonment is a separate explicit command, not lost-output or execution recovery.
 See [command contract](COMMANDS.md#executor-receipt-inspection-through-eef-unreleased-after-alpha6).
 
 Tests include real pinned-TLS client/gateway file-write execution, acceptance and

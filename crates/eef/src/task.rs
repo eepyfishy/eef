@@ -45,6 +45,8 @@ pub enum PlanStatus {
     Pausing,
     Stopping,
     Interrupted,
+    /// Explicit local tracking closure; remote effects remain unknown.
+    Abandoned,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -617,6 +619,20 @@ impl TaskEngine {
             engine: self.clone(),
             id: id.into(),
         })
+    }
+    pub(crate) fn abandon_reviewed(
+        &self,
+        command: &eefn::request_abandon::AbandonCommand,
+        origin: Option<&str>,
+    ) -> Result<(Plan, bool)> {
+        command.validate()?;
+        let active = self.active.lock().expect("active jobs");
+        let mut changed = false;
+        let plan = self.store.edit(&command.id, "Explicit tracking abandonment; remote effects remain unknown; no stop or retry authorized", |p| {
+            changed = crate::request_execution::abandon(p, command, origin, active.closing || active.ids.contains(&command.id), eefn::protocol::now_ms())?;
+            Ok(changed)
+        })?;
+        Ok((plan, !changed))
     }
     fn admit_new(&self, plan: Plan) -> Result<ActiveJob> {
         if plan.status != PlanStatus::Pending || plan.request_review.is_some() {

@@ -1,5 +1,44 @@
 # Architecture conformance status
 
+## Unreleased: explicit uncertainty acknowledgement and tracking closure (2026-10-11)
+
+Owner/origin `requests abandon` now closes idle interrupted coordinator tracking
+only against an exact revision and retained unknown grant, with explicit
+acknowledgement that remote effects may continue. The existing job journal saves
+a strict decision receipt and authenticated actor class under distinct `abandoned`.
+Original input/context, approved bindings, assignments, unknown attempt and any
+ACK/report/results remain retained; only unissued tasks are cancelled locally.
+This is not success, remote Stop, recovered output, rollback or retry/migration
+authorization. Live runners, shutdown, other origins, stale revisions, invented
+grants and reused/widened decisions fail atomically. Exact same-actor receipt reuse
+inspects without writing, including after restart. Late completion cannot replace
+retained uncertainty, and legacy runners cannot revive abandoned authority.
+
+Normal views expose closure/uncertainty hints without private decision receipts or
+parameters. Explicit `jobs remove` is separate, never automatic cleanup, and does
+not erase node nonce receipts. Removing history loses coordinator receipt recognition
+and evidence; it cannot prove no effects or authorize repeating work. See
+[command and recovery limits](COMMANDS.md#explicit-tracking-abandonment-unreleased-after-alpha6).
+
+Validation: **333 workspace/all-target Rust tests pass in both feature modes**.
+Fresh headless `request-drafts-ADw5AZ` covers both owner/origin CLI decisions,
+cross-site/widening/wrong-origin/stale denial, cold/warm restart uncertainty,
+deadline-to-unknown, actor-bound duplicate receipts, unchanged grant/task data,
+no replay, and nonce retention after separate history removal. Fake-model review
+(`request-review-Cb2zJO`), credentials (`node-credentials-ewwFSO`), model metadata
+(`model-metadata-i60KEZ`), shutdown (`job-shutdown-vdNCuL`) and scheduling
+(`scheduling-mPV61y`) regressions pass. All fixture children closed through cleanup;
+source dependency, formatting, syntax and diff checks pass.
+
+This implements the abandon-tracking recovery branch, not full lost-output/
+execution reconciliation or strong executor termination. Automatic semantic
+planning/bootstrap, legacy-path grant migration, clock/two-PC acceptance,
+continuous pipelines, peer/media paths, model lifecycle and stable release gates
+remain incomplete. Installed apps/remote nodes, models, permissions, versions,
+installers and disabled stable-only feeds are unchanged. These tests use isolated
+local processes/fake inference, not physical two-PC or real reasoning acceptance;
+no stable v0.4.0, signing or Defender-clearance claim is made.
+
 ## Unreleased: credential-only startup without a legacy secret (2026-10-11)
 
 EEF no longer requires an unused shared secret when the owner has explicitly

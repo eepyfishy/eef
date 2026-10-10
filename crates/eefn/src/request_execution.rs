@@ -83,7 +83,13 @@ pub fn confirmed(
         && origin.is_none_or(|id| id == r.request_context.origin_node())
         && matches!(
             r.status.as_str(),
-            "running" | "stopping" | "completed" | "failed" | "cancelled" | "interrupted"
+            "running"
+                | "stopping"
+                | "completed"
+                | "failed"
+                | "cancelled"
+                | "interrupted"
+                | "abandoned"
         )
 }
 impl crate::NodeService {

@@ -40,6 +40,8 @@ pub struct ExecutionRecord {
     pub command: ExecuteCommand,
     pub started_at_ms: u64,
     pub attempts: Vec<GrantedAttempt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abandonment: Option<eefn::request_abandon::AbandonRecord>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +56,73 @@ pub struct ReceiptInspectionRequest {
     pub schema_version: u32,
     pub expected_runtime_id: String,
     pub command: eefn::request_receipt::ReceiptCommand,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbandonmentRequest {
+    pub schema_version: u32,
+    pub expected_runtime_id: String,
+    pub command: eefn::request_abandon::AbandonCommand,
+}
+pub(crate) fn abandon(
+    p: &mut Plan,
+    command: &eefn::request_abandon::AbandonCommand,
+    origin: Option<&str>,
+    unavailable: bool,
+    now: u64,
+) -> Result<bool> {
+    command.validate()?;
+    let attempt = receipt_attempt(
+        p,
+        &eefn::request_receipt::ReceiptCommand {
+            id: command.id.clone(),
+            grant_id: command.grant_id.clone(),
+        },
+        origin,
+    )?;
+    let actor = if origin.is_some() {
+        eefn::request_abandon::AbandonActor::OriginNode
+    } else {
+        eefn::request_abandon::AbandonActor::CoordinatorOwner
+    };
+    let execution = p.execution.as_ref().context("No reviewed execution")?;
+    if let Some(existing) = &execution.abandonment {
+        if existing.command == *command && existing.actor == actor {
+            return Ok(false);
+        }
+        bail!("Abandonment already retained; inspect it without replacing the receipt")
+    }
+    if unavailable
+        || p.status != PlanStatus::Interrupted
+        || p.revision != command.expected_revision
+        || attempt.state != AttemptState::Unknown
+        || now < p.updated_at_ms
+        || now < attempt.grant.issued_at_ms
+        || operation_used(p, &command.operation_id)
+    {
+        bail!(
+            "Abandonment requires the exact idle interrupted revision/uncertain grant and a new receipt; no job change"
+        )
+    }
+    p.execution.as_mut().unwrap().abandonment = Some(eefn::request_abandon::AbandonRecord {
+        schema_version: 1,
+        command: command.clone(),
+        actor,
+        decided_at_ms: now,
+    });
+    cancel_pending(p);
+    p.status = PlanStatus::Abandoned;
+    Ok(true)
+}
+fn operation_used(p: &Plan, id: &str) -> bool {
+    p.execution.as_ref().is_some_and(|e| {
+        e.command.operation_id == id || e.attempts.iter().any(|a| a.grant.grant_id == id)
+    }) || p.approval.as_ref().is_some_and(|a| a.operation_id == id)
+        || p.planning.as_ref().is_some_and(|a| a.operation_id == id)
+        || p.request_review.as_ref().is_some_and(|r| {
+            r.proposals.iter().any(|p| p.operation_id == id)
+                || r.answers.iter().any(|a| a.operation_id == id)
+        })
 }
 fn receipt_attempt<'a>(
     plan: &'a Plan,
@@ -160,6 +229,7 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
                 | PlanStatus::Failed
                 | PlanStatus::Interrupted
                 | PlanStatus::Cancelled
+                | PlanStatus::Abandoned
         )
         || e.attempts.len() > plan.tasks.len()
     {
@@ -314,6 +384,35 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             > 1)
     {
         bail!("Reviewed execution/result state is inconsistent")
+    }
+    if let Some(record) = &e.abandonment {
+        record.command.validate()?;
+        let a = e
+            .attempts
+            .last()
+            .context("Abandonment lacks an issued attempt")?;
+        if record.schema_version != 1
+            || plan.status != PlanStatus::Abandoned
+            || record.command.id != plan.plan_id
+            || record.command.grant_id != a.grant.grant_id
+            || record.command.expected_revision <= e.command.expected_revision
+            || record.command.expected_revision.checked_add(1) != Some(plan.revision)
+            || record.decided_at_ms < a.grant.issued_at_ms
+            || record.decided_at_ms < e.started_at_ms
+            || record.decided_at_ms > plan.updated_at_ms
+            || operation_used(plan, &record.command.operation_id)
+            || a.state != AttemptState::Unknown
+            || plan.tasks.iter().any(|t| {
+                matches!(
+                    t.status,
+                    TaskStatus::Pending | TaskStatus::Running | TaskStatus::Failed
+                )
+            })
+        {
+            bail!("Damaged abandonment receipt; retained without recovery or replay")
+        }
+    } else if plan.status == PlanStatus::Abandoned {
+        bail!("Abandoned tracking lacks an explicit uncertainty acknowledgement")
     }
     Ok(())
 }
@@ -667,11 +766,38 @@ fn start(p: &mut Plan, command: &ExecuteCommand, now: u64) -> Result<()> {
         command: command.clone(),
         started_at_ms: now,
         attempts: vec![],
+        abandonment: None,
     });
     p.status = PlanStatus::Running;
     Ok(())
 }
 impl crate::Runtime {
+    pub fn request_abandonment_command(&self, request: AbandonmentRequest) -> Result<Value> {
+        if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
+            bail!("Abandonment schema/runtime changed")
+        }
+        self.abandon_request(request.command, None)
+    }
+    pub(crate) fn abandon_request(
+        &self,
+        command: eefn::request_abandon::AbandonCommand,
+        origin: Option<&str>,
+    ) -> Result<Value> {
+        let (p, reused) = self.engine.abandon_reviewed(&command, origin)?;
+        let abandonment = p
+            .execution
+            .as_ref()
+            .and_then(|e| e.abandonment.clone())
+            .context("No saved abandonment receipt")?;
+        Ok(json!(eefn::request_abandon::AbandonReport {
+            schema_version: 1, report_type: "coordinator_request_abandonment".into(), success: true,
+            runtime_id: self.instance_id.clone(), id: p.plan_id, revision: p.revision, status: "abandoned".into(),
+            request_context: p.goal.request_context.context("No origin")?, abandonment, reused, persisted: true,
+            tracking_abandoned: true, remote_stop_confirmed: false, remote_effects_unknown: true,
+            execution_requested: false, automatically_retried: false,
+            note: "Local coordinator tracking closed by explicit uncertainty acknowledgement. Issued attempts/effects remain unknown, not successful or remotely stopped. No retry, migration, grant or output recovery authorized. Retain receipts for investigation.".into(),
+        }))
+    }
     pub async fn request_receipt_command(
         &self,
         request: ReceiptInspectionRequest,
@@ -786,6 +912,182 @@ fn report(runtime: &crate::Runtime, p: &Plan, reused: bool) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::{event::EventBus, request_approval::tests as approval};
+    fn abandonment_command(p: &Plan) -> eefn::request_abandon::AbandonCommand {
+        eefn::request_abandon::AbandonCommand {
+            id: p.plan_id.clone(),
+            expected_revision: p.revision,
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            grant_id: p
+                .execution
+                .as_ref()
+                .unwrap()
+                .attempts
+                .last()
+                .unwrap()
+                .grant
+                .grant_id
+                .clone(),
+            acknowledge_effects_may_continue: true,
+        }
+    }
+    #[test]
+    fn abandonment_preserves_unknown_authority_and_effects_without_replay_or_fake_success() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, journal) = issued(&engine);
+        journal.record(&ack(&g)).unwrap();
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let unknown = engine.store.get(&p.plan_id).unwrap();
+        let command = abandonment_command(&unknown);
+        let origin = unknown.goal.request_context.as_ref().unwrap().origin_node();
+        assert!(
+            engine
+                .abandon_reviewed(&command, Some("other-origin"))
+                .is_err()
+        );
+        let (closed, reused) = engine.abandon_reviewed(&command, Some(origin)).unwrap();
+        assert!(!reused);
+        assert_eq!(closed.status, PlanStatus::Abandoned);
+        assert_eq!(closed.revision, unknown.revision + 1);
+        assert_eq!(json!(closed.goal), json!(unknown.goal));
+        assert_eq!(json!(closed.tasks), json!(unknown.tasks));
+        assert_eq!(
+            json!(closed.execution.as_ref().unwrap().attempts),
+            json!(unknown.execution.as_ref().unwrap().attempts)
+        );
+        assert_eq!(json!(closed.results), json!(unknown.results));
+        assert_eq!(
+            closed.execution.as_ref().unwrap().attempts[0].state,
+            AttemptState::Unknown
+        );
+        let view = crate::jobs::view(&closed, true);
+        assert_eq!(view["tracking_abandoned"], true);
+        assert_eq!(view["remote_effects_unknown"], true);
+        assert_eq!(view["can_resume"], false);
+        assert_eq!(view["can_abandon_tracking"], false);
+        let (same, reused) = engine.abandon_reviewed(&command, Some(origin)).unwrap();
+        assert!(reused);
+        assert_eq!(json!(same), json!(closed));
+        assert!(
+            engine.abandon_reviewed(&command, None).is_err(),
+            "different authenticated actor cannot reuse this action receipt"
+        );
+        let mut changed = command.clone();
+        changed.operation_id = uuid::Uuid::new_v4().to_string();
+        assert!(engine.abandon_reviewed(&changed, Some(origin)).is_err());
+        assert!(journal.record(&done(&g)).is_err());
+        assert!(engine.cancel(&p.plan_id).is_err());
+        assert!(engine.pause(&p.plan_id).is_err());
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(closed));
+        engine.store.remove_finished(&p.plan_id).unwrap();
+        assert!(engine.store.get(&p.plan_id).is_err());
+    }
+    #[tokio::test]
+    async fn abandonment_requires_idle_exact_unknown_checkpoint_and_rolls_back_denials() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, j) = issued(&engine);
+        let command = abandonment_command(&p);
+        assert!(engine.abandon_reviewed(&command, None).is_err());
+        j.record(&ack(&g)).unwrap();
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let unknown = engine.store.get(&p.plan_id).unwrap();
+        let command = abandonment_command(&unknown);
+        let mut bad = command.clone();
+        bad.acknowledge_effects_may_continue = false;
+        assert!(engine.abandon_reviewed(&bad, None).is_err());
+        let mut bad = command.clone();
+        bad.expected_revision -= 1;
+        assert!(engine.abandon_reviewed(&bad, None).is_err());
+        let mut bad = command.clone();
+        bad.grant_id = uuid::Uuid::new_v4().to_string();
+        assert!(engine.abandon_reviewed(&bad, None).is_err());
+        for used in [
+            unknown
+                .execution
+                .as_ref()
+                .unwrap()
+                .command
+                .operation_id
+                .clone(),
+            unknown.approval.as_ref().unwrap().operation_id.clone(),
+            unknown.planning.as_ref().unwrap().operation_id.clone(),
+        ] {
+            let mut bad = command.clone();
+            bad.operation_id = used;
+            assert!(engine.abandon_reviewed(&bad, None).is_err());
+        }
+        let guard = engine.claim(&p.plan_id, || Ok(())).unwrap();
+        assert!(engine.abandon_reviewed(&command, None).is_err());
+        drop(guard);
+        let mut clock_changed = unknown.clone();
+        assert!(
+            abandon(
+                &mut clock_changed,
+                &command,
+                None,
+                false,
+                unknown.updated_at_ms - 1
+            )
+            .is_err()
+        );
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(unknown));
+        engine.shutdown().await;
+        assert!(engine.abandon_reviewed(&command, None).is_err());
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(unknown));
+    }
+    #[test]
+    fn abandonment_is_durable_idempotent_under_racing_receipts_and_strict_against_tampering() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.db");
+        drop(rusqlite::Connection::open(&path).unwrap());
+        let engine = TaskEngine::with_store(
+            EventBus::new(20),
+            JobStore::open(&path, 20, 200000).unwrap(),
+        );
+        let (p, _, _) = issued(&engine);
+        engine.store.interrupt(&p.plan_id).unwrap();
+        let command = abandonment_command(&engine.store.get(&p.plan_id).unwrap());
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|s| {
+            let first = s.spawn(|| {
+                barrier.wait();
+                engine.abandon_reviewed(&command, None).unwrap()
+            });
+            barrier.wait();
+            let second = engine.abandon_reviewed(&command, None).unwrap();
+            let first = first.join().unwrap();
+            assert_ne!(first.1, second.1);
+            assert_eq!(json!(first.0), json!(second.0));
+        });
+        let closed = engine.store.get(&p.plan_id).unwrap();
+        for (field, bad) in [("schema_version", json!(2)), ("decided_at_ms", json!(0))] {
+            let mut raw = json!(closed);
+            raw["execution"]["abandonment"][field] = bad;
+            assert!(
+                crate::jobs::validate_retained_review(&serde_json::from_value(raw).unwrap())
+                    .is_err()
+            );
+        }
+        let mut raw = json!(closed);
+        raw["execution"]["abandonment"]["command"]["acknowledge_effects_may_continue"] =
+            json!(false);
+        assert!(
+            crate::jobs::validate_retained_review(&serde_json::from_value(raw).unwrap()).is_err()
+        );
+        let mut bad = closed.clone();
+        bad.status = PlanStatus::Cancelled;
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        let mut bad = closed.clone();
+        bad.execution.as_mut().unwrap().abandonment = None;
+        assert!(crate::jobs::validate_retained_review(&bad).is_err());
+        drop(engine);
+        let engine =
+            TaskEngine::with_store(EventBus::new(20), JobStore::open(&path, 20, 1024).unwrap());
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(closed));
+        let (same, reused) = engine.abandon_reviewed(&command, None).unwrap();
+        assert!(reused);
+        assert_eq!(json!(same), json!(closed));
+        assert!(engine.resume_job(&p.plan_id).is_err());
+    }
     #[test]
     fn receipt_selection_requires_original_origin_and_exact_retained_issuance_without_mutation() {
         let engine = TaskEngine::new(EventBus::new(20));

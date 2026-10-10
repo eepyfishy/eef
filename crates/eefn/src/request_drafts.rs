@@ -220,6 +220,7 @@ pub fn confirmed_report(value: &Value, node: &str, operation_id: &str, id: Optio
                 | "completed"
                 | "failed"
                 | "interrupted"
+                | "abandoned"
         )
         && report.operation_id == operation_id
         && report.request_context.origin_node() == node

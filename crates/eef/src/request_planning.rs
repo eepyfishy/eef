@@ -339,6 +339,18 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum PlanningAction {
+    /// Close local tracking of an uncertain attempt; acknowledge that remote effects may continue.
+    Abandon {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        grant_id: String,
+        #[arg(long, required = true)]
+        acknowledge_effects_may_continue: bool,
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Inspect one issued attempt's current authenticated executor receipt; never replay or reconcile.
     Receipt {
         id: String,

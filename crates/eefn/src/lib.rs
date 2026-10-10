@@ -27,6 +27,7 @@ pub mod model_server;
 pub mod network;
 pub mod protocol;
 pub mod python;
+pub mod request_abandon;
 pub mod request_drafts;
 pub mod request_execution;
 pub mod request_limits;

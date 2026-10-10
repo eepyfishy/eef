@@ -520,7 +520,61 @@ status. Even a completed receipt cannot prove all external effects stopped.
 A missing receipt does not prove nothing happened. Inspection never changes the
 coordinator revision/status, returns an unknown attempt to a runner, cancels remote
 effects, issues another grant, prunes receipts or supplies a recovery authorization.
-The separate explicit reconciliation/recovery policy remains required.
+Explicit local tracking abandonment is available below. Lost-output recovery,
+remote termination confirmation and execution/migration reconciliation remain required.
+
+## Explicit tracking abandonment (unreleased after alpha.6)
+
+After inspecting an uncertain granted attempt, the original node or local EEF
+owner can explicitly close its coordinator tracking without claiming remote stop:
+
+```powershell
+eefn requests abandon JOB_ID --revision REV --grant-id GRANT_UUID --acknowledge-effects-may-continue --json
+eef requests abandon JOB_ID --revision REV --grant-id GRANT_UUID --acknowledge-effects-may-continue --json
+```
+
+Both support `--operation-id UUID` for reuse of the **same exact receipt** after an
+unconfirmed response. Never generate a new receipt to conceal uncertainty. The
+job must be an idle reviewed execution in `interrupted`, with the exact current
+revision and retained unknown grant. Live runners, closing admission, other
+origins, stale revisions, unknown grants, reused action IDs and missing/false
+acknowledgement reject without changing data. A busy denial is not permission to
+force the journal. No model, executor connection, grant, fallback or automatic
+retry is needed or invoked. Empty/unissued interruptions can still use normal
+Stop; this command requires actual uncertain issuance.
+
+The atomic `abandoned` checkpoint retains original input/context, approved plan,
+assignments, unknown attempt, any ACK/report and result metadata. It records the
+exact decision receipt, authenticated actor class (`origin_node` or
+`coordinator_owner`) and timestamp; unissued tasks are cancelled locally. Unknown
+tasks/effects are **not** changed into success or remote cancellation. Restart
+cannot revive tracking/authority. Exact retries by the same actor inspect without
+another write; different decisions/actors cannot replace the receipt. Legacy
+run/resume/pause/Stop and fresh execution commands do not replay this work. An
+original execution receipt may still be inspected through exact reuse, not reissued.
+
+Guarded API: `POST /api/commands/requests/abandon`. EEF takes exactly
+`schema_version: 1`, `expected_runtime_id`, `command`; the node adapter instead
+takes `schema_version: 1`, `expected_node_id`, `command`. The command contains only
+`id`, `expected_revision`, canonical `operation_id`, `grant_id` and
+`acknowledge_effects_may_continue: true`. Node forwarding binds the decision's
+receipt to authenticated submission context; a caller cannot supply its own actor.
+Cross-site callers and extra authority fields reject.
+
+`coordinator_request_abandonment` confirms a persisted **local tracking decision**,
+not effect completion. It reports `tracking_abandoned: true`,
+`remote_stop_confirmed: false`, `remote_effects_unknown: true`,
+`execution_requested: false`, `automatically_retried: false`. Ordinary job views
+expose closure/uncertainty metadata without the private receipt or parameters;
+`can_abandon_tracking` is a state hint, not admission or authority. There is no
+resume, recovered output, rollback, remote process termination or migration promise.
+
+Keep history for investigation. `jobs remove` is a **separate explicit** action
+after abandonment, never automatic cleanup. Removal loses coordinator receipt
+recognition/history, not the node's consumed nonce ledger. Missing history or
+receipt evidence still cannot prove no effects; neither removal nor abandonment
+authorizes recreating/repeating uncertain work. Do not erase the node journal.
+This is the abandon-tracking recovery branch, not full execution reconciliation.
 
 ## Supplied structured proposals (unreleased)
 
