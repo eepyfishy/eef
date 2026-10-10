@@ -1,5 +1,47 @@
 # Architecture conformance status
 
+## Unreleased: bounded retained executor reports (2026-10-11)
+
+Granted operations atomically checkpoint bounded final reports/output in the
+existing node grant ledger before sending completion. Admission reserves result
+space across independent handles before consumption/ACK/effects. Schema 1-to-2
+migration preserves old consumed receipts without inventing output/success;
+read-only legacy inspection does not migrate. Damaged/future journals and failed
+checkpoints fail closed. Cached output is explicit/private, not routine status.
+
+Origin/EEF owner `requests result` reads the exact retained issuance from its
+independently authenticated pinned-issuer executor, including after session
+replacement. Executor-local `grants result` works offline. Strict bounds,
+scope/identity checks and API guards apply; no other origin, issuer or fallback
+can fetch it. Receipt commands stay metadata-only. Reads neither change EEF
+tracking nor infer, issue/renew grants, retry or reconcile. See
+[retained result contract](RETAINED-RESULTS.md).
+
+This is a lost-output evidence/retrieval foundation, not automatic uncertainty
+resolution, strong termination, legacy grant migration or physical acceptance.
+Versions, installed apps/physical nodes, installers and stable-only update feeds
+remain unchanged. Stop old runtimes and back up data before a future upgrade;
+older binaries reject schema-2 grant journals.
+
+Validation: **371 workspace/all-target Rust tests pass in both feature modes**,
+with fresh no-dashboard binaries. Added coverage checks bounded/correlated final
+reports, canonical checksums, changed cached output, atomic write failure,
+reservations across independent handles, replay denial, legacy migration and
+read-only/no-file-creation behavior. The pinned-TLS native file-write test
+deliberately loses the coordinator completion checkpoint, retrieves the exact
+node report across restart/session replacement and preserves an owner marker
+without re-executing. These are local isolated tests, not physical acceptance.
+
+`request-review-Q83hlH` passes origin/owner/local CLI/API result reads, another
+connected origin's denial, strict API guards, routine-output redaction and both
+role restarts with unchanged job state and no inference replay. The earlier new
+denial fixture reached a stopped peer; reconnecting it tests actual authenticated
+EEF refusal without weakening assertions/deadlines. Baselines pass in
+`request-drafts-BdBLPW`, `job-shutdown-KRqpnK`, `scheduling-tq7XqD`,
+`model-metadata-rROQlm` and `node-credentials-Kez5vL`. Formatter, JS syntax,
+backend/browser source boundary and diff checks pass. Fake-model/headless command
+tests do not establish real-model quality, physical load or two-PC acceptance.
+
 ## Unreleased: explicit grant-aware submission entry (2026-10-11)
 
 `requests submit` and `jobs request-text` let callers save and compile explicit

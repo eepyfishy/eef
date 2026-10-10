@@ -66,6 +66,12 @@ pub enum RequestAction {
         #[arg(long)]
         grant_id: String,
     },
+    /// Explicitly read retained executor output through EEF; never replay or reconcile.
+    Result {
+        id: String,
+        #[arg(long)]
+        grant_id: String,
+    },
     /// Ask EEF to execute one exact owner-approved request from this running node.
     Execute {
         id: String,

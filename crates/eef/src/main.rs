@@ -311,7 +311,13 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     "automatically_retried":false,"remote_stop_confirmed":false,"remote_effects_unknown":true,
                     "error_code":"abandonment_unconfirmed","note":"Inspect the request and reuse only the exact receipt; no fallback, stop or retry was authorized."})));
             }
-            if let eef::request_planning::PlanningAction::Receipt { id, grant_id } = command {
+            if let eef::request_planning::PlanningAction::Receipt { id, grant_id }
+            | eef::request_planning::PlanningAction::Result { id, grant_id } = command
+            {
+                let result_query = matches!(
+                    command,
+                    eef::request_planning::PlanningAction::Result { .. }
+                );
                 let command = eefn::request_receipt::ReceiptCommand {
                     id: id.clone(),
                     grant_id: grant_id.clone(),
@@ -321,9 +327,14 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     command_response(client.get(format!("{base}/api/diagnostics")).send().await?)
                         .await?;
                 let runtime = state["runtime_id"].as_str().context("Missing runtime ID")?;
-                let result = command_response(client.post(format!("{base}/api/commands/requests/receipt"))
+                let path = if result_query { "result" } else { "receipt" };
+                let result = command_response(client.post(format!("{base}/api/commands/requests/{path}"))
                     .json(&json!({"schema_version":1,"expected_runtime_id":runtime,"command":command})).send().await?).await?;
-                if !eefn::request_receipt::confirmed(&result, &command, None, Some(runtime)) {
+                if !(if result_query {
+                    eefn::request_result::confirmed(&result, &command, None, Some(runtime))
+                } else {
+                    eefn::request_receipt::confirmed(&result, &command, None, Some(runtime))
+                }) {
                     bail!("Unconfirmed receipt inspection; no fallback or recovery")
                 }
                 return Ok(result);
@@ -361,6 +372,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             let command = match command {
                 eef::request_planning::PlanningAction::Abandon { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Receipt { .. } => unreachable!(),
+                eef::request_planning::PlanningAction::Result { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Execute { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Inspect { id } => {
                     eef::request_planning::PlanningCommand::Inspect { id: id.clone() }

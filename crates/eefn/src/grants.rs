@@ -12,6 +12,8 @@ use std::{
 };
 
 pub const MAX_DURATION_MS: u64 = 30_000;
+// Full report identity/flags/error overhead, in addition to bounded output.
+pub(crate) const REPORT_HEADROOM: usize = 8192;
 /// Durable coordinator journal hook. Called on validated, session-bound reports
 /// before acknowledging them to the RPC caller; never relies on broadcast events.
 pub trait GrantObserver: Send + Sync {
@@ -47,12 +49,15 @@ pub struct GrantAdvertisement {
     pub deadline_guarantee: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timing_mode: Option<String>,
+    #[serde(default)]
+    pub retained_results: bool,
 }
 impl GrantAdvertisement {
     pub fn validate(&self) -> Result<()> {
         if self.schema_version != 1
             || self.deadline_guarantee != "rpc_future_only"
             || (self.available && self.limits.is_none())
+            || (self.retained_results && !self.available)
             || self
                 .timing_mode
                 .as_deref()
@@ -73,6 +78,11 @@ pub enum GrantAction {
         #[arg(long)]
         id: String,
     },
+    /// Read an explicitly requested retained final report/output; never replay work.
+    Result {
+        #[arg(long)]
+        id: String,
+    },
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -83,6 +93,24 @@ pub struct ReceiptRequest {
 }
 
 impl crate::NodeService {
+    pub fn grant_result(&self, request: ReceiptRequest) -> Result<Value> {
+        if request.schema_version != 1 || request.expected_node_id != self.node_id {
+            bail!("Invalid grant result schema/node")
+        }
+        let db = Connection::open_with_flags(
+            journal_path(&self.config_path),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        db.busy_timeout(Duration::from_millis(200))?;
+        let result =
+            crate::request_result::read_result(&db, &self.node_id, None, &request.grant_id)?;
+        Ok(
+            json!({"schema_version":1,"report_type":"node_grant_result","success":true,
+            "node_id":self.node_id,"grant_id":request.grant_id,"result":result,
+            "execution_requested":false,"automatically_retried":false,"reconciled":false,
+            "note":"Explicit read-only retained report/output, not termination, rollback or replay authority. Missing output does not prove no effects. Coordinator tracking is unchanged."}),
+        )
+    }
     pub fn grant_receipt(&self, request: ReceiptRequest) -> Result<Value> {
         if request.schema_version != 1 || request.expected_node_id != self.node_id {
             bail!("Invalid grant receipt schema/node")
@@ -404,7 +432,7 @@ impl GrantLedger {
             bail!("Damaged grant journal; retained for recovery")
         }
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if !matches!(version, 0 | 1) {
+        if !matches!(version, 0 | 1 | 2) {
             bail!("Unknown grant journal version; retained for recovery")
         }
         if version == 0 {
@@ -450,6 +478,17 @@ impl GrantLedger {
         if invalid != 0 {
             bail!("Damaged grant receipts; retained for recovery")
         }
+        let ids = {
+            let mut query = db.prepare("SELECT grant_id FROM execution_receipts")?;
+            query
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        // Validate before migrating. Never turn a damaged legacy record into a
+        // new schema or admit more work beside malformed retained evidence.
+        for id in &ids {
+            crate::request_result::read_result(&db, node_id, None, id)?;
+        }
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")?;
         let page_size: i64 = db.query_row("PRAGMA page_size", [], |r| r.get(0))?;
         db.pragma_update(
@@ -457,6 +496,14 @@ impl GrantLedger {
             "max_page_count",
             i64::try_from(policy.max_journal_bytes)? / page_size,
         )?;
+        // Additive migration retains consumed legacy receipts without inventing
+        // output/success. Owner/version/metadata checks precede any migration.
+        // Older binaries reject version 2; do not overlap or downgrade runtimes.
+        if version != 2 {
+            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            tx.execute_batch("ALTER TABLE execution_receipts ADD COLUMN max_result_bytes INTEGER NOT NULL DEFAULT 0; ALTER TABLE execution_receipts ADD COLUMN report TEXT; ALTER TABLE execution_receipts ADD COLUMN report_sha256 TEXT; PRAGMA user_version=2;")?;
+            tx.commit()?;
+        }
         Ok(Arc::new(Self {
             node_id: node_id.into(),
             connection: Mutex::new(db),
@@ -468,6 +515,11 @@ impl GrantLedger {
     }
     pub fn claim(&self, g: &ExecutionGrant) -> Result<()> {
         g.validate()?;
+        if g.limits.max_result_bytes > self.policy.max_result_bytes
+            || g.limits.max_execution_ms > self.policy.max_duration_ms
+        {
+            return Err(GrantDenied("grant_owner_limits_exceeded").into());
+        }
         if g.executor_node != self.node_id {
             bail!("Grant journal owner mismatch")
         }
@@ -496,9 +548,16 @@ impl GrantLedger {
             usize::try_from(tx.query_row::<i64, _, _>("PRAGMA page_count", [], |r| r.get(0))?)?;
         let page_size =
             usize::try_from(tx.query_row::<i64, _, _>("PRAGMA page_size", [], |r| r.get(0))?)?;
+        let reserved: i64 = tx.query_row(
+            "SELECT coalesce(sum(max_result_bytes+?2+4*?1),0) FROM execution_receipts WHERE state='accepted' AND max_result_bytes>0",
+            params![i64::try_from(page_size)?,i64::try_from(REPORT_HEADROOM)?], |r| r.get(0),
+        )?;
         if usize::try_from(count)? >= self.policy.max_receipts
             || pages
                 .saturating_mul(page_size)
+                .saturating_add(usize::try_from(reserved)?)
+                .saturating_add(g.limits.max_result_bytes)
+                .saturating_add(REPORT_HEADROOM)
                 .saturating_add(4 * page_size)
                 > self.policy.max_journal_bytes
         {
@@ -506,7 +565,7 @@ impl GrantLedger {
         }
         let now = i64::try_from(crate::protocol::now_ms())?;
         tx.execute(
-            "INSERT INTO execution_receipts VALUES (?1,?2,?3,?4,?5,?6,'accepted',?7,?7)",
+            "INSERT INTO execution_receipts(issuer_id,job_id,task_id,attempt,grant_id,grant_digest,state,accepted_ms,updated_ms,max_result_bytes,report) VALUES (?1,?2,?3,?4,?5,?6,'accepted',?7,?7,?8,NULL)",
             params![
                 g.issuer_id,
                 g.job_id,
@@ -514,24 +573,32 @@ impl GrantLedger {
                 g.attempt,
                 g.grant_id,
                 digest,
-                now
+                now,
+                i64::try_from(g.limits.max_result_bytes)?
             ],
         )?;
         tx.commit()?;
         Ok(())
     }
-    fn finish(&self, g: &ExecutionGrant, state: ReceiptState) -> Result<()> {
-        let state = match state {
+    fn finish(&self, g: &ExecutionGrant, report: &GrantReport) -> Result<()> {
+        if !report.confirms(g) || !report.persisted {
+            bail!("Invalid final grant report")
+        }
+        let state = match report.state {
             ReceiptState::Completed => "completed",
             ReceiptState::Unknown => "unknown",
             _ => bail!("Invalid terminal receipt"),
         };
+        let encoded = serde_json::to_string(report)?;
+        if encoded.len() > g.limits.max_result_bytes.saturating_add(REPORT_HEADROOM) {
+            bail!("Retained report exceeds its reserved bound")
+        }
         let db = self
             .connection
             .lock()
             .map_err(|_| anyhow::anyhow!("Grant journal lock unavailable"))?;
-        let n=db.execute("UPDATE execution_receipts SET state=?2,updated_ms=max(accepted_ms,?3) WHERE grant_id=?1 AND grant_digest=?4 AND state='accepted'",
-            params![g.grant_id,state,i64::try_from(crate::protocol::now_ms())?,definition_digest(&json!(g))?])?;
+        let n=db.execute("UPDATE execution_receipts SET state=?2,updated_ms=max(accepted_ms,?3),report=?5,report_sha256=?7 WHERE grant_id=?1 AND grant_digest=?4 AND state='accepted' AND report IS NULL AND report_sha256 IS NULL AND max_result_bytes=?6",
+            params![g.grant_id,state,i64::try_from(crate::protocol::now_ms())?,definition_digest(&json!(g))?,encoded,i64::try_from(g.limits.max_result_bytes)?,definition_digest(&json!(report))?])?;
         if n != 1 {
             bail!("Grant receipt changed before completion")
         }
@@ -552,6 +619,18 @@ impl GrantLedger {
             Some(issuer),
             grant_id
         )?))
+    }
+    pub fn result(&self, issuer: &str, grant_id: &str, expected_digest: &str) -> Result<Value> {
+        let db = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Grant journal lock unavailable"))?;
+        let result =
+            crate::request_result::read_result(&db, &self.node_id, Some(issuer), grant_id)?;
+        if result.receipt.grant_sha256 != expected_digest {
+            bail!("Retained report scope changed")
+        }
+        Ok(json!(result))
     }
 }
 pub struct AcceptedGrant {
@@ -693,7 +772,7 @@ impl AcceptedGrant {
                 Some("completion_after_deadline"),
             );
         }
-        if self.ledger.finish(g, result.state).is_err() {
+        if self.ledger.finish(g, &result).is_err() {
             result = GrantReport::new(
                 g,
                 ReceiptState::Unknown,
@@ -1098,5 +1177,223 @@ pub(crate) mod tests {
         let before = std::fs::read(&path).unwrap();
         assert!(GrantLedger::open(&path, Default::default(), "owner").is_err());
         assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn final_reports_are_atomic_bounded_durable_and_explicitly_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("node.json");
+        let path = journal_path(&config);
+        let service = crate::NodeService::new(config, "owner".into());
+        let g = grant();
+        let request = || ReceiptRequest {
+            schema_version: 1,
+            expected_node_id: "owner".into(),
+            grant_id: g.grant_id.clone(),
+        };
+        assert!(service.grant_result(request()).is_err());
+        assert!(!path.exists());
+        let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        ledger.claim(&g).unwrap();
+        let pending = service.grant_result(request()).unwrap();
+        assert_eq!(pending["result"]["availability"], "no_final_checkpoint");
+        assert!(pending["result"].get("report").is_none());
+        let good = GrantReport::new(
+            &g,
+            ReceiptState::Completed,
+            json!({"content":"private completed result"}),
+            None,
+        );
+        let mut bad = good.clone();
+        bad.data = json!("x".repeat(g.limits.max_result_bytes + 1));
+        assert!(ledger.finish(&g, &bad).is_err());
+        assert_eq!(
+            ledger.receipt(&g.issuer_id, &g.grant_id).unwrap()["state"],
+            "accepted"
+        );
+        bad = good.clone();
+        bad.grant_sha256 = "c".repeat(64);
+        assert!(ledger.finish(&g, &bad).is_err());
+        ledger.finish(&g, &good).unwrap();
+        assert!(ledger.finish(&g, &good).is_err());
+        assert!(ledger.claim(&g).is_err());
+        // Routine metadata inspection still does not export output.
+        assert!(
+            !service
+                .grant_receipt(request())
+                .unwrap()
+                .to_string()
+                .contains("private completed result")
+        );
+        let before = std::fs::read(&path).unwrap();
+        let result = service.grant_result(request()).unwrap();
+        assert_eq!(result["result"]["report"], json!(good));
+        assert_eq!(result["execution_requested"], false);
+        assert_eq!(result["reconciled"], false);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        drop(ledger);
+        let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        assert_eq!(service.grant_result(request()).unwrap(), result);
+        assert!(ledger.claim(&g).is_err());
+        let db = Connection::open(&path).unwrap();
+        let mut changed = json!(good);
+        changed["data"] = json!({"content":"changed cached output"});
+        db.execute(
+            "UPDATE execution_receipts SET report=?1 WHERE grant_id=?2",
+            params![changed.to_string(), g.grant_id],
+        )
+        .unwrap();
+        assert!(
+            service.grant_result(request()).is_err(),
+            "valid JSON output changes must fail the retained checksum"
+        );
+        db.execute(
+            "UPDATE execution_receipts SET report=?1 WHERE grant_id=?2",
+            params![serde_json::to_string(&good).unwrap(), g.grant_id],
+        )
+        .unwrap();
+        let mut bad = json!(good);
+        bad["issuer_id"] = json!("d".repeat(64));
+        db.execute(
+            "UPDATE execution_receipts SET report=?1 WHERE grant_id=?2",
+            params![bad.to_string(), g.grant_id],
+        )
+        .unwrap();
+        assert!(service.grant_result(request()).is_err());
+        let before = std::fs::read(&path).unwrap();
+        assert!(GrantLedger::open(&path, Default::default(), "owner").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn accepted_report_reservations_deny_before_effects_and_release_after_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("receipts.db");
+        let policy = GrantPolicy {
+            max_journal_bytes: 64 * 1024,
+            max_result_bytes: 1024,
+            ..Default::default()
+        };
+        let ledger = GrantLedger::open(&path, policy.clone(), "owner").unwrap();
+        let independent = GrantLedger::open(&path, policy, "owner").unwrap();
+        let mut g = grant();
+        g.limits.max_result_bytes = 1024;
+        ledger.claim(&g).unwrap();
+        let mut other = grant();
+        other.limits.max_result_bytes = 1024;
+        assert_eq!(
+            denial_code(&independent.claim(&other).unwrap_err()),
+            "grant_receipt_quota_full"
+        );
+        assert!(
+            independent
+                .receipt(&other.issuer_id, &other.grant_id)
+                .is_err()
+        );
+        ledger
+            .finish(
+                &g,
+                &GrantReport::new(&g, ReceiptState::Completed, json!({"ok":true}), None),
+            )
+            .unwrap();
+        independent.claim(&other).unwrap();
+        assert!(std::fs::metadata(&path).unwrap().len() <= 64 * 1024);
+    }
+
+    #[tokio::test]
+    async fn failed_final_checkpoint_keeps_consumption_uncertain_without_output_or_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("node.json");
+        let path = journal_path(&config);
+        let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        let g = grant();
+        let engine = engine(dir.path());
+        let accepted = AcceptedGrant::prepare(
+            g.clone(),
+            ledger.clone(),
+            &engine,
+            &g.issuer_id,
+            &g.session_id,
+            "owner",
+        )
+        .unwrap();
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TRIGGER refuse_completion BEFORE UPDATE ON execution_receipts BEGIN SELECT RAISE(ABORT,'fixture checkpoint failure'); END;").unwrap();
+        let result = accepted.run(&engine).await;
+        assert_eq!(result.state, ReceiptState::Unknown);
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("completion_checkpoint_failed")
+        );
+        assert!(!result.persisted);
+        assert!(result.data.is_null());
+        assert_eq!(
+            ledger.receipt(&g.issuer_id, &g.grant_id).unwrap()["state"],
+            "accepted"
+        );
+        let service = crate::NodeService::new(config, "owner".into());
+        let report = service
+            .grant_result(ReceiptRequest {
+                schema_version: 1,
+                expected_node_id: "owner".into(),
+                grant_id: g.grant_id.clone(),
+            })
+            .unwrap();
+        assert_eq!(report["result"]["availability"], "no_final_checkpoint");
+        assert!(report["result"].get("report").is_none());
+        assert!(ledger.claim(&g).is_err());
+    }
+
+    #[test]
+    fn legacy_journals_migrate_consumption_without_inventing_results_or_rewriting_corruption() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.db");
+        let g = grant();
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE execution_receipt_owner(owner TEXT NOT NULL PRIMARY KEY,node_id TEXT NOT NULL); CREATE TABLE execution_receipts(issuer_id TEXT NOT NULL,job_id TEXT NOT NULL,task_id TEXT NOT NULL,attempt INTEGER NOT NULL,grant_id TEXT NOT NULL UNIQUE,grant_digest TEXT NOT NULL,state TEXT NOT NULL,accepted_ms INTEGER NOT NULL,updated_ms INTEGER NOT NULL,PRIMARY KEY(issuer_id,job_id,task_id,attempt)); PRAGMA user_version=1;").unwrap();
+        db.execute(
+            "INSERT INTO execution_receipt_owner VALUES('node','owner')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO execution_receipts VALUES(?1,?2,?3,1,?4,?5,'completed',1,2)",
+            params![
+                g.issuer_id,
+                g.job_id,
+                g.task_id,
+                g.grant_id,
+                definition_digest(&json!(g)).unwrap()
+            ],
+        )
+        .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let original = crate::request_result::read_result(&db, "owner", None, &g.grant_id).unwrap();
+        assert_eq!(original.availability, "legacy_metadata_only");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        db.execute(
+            "UPDATE execution_receipts SET grant_digest=?1",
+            ["z".repeat(64)],
+        )
+        .unwrap();
+        let corrupted = std::fs::read(&path).unwrap();
+        assert!(GrantLedger::open(&path, Default::default(), "owner").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), corrupted);
+        db.execute(
+            "UPDATE execution_receipts SET grant_digest=?1",
+            [definition_digest(&json!(g)).unwrap()],
+        )
+        .unwrap();
+        let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        let migrated = crate::request_result::read_result(&db, "owner", None, &g.grant_id).unwrap();
+        assert_eq!(json!(migrated), json!(original));
+        assert_eq!(
+            db.query_row::<i64, _, _>("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap(),
+            2
+        );
+        assert!(ledger.claim(&g).is_err());
+        drop(ledger);
+        assert!(GrantLedger::open(&path, Default::default(), "owner").is_ok());
     }
 }

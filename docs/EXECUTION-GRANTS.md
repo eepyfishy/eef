@@ -59,10 +59,14 @@ automatically pruned. Quota/full/damaged storage disables admission; opening a
 damaged or unknown-version journal does not recreate or repair it.
 
 The journal is bound to the stable node ID and lives beside the exact node config
-as `CONFIG_FILENAME.grant-receipts.sqlite3`. It retains bounded identity/digest/state
-metadata, not parameters, original text, model output or media. Keep it with node
-data and backups. Deleting/replacing it loses replay protection; this is not
-tamper-proof storage or defense against the machine's owner.
+as `CONFIG_FILENAME.grant-receipts.sqlite3`. Schema-1 receipts retain only
+identity/digest/state metadata. The subsequent schema-2 increment also saves
+bounded final reports/output before completion delivery, with admission-time
+result reservations and explicit private reads. Parameters/original text/media
+inputs are not separately copied, but output may itself contain sensitive input.
+Keep it private with node data/backups; stop old runtimes and do not downgrade it.
+Deleting/replacing it loses replay protection. This is not encrypted/tamper-proof
+storage or defense against the machine's owner; see [retained results](RETAINED-RESULTS.md).
 
 Acceptance confirms durable consumption and that execution has not yet started.
 Completion confirms the same grant and scope digest, issuer/session/executor,
@@ -175,8 +179,9 @@ same strict metadata. Neither read path creates, repairs, prunes or changes rece
 
 `coordinator_request_receipt` reports explicitly set `execution_requested: false`,
 `automatically_retried: false`, `reconciled: false`. Coordinator state is a revision
-snapshot, not a write or resumed lease. Even `completed` cannot recover output or
-its success status: the node ledger stores consumption/terminal state only.
+snapshot, not a write or resumed lease. This metadata-only command does not fetch
+output/success; schema-1 receipts cannot supply them. The separate explicit
+`result` command now reads schema-2 final reports without changing EEF tracking.
 Missing evidence cannot prove no effects, and observed terminal state cannot prove
 every external effect stopped. Inspection performs no reconciliation; local tracking
 abandonment is a separate explicit command, not lost-output or execution recovery.

@@ -4,6 +4,18 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Explicit retained executor output (unreleased after alpha.6)
+
+`eefn requests result JOB_ID --grant-id GRANT_UUID --json` reads a bounded saved
+final report from the exact executor through EEF. Only the immutable request
+origin or local EEF owner (`eef requests result ...`) is authorized. Executor-local
+`eefn grants result --id GRANT_UUID --json` also works offline without starting a
+runtime or creating a journal. Routine receipt commands remain metadata-only.
+Reads perform no inference, replay, lease renewal, job change or reconciliation.
+Legacy/missing output is reported honestly. Schema-2 storage contains private
+output: back up data, stop old runtimes and do not downgrade the journal. See
+[full contract and quota semantics](RETAINED-RESULTS.md).
+
 ## Reply ownership across reconnect (unreleased after alpha.6)
 
 Remote RPC waiters now belong to the exact authenticated gateway session as well

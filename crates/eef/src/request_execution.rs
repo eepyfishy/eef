@@ -840,6 +840,35 @@ impl crate::Runtime {
         }
         self.execute_reviewed(request.command, None).await
     }
+    pub async fn request_result_command(&self, request: ReceiptInspectionRequest) -> Result<Value> {
+        if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
+            bail!("Result query schema/runtime changed")
+        }
+        self.inspect_request_result(request.command, None).await
+    }
+    pub(crate) async fn inspect_request_result(
+        &self,
+        command: eefn::request_result::ResultCommand,
+        origin: Option<&str>,
+    ) -> Result<Value> {
+        let plan = self.engine.store.get(&command.id)?;
+        let attempt = receipt_attempt(&plan, &command, origin)?;
+        let result = self
+            .node_server
+            .inspect_grant_result(&attempt.grant)
+            .await?;
+        let state = serde_json::to_value(attempt.state)?
+            .as_str()
+            .unwrap()
+            .to_string();
+        Ok(json!(eefn::request_result::ResultReport {
+            schema_version:1,report_type:"coordinator_request_result".into(),success:true,runtime_id:self.instance_id.clone(),
+            id:plan.plan_id,revision:plan.revision,request_context:plan.goal.request_context.context("Request context missing")?,
+            coordinator_attempt_state:state,result,
+            execution_requested:false,automatically_retried:false,reconciled:false,
+            note:"Explicit read-only retained report/output. Coordinator state remains a revision snapshot, unchanged even when final node evidence exists. No lease renewal, execution, rollback or proof every external effect stopped. Missing output never proves no effects.".into(),
+        }))
+    }
     pub(crate) async fn execute_reviewed(
         &self,
         command: ExecuteCommand,

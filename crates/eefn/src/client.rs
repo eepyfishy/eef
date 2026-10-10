@@ -210,7 +210,8 @@ impl NodeClient {
     pub fn with_status(mut self, status: Arc<std::sync::Mutex<Value>>) -> Self {
         self.status = status;
         self.status.lock().expect("status")["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
-            "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE});
+            "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE,
+            "retained_results":self.grant_ledger.is_some() && self.tls_config.is_some()});
         self
     }
     pub fn with_grants(
@@ -300,7 +301,8 @@ impl NodeClient {
         message["metadata"] = json!(self.config.metadata.advertised(capabilities));
         message["network"] = json!(self.config.network);
         message["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
-            "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE});
+            "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE,
+            "retained_results":self.grant_ledger.is_some() && self.tls_config.is_some()});
         message
     }
 
@@ -673,23 +675,39 @@ impl NodeClient {
                 }
                 continue;
             }
-            if message["type"] == "grant_receipt" {
+            if message["type"] == "grant_receipt" || message["type"] == "grant_result" {
+                let result_query = message["type"] == "grant_result";
                 let request_id = message["id"].as_str().unwrap_or("").to_owned();
-                let query = serde_json::from_value::<crate::request_receipt::WireRequest>(message);
+                let query = if result_query {
+                    serde_json::from_value::<crate::request_result::WireRequest>(message).and_then(
+                        |q| {
+                            let digest = q.expected_grant_sha256.clone();
+                            q.receipt_query()
+                                .map(|query| (query, Some(digest)))
+                                .map_err(serde::de::Error::custom)
+                        },
+                    )
+                } else {
+                    serde_json::from_value::<crate::request_receipt::WireRequest>(message)
+                        .map(|q| (q, None))
+                };
                 let prepared = match (
                     query,
                     self.request_budget.admit_receipt(),
                     self.grant_ledger.clone(),
                     grant_issuer.clone(),
                 ) {
-                    (Ok(query), Some(permit), Some(ledger), Some(issuer))
-                        if query.validate(&self.config.node_id, &issuer).is_ok() =>
+                    (Ok((query, digest)), Some(permit), Some(ledger), Some(issuer))
+                        if query.validate(&self.config.node_id, &issuer).is_ok()
+                            && digest
+                                .as_deref()
+                                .is_none_or(crate::request_result::valid_digest) =>
                     {
-                        Some((query, permit, ledger, issuer))
+                        Some((query, digest, permit, ledger, issuer))
                     }
                     _ => None,
                 };
-                let Some((query, permit, ledger, issuer)) = prepared else {
+                let Some((query, digest, permit, ledger, issuer)) = prepared else {
                     let response = json!({"type":"response","id":request_id,"success":false,"error_type":"GrantReceiptUnavailable","error":"Authenticated receipt inspection unavailable; no execution or recovery performed"});
                     timeout(Duration::from_secs(5), async {
                         write_message(&self.crypto, &mut *writer.lock().await, &response).await
@@ -703,7 +721,9 @@ impl NodeClient {
                 let write_failed = receipt_write_failed.clone();
                 tasks.spawn(async move {
                     let read = tokio::task::spawn_blocking(move || {
-                        let result = ledger.receipt(&issuer, &query.grant_id);
+                        let result = if let Some(digest)=digest {
+                            ledger.result(&issuer,&query.grant_id,&digest)
+                        } else {ledger.receipt(&issuer, &query.grant_id)};
                         (result, permit)
                     }).await;
                     let (result, _permit) = match read {
@@ -1169,12 +1189,52 @@ mod tests {
         let inspected = server.inspect_grant_receipt(&g).await.unwrap();
         assert_eq!(inspected.state, "completed");
         assert!(inspected.confirms(&g));
+        let retained = server.inspect_grant_result(&g).await.unwrap();
+        assert!(retained.confirms(&g));
+        assert_eq!(json!(retained.report), json!(Some(result.clone())));
         let mut wrong = g.clone();
         wrong.params["content"] = json!("forged different scope");
         assert!(server.inspect_grant_receipt(&wrong).await.is_err());
+        assert!(server.inspect_grant_result(&wrong).await.is_err());
         let mut wrong = g.clone();
         wrong.issuer_id = "d".repeat(64);
         assert!(server.inspect_grant_receipt(&wrong).await.is_err());
+        assert!(server.inspect_grant_result(&wrong).await.is_err());
+        // Node checkpoints output before a failing coordinator observer loses
+        // completion. Recovery reads the same old issuance without re-executing.
+        struct LoseCompletion;
+        impl crate::grants::GrantObserver for LoseCompletion {
+            fn record(&self, r: &crate::grants::GrantReport) -> Result<()> {
+                if r.state == crate::grants::ReceiptState::Completed {
+                    bail!("fixture lost coordinator checkpoint")
+                }
+                Ok(())
+            }
+        }
+        let mut lost = g.clone();
+        lost.grant_id = Uuid::new_v4().to_string();
+        lost.job_id = Uuid::new_v4().simple().to_string();
+        lost.task_id = Uuid::new_v4().simple().to_string();
+        lost.params["content"] = json!("effect with lost completion");
+        lost.issued_at_ms = crate::protocol::now_ms();
+        lost.expires_at_ms = lost.issued_at_ms + 10_000;
+        let unconfirmed = server
+            .invoke_grant_observed(
+                lost.clone(),
+                Duration::from_secs(10),
+                Arc::new(LoseCompletion),
+                std::time::Instant::now() + Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unconfirmed["error_type"], "GrantJournalError");
+        let recovered = server.inspect_grant_result(&lost).await.unwrap();
+        assert!(recovered.confirms(&lost));
+        assert!(recovered.report.as_ref().unwrap().success);
+        assert_eq!(
+            std::fs::read_to_string(&out).unwrap(),
+            "effect with lost completion"
+        );
         std::fs::write(&out, "owner marker").unwrap();
         let duplicate = server
             .invoke_grant(g.clone(), Duration::from_secs(5))
@@ -1203,6 +1263,15 @@ mod tests {
             inspected,
             "read-only evidence survives session replacement without reviving the old lease"
         );
+        assert_eq!(
+            json!(server.inspect_grant_result(&g).await.unwrap()),
+            json!(retained)
+        );
+        assert_eq!(
+            json!(server.inspect_grant_result(&lost).await.unwrap()),
+            json!(recovered)
+        );
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "owner marker");
         assert!(
             server
                 .invoke_grant(g.clone(), Duration::from_secs(1))

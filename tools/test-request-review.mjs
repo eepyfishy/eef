@@ -1,5 +1,5 @@
 // API-only node -> EEF review, using fake inference and isolated local data.
-// Stateless review, then durable review-only records; no executor/grant/download.
+// Review/preparation stay idle; separate owner-approved grant execution uses a fake backend.
 import assert from 'node:assert/strict';
 import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
@@ -634,6 +634,37 @@ try {
   assert.equal(calls.length,beforeConcrete+1);assert.equal(calls.at(-1).messages[0].content,textPrompt);
   assert.equal((await cli(['jobs','output',textId])).data.outputs[0].content,'fixture concrete grant result');
   assert.equal((await cli(requestedTextArgs)).data.status,'completed');assert.equal(calls.length,beforeConcrete+1);
+  // Final node output is durably separate from EEF's journal. Read it explicitly
+  // through the originating node or owner; routine receipts/jobs remain redacted.
+  const textCompleted=(await cli(['jobs','get',textId])).data,textGrant=textCompleted.grant_attempts[0].grant_id;
+  const resultArgs=['requests','result',textId,'--grant-id',textGrant];
+  const savedResult=await cli(resultArgs);
+  assert.equal(savedResult.result.result.availability,'retained_final_report');
+  assert.equal(savedResult.result.result.report.data.content,'fixture concrete grant result');
+  assert.equal(savedResult.reconciled,false);assert.equal(savedResult.result.reconciled,false);
+  assert.equal((await coordinator(resultArgs)).result.report.data.content,'fixture concrete grant result');
+  const localResult=await cli(['grants','result','--id',textGrant]);
+  assert.deepEqual(localResult.result,savedResult.result.result);
+  assert.equal((await cli(['grants','receipt','--id',textGrant])).receipt.report,undefined);
+  assert(!JSON.stringify(await cli(['grants','receipt','--id',textGrant])).includes('fixture concrete grant result'));
+  assert.deepEqual((await cli(['jobs','get',textId])).data,textCompleted,'result reads never change coordinator tracking');
+  expectedNodes=2;launch('eefn',['--config',peerConfigPath,'--no-ui']);await until(ready,'independent origin for result authorization denial');
+  assert.equal((await cli(resultArgs,false,peerConfigPath)).error_code,'result_unavailable');
+  const resultBody={schema_version:1,expected_node_id:config.node_id,request_id:randomUUID(),command:{id:textId,grant_id:textGrant}};
+  const resultUrl=node+'/api/commands/requests/result';
+  assert.equal((await fetch(resultUrl,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(resultBody)})).status,403);
+  assert.equal((await fetch(resultUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...resultBody,retry:true})})).status,422);
+  assert.equal((await fetch(resultUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...resultBody,expected_node_id:'other'})})).status,400);
+  const localResultBody={schema_version:1,expected_node_id:config.node_id,grant_id:textGrant};
+  assert.equal((await fetch(node+'/api/commands/grants/result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...localResultBody,execute:true})})).status,422);
+  assert.deepEqual((await json(node+'/api/commands/grants/result',localResultBody)).result,localResult.result);
+  const resultRuntime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+  await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==resultRuntime&&await ready(),'result evidence after coordinator restart');
+  assert.deepEqual((await cli(resultArgs)).result.result,savedResult.result.result);
+  await cli(['restart','--wait-seconds','15']);await until(ready,'result evidence after executor session replacement');
+  assert.deepEqual((await cli(resultArgs)).result.result,savedResult.result.result);
+  assert.deepEqual((await cli(['jobs','get',textId])).data,textCompleted);
+  assert.equal(calls.length,beforeConcrete+1,'result inspection must never repeat inference');
   await writeFile(join(scratch, 'results.json'), JSON.stringify({passed: true, api_only: true, node_to_coordinator_review: true,
     original_text_preserved: true, authenticated_origin: true, clarification_returned: true, rejected_authority_fields: true,
     stateless_no_jobs_created: true, durable_inferred_review: true, lost_draft_found_without_replay: true,
@@ -652,6 +683,7 @@ try {
     cross_node_method_preparation:true,method_disclosure_revocation_rechecked:true,
     explicit_concrete_requests:true,explicit_source_inputs_immutable:true,model_free_explicit_compilation:true,
     explicit_text_grant_execution:true,explicit_receipt_restart_recovery:true,partial_explicit_admission_inspectable:true,
+    retained_executor_results:true,explicit_origin_owner_result_reads:true,result_restart_recovery:true,result_reads_no_replay_or_reconciliation:true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
 } finally {

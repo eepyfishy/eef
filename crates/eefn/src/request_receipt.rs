@@ -73,7 +73,7 @@ pub(crate) fn read_consumed(
         [],
         |r| r.get(0),
     )?;
-    if version != 1 || owner != node {
+    if !matches!(version, 1 | 2) || owner != node {
         bail!("Receipt journal version/owner changed")
     }
     let value = db.query_row(

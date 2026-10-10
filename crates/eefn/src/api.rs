@@ -97,6 +97,7 @@ impl NodeService {
             )
             .route("/api/commands/jobs", post(job_command))
             .route("/api/commands/grants/receipt", post(grant_receipt))
+            .route("/api/commands/grants/result", post(grant_result))
             .route("/api/commands/requests/preview", post(request_preview))
             .route("/api/commands/requests/review", post(request_review))
             .route("/api/commands/requests/open", post(request_open))
@@ -117,6 +118,7 @@ impl NodeService {
                 "/api/commands/requests/receipt",
                 post(request_receipt_command),
             )
+            .route("/api/commands/requests/result", post(request_result))
             .route(
                 "/api/commands/requests/execute",
                 post(request_execute_command),
@@ -212,6 +214,18 @@ async fn grant_receipt(
     Json(request): Json<crate::grants::ReceiptRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.grant_receipt(request)?))
+}
+async fn grant_result(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::grants::ReceiptRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.grant_result(request)?))
+}
+async fn request_result(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_result::ResultRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.request_result(request).await?))
 }
 
 async fn config_get(State(state): State<Arc<NodeService>>) -> Result<Json<Value>, ApiError> {

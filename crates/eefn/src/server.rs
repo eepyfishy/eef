@@ -488,6 +488,27 @@ impl NodeServer {
         }
         Ok(receipt)
     }
+    /// Explicit output evidence read, never execution/reconciliation or lease renewal.
+    pub async fn inspect_grant_result(
+        &self,
+        grant: &crate::grants::ExecutionGrant,
+    ) -> Result<crate::request_result::RetainedResult> {
+        grant.validate()?;
+        let response = self.invoke_message(&grant.executor_node,
+            json!({"type":"grant_result","grant_id":grant.grant_id,"expected_node_id":grant.executor_node,
+                "expected_issuer_id":grant.issuer_id,"expected_grant_sha256":crate::grants::definition_digest(&json!(grant))?}),
+            Duration::from_secs(10),None,None,None).await?;
+        if response["success"] != true {
+            bail!("Retained result unavailable; no execution or fallback")
+        }
+        let result: crate::request_result::RetainedResult =
+            serde_json::from_value(response["data"].clone())?;
+        result.validate()?;
+        if !result.confirms(grant) {
+            bail!("Retained result does not match exact issuance")
+        }
+        Ok(result)
+    }
     async fn invoke_message(
         &self,
         node_id: &str,
@@ -522,8 +543,22 @@ impl NodeServer {
             .get(node_id)
             .cloned()
             .ok_or_else(|| NodeOfflineError(node_id.into()))?;
-        if message["type"] == "grant_receipt" {
+        if message["type"] == "grant_receipt" || message["type"] == "grant_result" {
             self.check_grant_connection(&connection)?;
+            if message["type"] == "grant_result" {
+                let support: crate::grants::GrantAdvertisement = serde_json::from_value(
+                    connection
+                        .state
+                        .as_ref()
+                        .context("Result registration unavailable")?
+                        .registration["execution_grants"]
+                        .clone(),
+                )?;
+                support.validate()?;
+                if !support.retained_results {
+                    bail!("Executor does not advertise retained results; no fallback")
+                }
+            }
             let issuer = self
                 .inner
                 .authentication

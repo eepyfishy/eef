@@ -73,6 +73,7 @@ impl SubmissionMailbox {
                 | "requests.draft_resolve"
                 | "requests.execute"
                 | "requests.receipt"
+                | "requests.result"
                 | "requests.abandon"
                 | "network.peers"
                 | "jobs.list"

@@ -809,6 +809,17 @@ impl Runtime {
                     Err(_) => Err(anyhow::anyhow!("Invalid receipt query")),
                 }
             }
+            "requests.result" => {
+                match serde_json::from_value::<eefn::request_result::ResultCommand>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(command) => {
+                        self.inspect_request_result(command, Some(context.origin_node()))
+                            .await
+                    }
+                    Err(_) => Err(anyhow::anyhow!("Invalid retained result query")),
+                }
+            }
             "requests.execute" => {
                 match serde_json::from_value::<eefn::request_execution::ExecuteCommand>(
                     message["payload"].clone(),

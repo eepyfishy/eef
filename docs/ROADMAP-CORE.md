@@ -340,6 +340,16 @@ reviving old authority, changing the job, inferring success or authorizing repla
 This supplies recovery evidence, **not** automatic or owner-directed uncertainty
 resolution, lost-output recovery or proof that external effects stopped.
 
+The subsequent [retained-results increment](RETAINED-RESULTS.md) atomically saves
+bounded terminal reports/output in the executor's existing grant journal before
+completion delivery. Admission reserves that space across independent handles;
+legacy migration preserves consumed history without inventing success/output.
+Origin/owner `requests result` and executor-local `grants result` explicitly fetch
+private evidence without changing EEF tracking, renewing authority or repeating
+effects, including after session replacement. Receipt/status paths stay redacted.
+This advances lost-output retrieval, not safe replay, explicit coordinator journal
+reconciliation, strong termination or physical release acceptance.
+
 The explicit `requests abandon` recovery branch now permits owner/origin closure
 of idle interrupted tracking, with exact revision/grant, an acknowledged effects-
 may-continue flag and durable decision receipt. It preserves the unknown issued

@@ -534,6 +534,7 @@ async fn execute_abandonment_command(
 async fn execute_request_receipt_command(
     args: &Args,
     command: eefn::request_receipt::ReceiptCommand,
+    result_query: bool,
 ) -> Result<serde_json::Value> {
     use serde_json::json;
     command.validate()?;
@@ -550,18 +551,30 @@ async fn execute_request_receipt_command(
         local.enabled,
     )?;
     let request_id = uuid::Uuid::new_v4().to_string();
+    let path = if result_query { "result" } else { "receipt" };
+    let report_type = if result_query {
+        "request_result"
+    } else {
+        "request_receipt"
+    };
+    let error_code = if result_query {
+        "result_unavailable"
+    } else {
+        "receipt_unavailable"
+    };
     let exchange = async {
         let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
-            .post(format!("http://{address}/api/commands/requests/receipt")).timeout(Duration::from_secs(25))
+            .post(format!("http://{address}/api/commands/requests/{path}")).timeout(Duration::from_secs(25))
             .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"request_id":request_id,"command":command})).send().await?;
         let ok = response.status().is_success();
         let value = eefn::model_manager::bounded_json(response).await?;
-        if !ok || !eefn::request_receipt::confirmed_node(&value, &command, &file.node_id, &request_id) { bail!("Unconfirmed receipt inspection") }
+        if !ok || !(if result_query {eefn::request_result::confirmed_node(&value,&command,&file.node_id,&request_id)}
+            else {eefn::request_receipt::confirmed_node(&value, &command, &file.node_id, &request_id)}) { bail!("Unconfirmed evidence inspection") }
         Ok::<_,anyhow::Error>(value)
     }.await;
-    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"request_receipt","node_id":file.node_id,"request_id":request_id,
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":report_type,"node_id":file.node_id,"request_id":request_id,
         "id":command.id,"grant_id":command.grant_id,"success":false,"execution_requested":false,"automatically_retried":false,"reconciled":false,
-        "error_code":"receipt_unavailable","note":"Inspection unconfirmed; no fallback, job change or recovery performed. Missing evidence does not prove no effects."})))
+        "error_code":error_code,"note":"Inspection unconfirmed; no fallback, job change or recovery performed. Missing evidence does not prove no effects."})))
 }
 async fn execute_reviewed_command(
     args: &Args,
@@ -936,18 +949,23 @@ enum NetworkAction {
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
-    if let Commands::Grants {
-        command: eefn::grants::GrantAction::Receipt { id },
-    } = command
-    {
+    if let Commands::Grants { command: action } = command {
         let file = load_file(&args.config)?;
         let node_id = file.node_id;
         let service = NodeService::new(args.config.clone(), node_id.clone());
-        return service.grant_receipt(eefn::grants::ReceiptRequest {
+        let id = match action {
+            eefn::grants::GrantAction::Receipt { id }
+            | eefn::grants::GrantAction::Result { id } => id,
+        };
+        let request = eefn::grants::ReceiptRequest {
             schema_version: 1,
             expected_node_id: node_id,
             grant_id: id.clone(),
-        });
+        };
+        return match action {
+            eefn::grants::GrantAction::Receipt { .. } => service.grant_receipt(request),
+            eefn::grants::GrantAction::Result { .. } => service.grant_result(request),
+        };
     }
     if let Commands::Connection { command } = command {
         return execute_connection_command(args, command).await;
@@ -1073,13 +1091,17 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Receipt { id, grant_id } => {
+            eefn::request_preview::RequestAction::Receipt { id, grant_id }
+            | eefn::request_preview::RequestAction::Result { id, grant_id } => {
+                let result_query =
+                    matches!(command, eefn::request_preview::RequestAction::Result { .. });
                 execute_request_receipt_command(
                     args,
                     eefn::request_receipt::ReceiptCommand {
                         id: id.clone(),
                         grant_id: grant_id.clone(),
                     },
+                    result_query,
                 )
                 .await
             }
@@ -2147,6 +2169,39 @@ mod tests {
     use super::*;
     #[test]
     fn receipt_command_requires_an_id_and_has_no_replay_switch() {
+        for command in ["receipt", "result"] {
+            assert!(Args::try_parse_from(["eefn", "grants", command]).is_err());
+            assert!(
+                Args::try_parse_from(["eefn", "grants", command, "--id", "receipt-id"]).is_ok()
+            );
+            assert!(
+                Args::try_parse_from(["eefn", "grants", command, "--id", "receipt-id", "--replay"])
+                    .is_err()
+            );
+            assert!(
+                Args::try_parse_from([
+                    "eefn",
+                    "requests",
+                    command,
+                    "job-id",
+                    "--grant-id",
+                    "grant-id"
+                ])
+                .is_ok()
+            );
+            assert!(
+                Args::try_parse_from([
+                    "eefn",
+                    "requests",
+                    command,
+                    "job-id",
+                    "--grant-id",
+                    "grant-id",
+                    "--retry"
+                ])
+                .is_err()
+            );
+        }
         assert!(Args::try_parse_from(["eefn", "grants", "receipt"]).is_err());
         assert!(Args::try_parse_from(["eefn", "grants", "receipt", "--id", "receipt-id"]).is_ok());
         assert!(

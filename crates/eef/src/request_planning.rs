@@ -343,6 +343,12 @@ pub enum PlanningAction {
         #[arg(long)]
         grant_id: String,
     },
+    /// Explicitly read retained executor output; never replay or reconcile tracking.
+    Result {
+        id: String,
+        #[arg(long)]
+        grant_id: String,
+    },
     /// Explicitly request execution of one exact owner-approved plan; never replay.
     Execute {
         id: String,
