@@ -306,6 +306,21 @@ restart, receipt/revision conflicts and non-executing cancellation.
 without invoking its fake inference provider. These remain local fixtures, not
 physical two-PC or real model acceptance.
 
+## Node grant receipts (unreleased after alpha.6)
+
+`eefn grants receipt --id GRANT_UUID --json` inspects this node's existing consumed
+receipt without starting a runtime, creating/repairing a journal or replaying work.
+It is also available through the guarded node-local
+`POST /api/commands/grants/receipt` API. An accepted receipt may be running or
+interrupted/uncertain; it is not authorization to repeat an operation.
+
+The [node execution grant boundary](EXECUTION-GRANTS.md) now validates exact
+owner-pinned issuer/session/operation scopes and durable node-side consumption.
+Normal EEF reviewed plans **still await approval**. Owner approval, persisted EEF
+issuance/ACK integration and the reviewed-plan dispatch path remain pending; legacy
+RPCs are unchanged. No grant-issuance, reset/replay or execution command is exposed
+by this receipt inspector, and no public installer/update feed includes this work yet.
+
 ## Supplied structured proposals (unreleased)
 
 Automation may submit a proposal for **review only**, without interpreter

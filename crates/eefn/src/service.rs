@@ -29,6 +29,13 @@ pub struct NodeService {
 }
 
 impl NodeService {
+    pub(crate) fn inspect_grant_configuration<T>(
+        &self,
+        check: impl FnOnce(&Value) -> Result<T>,
+    ) -> Result<T> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        check(&self.read_config()?)
+    }
     pub(crate) fn require_remote_update_permission(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
         let guard = self.config_lock.lock().expect("config lock");
         if self.read_config()?.pointer("/permissions/remote_updates") != Some(&json!(true)) {
@@ -222,6 +229,7 @@ impl NodeService {
             "capabilities":live["capabilities"],"last_activity":live["last_activity"],"last_request_context":live["last_request_context"],
             "last_resource_id":live["last_resource_id"],"pending_restart":live["pending_restart"],"download":live["download"],"update":live["update"],
             "request_limits":live["request_limits"],"busy_rejections":live["busy_rejections"].as_u64().unwrap_or(0),
+            "execution_grants":live["execution_grants"],"last_grant":live["last_grant"],
             "proposal_pending":self.config_path.with_extension("proposal.json").is_file()})
     }
 
@@ -719,6 +727,9 @@ impl NodeService {
 }
 
 fn validate_config(value: &Value) -> Result<()> {
+    if let Some(policy) = value.get("grants") {
+        serde_json::from_value::<crate::grants::GrantPolicy>(policy.clone())?.validate()?;
+    }
     if let Some(id) = value.get("node_id") {
         crate::network::validate_remote_node_id(id.as_str().unwrap_or(""))?;
     }

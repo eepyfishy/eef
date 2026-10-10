@@ -96,6 +96,7 @@ impl NodeService {
                 post(model_download_command),
             )
             .route("/api/commands/jobs", post(job_command))
+            .route("/api/commands/grants/receipt", post(grant_receipt))
             .route("/api/commands/requests/preview", post(request_preview))
             .route("/api/commands/requests/review", post(request_review))
             .route("/api/commands/requests/open", post(request_open))
@@ -189,6 +190,12 @@ async fn connection_command(
 
 async fn diagnostics(State(state): State<Arc<NodeService>>) -> Json<Value> {
     Json(state.diagnostics())
+}
+async fn grant_receipt(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::grants::ReceiptRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.grant_receipt(request)?))
 }
 
 async fn config_get(State(state): State<Arc<NodeService>>) -> Result<Json<Value>, ApiError> {

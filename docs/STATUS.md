@@ -1,5 +1,50 @@
 # Architecture conformance status
 
+## Unreleased: pinned-session node grant consumption and receipts (2026-10-10)
+
+The node has a distinct `execute_grant` path that requires independent exact-node
+credentials, an owner-pinned TLS issuer and matching fresh connection generation.
+Strict scopes bind the original context, job/task/attempt, plan and grant digests,
+one operation, executor/resource/model/backend/role and bounded lease/result policy.
+It never falls back to shared-secret or ordinary RPC execution. Existing node
+permissions remain necessary; relevant saved revocation/scope changes deny pending
+or new granted work without widening the applied runtime.
+
+SQLite consumption is atomic and durable before acceptance/effects. Grant UUID and
+stale/duplicate/unresolved attempts cannot be replayed, including through independent
+journal handles or node restart. Unknown/damaged journals are retained, not repaired;
+quotas fail before effects and no receipt pruning is automatic. The gateway correlates
+the exact durable acceptance before confirming completion, rejecting forged/stale ACKs,
+unpersisted success, ordinary RPC replies and attempts to undo acknowledgement.
+`eefn grants receipt` and the guarded local API inspect existing data read-only without
+starting a runtime, creating a journal, exporting parameters or replaying work.
+See [scope, storage and honest deadline limitations](EXECUTION-GRANTS.md).
+
+This is the node-side stage 6 boundary, **not the complete approved workflow**.
+Normal reviewed requests still stop at `awaiting_approval`. Owner approval, EEF's
+durable issuance/ACK lifecycle and reviewed-plan dispatch/reconciliation remain pending.
+Legacy execution is unchanged, not retroactively grant-enforced. Deadlines currently
+bound the RPC future, not all OS/backend side effects or process trees. Full physical
+resource enforcement, pipelines, peer paths and cluster fencing remain later gates.
+No stable v0.4.0, installed-node update, installer/signing or Defender clearance is claimed.
+
+Validation: **303 workspace/all-target Rust tests pass in both feature modes**.
+New tests run actual pinned-TLS client/gateway file-write execution and verify matching
+acceptance/completion, unchanged owner markers after replay and node restart, 24 racing
+claims through separate journal handles, immediate saved revocation before effects,
+scope/clock/expiry failures, quotas, damaged/future journal retention, canonical scope
+digests and read-only receipt/schema/CLI checks. Source backend/browser-boundary,
+formatting and diff checks pass. These are isolated local fixtures, not physical two-PC
+or full termination/release acceptance. Installed apps, model selection/downloads,
+feature permissions and public update feeds are unchanged.
+
+Fresh headless regressions pass: pinned-TLS draft/compile/restart and guarded
+read-only receipt checks (`request-drafts-BwV4vj`), fake-inferred review
+(`request-review-ZeLdD9`), credentials (`node-credentials-F8zv58`), model
+selection/jobs (`model-metadata-CQs9u2`), shutdown
+(`job-shutdown-JNtYhF`) and scheduling (`scheduling-WLYMXF`). No browser or physical
+node was used by these fixtures.
+
 ## Unreleased: concrete reviewed plans awaiting approval (2026-10-10)
 
 EEF now offers owner command/API `requests inspect/compile` without a browser.

@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Inspect consumed execution receipts without dispatch, replay or a dashboard.
+    Grants {
+        #[command(subcommand)]
+        command: eefn::grants::GrantAction,
+    },
     /// Preview an untrusted interpretation locally; never submit or execute work.
     Requests {
         #[command(subcommand)]
@@ -595,6 +600,19 @@ enum NetworkAction {
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Grants {
+        command: eefn::grants::GrantAction::Receipt { id },
+    } = command
+    {
+        let file = load_file(&args.config)?;
+        let node_id = file.node_id;
+        let service = NodeService::new(args.config.clone(), node_id.clone());
+        return service.grant_receipt(eefn::grants::ReceiptRequest {
+            schema_version: 1,
+            expected_node_id: node_id,
+            grant_id: id.clone(),
+        });
+    }
     if let Commands::Connection { command } = command {
         return execute_connection_command(args, command).await;
     }
@@ -803,6 +821,8 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
 
 #[derive(Clone, Debug, Deserialize)]
 struct FileConfig {
+    #[serde(default)]
+    grants: eefn::grants::GrantPolicy,
     #[serde(default)]
     auth_mode: eefn::authentication::AuthMode,
     #[serde(default)]
@@ -1397,6 +1417,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
                 },
                 engine.clone(),
             )?
+            .with_grants(&eefn::grants::journal_path(&args.config), file.grants)
             .with_status(dashboard.live.clone())
             .with_submissions(dashboard.submissions.clone()),
         )
@@ -1627,6 +1648,22 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn receipt_command_requires_an_id_and_has_no_replay_switch() {
+        assert!(Args::try_parse_from(["eefn", "grants", "receipt"]).is_err());
+        assert!(Args::try_parse_from(["eefn", "grants", "receipt", "--id", "receipt-id"]).is_ok());
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "grants",
+                "receipt",
+                "--id",
+                "receipt-id",
+                "--replay"
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn network_commands_require_complete_coordinator_metadata() {

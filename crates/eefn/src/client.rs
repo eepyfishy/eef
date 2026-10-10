@@ -134,6 +134,7 @@ fn default_ollama_url() -> String {
 }
 
 pub struct NodeClient {
+    grant_ledger: Option<Arc<crate::grants::GrantLedger>>,
     tls_config: Option<Arc<tokio_rustls::rustls::ClientConfig>>,
     request_budget: crate::request_limits::RequestBudget,
     config: NodeClientConfig,
@@ -194,6 +195,7 @@ impl NodeClient {
             }
         }
         Ok(Self {
+            grant_ledger: None,
             tls_config,
             request_budget: crate::request_limits::RequestBudget::new(&config.request_limits)?,
             crypto: NodeCrypto::new(&config.psk)?,
@@ -207,6 +209,21 @@ impl NodeClient {
 
     pub fn with_status(mut self, status: Arc<std::sync::Mutex<Value>>) -> Self {
         self.status = status;
+        self.status.lock().expect("status")["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
+            "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only"});
+        self
+    }
+    pub fn with_grants(
+        mut self,
+        path: &std::path::Path,
+        policy: crate::grants::GrantPolicy,
+    ) -> Self {
+        match crate::grants::GrantLedger::open(path, policy, &self.config.node_id) {
+            Ok(ledger) => self.grant_ledger = Some(ledger),
+            Err(_) => warn!(
+                "Execution grant journal unavailable; retained for recovery; grant execution disabled"
+            ),
+        }
         self
     }
 
@@ -282,6 +299,8 @@ impl NodeClient {
         let mut message = build_register(node_id, name, version, capabilities, specs, models);
         message["metadata"] = json!(self.config.metadata.advertised(capabilities));
         message["network"] = json!(self.config.network);
+        message["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
+            "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only"});
         message
     }
 
@@ -490,6 +509,19 @@ impl NodeClient {
             bail!("coordinator denied auth: {reply}");
         }
         let specs = system_specs();
+        let grant_session = reply["grant_session_id"]
+            .as_str()
+            .filter(|s| crate::job_commands::validate_operation_id(s).is_ok())
+            .map(str::to_owned);
+        let grant_issuer = if self.tls_config.is_some() {
+            self.config
+                .coordinator_certificate
+                .as_deref()
+                .map(crate::tls::certificate_fingerprint)
+                .transpose()?
+        } else {
+            None
+        };
         let mut models = discover_models(
             &self.http,
             &self.config.ollama_url,
@@ -630,6 +662,84 @@ impl NodeClient {
                         .into())
                     };
                     let _ = reply.send(result);
+                }
+                continue;
+            }
+            if message["type"] == "execute_grant" {
+                let request_id = message["id"].as_str().unwrap_or("").to_owned();
+                let parsed = serde_json::from_value::<crate::grants::GrantRequest>(message.clone())
+                    .and_then(|r| {
+                        if r.kind != "execute_grant"
+                            || crate::request_drafts::validate_id(&r.id).is_err()
+                        {
+                            Err(serde::de::Error::custom("Invalid grant envelope"))
+                        } else {
+                            Ok(r.grant)
+                        }
+                    });
+                let (Ok(grant), Some(ledger), Some(issuer), Some(session)) = (
+                    parsed,
+                    self.grant_ledger.clone(),
+                    grant_issuer.as_deref(),
+                    grant_session.as_deref(),
+                ) else {
+                    let response = json!({"type":"response","id":request_id,"success":false,"error_type":"GrantDenied","not_started":true,"error":"Grant execution requires a valid scope, receipt journal and pinned issuer session"});
+                    timeout(Duration::from_secs(5), async {
+                        write_message(&self.crypto, &mut *writer.lock().await, &response).await
+                    })
+                    .await
+                    .context("grant rejection write timed out")??;
+                    continue;
+                };
+                let admission = self.request_budget.admit(&grant.capability, &grant.action);
+                let prepared = if admission.is_some() {
+                    crate::grants::AcceptedGrant::prepare(
+                        grant.clone(),
+                        ledger,
+                        &self.engine,
+                        issuer,
+                        session,
+                        &self.config.node_id,
+                    )
+                } else {
+                    Err(crate::grants::GrantDenied("node_grant_capacity_full").into())
+                };
+                match prepared {
+                    Err(error) => {
+                        let report = crate::grants::GrantReport::new(
+                            &grant,
+                            crate::grants::ReceiptState::Rejected,
+                            Value::Null,
+                            Some(crate::grants::denial_code(&error)),
+                        );
+                        let response = json!({"type":"response","id":request_id,"success":false,"grant":report});
+                        timeout(Duration::from_secs(5), async {
+                            write_message(&self.crypto, &mut *writer.lock().await, &response).await
+                        })
+                        .await
+                        .context("grant rejection write timed out")??;
+                    }
+                    Ok(accepted) => {
+                        let ack = json!({"type":"grant_ack","id":request_id,"grant":accepted.acknowledgement()});
+                        // Receipt already durable. If ACK cannot be sent, no effects
+                        // start; its accepted receipt remains uncertain, never replayable.
+                        timeout(Duration::from_secs(5), async {
+                            write_message(&self.crypto, &mut *writer.lock().await, &ack).await
+                        })
+                        .await
+                        .context("grant acceptance write timed out")??;
+                        let engine = self.engine.clone();
+                        let writer = writer.clone();
+                        let crypto = self.crypto.clone();
+                        let status = self.status.clone();
+                        tasks.spawn(async move {
+                            let _permit=admission;
+                            let report=accepted.run(&engine).await;
+                            status.lock().expect("status")["last_grant"]=json!({"grant_id":report.grant_id,"state":report.state,"persisted":report.persisted,"success":report.success});
+                            let response=json!({"type":"response","id":request_id,"success":report.success,"grant":report});
+                            let _=write_message(&crypto,&mut *writer.lock().await,&response).await;
+                        });
+                    }
                 }
                 continue;
             }
@@ -869,6 +979,147 @@ mod tests {
             Arc::new(NodeEngine::new(false, vec![], std::env::temp_dir()).unwrap()),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn pinned_grants_acknowledge_and_fence_effects_across_node_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_file = dir.path().join("node.json");
+        let receipts = crate::grants::journal_path(&config_file);
+        let policy: crate::NodePolicy = serde_json::from_value(
+            json!({"filesystem":{"write":true},"full_access":["filesystem.write"]}),
+        )
+        .unwrap();
+        std::fs::write(
+            &config_file,
+            serde_json::to_vec(&json!({"node_id":"grant-node","permissions":policy})).unwrap(),
+        )
+        .unwrap();
+        let service = crate::NodeService::new(config_file, "grant-node".into());
+        let engine = Arc::new(
+            NodeEngine::new(false, vec![], dir.path().into())
+                .unwrap()
+                .with_policy(policy)
+                .unwrap()
+                .with_service(service),
+        );
+        let identity = crate::tls::CoordinatorIdentity::generate().unwrap();
+        let key = crate::authentication::generate_credential();
+        let server = crate::NodeServer::with_authentication(
+            "legacy-test-secret",
+            "127.0.0.1",
+            0,
+            crate::authentication::AuthenticationPolicy {
+                allow_legacy: false,
+                credentials: std::collections::BTreeMap::from([(
+                    "grant-node".into(),
+                    Some(key.clone()),
+                )]),
+                tls: Some(identity.clone()),
+            },
+        )
+        .unwrap();
+        server.start().await.unwrap();
+        let mut events = server.subscribe();
+        let config:NodeClientConfig=serde_json::from_value(json!({"node_id":"grant-node","psk":key,"auth_mode":"node_credential",
+            "coordinator_certificate":identity.certificate,"endpoints":[format!("127.0.0.1:{}",server.port())],"heartbeat_seconds":0.2})).unwrap();
+        let start = || {
+            let client = NodeClient::new(config.clone(), engine.clone())
+                .unwrap()
+                .with_grants(&receipts, Default::default());
+            let endpoint = client.config.endpoints[0].clone();
+            tokio::spawn(async move { client.serve_endpoint(&endpoint).await })
+        };
+        let wait_ready = || async {
+            timeout(Duration::from_secs(10), async {
+                loop {
+                    if let Ok(s) = server.grant_session("grant-node").await {
+                        break s;
+                    };
+                    sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap()
+        };
+        let node = start();
+        let session = wait_ready().await;
+        let now = crate::protocol::now_ms();
+        let out = dir.path().join("effect.txt");
+        let g:crate::grants::ExecutionGrant=serde_json::from_value(json!({"schema_version":1,"grant_id":Uuid::new_v4().to_string(),
+            "issuer_id":session["issuer_id"],"session_id":session["session_id"],"executor_node":"grant-node","job_id":Uuid::new_v4().simple().to_string(),
+            "task_id":Uuid::new_v4().simple().to_string(),"attempt":1,"plan_sha256":"b".repeat(64),
+            "request_context":{"request_id":Uuid::new_v4().to_string(),"origin_node":"origin","origin_area":["Room"]},
+            "capability":"filesystem","action":"write","params":{"path":out,"content":"first effect"},"resource_id":null,"model_id":null,"backend":null,"model_role":null,"priority":0,
+            "limits":{"max_execution_ms":5000,"max_result_bytes":65536},"reporting":"acceptance_and_completion","issued_at_ms":now-1,"expires_at_ms":now+10_000})).unwrap();
+        let response = server
+            .invoke_grant(g.clone(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        let result: crate::grants::GrantReport =
+            serde_json::from_value(response["grant"].clone()).unwrap();
+        assert!(result.confirms(&g));
+        assert!(result.success);
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "first effect");
+        let ack = timeout(Duration::from_secs(3), async {
+            loop {
+                if let crate::server::NodeEvent::GrantAccepted(r) = events.recv().await.unwrap() {
+                    break r;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(ack["grant_id"], g.grant_id);
+        assert_eq!(ack["persisted"], true);
+        assert_eq!(ack["execution_may_have_started"], false);
+        std::fs::write(&out, "owner marker").unwrap();
+        let duplicate = server
+            .invoke_grant(g.clone(), Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(duplicate["grant"]["state"], "rejected");
+        assert_eq!(
+            duplicate["grant"]["error_code"],
+            "grant_attempt_replayed_or_unresolved"
+        );
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "owner marker");
+        node.abort();
+        let _ = node.await;
+        timeout(Duration::from_secs(3), async {
+            while server.connected_nodes().await.contains_key("grant-node") {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let node = start();
+        let replacement = wait_ready().await;
+        assert_ne!(replacement["session_id"], session["session_id"]);
+        assert!(
+            server
+                .invoke_grant(g.clone(), Duration::from_secs(1))
+                .await
+                .is_err()
+        );
+        let mut replay = g.clone();
+        replay.session_id = replacement["session_id"].as_str().unwrap().into();
+        replay.grant_id = Uuid::new_v4().to_string();
+        let replayed = server
+            .invoke_grant(replay, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(replayed["grant"]["state"], "rejected");
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "owner marker");
+        node.abort();
+        let _ = node.await;
+        server.stop().await;
+        let ledger =
+            crate::grants::GrantLedger::open(&receipts, Default::default(), "grant-node").unwrap();
+        assert_eq!(
+            ledger.receipt(&g.issuer_id, &g.grant_id).unwrap()["state"],
+            "completed"
+        );
     }
 
     #[tokio::test]

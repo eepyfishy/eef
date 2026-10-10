@@ -425,6 +425,7 @@ impl Runtime {
                         submissions.spawn(async move { worker.on_node_submission(message).await });
                     }
                     Ok(NodeEvent::Down(node_id)) => runtime.sync_node_state(&node_id, true).await,
+                    Ok(NodeEvent::GrantAccepted(_)) => {} // Journal integration follows explicit owner approval; never dispatch here.
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
                         let _ = runtime.node_event_loss_count.fetch_update(
                             Ordering::Relaxed,

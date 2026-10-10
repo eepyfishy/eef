@@ -227,6 +227,7 @@ pub struct NodeEngine {
     service: Option<Arc<crate::NodeService>>,
     resource_owner: String,
     resources: Vec<crate::context::Resource>,
+    granted_model_config: Option<Value>,
 }
 
 impl NodeEngine {
@@ -263,6 +264,7 @@ impl NodeEngine {
             ollama_url: String::new(),
             ollama_models: HashMap::new(),
             service: None,
+            granted_model_config: None,
             resource_owner: String::new(),
             resources: Vec::new(),
         })
@@ -284,6 +286,7 @@ impl NodeEngine {
         Ok(self)
     }
     pub fn with_service(mut self, service: Arc<crate::NodeService>) -> Self {
+        self.granted_model_config = service.read_config().ok().map(|c| c["models"].clone());
         self.service = Some(service);
         self
     }
@@ -398,6 +401,94 @@ impl NodeEngine {
 
     pub fn python_plugins(&self) -> Vec<&PythonPlugin> {
         self.plugins.values().collect()
+    }
+
+    /// Grants never widen applied node policy. Changed relevant saved scopes fail
+    /// closed until restart, and revocation is checked before/pending execution.
+    pub(crate) fn check_grant_policy(&self, g: &crate::grants::ExecutionGrant) -> Result<()> {
+        if !self.capabilities().contains(&g.capability) {
+            bail!("Granted capability is not enabled on this node")
+        }
+        let section = match g.capability.as_str() {
+            "system.info" | "system.ping" => None,
+            "filesystem" => Some("filesystem"),
+            "process.exec" => Some("process"),
+            "application.control" => Some("applications"),
+            "http.request" => Some("http"),
+            "stt.transcribe" => Some("stt"),
+            "network.wol" => Some("wake_on_lan"),
+            "audio.capture" | "audio.play" | "tts.speak" | "camera.capture" | "screen.capture"
+            | "input.control" => Some("media"),
+            "llm.infer" | "vlm.analyze" => Some("models"),
+            _ => bail!("Capability has no supported grant enforcement contract"),
+        };
+        if let Some(service) = &self.service {
+            service.inspect_grant_configuration(|config| {
+                let limits: crate::grants::GrantPolicy = serde_json::from_value(
+                    config.get("grants").cloned().unwrap_or_else(|| json!({})),
+                )?;
+                limits.validate()?;
+                if g.limits.max_execution_ms > limits.max_duration_ms
+                    || g.limits.max_result_bytes > limits.max_result_bytes
+                {
+                    bail!("Saved node grant limits were reduced")
+                }
+                if section == Some("models") {
+                    if self.granted_model_config.as_ref() != Some(&config["models"]) {
+                        bail!("Model selection changed; restart/replan required")
+                    }
+                } else if let Some(section) = section {
+                    let current: NodePolicy = serde_json::from_value(
+                        config
+                            .get("permissions")
+                            .cloned()
+                            .unwrap_or_else(|| json!({})),
+                    )?;
+                    let current = normalize_policy(current)?;
+                    if grant_policy_scope(&self.policy, g, section)
+                        != grant_policy_scope(&current, g, section)
+                    {
+                        bail!("Relevant local permissions changed; restart/replan required")
+                    }
+                }
+                if g.resource_id.is_some() {
+                    let latest: crate::context::NodeMetadata = serde_json::from_value(
+                        config.get("metadata").cloned().unwrap_or_else(|| json!({})),
+                    )?;
+                    if json!(latest.resources) != json!(self.resources) {
+                        bail!("Local resource bindings changed; restart/replan required")
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        if let Some(model) = &g.model_id {
+            let metadata = if g.backend.as_deref() == Some("ollama") {
+                self.ollama_models
+                    .get(model)
+                    .context("Granted Ollama model is not selected")?
+                    .clone()
+            } else {
+                let server = self
+                    .model_server
+                    .as_ref()
+                    .context("Granted local model is not configured")?;
+                server.require_ready()?;
+                server
+                    .slot(Some(model))
+                    .context("Granted local model is not selected")?
+                    .selection_metadata()?
+            };
+            if !metadata.supports(&g.capability)
+                || !metadata.routable()
+                || g.model_role
+                    .as_ref()
+                    .is_some_and(|role| metadata.roles.as_ref().is_none_or(|r| !r.contains(role)))
+            {
+                bail!("Granted model capability/role is not enabled")
+            }
+        }
+        Ok(())
     }
 
     pub async fn execute(
@@ -1120,6 +1211,40 @@ impl NodeEngine {
     }
 }
 
+fn grant_policy_scope(
+    policy: &NodePolicy,
+    g: &crate::grants::ExecutionGrant,
+    section: &str,
+) -> Value {
+    let p = json!(policy);
+    let full = if g.capability == "filesystem" {
+        format!(
+            "filesystem.{}",
+            if g.action == "write" { "write" } else { "read" }
+        )
+    } else {
+        g.capability.clone()
+    };
+    let scope = match (section, g.action.as_str()) {
+        ("filesystem", "write") => {
+            json!({"enabled":policy.filesystem.write,"roots":policy.filesystem.roots,"max_bytes":policy.filesystem.max_write_bytes})
+        }
+        ("filesystem", _) => {
+            json!({"enabled":policy.filesystem.read,"roots":policy.filesystem.roots,"max_bytes":policy.filesystem.max_read_bytes,"max_entries":policy.filesystem.max_list_entries})
+        }
+        ("media", _) => p["media"][match g.capability.as_str() {
+            "audio.capture" => "microphone",
+            "audio.play" => "audio_output",
+            "tts.speak" => "tts",
+            "camera.capture" => "camera",
+            "screen.capture" => "screen_capture",
+            _ => "input_control",
+        }]
+        .clone(),
+        _ => p[section].clone(),
+    };
+    json!({"scope":scope,"full_access":policy.unrestricted(&full)})
+}
 fn normalize_policy(mut policy: NodePolicy) -> Result<NodePolicy> {
     policy.filesystem.roots = policy
         .filesystem

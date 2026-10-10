@@ -58,10 +58,20 @@ try {
     await cli('eefn',n.config,['connection','pair','--code-file',n.privateFile]);
     await until(async()=>(await json(n.api+'/api/status')).connection?.state==='connected','pinned node connected');
     assert.equal((await json(n.api+'/api/status')).connection.transport,'pinned_tls13');
+    assert.equal((await json(n.api+'/api/status')).execution_grants.available,true);
     assert.equal((await fetch(n.api+'/')).status,404);
   }
   await until(async()=>(await coordinator(['diagnostics'])).registered_node_count===2,'registered pair');
   const owner=nodes[0],other=nodes[1],node=args=>cli('eefn',owner.config,args),bad=args=>cli('eefn',owner.config,args,false);
+  const receiptFile=owner.config+'.grant-receipts.sqlite3',receiptBefore=await readFile(receiptFile);
+  const receiptRequest={schema_version:1,expected_node_id:owner.id,grant_id:randomUUID()};
+  await bad(['grants','receipt','--id',receiptRequest.grant_id]);
+  const receiptEndpoint=owner.api+'/api/commands/grants/receipt';
+  assert.equal((await response(receiptEndpoint,receiptRequest)).status,400);
+  assert.equal((await response(receiptEndpoint,{...receiptRequest,expected_node_id:other.id})).status,400);
+  assert.equal((await response(receiptEndpoint,{...receiptRequest,replay:true})).status,422);
+  assert.equal((await response(receiptEndpoint,receiptRequest,'https://untrusted.example')).status,403);
+  assert.deepEqual(await readFile(receiptFile),receiptBefore,'receipt inspection must not create or rewrite execution');
   const file=join(scratch,'proposal.json');await writeFile(file,JSON.stringify({schema_version:1,original_text:original,proposal}));
   const opened=await node(['requests','open-proposal','--file',file]);
   assert.equal(opened.report_type,'request_draft');assert.equal(opened.coordinator_acknowledged,true);

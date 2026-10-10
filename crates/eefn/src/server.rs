@@ -63,6 +63,7 @@ pub enum NodeEvent {
     Heartbeat(Value),
     Submission(Value),
     Down(String),
+    GrantAccepted(Value),
 }
 
 #[derive(Clone)]
@@ -108,6 +109,7 @@ impl Drop for IdentityLease {
 
 #[derive(Clone)]
 struct Connection {
+    credential_transport: bool,
     session_id: Uuid,
     info: ConnectionInfo,
     sender: mpsc::Sender<Value>,
@@ -117,6 +119,8 @@ struct Connection {
 }
 
 struct Pending {
+    grant: Option<crate::grants::ExecutionGrant>,
+    acknowledged: bool,
     node_id: String,
     session_id: Uuid,
     sender: oneshot::Sender<Value>,
@@ -376,6 +380,64 @@ impl NodeServer {
         wait: Duration,
         context: Option<&crate::context::RequestContext>,
     ) -> Result<Value> {
+        self.invoke_message(node_id,json!({"type":"request","capability":capability,"action":action,"params":params,"request_context":context}),wait,None).await
+    }
+
+    /// Issuer/session selection only, never an execution approval. The caller
+    /// must persist its reviewed approval and exact issuance before dispatch.
+    pub async fn grant_session(&self, node_id: &str) -> Result<Value> {
+        let connections = self.inner.connections.read().await;
+        let c = connections
+            .get(node_id)
+            .context("Grant node is not connected")?;
+        self.check_grant_connection(c)?;
+        let issuer = self
+            .inner
+            .authentication
+            .tls
+            .as_ref()
+            .context("Grant issuer TLS unavailable")?
+            .fingerprint()?;
+        Ok(
+            json!({"issuer_id":issuer,"session_id":c.session_id.to_string(),"executor_node":node_id,
+            "limits":c.state.as_ref().unwrap().registration["execution_grants"]["limits"]}),
+        )
+    }
+    fn check_grant_connection(&self, c: &Connection) -> Result<()> {
+        if !c.credential_transport
+            || c.state.as_ref().is_none_or(|s| {
+                s.registration["execution_grants"]["schema_version"] != 1
+                    || s.registration["execution_grants"]["available"] != true
+            })
+        {
+            bail!(
+                "Node requires an independent credential, pinned TLS and available grant receipt journal"
+            )
+        }
+        Ok(())
+    }
+    pub async fn invoke_grant(
+        &self,
+        grant: crate::grants::ExecutionGrant,
+        wait: Duration,
+    ) -> Result<Value> {
+        grant.validate()?;
+        let node = grant.executor_node.clone();
+        self.invoke_message(
+            &node,
+            json!({"type":"execute_grant","grant":grant}),
+            wait,
+            Some(grant),
+        )
+        .await
+    }
+    async fn invoke_message(
+        &self,
+        node_id: &str,
+        mut message: Value,
+        wait: Duration,
+        grant: Option<crate::grants::ExecutionGrant>,
+    ) -> Result<Value> {
         // Hold the routing read guard until the waiter is registered. Session
         // cleanup removes the route before draining that session's waiters.
         let connections = self.inner.connections.read().await;
@@ -383,11 +445,26 @@ impl NodeServer {
             .get(node_id)
             .cloned()
             .ok_or_else(|| NodeOfflineError(node_id.into()))?;
+        if let Some(g) = &grant {
+            self.check_grant_connection(&connection)?;
+            let issuer = self
+                .inner
+                .authentication
+                .tls
+                .as_ref()
+                .context("Grant issuer unavailable")?
+                .fingerprint()?;
+            if !g.matches_session(&issuer, &connection.session_id.to_string(), node_id) {
+                bail!("Grant issuer/session changed before dispatch")
+            }
+        }
         let request_id = Uuid::new_v4().simple().to_string();
         let (sender, receiver) = oneshot::channel();
         self.inner.pending.lock().await.insert(
             request_id.clone(),
             Pending {
+                grant,
+                acknowledged: false,
                 node_id: node_id.into(),
                 session_id: connection.session_id,
                 sender,
@@ -398,10 +475,7 @@ impl NodeServer {
             inner: self.inner.clone(),
             request_id: request_id.clone(),
         };
-        let message = json!({
-            "type": "request", "id": request_id, "capability": capability,
-            "action": action, "params": params, "request_context":context,
-        });
+        message["id"] = json!(request_id);
         // The same budget covers a saturated outbound queue and the reply.
         match timeout(wait, async {
             connection
@@ -608,15 +682,15 @@ impl NodeServer {
             inner: self.inner.clone(),
             node_id: node_id.clone(),
         };
+        let session_id = Uuid::new_v4();
         write_message(
             &crypto,
             &mut writer,
-            &json!({"type": "ok", "protocol": PROTOCOL_VERSION}),
+            &json!({"type": "ok", "protocol": PROTOCOL_VERSION,"grant_session_id":session_id.to_string()}),
         )
         .await?;
 
         let (send, mut receive) = mpsc::channel::<Value>(64);
-        let session_id = Uuid::new_v4();
         let info = ConnectionInfo {
             node_id: node_id.clone(),
             source_ip: peer.ip().to_string(),
@@ -631,6 +705,7 @@ impl NodeServer {
         self.inner.connections.write().await.insert(
             node_id.clone(),
             Connection {
+                credential_transport: selected_id.is_some(),
                 session_id,
                 info,
                 sender: send,
@@ -703,6 +778,11 @@ impl NodeServer {
                     )?;
                     metadata = metadata.advertised(&capabilities);
                     message["metadata"] = json!(metadata);
+                    if let Some(advertisement) = message.get("execution_grants") {
+                        let a: crate::grants::GrantAdvertisement =
+                            serde_json::from_value(advertisement.clone())?;
+                        a.validate()?;
+                    }
                     let advertisement = crate::network::PeerRecord::from_registration(&message)?;
                     interpretation_capabilities = capabilities;
                     let received_at_ms = now_ms();
@@ -727,6 +807,7 @@ impl NodeServer {
                                     "models",
                                     "metadata",
                                     "network",
+                                    "execution_grants",
                                 ],
                                 received_at_ms,
                             ),
@@ -798,6 +879,10 @@ impl NodeServer {
                     message["gateway_session_id"] = json!(session_id.to_string());
                     let _ = self.inner.events.send(NodeEvent::Submission(message));
                 }
+                Some("grant_ack") => {
+                    self.resolve_grant_ack(authenticated_id, session_id, message)
+                        .await
+                }
                 Some("response") => {
                     self.resolve_response(authenticated_id, session_id, message)
                         .await
@@ -867,12 +952,47 @@ impl NodeServer {
         };
         let mut requests = self.inner.pending.lock().await;
         if !requests.get(&id).is_some_and(|pending| {
-            pending.node_id == authenticated_id && pending.session_id == session_id
+            pending.node_id == authenticated_id
+                && pending.session_id == session_id
+                && pending.grant.as_ref().is_none_or(|g| {
+                    serde_json::from_value::<crate::grants::GrantReport>(message["grant"].clone())
+                        .is_ok_and(|r| {
+                            r.confirms(g)
+                                && r.state != crate::grants::ReceiptState::Accepted
+                                && message["success"] == json!(r.success)
+                                && if r.state == crate::grants::ReceiptState::Rejected {
+                                    !pending.acknowledged
+                                } else {
+                                    pending.acknowledged
+                                }
+                        })
+                })
         }) {
             return;
         }
         if let Some(pending) = requests.remove(&id) {
             let _ = pending.sender.send(message);
+        }
+    }
+    async fn resolve_grant_ack(&self, node: &str, session: Uuid, message: Value) {
+        let Some(id) = message["id"].as_str() else {
+            return;
+        };
+        let mut pending = self.inner.pending.lock().await;
+        let Some(p) = pending
+            .get_mut(id)
+            .filter(|p| p.node_id == node && p.session_id == session && !p.acknowledged)
+        else {
+            return;
+        };
+        let Some(g) = &p.grant else { return };
+        let Ok(r) = serde_json::from_value::<crate::grants::GrantReport>(message["grant"].clone())
+        else {
+            return;
+        };
+        if r.state == crate::grants::ReceiptState::Accepted && r.confirms(g) {
+            p.acknowledged = true;
+            let _ = self.inner.events.send(NodeEvent::GrantAccepted(json!(r)));
         }
     }
 
@@ -1578,6 +1698,7 @@ mod tests {
             "node-a".into(),
             Connection {
                 session_id: Uuid::nil(),
+                credential_transport: false,
                 info: info.clone(),
                 sender,
                 advertisement: None,
@@ -1787,6 +1908,8 @@ mod tests {
             "request".into(),
             Pending {
                 node_id: "owner".into(),
+                grant: None,
+                acknowledged: false,
                 session_id: Uuid::nil(),
                 sender,
             },
@@ -1805,6 +1928,85 @@ mod tests {
             .await;
         assert_eq!(receiver.await.unwrap(), response);
     }
+    #[tokio::test]
+    async fn grants_require_exact_durable_ack_before_correlated_completion() {
+        use crate::grants::{GrantReport, ReceiptState};
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        let mut events = server.subscribe();
+        let g = crate::grants::tests::grant();
+        let session = Uuid::parse_str(&g.session_id).unwrap();
+        let (sender, mut receiver) = oneshot::channel();
+        server.inner.pending.lock().await.insert(
+            "wire-id".into(),
+            Pending {
+                node_id: "owner".into(),
+                session_id: session,
+                grant: Some(g.clone()),
+                acknowledged: false,
+                sender,
+            },
+        );
+        let complete = json!({"type":"response","id":"wire-id","success":true,"grant":GrantReport::new(&g,ReceiptState::Completed,json!({"ok":true}),None)});
+        server
+            .resolve_response("owner", session, complete.clone())
+            .await;
+        assert!(receiver.try_recv().is_err());
+        let ack = json!({"type":"grant_ack","id":"wire-id","grant":GrantReport::new(&g,ReceiptState::Accepted,Value::Null,None)});
+        server
+            .resolve_grant_ack("other", session, ack.clone())
+            .await;
+        server
+            .resolve_grant_ack("owner", Uuid::new_v4(), ack.clone())
+            .await;
+        let mut forged = ack.clone();
+        forged["grant"]["persisted"] = json!(false);
+        server.resolve_grant_ack("owner", session, forged).await;
+        assert!(!server.inner.pending.lock().await["wire-id"].acknowledged);
+        assert!(events.try_recv().is_err());
+        server
+            .resolve_grant_ack("owner", session, ack.clone())
+            .await;
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            NodeEvent::GrantAccepted(_)
+        ));
+        server.resolve_grant_ack("owner", session, ack).await;
+        assert!(events.try_recv().is_err());
+        server
+            .resolve_response(
+                "owner",
+                session,
+                json!({"type":"response","id":"wire-id","success":true}),
+            )
+            .await;
+        let rejected = json!({"type":"response","id":"wire-id","success":false,"grant":GrantReport::new(&g,ReceiptState::Rejected,Value::Null,Some("rejected"))});
+        server.resolve_response("owner", session, rejected).await;
+        assert!(receiver.try_recv().is_err());
+        let mut bad = complete.clone();
+        bad["grant"]["plan_sha256"] = json!("c".repeat(64));
+        server.resolve_response("owner", session, bad).await;
+        let mut bad = complete.clone();
+        bad["grant"]["persisted"] = json!(false);
+        server.resolve_response("owner", session, bad).await;
+        assert!(receiver.try_recv().is_err());
+        server
+            .resolve_response("owner", session, complete.clone())
+            .await;
+        assert_eq!(receiver.await.unwrap(), complete);
+    }
+    #[tokio::test]
+    async fn legacy_routes_cannot_send_a_grant_or_downgrade_it_into_rpc() {
+        let (server, mut queue) = queued_test_server().await;
+        assert!(server.grant_session("owner").await.is_err());
+        assert!(
+            server
+                .invoke_grant(crate::grants::tests::grant(), Duration::from_millis(10))
+                .await
+                .is_err()
+        );
+        assert!(queue.try_recv().is_err());
+        assert!(server.inner.pending.lock().await.is_empty());
+    }
 
     async fn queued_test_server() -> (NodeServer, mpsc::Receiver<Value>) {
         let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
@@ -1813,6 +2015,7 @@ mod tests {
             "owner".into(),
             Connection {
                 session_id: Uuid::nil(),
+                credential_transport: false,
                 info: ConnectionInfo {
                     node_id: "owner".into(),
                     source_ip: "127.0.0.1".into(),
