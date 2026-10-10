@@ -31,6 +31,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect/compile reviewed requests as the local owner, without dispatch or grants.
+    Requests {
+        #[command(subcommand)]
+        command: eef::request_planning::PlanningAction,
+    },
     /// Inspect/save non-model scheduler limits as the local coordinator owner.
     Scheduling {
         #[command(subcommand)]
@@ -146,6 +151,42 @@ enum ModelsCommand {
 mod credential_cli_tests {
     use super::*;
     #[test]
+    fn planning_requires_an_explicit_revision_and_input_file() {
+        assert!(Args::try_parse_from(["eef", "requests", "inspect", "draft-id"]).is_ok());
+        assert!(Args::try_parse_from(["eef", "requests", "compile", "draft-id"]).is_err());
+        assert!(
+            Args::try_parse_from(["eef", "requests", "compile", "draft-id", "--revision", "1"])
+                .is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "requests",
+                "compile",
+                "draft-id",
+                "--revision",
+                "1",
+                "--file",
+                "input.json"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "requests",
+                "compile",
+                "draft-id",
+                "--revision",
+                "1",
+                "--file",
+                "input.json",
+                "--approve"
+            ])
+            .is_err()
+        );
+    }
+    #[test]
     fn scheduling_commands_require_explicit_node_limits_and_preserve_zero() {
         assert!(Args::try_parse_from(["eef", "scheduling", "show"]).is_ok());
         assert!(Args::try_parse_from(["eef", "scheduling", "node", "--node", "a"]).is_err());
@@ -203,6 +244,49 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::Requests { command } => {
+            let command = match command {
+                eef::request_planning::PlanningAction::Inspect { id } => {
+                    eef::request_planning::PlanningCommand::Inspect { id: id.clone() }
+                }
+                eef::request_planning::PlanningAction::Compile { id, revision, file } => {
+                    eef::request_planning::PlanningCommand::Compile {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                        operation_id: uuid::Uuid::new_v4().to_string(),
+                        input: eef::request_planning::read_input(file)?,
+                    }
+                }
+            };
+            command.validate()?;
+            let state =
+                command_response(client.get(format!("{base}/api/diagnostics")).send().await?)
+                    .await?;
+            let runtime_id = state["runtime_id"]
+                .as_str()
+                .context("Missing coordinator runtime ID")?;
+            let operation_id = match &command {
+                eef::request_planning::PlanningCommand::Inspect { .. } => None,
+                eef::request_planning::PlanningCommand::Compile { operation_id, .. } => {
+                    Some(operation_id.clone())
+                }
+            };
+            let exchange=async {
+                let value=command_response(client.post(format!("{base}/api/commands/requests/planning"))
+                    .json(&json!({"schema_version":1,"expected_runtime_id":runtime_id,"command":command})).send().await?).await?;
+                if !eef::request_planning::confirmed_report(&value,runtime_id,&command) {bail!("Unconfirmed planning report")}
+                Ok::<_,anyhow::Error>(value)
+            }.await;
+            return Ok(match exchange {
+                Ok(v) => v,
+                Err(e) => {
+                    json!({"schema_version":1,"report_type":"request_planning","success":false,
+                "id":command.id(),"operation_id":operation_id,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
+                "outcome_unknown":operation_id.is_some(),"error_code":"planning_unconfirmed","error":e.to_string(),
+                "note":"Inspect requests inspect with this ID before retrying; a concrete plan may have been retained. No fallback, replay or execution was requested."})
+                }
+            });
+        }
         Command::Scheduling { command } => {
             let response = client
                 .get(format!("{base}/api/commands/scheduling"))
@@ -567,6 +651,10 @@ async fn main() -> Result<()> {
                 if matches!(command, Command::Invite { .. }) || value["private"] == true {
                     eprintln!(
                         "Private connection code: share only with the node owner, not in reports or issues."
+                    );
+                } else if matches!(command, Command::Requests { .. }) && value["success"] == true {
+                    eprintln!(
+                        "Private request/plan report: may contain user text, task inputs and target bindings; do not publish it in reports or issues."
                     );
                 }
                 println!(

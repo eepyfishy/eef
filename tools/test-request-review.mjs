@@ -177,6 +177,27 @@ try {
   assert.equal(retained.draft.original_text,'Lost durable reply');assert.equal(retained.request_context.request_id,lostDraft.request_id);
   assert.deepEqual((await cli(['jobs','get',found.jobs[0].id])).data.tasks,[]);
   assert.equal(calls.length,beforeDurableLoss+1,'receipt inspection must not infer or resubmit');
+  // Concrete model binding uses live advertised roles; compiling cannot infer.
+  const modelProposalFile=join(scratch,'model-proposal.json');
+  await writeFile(modelProposalFile,JSON.stringify({schema_version:1,original_text:'Summarize this text',proposal:{...proposal(),suggested_capabilities:['llm.infer']}}));
+  const modelDraft=await cli(['requests','open-proposal','--file',modelProposalFile]);
+  const runtime=(await json(eef+'/api/diagnostics')).runtime_id;
+  const planInput={schema_version:1,template:'generate_text',params:{prompt:'Summarize this text',model_id:'fixture',max_tokens:64},
+    constraints:{node_id:config.node_id,backend:'ollama',model_role:'request_interpreter'}};
+  const planRequest={schema_version:1,expected_runtime_id:runtime,command:{operation:'compile',id:modelDraft.result.id,
+    expected_revision:1,operation_id:randomUUID(),input:planInput}};
+  const planUrl=eef+'/api/commands/requests/planning';
+  const beforeCompile=calls.length;
+  const wrongRole=await fetch(planUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...planRequest,
+    command:{...planRequest.command,input:{...planInput,constraints:{...planInput.constraints,model_role:'unselected_role'}}}})});
+  assert.equal(wrongRole.status,400);
+  const modelPlan=await json(planUrl,planRequest);
+  assert.equal(modelPlan.plan.status,'awaiting_approval');assert.equal(modelPlan.execution_authorized,false);assert.equal(modelPlan.dispatched,false);
+  assert.equal(modelPlan.plan.tasks[0].params.model_id,'fixture');assert.equal(modelPlan.plan.tasks[0].constraints.backend,'ollama');
+  assert.deepEqual(modelPlan.plan.planning.bindings[0],{task_id:modelPlan.plan.tasks[0].task_id,node_id:config.node_id,resource_id:null,model_id:'fixture',backend:'ollama'});
+  assert.equal(calls.length,beforeCompile,'compilation must not invoke inference');
+  const modelReused=await json(planUrl,planRequest);assert.equal(modelReused.reused,true);assert.deepEqual(modelReused.plan,modelPlan.plan);
+  await cli(['jobs','stop',modelDraft.result.id]);await cli(['jobs','remove',modelDraft.result.id]);
   for(const id of [durable.result.id,found.jobs[0].id]) {await cli(['jobs','stop',id]);await cli(['jobs','remove',id]);}
   assert.equal((await cli(['jobs','list'])).data.total,0);
   assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), JSON.parse(before), 'review leaves config unchanged');
@@ -184,7 +205,7 @@ try {
     original_text_preserved: true, authenticated_origin: true, clarification_returned: true, rejected_authority_fields: true,
     stateless_no_jobs_created: true, durable_inferred_review: true, lost_draft_found_without_replay: true,
     no_execution: true, restart_invalidates_inference: true, lost_reply_not_replayed: true,
-    real_inference: false, physical_two_pc: false}, null, 2));
+    explicit_model_plan_without_inference:true,owner_role_binding:true,real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
 } finally {
   for (const response of gates) response.destroy();

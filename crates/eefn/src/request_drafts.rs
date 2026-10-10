@@ -209,7 +209,10 @@ pub fn confirmed_report(value: &Value, node: &str, operation_id: &str, id: Optio
         && validate_id(&report.id).is_ok()
         && id.is_none_or(|id| id == report.id)
         && report.revision > 0
-        && matches!(report.status.as_str(), "review" | "cancelled")
+        && matches!(
+            report.status.as_str(),
+            "review" | "awaiting_approval" | "cancelled"
+        )
         && report.operation_id == operation_id
         && report.request_context.origin_node() == node
         && crate::job_commands::validate_operation_id(report.request_context.request_id()).is_ok()

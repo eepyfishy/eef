@@ -28,7 +28,7 @@ fn report(plan: &Plan, operation_id: &str, reused: bool) -> Result<Value> {
         "revision":plan.revision,"status":plan.status,"operation_id":operation_id,
         "request_context":plan.goal.request_context,"draft":draft,"review_state":draft.state(),
         "reused":reused,"execution_authorized":false,"dispatched":false,"persisted":true,
-        "note":"Durable review only. An answer does not resolve model uncertainty or authorize execution. Authoritative planning/approval/grants are still separate; no job runner was started."}),
+        "note":"Review or plan awaiting approval only. Answers and compilation never authorize execution; no job runner was started."}),
     )
 }
 pub fn open(
@@ -56,6 +56,7 @@ pub fn open(
         answers: vec![],
     };
     let plan = Plan {
+        planning: None,
         request_review: Some(draft),
         plan_id: uuid::Uuid::new_v4().simple().to_string(),
         goal: Goal {

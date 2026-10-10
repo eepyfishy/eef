@@ -106,14 +106,51 @@ try {
   await until(async()=>{const d=await coordinator(['diagnostics']);return d.runtime_id!==runtime&&d.registered_node_count===2;},'journal reopen and reconnect');
   const after=(await node(['requests','draft',id])).result;
   assert.equal(after.revision,4);assert.equal(after.status,'review');assert.deepEqual(after.draft,before.draft);assert.deepEqual(after.request_context,context);
+  const planFile=join(scratch,'concrete-plan.json');
+  const planInput={schema_version:1,template:'system_info',params:{},constraints:{node_id:owner.id}};
+  await writeFile(planFile,JSON.stringify(planInput));
+  const planningEndpoint=base+'/api/commands/requests/planning';
+  runtime=(await coordinator(['diagnostics'])).runtime_id;
+  const planningRequest={schema_version:1,expected_runtime_id:runtime,command:{operation:'compile',id,expected_revision:4,operation_id:randomUUID(),input:planInput}};
+  assert.equal((await response(planningEndpoint,planningRequest,'https://untrusted.example')).status,403);
+  assert.equal((await response(planningEndpoint,{...planningRequest,approved:true})).status,422);
+  assert.equal((await response(planningEndpoint,{...planningRequest,expected_runtime_id:'stale'})).status,400);
+  assert.equal((await response(planningEndpoint,{...planningRequest,command:{...planningRequest.command,input:{...planInput,params:{ignored_permission:true}}}})).status,400);
+  assert.equal((await response(planningEndpoint,{...planningRequest,command:{...planningRequest.command,input:{...planInput,constraints:{node_id:'missing-node'}}}})).status,400);
+  assert.equal((await node(['requests','draft',id])).result.revision,4);
+  const compiled=await coordinator(['requests','compile',id,'--revision','4','--file',planFile]);
+  assert.equal(compiled.execution_authorized,false);assert.equal(compiled.dispatched,false);assert.equal(compiled.reused,false);
+  assert.equal(compiled.plan.status,'awaiting_approval');assert.equal(compiled.plan.revision,5);
+  assert.deepEqual(compiled.plan.request_review,after.draft);assert.deepEqual(compiled.plan.goal.request_context,context);
+  assert.equal(compiled.plan.tasks.length,1);
+  const task=compiled.plan.tasks[0];assert.equal(task.capability,'system.info');assert.equal(task.status,'pending');
+  assert.equal(task.constraints.node_id,owner.id);assert.deepEqual(task.assignments,[]);assert.equal(task.attempts,0);assert.equal(task.retry_count,0);
+  assert.equal(compiled.plan.planning.bindings[0].node_id,owner.id);assert.match(compiled.plan.planning.plan_sha256,/^[a-f0-9]{64}$/);
+  const ownDraft=(await node(['requests','draft',id])).result;assert.equal(ownDraft.status,'awaiting_approval');assert(!('planning' in ownDraft));
+  await cli('eefn',other.config,['requests','draft',id],false);
+  const inspection=await coordinator(['requests','inspect',id]);assert.deepEqual(inspection.plan,compiled.plan);
+  const retry={...planningRequest,command:{...planningRequest.command,operation_id:compiled.operation_id}};
+  const reused=await json(planningEndpoint,retry);assert.equal(reused.reused,true);assert.deepEqual(reused.plan,compiled.plan);
+  assert.equal((await response(planningEndpoint,planningRequest)).status,400);
+  assert.equal((await response(planningEndpoint,{...retry,command:{...retry.command,input:{...planInput,constraints:{node_id:other.id}}}})).status,400);
+  await cli('eef',eefConfig,['requests','compile',id,'--revision','4','--file',planFile],false);
+  await bad(['jobs','pause',id]);await bad(['jobs','resume',id]);
+  const bounded=(await node(['jobs','get',id])).data;assert.equal(bounded.planning_state,'compiled_no_grant');assert(!('planning' in bounded));
+  runtime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+  await until(async()=>{const d=await coordinator(['diagnostics']);return d.runtime_id!==runtime&&d.registered_node_count===2;},'compiled plan reopen without execution');
+  const reopened=await coordinator(['requests','inspect',id]);assert.deepEqual(reopened.plan,compiled.plan);
+  assert.equal((await node(['requests','draft',id])).result.status,'awaiting_approval');
   for(const n of nodes)assert.deepEqual((await json(n.api+'/api/status')).models,[]);
   await node(['jobs','stop',id]);const stopped=(await node(['requests','draft',id])).result;assert.equal(stopped.status,'cancelled');
+  const cancelled=await coordinator(['requests','inspect',id]);assert.equal(cancelled.plan.tasks[0].status,'cancelled');
+  assert.equal(cancelled.plan.planning.plan_sha256,compiled.plan.planning.plan_sha256);
+  assert.equal(cancelled.plan.tasks[0].attempts,0);assert.deepEqual(cancelled.plan.tasks[0].assignments,[]);
   await bad(['requests','revise-proposal',id,'--revision',String(stopped.revision),'--file',file]);
   await node(['jobs','remove',id]);assert.equal((await node(['jobs','list'])).data.total,0);
   await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,two_logical_nodes:true,pinned_tls13:true,api_only:true,
     model_free:true,origin_owned:true,immutable_original:true,clarification_answers:true,proposal_history:true,
     receipt_deduplication:true,revision_checks:true,restart_persistence:true,no_executor:true,no_automatic_replay:true,
-    physical_two_pc:false,authoritative_planning:false,execution_grants:false},null,2));
+    physical_two_pc:false,explicit_concrete_planning:true,compiled_without_dispatch:true,immutable_plan_digest:true,execution_grants:false},null,2));
   console.log('Durable request validation passed: '+scratch);
 } finally {
   for(const child of children)if(child.exitCode===null)child.kill();

@@ -32,6 +32,8 @@ pub enum TaskStatus {
 pub enum PlanStatus {
     /// Durable review only. Never admitted to a task runner.
     Review,
+    #[serde(rename = "awaiting_approval")]
+    AwaitingApproval,
     Pending,
     Running,
     Completed,
@@ -126,6 +128,8 @@ pub struct TaskResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning: Option<crate::request_planning::PlanningRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_review: Option<eefn::request_drafts::DraftRecord>,
     #[serde(default = "short_id")]
     pub plan_id: String,
@@ -171,6 +175,7 @@ impl TaskPlanner {
             goal.template.clone()
         };
         let steps: Vec<(&str, &str, &[&str])> = match template.as_str() {
+            "system_info" => vec![("system.info", "run", &[])],
             "generate_text" => vec![(
                 "llm.infer",
                 "run",
@@ -278,6 +283,7 @@ impl TaskPlanner {
             });
         }
         Ok(Plan {
+            planning: None,
             request_review: None,
             plan_id: short_id(),
             goal,
@@ -749,6 +755,21 @@ impl TaskEngine {
         while !self.active.lock().expect("active jobs").ids.is_empty() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+    }
+    pub(crate) fn edit_review_plan(
+        &self,
+        id: &str,
+        edit: impl FnOnce(&mut Plan) -> Result<bool>,
+    ) -> Result<Plan> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no new planning checkpoint is accepted")
+        }
+        self.store.edit(
+            id,
+            "Concrete plan saved; awaiting approval and execution grants",
+            edit,
+        )
     }
     async fn drive(&self, id: &str, _guard: ActiveJob) -> Result<Plan> {
         let mut stopping = self.stopping.subscribe();

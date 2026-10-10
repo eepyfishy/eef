@@ -16,6 +16,7 @@ pub mod model;
 pub mod model_inventory;
 pub mod node_control;
 pub mod request_drafts;
+pub mod request_planning;
 pub mod request_review;
 pub mod runtime;
 pub mod scheduling;

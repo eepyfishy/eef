@@ -1,5 +1,48 @@
 # Architecture conformance status
 
+## Unreleased: concrete reviewed plans awaiting approval (2026-10-10)
+
+EEF now offers owner command/API `requests inspect/compile` without a browser.
+Strict explicit template inputs compile resolved one-shot reviews against current
+registered providers; model selections must match fresh gateway metadata, including
+roles/readiness rather than only cached model IDs. Compilation preserves immutable
+original text/context and proposal/answer history, rejects capability widening,
+unused inputs and unsupported routing, and freezes exact node/model/backend/resource
+bindings with zero automatic retries. It reuses the existing task planner and job
+journal, not a second execution framework. See [command contract and limits](COMMANDS.md#concrete-request-plans-awaiting-approval-unreleased-after-alpha6).
+
+The atomic checkpoint is `awaiting_approval`, with a SHA-256 definition digest,
+**not execution authority**. Restart preserves it without a runner; execution and
+pause/resume reject it, and origin-owned stop cancels tasks without changing their
+definition. Strict receipt/revision/runtime checks prevent implicit replacement.
+Exact retained compile/opening receipts deduplicate without rewriting. Full owner
+inspection is private; normal node job/draft views omit concrete inputs/bindings.
+Quota/shutdown failures leave the original review unchanged; damaged definitions
+are retained for recovery, not repaired or activated. New journal states require
+the new build; no automatic downgrade is safe.
+
+This advances stage 6's **explicit concrete compilation**, not automatic semantic
+planning, approval, signed execution grants, executor acknowledgement, node-side
+issuer/attempt replay fencing, continuous pipelines or safe cluster failover.
+The digest is not a signature or defense against a database owner. Legacy task/chat
+execution is not silently changed into a grant-enforced workflow. Current provider
+availability is a planning hint; future dispatch must revalidate and authorize it.
+Stable v0.4.0 is not ready or published by this checkpoint.
+
+Validation: **292 workspace/all-target Rust tests pass in both feature modes**,
+including non-executable restart/cancellation, immutable definitions and context,
+opening-receipt reuse after compilation, malformed report/input rejection, capability
+widening denial, UTF-8/BOM and size limits, quota rollback, shutdown rejection,
+damaged-journal retention, current-versus-cached model metadata, and CLI syntax.
+Fresh headless fixtures pass: pinned-TLS two-logical-node compile/restart/stop
+(`request-drafts-46mhzg`), fake-Ollama model-role binding without inference
+(`request-review-SPgvow`), credentials (`node-credentials-OWrHrR`), shutdown
+(`job-shutdown-dxpx5w`), scheduling (`scheduling-RO1Ft9`) and model/job selection
+(`model-metadata-J6sfXx`). Formatting, syntax,
+diff and source backend/browser-boundary checks pass. These are isolated local
+processes, not physical two-PC or real model reasoning acceptance.
+Installed apps, permissions, models, installers and public update feeds are unchanged.
+
 ## Unreleased: gateway-session-bound reply ownership (2026-10-10)
 
 RPC waiters now retain the exact authenticated connection generation, not just

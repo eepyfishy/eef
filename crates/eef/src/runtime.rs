@@ -46,7 +46,7 @@ pub struct Runtime {
     pub coordinator_id: String,
     pub coordinator_priority: i32,
     discovery: crate::discovery::DiscoveryPolicy,
-    instance_id: String,
+    pub(crate) instance_id: String,
     pub restart: Arc<tokio::sync::Notify>,
     pub pending_restart: AtomicBool,
     initialized: AtomicBool,
@@ -855,7 +855,7 @@ fn validate_secret(psk: &str) -> Result<()> {
     Ok(())
 }
 
-fn model_tiers(config: &Config) -> BTreeMap<String, Vec<String>> {
+pub(crate) fn model_tiers(config: &Config) -> BTreeMap<String, Vec<String>> {
     config
         .object("models.tiers")
         .into_iter()

@@ -168,7 +168,9 @@ the new `review` status: do not downgrade a database containing these records to
 an old build. Keep a backup before testing a development build; there is no lossy
 automatic downgrade or conversion to executable jobs.
 
-Only the authenticated original node can read or mutate the full draft. Later
+Only the authenticated original node can read or mutate the full draft through
+node commands; the local coordinator owner can explicitly inspect it using
+`eef requests inspect` below. Later
 commands cannot change its original text, original origin/area or opening receipt.
 An answer records the exact current question, proposal index and supplied text;
 `answer_recorded` does **not** mean model uncertainty has been resolved. An
@@ -217,8 +219,9 @@ authority/context fields, wrong targets, invalid IDs and cross-site callers fail
 Commands use the existing authenticated submission connection; no second node
 runtime or browser is needed. `jobs list/get/find` expose bounded review state/counts,
 not raw proposals/answers; explicit draft inspection includes private user content.
-Do not publish those snapshots. Authoritative planning, owner approval, execution
-grants and executor acknowledgements remain required stage 6 work.
+Do not publish those snapshots. Explicit concrete compilation is described below;
+automatic semantic planning, owner approval, execution grants and executor
+acknowledgements remain required stage 6 work.
 
 `node tools/test-request-drafts.mjs` tests two logical, independently credentialed
 nodes with pinned TLS 1.3, no browser or model: ownership, immutable origin/text,
@@ -226,6 +229,82 @@ answers/revisions, stale/duplicate/conflicting receipts, restart retention and
 stop/removal. `test-request-review.mjs` additionally checks fake-inferred durable
 review and receipt lookup after a lost save reply. Neither is physical two-PC
 acceptance or real model reasoning.
+
+## Concrete request plans awaiting approval (unreleased after alpha.6)
+
+The local coordinator owner can compile a resolved one-shot review into the
+existing journal without a dashboard, inference, permission change or dispatch:
+
+```powershell
+eef requests inspect DRAFT_ID --json
+eef requests compile DRAFT_ID --revision 4 --file concrete-plan.json --json
+```
+
+Example input (replace `EXACT_NODE_ID` with an installed, connected node's ID):
+
+```json
+{"schema_version":1,"template":"system_info","params":{},"constraints":{"node_id":"EXACT_NODE_ID"}}
+```
+
+This is an explicit backend compiler interface, not the final non-coder setup
+workflow or an automatic translation of model hints. It reuses existing task
+templates. Every compiled capability must appear in the latest reviewed proposal;
+widening that set requires a proposal revision first. Original text, origin/area,
+opening receipt and complete review history remain unchanged. Inputs are strict
+UTF-8 JSON (optional BOM), bounded to 64 KiB, with exactly the four shown fields.
+Unused parameters, empty/unknown templates and unsupported constraints fail.
+Continuous/unknown workloads and implicit camera-result-to-VLM wiring are not
+implemented here and reject rather than produce a misleading executable plan.
+
+Non-model tasks use current capability/action/parameter validation and existing
+node/name/area/resource/GPU constraints. Compilation requires a fresh registered
+remote node, never the coordinator's internal `local` adapter. Model tasks use
+explicit prompt or messages, optional installed model ID/tier, and node/backend/
+model-role constraints. Unsupported physical model constraints reject instead of
+being ignored. The chosen cached model route must still match its current gateway
+registration, including normalized role/readiness metadata. No model is installed,
+loaded or inferred; no resource reservation is made. Availability at compilation
+is not a promise that a later execution can use the same resource.
+
+EEF freezes exact node, model/backend or physical resource bindings, bounded task
+definitions and zero automatic retries, and stores `awaiting_approval` atomically
+under the same job ID. It records a SHA-256 definition digest. This detects
+definition inconsistencies; it is **not** a signature, execution grant, node-side
+authorization or protection against someone controlling the database. Restart
+retains the plan without activating a runner. Existing execution and pause/resume
+entry points reject it. The originating node can inspect bounded status or stop
+it; cancellation keeps the definition/digest but marks tasks cancelled. Removal
+is explicit. Older builds cannot read this new state; back up development databases
+and do not downgrade them automatically.
+
+`inspect` returns private original text, task inputs and target bindings. Ordinary
+origin-owned job/draft responses omit these concrete parameters/bindings; inspection
+by another node remains denied. Do not attach full owner reports to public issues.
+This slice does not add an approval/execution command or change legacy task/chat
+execution into a grant-enforced workflow.
+
+Owner API: `POST /api/commands/requests/planning` on the existing guarded loopback
+API, with exactly `schema_version: 1`, current diagnostic `expected_runtime_id`
+and `command`. Inspect uses `{"operation":"inspect","id":"DRAFT_ID"}`. Compile
+adds `expected_revision`, a canonical UUID `operation_id`, and the exact `input`
+object above. Extra authority fields, cross-site callers and runtime/revision
+changes reject. Reports are `report_type: request_planning`, with
+`execution_authorized`, `dispatched` and `automatically_retried` all false.
+The CLI checks the concrete definition, runtime, receipt and requested input.
+
+The CLI sends once. A lost or corrupt compile reply is unconfirmed: inspect that
+ID before retrying, because the plan may already be saved. Within the retained
+record, repeating the same compile UUID/revision/input acknowledges the stored
+plan without a write, even after cancellation; conflicts reject and cannot replace
+it. Reopening with the original node receipt returns the same retained ID even
+after compilation. There is no implicit replan, replay, permanent receipt ledger,
+executor acknowledgement or exactly-once effect promise.
+
+`test-request-drafts.mjs` checks CLI compilation, pinned-TLS origin isolation,
+restart, receipt/revision conflicts and non-executing cancellation.
+`test-request-review.mjs` also checks exact installed model/backend/role binding
+without invoking its fake inference provider. These remain local fixtures, not
+physical two-PC or real model acceptance.
 
 ## Supplied structured proposals (unreleased)
 

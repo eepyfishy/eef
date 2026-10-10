@@ -17,7 +17,10 @@ fn reserve(plan: &Plan) -> usize {
     match plan.status {
         PlanStatus::Pending | PlanStatus::Running => RECOVERY_RESERVE,
         PlanStatus::Pausing | PlanStatus::Stopping => 3072,
-        PlanStatus::Review | PlanStatus::Paused | PlanStatus::Interrupted => 1024,
+        PlanStatus::Review
+        | PlanStatus::AwaitingApproval
+        | PlanStatus::Paused
+        | PlanStatus::Interrupted => 1024,
         _ => 0,
     }
 }
@@ -257,16 +260,16 @@ impl JobStore {
         if let Some(saved) = existing {
             // Retain the original origin/area snapshot, even after a node moves.
             // Compare input, not generated task IDs, attempts or mutable results.
-            if saved.goal.description != plan.goal.description
-                || saved.goal.template != plan.goal.template
-                || saved.goal.params != plan.goal.params
-                || saved.goal.constraints != plan.goal.constraints
-                || match (&saved.request_review, &plan.request_review) {
-                    (None, None) => false,
-                    (Some(a), Some(b)) => !a.same_opening(b),
-                    _ => true,
+            if match (&saved.request_review, &plan.request_review) {
+                (Some(a), Some(b)) => !a.same_opening(b),
+                (None, None) => {
+                    saved.goal.description != plan.goal.description
+                        || saved.goal.template != plan.goal.template
+                        || saved.goal.params != plan.goal.params
+                        || saved.goal.constraints != plan.goal.constraints
                 }
-            {
+                _ => true,
+            } {
                 bail!(
                     "Operation receipt conflicts with a retained job; use jobs.find to inspect it"
                 )
@@ -326,8 +329,8 @@ impl JobStore {
         if !edit(&mut plan)? {
             return Ok(plan);
         }
-        validate_retained_review(&plan)?;
         stamp(&mut plan, event)?;
+        validate_retained_review(&plan)?;
         let encoded = serde_json::to_string(&plan)?;
         self.check_size(&connection, id, encoded.len(), reserve(&plan))?;
         connection.execute(
@@ -429,7 +432,7 @@ fn read(connection: &Connection, id: &str) -> Result<Plan> {
     validate_retained_review(&plan)?;
     Ok(plan)
 }
-fn validate_retained_review(plan: &Plan) -> Result<()> {
+pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
     if let Some(draft) = &plan.request_review {
         draft.validate()?;
         let context = plan
@@ -439,18 +442,27 @@ fn validate_retained_review(plan: &Plan) -> Result<()> {
             .context("Damaged review origin; retained for recovery")?;
         eefn::job_commands::validate_operation_id(context.request_id())?;
         eefn::network::validate_remote_node_id(context.origin_node())?;
-        if !matches!(plan.status, PlanStatus::Review | PlanStatus::Cancelled)
-            || !plan.tasks.is_empty()
-            || !plan.results.is_empty()
+        if !plan.results.is_empty()
             || context.request_id() != draft.proposals[0].operation_id
-            || plan.goal.template != "request_review"
             || plan.goal.description != draft.proposals[0].proposal.goal
-            || plan.goal.params != json!({})
-            || plan.goal.constraints != json!({})
         {
             bail!("Damaged review state; retained for recovery")
         }
-    } else if plan.status == PlanStatus::Review {
+        if plan.planning.is_some() {
+            crate::request_planning::validate_retained(plan)?;
+        } else if !matches!(plan.status, PlanStatus::Review | PlanStatus::Cancelled)
+            || !plan.tasks.is_empty()
+            || plan.goal.template != "request_review"
+            || plan.goal.params != json!({})
+            || plan.goal.constraints != json!({})
+        {
+            bail!("Damaged unplanned review state; retained for recovery")
+        }
+    } else if matches!(
+        plan.status,
+        PlanStatus::Review | PlanStatus::AwaitingApproval
+    ) || plan.planning.is_some()
+    {
         bail!("Damaged review data; retained for recovery")
     }
     Ok(())
@@ -483,6 +495,7 @@ fn validate(plan: &Plan) -> Result<()> {
         validate_retained_review(plan)?;
         draft.validate()?;
         if plan.status != PlanStatus::Review
+            || plan.planning.is_some()
             || !plan.tasks.is_empty()
             || draft.proposals.len() != 1
             || !draft.answers.is_empty()
@@ -566,6 +579,11 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
         value["review_state"] = json!(draft.state());
         value["answer_count"] = json!(draft.answers.len());
         value["proposal_count"] = json!(draft.proposals.len());
+        value["planning_state"] = json!(if plan.planning.is_some() {
+            "compiled_no_grant"
+        } else {
+            "not_compiled"
+        });
     }
     if details {
         value["tasks"] =
