@@ -197,6 +197,14 @@ try {
   assert.deepEqual(modelPlan.plan.planning.bindings[0],{task_id:modelPlan.plan.tasks[0].task_id,node_id:config.node_id,resource_id:null,model_id:'fixture',backend:'ollama'});
   assert.equal(calls.length,beforeCompile,'compilation must not invoke inference');
   const modelReused=await json(planUrl,planRequest);assert.equal(modelReused.reused,true);assert.deepEqual(modelReused.plan,modelPlan.plan);
+  // A legacy shared-secret route cannot satisfy the owner approval/grant contract.
+  const legacyApproval=await fetch(planUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    schema_version:1,expected_runtime_id:runtime,command:{operation:'approve',id:modelDraft.result.id,expected_revision:2,
+      operation_id:randomUUID(),plan_sha256:modelPlan.plan.planning.plan_sha256,valid_for_ms:60000,
+      limits:{max_execution_ms:1000,max_result_bytes:16384}}})});
+  assert.equal(legacyApproval.status,400);
+  const afterDenied=await json(planUrl,{schema_version:1,expected_runtime_id:runtime,command:{operation:'inspect',id:modelDraft.result.id}});
+  assert.deepEqual(afterDenied.plan,modelPlan.plan);assert.equal(calls.length,beforeCompile,'denied approval must not infer or execute');
   await cli(['jobs','stop',modelDraft.result.id]);await cli(['jobs','remove',modelDraft.result.id]);
   for(const id of [durable.result.id,found.jobs[0].id]) {await cli(['jobs','stop',id]);await cli(['jobs','remove',id]);}
   assert.equal((await cli(['jobs','list'])).data.total,0);
@@ -205,7 +213,8 @@ try {
     original_text_preserved: true, authenticated_origin: true, clarification_returned: true, rejected_authority_fields: true,
     stateless_no_jobs_created: true, durable_inferred_review: true, lost_draft_found_without_replay: true,
     no_execution: true, restart_invalidates_inference: true, lost_reply_not_replayed: true,
-    explicit_model_plan_without_inference:true,owner_role_binding:true,real_inference: false, physical_two_pc: false}, null, 2));
+    explicit_model_plan_without_inference:true,owner_role_binding:true,legacy_approval_denied_without_inference:true,
+    real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
 } finally {
   for (const response of gates) response.destroy();

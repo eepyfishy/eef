@@ -280,8 +280,9 @@ and do not downgrade them automatically.
 `inspect` returns private original text, task inputs and target bindings. Ordinary
 origin-owned job/draft responses omit these concrete parameters/bindings; inspection
 by another node remains denied. Do not attach full owner reports to public issues.
-This slice does not add an approval/execution command or change legacy task/chat
-execution into a grant-enforced workflow.
+Compilation itself adds no execution authority. The subsequent explicit owner
+approval command below still does not change legacy task/chat execution into a
+grant-enforced workflow.
 
 Owner API: `POST /api/commands/requests/planning` on the existing guarded loopback
 API, with exactly `schema_version: 1`, current diagnostic `expected_runtime_id`
@@ -305,6 +306,71 @@ restart, receipt/revision conflicts and non-executing cancellation.
 `test-request-review.mjs` also checks exact installed model/backend/role binding
 without invoking its fake inference provider. These remain local fixtures, not
 physical two-PC or real model acceptance.
+
+## Bounded owner request approval (unreleased after alpha.6)
+
+After inspecting the exact private plan, the local EEF owner can retain a
+conditional approval without a browser:
+
+```powershell
+eef requests approve DRAFT_ID --revision 5 --digest PLAN_SHA256 --valid-for-ms 60000 --max-execution-ms 1000 --max-result-bytes 16384 --json
+```
+
+Replace the ID, revision and digest with the inspected values. All bounds are
+explicit; nothing defaults to unlimited authority. Validity is 1 ms-24 hours and
+must be at least the execution bound. Execution is 1-30000 ms and no wider than
+the compiled deadline or selected node's advertised limit. Results are 1 KiB-1 MiB
+and no wider than the selected node's limit. These are future RPC/result bounds,
+not CPU/RAM accounting, process-tree termination or automatic retry permission.
+
+The exact plan digest/revision, original context, inputs and frozen bindings must
+still be valid. Each selected executor must be fresh, independently authenticated
+over owner-pinned TLS, and advertise its durable grant gate. Selected resource
+and model/backend/role routes are rechecked without rebinding, installing, loading
+or invoking a model. Legacy/shared-secret nodes and unsupported grant contracts
+reject, leaving the compiled plan unchanged. Availability is not a reservation;
+dispatch must recheck it and the applied node permissions later.
+
+EEF atomically retains `approved` plus a strict owner receipt: exact plan digest,
+issuer certificate fingerprint, source revision, approval/expiry times, limits and
+a canonical approval digest. **It issues no execution grant and starts no runner.**
+The issuer is not a shared network secret and approval is not a signature or
+protection against the local owner modifying their database. `execution_authorized`,
+`dispatched` and `automatically_retried` remain false in these planning reports:
+approval is conditional authorization for the future issuance step, not present
+executor authority. Legacy execution paths, pause and resume cannot activate it.
+
+The existing guarded `POST /api/commands/requests/planning` uses `command`:
+
+```json
+{"operation":"approve","id":"DRAFT_ID","expected_revision":5,"operation_id":"CANONICAL_UUID","plan_sha256":"PLAN_SHA256","valid_for_ms":60000,"limits":{"max_execution_ms":1000,"max_result_bytes":16384}}
+```
+
+The outer schema/runtime checks and private owner report rules above also apply.
+Extra permission/execute fields and cross-site callers reject. The CLI sends once
+and validates the retained receipt, digest, revision and exact requested bounds.
+Use `--operation-id CANONICAL_UUID` to provide a receipt explicitly. If a reply is
+lost, inspect first and keep its operation ID: repeating exactly the same original
+revision/digest/bounds/UUID returns retained approval without a write or renewal,
+even after expiry, disconnect or cancellation. A different approval or changed
+limits cannot overwrite it. No automatic renewal or replan exists yet; cancel and
+explicitly create/review new work rather than reviving a cancelled plan.
+
+Restart preserves approval but never resumes work. Expiry is checked against
+current wall time, not implemented as an automatic journal rewrite. The bounded
+job view exposes `approved_no_grant`, expiry and `approval_active` (state/time
+only, not node readiness or a grant); it omits approval internals and execution
+inputs. The originating node can inspect its review or Stop, preserving the
+receipt/digest while cancelling all unstarted tasks. Other nodes cannot read it.
+Quota, concurrent revision and shutdown failures leave the prior plan unchanged;
+damaged approval records are retained and reject, not repaired or activated.
+
+Durable issuance, persisted executor ACK/completion, reviewed-plan dispatch,
+uncertainty recovery and physical two-PC acceptance remain required. This is not
+the final non-coder workflow or a stable v0.4.0 release. Approval/replay protection
+depends on retaining the existing job database; deleting history is not a reset
+or proof that effects elsewhere never happened. Back up before using these new
+development states; older executables must not automatically downgrade the data.
 
 ## Node grant receipts (unreleased after alpha.6)
 

@@ -31,7 +31,7 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Inspect/compile reviewed requests as the local owner, without dispatch or grants.
+    /// Inspect/compile/approve reviewed requests as the local owner, without dispatch.
     Requests {
         #[command(subcommand)]
         command: eef::request_planning::PlanningAction,
@@ -204,6 +204,39 @@ mod credential_cli_tests {
         ));
     }
     #[test]
+    fn approval_requires_digest_revision_and_all_bounds_and_has_no_execute_flag() {
+        let args = [
+            "eef",
+            "requests",
+            "approve",
+            "draft-id",
+            "--revision",
+            "2",
+            "--digest",
+            "hash",
+            "--valid-for-ms",
+            "60000",
+            "--max-execution-ms",
+            "5000",
+            "--max-result-bytes",
+            "65536",
+        ];
+        assert!(Args::try_parse_from(args).is_ok());
+        for i in [4, 6, 8, 10, 12] {
+            let mut missing = args.to_vec();
+            missing.drain(i..i + 2);
+            assert!(Args::try_parse_from(missing).is_err());
+        }
+        for flag in ["--execute", "--renew", "--retry", "--auto-approve"] {
+            let mut bad = args.to_vec();
+            bad.push(flag);
+            assert!(Args::try_parse_from(bad).is_err());
+        }
+        let mut explicit = args.to_vec();
+        explicit.extend(["--operation-id", "receipt"]);
+        assert!(Args::try_parse_from(explicit).is_ok());
+    }
+    #[test]
     fn legacy_policy_requires_an_explicit_value_and_rotation_is_opt_in() {
         assert!(Args::try_parse_from(["eef", "credentials", "legacy"]).is_err());
         assert!(Args::try_parse_from(["eef", "credentials", "legacy", "--allow", "false"]).is_ok());
@@ -257,6 +290,27 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                         input: eef::request_planning::read_input(file)?,
                     }
                 }
+                eef::request_planning::PlanningAction::Approve {
+                    id,
+                    revision,
+                    digest,
+                    valid_for_ms,
+                    max_execution_ms,
+                    max_result_bytes,
+                    operation_id,
+                } => eef::request_planning::PlanningCommand::Approve {
+                    id: id.clone(),
+                    expected_revision: *revision,
+                    operation_id: operation_id
+                        .clone()
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    plan_sha256: digest.clone(),
+                    valid_for_ms: *valid_for_ms,
+                    limits: eefn::grants::GrantLimits {
+                        max_execution_ms: *max_execution_ms,
+                        max_result_bytes: *max_result_bytes,
+                    },
+                },
             };
             command.validate()?;
             let state =
@@ -267,7 +321,8 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 .context("Missing coordinator runtime ID")?;
             let operation_id = match &command {
                 eef::request_planning::PlanningCommand::Inspect { .. } => None,
-                eef::request_planning::PlanningCommand::Compile { operation_id, .. } => {
+                eef::request_planning::PlanningCommand::Compile { operation_id, .. }
+                | eef::request_planning::PlanningCommand::Approve { operation_id, .. } => {
                     Some(operation_id.clone())
                 }
             };
@@ -283,7 +338,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     json!({"schema_version":1,"report_type":"request_planning","success":false,
                 "id":command.id(),"operation_id":operation_id,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
                 "outcome_unknown":operation_id.is_some(),"error_code":"planning_unconfirmed","error":e.to_string(),
-                "note":"Inspect requests inspect with this ID before retrying; a concrete plan may have been retained. No fallback, replay or execution was requested."})
+                "note":"Use requests inspect with this ID before retrying; a plan/approval may have been retained. Keep the operation receipt. No fallback, replay or execution was requested."})
                 }
             });
         }

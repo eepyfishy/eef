@@ -19,6 +19,7 @@ fn reserve(plan: &Plan) -> usize {
         PlanStatus::Pausing | PlanStatus::Stopping => 3072,
         PlanStatus::Review
         | PlanStatus::AwaitingApproval
+        | PlanStatus::Approved
         | PlanStatus::Paused
         | PlanStatus::Interrupted => 1024,
         _ => 0,
@@ -450,7 +451,8 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
         }
         if plan.planning.is_some() {
             crate::request_planning::validate_retained(plan)?;
-        } else if !matches!(plan.status, PlanStatus::Review | PlanStatus::Cancelled)
+        } else if plan.approval.is_some()
+            || !matches!(plan.status, PlanStatus::Review | PlanStatus::Cancelled)
             || !plan.tasks.is_empty()
             || plan.goal.template != "request_review"
             || plan.goal.params != json!({})
@@ -460,8 +462,9 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
         }
     } else if matches!(
         plan.status,
-        PlanStatus::Review | PlanStatus::AwaitingApproval
+        PlanStatus::Review | PlanStatus::AwaitingApproval | PlanStatus::Approved
     ) || plan.planning.is_some()
+        || plan.approval.is_some()
     {
         bail!("Damaged review data; retained for recovery")
     }
@@ -484,6 +487,7 @@ fn stamp(plan: &mut Plan, event: &str) -> Result<()> {
     Ok(())
 }
 fn validate(plan: &Plan) -> Result<()> {
+    validate_retained_review(plan)?;
     if !matches!(plan.status, PlanStatus::Pending | PlanStatus::Review)
         || !plan.results.is_empty()
         || plan.revision != 0
@@ -579,11 +583,17 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
         value["review_state"] = json!(draft.state());
         value["answer_count"] = json!(draft.answers.len());
         value["proposal_count"] = json!(draft.proposals.len());
-        value["planning_state"] = json!(if plan.planning.is_some() {
+        value["planning_state"] = json!(if plan.approval.is_some() {
+            "approved_no_grant"
+        } else if plan.planning.is_some() {
             "compiled_no_grant"
         } else {
             "not_compiled"
         });
+        if let Some(approval) = &plan.approval {
+            value["approval_active"] = json!(approval.active_at(plan, eefn::protocol::now_ms()));
+            value["approval_expires_at_ms"] = json!(approval.expires_at_ms);
+        }
     }
     if details {
         value["tasks"] =

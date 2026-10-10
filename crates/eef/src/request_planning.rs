@@ -1,4 +1,4 @@
-//! Coordinator-owned concrete planning in the existing journal. Never dispatches.
+//! Coordinator-owned concrete planning/approval in the existing journal. Never dispatches.
 use crate::{
     capability::CapabilityRegistry,
     model::{Modality, ModelRegistry, ModelRequest},
@@ -190,7 +190,7 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             .any(|a| a.operation_id == record.operation_id)
         || !matches!(
             plan.status,
-            PlanStatus::AwaitingApproval | PlanStatus::Cancelled
+            PlanStatus::AwaitingApproval | PlanStatus::Approved | PlanStatus::Cancelled
         )
         || plan.tasks.is_empty()
         || plan.tasks.len() > 128
@@ -325,6 +325,7 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
     if record.plan_sha256.len() != 64 || digest(plan, record)? != record.plan_sha256 {
         bail!("Concrete plan digest mismatch")
     }
+    crate::request_approval::validate_retained(plan)?;
     Ok(())
 }
 
@@ -340,6 +341,23 @@ pub enum PlanningAction {
         #[arg(long)]
         file: std::path::PathBuf,
     },
+    /// Save bounded owner approval for an exact inspected plan; never dispatches.
+    Approve {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        digest: String,
+        #[arg(long)]
+        valid_for_ms: u64,
+        #[arg(long)]
+        max_execution_ms: u64,
+        #[arg(long)]
+        max_result_bytes: usize,
+        /// Reuse only this exact receipt after an uncertain response; never renews.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
@@ -353,11 +371,19 @@ pub enum PlanningCommand {
         operation_id: String,
         input: PlanInput,
     },
+    Approve {
+        id: String,
+        expected_revision: u64,
+        operation_id: String,
+        plan_sha256: String,
+        valid_for_ms: u64,
+        limits: eefn::grants::GrantLimits,
+    },
 }
 impl PlanningCommand {
     pub fn id(&self) -> &str {
         match self {
-            Self::Inspect { id } | Self::Compile { id, .. } => id,
+            Self::Inspect { id } | Self::Compile { id, .. } | Self::Approve { id, .. } => id,
         }
     }
     pub fn validate(&self) -> Result<()> {
@@ -375,6 +401,24 @@ impl PlanningCommand {
             eefn::job_commands::validate_operation_id(operation_id)?;
             input.validate()?;
         }
+        if let Self::Approve {
+            expected_revision,
+            operation_id,
+            plan_sha256,
+            valid_for_ms,
+            limits,
+            ..
+        } = self
+        {
+            if *expected_revision == 0 || *expected_revision == u64::MAX {
+                bail!("Invalid approval revision")
+            }
+            eefn::job_commands::validate_operation_id(operation_id)?;
+            if uuid::Uuid::parse_str(operation_id)?.is_nil() {
+                bail!("Nil approval receipt")
+            }
+            crate::request_approval::validate_options(plan_sha256, *valid_for_ms, limits)?;
+        }
         Ok(())
     }
 }
@@ -388,9 +432,9 @@ pub struct PlanningRequest {
 
 fn report(plan: Plan, command: &PlanningCommand, runtime_id: &str, reused: bool) -> Value {
     json!({"schema_version":1,"report_type":"request_planning","success":true,"runtime_id":runtime_id,"id":plan.plan_id,
-        "operation_id":match command {PlanningCommand::Inspect{..}=>None,PlanningCommand::Compile{operation_id,..}=>Some(operation_id)},
+        "operation_id":match command {PlanningCommand::Inspect{..}=>None,PlanningCommand::Compile{operation_id,..}|PlanningCommand::Approve{operation_id,..}=>Some(operation_id)},
         "plan":plan,"reused":reused,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
-        "note":"Private owner inspection/concrete plan only; no execution grant, reservation or runner. Approval/grants and executor revalidation remain required."})
+        "note":"Private owner inspection/compilation/conditional approval only; no execution grant, reservation or runner. Durable issuance and executor revalidation remain required."})
 }
 pub fn confirmed_report(value: &Value, runtime_id: &str, command: &PlanningCommand) -> bool {
     if command.validate().is_err() {
@@ -451,6 +495,21 @@ pub fn confirmed_report(value: &Value, runtime_id: &str, command: &PlanningComma
                         .checked_add(1)
                         .is_some_and(|rev| r.plan.revision == rev))
         }
+        PlanningCommand::Approve {
+            operation_id,
+            expected_revision,
+            ..
+        } => {
+            r.operation_id.as_deref() == Some(operation_id)
+                && r.plan
+                    .approval
+                    .as_ref()
+                    .is_some_and(|a| a.confirms(command))
+                && (r.reused
+                    || expected_revision
+                        .checked_add(1)
+                        .is_some_and(|rev| r.plan.revision == rev))
+        }
     }
 }
 
@@ -463,6 +522,11 @@ impl crate::Runtime {
         let saved = self.engine.store.get(request.command.id())?;
         if saved.request_review.is_none() {
             bail!("Not a reviewed request")
+        }
+        if matches!(request.command, PlanningCommand::Approve { .. }) {
+            let (plan, reused) =
+                crate::request_approval::approve(self, saved, &request.command).await?;
+            return Ok(report(plan, &request.command, &self.instance_id, reused));
         }
         let PlanningCommand::Compile {
             expected_revision,
@@ -547,7 +611,7 @@ impl crate::Runtime {
     }
 }
 
-async fn live_peer(
+pub(crate) async fn live_peer(
     server: &eefn::NodeServer,
     node: &str,
     capability: &str,
@@ -667,7 +731,10 @@ async fn bind_tasks(
     }
     Ok(())
 }
-fn current_model_matches(peer: &eefn::network::PeerModel, spec: &crate::model::ModelSpec) -> bool {
+pub(crate) fn current_model_matches(
+    peer: &eefn::network::PeerModel,
+    spec: &crate::model::ModelSpec,
+) -> bool {
     let expected = spec.model_metadata.clone().unwrap_or_else(|| {
         eefn::model_metadata::ModelMetadata::from_legacy(Some(match spec.modality {
             Modality::Text => "text",
@@ -749,7 +816,7 @@ fn validate_model_input(params: &Value, vision: bool) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{event::EventBus, jobs::JobStore, task::TaskEngine};
 
@@ -761,7 +828,7 @@ mod tests {
             constraints: json!({"node_id":"owner"}),
         }
     }
-    fn review(engine: &TaskEngine) -> Plan {
+    pub(crate) fn review(engine: &TaskEngine) -> Plan {
         let ctx = eefn::context::RequestContext::new(
             uuid::Uuid::new_v4().to_string(),
             "owner".into(),
@@ -774,7 +841,7 @@ mod tests {
             &ctx,&["system.info".into()]).unwrap();
         engine.store.get(report["id"].as_str().unwrap()).unwrap()
     }
-    fn compiled(saved: &Plan) -> Plan {
+    pub(crate) fn compiled(saved: &Plan) -> Plan {
         let mut p = unbound_plan(saved, &input()).unwrap();
         p.plan_id = saved.plan_id.clone();
         p.request_review = saved.request_review.clone();

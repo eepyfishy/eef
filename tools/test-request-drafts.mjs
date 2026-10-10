@@ -150,17 +150,53 @@ try {
   await until(async()=>{const d=await coordinator(['diagnostics']);return d.runtime_id!==runtime&&d.registered_node_count===2;},'compiled plan reopen without execution');
   const reopened=await coordinator(['requests','inspect',id]);assert.deepEqual(reopened.plan,compiled.plan);
   assert.equal((await node(['requests','draft',id])).result.status,'awaiting_approval');
+  runtime=(await coordinator(['diagnostics'])).runtime_id;
+  const approvalOperation=randomUUID(),approvalDigest=compiled.plan.planning.plan_sha256;
+  const approvalRequest={schema_version:1,expected_runtime_id:runtime,command:{operation:'approve',id,expected_revision:5,
+    operation_id:approvalOperation,plan_sha256:approvalDigest,valid_for_ms:60000,limits:{max_execution_ms:1000,max_result_bytes:16384}}};
+  assert.equal((await response(planningEndpoint,approvalRequest,'https://untrusted.example')).status,403);
+  assert.equal((await response(planningEndpoint,{...approvalRequest,expected_runtime_id:'stale'})).status,400);
+  assert.equal((await response(planningEndpoint,{...approvalRequest,command:{...approvalRequest.command,execute:true}})).status,422);
+  assert.equal((await response(planningEndpoint,{...approvalRequest,command:{...approvalRequest.command,expected_revision:4}})).status,400);
+  assert.equal((await response(planningEndpoint,{...approvalRequest,command:{...approvalRequest.command,plan_sha256:'f'.repeat(64)}})).status,400);
+  assert.equal((await response(planningEndpoint,{...approvalRequest,command:{...approvalRequest.command,limits:{max_execution_ms:1000,max_result_bytes:65537}}})).status,400);
+  assert.equal((await coordinator(['requests','inspect',id])).plan.revision,5);
+  const approved=await coordinator(['requests','approve',id,'--revision','5','--digest',approvalDigest,
+    '--valid-for-ms','60000','--max-execution-ms','1000','--max-result-bytes','16384','--operation-id',approvalOperation]);
+  assert.equal(approved.plan.status,'approved');assert.equal(approved.plan.revision,6);
+  assert.equal(approved.dispatched,false);assert.equal(approved.execution_authorized,false);assert.equal(approved.automatically_retried,false);
+  assert.equal(approved.plan.approval.source_revision,5);assert.equal(approved.plan.approval.plan_sha256,approvalDigest);
+  assert.equal(approved.plan.approval.operation_id,approvalOperation);assert.match(approved.plan.approval.issuer_id,/^[a-f0-9]{64}$/);
+  assert.equal(approved.plan.approval.expires_at_ms-approved.plan.approval.approved_at_ms,60000);
+  assert.deepEqual(approved.plan.tasks,compiled.plan.tasks);assert.deepEqual(approved.plan.planning,compiled.plan.planning);
+  assert.deepEqual(approved.plan.request_review,compiled.plan.request_review);assert.deepEqual(approved.plan.goal,compiled.plan.goal);
+  const approvalReused=await json(planningEndpoint,approvalRequest);assert.equal(approvalReused.reused,true);assert.deepEqual(approvalReused.plan,approved.plan);
+  assert.equal((await response(planningEndpoint,{...approvalRequest,command:{...approvalRequest.command,operation_id:randomUUID()}})).status,400);
+  assert.equal((await response(planningEndpoint,{...approvalRequest,command:{...approvalRequest.command,limits:{max_execution_ms:1000,max_result_bytes:16385}}})).status,400);
+  assert.equal((await node(['requests','draft',id])).result.status,'approved');
+  const approvedView=(await node(['jobs','get',id])).data;assert.equal(approvedView.planning_state,'approved_no_grant');
+  assert.equal(approvedView.approval_active,true);assert(!('approval' in approvedView));assert(!('planning' in approvedView));
+  await bad(['jobs','pause',id]);await bad(['jobs','resume',id]);
+  assert.equal((await response(other.api+'/api/commands/requests/planning',approvalRequest)).status,404);
+  runtime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
+  await until(async()=>{const d=await coordinator(['diagnostics']);return d.runtime_id!==runtime&&d.registered_node_count===2;},'approved plan reopen without issuance');
+  assert.deepEqual((await coordinator(['requests','inspect',id])).plan,approved.plan);
+  assert.deepEqual(await readFile(receiptFile),receiptBefore,'owner approval must not issue/consume a node grant');
   for(const n of nodes)assert.deepEqual((await json(n.api+'/api/status')).models,[]);
   await node(['jobs','stop',id]);const stopped=(await node(['requests','draft',id])).result;assert.equal(stopped.status,'cancelled');
   const cancelled=await coordinator(['requests','inspect',id]);assert.equal(cancelled.plan.tasks[0].status,'cancelled');
   assert.equal(cancelled.plan.planning.plan_sha256,compiled.plan.planning.plan_sha256);
   assert.equal(cancelled.plan.tasks[0].attempts,0);assert.deepEqual(cancelled.plan.tasks[0].assignments,[]);
+  assert.deepEqual(cancelled.plan.approval,approved.plan.approval);assert.equal((await node(['jobs','get',id])).data.approval_active,false);
+  const cancelledRetry=await json(planningEndpoint,{...approvalRequest,expected_runtime_id:(await coordinator(['diagnostics'])).runtime_id});
+  assert.equal(cancelledRetry.reused,true);assert.deepEqual(cancelledRetry.plan,cancelled.plan);
   await bad(['requests','revise-proposal',id,'--revision',String(stopped.revision),'--file',file]);
   await node(['jobs','remove',id]);assert.equal((await node(['jobs','list'])).data.total,0);
   await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,two_logical_nodes:true,pinned_tls13:true,api_only:true,
     model_free:true,origin_owned:true,immutable_original:true,clarification_answers:true,proposal_history:true,
     receipt_deduplication:true,revision_checks:true,restart_persistence:true,no_executor:true,no_automatic_replay:true,
-    physical_two_pc:false,explicit_concrete_planning:true,compiled_without_dispatch:true,immutable_plan_digest:true,execution_grants:false},null,2));
+    physical_two_pc:false,explicit_concrete_planning:true,compiled_without_dispatch:true,immutable_plan_digest:true,
+    bounded_owner_approval:true,approved_without_grant_or_dispatch:true,approval_restart_and_cancellation:true,execution_grants:false},null,2));
   console.log('Durable request validation passed: '+scratch);
 } finally {
   for(const child of children)if(child.exitCode===null)child.kill();

@@ -1,5 +1,51 @@
 # Architecture conformance status
 
+## Unreleased: bounded owner approval without grant issuance (2026-10-10)
+
+EEF now supports `requests approve` through the same backend planning command/API,
+without a dashboard or model call. Approval names the exact compiled revision and
+definition digest, explicit validity/execution/result bounds and current pinned
+issuer. Fresh fixed executors/resources and exact model/backend/role routes must
+still match; unsupported/shared-secret routes or wider node limits reject.
+The atomic `approved` checkpoint preserves original context/text, review history
+and immutable task definitions. It saves an expiry and strict canonical receipt,
+not an execution grant, reservation or runner. See
+[command contract](COMMANDS.md#bounded-owner-request-approval-unreleased-after-alpha6).
+
+Exact retained receipt retries inspect without a write or renewal, including after
+expiry/cancellation. Conflicting approvals cannot replace them. Restart preserves
+approval but never activates work; origin-owned Stop cancels unstarted tasks while
+retaining the receipt/digests. Legacy execution and pause/resume reject these records.
+Normal node views expose only bounded approval state/time, not concrete inputs or
+receipt internals. Quota, shutdown and concurrent state changes fail atomically;
+damaged approvals remain retained without repair or activation. New development
+states require the new build and must not be automatically downgraded.
+
+This completes **explicit conditional owner approval**, not stage 6 as a whole.
+Reviewed plans still cannot execute. EEF's durable issuance, persisted executor
+ACK/completion, exact reviewed-plan dispatch and uncertainty reconciliation remain
+the next integration boundary. Stronger OS/backend termination, continuous local
+pipelines, peer/media paths, model bootstrap/lifecycle and physical two-PC/release
+acceptance remain open. No stable v0.4.0 or Defender/signing clearance is claimed.
+
+Validation: **312 workspace/all-target Rust tests pass in both feature modes**.
+New cases cover strict bounds/receipts, immutable approval/plan data, no legacy
+runner after restart, exact duplicate inspection, concurrent approvals/Stop,
+cancellation, expiry/time gates, quota/shutdown rollback, damaged-journal retention
+and report/CLI authority checks. Fresh API-only pinned-TLS two-logical-node
+approval/restart/cancellation checks pass (`request-drafts-3lITf0`), including an
+unchanged node grant journal after owner approval. Fake-inference review and
+model-plan checks pass (`request-review-eyboRn`), including legacy approval denial
+without another model call. These are isolated local fixtures, not physical two-PC
+or real model reasoning acceptance. Source dependency, formatting, syntax and diff
+checks pass. Installed apps, model selections/downloads, permissions, installers,
+versions and stable-only public update feeds are unchanged.
+
+Additional fresh headless regressions pass: independent credentials
+(`node-credentials-a1nlGl`), model metadata/selection and legacy durable jobs
+(`model-metadata-lMD3WF`), shutdown (`job-shutdown-MTCaxi`) and scheduling
+(`scheduling-9NXLU1`). All fixture child processes were closed by their cleanup.
+
 ## Unreleased: pinned-session node grant consumption and receipts (2026-10-10)
 
 The node has a distinct `execute_grant` path that requires independent exact-node

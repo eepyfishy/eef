@@ -34,6 +34,8 @@ pub enum PlanStatus {
     Review,
     #[serde(rename = "awaiting_approval")]
     AwaitingApproval,
+    /// Owner approval retained; not a grant and never admitted to legacy runners.
+    Approved,
     Pending,
     Running,
     Completed,
@@ -127,6 +129,8 @@ pub struct TaskResult {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<crate::request_approval::ApprovalRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planning: Option<crate::request_planning::PlanningRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -283,6 +287,7 @@ impl TaskPlanner {
             });
         }
         Ok(Plan {
+            approval: None,
             planning: None,
             request_review: None,
             plan_id: short_id(),
@@ -761,15 +766,23 @@ impl TaskEngine {
         id: &str,
         edit: impl FnOnce(&mut Plan) -> Result<bool>,
     ) -> Result<Plan> {
-        let active = self.active.lock().expect("active jobs");
-        if active.closing {
-            bail!("Coordinator is stopping; no new planning checkpoint is accepted")
-        }
-        self.store.edit(
+        self.edit_review_checkpoint(
             id,
             "Concrete plan saved; awaiting approval and execution grants",
             edit,
         )
+    }
+    pub(crate) fn edit_review_checkpoint(
+        &self,
+        id: &str,
+        event: &str,
+        edit: impl FnOnce(&mut Plan) -> Result<bool>,
+    ) -> Result<Plan> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no new planning checkpoint is accepted")
+        }
+        self.store.edit(id, event, edit)
     }
     async fn drive(&self, id: &str, _guard: ActiveJob) -> Result<Plan> {
         let mut stopping = self.stopping.subscribe();

@@ -183,8 +183,8 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 2 | Coordinator advertisements + network view | Authenticated, bounded, fresh node listings and coordinator hints; authorized peer lookup; no automatic trust or claimed cluster election. | Scoped pull discovery, registration metadata and freshness implemented; owner grant/revoke and restart CLI added in development; no direct peer transport claim |
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned metadata/inventory and node selection commands added in development; text/vision routing filters capabilities/state and explicit owner role constraints; route inspection available; automatic role-based planning and new executors remain planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
-| 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview/stateless review and origin-owned durable review/answer/proposal commands with retained text/history and receipt/revision checks; explicit template compilation now starts stage 6, while automatic clarification re-interpretation, semantic planning and approval remain planned |
-| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: explicit one-shot compilation retains non-executable `awaiting_approval` plans; distinct pinned issuer/session node grant gate, durable attempt consumption, matched acceptance/completion and read-only receipt inspection added; normal reviewed requests still do not execute. Automatic semantic planning, owner approval, persisted EEF issuance/ACK/dispatch integration, stronger executor termination and cluster fencing remain required |
+| 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview/stateless review and origin-owned durable review/answer/proposal commands with retained text/history and receipt/revision checks; explicit template compilation and bounded owner approval now start stage 6, while automatic clarification re-interpretation and semantic planning remain planned |
+| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: explicit one-shot compilation and owner approval retain non-executable plans with frozen digests/bindings, expiry and bounds; distinct pinned issuer/session node grant gate, durable attempt consumption, matched acceptance/completion and read-only receipt inspection added; normal reviewed requests still do not execute. Automatic semantic planning, persisted EEF issuance/ACK/dispatch integration, stronger executor termination and cluster fencing remain required |
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node request limits/reserved controls and typed coordinator non-model scheduling budgets with saved/applied readback; pipelines, executor acknowledgements and full resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
@@ -296,6 +296,16 @@ Neither natural language nor an LM-generated plan is executable shell code.
 Do not present the small classifier/interpreter as a heavy reasoning model.
 
 ## 6-7. Plans, grants and deterministic execution
+
+The latest unreleased owner approval increment saves `approved` against the exact
+compiled digest/revision, original context, issuer fingerprint and explicit
+expiry/execution/result limits. It rechecks fresh fixed providers and grant
+support, with no model call, download, reservation or work dispatch. Exact receipt
+retries inspect without renewal; restart, expiry and origin-owned cancellation do
+not revive execution. Legacy runners reject these records. This completes an
+explicit conditional approval slice, not durable grant issuance/ACK integration
+or the final non-coder request-to-execution workflow; see
+[commands and limits](COMMANDS.md#bounded-owner-request-approval-unreleased-after-alpha6).
 
 The 2026-10-10 unreleased [scheduling command increment](COMMANDS.md#coordinator-scheduling-limits-unreleased-after-alpha6)
 adds owner-configured non-model freshness and coordinator-local global/provider/

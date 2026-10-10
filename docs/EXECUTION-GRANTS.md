@@ -1,9 +1,11 @@
 # Execution grant boundary (unreleased after alpha.6)
 
 This is a node-side prerequisite for roadmap stages 6-7, **not a completed
-approval/execution workflow or a stable release**. Normal reviewed requests still
-stop at `awaiting_approval`. The EEF owner approval command, durable issuance/ACK
-integration in the existing job journal, executor dispatch, reconciliation and
+approval/execution workflow or a stable release**. The subsequent EEF
+[bounded owner approval command](COMMANDS.md#bounded-owner-request-approval-unreleased-after-alpha6)
+retains `approved` without issuing a grant or starting work; normal reviewed
+requests remain non-executable. Durable issuance/ACK integration in the existing
+job journal, executor dispatch, reconciliation and
 physical two-PC acceptance remain required. No public API lets a proposal or LM
 directly manufacture these grants. Existing legacy task/chat and management RPCs
 are unchanged and are **not** claimed to be grant-enforced.
