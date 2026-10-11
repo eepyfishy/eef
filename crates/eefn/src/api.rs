@@ -101,6 +101,11 @@ impl NodeService {
             .route("/api/commands/requests/preview", post(request_preview))
             .route("/api/commands/requests/review", post(request_review))
             .route("/api/commands/requests/open", post(request_open))
+            .route("/api/commands/requests/input", post(request_input))
+            .route(
+                "/api/commands/requests/workflow",
+                post(request_input_policy),
+            )
             .route(
                 "/api/commands/requests/open-proposal",
                 post(request_open_proposal),
@@ -325,6 +330,18 @@ async fn request_open(
 ) -> Json<Value> {
     Json(state.open_request(request).await)
 }
+async fn request_input(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_preview::PreviewRequest>,
+) -> Json<Value> {
+    Json(state.input_request(request).await)
+}
+async fn request_input_policy(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_input::PolicyRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.input_policy_command(request)?))
+}
 async fn request_open_proposal(
     State(state): State<Arc<NodeService>>,
     Json(request): Json<crate::request_preview::ProposalReviewRequest>,
@@ -384,10 +401,10 @@ async fn chat(
     State(state): State<Arc<NodeService>>,
     Json(value): Json<ChatInput>,
 ) -> Result<Json<Value>, ApiError> {
-    // Compatibility adapter only: same durable review service as CLI/open.
+    // Compatibility adapter only: same runtime-owned input service as CLI.
     // Never send raw messages or silently fall back to keyword execution.
     let mut report = state
-        .open_request(crate::request_preview::PreviewRequest {
+        .input_request(crate::request_preview::PreviewRequest {
             schema_version: 1,
             expected_node_id: state.node_id.clone(),
             request_id: value
@@ -398,29 +415,7 @@ async fn chat(
         .await;
     // Human-readable compatibility output, not fabricated model output or a
     // browser-owned execution decision. The complete receipt remains present.
-    report["reply"] = json!(if report["success"] == true {
-        let id = report["result"]["id"].as_str().unwrap_or("unknown");
-        match report
-            .pointer("/result/draft/proposals/0/proposal/clarification")
-            .and_then(Value::as_str)
-        {
-            Some(question) => format!(
-                "Saved request {id}. Clarification required: {question} No workload was executed."
-            ),
-            None => format!(
-                "Saved request {id} for review. Preparation, owner approval and execution are separate steps. No workload was executed."
-            ),
-        }
-    } else {
-        format!(
-            "Request not confirmed ({}). Inspect receipt {} before retrying. No workload execution or automatic retry was requested. {}",
-            report["error_code"]
-                .as_str()
-                .unwrap_or("request_unconfirmed"),
-            report["request_id"].as_str().unwrap_or("unavailable"),
-            report["setup_hint"].as_str().unwrap_or("")
-        )
-    });
+    report["reply"] = json!(crate::request_input::input_reply(&report));
     Ok(Json(report))
 }
 

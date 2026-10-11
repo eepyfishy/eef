@@ -6,6 +6,7 @@
   "endpoints": [],
   "heartbeat_seconds": 3.0,
   "request_limits": { "work": 16, "control": 2 },
+  "input_workflow": { "prepare_on_input": true },
   "allow_write": false,
   "allowed_roots": [],
   "python_plugins": [],

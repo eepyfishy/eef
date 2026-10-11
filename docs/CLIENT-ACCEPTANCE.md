@@ -5,7 +5,7 @@ This checkpoint adapts remaining protocol/browser/model fixtures to the mandator
 unreleased development state after alpha.6. No published installer, update feed,
 installed runtime or physical node is changed by this checkpoint.
 
-The 2026-10-11 verification passes 390 workspace/all-target Rust tests both
+The initial 2026-10-11 checkpoint passes 390 workspace/all-target Rust tests both
 with default dashboard features and with `--no-default-features`. Fresh default
 executables pass the metadata fixture in API-only and saved-UI-preference modes,
 first-run/browser, reviewed requests and verified-artifact real CPU inference.
@@ -32,7 +32,8 @@ physical update, installer rebuild or security-scanner certification is claimed.
   authenticated immutable origin/area, persisted jobs/drafts, copy/selection/focus
   retention, mobile layout and storage limits after a verified EEF restart.
   Forged origin on browser input is rejected. Missing interpreter/role cannot
-  invoke a keyword fallback. Valid input opens review, not an automatic workload.
+  invoke a keyword fallback. With the subsequent input-workflow policy, fresh
+  browser/CLI input prepares an eligible plan awaiting approval, not a workload.
 - Storage: retained review drafts reserve future checkpoint space. Explicit
   cancellation/removal releases that accounted space; reviews are not treated
   as finished jobs merely because they have no running executor.
@@ -88,6 +89,19 @@ built roles instead of old packaged executables. Choose a catalog model with
 `EEF_TEST_MODEL_ID` if needed. Without an existing model, a download requires the
 additional explicit `EEF_TEST_ALLOW_MODEL_DOWNLOAD=1` opt-in and occurs only in
 the disposable fixture. Never select or alter a personal model for this test.
+
+The subsequent [input workflow acceptance](INPUT-WORKFLOW.md) adds seven Rust
+tests (397 total in both feature modes) and an API-only public-command fixture.
+Fresh browser/CLI preparation and retained pending plans replace review-only input
+assertions; explicit review-only policy remains tested in the request fixture.
+The new checks do not claim automatic approval or workload execution.
+
+Fresh executables pass input workflow (`request-input-CqhxNt`), request regression
+(`request-review-1leGwq`), browser/first-run (`first-run-dS5DGq`), metadata API-only
+(`model-metadata-Il9vqT`) and saved-UI
+(`model-metadata-WPWhkN`) checks, plus verified-artifact real CPU inference
+(`real-model-wybvNt`). These local fixture directories are evidence, not release
+artifacts or public model defaults. No model download or physical update occurred.
 
 These checks do not prove interpreter quality/default model suitability, physical
 two-PC acceptance, continuous media pipelines, peer transport, cluster safety,

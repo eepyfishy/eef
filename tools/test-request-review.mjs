@@ -94,7 +94,7 @@ try {
   const config = JSON.parse(await readFile(join(root, 'config/node.example.json'), 'utf8'));
   Object.assign(config, {node_id: 'review-fixture-node', name: 'Review fixture', psk: secret, auto_local: false,
     local_pairing: false, endpoints: [`127.0.0.1:${gatewayPort}`], heartbeat_seconds: 1, connection_enabled: true,
-    metadata: {area: ['Home', 'Bedroom']}, update: {policy: 'off'},
+    metadata: {area: ['Home', 'Bedroom']}, update: {policy: 'off'}, input_workflow: {prepare_on_input:false},
     dashboard: {enabled: true, ui_enabled: false, host: '127.0.0.1', port: apiPort},
     models: {provider: 'ollama', ollama: {base_url: `http://127.0.0.1:${fakePort}`,
       selected: [{model_id: 'fixture', modality: 'text', selection: {roles: ['request_interpreter']}}]}, llamacpp: {slots: []}}});
@@ -190,7 +190,7 @@ try {
   mode='valid';
   for (const input of [await cli(['--ask','  Normal input through running node\n']),
     await json(node+'/api/chat',{message:'  HTTP input through node\n',request_id:randomUUID()})]) {
-    assert.equal(input.report_type,'request_draft');assert.equal(input.success,true);
+    assert.equal(input.report_type,'node_input_workflow');assert.equal(input.success,true);
     assert.equal(input.execution_authorized,false);assert.equal(input.dispatched,false);
     assert.equal(input.result.request_context.origin_node,config.node_id);
     assert.equal(input.result.status,'review');

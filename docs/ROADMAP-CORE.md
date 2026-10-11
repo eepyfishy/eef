@@ -44,8 +44,9 @@ grants mandatory in the public EEF core and on the node's ordinary RPC receiver.
 It retires legacy workload admission/dispatch/resume, moves `--ask` and node
 HTTP input to durable review, and migrates text-job creation to review/compilation.
 No second node runtime, model/RPC fallback or configuration opt-out is introduced.
-Automatic source-bound preparation/answer workflows, client/regression migration
-and physical acceptance remain open; this is not finished first-time automation.
+The following checkpoints cover client/regression migration and initial automatic
+source-bound preparation. Answer workflows and physical acceptance remain open;
+this is not finished first-time automation.
 
 The following unreleased [client acceptance checkpoint](CLIENT-ACCEPTANCE.md)
 migrates model-management, browser and real-model regressions to reviewed grants.
@@ -54,6 +55,15 @@ without a visual UI redesign or automatic role selection. It exposes two
 remaining onboarding requirements: owner-pinned grant pairing and interpreter-role
 configuration must become a usable non-coder command/client flow. Passing these
 fixtures with explicit setup is not completion of that requirement or stable 0.4.0.
+
+The next unreleased [input workflow](INPUT-WORKFLOW.md) shares normal CLI/HTTP
+input with a runtime-owned preparation policy. Fresh configurations can prepare
+eligible one-shot requests awaiting approval; older missing policies remain
+review-only. It preserves complete source lineage and separate receipts, fails
+busy without queueing, and prevents implicit continuation after uncertainty or
+runtime change. Reusing input only inspects origin-owned history. Owner approval,
+execution, answer-triggered workflows, durable automation and reusable bounded
+approvals are not supplied by preparation policy; the full release scope remains.
 
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.

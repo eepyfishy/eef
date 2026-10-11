@@ -29,6 +29,25 @@ pub struct NodeService {
 }
 
 impl NodeService {
+    pub(crate) fn save_input_policy(
+        &self,
+        policy: crate::request_input::InputPolicy,
+    ) -> Result<bool> {
+        let _guard = self.config_lock.lock().expect("config lock");
+        let mut config = self.read_config()?;
+        let before: crate::request_input::InputPolicy = serde_json::from_value(
+            config
+                .get("input_workflow")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+        )?;
+        if before == policy {
+            return Ok(false);
+        }
+        config["input_workflow"] = json!(policy);
+        self.save_config_locked(config)?;
+        Ok(true)
+    }
     pub(crate) fn inspect_grant_configuration<T>(
         &self,
         check: impl FnOnce(&Value) -> Result<T>,
@@ -727,6 +746,9 @@ impl NodeService {
 }
 
 fn validate_config(value: &Value) -> Result<()> {
+    if let Some(policy) = value.get("input_workflow") {
+        serde_json::from_value::<crate::request_input::InputPolicy>(policy.clone())?;
+    }
     if let Some(policy) = value.get("grants") {
         serde_json::from_value::<crate::grants::GrantPolicy>(policy.clone())?.validate()?;
     }

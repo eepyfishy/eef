@@ -29,7 +29,9 @@ try{
   if(req.url==='/api/chat'){
    let body='';for await(const chunk of req){body+=chunk;assert(body.length<=65536);}
    const payload=JSON.parse(body);assert.equal(payload.model,'test-model:tiny');interpretations++;
-   const proposal={schema_version:1,intent:'information',goal:'Inspect node status',context_hints:[],constraints:[],suggested_capabilities:['system.info'],complexity:'simple',workload:'one_shot',needs_clarification:false,clarification:null};
+   const proposal=payload.messages[0].content.startsWith('Propose one method')
+    ? {schema_version:1,method:{schema_version:1,template:'system_info',params:{},constraints:{}},clarification:null}
+    : {schema_version:1,intent:'information',goal:'Inspect node status',context_hints:[],constraints:[],suggested_capabilities:['system.info'],complexity:'simple',workload:'one_shot',needs_clarification:false,clarification:null};
    res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({message:{content:JSON.stringify(proposal)},done:true,done_reason:'stop'}));
   }
   res.writeHead(404);res.end();
@@ -139,7 +141,7 @@ try{
  // below only after the owner installs/selects the fake fixture model.
  await page.locator('#message').fill('remember running-node browser input works');
  await page.locator('#sendMessage').click();
- await page.waitForFunction(()=>document.getElementById('reply').textContent.includes('Request not confirmed'));
+ await page.waitForFunction(()=>document.getElementById('reply').textContent.includes('Input workflow not confirmed'));
  const missingInterpreter=await cli('eefn',configPath,['--ask','remember running-node CLI input works'],false);
  assert.equal(missingInterpreter.execution_authorized,false);assert.equal(missingInterpreter.dispatched,false);
  assert.equal(interpretations,0);assert.equal((await json(node+'/api/jobs')).jobs.length,1);
@@ -205,16 +207,17 @@ try{
  const browserReply=page.waitForResponse(r=>r.url()===node+'/api/chat'&&r.request().postDataJSON().message===browserText);
  await page.locator('#message').fill(browserText);await page.locator('#sendMessage').click();
  const browserReport=await (await browserReply).json();assert.equal(browserReport.success,true,JSON.stringify(browserReport));
- await page.waitForFunction(()=>document.getElementById('reply').textContent.includes('Saved request'));
+ await page.waitForFunction(()=>document.getElementById('reply').textContent.includes('Prepared request'));
  const cliText='  Inspect running-node CLI status\n';
  const opened=await cli('eefn',configPath,['--ask',cliText]);
  assert.equal(opened.coordinator_acknowledged,true);assert.equal(opened.execution_authorized,false);assert.equal(opened.dispatched,false);
- assert.equal(opened.result.draft.original_text,cliText);assert.equal(opened.result.status,'review');
- const inputs=(await json(node+'/api/jobs')).jobs.filter(j=>j.status==='review');assert.equal(inputs.length,2);
+ assert.equal(opened.result.draft.original_text,cliText);assert.equal(opened.result.status,'awaiting_approval');
+ assert.equal(opened.preparation.checkpoint_saved,true);assert.equal(browserReport.preparation.checkpoint_saved,true);
+ const inputs=(await json(node+'/api/jobs')).jobs.filter(j=>j.status==='awaiting_approval');assert.equal(inputs.length,2);
  const drafts=await Promise.all(inputs.map(j=>reviewed.inspect(j.id)));
  assert(drafts.some(p=>p.request_review.original_text===browserText));
  assert(drafts.every(p=>p.goal.request_context.origin_node===id&&p.execution===undefined));
- assert.equal(interpretations,2);assert.equal((await json(eef+'/api/status')).world.devices.filter(n=>n.connected).length,1);
+ assert.equal(interpretations,4);assert.equal((await json(eef+'/api/status')).world.devices.filter(n=>n.connected).length,1);
  const coordinator=await context.newPage();coordinator.on('pageerror',e=>{throw e;});await coordinator.goto(eef+'/#devices');await coordinator.getByRole('button',{name:'Configure node'}).click();await coordinator.locator('#remoteBanner').waitFor({state:'visible'});await coordinator.getByRole('link',{name:'Settings',exact:true}).click();await coordinator.locator('[data-field=name]').fill('Named from EEF UI');await coordinator.locator('[data-field="metadata.area"]').fill('Home / Remote study');await coordinator.locator('[data-resource-field="name"]').last().fill('Remotely named camera');await coordinator.locator('#saveRestart').click();
  await until(async()=>{const s=await json(eef+'/api/status');return s.world?.devices?.some(n=>n.node_id===id&&n.name==='Named from EEF UI'&&n.connected);},'configuration from EEF UI');
  assert.deepEqual((await json(node+'/api/status')).metadata.area,['Home','Remote study']);
@@ -257,14 +260,14 @@ try{
  await until(async()=>{const s=await json(eef+'/api/status');return s.runtime_id!==beforeSettingsRestart&&s.world?.devices?.some(n=>n.node_id===id&&n.connected)&&(await json(node+'/api/status')).connection?.state==='connected';},'job storage preferences applied after restart');
  const jobUsage=(await json(node+'/api/jobs')).storage;
  assert.equal(jobUsage.max_count,250);assert.equal(jobUsage.max_bytes,32*1048576);
- assert.equal(jobUsage.reserved_bytes,inputs.length*1024,'retained review drafts reserve future checkpoint space');
- for(const draft of drafts){assert.deepEqual(await reviewed.inspect(draft.plan_id),draft,'review-only input survives restart without execution');await reviewed.cleanup(draft.plan_id);}
+ assert.equal(jobUsage.reserved_bytes,inputs.length*1024,'retained prepared requests reserve exact future checkpoint space');
+ for(const draft of drafts){assert.deepEqual(await reviewed.inspect(draft.plan_id),draft,'prepared input survives restart without execution');await reviewed.cleanup(draft.plan_id);}
  const released=(await json(node+'/api/jobs')).storage;
  assert.equal(released.reserved_bytes,0);assert.equal(released.count,jobUsage.count-inputs.length);
  assert(released.available_bytes>jobUsage.available_bytes,'explicit removal releases accounted headroom');
  await page.goto(node+'/#jobs');await page.waitForFunction(()=>document.getElementById('jobStorage').textContent.includes('32.00 MiB'));
  await page.screenshot({path:join(scratch,'node-job-storage.png'),fullPage:true});
- await writeFile(join(scratch,'jobs-results.json'),JSON.stringify({passed:true,physical_two_pc:false,pinned_tls:true,reviewed_grants:true,completed_jobs_survive_verified_restart:true,node_origin_preserved:true,retired_raw_creation_refused:true,copy_and_details_retained:true,storage_form_and_applied_limits:true},null,2));
+ await writeFile(join(scratch,'jobs-results.json'),JSON.stringify({passed:true,physical_two_pc:false,pinned_tls:true,reviewed_grants:true,completed_jobs_survive_verified_restart:true,node_origin_preserved:true,retired_raw_creation_refused:true,copy_and_details_retained:true,storage_form_and_applied_limits:true,fresh_input_awaits_approval_without_dispatch:true,retained_prepared_request_count:inputs.length,reserved_before_removal:jobUsage.reserved_bytes,reserved_after_removal:released.reserved_bytes},null,2));
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,real_inference:false,non_coder_setup_complete:false,owner_cli_interpreter_role_setup_required:true,stable_identity:true,local_registration:true,explicit_owner_tls_pairing:true,remote_approval:true,remote_configuration:true,device_restart:true,eef_restart:true,browser_forms:true,copy_selection_and_focus_stable:true,running_node_browser_and_cli_review_input:true,missing_interpreter_no_keyword_fallback:true,feature_wide_permissions:true,mobile_layout:true,no_initial_model_download:true,mock_ollama_install_select_and_register:true,stalled_download_cancellation:true,origin_survives_routing_and_restart:true,resource_bindings_private_and_owner_selected:true,area_and_resource_forms:true},null,2));
  console.log('First-run and browser validation passed: '+scratch);
 }catch(e){console.error(errors.slice(-12).join('\n'));console.error('Child exit codes:',children.map(c=>({pid:c.pid,exit:c.exitCode})));for(const url of [eef,node]){try{console.error(url,await (await fetch(url+'/api/status',{signal:AbortSignal.timeout(2000)})).json());}catch(error){console.error(url,error.message);}}throw e;}finally{if(browser)await browser.close();for(const child of children)if(child.exitCode===null)child.kill();await Promise.allSettled(children.map(c=>c.result));if(modelServer){modelServer.closeAllConnections();await new Promise(r=>modelServer.close(r));}}

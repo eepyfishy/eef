@@ -6,10 +6,14 @@ Older v0.4.0a installers do not contain them.
 
 ## Default workload boundary (unreleased after alpha.6)
 
-`eefn --ask TEXT` now opens an origin-owned durable review through the already
-running node; it never creates a second runtime. Node `/api/chat` calls the same
-service and returns review/clarification status, not a workload result. Preparation,
-owner approval and execution are still separate commands, not automatic policies.
+`eefn --ask TEXT`, `eefn requests input --text TEXT [--operation-id UUID]`, and
+node `/api/chat` share the running node's [input workflow](INPUT-WORKFLOW.md).
+It saves origin-owned review and, if applied policy allows it, prepares an eligible
+one-shot request awaiting approval. It never starts a second runtime, approves
+or executes work. Reusing an input receipt only inspects retained history.
+`requests workflow show|set --prepare-on-input true|false` exposes saved/applied
+policy; explicitly restart after saving a change. Fresh configurations enable
+preparation; older configurations missing the field stay review-only.
 
 `jobs generate-text` now shares the explicit `request-text` review/compiler flow.
 Raw job creation, legacy resume/dispatcher/model chat and ordinary workload RPC
@@ -33,8 +37,8 @@ This changes saved roles, not permissions or plan approval. Multiple interpreter
 models fail as ambiguous instead of choosing automatically. Unreleased `--ask`,
 review and HTTP input failures expose `setup_hint` for these setup cases; node
 HTTP input's human-readable `reply` includes that guidance. The existing browser
-model picker does not configure roles. First-time non-coder setup/automatic
-preparation remain release requirements, not completed by this command example.
+model picker does not configure roles. First-time non-coder setup, answer-triggered
+automation and reusable bounded approvals remain release requirements.
 See [client acceptance](CLIENT-ACCEPTANCE.md).
 
 Node status includes an optional live `last_workload` scope snapshot after durable

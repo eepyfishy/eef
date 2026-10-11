@@ -8,6 +8,19 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Interpret/save input and prepare an eligible method according to node policy; never execute.
+    Input {
+        #[arg(long)]
+        text: String,
+        /// Preserve this receipt after an uncertain reply; reuse only inspects retained history.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
+    /// Inspect or save the node's input preparation policy; changes require restart.
+    Workflow {
+        #[command(subcommand)]
+        command: crate::request_input::PolicyAction,
+    },
     /// Reconcile one uncertain origin-owned attempt from retained completion; never resume.
     RecoverResult {
         id: String,
@@ -260,12 +273,14 @@ pub fn confirmed_review(data: &Value, node_id: &str, request_id: &str, text: &st
 struct Binding {
     runtime_id: String,
     engine: Weak<NodeEngine>,
+    input_policy: crate::request_input::InputPolicy,
 }
 
 pub(crate) struct PreviewRuntime {
     binding: Mutex<Option<Binding>>,
     generation: watch::Sender<Option<String>>,
     capacity: Semaphore,
+    input_capacity: Arc<Semaphore>,
 }
 impl Default for PreviewRuntime {
     fn default() -> Self {
@@ -273,6 +288,7 @@ impl Default for PreviewRuntime {
             binding: Mutex::new(None),
             generation: watch::channel(None).0,
             capacity: Semaphore::new(1),
+            input_capacity: Arc::new(Semaphore::new(1)),
         }
     }
 }
@@ -728,12 +744,22 @@ impl NodeService {
         engine: &Arc<NodeEngine>,
         runtime_id: String,
     ) -> PreviewGuard {
+        self.attach_preview_runtime_with_policy(engine, runtime_id, Default::default())
+    }
+
+    pub fn attach_preview_runtime_with_policy(
+        &self,
+        engine: &Arc<NodeEngine>,
+        runtime_id: String,
+        input_policy: crate::request_input::InputPolicy,
+    ) -> PreviewGuard {
         let runtime = self.preview.clone();
         {
             let mut binding = runtime.binding.lock().unwrap();
             *binding = Some(Binding {
                 runtime_id: runtime_id.clone(),
                 engine: Arc::downgrade(engine),
+                input_policy,
             });
             runtime.generation.send_replace(Some(runtime_id.clone()));
         }
@@ -741,6 +767,33 @@ impl NodeService {
             runtime,
             runtime_id,
         }
+    }
+
+    pub(crate) fn input_workflow_runtime(
+        &self,
+    ) -> Option<(
+        String,
+        crate::request_input::InputPolicy,
+        watch::Receiver<Option<String>>,
+    )> {
+        let binding = self.preview.binding.lock().unwrap();
+        let value = binding.as_ref()?;
+        value.engine.upgrade()?;
+        Some((
+            value.runtime_id.clone(),
+            value.input_policy,
+            self.preview.generation.subscribe(),
+        ))
+    }
+
+    pub(crate) fn input_workflow_permit(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, &'static str> {
+        self.preview
+            .input_capacity
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "input_workflow_busy")
     }
 
     pub async fn preview_request(&self, request: PreviewRequest) -> Value {

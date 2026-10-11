@@ -50,7 +50,7 @@ struct Args {
     rollback: bool,
     #[arg(
         long,
-        help = "Interpret/save a durable review through the running node; never execute or start a node"
+        help = "Submit input through the running node's preparation policy; never approve, execute or start a node"
     )]
     ask: Option<String>,
     #[arg(long, help = "List installed Ollama model IDs without selecting them")]
@@ -257,6 +257,118 @@ async fn execute_request_command(
         "dispatched":false,"automatically_retried":false,
         "outcome_unknown":review,
         "error":if persist {"No confirmed durable review reply. Inspect jobs.find with this request ID; a review may have been saved. No execution or automatic replay was requested."} else {"No confirmed request reply. Inference/review may have run; no job or action was requested. No automatic retry."}})))
+}
+
+async fn execute_input_command(
+    args: &Args,
+    text: &str,
+    operation_id: Option<&str>,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    eefn::interpretation::messages(text, &[])?;
+    let receipt = operation_id
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    eefn::job_commands::validate_operation_id(&receipt)?;
+    let failure = |code: &str, unknown: bool| {
+        json!({"schema_version":1,
+        "report_type":"node_input_workflow","request_id":receipt,"success":false,
+        "error_code":code,"outcome_unknown":unknown,"execution_authorized":false,
+        "dispatched":false,"automatically_retried":false,"coordinator_acknowledged":false,
+        "note":"No confirmed input reply. Inspect jobs.find with this receipt before deciding what to do. No fallback, approval, execution or automatic retry was requested."})
+    };
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        return Ok(failure("node_not_running", false));
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!("http://{address}/api/commands/requests/input"))
+            .timeout(Duration::from_secs(150))
+            .json(&json!({"schema_version":1,
+                "expected_node_id":file.node_id,"request_id":receipt,"text":text}))
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(failure("unsupported_command", false));
+        }
+        let status = response.status();
+        let report = eefn::model_manager::bounded_json(response).await?;
+        if !status.is_success()
+            || !eefn::request_input::confirmed(&report, &file.node_id, &receipt, text)
+        {
+            bail!("Unconfirmed input workflow reply")
+        }
+        Ok::<serde_json::Value, anyhow::Error>(report)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| failure("local_input_reply_unconfirmed", true)))
+}
+
+async fn execute_input_policy_command(
+    args: &Args,
+    action: &eefn::request_input::PolicyAction,
+) -> Result<serde_json::Value> {
+    use eefn::request_input::{PolicyAction, PolicyCommand, PolicyRequest};
+    let command = match action {
+        PolicyAction::Show => PolicyCommand::Show,
+        PolicyAction::Set { prepare_on_input } => PolicyCommand::Set {
+            prepare_on_input: *prepare_on_input,
+        },
+    };
+    let lock = eefn::setup::instance_lock(&args.config)?;
+    let file = load_file(&args.config)?;
+    if file.node_id.is_empty() {
+        bail!("No saved node identity; configure the node first")
+    }
+    let request = PolicyRequest {
+        schema_version: 1,
+        expected_node_id: file.node_id.clone(),
+        command,
+    };
+    if lock.is_some() {
+        return NodeService::new(args.config.clone(), file.node_id).input_policy_command(request);
+    }
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?
+        .post(format!("http://{address}/api/commands/requests/workflow"))
+        .timeout(Duration::from_secs(15))
+        .json(&request)
+        .send()
+        .await?;
+    let ok = response.status().is_success();
+    let report = eefn::model_manager::bounded_json(response).await?;
+    let agrees = match action {
+        PolicyAction::Show => true,
+        PolicyAction::Set { prepare_on_input } => {
+            report["saved_policy"]["prepare_on_input"] == *prepare_on_input
+        }
+    };
+    if !ok || !agrees || !eefn::request_input::confirmed_policy(&report, &file.node_id) {
+        bail!("Unconfirmed input policy reply; inspect saved/applied policy before retrying")
+    }
+    Ok(report)
 }
 
 async fn execute_draft_command(
@@ -1035,6 +1147,12 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     }
     if let Commands::Requests { command } = command {
         return match command {
+            eefn::request_preview::RequestAction::Input { text, operation_id } => {
+                execute_input_command(args, text, operation_id.as_deref()).await
+            }
+            eefn::request_preview::RequestAction::Workflow { command } => {
+                execute_input_policy_command(args, command).await
+            }
             eefn::request_preview::RequestAction::Plan { id } => {
                 execute_node_planning_command(
                     args,
@@ -1401,6 +1519,8 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
 #[derive(Clone, Debug, Deserialize)]
 struct FileConfig {
     #[serde(default)]
+    input_workflow: eefn::request_input::InputPolicy,
+    #[serde(default)]
     grants: eefn::grants::GrantPolicy,
     #[serde(default)]
     auth_mode: eefn::authentication::AuthMode,
@@ -1587,13 +1707,13 @@ async fn main() -> Result<()> {
     // Input is a client command: no ephemeral runtime, registration, pairing,
     // models or configuration writes if the node is not already running.
     if let Some(message) = &args.ask {
-        let value = match execute_request_command(&args, message, true, None, true).await {
+        let value = match execute_input_command(&args, message, None).await {
             Ok(value) => value,
             Err(error) => {
                 if args.json {
                     println!(
                         "{}",
-                        serde_json::json!({"schema_version":1,"report_type":"request_draft",
+                        serde_json::json!({"schema_version":1,"report_type":"node_input_workflow",
                         "success":false,"error_code":"command_failed","error":error.to_string(),
                         "execution_authorized":false,"dispatched":false,"automatically_retried":false})
                     );
@@ -1954,7 +2074,8 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         status["connection"] =
             serde_json::json!({"state":if file.connection_enabled {"waiting"} else {"paused"}});
     }
-    let _preview_runtime = dashboard.attach_preview_runtime(&engine, runtime_id);
+    let _preview_runtime =
+        dashboard.attach_preview_runtime_with_policy(&engine, runtime_id, file.input_workflow);
     let client = if file.endpoints.is_empty() || !file.connection_enabled {
         None
     } else {

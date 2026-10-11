@@ -8,26 +8,28 @@ Both roles need a new, versioned release before physical network acceptance.
 ## Input and execution
 
 - `eefn --ask TEXT` is a client of the **already running node**, using the same
-  durable-review service as `eefn requests open --text TEXT`. It never starts an
+  input workflow as `eefn requests input --text TEXT`. It never starts an
   ephemeral runtime, registers a competing identity, pairs, or changes models.
   An unavailable interpreter/coordinator is an explicit failure, not permission
   to use a keyword planner or another model.
 - Node `POST /api/chat` remains a compatibility input adapter. Its strict body is
   `{ "message": "original text", "request_id": "optional canonical UUID" }`.
-  It returns the durable-review report plus a human-readable `reply` that states
-  whether review/clarification is needed. This is not fabricated inference output.
+  It returns the input workflow report plus a human-readable `reply` that states
+  review/clarification/approval status. This is not fabricated inference output.
   Original whitespace, authenticated origin/area and the save receipt survive.
 - `eefn jobs generate-text` now shares `request-text`'s explicit, model-free
   source admission/compilation. It preserves the prompt and exact caller choices,
   returns `awaiting_approval`, and does **not** start inference. Both commands use
   the existing journal, not a second job system. Retain the returned operation ID.
-- Preparation/clarification, owner approval and exact execution remain separate
-  commands. Model selection, feature switches and pairing are not plan approval.
+- Applied node input policy can prepare an eligible one-shot source automatically.
+  Owner approval and exact execution remain separate commands. Model selection,
+  preparation policy, feature switches and pairing are not plan approval.
   See [commands](COMMANDS.md), [explicit inputs](EXPLICIT-REQUESTS.md), and
   [result recovery](RESULT-RECOVERY.md).
 
-Natural input opening is now the default path, but automatic method preparation,
-answer-trigger policies and reusable bounded approvals are **not implemented**.
+Natural input opening and configurable one-shot preparation share the bounded
+[input workflow](INPUT-WORKFLOW.md). Answer-trigger policies and reusable bounded
+approvals are **not implemented**.
 This increment must not be described as a finished non-coder automation workflow.
 
 ## Retired paths
