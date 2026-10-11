@@ -95,6 +95,17 @@ Unconfirmed save replies remain uncertain unless known not sent. Runtime changes
 after submission may still leave valid EEF checkpoints; inspect or reuse the
 exact receipt. No automatic replay or native-effects termination claim.
 
+The unreleased checkpoint-diagnostic increment distinguishes an authenticated
+negative coordinator reply (`preparation_rejected`) from transport/timeout or
+invalid-success uncertainty (`preparation_unconfirmed`). Only the former adds
+`coordinator_rejection`: origin-private text with control characters removed and
+a 1,024-byte UTF-8-safe bound. Success reports cannot contain rejection text.
+This is diagnosis, not authority or proof of no commit: the coordinator can fail
+confirmation after a durable write, so rejection keeps `outcome_unknown: true`.
+Only a known local `NotSent` outcome clears uncertainty. Inspect the exact saved
+receipt/source before explicitly continuing; no rejection triggers replay,
+fallback, new inference or a rollback of earlier confirmed history.
+
 Automatic open/answer-trigger policy, delegated approval, compound/continuous
 methods, semantic quality, complete uncertainty reconciliation and first-time
 bootstrap remain unfinished requirements.

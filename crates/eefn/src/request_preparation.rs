@@ -454,6 +454,39 @@ pub fn saved_checkpoint(
         .transpose()
 }
 
+/// Preserve an authenticated rejection as diagnosis, not proof of no commit.
+/// The coordinator can fail confirmation after writing a checkpoint. Inspect
+/// retained history before any explicit continuation; this never retries.
+pub(crate) fn checkpoint_submission(
+    report: &mut Value,
+    result: Result<Value>,
+) -> std::result::Result<Value, &'static str> {
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => match error.downcast_ref::<crate::submission::SubmissionFailure>() {
+            Some(crate::submission::SubmissionFailure::NotSent(_)) => {
+                report["outcome_unknown"] = json!(false);
+                Err("preparation_not_sent")
+            }
+            Some(crate::submission::SubmissionFailure::Rejected(reason)) => {
+                // Origin-private diagnostics only; bound bytes without splitting
+                // UTF-8 and remove terminal/control characters from peer text.
+                let mut bounded = String::new();
+                for c in reason.chars().filter(|c| !c.is_control()) {
+                    if bounded.len() + c.len_utf8() > 1024 {
+                        break;
+                    }
+                    bounded.push(c);
+                }
+                report["coordinator_rejection"] = json!(bounded);
+                report["outcome_unknown"] = json!(true);
+                Err("preparation_rejected")
+            }
+            None => Err("preparation_unconfirmed"),
+        },
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PrepareReport {
@@ -475,6 +508,8 @@ struct PrepareReport {
     coordinator_operation_id: Option<String>,
     result: Option<Value>,
     error_code: Option<String>,
+    #[serde(default)]
+    coordinator_rejection: Option<String>,
     note: String,
 }
 pub fn confirmed(report: &Value, node: &str, command: &PrepareCommand) -> bool {
@@ -499,6 +534,7 @@ pub fn confirmed(report: &Value, node: &str, command: &PrepareCommand) -> bool {
         || r.automatically_retried
         || r.outcome_unknown
         || r.error_code.is_some()
+        || r.coordinator_rejection.is_some()
         || r.note.len() > 2048
         || crate::job_commands::validate_operation_id(runtime).is_err()
     {
@@ -582,6 +618,78 @@ pub fn validate_question_lineage(draft: &DraftRecord, index: usize) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn checkpoint_rejection_preserves_diagnosis_without_claiming_no_commit() {
+        let mut report = json!({"outcome_unknown":true,"success":false,
+            "checkpoint_saved":false,"execution_authorized":false,"dispatched":false,
+            "automatically_retried":false});
+        let rejected = crate::submission::SubmissionFailure::Rejected(
+            "Preparation source revision changed".into(),
+        );
+        assert_eq!(
+            checkpoint_submission(&mut report, Err(rejected.into())),
+            Err("preparation_rejected")
+        );
+        assert_eq!(
+            report["coordinator_rejection"],
+            "Preparation source revision changed"
+        );
+        assert_eq!(report["outcome_unknown"], true);
+        for field in [
+            "success",
+            "checkpoint_saved",
+            "execution_authorized",
+            "dispatched",
+            "automatically_retried",
+        ] {
+            assert_eq!(report[field], false, "{field}");
+        }
+        // A coordinator may also reject after the durable write/confirmation.
+        let rejected = crate::submission::SubmissionFailure::Rejected(
+            "Prepared checkpoint failed confirmation".into(),
+        );
+        assert_eq!(
+            checkpoint_submission(&mut report, Err(rejected.into())),
+            Err("preparation_rejected")
+        );
+        assert_eq!(report["outcome_unknown"], true);
+        let reason = format!("\u{1b}\r\n{}", "é".repeat(1024));
+        checkpoint_submission(
+            &mut report,
+            Err(crate::submission::SubmissionFailure::Rejected(reason).into()),
+        )
+        .unwrap_err();
+        let bounded = report["coordinator_rejection"].as_str().unwrap();
+        assert_eq!(bounded.len(), 1024);
+        assert!(!bounded.chars().any(char::is_control));
+        assert!(bounded.chars().all(|c| c == 'é'));
+    }
+    #[test]
+    fn checkpoint_delivery_distinguishes_not_sent_from_transport_uncertainty() {
+        let mut report = json!({"outcome_unknown":true});
+        assert_eq!(
+            checkpoint_submission(&mut report, Err(anyhow::anyhow!("Connection ended"))),
+            Err("preparation_unconfirmed")
+        );
+        assert_eq!(report["outcome_unknown"], true);
+        assert!(report.get("coordinator_rejection").is_none());
+        assert_eq!(
+            checkpoint_submission(
+                &mut report,
+                Err(crate::submission::SubmissionFailure::NotSent("No connection".into()).into())
+            ),
+            Err("preparation_not_sent")
+        );
+        assert_eq!(report["outcome_unknown"], false);
+        assert_eq!(
+            checkpoint_submission(
+                &mut report,
+                Ok(json!({"candidate":"not yet independently confirmed"}))
+            )
+            .unwrap(),
+            json!({"candidate":"not yet independently confirmed"})
+        );
+    }
     fn draft() -> DraftRecord {
         let proposal = json!({"schema_version":1,"intent":"information","goal":"Inspect node status","context_hints":[],"constraints":[],
             "suggested_capabilities":["system.info"],"complexity":"simple","workload":"one_shot","needs_clarification":false,"clarification":null});
@@ -646,6 +754,9 @@ mod tests {
             "outcome_unknown":false,"checkpoint_saved":true,"inspection_only":false,"model_inference_requested":true,"saving_attempted":true,
             "coordinator_operation_id":operation,"result":data,"error_code":null,"note":"Await approval"});
         assert!(confirmed(&report, "owner", &command));
+        let mut diagnosed = report.clone();
+        diagnosed["coordinator_rejection"] = json!("Prepared checkpoint failed confirmation");
+        assert!(!confirmed(&diagnosed, "owner", &command));
         for (pointer, value) in [
             ("/execution_authorized", json!(true)),
             ("/outcome_unknown", json!(true)),

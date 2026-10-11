@@ -94,6 +94,13 @@ of overwriting the newer history. Confirmed earlier stages and their derived
 commands are validated even in failed aggregate replies; `result` is the last
 confirmed snapshot, not a promise that no newer checkpoint was committed.
 
+An authenticated checkpoint rejection now retains bounded, origin-private
+`preparation.coordinator_rejection` with `preparation.error_code` set to
+`preparation_rejected`. The aggregate remains
+`answer_preparation_not_confirmed`; rejection alone does not prove no durable
+write and leaves uncertainty true. Inspect retained history rather than starting
+another answer or inference automatically. See [checkpoint diagnostics](SEMANTIC-PREPARATION.md).
+
 After a lost/corrupted local HTTP reply the CLI reports uncertainty with the entire
 pre-send response command. It performs no fallback or replay. Unsupported older
 nodes do not fall back to chat, manual answer, raw jobs or execution.

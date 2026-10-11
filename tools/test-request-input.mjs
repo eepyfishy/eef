@@ -15,12 +15,14 @@ const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DI
 function launch(name,args,extra={}) {
  const child=spawn(join(bin,name+'.exe'),args,{cwd:root,windowsHide:true,env:{...env,...extra},stdio:['ignore','pipe','pipe']});
  let out='',err='';child.stdout.on('data',b=>out=(out+b).slice(-1048576));child.stderr.on('data',b=>err=(err+b).slice(-1048576));
+ child.logs=()=>({role:child.diagnosticRole,out,err,exit_code:child.exitCode});
  child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r({code,out,err}));});children.push(child);return child;
 }
 async function cli(name,path,args,success=true) {
  const child=launch(name,['--config',path,'--json',...args]),timer=setTimeout(()=>child.kill(),60000);
  try {const r=await child.result;
-  if(r.code!==(success?0:1))await writeFile(join(scratch,'unexpected-cli.json'),JSON.stringify({command:args,expected_exit:success?0:1,...r},null,2));
+  if(r.code!==(success?0:1))await writeFile(join(scratch,'unexpected-cli.json'),JSON.stringify({command:args,expected_exit:success?0:1,...r,
+   fixture_mode:mode,inference_calls:calls.length,runtime_logs:children.filter(c=>c.diagnosticRole).map(c=>c.logs())},null,2));
   assert.equal(r.code,success?0:1,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}
 }
 const nodeCli=(args,success=true)=>cli('eefn',configPath,args,success);
@@ -87,8 +89,8 @@ try {
  const offline=await nodeCli(['requests','workflow','show']);assert.equal(offline.saved_policy.prepare_on_input,true);assert.equal(offline.applied_policy,null);
  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
  await writeFile(eefConfig,yaml);
- launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:secret});
- launch('eefn',['--config',configPath,'--no-ui']);
+ launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:secret}).diagnosticRole='coordinator';
+ launch('eefn',['--config',configPath,'--no-ui']).diagnosticRole='node';
  const ready=async()=>{node='http://'+JSON.parse(await readFile(marker,'utf8')).address;return(await json(node+'/api/status')).connection.state==='connected'&&(await json(eef+'/api/diagnostics')).registered_node_count===1;};
  await until(ready,'initial registration');
  const invitation=await cli('eef',eefConfig,['credentials','provision','--node',id,'--address',`127.0.0.1:${gatewayPort}`]);
@@ -203,6 +205,27 @@ try {
  const raceReport=await racing;assert.equal(raceReport.success,false);assert.equal(raceReport.answer_confirmed,true);assert.equal(raceReport.preparation,null);
  const afterRace=(await plan(raceSource.id)).result;assert.equal(afterRace.revision,3);assert.equal(afterRace.status,'review');assert.equal(afterRace.draft.answers.length,2);assert.equal(afterRace.input,null);
  mode='valid';assert.equal((await respond(raceSource.id,1,'First answer',raceId)).status,'historical_snapshot');assert.equal(calls.length,count+1);
+ // A known coordinator rejection during checkpoint saving stays distinct from
+ // a lost reply. Its diagnostic is not proof of no commit or permission to retry.
+ const checkpointRaceSource=await newQuestion('Reject stale method checkpoint');mode='gate-method';count=calls.length;
+ const checkpointRaceId=randomUUID(),checkpointPending=respond(checkpointRaceSource.id,1,'This node',checkpointRaceId,false);
+ await until(()=>gates.size===1,'gated checkpoint preparation');
+ const changedProposalFile=join(scratch,'checkpoint-race-proposal.json');
+ await writeFile(changedProposalFile,JSON.stringify({schema_version:1,original_text:checkpointRaceSource.draft.original_text,proposal:proposal()}));
+ const changedProposal=await nodeCli(['requests','revise-proposal',checkpointRaceSource.id,'--revision','3','--file',changedProposalFile]);
+ assert.equal(changedProposal.result.revision,4);
+ for(const gate of gates)gate.end(JSON.stringify({message:{content:JSON.stringify(method())},done:true,done_reason:'stop'}));
+ const checkpointRejected=await checkpointPending;
+ assert.equal(checkpointRejected.error_code,'answer_preparation_not_confirmed');assert.equal(checkpointRejected.answer_confirmed,true);
+ assert.equal(checkpointRejected.preparation.error_code,'preparation_rejected');
+ assert.equal(checkpointRejected.preparation.coordinator_rejection,'Preparation source revision changed');
+ assert.equal(checkpointRejected.preparation.saving_attempted,true);assert.equal(checkpointRejected.preparation.coordinator_acknowledged,false);
+ assert.equal(checkpointRejected.preparation.outcome_unknown,true);assert.equal(checkpointRejected.outcome_unknown,true);
+ assert.equal(checkpointRejected.execution_authorized,false);assert.equal(checkpointRejected.dispatched,false);assert.equal(checkpointRejected.automatically_retried,false);
+ const afterCheckpointRace=(await plan(checkpointRaceSource.id)).result;
+ assert.equal(afterCheckpointRace.revision,4);assert.equal(afterCheckpointRace.status,'review');assert.equal(afterCheckpointRace.input,null);
+ mode='valid';assert.equal((await respond(checkpointRaceSource.id,1,'This node',checkpointRaceId)).status,'historical_snapshot');
+ assert.equal(calls.length,count+2);assert.deepEqual((await plan(checkpointRaceSource.id)).result,afterCheckpointRace);
  // Lost/corrupt replies preserve the entire response command. Reusing it only
  // reads durable history, including after interpreter withdrawal/restart below.
  let lostAnswerId,lostAnswerSource;for(const transport of ['drop','answer-lineage','old']) {
@@ -291,6 +314,7 @@ try {
  assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal(calls.length,count);
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count);
  evidence={passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
+  checkpoint_rejection_diagnosed_without_replay:true,
   immutable_input_context:true,read_only_receipt_reuse:true,partial_preparation_no_implicit_retry:true,current_question_returned:true,
   clarification_and_continuous_not_auto_prepared:true,saved_applied_policy_separate:true,runtime_change_cancels_workflow:true,
   concurrent_input_not_queued:true,lost_and_corrupt_replies_retained:true,full_preparation_source_lineage_checked:true,older_node_no_fallback:true,role_withdrawn_history_readable:true,

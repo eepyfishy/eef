@@ -397,11 +397,8 @@ impl NodeService {
                     result = tokio::time::timeout(Duration::from_secs(30), self.submissions.request_correlated(
                         "requests.preparation_checkpoint", json!(checkpoint), Some(command.operation_id.clone()),
                     )) => match result {
-                        Ok(Ok(value)) => value,
-                        Ok(Err(error)) if matches!(error.downcast_ref::<crate::submission::SubmissionFailure>(), Some(crate::submission::SubmissionFailure::NotSent(_))) => {
-                            report["outcome_unknown"] = json!(false); return Err("preparation_not_sent");
-                        }
-                        _ => return Err("preparation_unconfirmed"),
+                        Ok(result) => crate::request_preparation::checkpoint_submission(&mut report, result)?,
+                        Err(_) => return Err("preparation_unconfirmed"),
                     },
                 };
                 if !crate::request_preparation::confirmed_checkpoint(&saved, &self.node_id, &checkpoint) {
