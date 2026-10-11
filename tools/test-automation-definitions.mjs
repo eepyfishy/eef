@@ -1,5 +1,6 @@
 // Public-command two-logical-node fixture, not physical two-PC acceptance.
-// Durable authoring only: no timers, approval, execution, models or UI controller.
+// Durable definitions and owner-approval records only: no occurrence admission,
+// timers, job execution, models or UI controller.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
@@ -22,7 +23,11 @@ function launch(name,config,args,input,extra={}){
 }
 async function cli(name,config,args,success=true,input){
   const child=launch(name,config,['--json',...args],input),timer=setTimeout(()=>child.kill(),70000);
-  try{const value=await child.result;assert.equal(value.code,success?0:1,'CLI failed (private output withheld)');return JSON.parse(value.out);}finally{clearTimeout(timer);}
+  try{const value=await child.result;
+    if(value.code!==(success?0:1)&&!['credentials','connection'].includes(args[0]))
+      await writeFile(join(scratch,'unexpected-cli.json'),JSON.stringify({name,args,value},null,2));
+    assert.equal(value.code,success?0:1,'CLI failed (private output withheld; fixture '+scratch+')');return JSON.parse(value.out);
+  }finally{clearTimeout(timer);}
 }
 const owner=(args,success=true,config=eefConfig)=>cli('eef',config,args,success);
 const local=(node,args,success=true)=>cli('eefn',node.config,args,success);
@@ -31,6 +36,11 @@ async function until(fn,label){const end=Date.now()+65000;while(Date.now()<end){
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 function args(command){return ['automations','define','--operation-id',command.operation_id,'--from-job',command.from_job,'--revision',String(command.revision),
   '--plan-sha256',command.plan_sha256,'--name',command.name,'--every-ms',String(command.every_ms),'--max-runs',String(command.max_runs),'--valid-for-ms',String(command.valid_for_ms)];}
+function policyArgs(command){return ['automation-policies','approve','--definition',command.definition,'--revision',String(command.revision),
+  '--definition-sha256',command.definition_sha256,'--generation',String(command.generation),'--operation-id',command.operation_id,
+  '--valid-for-ms',String(command.valid_for_ms),'--max-runs',String(command.max_runs),
+  '--max-execution-ms-per-task',String(command.max_execution_ms_per_task),'--max-result-bytes-per-task',String(command.max_result_bytes_per_task),
+  '--max-reserved-execution-ms',String(command.max_reserved_execution_ms),'--max-reserved-result-bytes',String(command.max_reserved_result_bytes)];}
 try{
   await new Promise(r=>tags.listen(0,'127.0.0.1',r));const [eefPort,gatewayPort]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${eefPort}`;
   const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
@@ -106,14 +116,49 @@ try{
     schema_version:1,expected_runtime_id:runtime,command:concurrent})));
   assert.equal(responses.filter(r=>r.reused===false).length,1,'one exact durable creation, not sixteen');
   for(const value of responses){assert.deepEqual(value.definition,responses[0].definition);assert.equal(value.timers_started,false);assert.equal(value.dispatched,false);}
+  const policyCommand={operation:'approve',definition:command.operation_id,revision:1,definition_sha256:saved.result.definition.definition_sha256,
+    generation:0,operation_id:randomUUID(),valid_for_ms:10000,max_runs:3,max_execution_ms_per_task:1000,max_result_bytes_per_task:1024,
+    max_reserved_execution_ms:3000,max_reserved_result_bytes:3072};
+  const policy=await owner(policyArgs(policyCommand));assert.equal(policy.success,true);assert.equal(policy.execution_authorized,false);
+  assert.equal(policy.result.authorization.state,'approved');assert.equal(policy.result.occurrence_admission_available,false);
+  assert.equal(policy.result.authorization.runtime_id,runtime);assert.deepEqual(policy.result.authorization.scope.owner_context,full.goal.request_context);
+  assert.equal(policy.result.authorization.scope.operations[0].executor_node,a.id);
+  const noBypass=await json(a.url+'/api/commands/requests/execute',{schema_version:1,expected_node_id:a.id,command:{id:source.id,
+    expected_revision:source.revision,operation_id:randomUUID(),approval_sha256:policy.result.authorization.authorization_sha256}});
+  assert.equal(noBypass.success,false,'policy digest cannot substitute for a job approval');
+  assert.equal((await json(a.url+'/api/status')).last_workload,null);
+  assert.equal((await owner(policyArgs(policyCommand))).result.reused,true);
+  assert.deepEqual((await owner(['automation-policies','show',policyCommand.operation_id])).result.authorization,policy.result.authorization);
+  const stalePolicy=await owner(policyArgs({...policyCommand,operation_id:randomUUID()}),false);assert.equal(stalePolicy.error_code,'automation_rejected');
+  await owner(policyArgs({...policyCommand,generation:1,max_runs:4,operation_id:randomUUID()}),false);
+  assert.equal((await json(eef+'/api/jobs')).storage.authorization_count,1);
+  response=await fetch(a.url+'/api/commands/automation-policies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schema_version:1,expected_runtime_id:runtime,command:policyCommand})});assert.equal(response.status,404);
+  response=await fetch(a.url+'/api/commands/automations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schema_version:1,expected_node_id:a.id,request_id:policyCommand.operation_id,command:policyCommand})});assert.equal(response.status,422);
+  response=await fetch(eef+'/api/commands/automation-policies',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({schema_version:1,expected_runtime_id:runtime,command:policyCommand})});assert.equal(response.status,403);
+  const secondPolicy={...policyCommand,generation:1,operation_id:randomUUID()};
+  const policies=await Promise.all(Array.from({length:16},()=>json(eef+'/api/commands/automation-policies',{schema_version:1,expected_runtime_id:runtime,command:secondPolicy})));
+  assert.equal(policies.filter(r=>r.reused===false).length,1);
+  for(const value of policies){assert.deepEqual(value.authorization,policies[0].authorization);assert.equal(value.authorization.generation,2);assert.equal(value.occurrence_admission_available,false);assert.equal(value.execution_requested,false);}
+  const policyPage=await owner(['automation-policies','list','--definition',command.operation_id,'--limit','1']);assert.equal(policyPage.result.items.length,1);assert(policyPage.result.next_after);
+  assert(!JSON.stringify(policyPage).includes('operations'));assert(!JSON.stringify(policyPage).includes('Explicit reusable status source'));
+  const revoke=['automation-policies','revoke',policyCommand.operation_id,'--revision','1','--operation-id',randomUUID()];
+  assert.equal((await owner(revoke)).result.authorization.state,'revoked');assert.equal((await owner(revoke)).result.reused,true);
+  assert.equal((await owner(policyArgs(policyCommand))).result.authorization.state,'revoked');
+  assert.equal(JSON.stringify(await review.inspect(source.id)),sourceBefore,'policy does not authorize/mutate original source');
   previous=runtime;await owner(['restart']);await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==previous,'restart with definitions');
   await until(async()=>(await json(eef+'/api/diagnostics')).registered_node_count===2,'pinned reconnection');
+  const afterPolicyRestart=await owner(['automation-policies','show',secondPolicy.operation_id]);
+  assert.notEqual(afterPolicyRestart.result.runtime_id,runtime);assert.deepEqual(afterPolicyRestart.result.authorization,policies[0].authorization);
+  assert.equal(afterPolicyRestart.result.occurrence_admission_available,false);
+  assert.equal((await owner(policyArgs(secondPolicy))).result.reused,true);
   assert.deepEqual((await local(a,['automations','show',command.operation_id])).result.definition,saved.result.definition);
   assert.equal(JSON.stringify(await review.inspect(source.id)),sourceBefore,'definition authoring/restart cannot approve, mutate or execute source');
   const removal=randomUUID(),remove=['automations','remove',command.operation_id,'--revision','1','--operation-id',removal];
   const removed=await local(a,remove);assert.equal(removed.result.definition.source,null);assert.equal(removed.result.definition.state,'removed');
   assert.equal((await local(a,remove)).result.reused,true);
   const old=await local(a,args(command));assert.equal(old.result.reused,true);assert.equal(old.result.definition.state,'removed');
+  assert.deepEqual((await owner(['automation-policies','show',secondPolicy.operation_id])).result.authorization,policies[0].authorization);
+  assert.equal((await owner(policyArgs(secondPolicy))).result.reused,true,'historical policy cannot recreate a removed definition');
   // Actual owner CLI fault handling: inspect the same receipt, never synthesize
   // another one after a lost/corrupt/negative reply, including a post-commit error.
   let ownerMode='drop',ownerPosts=0;
@@ -124,14 +169,19 @@ try{
         if(ownerMode==='invalid-runtime')value.runtime_id='invalid';
         if(ownerMode==='stale-runtime')value.runtime_id=randomUUID();
         res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
-      assert.equal(req.url,'/api/commands/automations');ownerPosts++;
+      assert(['/api/commands/automations','/api/commands/automation-policies'].includes(req.url));ownerPosts++;
       let body='';for await(const bytes of req){body+=bytes;assert(body.length<=65536);}
       const r=await fetch(eef+req.url,{method:'POST',headers:{'Content-Type':'application/json'},body,signal:AbortSignal.timeout(20000)});
       const value=await r.json();
       if(ownerMode==='stale-runtime'){assert.equal(r.status,400);res.writeHead(400);return res.end(JSON.stringify(value));}
-      assert(r.ok);assert.equal(value.definition.state,'disabled');
+      assert(r.ok);
+      const retained=req.url==='/api/commands/automations'?value.definition:value.authorization;
+      assert.equal(retained.state,req.url==='/api/commands/automations'?'disabled':'approved');
       if(ownerMode==='drop')return res.destroy();
-      if(ownerMode==='corrupt')value.definition.owner_context.origin_node='forged';
+      if(ownerMode==='corrupt'){
+        if(value.definition)value.definition.owner_context.origin_node='forged';
+        else value.authorization.scope.owner_context.origin_node='forged';
+      }
       if(ownerMode==='reject')res.statusCode=409;
       res.setHeader('Content-Type','application/json');res.end(JSON.stringify(value));
     }catch(error){proxyError=error;res.destroy();}
@@ -151,11 +201,33 @@ try{
     else {const retained=await owner(['automations','show',receipt.operation_id]);assert.equal(retained.result.definition.state,'disabled');
       const repeated=await owner(args(receipt));assert.equal(repeated.result.reused,true);assert.deepEqual(repeated.result.definition,retained.result.definition);}
   }
-  const inventory=await json(eef+'/api/jobs');assert.equal(inventory.jobs.length,1);assert.equal(inventory.storage.automation_count,7);
+  let faultGeneration=0;
+  for(const failure of ['drop','corrupt','reject','stale-runtime','invalid-runtime']) {
+    ownerMode=failure;
+    const receipt={...policyCommand,definition:concurrent.operation_id,definition_sha256:responses[0].definition.definition_sha256,
+      generation:faultGeneration,operation_id:randomUUID()},beforePosts=ownerPosts;
+    const report=await owner(policyArgs(receipt),false,ownerProxyConfig);if(proxyError)throw proxyError;
+    assert.equal(report.command.operation_id,receipt.operation_id);assert.equal(report.success,false);assert.equal(report.result,null);
+    assert.equal(report.automatically_retried,false);assert.equal(report.execution_authorized,false);assert.equal(report.timers_started,false);
+    assert.equal(report.sending_attempted,failure!=='invalid-runtime');assert.equal(report.outcome_unknown,failure!=='invalid-runtime');
+    assert.equal(ownerPosts,beforePosts+(failure==='invalid-runtime'?0:1));
+    if(['stale-runtime','invalid-runtime'].includes(failure))await owner(['automation-policies','show',receipt.operation_id],false);
+    else {
+      faultGeneration++;
+      const retained=await owner(['automation-policies','show',receipt.operation_id]);
+      assert.equal(retained.result.authorization.state,'approved');assert.equal(retained.result.authorization.generation,faultGeneration);
+      assert.equal(retained.result.occurrence_admission_available,false);
+      const reused=await owner(policyArgs(receipt));assert.equal(reused.result.reused,true);
+      assert.deepEqual(reused.result.authorization,retained.result.authorization);
+    }
+  }
+  const inventory=await json(eef+'/api/jobs');assert.equal(inventory.jobs.length,1);assert.equal(inventory.storage.automation_count,7);assert.equal(inventory.storage.authorization_count,5);
   assert.equal(JSON.stringify(await review.inspect(source.id)),sourceBefore);
   await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,
     no_models:true,no_ui_controller:true,immutable_compiled_source:true,origin_isolation:true,restart_retention:true,lost_reply_inspection:true,
     removal_receipt_prevents_recreation:true,concurrent_creation_deduplicated:true,owner_cli:true,owner_cli_uncertain_receipts_inspected:true,
+    owner_policy_records:true,policy_generation_cas:true,concurrent_policy_deduplication:true,policy_revocation_retained:true,policy_restart_retained_without_admission:true,
+    owner_policy_uncertain_receipts_inspected:true,
     definitions_disabled:true,timers_started:false,execution_authorized:false},null,2));
   console.log('Automation definition validation passed: '+scratch);
 }finally{

@@ -11,6 +11,8 @@ use std::{
     time::Duration,
 };
 
+#[path = "automation_authorizations.rs"]
+mod automation_authorizations;
 #[path = "automations.rs"]
 mod automations;
 
@@ -169,6 +171,7 @@ impl JobStore {
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS durable_jobs (job_id TEXT PRIMARY KEY, plan_json TEXT NOT NULL, updated_ms INTEGER NOT NULL, reserved_bytes INTEGER NOT NULL DEFAULT 0);")?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_definitions (definition_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);")?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_authorizations (authorization_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, reserved_bytes INTEGER NOT NULL);")?;
         let columns = connection
             .prepare("PRAGMA table_info(durable_jobs)")?
             .query_map([], |r| r.get::<_, String>(1))?
@@ -382,14 +385,18 @@ impl JobStore {
     pub fn usage(&self) -> Result<serde_json::Value> {
         let connection = self.connection.lock().expect("job journal");
         let (count,payload,reserved):(i64,i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(plan_json AS BLOB))),0),COALESCE(SUM(reserved_bytes),0) FROM durable_jobs",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
-        let automation_bytes = automations::definition_bytes(&connection)?;
-        let automation_count =
-            automations::count(&connection)?.saturating_sub(usize::try_from(count)?);
+        let (automation_count,automation_bytes):(i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
+        let (authorization_count,authorization_bytes,authorization_reserved_bytes):(i64,i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0),COALESCE(SUM(reserved_bytes),0) FROM automation_authorizations",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
         let used = usize::try_from(payload)?
             .saturating_add(usize::try_from(reserved)?)
-            .saturating_add(automation_bytes);
+            .saturating_add(usize::try_from(automation_bytes)?)
+            .saturating_add(usize::try_from(authorization_bytes)?)
+            .saturating_add(usize::try_from(authorization_reserved_bytes)?);
         Ok(
-            serde_json::json!({"count":count,"automation_count":automation_count,"automation_bytes":automation_bytes,"max_count":self.max_count,"payload_bytes":payload,"reserved_bytes":reserved,"max_bytes":self.max_bytes,"available_bytes":self.max_bytes.saturating_sub(used),"over_limit":used>self.max_bytes||usize::try_from(count)?.saturating_add(automation_count)>self.max_count}),
+            serde_json::json!({"count":count,"automation_count":automation_count,"automation_bytes":automation_bytes,"authorization_count":authorization_count,
+                "authorization_bytes":authorization_bytes,"authorization_reserved_bytes":authorization_reserved_bytes,"max_count":self.max_count,
+                "payload_bytes":payload,"reserved_bytes":reserved,"max_bytes":self.max_bytes,"available_bytes":self.max_bytes.saturating_sub(used),
+                "over_limit":used>self.max_bytes||automations::count(&connection)?>self.max_count}),
         )
     }
     pub fn interrupt(&self, id: &str) -> Result<()> {

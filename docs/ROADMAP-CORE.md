@@ -138,6 +138,15 @@ diagnostic increment preserves bounded private coordinator rejection text while
 keeping possible writes uncertain. The prior intermittent preparation failure
 remains unproven; successful reruns are not treated as its fix.
 
+The next [reusable owner-approval checkpoint](AUTOMATION-APPROVALS.md) retains
+fixed scopes, current issuer/runtime identity, expiry, generation, run/grant and
+aggregate duration/result bounds. It adds owner commands and shared storage
+accounting with reserved revocation headroom. Superseded, revoked, removed or
+old-runtime policies cannot silently become current. Exact receipt reuse is
+inspection, not renewal. This stage does not consume budgets or admit/approve
+occurrences; atomic independently compiled-job delegation, every-issuance fences,
+safe triggering/overlap/restart behavior and full physical execution remain open.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

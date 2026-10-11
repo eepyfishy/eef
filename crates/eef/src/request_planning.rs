@@ -45,7 +45,7 @@ pub struct PlanningRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preparation: Option<eefn::request_preparation::PreparationSource>,
 }
-fn digest(plan: &Plan, record: &PlanningRecord) -> Result<String> {
+pub(crate) fn digest(plan: &Plan, record: &PlanningRecord) -> Result<String> {
     let tasks=plan.tasks.iter().map(|t|json!({"id":t.task_id,"request_context":t.request_context,"capability":t.capability,"action":t.action,
         "params":t.params,"constraints":t.constraints,"dependencies":t.dependencies,"timeout_ms":t.timeout_ms,"retry_count":t.retry_count,"retry_delay_ms":t.retry_delay_ms})).collect::<Vec<_>>();
     let mut definition = json!({"schema_version":1,"id":plan.plan_id,"goal":plan.goal,"tasks":tasks,

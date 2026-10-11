@@ -22,6 +22,22 @@ rewriting their immutable context. Negative/lost/corrupt mutation replies remain
 uncertain; retain the exact command/receipt and inspect. Source-bearing reports
 are private. No timer, approval, execution, fallback or automatic retry is added.
 
+## Reusable owner approval records (unreleased after alpha.6)
+
+`eef automation-policies approve|list|show|revoke` adds explicit fixed-scope owner
+approval checkpoints to that same journal. Approval requires the exact disabled
+definition, last generation, receipt, expiry, run count, per-task grant bounds and
+aggregate duration/result allowances. It does not approve the original job,
+consume an occurrence budget, issue grants or start timers. Reports explicitly
+say `occurrence_admission_available: false`.
+
+Policies retain runtime/issuer identity and generation history. Restart does not
+reactivate them; exact receipt reuse is historical inspection, not renewal.
+Only the guarded coordinator-owner command can create/revoke these records;
+node submission, node management and remote-update permissions cannot grant them.
+Show/approval scope is private. See [exact commands, bounds, revocation, storage
+and the remaining execution stage](AUTOMATION-APPROVALS.md).
+
 ## Default workload boundary (unreleased after alpha.6)
 
 `eefn --ask TEXT`, `eefn requests input --text TEXT [--operation-id UUID]`, and

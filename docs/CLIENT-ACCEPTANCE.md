@@ -369,3 +369,39 @@ evidence, not physical two-PC, native termination or real-model quality evidence
 The prior intermittent input/busy failures remain open investigation items.
 Installed nodes, browser assets, releases/installers and update feeds remain
 unchanged. The full stable-0.4.0 requirements and release gates remain in scope.
+
+## Reusable owner-approval record checkpoint (2026-10-12)
+
+The [bounded reusable approval record stage](AUTOMATION-APPROVALS.md) adds twelve
+tests, bringing both passing full workspace/all-target feature-mode suites to
+457. The fresh default executable/example build, formatting, diff/JavaScript
+checks and backend/browser source guard pass.
+
+The stronger public authoring fixture (`automation-definitions-B1ofi6`) uses
+two separately authenticated pinned-TLS logical nodes and actual owner CLI/API
+commands. It verifies fixed scope and generation, foreign node/origin refusals,
+policy digest denial at the original job's execution boundary, sixteen-way exact
+receipt deduplication, private-scope-free pagination, revocation and historical
+inspection after coordinator restart/source-definition removal. Owner policy
+fault-proxy cases cover dropped/substituted/negative-after-commit replies and
+stale/invalid runtime. Inspection/reuse preserves one exact record, not a new
+receipt or renewed authority. The source job remains unchanged and unexecuted.
+
+Journal tests independently cover source/compiler validation after definition
+removal, future schema and missing generation history without pruning, shared
+job/definition/policy byte and count quotas, and reserved revocation headroom
+under lowered quotas/backward clock observation. No occurrence budget is consumed,
+job approved, grant issued or timer started by this stage. Reports explicitly
+state `occurrence_admission_available: false`.
+
+Fresh final-build input/answer (`request-input-luGLfF`) and reviewed
+execution/recovery (`request-review-VEATQU`) regressions also pass. These are
+isolated local fixtures, not physical two-PC, approved interpreter quality or
+hard native termination evidence. The earlier intermittent input/busy failures
+are not diagnosed by successful regressions and remain open.
+
+Atomic new compiled-job delegation, aggregate consumption and every-issuance
+policy fences must precede timers. Safe overlap/restart/missed-trigger behavior,
+the other full roadmap requirements and installer/Defender/Authenticode gates
+remain in scope. Installed nodes, releases, feeds and browser assets are unchanged;
+stable 0.4.0 is not claimed.

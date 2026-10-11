@@ -398,7 +398,7 @@ mod tests {
         assert_eq!(store.usage().unwrap()["over_limit"], false);
     }
 }
-fn read_definition(connection: &Connection, id: &str) -> Result<Definition> {
+pub(super) fn read_definition(connection: &Connection, id: &str) -> Result<Definition> {
     let raw: String = connection
         .query_row(
             "SELECT record_json FROM automation_definitions WHERE definition_id=?1",
@@ -416,7 +416,7 @@ fn read_definition(connection: &Connection, id: &str) -> Result<Definition> {
 }
 pub(super) fn count(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT (SELECT count(*) FROM durable_jobs)+(SELECT count(*) FROM automation_definitions)",
+        "SELECT (SELECT count(*) FROM durable_jobs)+(SELECT count(*) FROM automation_definitions)+(SELECT count(*) FROM automation_authorizations)",
         [],
         |r| r.get(0),
     )?;
@@ -424,7 +424,7 @@ pub(super) fn count(connection: &Connection) -> Result<usize> {
 }
 pub(super) fn definition_bytes(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions",
+        "SELECT (SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM automation_authorizations)",
         [],
         |r| r.get(0),
     )?;
@@ -438,6 +438,7 @@ impl JobStore {
         for id in statement.query_map([], |r| r.get::<_, String>(0))? {
             read_definition(&connection, &id?)?;
         }
+        automation_authorizations::validate_all(&connection)?;
         Ok(())
     }
     fn save_definition(
@@ -455,8 +456,10 @@ impl JobStore {
         if !previous.is_some_and(|old| old >= 0 && encoded.len() as u64 <= old as u64) {
             let jobs:i64=connection.query_row("SELECT COALESCE(SUM(length(CAST(plan_json AS BLOB))+reserved_bytes),0) FROM durable_jobs",[],|r|r.get(0))?;
             let other:i64=connection.query_row("SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions WHERE definition_id<>?1",[&definition.id],|r|r.get(0))?;
+            let authorization_bytes = automation_authorizations::bytes(connection)?;
             let used = usize::try_from(jobs)?
                 .checked_add(usize::try_from(other)?)
+                .and_then(|bytes| bytes.checked_add(authorization_bytes))
                 .context("Storage size overflow")?;
             if encoded.len() > 8 * 1024 * 1024
                 || encoded.len() > self.max_bytes.saturating_sub(used)

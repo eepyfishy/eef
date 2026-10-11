@@ -101,6 +101,12 @@ consume history count and compact payload space; there is no automatic pruning
 or permanent deduplication guarantee after database replacement/deletion.
 Logical quotas are not promises of free physical disk space or RAM/CPU budgets.
 
+The subsequent [owner-approval checkpoint stage](AUTOMATION-APPROVALS.md) shares
+these limits with retained authorization payloads and revocation reserves. Storage
+reports add `authorization_count`, `authorization_bytes` and
+`authorization_reserved_bytes`; existing job/definition count meanings stay the
+same. New jobs, definitions and policies all account for all three record kinds.
+
 Startup validates retained definitions and frozen sources without activating
 them. Damaged/future records are retained and cause a clear failure, not repaired,
 ignored or returned as a successful partial inventory. Older executables do not
@@ -116,7 +122,9 @@ Listing/showing removed or disabled definitions is not readiness for automation.
 ## Remaining execution requirements
 
 Bounded reusable owner approval against the exact definition, issuer identity,
-generation/revision, expiry and aggregate run/resource budget remains required.
+generation/revision, expiry and declared aggregate duration/result budget now has
+a separate [record checkpoint](AUTOMATION-APPROVALS.md). It is not occurrence
+authority exercised by the runner; runtime admission/consumption remains required.
 Each occurrence needs atomic consumption and its own durable job/attempt/issuance
 lineage before dispatch through the existing reviewed grant driver. Revalidate
 current providers, resources and node-local permissions; saved snapshots cannot

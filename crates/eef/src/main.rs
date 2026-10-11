@@ -31,6 +31,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Save/inspect/revoke bounded reusable approval as the local owner; no occurrence admission yet.
+    AutomationPolicies {
+        #[command(subcommand)]
+        command: eefn::automation_policy::PolicyCommand,
+    },
     /// Author/inspect/remove disabled automation definitions as the local owner; never run them.
     Automations {
         #[command(subcommand)]
@@ -155,6 +160,60 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn reusable_approval_cli_requires_all_bounds_and_cannot_start_work() {
+        let args = [
+            "eef",
+            "automation-policies",
+            "approve",
+            "--definition",
+            "id",
+            "--revision",
+            "1",
+            "--definition-sha256",
+            "hash",
+            "--generation",
+            "0",
+            "--operation-id",
+            "receipt",
+            "--valid-for-ms",
+            "10000",
+            "--max-runs",
+            "3",
+            "--max-execution-ms-per-task",
+            "1000",
+            "--max-result-bytes-per-task",
+            "1024",
+            "--max-reserved-execution-ms",
+            "3000",
+            "--max-reserved-result-bytes",
+            "3072",
+        ];
+        assert!(Args::try_parse_from(args).is_ok());
+        for index in (3..args.len()).step_by(2) {
+            let mut missing = args.to_vec();
+            missing.drain(index..index + 2);
+            assert!(Args::try_parse_from(missing).is_err());
+        }
+        for flag in ["--execute", "--run", "--enable", "--retry", "--permissions"] {
+            let mut extra = args.to_vec();
+            extra.push(flag);
+            assert!(Args::try_parse_from(extra).is_err());
+        }
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "automation-policies",
+                "revoke",
+                "id",
+                "--revision",
+                "1",
+                "--operation-id",
+                "receipt"
+            ])
+            .is_ok()
+        );
+    }
     #[test]
     fn automation_authoring_requires_explicit_source_and_bounded_declarations() {
         let args = [
@@ -367,6 +426,72 @@ mod credential_cli_tests {
     }
 }
 
+async fn owner_automation_exchange(
+    client: &reqwest::Client,
+    base: &str,
+    command: serde_json::Value,
+    mutation: bool,
+    path: &str,
+    report_type: &str,
+    validate: impl Fn(&serde_json::Value, &str) -> bool,
+) -> serde_json::Value {
+    use serde_json::json;
+    let mut sending_attempted = false;
+    let mut runtime_id: Option<String> = None;
+    let exchange: std::result::Result<serde_json::Value, &str> = async {
+        let response = client
+            .get(format!("{base}/api/diagnostics"))
+            .send()
+            .await
+            .map_err(|_| "coordinator_unavailable")?;
+        if !response.status().is_success() {
+            return Err("coordinator_unavailable");
+        }
+        let diagnostics = eefn::model_manager::bounded_json(response)
+            .await
+            .map_err(|_| "coordinator_unconfirmed")?;
+        let runtime = diagnostics["runtime_id"]
+            .as_str()
+            .ok_or("coordinator_unconfirmed")?;
+        if diagnostics["schema_version"] != 1
+            || diagnostics["success"] != true
+            || diagnostics["report_type"] != "coordinator_diagnostics"
+            || eefn::job_commands::validate_operation_id(runtime).is_err()
+        {
+            return Err("coordinator_unconfirmed");
+        }
+        runtime_id = Some(runtime.to_owned());
+        sending_attempted = true;
+        let response = client
+            .post(format!("{base}/api/commands/{path}"))
+            .json(&json!({"schema_version":1,"expected_runtime_id":runtime,"command":command}))
+            .send()
+            .await
+            .map_err(|_| "automation_reply_unconfirmed")?;
+        if !response.status().is_success() {
+            return Err("automation_rejected");
+        }
+        let report = eefn::model_manager::bounded_json(response)
+            .await
+            .map_err(|_| "automation_reply_unconfirmed")?;
+        if !validate(&report, runtime) {
+            return Err("automation_reply_unconfirmed");
+        }
+        Ok(report)
+    }
+    .await;
+    let (result, error_code) = match exchange {
+        Ok(report) => (Some(report), None),
+        Err(code) => (None, Some(code)),
+    };
+    let success = result.is_some();
+    json!({"schema_version":1,"report_type":report_type,"actor":"coordinator_owner","command":command,"runtime_id":runtime_id,
+        "success":success,"coordinator_acknowledged":success,"sending_attempted":sending_attempted,
+        "outcome_unknown":!success && sending_attempted && mutation,"error_code":error_code,"result":result,
+        "timers_started":false,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
+        "note":"Private definition/approval checkpoints only, not occurrence admission or execution. Inspect the exact receipt after uncertainty. No new receipt, fallback or automatic retry."})
+}
+
 async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value> {
     use serde_json::json;
     let config = eef::config::Config::load(Some(&args.config))?;
@@ -387,45 +512,29 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
     let response = match command {
         Command::Automations { command } => {
             command.validate()?;
-            let mut sending_attempted = false;
-            let mut runtime_id: Option<String> = None;
-            let exchange: std::result::Result<serde_json::Value, &str> = async {
-                let response = client.get(format!("{base}/api/diagnostics")).send().await
-                    .map_err(|_| "coordinator_unavailable")?;
-                if !response.status().is_success() { return Err("coordinator_unavailable"); }
-                let diagnostics = eefn::model_manager::bounded_json(response).await
-                    .map_err(|_| "coordinator_unconfirmed")?;
-                let runtime = diagnostics["runtime_id"].as_str().ok_or("coordinator_unconfirmed")?;
-                if diagnostics["schema_version"] != 1 || eefn::job_commands::validate_operation_id(runtime).is_err() {
-                    return Err("coordinator_unconfirmed");
-                }
-                runtime_id = Some(runtime.to_owned());
-                sending_attempted = true;
-                let response = client.post(format!("{base}/api/commands/automations"))
-                    .json(&json!({"schema_version":1,"expected_runtime_id":runtime,"command":command}))
-                    .send().await.map_err(|_| "automation_reply_unconfirmed")?;
-                if !response.status().is_success() { return Err("automation_rejected"); }
-                let report = eefn::model_manager::bounded_json(response).await.map_err(|_| "automation_reply_unconfirmed")?;
-                if !eefn::automation::confirmed(&report, command, None) { return Err("automation_reply_unconfirmed"); }
-                Ok(report)
-            }.await;
-            let (result, error_code) = match exchange {
-                Ok(report) => (Some(report), None),
-                Err(code) => (None, Some(code)),
-            };
-            let success = result.is_some();
-            // Negative replies can follow a commit. A mutation remains unknown
-            // until exact receipt inspection; neither this adapter nor a repeat
-            // of its command creates a new receipt or automatically retries.
-            return Ok(
-                json!({"schema_version":1,"report_type":"owner_automation_command",
-                "actor":"coordinator_owner","command":command,"runtime_id":runtime_id,
-                "success":success,"coordinator_acknowledged":success,"sending_attempted":sending_attempted,
-                "outcome_unknown":!success && sending_attempted && command.receipt().is_some(),
-                "error_code":error_code,"result":result,"timers_started":false,"execution_authorized":false,
-                "dispatched":false,"automatically_retried":false,
-                "note":"Private source-bound definitions only, not approval or execution. Inspect the exact definition/receipt after uncertainty. No new receipt, fallback or automatic retry."}),
-            );
+            return Ok(owner_automation_exchange(
+                &client,
+                &base,
+                json!(command),
+                command.receipt().is_some(),
+                "automations",
+                "owner_automation_command",
+                |value, _| eefn::automation::confirmed(value, command, None),
+            )
+            .await);
+        }
+        Command::AutomationPolicies { command } => {
+            command.validate()?;
+            return Ok(owner_automation_exchange(
+                &client,
+                &base,
+                json!(command),
+                command.receipt().is_some(),
+                "automation-policies",
+                "owner_automation_policy_command",
+                |value, runtime| eefn::automation_policy::confirmed(value, command, runtime),
+            )
+            .await);
         }
         Command::Requests { command } => {
             if let eef::request_planning::PlanningAction::Abandon {
@@ -986,7 +1095,9 @@ async fn main() -> Result<()> {
                     );
                 } else if matches!(
                     command,
-                    Command::Requests { .. } | Command::Automations { .. }
+                    Command::Requests { .. }
+                        | Command::Automations { .. }
+                        | Command::AutomationPolicies { .. }
                 ) && value["success"] == true
                 {
                     eprintln!(
