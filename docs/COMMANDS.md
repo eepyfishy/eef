@@ -48,6 +48,14 @@ runtime's authority. Existing grants/receipts/recovery remain the only execution
 path. No timers, hidden retries or budget refunds are supplied. See [commands,
 privacy, lifecycle, storage and remaining work](AUTOMATION-OCCURRENCES.md).
 
+`eef automation-occurrences archive|archive-show` adds exact-revision owner
+archiving for proven completed or unissued-cancelled occurrences. It atomically
+retains private terminal evidence while removing the live job; original budgets
+and request-identity tombstones survive. Failed/unknown/partially issued work
+cannot be archived. Lost replies require exact receipt inspection, not a new
+command. This is bounded evidence retention, not byte reclamation or automatic
+cleanup. See [archive commands and limits](AUTOMATION-OCCURRENCES.md#explicit-terminal-archiving-subsequent-unreleased-increment).
+
 ## Default workload boundary (unreleased after alpha.6)
 
 `eefn --ask TEXT`, `eefn requests input --text TEXT [--operation-id UUID]`, and

@@ -175,6 +175,7 @@ impl JobStore {
         connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_definitions (definition_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);")?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_authorizations (authorization_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, reserved_bytes INTEGER NOT NULL);")?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_occurrences (reservation_id TEXT PRIMARY KEY, job_id TEXT UNIQUE NOT NULL, record_json TEXT NOT NULL);")?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_occurrence_archives (archive_id TEXT PRIMARY KEY, reservation_id TEXT UNIQUE NOT NULL, job_id TEXT UNIQUE NOT NULL, record_json TEXT NOT NULL);")?;
         let columns = connection
             .prepare("PRAGMA table_info(durable_jobs)")?
             .query_map([], |r| r.get::<_, String>(1))?
@@ -252,6 +253,7 @@ impl JobStore {
             .as_ref()
             .context("Node origin is required")?;
         let connection = self.connection.lock().expect("job journal");
+        automation_occurrences::refuse_archived_request(&connection, origin)?;
         let mut statement = connection.prepare("SELECT plan_json FROM durable_jobs")?;
         let mut rows = statement.query([])?;
         let mut existing: Option<Plan> = None;
@@ -305,6 +307,13 @@ impl JobStore {
 
     fn insert_locked(&self, connection: &Connection, mut plan: Plan) -> Result<Plan> {
         validate(&plan)?;
+        if connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM automation_occurrence_archives WHERE job_id=?1)",
+            [&plan.plan_id],
+            |r| r.get::<_, bool>(0),
+        )? {
+            bail!("Archived occurrence job identity cannot be recreated");
+        }
         if automations::count(connection)? >= self.max_count {
             bail!("Job history is full. Remove finished jobs or increase jobs.max_count.")
         }
@@ -421,16 +430,19 @@ impl JobStore {
         let (automation_count,automation_bytes):(i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
         let (authorization_count,authorization_bytes,authorization_reserved_bytes):(i64,i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0),COALESCE(SUM(reserved_bytes),0) FROM automation_authorizations",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
         let (occurrence_count,occurrence_bytes):(i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences", [], |r|Ok((r.get(0)?,r.get(1)?)))?;
+        let (occurrence_archive_count,occurrence_archive_bytes):(i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrence_archives", [], |r|Ok((r.get(0)?,r.get(1)?)))?;
         let used = usize::try_from(payload)?
             .saturating_add(usize::try_from(reserved)?)
             .saturating_add(usize::try_from(automation_bytes)?)
             .saturating_add(usize::try_from(authorization_bytes)?)
             .saturating_add(usize::try_from(authorization_reserved_bytes)?)
-            .saturating_add(usize::try_from(occurrence_bytes)?);
+            .saturating_add(usize::try_from(occurrence_bytes)?)
+            .saturating_add(usize::try_from(occurrence_archive_bytes)?);
         Ok(
             serde_json::json!({"count":count,"automation_count":automation_count,"automation_bytes":automation_bytes,"authorization_count":authorization_count,
                 "authorization_bytes":authorization_bytes,"authorization_reserved_bytes":authorization_reserved_bytes,
                 "occurrence_count":occurrence_count,"occurrence_bytes":occurrence_bytes,"max_count":self.max_count,
+                "occurrence_archive_count":occurrence_archive_count,"occurrence_archive_bytes":occurrence_archive_bytes,
                 "payload_bytes":payload,"reserved_bytes":reserved,"max_bytes":self.max_bytes,"available_bytes":self.max_bytes.saturating_sub(used),
                 "over_limit":used>self.max_bytes||automations::count(&connection)?>self.max_count}),
         )
@@ -479,7 +491,7 @@ impl JobStore {
             |r| r.get::<_, bool>(0),
         )? {
             bail!(
-                "Occurrence lineage must be retained; terminal archiving is not implemented. No budget refund or replacement authorized"
+                "Occurrence lineage must be retained; use the exact owner automation-occurrences archive command. No budget refund or replacement authorized"
             );
         }
         if !matches!(

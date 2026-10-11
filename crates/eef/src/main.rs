@@ -166,6 +166,46 @@ enum ModelsCommand {
 mod credential_cli_tests {
     use super::*;
     #[test]
+    fn archive_cli_needs_exact_terminal_revision_receipt_and_cannot_refund_or_execute() {
+        let args = [
+            "eef",
+            "automation-occurrences",
+            "archive",
+            "--reservation",
+            "receipt",
+            "--reservation-sha256",
+            "hash",
+            "--job",
+            "job",
+            "--revision",
+            "4",
+            "--operation-id",
+            "archive-receipt",
+        ];
+        assert!(Args::try_parse_from(args).is_ok());
+        for index in (3..args.len()).step_by(2) {
+            let mut missing = args.to_vec();
+            missing.drain(index..index + 2);
+            assert!(Args::try_parse_from(missing).is_err());
+        }
+        for flag in [
+            "--execute",
+            "--refund",
+            "--replace",
+            "--renew",
+            "--retry",
+            "--force",
+        ] {
+            let mut extra = args.to_vec();
+            extra.push(flag);
+            assert!(Args::try_parse_from(extra).is_err());
+        }
+        assert!(
+            Args::try_parse_from(["eef", "automation-occurrences", "archive-show", "receipt"])
+                .is_ok()
+        );
+    }
+    #[test]
     fn reusable_approval_cli_requires_all_bounds_and_cannot_start_work() {
         let args = [
             "eef",

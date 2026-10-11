@@ -444,10 +444,46 @@ evidence, not physical two-PC, real semantic bootstrap quality, general pipeline
 strong native termination or full measured-resource evidence. Previous
 intermittent input/busy failures remain unproven.
 
-Reservations consume declared authority permanently, including after unissued
-cancellation; terminal occurrence jobs currently cannot be removed. Safe
+At this reservation checkpoint, authority is consumed permanently, including
+after unissued cancellation; terminal occurrence jobs could not be removed. Safe
 archiving/retention, unresolved partial-work handling and timer lifecycle remain
 necessary follow-up work. No timer or automatic job creation is enabled. The
 remaining full roadmap and installer/Defender/Authenticode gates stay in scope.
 Installed nodes, releases/installers, feeds and browser assets are unchanged.
 Stable 0.4.0 is not claimed.
+
+## Explicit terminal occurrence archiving (2026-10-12)
+
+The subsequent archive increment adds eight tests, for **477** passing in
+each workspace/all-target feature mode (186 EEF library, 11 owner CLI,
+6 installer, 268 EEFN library, 6 node CLI). Its fresh default binaries/examples,
+formatting, diff, JavaScript syntax and backend/browser source guard also pass.
+The core uses the existing journal/admission gate; it is not a browser controller.
+
+Exact owner archive commands atomically retain validated completed or unissued-
+cancelled job evidence and remove the live job. Permanent reservation budgets,
+no-overlap proofs and original node/request tombstones remain. Insertion,
+deletion, quota and backward-clock failures roll back; stale, nonterminal,
+missing, future or unexpectedly reintroduced live evidence fails closed.
+Receipt inspection remains read-only after restart/expiry/lowered quotas.
+The bounded 2 MiB full snapshot retains private data and may add metadata bytes;
+archival is not compaction, byte reclamation, automatic retention or a refund.
+
+Public fixture `automation-occurrences-8i85cy` retains actual native `system.info`
+completion/receipt evidence and makes exactly one archive for 16 concurrent
+owner calls. It inspects the same proof across restart, archives unissued
+cancellation after revocation/runtime replacement, refuses original request
+replay/nonterminal removal/foreign-origin calls, and handles dropped/substituted/
+negative post-commit archive replies as uncertain. Exact receipt reuse neither
+refunds nor reactivates authority. This is local logical-node evidence, not
+physical two-PC or model quality. The preceding archive run `automation-occurrences-npmUJZ`
+also passed before the last two public refusal assertions were added.
+
+Current-build definitions/policies (`automation-definitions-Al9E8e`), input/
+answers (`request-input-sOCMdx`) and broader reviewed execution/recovery
+(`request-review-NPiW9N`) regressions pass. The last uses fake inference;
+previous intermittent input/busy failures remain unproven. Physical two-PC,
+timer/recurrence lifecycle, partial-work resolution, real bootstrap quality,
+heavy planning, measured resource limits, media/mesh/cluster and installer/
+Defender/Authenticode gates remain in scope. Installed nodes, published
+releases/feeds and browser assets are unchanged. Stable 0.4.0 is not claimed.

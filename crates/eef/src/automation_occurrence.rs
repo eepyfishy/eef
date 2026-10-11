@@ -67,6 +67,9 @@ impl Runtime {
             }
             self.engine
                 .reserve_occurrence(command.clone(), &self.instance_id, &policy.issuer_id)?
+        } else if matches!(command, OccurrenceCommand::Archive { .. }) {
+            self.engine
+                .archive_occurrence(command.clone(), &self.instance_id)?
         } else {
             self.engine
                 .store
@@ -94,6 +97,7 @@ pub(crate) fn report(
         runtime_id: runtime.into(),
         command: command.clone(),
         reservation,
+        archive: None,
         items,
         next_after,
         reused,

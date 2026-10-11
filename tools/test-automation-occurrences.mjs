@@ -32,6 +32,8 @@ async function json(url,body){const r=await fetch(url,{method:body?'POST':'GET',
 async function until(fn,label){const end=Date.now()+65000;while(Date.now()<end){if(proxyError)throw proxyError;try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,150));}throw Error('Timeout: '+label);}
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 function reservationArgs(c){return ['automation-occurrences','reserve','--policy',c.policy,'--policy-sha256',c.policy_sha256,'--job',c.job,'--revision',String(c.revision),'--plan-sha256',c.plan_sha256,'--operation-id',c.operation_id];}
+function archiveCommand(record,plan){return {operation:'archive',reservation:record.id,reservation_sha256:record.reservation_sha256,job:plan.plan_id,revision:plan.revision,operation_id:randomUUID()};}
+function archiveArgs(c){return ['automation-occurrences','archive','--reservation',c.reservation,'--reservation-sha256',c.reservation_sha256,'--job',c.job,'--revision',String(c.revision),'--operation-id',c.operation_id];}
 try{
  await new Promise(r=>tags.listen(0,'127.0.0.1',r));const [eefPort,gatewayPort]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${eefPort}`;
  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
@@ -76,9 +78,24 @@ try{
  await review.start({id:first.id,expected_revision:approved.revision,operation_id:randomUUID(),approval_sha256:approved.approval.approval_sha256});
  await until(async()=>(await review.inspect(first.id)).status==='completed','existing grant driver completes reserved system information');
  assert.equal((await json(a.url+'/api/status')).last_workload.capability,'system.info');
+ const terminalFirst=await review.inspect(first.id),firstArchiveCommand=archiveCommand(repeated.result.reservation,terminalFirst);
+ response=await fetch(eef+'/api/commands/automation-occurrences',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({schema_version:1,expected_runtime_id:runtime,command:firstArchiveCommand})});assert.equal(response.status,403);
+ response=await fetch(a.url+'/api/commands/automation-occurrences',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schema_version:1,expected_runtime_id:runtime,command:firstArchiveCommand})});assert.equal(response.status,404);
+ const archiveReplies=await Promise.all(Array.from({length:16},()=>json(eef+'/api/commands/automation-occurrences',{schema_version:1,expected_runtime_id:runtime,command:firstArchiveCommand})));
+ assert.equal(archiveReplies.filter(r=>!r.reused).length,1,'one atomic terminal archive');
+ for(const r of archiveReplies){assert.deepEqual(r.archive,archiveReplies[0].archive);assert.equal(r.execution_requested,false);assert.equal(r.timers_started,false);}
+ const firstArchive=(await owner(['automation-occurrences','archive-show',firstArchiveCommand.operation_id])).result.archive;
+ assert.deepEqual(firstArchive.terminal_job,terminalFirst,'actual native grant and completion retained');
+ assert.equal((await owner(reservationArgs(command))).result.reused,true,'archive cannot consume again');
+ assert.equal((await json(eef+'/api/jobs')).storage.occurrence_archive_count,1);
+ await local(a,['requests','submit','--text','Explicit occurrence status','--template','system_info','--node',a.id,'--operation-id',terminalFirst.goal.request_context.request_id],false);
+ assert.equal((await json(eef+'/api/jobs')).storage.occurrence_count,1);
  const secondReserved=await owner(reservationArgs(secondCommand));assert.equal(secondReserved.result.reservation.ordinal,2);
  await owner(['automation-policies','revoke',policy.id,'--revision','1','--operation-id',randomUUID()]);
  const p2=await review.inspect(second.id);
+ await owner(archiveArgs(archiveCommand(secondReserved.result.reservation,p2)),false);
+ assert.equal((await json(eef+'/api/jobs')).storage.occurrence_archive_count,1,'approved is not terminal proof');
+ assert.equal((await review.inspect(second.id)).status,'approved');
  assert(Date.now()<policy.expires_at_ms,'revocation is tested inside the original time window');
  const denied=await json(a.url+'/api/commands/requests/execute',{schema_version:1,expected_node_id:a.id,command:{id:second.id,expected_revision:p2.revision,operation_id:randomUUID(),approval_sha256:p2.approval.approval_sha256}});
  assert.equal(denied.success,false);assert.equal(Object.hasOwn(await review.inspect(second.id),'execution'),false);
@@ -94,9 +111,9 @@ try{
  proxy=httpServer(async(req,res)=>{try{
   if(req.url==='/api/diagnostics'){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(await json(eef+'/api/diagnostics')));}
   assert.equal(req.url,'/api/commands/automation-occurrences');posts++;let body='';for await(const b of req){body+=b;assert(body.length<=65536);}
-  const value=await json(eef+req.url,JSON.parse(body));assert(value.reservation);
+  const value=await json(eef+req.url,JSON.parse(body));assert(value.reservation||value.archive);
   if(proxyMode==='drop')return res.destroy();
-  if(proxyMode==='corrupt')value.reservation.approved_job.approval.issuer_id='forged';
+  if(proxyMode==='corrupt'){if(value.archive)value.archive.terminal_job.approval.issuer_id='forged';else value.reservation.approved_job.approval.issuer_id='forged';}
   if(proxyMode==='reject')res.statusCode=409;
   res.setHeader('Content-Type','application/json');res.end(JSON.stringify(value));
  }catch(e){proxyError=e;res.destroy();}});await new Promise(r=>proxy.listen(0,'127.0.0.1',r));
@@ -119,10 +136,27 @@ try{
  response=await fetch(eef+'/api/commands/requests/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schema_version:1,
   expected_runtime_id:(await json(eef+'/api/diagnostics')).runtime_id,command:{id:third.id,expected_revision:p3.revision,operation_id:randomUUID(),approval_sha256:p3.approval.approval_sha256}})});
  assert.equal(response.status,400);assert.match((await response.json()).error,/Delegated occurrence policy/);
+ assert.deepEqual((await owner(['automation-occurrences','archive-show',firstArchiveCommand.operation_id])).result.archive,firstArchive,'restart retains actual terminal evidence');
+ const secondTerminal=await review.inspect(second.id),secondArchiveCommand=archiveCommand(secondReserved.result.reservation,secondTerminal);
+ const secondArchive=(await owner(archiveArgs(secondArchiveCommand))).result.archive;
+ assert.equal(secondArchive.terminal_job.status,'cancelled');assert.equal(Object.hasOwn(secondArchive.terminal_job,'execution'),false);
+ await local(a,['jobs','stop',third.id]);
+ const thirdTerminal=await review.inspect(third.id),thirdArchiveCommand=archiveCommand(historical,thirdTerminal);
+ for(const mode of ['drop','corrupt','reject']){
+  proxyMode=mode;const before=posts;const uncertain=await owner(archiveArgs(thirdArchiveCommand),false,proxyConfig);if(proxyError)throw proxyError;
+  assert.equal(posts,before+1);assert.equal(uncertain.outcome_unknown,true);assert.equal(uncertain.automatically_retried,false);assert.equal(uncertain.result,null);
+  assert.equal((await owner(archiveArgs(thirdArchiveCommand))).result.reused,true);
+ }
+ const archivedStorage=(await json(eef+'/api/jobs')).storage;assert.equal(archivedStorage.occurrence_count,3);assert.equal(archivedStorage.occurrence_archive_count,3);
+ assert(archivedStorage.occurrence_archive_bytes>0);
+ assert.equal((await owner(reservationArgs(thirdCommand))).result.reused,true);
  assert.equal(JSON.stringify(await review.inspect(source.id)),sourceBefore);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,no_models:true,no_ui_controller:true,
   independent_compiled_jobs:true,immutable_source:true,one_concurrent_reservation:true,existing_grant_driver_execution:true,origin_scope_refusal:true,
-  no_overlap:true,revocation_start_fence:true,restart_start_fence:true,lost_substituted_negative_reply_inspection:true,no_automatic_dispatch:true,timers_started:false},null,2));
+  no_overlap:true,revocation_start_fence:true,restart_start_fence:true,lost_substituted_negative_reply_inspection:true,
+  actual_native_terminal_archive:true,unissued_cancellation_archive:true,one_concurrent_archive:true,archive_restart_evidence:true,archive_request_replay_refused:true,
+  archive_lost_substituted_negative_reply_inspection:true,archive_no_refund_or_reactivation:true,archive_nonterminal_refused:true,
+  archive_foreign_origin_refused:true,no_automatic_dispatch:true,timers_started:false},null,2));
  console.log('Automation occurrence validation passed: '+scratch);
 }finally{
  for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));

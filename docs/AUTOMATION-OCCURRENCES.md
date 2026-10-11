@@ -94,11 +94,53 @@ the old runtime's delegated authority. Historical inspection is not readiness.
 Live job authority must match its retained reservation; missing, future or
 damaged records/generation/ordinal history fail closed without repair or pruning.
 
-Current reserved occurrence jobs cannot be removed, including terminal ones:
-their lifecycle evidence is needed for overlap/replacement decisions. Safe
-terminal archiving/compaction and an explicit recovery path for unresolved
-partially issued work remain necessary usability/retention work. No hidden
-deletion or budget reset is implemented.
+Reserved jobs cannot use ordinary `jobs remove`: their evidence is needed for
+overlap/replacement decisions. The subsequent explicit archive path below moves
+proven terminal evidence out of live jobs without erasing it or resetting budgets.
+Unresolved partial work still cannot be archived or replaced.
+
+## Explicit terminal archiving (subsequent unreleased increment)
+
+After an actual completed reviewed job, or cancellation with **no issued attempt**,
+inspect its exact final revision and the original reservation ID/digest. Then:
+
+```powershell
+eef automation-occurrences archive --reservation RESERVATION_UUID --reservation-sha256 RESERVATION_HASH --job JOB_ID --revision TERMINAL_REVISION --operation-id ARCHIVE_UUID --json
+eef automation-occurrences archive-show ARCHIVE_UUID --json
+```
+
+These are owner commands on the same guarded endpoint, not node permission or
+remote-update commands. No provider, model, new approval or current unrevoked
+policy is needed to archive historical evidence. The current runtime envelope
+still must match. An active driver, stale revision, wrong reservation/hash/job,
+failed, interrupted, abandoned or partially issued/cancelled occurrence refuses
+archiving. A status label alone is not proof: normal compiler/approval/grant,
+acknowledgement/completion/recovery and task-result validation still applies.
+
+One transaction retains the **actual final job snapshot** and immutable archive
+receipt, removes the live job, and revalidates the entire occurrence history.
+It rolls back both writes on insertion/deletion/validation/quota failure or a
+backward commit clock. The terminal snapshot is never a resumable job. The
+original reservation, ordinal, policy generation and consumed run/duration/result
+allowances remain unchanged. Subsequent overlap checks use the validated archived
+proof. Missing, future, damaged or unexpectedly reintroduced live history fails
+closed; it cannot imply a refund or permission to replace unknown work.
+
+Reuse the **same** archive command/receipt after a lost, substituted or negative
+post-commit response; `archive-show` inspects it without mutation. Reuse remains
+read-only across restart, expiry and lowered quotas. A tombstone rejects opening
+a new job using the archived original node/request identity, even if the old
+input is repeated. Archive receipts and reservation receipts are distinct.
+
+Archives share logical storage/count quotas. One archive replaces one live job
+in the count, but does **not** free its evidence bytes; metadata may require
+additional quota headroom. Storage exposes `occurrence_archive_count` and
+`occurrence_archive_bytes` separately and includes them in available/over-limit
+accounting. An archive above **2 MiB** is refused before commit; the job remains.
+This bounded full-evidence stage is not payload compaction, private-data erasure,
+physical disk reclamation or automatic retention. Archive/show replies remain
+private (original input, parameters, results and native receipts); list pages
+still exclude those snapshots. No browser controller or automatic cleanup is added.
 
 ## Remaining work
 
@@ -110,12 +152,13 @@ reusable pipeline grants, bootstrap quality, measured full resource enforcement,
 strong native termination, peer/media/cluster behavior, physical two-PC and
 installer/Defender/Authenticode release acceptance remain in scope.
 
-## Evidence (2026-10-12)
+## Reservation checkpoint evidence (2026-10-12)
 
-Twelve new tests bring both final passing workspace/all-target feature-mode
-suites to 469: nine journal tests, two shared contract tests and one owner CLI
-test. The fresh default executable/example build, formatting, JavaScript syntax,
-diff and backend/browser source checks pass separately.
+The preceding reservation increment added twelve tests and was verified with
+469 passing tests in each workspace/all-target feature mode: nine journal tests,
+two shared contract tests and one owner CLI test. Its fresh default executable/
+example build, formatting, JavaScript syntax, diff and backend/browser source
+checks passed separately.
 
 Journal tests cover an actual new compiled job's approval and source preservation,
 exact historical receipt reuse, no overlap or cancellation refund, exhausted
@@ -154,3 +197,38 @@ two-PC, real interpreter quality, general pipeline, hard native termination,
 measured full quotas, timer lifecycle or installer/signing acceptance. Installed
 nodes, published versions/installers, feeds and browser assets are unchanged.
 Stable 0.4.0 remains open.
+
+## Terminal archive evidence (2026-10-12)
+
+Eight additional tests bring both passing workspace/all-target feature modes
+to **477** (EEF library 186, owner CLI 11, installer 6, EEFN library 268,
+node CLI 6). Five journal tests cover terminal archival across expiry/restart,
+permanent budget consumption and request tombstones, exact receipt conflicts,
+insertion/deletion/commit-clock rollback, stale references and nonterminal
+refusal, byte-quota rollback/shared count replacement, and missing/future/
+reintroduced history refusal. Two shared contract tests check bounded strict
+private evidence and correlated non-dispatch replies; the CLI test requires
+all removal references and rejects execution/refund/retry/force options.
+
+The fresh default executable/example build, formatting, diff, script syntax
+and backend/browser source guard pass. Current-build definitions/policies
+(`automation-definitions-Al9E8e`), input/answers (`request-input-sOCMdx`) and
+the broader reviewed execution/recovery fixture (`request-review-NPiW9N`)
+pass separately. The last uses fake inference, not real semantic quality.
+The earlier intermittent input/busy failures remain unproven.
+
+The final public fixture (`automation-occurrences-8i85cy`) uses local pinned-TLS
+logical nodes, not physical two-PC acceptance. It retains actual native
+system-information completion/receipts, archives exactly
+once across 16 concurrent owner calls, inspects unchanged proof after restart,
+archives unissued cancellation even after policy revocation/runtime replacement,
+refuses original-request replay, nonterminal removal and foreign-origin calls,
+and preserves uncertainty for dropped/substituted/negative post-commit archive
+responses. Exact command reuse finds one archive and never refunds or reactivates
+authority. The preceding archive fixture (`automation-occurrences-npmUJZ`) also
+passed before the last two public refusal assertions were added.
+
+These checks do not establish physical two-PC, hard native termination,
+measured full quotas, timer activation or
+installer/Defender/Authenticode acceptance. No installed node, version/feed,
+browser asset, model or release artifact changed. Stable 0.4.0 remains open.

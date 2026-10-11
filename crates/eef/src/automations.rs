@@ -416,7 +416,7 @@ pub(super) fn read_definition(connection: &Connection, id: &str) -> Result<Defin
 }
 pub(super) fn count(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT (SELECT count(*) FROM durable_jobs)+(SELECT count(*) FROM automation_definitions)+(SELECT count(*) FROM automation_authorizations)+(SELECT count(*) FROM automation_occurrences)",
+        "SELECT (SELECT count(*) FROM durable_jobs)+(SELECT count(*) FROM automation_definitions)+(SELECT count(*) FROM automation_authorizations)+(SELECT count(*) FROM automation_occurrences)+(SELECT count(*) FROM automation_occurrence_archives)",
         [],
         |r| r.get(0),
     )?;
@@ -424,7 +424,7 @@ pub(super) fn count(connection: &Connection) -> Result<usize> {
 }
 pub(super) fn definition_bytes(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT (SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM automation_authorizations)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences)",
+        "SELECT (SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM automation_authorizations)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrence_archives)",
         [],
         |r| r.get(0),
     )?;

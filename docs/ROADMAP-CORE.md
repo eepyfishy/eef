@@ -158,6 +158,15 @@ cannot silently create replacement occurrences. This adds manual owner admission
 not timers, automatic job creation, terminal archiving, strong native termination,
 measured full resource quotas or completed recurring automation.
 
+The subsequent explicit terminal archive command atomically retains validated
+completed or unissued-cancelled evidence and removes the live job. Budget
+consumption, immutable reservation history and original request tombstones remain;
+restart or lost responses cannot recreate work. It shares count/byte accounting
+and refuses stale, damaged, future or unresolved evidence. Full snapshots are
+bounded to 2 MiB; payload compaction, automated retention and partial-work
+resolution remain open. This improves the durable lifecycle foundation, without
+claiming timer activation or the full recurring-automation milestone.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

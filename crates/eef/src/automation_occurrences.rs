@@ -1,10 +1,12 @@
 //! Atomic budget consumption and delegated approval in the existing journal.
 use super::*;
 use eefn::automation_occurrence::{Delegation, OccurrenceCommand, Reservation};
+#[path = "automation_occurrence_archives.rs"]
+mod archives;
 
 pub(super) fn bytes(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences",
+        "SELECT (SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrence_archives)",
         [],
         |r| r.get(0),
     )?;
@@ -107,6 +109,13 @@ fn live_matches(record: &Reservation, plan: &Plan) -> Result<()> {
     Ok(())
 }
 pub(super) fn validate_job(connection: &Connection, plan: &Plan) -> Result<()> {
+    if connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM automation_occurrence_archives WHERE job_id=?1)",
+        [&plan.plan_id],
+        |r| r.get::<_, bool>(0),
+    )? {
+        bail!("Archived job unexpectedly live; no replay or replacement");
+    }
     let id: Option<String> = connection
         .query_row(
             "SELECT reservation_id FROM automation_occurrences WHERE job_id=?1",
@@ -126,21 +135,13 @@ pub(super) fn validate_job(connection: &Connection, plan: &Plan) -> Result<()> {
     Ok(())
 }
 fn records(connection: &Connection) -> Result<Vec<Reservation>> {
+    archives::validate_all(connection)?;
     let mut statement = connection
         .prepare("SELECT reservation_id FROM automation_occurrences ORDER BY reservation_id")?;
     let mut result = Vec::new();
     for id in statement.query_map([], |r| r.get::<_, String>(0))? {
         let record = row(connection, &id?)?.context("Missing reservation")?;
-        let raw: String = connection
-            .query_row(
-                "SELECT plan_json FROM durable_jobs WHERE job_id=?1",
-                [record.approved_job["plan_id"].as_str().unwrap()],
-                |r| r.get(0),
-            )
-            .context("Occurrence job missing; no replacement or refund")?;
-        let plan: Plan = serde_json::from_str(&raw)?;
-        validate_retained_review(&plan)?;
-        live_matches(&record, &plan)?;
+        archives::retained_plan(connection, &record)?;
         result.push(record);
     }
     let mut groups = std::collections::BTreeMap::<String, Vec<&Reservation>>::new();
@@ -187,6 +188,12 @@ fn records(connection: &Connection) -> Result<Vec<Reservation>> {
 pub(super) fn validate_all(connection: &Connection) -> Result<()> {
     records(connection)?;
     Ok(())
+}
+pub(super) fn refuse_archived_request(
+    connection: &Connection,
+    origin: &eefn::context::RequestContext,
+) -> Result<()> {
+    archives::refuse_request(connection, origin)
 }
 pub(super) fn fence(
     connection: &Connection,
@@ -271,6 +278,9 @@ impl JobStore {
         let retained = records(&connection)?;
         let (mut reservation, mut items, mut next, mut reused) = (None, Vec::new(), None, false);
         match &command {
+            OccurrenceCommand::Archive { .. } | OccurrenceCommand::ArchiveShow { .. } => {
+                return archives::checkpoint(self, &connection, &command, runtime, clock);
+            }
             OccurrenceCommand::Show { id } => {
                 reservation = Some(row(&connection, id)?.context("Occurrence unavailable")?);
             }
@@ -363,15 +373,8 @@ impl JobStore {
                         .iter()
                         .filter(|r| r.delegation.definition_id == *definition)
                     {
-                        let p = read(
-                            &connection,
-                            previous.approved_job["plan_id"].as_str().unwrap(),
-                        )?;
-                        let resolved = (p.status == PlanStatus::Completed
-                            && p.tasks.iter().all(|t| t.status == TaskStatus::Completed))
-                            || (p.status == PlanStatus::Cancelled
-                                && p.execution.as_ref().is_none_or(|e| e.attempts.is_empty()));
-                        if !resolved {
+                        let p = archives::retained_plan(&connection, previous)?;
+                        if !archives::resolved(&p) {
                             bail!(
                                 "Previous occurrence is unfinished/uncertain; no overlap or replacement"
                             );
@@ -556,10 +559,307 @@ mod tests {
             "authorization_bytes",
             "authorization_reserved_bytes",
             "occurrence_bytes",
+            "occurrence_archive_bytes",
         ]
         .iter()
         .map(|k| value[k].as_u64().unwrap() as usize)
         .sum()
+    }
+    fn archive_command(record: &serde_json::Value, plan: &Plan) -> OccurrenceCommand {
+        OccurrenceCommand::Archive {
+            reservation: record["id"].as_str().unwrap().into(),
+            reservation_sha256: record["reservation_sha256"].as_str().unwrap().into(),
+            job: plan.plan_id.clone(),
+            revision: plan.revision,
+            operation_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+    fn archive(
+        store: &JobStore,
+        command: OccurrenceCommand,
+        policy: &Authorization,
+    ) -> serde_json::Value {
+        store
+            .occurrence_checkpoint(command, &policy.runtime_id, None, policy.expires_at_ms + 1)
+            .unwrap()
+    }
+    #[test]
+    fn terminal_archive_removes_only_live_history_and_never_refunds_or_recreates() {
+        let store = JobStore::in_memory().unwrap();
+        let (engine, source, policy) = setup(store.clone());
+        let original = json!(store.get(&source.plan_id).unwrap());
+        for ordinal in 1..=3 {
+            let job = fresh(&engine);
+            let reserve_cmd = command(&policy, &job);
+            let saved = save(&store, &policy, &job, &reserve_cmd);
+            assert_eq!(saved["reservation"]["ordinal"], ordinal);
+            let cancelled = engine.cancel(&job.plan_id).unwrap();
+            let cmd = archive_command(&saved["reservation"], &cancelled);
+            let result = archive(&store, cmd.clone(), &policy);
+            assert!(eefn::automation_occurrence::confirmed(
+                &result,
+                &cmd,
+                &policy.runtime_id
+            ));
+            assert_eq!(result["archive"]["terminal_job"], json!(cancelled));
+            assert!(store.get(&job.plan_id).is_err());
+            let usage = store.usage().unwrap();
+            assert_eq!(usage["count"], 1);
+            assert_eq!(usage["occurrence_count"], ordinal);
+            assert_eq!(usage["occurrence_archive_count"], ordinal);
+            assert_eq!(archive(&store, cmd.clone(), &policy)["reused"], true);
+            assert_eq!(store.usage().unwrap(), usage);
+            assert_eq!(
+                archive(&store, reserve_cmd, &policy)["reservation"],
+                saved["reservation"]
+            );
+            let show = OccurrenceCommand::ArchiveShow {
+                id: cmd.receipt().unwrap().into(),
+            };
+            let inspected = archive(&store, show.clone(), &policy);
+            assert!(eefn::automation_occurrence::confirmed(
+                &inspected,
+                &show,
+                &policy.runtime_id
+            ));
+            assert_eq!(inspected["archive"], result["archive"]);
+            let ctx = job.goal.request_context.as_ref().unwrap();
+            let draft = job.request_review.as_ref().unwrap();
+            let replay = crate::request_drafts::open(
+                &engine,
+                json!({"schema_version":1,
+                "original_text":draft.original_text,"proposal":draft.proposals[0].proposal}),
+                ctx,
+                &["system.info".into()],
+            );
+            assert!(
+                replay
+                    .unwrap_err()
+                    .to_string()
+                    .contains("archived occurrence")
+            );
+            let mut conflict = cmd;
+            if let OccurrenceCommand::Archive { revision, .. } = &mut conflict {
+                *revision += 1;
+            }
+            assert!(
+                store
+                    .occurrence_checkpoint(
+                        conflict,
+                        &policy.runtime_id,
+                        None,
+                        policy.expires_at_ms + 1
+                    )
+                    .is_err()
+            );
+        }
+        let fourth = fresh(&engine);
+        assert!(
+            store
+                .occurrence_checkpoint(
+                    command(&policy, &fourth),
+                    &policy.runtime_id,
+                    Some(&policy.issuer_id),
+                    at(&policy, &fourth)
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("budget exhausted")
+        );
+        assert_eq!(json!(store.get(&source.plan_id).unwrap()), original);
+    }
+    #[test]
+    fn archive_write_delete_and_clock_faults_leave_the_job_and_budget_unchanged() {
+        for fault in ["insert", "delete", "clock"] {
+            let store = JobStore::in_memory().unwrap();
+            let (engine, _source, policy) = setup(store.clone());
+            let job = fresh(&engine);
+            let saved = save(&store, &policy, &job, &command(&policy, &job));
+            let cancelled = engine.cancel(&job.plan_id).unwrap();
+            let cmd = archive_command(&saved["reservation"], &cancelled);
+            let before = store.usage().unwrap();
+            if fault != "clock" {
+                let trigger = if fault == "insert" {
+                    "BEFORE INSERT ON automation_occurrence_archives"
+                } else {
+                    "BEFORE DELETE ON durable_jobs"
+                };
+                store.connection.lock().unwrap().execute_batch(&format!("CREATE TRIGGER archive_fault {trigger} BEGIN SELECT RAISE(FAIL,'isolated archive fault'); END;")).unwrap();
+            }
+            let calls = std::cell::Cell::new(0u8);
+            let now = policy.expires_at_ms + 1;
+            let result =
+                store.occurrence_checkpoint_clock(cmd.clone(), &policy.runtime_id, None, || {
+                    let count = calls.get();
+                    calls.set(count + 1);
+                    if fault == "clock" && count > 0 {
+                        now - 1
+                    } else {
+                        now
+                    }
+                });
+            assert!(result.is_err(), "{fault}");
+            assert_eq!(json!(store.get(&job.plan_id).unwrap()), json!(cancelled));
+            assert_eq!(store.usage().unwrap(), before);
+            if fault != "clock" {
+                store
+                    .connection
+                    .lock()
+                    .unwrap()
+                    .execute_batch("DROP TRIGGER archive_fault")
+                    .unwrap();
+            }
+            assert_eq!(archive(&store, cmd, &policy)["reused"], false);
+        }
+    }
+    #[test]
+    fn exact_terminal_revision_digest_and_proof_are_required_before_archiving() {
+        let store = JobStore::in_memory().unwrap();
+        let (engine, _source, policy) = setup(store.clone());
+        let job = fresh(&engine);
+        let saved = save(&store, &policy, &job, &command(&policy, &job));
+        let approved = store.get(&job.plan_id).unwrap();
+        let cmd = archive_command(&saved["reservation"], &approved);
+        assert!(
+            store
+                .occurrence_checkpoint(cmd, &policy.runtime_id, None, policy.expires_at_ms + 1)
+                .is_err()
+        );
+        let cancelled = engine.cancel(&job.plan_id).unwrap();
+        for field in ["revision", "reservation_sha256", "job", "reservation"] {
+            let mut bad = json!(archive_command(&saved["reservation"], &cancelled));
+            bad[field] = match field {
+                "revision" => json!(cancelled.revision - 1),
+                "reservation_sha256" => json!("a".repeat(64)),
+                "job" => json!("a".repeat(32)),
+                _ => json!(uuid::Uuid::new_v4().to_string()),
+            };
+            assert!(
+                store
+                    .occurrence_checkpoint(
+                        serde_json::from_value(bad).unwrap(),
+                        &policy.runtime_id,
+                        None,
+                        policy.expires_at_ms + 1
+                    )
+                    .is_err()
+            );
+        }
+        assert_eq!(store.usage().unwrap()["occurrence_archive_count"], 0);
+        // Status alone is not terminal evidence.
+        let mut forged = cancelled;
+        forged.status = PlanStatus::Completed;
+        for t in &mut forged.tasks {
+            t.status = TaskStatus::Completed;
+        }
+        assert!(!archives::resolved(&forged));
+        for status in [
+            PlanStatus::Failed,
+            PlanStatus::Interrupted,
+            PlanStatus::Abandoned,
+            PlanStatus::Stopping,
+        ] {
+            forged.status = status;
+            assert!(!archives::resolved(&forged));
+        }
+    }
+    #[test]
+    fn archive_quota_failure_is_atomic_and_replacement_preserves_shared_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.db");
+        Connection::open(&path).unwrap();
+        let store = JobStore::open(&path, 20, 1024 * 1024).unwrap();
+        let (engine, _source, policy) = setup(store.clone());
+        let job = fresh(&engine);
+        let saved = save(&store, &policy, &job, &command(&policy, &job));
+        let cancelled = engine.cancel(&job.plan_id).unwrap();
+        let cmd = archive_command(&saved["reservation"], &cancelled);
+        let before = store.usage().unwrap();
+        let count = automations::count(&store.connection.lock().unwrap()).unwrap();
+        drop(engine);
+        drop(store);
+        let store = JobStore::open(&path, count, used(&before)).unwrap();
+        assert!(
+            store
+                .occurrence_checkpoint(
+                    cmd.clone(),
+                    &policy.runtime_id,
+                    None,
+                    policy.expires_at_ms + 1
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("quota")
+        );
+        assert_eq!(store.usage().unwrap()["occurrence_archive_count"], 0);
+        assert_eq!(json!(store.get(&job.plan_id).unwrap()), json!(cancelled));
+        drop(store);
+        let store = JobStore::open(&path, count, used(&before) + 4096).unwrap();
+        archive(&store, cmd.clone(), &policy);
+        assert_eq!(
+            automations::count(&store.connection.lock().unwrap()).unwrap(),
+            count
+        );
+        drop(store);
+        let store = JobStore::open(&path, 1, 1024).unwrap();
+        let new_runtime = uuid::Uuid::new_v4().to_string();
+        let reused = store
+            .occurrence_checkpoint(cmd, &new_runtime, None, policy.expires_at_ms + 100)
+            .unwrap();
+        assert_eq!(reused["reused"], true);
+        assert_eq!(reused["archive"]["runtime_id"], policy.runtime_id);
+        assert!(store.get(&job.plan_id).is_err());
+    }
+    #[test]
+    fn missing_future_or_reintroduced_terminal_evidence_fails_closed_without_repair() {
+        for fault in ["missing", "future", "live"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("jobs.db");
+            Connection::open(&path).unwrap();
+            let store = JobStore::open(&path, 20, 1024 * 1024).unwrap();
+            let (engine, _source, policy) = setup(store.clone());
+            let job = fresh(&engine);
+            let saved = save(&store, &policy, &job, &command(&policy, &job));
+            let terminal = engine.cancel(&job.plan_id).unwrap();
+            let result = archive(
+                &store,
+                archive_command(&saved["reservation"], &terminal),
+                &policy,
+            );
+            {
+                let connection = store.connection.lock().unwrap();
+                match fault {
+                    "missing" => {
+                        connection
+                            .execute("DELETE FROM automation_occurrence_archives", [])
+                            .unwrap();
+                    }
+                    "future" => {
+                        let mut raw = result["archive"].clone();
+                        raw["schema_version"] = json!(2);
+                        connection
+                            .execute(
+                                "UPDATE automation_occurrence_archives SET record_json=?1",
+                                [serde_json::to_string(&raw).unwrap()],
+                            )
+                            .unwrap();
+                    }
+                    _ => {
+                        connection.execute("INSERT INTO durable_jobs(job_id,plan_json,updated_ms,reserved_bytes) VALUES(?1,?2,?3,0)",params![terminal.plan_id,serde_json::to_string(&terminal).unwrap(),terminal.updated_at_ms as i64]).unwrap();
+                    }
+                }
+            }
+            drop(engine);
+            drop(store);
+            assert!(JobStore::open(&path, 20, 1024 * 1024).is_err(), "{fault}");
+            let raw = Connection::open(&path).unwrap();
+            assert_eq!(
+                raw.query_row("SELECT count(*) FROM automation_occurrences", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                1
+            );
+        }
     }
     #[test]
     fn atomic_reservation_is_new_job_approval_not_source_mutation_or_dispatch() {
