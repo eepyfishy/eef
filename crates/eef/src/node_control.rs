@@ -97,7 +97,9 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
         "mutation_requested":false,"acknowledged":false,"outcome_unknown":false});
     if matches!(
         request.command,
-        ModelCommand::Interpreter { .. } | ModelCommand::ClearInterpreter {}
+        ModelCommand::Interpreter { .. }
+            | ModelCommand::ClearInterpreter {}
+            | ModelCommand::CpuThreads { .. }
     ) {
         result["command"] = serde_json::to_value(&request.command)?;
     }
@@ -163,7 +165,9 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
             if valid(&reply)
                 && (!matches!(
                     command.command,
-                    ModelCommand::Interpreter { .. } | ModelCommand::ClearInterpreter {}
+                    ModelCommand::Interpreter { .. }
+                        | ModelCommand::ClearInterpreter {}
+                        | ModelCommand::CpuThreads { .. }
                 ) || eefn::model_selection::confirmed_interpreter(
                     &reply["data"],
                     &request.node_id,

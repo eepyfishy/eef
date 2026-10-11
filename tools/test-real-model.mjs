@@ -68,10 +68,30 @@ try{
  const hash=createHash('sha256');for await(const chunk of createReadStream(modelPath))hash.update(chunk);
  assert.equal(hash.digest('hex'),entry.sha256,'existing artifacts must still pass exact verification');
  console.log('Verified test artifact: '+modelPath);
- const selected=(await json(node+'/api/config')).config;selected.models.llamacpp.slots=[{model_id:entry.id,model_path:modelPath,port:modelPort,context:2048,gpu_layers:0}];
- await json(node+'/api/config',{config:selected},'PUT');await cli('eefn',configPath,['restart','--wait-seconds','60']);
+ // Public selection and tuning commands; no config JSON edits for these settings.
+ await cli('eefn',configPath,['models','select-gguf','--model',entry.id,'--file',modelPath,'--port',String(modelPort),'--context','2048','--cpu-threads','4']);
+ const beforeTuning=await readFile(configPath,'utf8'),beforeRuntime=(await json(node+'/api/diagnostics')).runtime_id;
+ const deniedCpu=await json(eef+`/api/node/${initial.node_id}/invoke`,{capability:'node.configure',action:'model_command',params:{schema_version:1,expected_node_id:initial.node_id,command:{operation:'cpu_threads',model_id:entry.id,threads:2}},timeout:10});
+ assert.equal(deniedCpu.data.error_code,'approval_required');assert.equal(await readFile(configPath,'utf8'),beforeTuning);
+ const tuned=await cli('eefn',configPath,['models','cpu-threads','--model',entry.id,'--threads','2']);
+ assert.equal(tuned.saved_selections.find(m=>m.model_id===entry.id).cpu_threads,2);
+ assert(!tuned.registered_models.some(m=>m.model_id===entry.id),'saved tuning cannot load a model');
+ assert.equal((await json(node+'/api/diagnostics')).runtime_id,beforeRuntime);
+ assert.equal((await cli('eefn',configPath,['models','cpu-threads','--model',entry.id,'--threads','2'])).changed,false);
+ await cli('eefn',configPath,['restart','--wait-seconds','60']);
  const ready=async()=>{const status=await json(node+'/api/status');const models=(await json(eef+'/api/commands/models')).nodes.find(n=>n.node_id===initial.node_id)?.models;return status.connection.state==='connected'&&models?.some(m=>m.instance.model_id===entry.id&&m.lifecycle==='ready');};
  await until(ready,'real CPU model ready and registered',330000);
+ const applied=await cli('eefn',configPath,['models','show']);
+ assert.equal(applied.registered_models.find(m=>m.model_id===entry.id).cpu_threads,2);
+ assert.equal((await json(eef+'/api/commands/models')).nodes.find(n=>n.node_id===initial.node_id).models.find(m=>m.instance.model_id===entry.id).cpu_threads,2);
+ if(process.platform==='win32'){
+  const runtime=(await json(node+'/api/diagnostics')).runtime_id;assert.equal(typeof runtime,'string');
+  const owner=children.find(c=>c.spawnargs?.includes('--no-ui')&&c.spawnargs[0].endsWith('eefn.exe'));assert(owner?.pid);
+  const {execFile}=await import('node:child_process');const {promisify}=await import('node:util');
+  const {stdout}=await promisify(execFile)('powershell.exe',['-NoProfile','-NonInteractive','-Command',
+   `$cpuProcesses=@(Get-CimInstance Win32_Process -Filter "ParentProcessId=${owner.pid}" | Where-Object { $_.Name -eq 'llama-server.exe' }); if ($cpuProcesses.Count -eq 1) { $cpuProcesses[0].CommandLine }`],{windowsHide:true,timeout:10000,maxBuffer:65536});
+  assert.match(stdout,/--threads\s+2\b/);assert.match(stdout,/--threads-batch\s+2\b/);assert.match(stdout,/-ngl\s+0\b/);
+ }
  const reviewed=reviewedFixture(eef,node,initial.node_id);
  const infer=async(prompt,max_tokens)=>{
   const plan=await reviewed.save({template:'generate_text',params:{model_id:entry.id,prompt,max_tokens,temperature:0},constraints:{node_id:initial.node_id,backend:'llamacpp'}},prompt);
@@ -89,11 +109,15 @@ try{
  await until(ready,'restart selected real model',330000);
  assert.deepEqual(await reviewed.get(first.id),first.metadata,'restart cannot replay completed work');
  assert.deepEqual(await reviewed.result(first.id),first.report,'retained result survives replacement session');
+ assert.equal((await cli('eefn',configPath,['models','show'])).registered_models.find(m=>m.model_id===entry.id).cpu_threads,2);
  const second=await infer('Say hello.',16);
- const stopped=(await json(node+'/api/config')).config;stopped.models.llamacpp.slots=[];await json(node+'/api/config',{config:stopped},'PUT');await cli('eefn',configPath,['restart','--wait-seconds','60']);
+ const auto=await cli('eefn',configPath,['models','cpu-threads','--model',entry.id,'--auto']);
+ assert.equal(auto.saved_selections.find(m=>m.model_id===entry.id).cpu_threads,undefined);
+ assert.equal(auto.registered_models.find(m=>m.model_id===entry.id).cpu_threads,2,'reset is saved only until restart');
+ await cli('eefn',configPath,['models','remove','--backend','llamacpp','--model',entry.id]);await cli('eefn',configPath,['restart','--wait-seconds','60']);
  await until(async()=>{const s=await json(node+'/api/status');return s.connection?.state==='connected'&&s.models.length===0;},'stop selected model');
  await reviewed.cleanup(first.id);await reviewed.cleanup(second.id);
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,model:entry.id,bytes:entry.bytes,sha256:entry.sha256,real_cpu_inference:true,model_quality_accepted:false,reused_verified_artifact:!!reused,model_downloads:!reused,pinned_tls:true,reviewed_grants:true,reply:content,stable_identity:true,verified_restart_with_selected_model:true,retained_result_after_restart:true,completed_work_not_replayed:true,model_withdrawal:true},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,model:entry.id,bytes:entry.bytes,sha256:entry.sha256,real_cpu_inference:true,model_quality_accepted:false,reused_verified_artifact:!!reused,model_downloads:!reused,pinned_tls:true,reviewed_grants:true,reply:content,stable_identity:true,verified_restart_with_selected_model:true,retained_result_after_restart:true,completed_work_not_replayed:true,model_withdrawal:true,selection_by_owner_command:true,cpu_threads:2,saved_applied_threads_checked:true,remote_tuning_refusal_checked:true,explicit_cpu_launch_arguments_checked:process.platform==='win32',resource_quota_enforced:false},null,2));
  console.log('Real model validation passed: '+scratch);
 }finally{
  for(const child of children)if(child.exitCode===null){await new Promise(r=>{const stop=spawn('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});stop.on('exit',r);stop.on('error',r);});}

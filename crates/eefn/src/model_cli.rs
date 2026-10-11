@@ -18,6 +18,17 @@ pub enum ModelsAction {
     },
     /// Remove the interpreter role without removing models or other roles.
     ClearInterpreter,
+    /// Set local GGUF generation/prompt workers; save only, restart separately.
+    CpuThreads {
+        #[arg(long)]
+        model: String,
+        #[arg(long, required_unless_present = "auto", conflicts_with = "auto",
+            value_parser = clap::value_parser!(u16).range(1..=256))]
+        threads: Option<u16>,
+        /// Restore backend defaults, not a measured CPU budget.
+        #[arg(long)]
+        auto: bool,
+    },
     /// Select an Ollama model ID. Installation/availability is checked on connection.
     SelectOllama {
         #[arg(long)]
@@ -43,6 +54,8 @@ pub enum ModelsAction {
         gpu_layers: i32,
         #[arg(long, default_value_t = 4096)]
         context: u32,
+        #[arg(long, value_parser = clap::value_parser!(u16).range(1..=256))]
+        cpu_threads: Option<u16>,
         #[arg(long = "capability")]
         capabilities: Vec<String>,
         #[arg(long = "role")]
@@ -107,6 +120,10 @@ impl ModelsAction {
                 model_id: model.clone(),
             },
             ModelsAction::ClearInterpreter => ModelCommand::ClearInterpreter {},
+            ModelsAction::CpuThreads { model, threads, .. } => ModelCommand::CpuThreads {
+                model_id: model.clone(),
+                threads: *threads,
+            },
             ModelsAction::Provider { provider } => ModelCommand::Provider {
                 provider: provider.clone(),
             },
@@ -129,6 +146,7 @@ impl ModelsAction {
                 port,
                 gpu_layers,
                 context,
+                cpu_threads,
                 capabilities,
                 roles,
             } => ModelCommand::SelectGguf {
@@ -139,6 +157,7 @@ impl ModelsAction {
                     port: port.unwrap_or(0),
                     gpu_layers: *gpu_layers,
                     context: *context,
+                    cpu_threads: *cpu_threads,
                     gpu_vram_mb: 0,
                     hints: hints(capabilities, roles),
                 },
@@ -173,6 +192,60 @@ impl ModelsAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cpu_thread_cli_requires_exact_model_and_explicit_bounded_or_auto_choice() {
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(subcommand)]
+            action: ModelsAction,
+        }
+        use clap::Parser;
+        for args in [
+            vec!["models", "cpu-threads", "--model", "local"],
+            vec!["models", "cpu-threads", "--threads", "4"],
+            vec![
+                "models",
+                "cpu-threads",
+                "--model",
+                "local",
+                "--threads",
+                "0",
+            ],
+            vec![
+                "models",
+                "cpu-threads",
+                "--model",
+                "local",
+                "--threads",
+                "257",
+            ],
+            vec![
+                "models",
+                "cpu-threads",
+                "--model",
+                "local",
+                "--threads",
+                "4",
+                "--auto",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        for (choice, expected) in [(vec!["--threads", "4"], Some(4)), (vec!["--auto"], None)] {
+            let mut args = vec!["models", "cpu-threads", "--model", "local"];
+            args.extend(choice);
+            let ModelCommand::CpuThreads { model_id, threads } = Cli::try_parse_from(args)
+                .unwrap()
+                .action
+                .to_command(false)
+                .unwrap()
+            else {
+                panic!("wrong command")
+            };
+            assert_eq!(model_id, "local");
+            assert_eq!(threads, expected);
+        }
+    }
     #[test]
     fn interpreter_cli_requires_an_explicit_existing_model_identity() {
         use clap::Parser;
@@ -227,6 +300,7 @@ mod tests {
             port: None,
             gpu_layers: 0,
             context: 4096,
+            cpu_threads: None,
             capabilities: vec![],
             roles: vec![],
         };

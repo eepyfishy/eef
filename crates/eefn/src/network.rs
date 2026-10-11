@@ -249,6 +249,8 @@ pub struct PeerModel {
     pub modality: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_metadata: Option<crate::model_metadata::ModelMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_threads: Option<u16>,
 }
 
 impl PeerModel {
@@ -336,6 +338,18 @@ impl PeerRecord {
                     backend: field(model, "backend", 64)?,
                     modality: field(model, "modality", 64)?,
                     model_metadata,
+                    cpu_threads: {
+                        let threads: Option<u16> = model
+                            .get("cpu_threads")
+                            .map(|value| serde_json::from_value(value.clone()))
+                            .transpose()?
+                            .flatten();
+                        crate::model_server::validate_cpu_threads(threads)?;
+                        if threads.is_some() && model["backend"] != "llamacpp" {
+                            bail!("CPU thread settings require a local GGUF backend")
+                        }
+                        threads
+                    },
                 });
             }
         }
@@ -366,6 +380,32 @@ pub struct CommandRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cpu_thread_advertisements_are_optional_bounded_and_not_model_estimates() {
+        for threads in [serde_json::Value::Null, serde_json::json!(4)] {
+            let value = serde_json::json!({"node_id":"node","models":[{"model_id":"m","backend":"llamacpp","cpu_threads":threads}]});
+            let model = PeerRecord::from_registration(&value)
+                .unwrap()
+                .models
+                .remove(0);
+            assert!(
+                model
+                    .normalized_metadata()
+                    .resource_estimates
+                    .ram_mb
+                    .is_none()
+            );
+            assert_eq!(serde_json::to_value(model.cpu_threads).unwrap(), threads);
+        }
+        for (backend, threads) in [
+            ("llamacpp", serde_json::json!(0)),
+            ("llamacpp", serde_json::json!(257)),
+            ("ollama", serde_json::json!(4)),
+            ("llamacpp", serde_json::json!("4")),
+        ] {
+            assert!(PeerRecord::from_registration(&serde_json::json!({"node_id":"node","models":[{"model_id":"m","backend":backend,"cpu_threads":threads}]})).is_err());
+        }
+    }
     #[test]
     fn remote_ids_preserve_exact_bytes_but_reject_reserved_or_malformed_identities() {
         for id in [

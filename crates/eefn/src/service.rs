@@ -544,7 +544,11 @@ impl NodeService {
             let record = crate::network::PeerRecord::from_registration(
                 &json!({"node_id":self.node_id,"models":models}),
             )?;
-            Some(record.models.into_iter().map(|model|json!({"backend":model.backend,"model_id":model.model_id,"model_metadata":model.normalized_metadata()})).collect::<Vec<_>>())
+            Some(record.models.into_iter().map(|model| {
+                let mut value = json!({"backend":model.backend,"model_id":model.model_id,"model_metadata":model.normalized_metadata()});
+                if let Some(threads) = model.cpu_threads { value["cpu_threads"] = json!(threads); }
+                value
+            }).collect::<Vec<_>>())
         } else {
             None
         };

@@ -356,6 +356,11 @@ try{
     forwarded++;
     const response=await fetch(node+req.url,{method:req.method,headers:{'Content-Type':'application/json'},body,signal:AbortSignal.timeout(15000)});
     accepted=await response.json();
+    if(replyMode==='cpu-corrupt'){
+     const substituted=structuredClone(accepted);
+     substituted.saved_selections.find(m=>m.backend==='llamacpp').cpu_threads=7;
+     res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(substituted));
+    }
     if(replyMode==='role-corrupt'){
      const substituted=structuredClone(accepted);
      substituted.saved_selections[0].model_metadata.roles=['request_interpreter'];
@@ -400,6 +405,39 @@ try{
    const oldRole=await nodeCommand(['clear-interpreter'],false);
    assert.equal(oldRole.error_code,'unsupported_command');assert.equal(oldRole.outcome_unknown,false);assert.equal(forwarded,beforeRoleForward+2);
    await writeFile(marker,originalMarker);assert.equal(requests.length,roleCount,'role inspection/uncertainty must not infer or replay');
+   // CPU settings use the same owner commands, exact saved-value confirmation,
+   // and no-replay boundary. The tiny file is never loaded as a model here.
+   const cpuFile=join(scratch,'PRIVATE-cpu-fixture.gguf');await writeFile(cpuFile,'not-a-model');
+   await nodeCommand(['select-gguf','--model','cpu-fixture','--file',cpuFile,'--cpu-threads','4']);
+   const cpuBefore=JSON.parse(await readFile(nodeConfig,'utf8'));
+   cpuBefore.management.allow_remote=false;await json(node+'/api/config',{config:cpuBefore},'PUT');
+   const denied=await remoteModels(['cpu-threads','--model','cpu-fixture','--threads','2'],false);
+   assert.equal(denied.error_code,'approval_required');
+   assert.deepEqual(denied.command,{operation:'cpu_threads',model_id:'cpu-fixture',threads:2});
+   assert.equal(JSON.parse(await readFile(nodeConfig,'utf8')).models.llamacpp.slots[0].cpu_threads,4);
+   cpuBefore.management.allow_remote=true;await json(node+'/api/config',{config:cpuBefore},'PUT');
+   const approved=await remoteModels(['cpu-threads','--model','cpu-fixture','--threads','2']);
+   assert.deepEqual(approved.command,denied.command);
+   assert.equal(approved.data.saved_selections.find(m=>m.model_id==='cpu-fixture').cpu_threads,2);
+   const runtimeBefore=(await json(node+'/api/diagnostics')).runtime_id,cpuForward=forwarded;
+   for(const [mode,threads] of [['drop','3'],['cpu-corrupt','4']]){
+    replyMode=mode;await writeFile(marker,JSON.stringify({schema_version:1,node_id:id,address:`127.0.0.1:${dropReply.address().port}`}));
+    const unconfirmedCpu=await nodeCommand(['cpu-threads','--model','cpu-fixture','--threads',threads],false);
+    assert.equal(unconfirmedCpu.error_code,'local_model_cpu_threads_reply_unconfirmed');assert.equal(unconfirmedCpu.outcome_unknown,true);
+    assert.equal(unconfirmedCpu.automatically_retried,false);assert.equal(unconfirmedCpu.command.threads,Number(threads));
+    await writeFile(marker,originalMarker);
+    assert.equal((await nodeCommand(['show'])).saved_selections.find(m=>m.model_id==='cpu-fixture').cpu_threads,Number(threads));
+   }
+   assert.equal(forwarded,cpuForward+2,'CPU mutations must not replay after lost/substituted replies');
+   replyMode='old';await writeFile(marker,JSON.stringify({schema_version:1,node_id:id,address:`127.0.0.1:${dropReply.address().port}`}));
+   const oldCpu=await nodeCommand(['cpu-threads','--model','cpu-fixture','--auto'],false);
+   assert.equal(oldCpu.error_code,'unsupported_command');assert.equal(oldCpu.outcome_unknown,false);assert.equal(forwarded,cpuForward+2);
+   await writeFile(marker,originalMarker);
+   const clearedCpu=await remoteModels(['cpu-threads','--model','cpu-fixture','--auto']);
+   assert.equal(clearedCpu.data.saved_selections.find(m=>m.model_id==='cpu-fixture').cpu_threads,undefined);
+   assert.equal((await json(node+'/api/diagnostics')).runtime_id,runtimeBefore);
+   assert.equal(requests.length,roleCount,'CPU settings must not infer or execute workloads');
+   await nodeCommand(['remove','--backend','llamacpp','--model','cpu-fixture']);
   }finally{
    await writeFile(marker,originalMarker);dropReply.closeAllConnections();await new Promise(r=>dropReply.close(r));
   }

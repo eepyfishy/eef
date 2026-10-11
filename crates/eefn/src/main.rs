@@ -142,10 +142,11 @@ async fn execute_model_command(
         request.command,
         eefn::model_selection::ModelCommand::Interpreter { .. }
             | eefn::model_selection::ModelCommand::ClearInterpreter {}
+            | eefn::model_selection::ModelCommand::CpuThreads { .. }
     );
     let uncertain_role = |code: &str, unknown: bool| {
         serde_json::json!({"schema_version":1,
-        "report_type":"interpreter_role_command","node_id":request.expected_node_id,"command":request.command,
+        "report_type":if matches!(request.command,eefn::model_selection::ModelCommand::CpuThreads {..}) {"model_cpu_threads_command"} else {"interpreter_role_command"},"node_id":request.expected_node_id,"command":request.command,
         "success":false,"error_code":code,"mutation_requested":true,"outcome_unknown":unknown,
         "automatically_retried":false,"execution_authorized":false,"dispatched":false,
         "note":"Inspect saved selections before deciding what to do. This command has no durable receipt ledger; no automatic retry, fallback, provider switch or restart was sent."})
@@ -184,7 +185,19 @@ async fn execute_model_command(
         Ok(result)
     }.await;
     if role_operation {
-        Ok(exchange.unwrap_or_else(|_| uncertain_role("local_model_role_reply_unconfirmed", true)))
+        Ok(exchange.unwrap_or_else(|_| {
+            uncertain_role(
+                if matches!(
+                    request.command,
+                    eefn::model_selection::ModelCommand::CpuThreads { .. }
+                ) {
+                    "local_model_cpu_threads_reply_unconfirmed"
+                } else {
+                    "local_model_role_reply_unconfirmed"
+                },
+                true,
+            )
+        }))
     } else {
         exchange
     }

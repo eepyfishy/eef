@@ -105,6 +105,15 @@ This removes an intermediate invitation file for clients/automation, not owner
 provisioning, automatic private same-PC pairing, bootstrap or complete non-coder
 onboarding. UI assets and installed nodes are unchanged.
 
+The subsequent [local-model CPU settings](MODEL-CPU-THREADS.md) provide per-model
+bounded worker configuration through the shared node/approved coordinator
+commands. Saving preserves roles/files/provider and differs from applying;
+reselection cannot silently clear the count. The launcher configures generation
+and prompt workers together and passes explicit zero GPU layers for the CPU
+choice. These are backend settings, not CPU-percent/RAM quotas or full workload
+budgets. Default bootstrap, native termination, measured physical resource limits
+and all other release gates remain open.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

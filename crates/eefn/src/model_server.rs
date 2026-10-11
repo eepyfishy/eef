@@ -24,6 +24,9 @@ pub struct ModelSlot {
     pub gpu_layers: i32,
     #[serde(default = "default_context")]
     pub context: u32,
+    /// Requested generation/prompt worker count, not a CPU-percent or RAM quota.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_threads: Option<u16>,
     #[serde(default)]
     pub gpu_vram_mb: u64,
     #[serde(
@@ -43,6 +46,7 @@ const fn default_context() -> u32 {
 
 impl ModelSlot {
     pub fn selection_metadata(&self) -> Result<crate::model_metadata::ModelMetadata> {
+        validate_cpu_threads(self.cpu_threads)?;
         self.hints
             .metadata(if self.is_vlm() { "vlm" } else { "text" })
     }
@@ -54,7 +58,7 @@ impl ModelSlot {
 
     pub fn advertise(&self) -> Result<Value> {
         let modality = if self.is_vlm() { "vlm" } else { "text" };
-        Ok(json!({
+        let mut value = json!({
             "model_id": self.model_id,
             "backend": "llamacpp",
             "hardware": if self.gpu_layers != 0 { "gpu" } else { "cpu" },
@@ -62,13 +66,76 @@ impl ModelSlot {
             "port": self.port,
             "modality": modality,
             "model_metadata": self.selection_metadata()?,
-        }))
+        });
+        if let Some(threads) = self.cpu_threads {
+            value["cpu_threads"] = json!(threads);
+        }
+        Ok(value)
     }
+}
+
+pub(crate) fn validate_cpu_threads(threads: Option<u16>) -> Result<()> {
+    if threads.is_some_and(|n| !(1..=256).contains(&n)) {
+        bail!("CPU threads must be 1-256, or omitted for backend defaults")
+    }
+    Ok(())
+}
+
+fn configure_cpu_threads(command: &mut Command, threads: Option<u16>) -> Result<()> {
+    validate_cpu_threads(threads)?;
+    if let Some(threads) = threads {
+        // Set both: inherited environment must not widen prompt worker counts.
+        command.arg("--threads").arg(threads.to_string());
+        command.arg("--threads-batch").arg(threads.to_string());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod advertisement_tests {
     use super::*;
+    #[test]
+    fn explicit_threads_cover_both_worker_pools_and_legacy_settings_stay_unknown() {
+        for threads in [None, Some(1), Some(4), Some(256)] {
+            let mut command = Command::new("test-only-not-spawned");
+            configure_cpu_threads(&mut command, threads).unwrap();
+            let args: Vec<_> = command
+                .as_std()
+                .get_args()
+                .map(|v| v.to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(
+                args,
+                threads
+                    .map(|n| vec![
+                        "--threads".into(),
+                        n.to_string(),
+                        "--threads-batch".into(),
+                        n.to_string()
+                    ])
+                    .unwrap_or_default()
+            );
+            let slot: ModelSlot =
+                serde_json::from_value(json!({"model_id":"legacy","cpu_threads":threads})).unwrap();
+            assert_eq!(slot.advertise().unwrap()["cpu_threads"], json!(threads));
+            assert!(
+                slot.selection_metadata()
+                    .unwrap()
+                    .resource_estimates
+                    .ram_mb
+                    .is_none()
+            );
+        }
+        for threads in [0, 257] {
+            let mut command = Command::new("test-only-not-spawned");
+            assert!(configure_cpu_threads(&mut command, Some(threads)).is_err());
+            assert_eq!(command.as_std().get_args().count(), 0);
+            let slot: ModelSlot =
+                serde_json::from_value(json!({"model_id":"invalid","cpu_threads":threads}))
+                    .unwrap();
+            assert!(slot.selection_metadata().is_err());
+        }
+    }
     #[tokio::test]
     async fn failed_group_is_visible_but_never_routable() {
         let fixture = tempfile::tempdir().unwrap();
@@ -272,9 +339,9 @@ impl ModelServer {
             if let Some(mmproj) = &slot.mmproj_path {
                 command.arg("--mmproj").arg(mmproj);
             }
-            if slot.gpu_layers != 0 {
-                command.arg("-ngl").arg(slot.gpu_layers.to_string());
-            }
+            configure_cpu_threads(&mut command, slot.cpu_threads)?;
+            // Zero is an explicit CPU choice, not permission for backend auto GPU.
+            command.arg("-ngl").arg(slot.gpu_layers.to_string());
             let child = command
                 .spawn()
                 .with_context(|| format!("spawn model '{}'", slot.model_id))?;

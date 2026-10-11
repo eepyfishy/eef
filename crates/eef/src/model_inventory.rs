@@ -45,10 +45,14 @@ impl InventoryQuery {
 
 fn model(node_id: &str, entry: &PeerModel) -> Value {
     let metadata = entry.normalized_metadata();
-    json!({"instance":{"node_id":node_id,"backend":entry.backend,"model_id":entry.model_id},
+    let mut value = json!({"instance":{"node_id":node_id,"backend":entry.backend,"model_id":entry.model_id},
         "capabilities":metadata.capabilities,"input_modalities":metadata.input_modalities,"output_modalities":metadata.output_modalities,
         "legacy_modality":entry.modality,"metadata_source":if entry.model_metadata.is_some(){"model_metadata_v1"}else{"legacy_registration"},
-        "roles":metadata.roles,"lifecycle":metadata.lifecycle,"availability":metadata.availability,"resource_estimates":metadata.resource_estimates})
+        "roles":metadata.roles,"lifecycle":metadata.lifecycle,"availability":metadata.availability,"resource_estimates":metadata.resource_estimates});
+    if let Some(threads) = entry.cpu_threads {
+        value["cpu_threads"] = json!(threads);
+    }
+    value
 }
 
 pub async fn list(
@@ -209,6 +213,7 @@ mod tests {
             json!([])
         );
         let unknown = PeerModel {
+            cpu_threads: None,
             model_id: "unknown".into(),
             backend: None,
             modality: None,
@@ -237,6 +242,7 @@ mod tests {
             let mut r = record(&format!("node-{i:02}"));
             r.models = (0..64)
                 .map(|j| PeerModel {
+                    cpu_threads: None,
                     model_id: format!("{j:03}{}", "x".repeat(250)),
                     backend: Some("b".repeat(64)),
                     modality: Some("vlm".into()),

@@ -225,3 +225,38 @@ These are isolated local logical-node tests, not physical second-PC acceptance,
 bootstrap or release acceptance. UI assets, installed nodes, public installers
 and update feeds remain unchanged. Durable automation, full resource/termination,
 peer/media/cluster and MSI/Defender/Authenticode gates remain open.
+
+## Local-model CPU settings checkpoint (2026-10-11)
+
+[Shared owner CPU commands](MODEL-CPU-THREADS.md) add five tests (422 total).
+The setting is per existing GGUF selection, bounded, explicit and saved-only;
+approved coordinator management uses the same service. Roles/restrictions,
+provider, private paths and other configuration survive. Reselection without a
+new count preserves the old count; clearing requires an explicit command.
+Exact saved-value confirmation rejects substituted replies without replay,
+fallback, provider change or restart. Old settings remain backend-default/unknown.
+Optional public advertisements carry the configured count, not CPU/RAM estimates.
+
+The launcher configures generation/prompt workers together and now passes zero
+GPU layers explicitly for the CPU setting. This is not a total process/CPU/RAM
+quota, physical resource measurement, native termination proof or default-model
+approval. Ordinary reviewed grant/configuration fencing is retained.
+
+Both full workspace/all-target suites pass all 422 tests after the final change.
+Fresh binaries pass command metadata with saved UI preferences and CPU fault
+injection (`model-metadata-ryecSb`), first-run/browser (`first-run-CZZsJm`),
+verified-artifact actual CPU inference (`real-model-H7NFNK`) and the source
+backend/browser guard. The real-model fixture now uses public selection/removal
+commands rather than editing model configuration JSON, checks saved/applied
+counts and coordinator inventory, and checks its owned Windows model process
+arguments before reviewed inference/restart/result-retention/withdrawal.
+The existing artifact is reused, without new downloads or copies.
+
+One earlier saved-UI fixture (`model-metadata-1ZiOMo`) failed on a truthful
+`node_busy`/`not_started` reply during repeated remote hints at work capacity one.
+It is not counted as passing. The standalone rerun (`model-metadata-zS461C`) and
+final fresh-binary run pass; admission timing remains a reliability follow-up,
+not a diagnosed/fixed race. No hidden retry or relaxed capacity assertion was
+introduced. UI assets, installed nodes, installers and feeds are unchanged.
+Physical, bootstrap/quality, durable automation, full runtime/peer/media/cluster
+and MSI/Defender/Authenticode gates remain open; stable 0.4.0 is not claimed.

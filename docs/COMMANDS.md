@@ -235,6 +235,12 @@ bootstrap; publishing a release does not automatically upgrade older nodes.
 
 ## Durable request review and clarification (unreleased after alpha.6)
 
+Local GGUF CPU worker settings are also now command-driven, without reselecting
+files or editing JSON: `eefn models cpu-threads --model MODEL_ID --threads 4`.
+Approved coordinator management uses the same action under `eef node models`.
+Saving is separate from restart/application; `--auto` restores backend defaults,
+not a measured budget. See [CPU settings and confirmation](MODEL-CPU-THREADS.md).
+
 Save a request through the running node, then inspect/answer it without a
 dashboard. These commands are not in the published alpha.6 installers.
 

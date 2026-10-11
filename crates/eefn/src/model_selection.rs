@@ -83,6 +83,17 @@ pub enum ModelCommand {
     },
     /// Remove only the interpreter role; retain model selections and other roles.
     ClearInterpreter {},
+    CpuThreads {
+        model_id: String,
+        #[serde(deserialize_with = "required_cpu_threads")]
+        threads: Option<u16>,
+    },
+}
+
+fn required_cpu_threads<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<u16>, D::Error> {
+    Option::<u16>::deserialize(deserializer)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -132,6 +143,31 @@ pub fn apply(config: &mut Value, command: &ModelCommand) -> Result<bool> {
             assign_interpreter(config, Some((*backend, model_id)))?;
         }
         ModelCommand::ClearInterpreter {} => assign_interpreter(config, None)?,
+        ModelCommand::CpuThreads { model_id, threads } => {
+            validate_id(model_id)?;
+            crate::model_server::validate_cpu_threads(*threads)?;
+            let mut staged = config.clone();
+            let slots = staged
+                .pointer_mut("/models/llamacpp/slots")
+                .and_then(Value::as_array_mut)
+                .context("local GGUF model must already be selected")?;
+            if slots.iter().filter(|m| m["model_id"] == *model_id).count() != 1 {
+                bail!("CPU thread command requires one exact existing local GGUF selection")
+            }
+            let slot = slots
+                .iter_mut()
+                .find(|m| m["model_id"] == *model_id)
+                .unwrap();
+            if let Some(threads) = threads {
+                slot["cpu_threads"] = json!(threads);
+            } else {
+                slot.as_object_mut()
+                    .context("model must be an object")?
+                    .remove("cpu_threads");
+            }
+            selection_view(&staged)?;
+            *config = staged;
+        }
         ModelCommand::Provider { provider } => {
             if !matches!(provider.as_str(), "auto" | "ollama" | "llamacpp") {
                 bail!("provider must be auto, ollama, or llamacpp")
@@ -157,6 +193,15 @@ pub fn apply(config: &mut Value, command: &ModelCommand) -> Result<bool> {
             let mut slot = slot.clone();
             validate_id(&slot.model_id)?;
             slot.selection_metadata()?;
+            if slot.cpu_threads.is_none() {
+                slot.cpu_threads = config
+                    .pointer("/models/llamacpp/slots")
+                    .and_then(Value::as_array)
+                    .and_then(|slots| slots.iter().find(|m| m["model_id"] == slot.model_id))
+                    .map(|old| serde_json::from_value::<ModelSlot>(old.clone()))
+                    .transpose()?
+                    .and_then(|old| old.cpu_threads);
+            }
             if !slot.model_path.is_absolute() || !slot.model_path.is_file() {
                 bail!("select GGUF using an absolute existing model file")
             }
@@ -354,7 +399,11 @@ pub fn selection_view(config: &Value) -> Result<Vec<Value>> {
     if let Some(raw) = config.pointer("/models/llamacpp/slots") {
         let slots: Vec<ModelSlot> = serde_json::from_value(raw.clone())?;
         for slot in slots {
-            selections.push(json!({"backend":"llamacpp","model_id":slot.model_id,"model_metadata":slot.selection_metadata()?}));
+            let mut value = json!({"backend":"llamacpp","model_id":slot.model_id,"model_metadata":slot.selection_metadata()?});
+            if let Some(threads) = slot.cpu_threads {
+                value["cpu_threads"] = json!(threads);
+            }
+            selections.push(value);
         }
     }
     if selections.len() > 64 {
@@ -369,7 +418,7 @@ pub fn selection_view(config: &Value) -> Result<Vec<Value>> {
     Ok(selections)
 }
 
-/// Confirm only the new explicit role operations. Saved labels never attest to
+/// Confirm explicit role/CPU operations. Saved settings never attest to
 /// applied readiness, model quality or execution authority.
 pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) -> bool {
     #[derive(Deserialize)]
@@ -378,6 +427,8 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
         backend: Backend,
         model_id: String,
         model_metadata: ModelMetadata,
+        #[serde(default)]
+        cpu_threads: Option<u16>,
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -423,6 +474,8 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
         for model in selections {
             if validate_id(&model.model_id).is_err()
                 || model.model_metadata.validate().is_err()
+                || crate::model_server::validate_cpu_threads(model.cpu_threads).is_err()
+                || (model.cpu_threads.is_some() && model.backend != Backend::Llamacpp)
                 || !ids.insert((model.backend.name(), &model.model_id))
             {
                 return false;
@@ -458,6 +511,15 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
                     .any(|m| m == "text")
         }
         ModelCommand::ClearInterpreter {} => interpreters.is_empty(),
+        ModelCommand::CpuThreads { model_id, threads } => {
+            validate_id(model_id).is_ok()
+                && crate::model_server::validate_cpu_threads(*threads).is_ok()
+                && report.saved_selections.iter().any(|m| {
+                    m.backend == Backend::Llamacpp
+                        && m.model_id == *model_id
+                        && m.cpu_threads == *threads
+                })
+        }
         _ => false,
     }
 }
@@ -465,6 +527,110 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cpu_threads_preserve_exact_selection_and_reject_ambiguous_or_invalid_updates() {
+        let mut config = interpreter_config();
+        let initial = config.clone();
+        let command = |id: &str, threads| ModelCommand::CpuThreads {
+            model_id: id.into(),
+            threads,
+        };
+        assert!(apply(&mut config, &command("same-id", Some(4))).unwrap());
+        assert_eq!(config["models"]["llamacpp"]["slots"][0]["cpu_threads"], 4);
+        assert_eq!(selection_view(&config).unwrap()[0]["cpu_threads"], 4);
+        assert!(!apply(&mut config, &command("same-id", Some(4))).unwrap());
+        let before = config.clone();
+        for cmd in [
+            command("missing", Some(4)),
+            command("same-id", Some(0)),
+            command("same-id", Some(257)),
+        ] {
+            assert!(apply(&mut config, &cmd).is_err());
+            assert_eq!(config, before);
+        }
+        let duplicate = config["models"]["llamacpp"]["slots"][0].clone();
+        config["models"]["llamacpp"]["slots"]
+            .as_array_mut()
+            .unwrap()
+            .push(duplicate);
+        let duplicated = config.clone();
+        assert!(apply(&mut config, &command("same-id", Some(2))).is_err());
+        assert_eq!(config, duplicated);
+        config = before;
+        assert!(apply(&mut config, &command("same-id", None)).unwrap());
+        assert_eq!(
+            config, initial,
+            "clear only the exact explicit thread setting"
+        );
+        assert!(!apply(&mut config, &command("same-id", None)).unwrap());
+        for raw in [
+            json!({"operation":"cpu_threads","model_id":"same-id"}),
+            json!({"operation":"cpu_threads","model_id":"same-id","threads":4,"backend":"ollama"}),
+        ] {
+            assert!(serde_json::from_value::<ModelCommand>(raw).is_err());
+        }
+    }
+    #[tokio::test]
+    async fn cpu_thread_reports_and_owner_permission_do_not_claim_runtime_or_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = service(dir.path());
+        let path = dir.path().join("PRIVATE.gguf");
+        std::fs::write(&path, b"not-a-model").unwrap();
+        let slot: ModelSlot = serde_json::from_value(
+            json!({"model_id":"local","model_path":path,"port":0,"cpu_threads":4}),
+        )
+        .unwrap();
+        core.model_command(request(ModelCommand::SelectGguf { slot: slot.clone() }))
+            .unwrap();
+        let cpu = ModelCommand::CpuThreads {
+            model_id: "local".into(),
+            threads: Some(2),
+        };
+        let before = core.read_config().unwrap();
+        let denied = core
+            .remote(
+                "model_command",
+                serde_json::to_value(request(cpu.clone())).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied["error_code"], "approval_required");
+        assert_eq!(core.read_config().unwrap(), before);
+        let report = core.model_command(request(cpu.clone())).unwrap();
+        assert!(confirmed_interpreter(&report, "node", &cpu));
+        assert!(report["registered_models"].is_null());
+        assert_eq!(report["saved_selections"][0]["cpu_threads"], 2);
+        assert_eq!(report["restart_required"], true);
+        assert!(!report.to_string().contains("PRIVATE"));
+        for (key, value) in [
+            ("cpu_threads", json!(4)),
+            ("backend", json!("ollama")),
+            ("cpu_threads", json!(257)),
+        ] {
+            let mut wrong = report.clone();
+            wrong["saved_selections"][0][key] = value;
+            assert!(!confirmed_interpreter(&wrong, "node", &cpu));
+        }
+        let mut reselect = slot;
+        reselect.cpu_threads = None;
+        core.model_command(request(ModelCommand::SelectGguf { slot: reselect }))
+            .unwrap();
+        assert_eq!(
+            core.read_config().unwrap()["models"]["llamacpp"]["slots"][0]["cpu_threads"],
+            2,
+            "reselection must not silently widen worker counts"
+        );
+        let clear = ModelCommand::CpuThreads {
+            model_id: "local".into(),
+            threads: None,
+        };
+        assert!(confirmed_interpreter(
+            &core.model_command(request(clear.clone())).unwrap(),
+            "node",
+            &clear
+        ));
+        assert!(path.is_file());
+    }
     fn interpreter_config() -> Value {
         json!({"future":{"keep":true},"models":{"provider":"auto",
             "ollama":{"base_url":"http://PRIVATE","selected":[
