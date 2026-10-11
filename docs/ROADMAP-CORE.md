@@ -114,6 +114,14 @@ choice. These are backend settings, not CPU-percent/RAM quotas or full workload
 budgets. Default bootstrap, native termination, measured physical resource limits
 and all other release gates remain open.
 
+The subsequent [bounded node output](TRANSPORT-OUTPUT.md) increment applies one
+existing-session write guard to ordinary replies, heartbeats and all remaining
+node frames. Failed/partial output retires the connection before another frame
+can append; reconnection does not replay mutations, grants or submissions.
+Outgoing encoded frames obey the existing receiver limit. Real TCP fault and
+actual headless-node command fixtures cover retirement/reconnection, not native
+stop, physical two-PC behavior, the intermittent busy reply or automation.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

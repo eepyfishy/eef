@@ -13,30 +13,8 @@ pub const MODE: &str = "issuer_lease_challenge_v1";
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_PENDING: usize = 64;
 
-/// Retire a framed connection if a write fails or its future is cancelled after
-/// acquiring the writer. Partial encrypted frames cannot be reused safely.
-pub(crate) struct WriteGuard {
-    signal: tokio::sync::watch::Sender<bool>,
-    completed: bool,
-}
-impl WriteGuard {
-    pub fn new(signal: tokio::sync::watch::Sender<bool>) -> Self {
-        Self {
-            signal,
-            completed: false,
-        }
-    }
-    pub fn complete(&mut self) {
-        self.completed = true;
-    }
-}
-impl Drop for WriteGuard {
-    fn drop(&mut self) {
-        if !self.completed {
-            let _ = self.signal.send(true);
-        }
-    }
-}
+#[cfg(test)]
+pub(crate) use crate::session_output::WriteGuard;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -46,6 +46,7 @@ pub mod request_result;
 pub mod request_submission;
 pub mod server;
 pub mod service;
+mod session_output;
 pub mod setup;
 pub mod startup;
 pub mod submission;

@@ -19,6 +19,7 @@ use crate::protocol::{
     build_auth, build_heartbeat, build_register, error_response, read_message, success_response,
     write_message,
 };
+use crate::session_output::send as write_session_frame;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SelectedModel {
@@ -380,16 +381,16 @@ impl NodeClient {
         let (reader, writer) = tokio::io::split(stream);
         let mut reader = BufReader::new(reader);
         let writer = Arc::new(Mutex::new(writer));
+        // One monotonic failure signal for every output on this connection.
+        let (output_write_failed, mut output_write_failure) = tokio::sync::watch::channel(false);
 
-        {
-            let mut output = writer.lock().await;
-            write_message(
-                &self.crypto,
-                &mut *output,
-                &build_auth(&self.crypto, &self.config.node_id, crate::VERSION),
-            )
-            .await?;
-        }
+        write_session_frame(
+            &self.crypto,
+            &writer,
+            &output_write_failed,
+            &build_auth(&self.crypto, &self.config.node_id, crate::VERSION),
+        )
+        .await?;
         let reply = timeout(
             Duration::from_secs(10),
             read_message(&self.crypto, &mut reader),
@@ -425,10 +426,10 @@ impl NodeClient {
         }
         let capabilities = advertised_capabilities(&self.engine.capabilities(), &models);
         {
-            let mut output = writer.lock().await;
-            write_message(
+            write_session_frame(
                 &self.crypto,
-                &mut *output,
+                &writer,
+                &output_write_failed,
                 &self.registration(
                     &self.config.node_id,
                     if self.config.name.is_empty() {
@@ -462,6 +463,7 @@ impl NodeClient {
         let heartbeat_writer = writer.clone();
         let heartbeat_crypto = self.crypto.clone();
         let heartbeat_id = self.config.node_id.clone();
+        let heartbeat_write_failed = output_write_failed.clone();
         let heartbeat_interval = Duration::from_secs_f64(self.config.heartbeat_seconds.max(0.2));
         let heartbeat = AbortTask(tokio::spawn(async move {
             loop {
@@ -469,9 +471,10 @@ impl NodeClient {
                 let load = current_load().await;
                 let latency = started.elapsed().as_secs_f64() * 1000.0;
                 let message = build_heartbeat(&heartbeat_id, &load, latency, &system_specs());
-                if write_message(
+                if write_session_frame(
                     &heartbeat_crypto,
-                    &mut *heartbeat_writer.lock().await,
+                    &heartbeat_writer,
+                    &heartbeat_write_failed,
                     &message,
                 )
                 .await
@@ -486,8 +489,6 @@ impl NodeClient {
         let mut tasks = tokio::task::JoinSet::new();
         let lease_requests = Arc::new(crate::grant_time::LeaseRequests::default());
         let mut local = self.submissions.connect();
-        // A timed-out partial response must retire this framed connection.
-        let (receipt_write_failed, mut receipt_write_failure) = tokio::sync::watch::channel(false);
         let mut replies: std::collections::HashMap<
             String,
             tokio::sync::oneshot::Sender<Result<Value>>,
@@ -499,7 +500,7 @@ impl NodeClient {
             tokio::pin!(incoming);
             let message = loop {
                 tokio::select! {
-                    _ = receipt_write_failure.changed() => bail!("Receipt response delivery failed; reconnect required"),
+                    _ = output_write_failure.changed() => bail!("Framed output delivery failed; reconnect required; sent operations may be unconfirmed"),
                     message = &mut incoming => break message?,
                     _ = async {
                         if let Some(changes) = &mut model_changes { let _ = changes.changed().await; }
@@ -514,9 +515,8 @@ impl NodeClient {
                         let capabilities = advertised_capabilities(&self.engine.capabilities(), &updated);
                         let registration = self.registration(&self.config.node_id, &self.config.name,
                             crate::VERSION, &capabilities, &specs, &updated);
-                        timeout(Duration::from_secs(5), async {
-                            write_message(&self.crypto, &mut *writer.lock().await, &registration).await
-                        }).await.context("model registration refresh timed out")??;
+                        write_session_frame(&self.crypto,&writer,&output_write_failed,&registration)
+                            .await.context("model registration refresh failed")?;
                         models = updated;
                         let mut status = self.status.lock().expect("status");
                         status["models"] = json!(models);
@@ -534,9 +534,8 @@ impl NodeClient {
                         // Store before writing: a failed/partial write is unknown,
                         // not permission to automatically execute the request twice.
                         replies.insert(command.id, command.reply);
-                        timeout(Duration::from_secs(5), async {
-                            write_message(&self.crypto, &mut *writer.lock().await, &value).await
-                        }).await.context("message send timed out; delivery is unknown")??;
+                        write_session_frame(&self.crypto,&writer,&output_write_failed,&value)
+                            .await.context("message send failed; delivery is unknown")?;
                     }
                 }
             };
@@ -599,16 +598,14 @@ impl NodeClient {
                 };
                 let Some((query, digest, permit, ledger, issuer)) = prepared else {
                     let response = json!({"type":"response","id":request_id,"success":false,"error_type":"GrantReceiptUnavailable","error":"Authenticated receipt inspection unavailable; no execution or recovery performed"});
-                    timeout(Duration::from_secs(5), async {
-                        write_message(&self.crypto, &mut *writer.lock().await, &response).await
-                    })
-                    .await
-                    .context("receipt rejection write timed out")??;
+                    write_session_frame(&self.crypto, &writer, &output_write_failed, &response)
+                        .await
+                        .context("receipt rejection write failed")?;
                     continue;
                 };
                 let writer = writer.clone();
                 let crypto = self.crypto.clone();
-                let write_failed = receipt_write_failed.clone();
+                let write_failed = output_write_failed.clone();
                 tasks.spawn(async move {
                     let read = tokio::task::spawn_blocking(move || {
                         let result = if let Some(digest)=digest {
@@ -624,9 +621,7 @@ impl NodeClient {
                         Ok(data) => success_response(&request_id, data),
                         Err(_) => json!({"type":"response","id":request_id,"success":false,"error_type":"GrantReceiptUnavailable","error":"Consumed receipt unavailable; no execution, fallback or recovery performed"}),
                     };
-                    if !matches!(timeout(Duration::from_secs(5), async {
-                        write_message(&crypto, &mut *writer.lock().await, &response).await
-                    }).await, Ok(Ok(()))) { let _ = write_failed.send(true); }
+                    let _ = write_session_frame(&crypto,&writer,&write_failed,&response).await;
                 });
                 continue;
             }
@@ -649,11 +644,9 @@ impl NodeClient {
                     grant_session.as_deref(),
                 ) else {
                     let response = json!({"type":"response","id":request_id,"success":false,"error_type":"GrantDenied","not_started":true,"error":"Grant execution requires a valid scope, receipt journal and pinned issuer session"});
-                    timeout(Duration::from_secs(5), async {
-                        write_message(&self.crypto, &mut *writer.lock().await, &response).await
-                    })
-                    .await
-                    .context("grant rejection write timed out")??;
+                    write_session_frame(&self.crypto, &writer, &output_write_failed, &response)
+                        .await
+                        .context("grant rejection write failed")?;
                     continue;
                 };
                 let admission = self.request_budget.admit(&grant.capability, &grant.action);
@@ -683,11 +676,9 @@ impl NodeClient {
                             Some(crate::grants::denial_code(&error)),
                         );
                         let response = json!({"type":"response","id":request_id,"success":false,"grant":report});
-                        timeout(Duration::from_secs(5), async {
-                            write_message(&self.crypto, &mut *writer.lock().await, &response).await
-                        })
-                        .await
-                        .context("grant rejection write timed out")??;
+                        write_session_frame(&self.crypto, &writer, &output_write_failed, &response)
+                            .await
+                            .context("grant rejection write failed")?;
                     }
                     Ok(()) => {
                         let engine = self.engine.clone();
@@ -698,7 +689,7 @@ impl NodeClient {
                         let session = session.to_owned();
                         let node_id = self.config.node_id.clone();
                         let leases = lease_requests.clone();
-                        let write_failed = receipt_write_failed.clone();
+                        let write_failed = output_write_failed.clone();
                         tasks.spawn(async move {
                             let _permit=admission;
                             let lease = leases.request(&grant, &request_id, |query| {
@@ -706,11 +697,7 @@ impl NodeClient {
                                 let crypto=&crypto;
                                 let write_failed=&write_failed;
                                 async move {
-                                let mut output=writer.lock().await;
-                                let mut guard=crate::grant_time::WriteGuard::new(write_failed.clone());
-                                let result=write_message(&crypto,&mut *output,&query).await;
-                                if result.is_ok(){guard.complete()}
-                                result
+                                write_session_frame(crypto,writer,write_failed,&query).await
                             }}).await;
                             let prepared=lease.map_err(|_| crate::grants::GrantDenied("grant_lease_unavailable").into())
                                 .and_then(|lease| crate::grants::AcceptedGrant::prepare_with_lease(
@@ -722,13 +709,7 @@ impl NodeClient {
                                     // retire the connection and retain uncertainty;
                                     // no effects start and no rejected receipt is invented.
                                     let ack=json!({"type":"grant_ack","id":request_id,"grant":accepted.acknowledgement()});
-                                    if !matches!(timeout(Duration::from_secs(5),async {
-                                        let mut output=writer.lock().await;
-                                        let mut guard=crate::grant_time::WriteGuard::new(write_failed.clone());
-                                        let result=write_message(&crypto,&mut *output,&ack).await;
-                                        if result.is_ok(){guard.complete()}
-                                        result
-                                    }).await,Ok(Ok(()))){let _=write_failed.send(true);return}
+                                    if write_session_frame(&crypto,&writer,&write_failed,&ack).await.is_err(){return}
                                     {
                                         let mut live=status.lock().expect("status");
                                         live["last_activity"]=json!(grant.capability);
@@ -748,13 +729,7 @@ impl NodeClient {
                             };
                             status.lock().expect("status")["last_grant"]=json!({"grant_id":report.grant_id,"state":report.state,"persisted":report.persisted,"success":report.success});
                             let response=json!({"type":"response","id":request_id,"success":report.success,"grant":report});
-                            if !matches!(timeout(Duration::from_secs(5),async {
-                                let mut output=writer.lock().await;
-                                let mut guard=crate::grant_time::WriteGuard::new(write_failed.clone());
-                                let result=write_message(&crypto,&mut *output,&response).await;
-                                if result.is_ok(){guard.complete()}
-                                result
-                            }).await,Ok(Ok(()))){let _=write_failed.send(true);}
+                            let _ = write_session_frame(&crypto,&writer,&write_failed,&response).await;
                         });
                     }
                 }
@@ -784,11 +759,9 @@ impl NodeClient {
                     "error":"Workload execution requires a reviewed execution grant; no fallback was attempted",
                     "error_type":"ExecutionGrantRequired","error_code":crate::execution_boundary::ERROR_CODE,
                     "not_started":true});
-                timeout(Duration::from_secs(5), async {
-                    write_message(&self.crypto, &mut *writer.lock().await, &response).await
-                })
-                .await
-                .context("grant-required response timed out; reconnect required")??;
+                write_session_frame(&self.crypto, &writer, &output_write_failed, &response)
+                    .await
+                    .context("grant-required response write failed; reconnect required")?;
                 continue;
             }
             let Some(permit) = self.request_budget.admit(&capability, &action) else {
@@ -806,11 +779,9 @@ impl NodeClient {
                     "error_type":"NodeBusy","not_started":true});
                 // A timed-out partial write ends this connection; never continue
                 // its framing or automatically replay the rejected operation.
-                timeout(Duration::from_secs(5), async {
-                    write_message(&self.crypto, &mut *writer.lock().await, &response).await
-                })
-                .await
-                .context("busy response timed out; reconnect required")??;
+                write_session_frame(&self.crypto, &writer, &output_write_failed, &response)
+                    .await
+                    .context("busy response write failed; reconnect required")?;
                 continue;
             };
             let context = message
@@ -821,6 +792,7 @@ impl NodeClient {
             let writer = writer.clone();
             let crypto = self.crypto.clone();
             let status = self.status.clone();
+            let write_failed = output_write_failed.clone();
             tasks.spawn(async move {
                 let _permit = permit;
                 {
@@ -834,7 +806,7 @@ impl NodeClient {
                     Ok(data) => success_response(&request_id, data),
                     Err(error) => error_response(&request_id, error),
                 };
-                let _ = write_message(&crypto, &mut *writer.lock().await, &response).await;
+                let _ = write_session_frame(&crypto, &writer, &write_failed, &response).await;
             });
         }
         drop(heartbeat);
@@ -978,6 +950,116 @@ fn advertised_capabilities(configured: &[String], models: &[Value]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unread_peer_retires_session_without_busy_rejection_or_replaying_work() {
+        // A real encrypted TCP peer completes reachability/auth/registration,
+        // then stops reading. Stay below work capacity so the existing bounded
+        // busy-rejection path cannot mask unbounded ordinary reply writes.
+        let fixture = tempfile::tempdir().unwrap();
+        let path = fixture.path().join("node.json");
+        let roles: Vec<_> = (0..32)
+            .map(|i| format!("r{i:02}{}", "x".repeat(60)))
+            .collect();
+        let models: Vec<_> = (0..64).map(|i| json!({"model_id":format!("m{i:02}{}","x".repeat(250)),"selection":{"roles":roles}})).collect();
+        std::fs::write(
+            &path,
+            serde_json::to_vec(
+                &json!({"node_id":"blocked-output","models":{"llamacpp":{"slots":models}}}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let service = crate::NodeService::new(path.clone(), "blocked-output".into());
+        let engine = Arc::new(
+            NodeEngine::new(false, vec![], fixture.path().into())
+                .unwrap()
+                .with_service(service),
+        );
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.set_recv_buffer_size(4096).unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let listener = socket.listen(1).unwrap();
+        let config: NodeClientConfig = serde_json::from_value(json!({"node_id":"blocked-output","psk":"test-only-secret",
+            "endpoints":[format!("127.0.0.1:{}",listener.local_addr().unwrap().port())],"heartbeat_seconds":60,
+            "request_limits":{"work":128,"control":2}})).unwrap();
+        let live = Arc::new(std::sync::Mutex::new(json!({})));
+        let client = NodeClient::new(config, engine)
+            .unwrap()
+            .with_status(live.clone());
+        let endpoint = client.config.endpoints[0].clone();
+        let mut node = tokio::spawn(async move { client.serve_endpoint(&endpoint).await });
+        let (peer, _) = timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let (input, mut output) = peer.into_split();
+        let mut input = BufReader::new(input);
+        let crypto = NodeCrypto::new("test-only-secret").unwrap();
+        let probe = timeout(Duration::from_secs(5), read_message(&crypto, &mut input))
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(probe["type"], "probe");
+        write_message(
+            &crypto,
+            &mut output,
+            &json!({"type":"pong","nonce":probe["nonce"],"protocol":crate::PROTOCOL_VERSION}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            timeout(Duration::from_secs(5), read_message(&crypto, &mut input))
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()["type"],
+            "auth"
+        );
+        write_message(&crypto, &mut output, &json!({"type":"ok"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            timeout(Duration::from_secs(5), read_message(&crypto, &mut input))
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()["type"],
+            "register"
+        );
+        // Keep input open, but never read responses. Each reply is ~170 KiB;
+        // sixty-four bounded reads exceed the tiny advertised receive window.
+        timeout(Duration::from_secs(5), async {
+            for i in 0..64 {
+                write_message(&crypto,&mut output,&json!({"type":"request","id":format!("read-{i}"),"capability":"node.configure","action":"model_command",
+                    "params":{"schema_version":1,"expected_node_id":"blocked-output","command":{"operation":"show"}}})).await.unwrap();
+            }
+        }).await.unwrap();
+        let finished = timeout(Duration::from_secs(12), &mut node).await;
+        if finished.is_err() {
+            node.abort();
+            let _ = node.await;
+        }
+        assert!(
+            finished.is_ok(),
+            "ordinary replies kept the unread framed connection alive past its write deadline"
+        );
+        assert!(finished.unwrap().unwrap().is_err());
+        assert_eq!(live.lock().unwrap()["last_activity"], "node.configure");
+        assert_eq!(
+            live.lock().unwrap()["busy_rejections"]
+                .as_u64()
+                .unwrap_or(0),
+            0
+        );
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            before,
+            "read-only inspection cannot mutate settings or issue work"
+        );
+    }
 
     #[test]
     fn client_identity_validation_is_identical_for_legacy_and_credential_modes() {

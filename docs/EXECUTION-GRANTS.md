@@ -201,3 +201,9 @@ scope, expired/mismatched/widened replies, round-trip deduction, nonce replay,
 local clock changes, cancellation and no native writes after ACK-wait expiry.
 Gateway tests reject unproved/expired ACKs and renewal/old-session probes. They do
 not change either PC's OS clock or prove safe suspend/partition/cluster behavior.
+
+The subsequent [bounded session output](TRANSPORT-OUTPUT.md) increment extends
+the partial-write retirement guard to every node session frame. Grant lease/ACK
+and retained-result semantics remain unchanged: a failed ACK write cannot start
+effects through that grant task, while lost final replies do not prove rollback
+or native stop. Reconnection is not permission to replay or renew work.

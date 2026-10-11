@@ -260,3 +260,34 @@ not a diagnosed/fixed race. No hidden retry or relaxed capacity assertion was
 introduced. UI assets, installed nodes, installers and feeds are unchanged.
 Physical, bootstrap/quality, durable automation, full runtime/peer/media/cluster
 and MSI/Defender/Authenticode gates remain open; stable 0.4.0 is not claimed.
+
+## Bounded node output checkpoint (2026-10-11)
+
+[Session output](TRANSPORT-OUTPUT.md) adds six Rust tests (428 total). Both full
+workspace/all-target feature-mode suites pass. The real TCP fault unit reproduces
+the earlier unbounded ordinary-reply behavior before the fix and passes afterward.
+Fresh default executables pass the process-level output fault fixture
+(`node-output-2kR8eg`): connection retirement/reconnection in 6,332 ms, unchanged
+node runtime and saved settings, usable local commands, no busy rejection and no
+old response/work traffic on the new connection. An invalid-config precursor
+(`node-output-YmpDBE`) is not counted as passing; see the linked evidence/limits.
+
+Public regressions also pass: node commands (`node-commands-JCeQrQ`), input
+workflow (`request-input-RwzADu`), reviewed requests (`request-review-b5R0Ew`),
+private pairing (`private-pairing-k49buW`), separately authenticated logical nodes
+(`node-credentials-lfG2Tp`), model download commands (`model-downloads-rsCaoc`),
+model metadata/API-only (`model-metadata-sSqXRT`), saved UI preferences with CPU
+fault cases (`model-metadata-TDBFmy`), first-run/browser (`first-run-Or9zys`) and
+the backend/browser source guard. Formatting, JavaScript syntax, a fresh default
+binary/example build and diff checks pass separately.
+
+Actual pinned-TLS CPU inference (`real-model-DcfZd4`) reuses the exact existing
+1.5B artifact, checks explicit generation/prompt CPU settings and zero GPU layers,
+executes reviewed grants, verifies restart/retained results and withdraws the
+selection. No weights are copied or downloaded. A successful greeting does not
+approve this model's interpretation quality or make it a bootstrap default.
+
+The fix does not diagnose the prior intermittent busy response, prove native
+termination, complete durable automation or replace physical acceptance. Published
+versions, installers, installed nodes, update feeds and UI assets are unchanged.
+Full stable 0.4.0 acceptance remains open.

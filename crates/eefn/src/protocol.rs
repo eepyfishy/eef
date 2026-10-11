@@ -20,6 +20,9 @@ pub fn encode_line(crypto: &NodeCrypto, message: &Value) -> Result<Vec<u8>> {
     let payload = serde_json::to_vec(message)?;
     let mut line = crypto.encrypt(&payload, b"")?.into_bytes();
     line.push(b'\n');
+    if line.len() > MAX_WIRE_LINE {
+        bail!("outgoing wire message exceeds {MAX_WIRE_LINE} bytes");
+    }
     Ok(line)
 }
 
@@ -128,6 +131,13 @@ pub fn error_response(request_id: &str, error: impl std::fmt::Display) -> Value 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outgoing_encrypted_frames_obey_the_same_bound_as_the_reader() {
+        let crypto = NodeCrypto::new("test-only").unwrap();
+        assert!(encode_line(&crypto, &json!({"data":"x".repeat(MAX_WIRE_LINE)})).is_err());
+        assert!(encode_line(&crypto, &json!({"data":"small"})).is_ok());
+    }
 
     #[test]
     fn encrypted_line_round_trip() {
