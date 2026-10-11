@@ -138,27 +138,56 @@ async fn execute_model_command(
         local.port,
         local.enabled,
     )?;
-    let response = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?
-        .post(format!("http://{}/api/commands/models", address))
-        .timeout(Duration::from_secs(15))
-        .json(&request)
-        .send()
-        .await?;
-    let ok = response.status().is_success();
-    let mut result = eefn::model_manager::bounded_json(response).await?;
-    if !ok {
-        bail!(
-            "{}",
-            result["error"]
-                .as_str()
-                .unwrap_or("local model command failed")
-        )
+    let role_operation = matches!(
+        request.command,
+        eefn::model_selection::ModelCommand::Interpreter { .. }
+            | eefn::model_selection::ModelCommand::ClearInterpreter {}
+    );
+    let uncertain_role = |code: &str, unknown: bool| {
+        serde_json::json!({"schema_version":1,
+        "report_type":"interpreter_role_command","node_id":request.expected_node_id,"command":request.command,
+        "success":false,"error_code":code,"mutation_requested":true,"outcome_unknown":unknown,
+        "automatically_retried":false,"execution_authorized":false,"dispatched":false,
+        "note":"Inspect saved selections before deciding what to do. This command has no durable receipt ledger; no automatic retry, fallback, provider switch or restart was sent."})
+    };
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!("http://{}/api/commands/models", address))
+            .timeout(Duration::from_secs(15))
+            .json(&request)
+            .send()
+            .await?;
+        if role_operation && response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(uncertain_role("unsupported_command", false));
+        }
+        let ok = response.status().is_success();
+        let mut result = eefn::model_manager::bounded_json(response).await?;
+        if !ok {
+            bail!(
+                "{}",
+                result["error"]
+                    .as_str()
+                    .unwrap_or("local model command failed")
+            )
+        }
+        if role_operation && !eefn::model_selection::confirmed_interpreter(
+            &result,
+            &request.expected_node_id,
+            &request.command,
+        ) {
+            bail!("Interpreter role change not confirmed. Inspect saved selections before retrying; no automatic retry or fallback was sent.")
+        }
+        result["running"] = serde_json::json!(true);
+        Ok(result)
+    }.await;
+    if role_operation {
+        Ok(exchange.unwrap_or_else(|_| uncertain_role("local_model_role_reply_unconfirmed", true)))
+    } else {
+        exchange
     }
-    result["running"] = serde_json::json!(true);
-    Ok(result)
 }
 
 async fn execute_request_command(

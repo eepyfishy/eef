@@ -8,6 +8,16 @@ use std::path::PathBuf;
 #[derive(Debug, Subcommand)]
 pub enum ModelsAction {
     Show,
+    /// Assign one existing selected model as interpreter; preserves other roles.
+    /// Moves that role off all other selections. Restart separately to apply.
+    Interpreter {
+        #[arg(long,value_parser=["ollama","llamacpp"])]
+        backend: String,
+        #[arg(long)]
+        model: String,
+    },
+    /// Remove the interpreter role without removing models or other roles.
+    ClearInterpreter,
     /// Select an Ollama model ID. Installation/availability is checked on connection.
     SelectOllama {
         #[arg(long)]
@@ -89,6 +99,14 @@ impl ModelsAction {
         };
         let command = match self {
             ModelsAction::Show => ModelCommand::Show {},
+            ModelsAction::Interpreter {
+                backend: name,
+                model,
+            } => ModelCommand::Interpreter {
+                backend: backend(name),
+                model_id: model.clone(),
+            },
+            ModelsAction::ClearInterpreter => ModelCommand::ClearInterpreter {},
             ModelsAction::Provider { provider } => ModelCommand::Provider {
                 provider: provider.clone(),
             },
@@ -155,6 +173,50 @@ impl ModelsAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn interpreter_cli_requires_an_explicit_existing_model_identity() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(subcommand)]
+            action: ModelsAction,
+        }
+        for args in [
+            vec!["models", "interpreter"],
+            vec!["models", "interpreter", "--backend", "ollama"],
+            vec![
+                "models",
+                "interpreter",
+                "--backend",
+                "automatic",
+                "--model",
+                "fixture",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        let action = Cli::try_parse_from([
+            "models",
+            "interpreter",
+            "--backend",
+            "llamacpp",
+            "--model",
+            "fixture",
+        ])
+        .unwrap()
+        .action;
+        assert!(
+            matches!(action.to_command(false).unwrap(), ModelCommand::Interpreter {backend:Backend::Llamacpp,model_id} if model_id == "fixture")
+        );
+        let clear = Cli::try_parse_from(["models", "clear-interpreter"])
+            .unwrap()
+            .action;
+        assert!(matches!(
+            clear.to_command(true).unwrap(),
+            ModelCommand::ClearInterpreter {}
+        ));
+        assert!(serde_json::from_value::<ModelCommand>(serde_json::json!({"operation":"interpreter","backend":"ollama","model_id":"fixture","provider":"auto"})).is_err());
+    }
     #[test]
     fn remote_paths_are_not_resolved_on_the_coordinator() {
         let path = PathBuf::from("/nonexistent-node-volume/fixture.gguf");

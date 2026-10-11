@@ -241,7 +241,7 @@ try {
    assert.equal((await input('Transport '+transport,op)).status,'historical_snapshot');assert.equal(calls.length,count+2);
   }
  }
- await nodeCli(['models','hints','--backend','ollama','--model','fixture','--role','unselected_role']);await nodeCli(['restart','--wait-seconds','20']);await until(ready,'withdraw interpreter');
+ await nodeCli(['models','clear-interpreter']);await nodeCli(['restart','--wait-seconds','20']);await until(ready,'withdraw interpreter');
  count=calls.length;assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal((await input(lostText,lostReceipt)).status,'historical_snapshot');
  const missing=await input('New input without role',randomUUID(),false);assert.equal(missing.error_code,'interpreter_unavailable');assert(missing.setup_hint.includes('request_interpreter'));assert.equal(calls.length,count);
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal((await respond(lostAnswerSource,1,'This node',lostAnswerId)).status,'historical_snapshot');assert.equal(calls.length,count);

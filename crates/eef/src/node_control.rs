@@ -95,6 +95,12 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
     let mut result = json!({"schema_version":1,"success":false,"report_type":"remote_model_command",
         "operation_id":uuid::Uuid::new_v4().to_string(),"node_id":request.node_id,
         "mutation_requested":false,"acknowledged":false,"outcome_unknown":false});
+    if matches!(
+        request.command,
+        ModelCommand::Interpreter { .. } | ModelCommand::ClearInterpreter {}
+    ) {
+        result["command"] = serde_json::to_value(&request.command)?;
+    }
     let mut command = ModelCommandRequest {
         schema_version: 1,
         expected_node_id: request.node_id.clone(),
@@ -153,7 +159,17 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
                 "Node rejected this model command before execution because its work capacity is full. No selection change was started and no automatic retry was sent."
             );
         }
-        Ok(reply) if valid(&reply) => {
+        Ok(reply)
+            if valid(&reply)
+                && (!matches!(
+                    command.command,
+                    ModelCommand::Interpreter { .. } | ModelCommand::ClearInterpreter {}
+                ) || eefn::model_selection::confirmed_interpreter(
+                    &reply["data"],
+                    &request.node_id,
+                    &command.command,
+                )) =>
+        {
             result["success"] = json!(true);
             result["acknowledged"] = json!(true);
             result["data"] = reply["data"].clone();
@@ -436,6 +452,92 @@ mod tests {
                     provider: "auto".into(),
                 }
             },
+        }
+    }
+    #[tokio::test]
+    async fn remote_interpreter_changes_confirm_exact_saved_assignment_without_replay() {
+        use eefn::model_selection::{Backend, ModelCommand};
+        for clear in [false, true] {
+            let mut metadata = eefn::model_metadata::ModelMetadata::from_legacy(Some("text"));
+            metadata.roles = Some(if clear {
+                vec!["other_role".into()]
+            } else {
+                vec!["other_role".into(), "request_interpreter".into()]
+            });
+            let valid = json!({"success":true,"data":{"schema_version":1,"success":true,"node_id":"node-b",
+                "report_type":"model_selections","remote_management_allowed":true,"changed":true,
+                "saved_selections":[{"backend":"ollama","model_id":"chosen","model_metadata":metadata}],
+                "registered_models":null,"provider":"auto","restart_required":true,"note":"Saved only"}});
+            for case in 0..4 {
+                let mut reply = valid.clone();
+                match case {
+                    1 => {
+                        reply["data"]["saved_selections"][0]["model_metadata"]["roles"] =
+                            json!(if clear {
+                                vec!["request_interpreter"]
+                            } else {
+                                vec!["other_role"]
+                            })
+                    }
+                    2 => {
+                        let duplicate = reply["data"]["saved_selections"][0].clone();
+                        reply["data"]["saved_selections"]
+                            .as_array_mut()
+                            .unwrap()
+                            .push(duplicate);
+                    }
+                    3 => reply["data"]["execution_authorized"] = json!(true),
+                    _ => {}
+                }
+                let fake = ModelFake(Mutex::new(VecDeque::from([
+                    ("show", Some(model_report(true))),
+                    (
+                        if clear {
+                            "clear_interpreter"
+                        } else {
+                            "interpreter"
+                        },
+                        Some(reply),
+                    ),
+                ])));
+                let result = models_on(
+                    &fake,
+                    ModelsRequest {
+                        schema_version: 1,
+                        node_id: "node-b".into(),
+                        command: if clear {
+                            ModelCommand::ClearInterpreter {}
+                        } else {
+                            ModelCommand::Interpreter {
+                                backend: Backend::Ollama,
+                                model_id: "chosen".into(),
+                            }
+                        },
+                    },
+                )
+                .await
+                .unwrap();
+                assert_eq!(result["success"], case == 0);
+                assert_eq!(result["acknowledged"], case == 0);
+                assert_eq!(result["outcome_unknown"], case != 0);
+                assert_eq!(result["mutation_requested"], true);
+                assert_eq!(
+                    result["command"]["operation"],
+                    if clear {
+                        "clear_interpreter"
+                    } else {
+                        "interpreter"
+                    }
+                );
+                if !clear {
+                    assert_eq!(result["command"]["model_id"], "chosen");
+                    assert_eq!(result["command"]["backend"], "ollama");
+                }
+                if case != 0 {
+                    assert_eq!(result["error_code"], "model_change_unconfirmed");
+                }
+                assert!(fake.0.lock().unwrap().is_empty());
+            }
         }
     }
     #[tokio::test]

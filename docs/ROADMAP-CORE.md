@@ -73,6 +73,13 @@ awaits approval, while partial/reused receipts cannot trigger implicit continuat
 This covers initial answer triggers, not durable automation definitions, reusable
 approval policy, general planning, complete onboarding or physical acceptance.
 
+The next [explicit interpreter setup](INTERPRETER-SETUP.md) increment lets the
+owner move only the interpreter role to one existing selection atomically through
+node or approved coordinator commands. Other roles/restrictions survive, saved
+and applied models stay separate, and no model/provider is chosen automatically.
+This removes multi-write hint editing, not the default bootstrap/quality or
+friendly private pairing requirements. Complete non-coder setup remains open.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

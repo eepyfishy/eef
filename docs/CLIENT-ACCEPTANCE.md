@@ -127,3 +127,23 @@ Prepared methods remain pending approval; no workload is admitted by this workfl
 These are local logical-node fixtures, not physical two-PC or default interpreter
 quality acceptance. No models were downloaded/copied, installed runtimes changed,
 release artifacts replaced or update feeds modified. All release gates above remain.
+
+## Explicit interpreter setup checkpoint (2026-10-11)
+
+The [atomic interpreter role commands](INTERPRETER-SETUP.md) add seven Rust
+tests (410 total in both feature modes). The full metadata fixtures pass in
+API-only (`model-metadata-U31v6L`) and saved-UI (`model-metadata-igRWPB`) modes.
+They cover approved/denied coordinator commands, role preservation, no-op/clear,
+saved/applied separation, explicit restart, lost/substituted replies after real
+configuration saves and old-endpoint refusal. No model inference or download
+is caused by assigning/clearing a role.
+
+The input/answer fixture passes (`request-input-h8zkEM`) with interpreter
+withdrawal through the new command and read-only retained history after restart.
+First-run/browser regression passes (`first-run-ImtFAE`); this fixture still
+uses explicit owner pairing and is not complete non-coder setup acceptance.
+The full request regression also passes (`request-review-x56Izd`).
+After the final command-report change, fresh binaries pass metadata API-only
+again (`model-metadata-whMtGJ`).
+Exact saved role validation is not model quality or applied runtime readiness.
+No UI assets, personal installations, physical nodes or release feeds changed.

@@ -143,6 +143,10 @@ try{
   const remoteDenied=await remoteModels(['hints','--backend','ollama','--model','fixture-text','--role','node_tool'],false);
   assert.equal(remoteDenied.error_code,'approval_required');assert.equal(remoteDenied.mutation_requested,false);
   assert.equal(await readFile(nodeConfig,'utf8'),deniedBefore);
+  const deniedInterpreter=await remoteModels(['interpreter','--backend','ollama','--model','fixture-text'],false);
+  assert.equal(deniedInterpreter.error_code,'approval_required');assert.equal(await readFile(nodeConfig,'utf8'),deniedBefore);
+  const deniedClear=await remoteModels(['clear-interpreter'],false);
+  assert.equal(deniedClear.error_code,'approval_required');assert.equal(await readFile(nodeConfig,'utf8'),deniedBefore);
   const approved=(await json(node+'/api/config')).config;approved.management.allow_remote=true;
   await json(node+'/api/config',{config:approved},'PUT');
   const remoteSaved=await remoteModels(['hints','--backend','ollama','--model','fixture-text','--role','node_tool']);
@@ -150,6 +154,17 @@ try{
   assert.deepEqual(remoteSaved.data.saved_selections.find(m=>m.model_id==='fixture-text').model_metadata.roles,['node_tool']);
   assert.equal(remoteSaved.data.registered_models.find(m=>m.model_id==='fixture-text').model_metadata.roles,null,'saved must not pretend to be applied');
   assert.equal((await remoteModels(['hints','--backend','ollama','--model','fixture-text','--role','node_tool'])).data.changed,false);
+  const roleMoved=await remoteModels(['interpreter','--backend','ollama','--model','fixture-text']);
+  assert.equal(roleMoved.acknowledged,true);assert.equal(roleMoved.data.changed,true);
+  assert.deepEqual(roleMoved.data.saved_selections.find(m=>m.model_id==='fixture-text').model_metadata.roles,['node_tool','request_interpreter']);
+  assert.equal(roleMoved.data.registered_models.find(m=>m.model_id==='fixture-text').model_metadata.roles,null,'role assignment is saved, not applied');
+  assert.equal((await remoteModels(['interpreter','--backend','ollama','--model','fixture-text'])).data.changed,false);
+  const beforeMissing=await readFile(nodeConfig,'utf8');
+  await nodeCommand(['interpreter','--backend','ollama','--model','missing'],false);assert.equal(await readFile(nodeConfig,'utf8'),beforeMissing);
+  const cleared=await remoteModels(['clear-interpreter']);
+  assert.equal(cleared.data.changed,true);assert.equal(cleared.data.saved_selections.length,2);
+  assert.deepEqual(cleared.data.saved_selections.find(m=>m.model_id==='fixture-text').model_metadata.roles,['node_tool']);
+  assert.equal((await remoteModels(['clear-interpreter'])).data.changed,false);
   const remoteBody={schema_version:1,node_id:id,command:{operation:'show'}};
   assert.equal((await fetch(eef+'/api/commands/node/models',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(remoteBody)})).status,403);
   assert.equal(requests.length,1,'selection commands must not execute inference');
@@ -170,10 +185,14 @@ try{
   const before=await readFile(nodeConfig,'utf8');
   await nodeCommand(['hints','--backend','ollama','--model','fixture-text','--capability','vlm.analyze'],false);
   assert.equal(await readFile(nodeConfig,'utf8'),before);
-  const saved=await nodeCommand(['hints','--backend','ollama','--model','fixture-vision','--capability','llm.infer','--role','request_interpreter']);
+  await nodeCommand(['hints','--backend','ollama','--model','fixture-vision','--capability','llm.infer']);
+  await nodeCommand(['interpreter','--backend','ollama','--model','fixture-text']);
+  const saved=await nodeCommand(['interpreter','--backend','ollama','--model','fixture-vision']);
   assert.equal(saved.changed,true);assert.equal(saved.restart_required,true);assert.equal(saved.running,true);
   assert(saved.registered_models.find(m=>m.model_id==='fixture-vision').model_metadata.capabilities.includes('vlm.analyze'),'saved is not applied');
   assert.deepEqual(saved.saved_selections.find(m=>m.model_id==='fixture-vision').model_metadata.roles,['request_interpreter']);
+  assert.deepEqual(saved.saved_selections.find(m=>m.model_id==='fixture-text').model_metadata.roles,['node_tool'],'moving the interpreter preserves unrelated roles');
+  assert.equal(saved.saved_selections.filter(m=>m.model_metadata.roles?.includes('request_interpreter')).length,1);
   assert.equal((await fetch(node+'/api/commands/models',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({schema_version:1,expected_node_id:id,command:{operation:'show'}})})).status,403);
   assert.equal((await fetch(node+'/api/commands/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schema_version:1,expected_node_id:'wrong',command:{operation:'show'}})})).status,400);
   await localRestart();
@@ -329,14 +348,20 @@ try{
   // Lose the local HTTP reply after EEF has accepted the creation. The CLI must
   // retain its pre-send receipt and never replay; restore only our fixture marker.
   const marker=nodeConfig+'.api.json',originalMarker=await readFile(marker,'utf8');
-  let forwarded=0,forwardError=null,accepted=null;
+  let forwarded=0,forwardError=null,accepted=null,replyMode='drop';
   const dropReply=createServer(async(req,res)=>{
    try{
+    if(replyMode==='old'){res.writeHead(404);return res.end('{}');}
     let body='';for await(const chunk of req)body+=chunk;
     forwarded++;
     const response=await fetch(node+req.url,{method:req.method,headers:{'Content-Type':'application/json'},body,signal:AbortSignal.timeout(15000)});
     accepted=await response.json();
-   }catch(error){forwardError=error;}finally{res.destroy();}
+    if(replyMode==='role-corrupt'){
+     const substituted=structuredClone(accepted);
+     substituted.saved_selections[0].model_metadata.roles=['request_interpreter'];
+     res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(substituted));
+    }
+   }catch(error){forwardError=error;}finally{if(replyMode==='drop')res.destroy();}
   });
   try{
    await new Promise(r=>dropReply.listen(0,'127.0.0.1',r));
@@ -356,6 +381,25 @@ try{
    assert.equal((await reviewed.result(accepted.data.id)).success,true);
    await nodeJobs(['remove',accepted.data.id]);
    assert.equal((await nodeJobs(['find','--operation-id',unconfirmed.operation_id])).data.total,0,'lookup searches retained history only');
+   // A role mutation can commit before a lost/substituted reply. Keep its exact
+   // target, never retry or switch provider/restart behind the owner's back.
+   const roleCount=requests.length,beforeRoleForward=forwarded;
+   replyMode='role-corrupt';await writeFile(marker,JSON.stringify({schema_version:1,node_id:id,address:`127.0.0.1:${dropReply.address().port}`}));
+   const corruptRole=await nodeCommand(['clear-interpreter'],false);
+   assert.equal(corruptRole.error_code,'local_model_role_reply_unconfirmed');assert.equal(corruptRole.outcome_unknown,true);
+   assert.deepEqual(corruptRole.command,{operation:'clear_interpreter'});assert.equal(corruptRole.automatically_retried,false);
+   assert.equal(forwarded,beforeRoleForward+1);await writeFile(marker,originalMarker);
+   const inspectedClear=await nodeCommand(['show']);assert(inspectedClear.saved_selections.every(m=>!m.model_metadata.roles?.includes('request_interpreter')));
+   replyMode='drop';await writeFile(marker,JSON.stringify({schema_version:1,node_id:id,address:`127.0.0.1:${dropReply.address().port}`}));
+   const lostRole=await nodeCommand(['interpreter','--backend','ollama','--model','fixture-vision'],false);
+   assert.equal(lostRole.error_code,'local_model_role_reply_unconfirmed');assert.equal(lostRole.outcome_unknown,true);
+   assert.deepEqual(lostRole.command,{operation:'interpreter',backend:'ollama',model_id:'fixture-vision'});assert.equal(forwarded,beforeRoleForward+2);
+   await writeFile(marker,originalMarker);
+   assert((await nodeCommand(['show'])).saved_selections.find(m=>m.model_id==='fixture-vision').model_metadata.roles.includes('request_interpreter'));
+   replyMode='old';await writeFile(marker,JSON.stringify({schema_version:1,node_id:id,address:`127.0.0.1:${dropReply.address().port}`}));
+   const oldRole=await nodeCommand(['clear-interpreter'],false);
+   assert.equal(oldRole.error_code,'unsupported_command');assert.equal(oldRole.outcome_unknown,false);assert.equal(forwarded,beforeRoleForward+2);
+   await writeFile(marker,originalMarker);assert.equal(requests.length,roleCount,'role inspection/uncertainty must not infer or replay');
   }finally{
    await writeFile(marker,originalMarker);dropReply.closeAllConnections();await new Promise(r=>dropReply.close(r));
   }

@@ -25,16 +25,24 @@ release-specific descriptions below must not be read as current dispatch behavio
 
 Input requires exactly one selected model with the explicit `request_interpreter`
 role. Installing/selecting a model alone does not assign that role. Inspect
-saved/applied selections with `eefn models show --json`, then use the existing
-owner command with the actual backend/model ID:
+saved/applied selections with `eefn models show --json`, then explicitly choose
+an existing text-capable selection with its actual backend/model ID:
 
 ```powershell
-eefn models hints --backend BACKEND --model MODEL_ID --role request_interpreter --json
+eefn models interpreter --backend BACKEND --model MODEL_ID --json
 eefn restart --wait-seconds 60 --json
 ```
 
-This changes saved roles, not permissions or plan approval. Multiple interpreter
-models fail as ambiguous instead of choosing automatically. Unreleased `--ask`,
+The unreleased `interpreter` command atomically moves only `request_interpreter`
+to the chosen selection across both backends, preserving other roles and all
+capability restrictions. `models clear-interpreter` removes only that role.
+Neither command selects/downloads/loads models, switches provider, restarts,
+changes permissions or approves work. Provider must activate the chosen backend.
+Missing selections, disabled text inference and malformed/duplicate selections
+are rejected unchanged. Repeated assignment/clear is a no-op. Older builds do
+not support these operations; there is no multi-write hints/save fallback.
+Manual hints can still produce multiple interpreter models, which fail as
+ambiguous instead of choosing automatically. Unreleased `--ask`,
 review and HTTP input failures expose `setup_hint` for these setup cases; node
 HTTP input's human-readable `reply` includes that guidance. The existing browser
 model picker does not configure roles. First-time non-coder setup, general durable
@@ -1324,6 +1332,14 @@ Missing records fall back to config for older nodes; stopped-node commands ignor
 stale records. Failure to write discovery is logged without stopping the node.
 
 ## Added in v0.4.0a3: node model selection commands
+
+Unreleased after alpha.6, both local `eefn models interpreter --backend BACKEND
+--model MODEL_ID` and approved `eef node models --node NODE_ID interpreter
+--backend BACKEND --model MODEL_ID` use one node-core atomic role assignment.
+`clear-interpreter` is available through both adapters. These are not in alpha.6
+installers. Node and coordinator adapters validate exact saved role/target reports;
+unconfirmed replies do not cause a retry or legacy fallback. Saved roles are not
+applied readiness or a model-quality attestation. See setup guidance above.
 
 The development coordinator also exposes these operations for a connected node:
 

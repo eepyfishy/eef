@@ -76,6 +76,13 @@ pub enum ModelCommand {
     Provider {
         provider: String,
     },
+    /// Explicitly move only the request_interpreter role to one existing selection.
+    Interpreter {
+        backend: Backend,
+        model_id: String,
+    },
+    /// Remove only the interpreter role; retain model selections and other roles.
+    ClearInterpreter {},
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -121,6 +128,10 @@ pub fn apply(config: &mut Value, command: &ModelCommand) -> Result<bool> {
     let before = config.clone();
     match command {
         ModelCommand::Show {} => {}
+        ModelCommand::Interpreter { backend, model_id } => {
+            assign_interpreter(config, Some((*backend, model_id)))?;
+        }
+        ModelCommand::ClearInterpreter {} => assign_interpreter(config, None)?,
         ModelCommand::Provider { provider } => {
             if !matches!(provider.as_str(), "auto" | "ollama" | "llamacpp") {
                 bail!("provider must be auto, ollama, or llamacpp")
@@ -235,6 +246,85 @@ pub fn apply(config: &mut Value, command: &ModelCommand) -> Result<bool> {
     Ok(*config != before)
 }
 
+/// Stage a role move in one validated configuration, never a series of client
+/// hint writes. Do not expand capabilities, select files, change provider or load.
+fn assign_interpreter(config: &mut Value, target: Option<(Backend, &str)>) -> Result<()> {
+    if let Some((_, id)) = target {
+        validate_id(id)?;
+    }
+    let selections = selection_view(config)?;
+    let mut identities = std::collections::BTreeSet::new();
+    for selection in &selections {
+        let identity = (
+            selection["backend"].as_str().context("missing backend")?,
+            selection["model_id"].as_str().context("missing model ID")?,
+        );
+        if !identities.insert(identity) {
+            bail!("duplicate model selections must be resolved before assigning an interpreter")
+        }
+    }
+    if let Some((backend, id)) = target {
+        let selected = selections
+            .iter()
+            .find(|m| m["backend"] == backend.name() && m["model_id"] == id)
+            .context("interpreter model must already be selected on the specified backend")?;
+        let metadata: ModelMetadata = serde_json::from_value(selected["model_metadata"].clone())?;
+        if !metadata.supports("llm.infer")
+            || !metadata.input_modalities.iter().any(|m| m == "text")
+            || !metadata.output_modalities.iter().any(|m| m == "text")
+        {
+            bail!(
+                "interpreter selection must already support text llm.infer; capabilities were not expanded"
+            )
+        }
+    }
+    let mut staged = config.clone();
+    for backend in [Backend::Ollama, Backend::Llamacpp] {
+        // Missing backends/selection hints are not manufactured when clearing.
+        let Some(raw) =
+            staged.pointer_mut(&format!("/models/{}/{}", backend.name(), backend.key()))
+        else {
+            continue;
+        };
+        let models = raw
+            .as_array_mut()
+            .context("selected models must be a list")?;
+        for model in models {
+            let is_target = target.is_some_and(|(b, id)| b == backend && model["model_id"] == id);
+            let had_role = model
+                .pointer("/selection/roles")
+                .and_then(Value::as_array)
+                .is_some_and(|roles| roles.iter().any(|r| r == "request_interpreter"));
+            if is_target == had_role {
+                continue;
+            }
+            let hints = model
+                .as_object_mut()
+                .context("model must be an object")?
+                .entry("selection")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .context("selection must be an object")?;
+            let mut roles = hints
+                .get("roles")
+                .filter(|v| !v.is_null())
+                .map(|v| serde_json::from_value::<Vec<String>>(v.clone()))
+                .transpose()?
+                .unwrap_or_default();
+            roles.retain(|role| role != "request_interpreter");
+            if is_target {
+                roles.push("request_interpreter".into());
+            }
+            hints.insert("roles".into(), json!(roles));
+        }
+    }
+    // Includes bounded roles and full adapter restrictions. Failed edits leave
+    // even the caller's in-memory value unchanged, not just the saved file.
+    selection_view(&staged)?;
+    *config = staged;
+    Ok(())
+}
+
 fn upsert(list: &mut Vec<Value>, id: &str, mut model: Value) -> Result<()> {
     if let Some(existing) = list.iter_mut().find(|m| m["model_id"] == id) {
         // Selection refresh preserves owner roles/restrictions unless explicitly replaced.
@@ -279,9 +369,313 @@ pub fn selection_view(config: &Value) -> Result<Vec<Value>> {
     Ok(selections)
 }
 
+/// Confirm only the new explicit role operations. Saved labels never attest to
+/// applied readiness, model quality or execution authority.
+pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) -> bool {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Selection {
+        backend: Backend,
+        model_id: String,
+        model_metadata: ModelMetadata,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Report {
+        schema_version: u32,
+        success: bool,
+        report_type: String,
+        node_id: String,
+        changed: bool,
+        saved_selections: Vec<Selection>,
+        registered_models: Option<Vec<Selection>>,
+        remote_management_allowed: bool,
+        provider: String,
+        restart_required: bool,
+        note: String,
+    }
+    let Ok(report) = serde_json::from_value::<Report>(value.clone()) else {
+        return false;
+    };
+    let _ = (
+        report.changed,
+        report.remote_management_allowed,
+        report.restart_required,
+    );
+    if report.schema_version != 1
+        || !report.success
+        || report.report_type != "model_selections"
+        || report.node_id != node
+        || report.note.len() > 2048
+        || !matches!(report.provider.as_str(), "auto" | "ollama" | "llamacpp")
+        || report.saved_selections.len() > 64
+        || report
+            .registered_models
+            .as_ref()
+            .is_some_and(|m| m.len() > 64)
+    {
+        return false;
+    }
+    for selections in
+        std::iter::once(&report.saved_selections).chain(report.registered_models.iter())
+    {
+        let mut ids = std::collections::BTreeSet::new();
+        for model in selections {
+            if validate_id(&model.model_id).is_err()
+                || model.model_metadata.validate().is_err()
+                || !ids.insert((model.backend.name(), &model.model_id))
+            {
+                return false;
+            }
+        }
+    }
+    let interpreters = report
+        .saved_selections
+        .iter()
+        .filter(|m| {
+            m.model_metadata
+                .roles
+                .as_ref()
+                .is_some_and(|roles| roles.iter().any(|r| r == "request_interpreter"))
+        })
+        .collect::<Vec<_>>();
+    match command {
+        ModelCommand::Interpreter { backend, model_id } => {
+            validate_id(model_id).is_ok()
+                && interpreters.len() == 1
+                && interpreters[0].backend == *backend
+                && interpreters[0].model_id == *model_id
+                && interpreters[0].model_metadata.supports("llm.infer")
+                && interpreters[0]
+                    .model_metadata
+                    .input_modalities
+                    .iter()
+                    .any(|m| m == "text")
+                && interpreters[0]
+                    .model_metadata
+                    .output_modalities
+                    .iter()
+                    .any(|m| m == "text")
+        }
+        ModelCommand::ClearInterpreter {} => interpreters.is_empty(),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn interpreter_config() -> Value {
+        json!({"future":{"keep":true},"models":{"provider":"auto",
+            "ollama":{"base_url":"http://PRIVATE","selected":[
+                {"model_id":"same-id","modality":"text","selection":{"capabilities":["llm.infer"],"roles":["request_interpreter","node_tool"]}},
+                {"model_id":"other","modality":"vlm","selection":{"roles":["request_interpreter","other_role"]}}]},
+            "llamacpp":{"slots":[{"model_id":"same-id","model_path":"PRIVATE.gguf","port":19000,
+                "selection":{"roles":["heavy_planner"]}}]}}})
+    }
+    fn interpreter(backend: Backend, id: &str) -> ModelCommand {
+        ModelCommand::Interpreter {
+            backend,
+            model_id: id.into(),
+        }
+    }
+    #[test]
+    fn interpreter_role_move_is_unique_atomic_and_preserves_other_fields() {
+        let mut config = interpreter_config();
+        let before = config.clone();
+        assert!(apply(&mut config, &interpreter(Backend::Llamacpp, "same-id")).unwrap());
+        let view = selection_view(&config).unwrap();
+        assert_eq!(
+            view.iter()
+                .filter(|m| m["model_metadata"]["roles"]
+                    .as_array()
+                    .is_some_and(|r| r.contains(&json!("request_interpreter"))))
+                .count(),
+            1
+        );
+        assert_eq!(
+            config["models"]["ollama"]["selected"][0]["selection"]["roles"],
+            json!(["node_tool"])
+        );
+        assert_eq!(
+            config["models"]["ollama"]["selected"][1]["selection"]["roles"],
+            json!(["other_role"])
+        );
+        assert_eq!(
+            config["models"]["llamacpp"]["slots"][0]["selection"]["roles"],
+            json!(["heavy_planner", "request_interpreter"])
+        );
+        let saved = config.clone();
+        assert!(!apply(&mut config, &interpreter(Backend::Llamacpp, "same-id")).unwrap());
+        assert_eq!(config, saved);
+        // Strip only roles from both values; everything else must be unchanged.
+        let mut expected = before;
+        for value in [&mut config, &mut expected] {
+            for pointer in ["/models/ollama/selected", "/models/llamacpp/slots"] {
+                for model in value.pointer_mut(pointer).unwrap().as_array_mut().unwrap() {
+                    model["selection"].as_object_mut().unwrap().remove("roles");
+                }
+            }
+        }
+        assert_eq!(config, expected);
+    }
+    #[test]
+    fn interpreter_clear_retains_selections_and_does_not_manufacture_config() {
+        let mut config = interpreter_config();
+        assert!(apply(&mut config, &ModelCommand::ClearInterpreter {}).unwrap());
+        assert_eq!(selection_view(&config).unwrap().len(), 3);
+        assert_eq!(
+            config["models"]["llamacpp"]["slots"][0]["selection"]["roles"],
+            json!(["heavy_planner"])
+        );
+        assert!(!apply(&mut config, &ModelCommand::ClearInterpreter {}).unwrap());
+        let mut empty = json!({"unrelated":true});
+        assert!(!apply(&mut empty, &ModelCommand::ClearInterpreter {}).unwrap());
+        assert_eq!(empty, json!({"unrelated":true}));
+    }
+    #[test]
+    fn interpreter_reports_confirm_exact_saved_role_not_applied_readiness() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = service(dir.path());
+        for id in ["chosen", "other"] {
+            core.model_command(request(selected(id))).unwrap();
+        }
+        let command = interpreter(Backend::Ollama, "chosen");
+        let report = core.model_command(request(command.clone())).unwrap();
+        assert!(confirmed_interpreter(&report, "node", &command));
+        assert!(report["registered_models"].is_null());
+        assert!(!confirmed_interpreter(&report, "wrong-node", &command));
+        assert!(!confirmed_interpreter(
+            &report,
+            "node",
+            &interpreter(Backend::Llamacpp, "chosen")
+        ));
+        assert!(!confirmed_interpreter(
+            &report,
+            "node",
+            &ModelCommand::ClearInterpreter {}
+        ));
+        for case in 0..7 {
+            let mut bad = report.clone();
+            match case {
+                0 => {
+                    bad["saved_selections"][1]["model_metadata"]["roles"] =
+                        json!(["request_interpreter"])
+                }
+                1 => bad["saved_selections"][0]["model_metadata"]["capabilities"] = json!([]),
+                2 => bad["saved_selections"][0]["model_metadata"]["input_modalities"] = json!([]),
+                3 => bad["provider"] = json!("made-up"),
+                4 => {
+                    let duplicate = bad["saved_selections"][0].clone();
+                    bad["saved_selections"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(duplicate);
+                }
+                5 => bad["execution_authorized"] = json!(true),
+                _ => bad["success"] = json!(false),
+            }
+            assert!(
+                !confirmed_interpreter(&bad, "node", &command),
+                "case {case}"
+            );
+        }
+        let clear = ModelCommand::ClearInterpreter {};
+        let report = core.model_command(request(clear.clone())).unwrap();
+        assert!(confirmed_interpreter(&report, "node", &clear));
+        assert!(!confirmed_interpreter(&report, "node", &command));
+    }
+    #[test]
+    fn failed_interpreter_moves_leave_even_in_memory_config_unchanged() {
+        for case in 0..6 {
+            let mut config = interpreter_config();
+            let id = match case {
+                0 => "missing",
+                1 => " bad-id",
+                2 => {
+                    config["models"]["llamacpp"]["slots"][0]["selection"]["capabilities"] =
+                        json!([]);
+                    "same-id"
+                }
+                3 => {
+                    config["models"]["llamacpp"]["slots"][0]["selection"]["roles"] =
+                        json!((0..32).map(|i| format!("role_{i}")).collect::<Vec<_>>());
+                    "same-id"
+                }
+                4 => {
+                    let duplicate = config["models"]["llamacpp"]["slots"][0].clone();
+                    config["models"]["llamacpp"]["slots"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(duplicate);
+                    "same-id"
+                }
+                _ => {
+                    config["models"]["ollama"]["selected"][1]["selection"]["roles"] =
+                        json!(["bad role"]);
+                    "same-id"
+                }
+            };
+            let before = config.clone();
+            assert!(
+                apply(&mut config, &interpreter(Backend::Llamacpp, id)).is_err(),
+                "case {case}"
+            );
+            assert_eq!(config, before, "case {case}");
+        }
+    }
+    #[tokio::test]
+    async fn interpreter_owner_authorization_and_concurrent_moves_use_existing_config_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = service(dir.path());
+        for id in ["first", "second"] {
+            core.model_command(request(selected(id))).unwrap();
+        }
+        let before = core.read_config().unwrap();
+        let denied = core
+            .remote(
+                "model_command",
+                serde_json::to_value(request(interpreter(Backend::Ollama, "first"))).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied["error_code"], "approval_required");
+        assert_eq!(core.read_config().unwrap(), before);
+        let workers = ["first", "second"]
+            .into_iter()
+            .map(|id| {
+                let core = core.clone();
+                std::thread::spawn(move || {
+                    core.model_command(request(interpreter(Backend::Ollama, id)))
+                        .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            assert_eq!(worker.join().unwrap()["success"], true);
+        }
+        let saved = core.read_config().unwrap();
+        assert_eq!(
+            selection_view(&saved)
+                .unwrap()
+                .iter()
+                .filter(|m| m["model_metadata"]["roles"]
+                    .as_array()
+                    .is_some_and(|r| r.contains(&json!("request_interpreter"))))
+                .count(),
+            1
+        );
+        assert_eq!(saved["custom"]["retain"], true);
+        let clear_denied = core
+            .remote(
+                "model_command",
+                serde_json::to_value(request(ModelCommand::ClearInterpreter {})).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(clear_denied["error_code"], "approval_required");
+        assert_eq!(core.read_config().unwrap(), saved);
+    }
     fn selected(id: &str) -> ModelCommand {
         ModelCommand::SelectOllama {
             model: SelectedModel {

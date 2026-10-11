@@ -911,10 +911,10 @@ impl NodeService {
 fn interpreter_setup_hint(code: &str) -> Option<&'static str> {
     match code {
         "interpreter_unavailable" => Some(
-            "Select an installed model with the request_interpreter role, then restart this node to apply it. Selecting a model alone does not assign that role. Inspect saved and applied selections with eefn models show.",
+            "Inspect selections with eefn models show. Choose an existing text-capable selection using eefn models interpreter --backend BACKEND --model MODEL_ID, then restart this node to apply it. This explicitly assigns the request_interpreter role; provider must activate the chosen backend. No model was chosen or downloaded automatically.",
         ),
         "interpreter_ambiguous" => Some(
-            "More than one model has the request_interpreter role. Keep that role on exactly one selected model, then restart this node. No model was chosen automatically.",
+            "More than one model has the request_interpreter role. Use eefn models interpreter --backend BACKEND --model MODEL_ID to keep that role on exactly one chosen selection, then restart this node. Other roles and capabilities are preserved. No model was chosen automatically.",
         ),
         _ => None,
     }
