@@ -413,11 +413,12 @@ async fn chat(
         }
     } else {
         format!(
-            "Request not confirmed ({}). Inspect receipt {} before retrying. No workload execution or automatic retry was requested.",
+            "Request not confirmed ({}). Inspect receipt {} before retrying. No workload execution or automatic retry was requested. {}",
             report["error_code"]
                 .as_str()
                 .unwrap_or("request_unconfirmed"),
-            report["request_id"].as_str().unwrap_or("unavailable")
+            report["request_id"].as_str().unwrap_or("unavailable"),
+            report["setup_hint"].as_str().unwrap_or("")
         )
     });
     Ok(Json(report))

@@ -836,13 +836,47 @@ impl NodeService {
         } else {
             "local_node"
         });
+        if let Some(hint) = interpreter_setup_hint(report["error_code"].as_str().unwrap_or("")) {
+            report["setup_hint"] = json!(hint);
+        }
         report
+    }
+}
+
+/// Readable adapter guidance, never a command, role selection or fallback.
+fn interpreter_setup_hint(code: &str) -> Option<&'static str> {
+    match code {
+        "interpreter_unavailable" => Some(
+            "Select an installed model with the request_interpreter role, then restart this node to apply it. Selecting a model alone does not assign that role. Inspect saved and applied selections with eefn models show.",
+        ),
+        "interpreter_ambiguous" => Some(
+            "More than one model has the request_interpreter role. Keep that role on exactly one selected model, then restart this node. No model was chosen automatically.",
+        ),
+        _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn setup_guidance_does_not_imply_selection_fallback_or_retry() {
+        let missing = interpreter_setup_hint("interpreter_unavailable").unwrap();
+        assert!(missing.contains("request_interpreter") && missing.contains("restart"));
+        let ambiguous = interpreter_setup_hint("interpreter_ambiguous").unwrap();
+        assert!(
+            ambiguous.contains("exactly one")
+                && ambiguous.contains("No model was chosen automatically")
+        );
+        for code in [
+            "",
+            "interpretation_timeout",
+            "interpreter_backend_failed",
+            "runtime_changed",
+        ] {
+            assert_eq!(interpreter_setup_hint(code), None, "{code}");
+        }
+    }
     fn supplied() -> ProposalReviewRequest {
         serde_json::from_value(json!({"schema_version":1,"expected_node_id":"node",
             "request_id":uuid::Uuid::new_v4().to_string(),"text":"  Check status\n",
@@ -1199,6 +1233,10 @@ mod tests {
         let guard = service.attach_preview_runtime(&engine, "first".into());
         let report = service.preview_request(request()).await;
         assert_eq!(report["error_code"], "interpreter_unavailable");
+        assert_eq!(
+            report["setup_hint"],
+            interpreter_setup_hint("interpreter_unavailable").unwrap()
+        );
         assert_eq!(report["execution_authorized"], false);
         let _permit = service.preview.capacity.acquire().await.unwrap();
         assert_eq!(

@@ -19,6 +19,34 @@ Use reviewed requests and exact grants instead; preserve receipts after uncertai
 See [compatibility and verification limits](EXECUTION-BOUNDARY.md). The older
 release-specific descriptions below must not be read as current dispatch behavior.
 
+Input requires exactly one selected model with the explicit `request_interpreter`
+role. Installing/selecting a model alone does not assign that role. Inspect
+saved/applied selections with `eefn models show --json`, then use the existing
+owner command with the actual backend/model ID:
+
+```powershell
+eefn models hints --backend BACKEND --model MODEL_ID --role request_interpreter --json
+eefn restart --wait-seconds 60 --json
+```
+
+This changes saved roles, not permissions or plan approval. Multiple interpreter
+models fail as ambiguous instead of choosing automatically. Unreleased `--ask`,
+review and HTTP input failures expose `setup_hint` for these setup cases; node
+HTTP input's human-readable `reply` includes that guidance. The existing browser
+model picker does not configure roles. First-time non-coder setup/automatic
+preparation remain release requirements, not completed by this command example.
+See [client acceptance](CLIENT-ACCEPTANCE.md).
+
+Node status includes an optional live `last_workload` scope snapshot after durable
+grant admission and a successful ACK write, immediately before execution. It
+contains grant ID, capability, immutable context and exact resource/model/backend
+IDs, never private parameters/output. `execution_may_have_started: true` is not
+a completion or stop assertion. Control polling cannot erase it; rejected work
+cannot replace it. This is a last-attempt snapshot, not history, latency measurement,
+durable evidence, or proof of all currently running effects. Use existing grant
+receipts/results for durable inspection. Legacy last-activity fields may still
+change during ordinary control activity.
+
 ## Explicit interrupted-result reconciliation (unreleased after alpha.6)
 
 `eefn requests recover-result JOB_ID --revision REV --grant-id GRANT_UUID

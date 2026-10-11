@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 export function reviewedFixture(eef, node, id) {
-  async function exchange(url, body) {
-    const response = await fetch(url, {method:body?'POST':'GET',
+  async function exchange(url, body, method) {
+    const response = await fetch(url, {method:method||(body?'POST':'GET'),
       headers:{'Content-Type':'application/json'}, body:body?JSON.stringify(body):undefined,
       signal:AbortSignal.timeout(10000)});
     const value = await response.json();
@@ -25,11 +25,18 @@ export function reviewedFixture(eef, node, id) {
     return plan;
   }
   async function approve(plan, limits={max_execution_ms:5000,max_result_bytes:65536}) {
+    let hash=plan.plan_sha256;
+    if(!hash) {
+      const full=await inspect(plan.id);
+      assert.equal(full.revision,plan.revision,'never approve a silently refreshed revision');
+      assert.equal(full.status,'awaiting_approval');
+      hash=full.planning.plan_sha256;
+    }
     const runtime=(await exchange(eef+'/api/diagnostics')).runtime_id;
     const approval=await exchange(eef+'/api/commands/requests/planning', {
       schema_version:1,expected_runtime_id:runtime,command:{operation:'approve',
         id:plan.id,expected_revision:plan.revision,operation_id:randomUUID(),
-        plan_sha256:plan.plan_sha256,valid_for_ms:60000,limits}});
+        plan_sha256:hash,valid_for_ms:60000,limits}});
     assert.equal(approval.plan.status,'approved');
     return {id:plan.id,expected_revision:approval.plan.revision,operation_id:randomUUID(),
       approval_sha256:approval.plan.approval.approval_sha256};
@@ -65,5 +72,26 @@ export function reviewedFixture(eef, node, id) {
     assert(['completed','unknown'].includes(retained.report.state));
     return retained.report;
   }
-  return {save,approve,start,startOwner,get,wait,result};
+  async function inspect(job) {
+    const value=await exchange(eef+'/api/commands/requests/planning', {
+      schema_version:1,expected_runtime_id:(await exchange(eef+'/api/diagnostics')).runtime_id,
+      command:{operation:'inspect',id:job}});
+    assert.equal(value.plan.plan_id,job);return value.plan;
+  }
+  async function cleanup(job) {
+    const metadata=await get(job);
+    if(metadata.status==='interrupted') {
+      assert.equal(metadata.grant_attempts.length,1);
+      const value=await exchange(node+'/api/commands/requests/abandon', {
+        schema_version:1,expected_node_id:id,command:{id:job,expected_revision:metadata.revision,
+          grant_id:metadata.grant_attempts[0].grant_id,operation_id:randomUUID(),acknowledge_effects_may_continue:true}});
+      assert.equal(value.result.remote_stop_confirmed,false);
+    } else if(['review','awaiting_approval','approved'].includes(metadata.status)) {
+      assert.equal((await exchange(node+'/api/jobs/'+job+'/stop',{})).status,'cancelled');
+    } else {
+      assert(['completed','failed','cancelled','abandoned'].includes(metadata.status),'never remove active work');
+    }
+    assert.equal((await exchange(node+'/api/jobs/'+job,undefined,'DELETE')).removed,true);
+  }
+  return {save,approve,start,startOwner,get,wait,result,inspect,cleanup};
 }

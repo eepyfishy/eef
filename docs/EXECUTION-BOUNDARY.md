@@ -104,12 +104,16 @@ checked independently. Formatter, JavaScript syntax and the backend/browser
 dependency guard are checked separately. Historical legacy fixture factories
 do not count as public-process execution acceptance.
 
-Older `test-model-metadata`, `test-first-run`, and `test-real-model` fixtures still
-contain retired workload entry points and require migration before they can be
-used as current acceptance evidence. Do not count their previous passes as
-validation of this boundary or skip their remaining requirements for release.
+The follow-up migrates `test-model-metadata`, `test-first-run`, and
+`test-real-model` to source admission, owner approval and reviewed execution.
+They refuse retired RPC/raw job creation rather than restoring a legacy opt-out.
+Their prior passes are not evidence for this boundary. See the follow-up
+[client acceptance scope](CLIENT-ACCEPTANCE.md), including explicit command
+steps that still prevent claiming complete non-coder setup. Optional real-model
+testing can reuse a verified artifact without another copy/download; this does
+not establish interpreter quality or approve a default model.
 
-Remaining work includes those regressions and client adaptation, automatic
+Remaining work includes further client adaptation, automatic
 source-bound workflows, heavy planning, stronger termination, continuous
 pipelines, authenticated peer data paths, full model lifecycle and cluster
 fencing. The full [roadmap](ROADMAP-CORE.md) remains active; stable v0.4.0 is not

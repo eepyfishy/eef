@@ -229,7 +229,7 @@ impl NodeService {
             "capabilities":live["capabilities"],"last_activity":live["last_activity"],"last_request_context":live["last_request_context"],
             "last_resource_id":live["last_resource_id"],"pending_restart":live["pending_restart"],"download":live["download"],"update":live["update"],
             "request_limits":live["request_limits"],"busy_rejections":live["busy_rejections"].as_u64().unwrap_or(0),
-            "execution_grants":live["execution_grants"],"last_grant":live["last_grant"],
+            "execution_grants":live["execution_grants"],"last_grant":live["last_grant"],"last_workload":live["last_workload"],
             "proposal_pending":self.config_path.with_extension("proposal.json").is_file()})
     }
 

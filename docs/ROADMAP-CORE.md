@@ -47,6 +47,14 @@ No second node runtime, model/RPC fallback or configuration opt-out is introduce
 Automatic source-bound preparation/answer workflows, client/regression migration
 and physical acceptance remain open; this is not finished first-time automation.
 
+The following unreleased [client acceptance checkpoint](CLIENT-ACCEPTANCE.md)
+migrates model-management, browser and real-model regressions to reviewed grants.
+It fixes last-workload diagnostics and adds actionable interpreter setup guidance,
+without a visual UI redesign or automatic role selection. It exposes two
+remaining onboarding requirements: owner-pinned grant pairing and interpreter-role
+configuration must become a usable non-coder command/client flow. Passing these
+fixtures with explicit setup is not completion of that requirement or stable 0.4.0.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

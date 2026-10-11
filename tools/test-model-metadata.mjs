@@ -6,7 +6,8 @@ import {resolve,join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer as tcpServer} from 'node:net';
 import {createServer} from 'node:http';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,randomUUID} from 'node:crypto';
+import {reviewedFixture} from './reviewed-fixture.mjs';
 const root=resolve(import.meta.dirname,'..');
 const scratch=await mkdtemp(join(root,'.validation','model-metadata-'));
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
@@ -92,10 +93,45 @@ try{
  const owner=launch('eef',['--config',eefConfig,'models','list','--json']);
  const timer=setTimeout(()=>owner.kill(),20000);const cli=await owner.result;clearTimeout(timer);
  assert.equal(cli.code,0,cli.err);assert.equal(JSON.parse(cli.out).nodes[0].models.length,2);
- const invoke=params=>json(eef+`/api/node/${id}/invoke`,{capability:'llm.infer',action:'run',params:{model:'fixture-text',prompt:'protocol fixture',...params},timeout:10});
- const reply=await invoke({backend:'ollama'});assert.equal(reply.success,true);assert.equal(requests.length,1);
- if(!legacyNode){assert.equal(reply.data.completion_complete,true);assert.equal(reply.data.finish_reason,'stop');}
- if(!legacyNode){const wrong=await invoke({backend:'llamacpp'});assert.equal(wrong.success,false);assert.equal(requests.length,1,'wrong backend must not fall back');}
+ const ordinaryDenied=async capability=>{
+  const response=await fetch(eef+`/api/node/${id}/invoke`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability,action:'run',params:{model:'fixture-text',backend:'ollama',prompt:'must not run'},timeout:10})});
+  assert.equal(response.status,400);const value=await response.json();
+  assert.equal(value.error_code,'execution_grant_required');assert.equal(value.not_started,true);
+ };
+ await ordinaryDenied('llm.infer');assert.equal(requests.length,0,'legacy RPC cannot execute a workload');
+ let reviewed;
+ if(!legacyNode){
+  const coordinator=async args=>{const c=launch('eef',['--config',eefConfig,'--json',...args]),timer=setTimeout(()=>c.kill(),30000);try{const r=await c.result;assert.equal(r.code,0,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}};
+  const privateFile=join(scratch,'PRIVATE-pair.json');
+  await writeFile(privateFile,JSON.stringify(await coordinator(['credentials','provision','--node',id,'--address',`127.0.0.1:${nodePort}`])));
+  await coordinator(['credentials','legacy','--allow','false']);
+  const old=(await json(eef+'/api/diagnostics')).runtime_id;await coordinator(['restart']);
+  await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==old,'coordinator TLS restart');
+  const pairing=launch('eefn',['--config',nodeConfig,'connection','pair','--code-file',privateFile,'--json']);
+  const paired=await pairing.result;assert.equal(paired.code,0,paired.out+paired.err);
+  await until(async()=>(await json(node+'/api/status')).execution_grants.available&&(await inventory()).nodes[0]?.models.length===2,'pinned grant session');
+  reviewed=reviewedFixture(eef,node,id);
+ }
+ const infer=async(prompt='protocol fixture',limits)=>{
+  const plan=await reviewed.save({template:'generate_text',params:{model_id:'fixture-text',prompt},constraints:{backend:'ollama',node_id:id}},prompt);
+  await reviewed.start(await reviewed.approve(plan,limits));const report=await reviewed.result(plan.id);
+  await reviewed.cleanup(plan.id);return report;
+ };
+ const rejectedSelection=async args=>{
+  const count=requests.length;
+  const reply=await nodeJobs(['generate-text','--prompt','must not execute',...args],false);
+  assert.equal(reply.execution_authorized,false);assert.equal(reply.dispatched,false);
+  const found=await nodeJobs(['find','--operation-id',reply.operation_id]);
+  assert.equal(found.data.total,1);const plan=await reviewed.inspect(found.data.jobs[0].id);
+  assert.equal(plan.status,'review');assert.equal(plan.execution,undefined);
+  assert.equal(requests.length,count,'failed compilation must not fall back');
+  await reviewed.cleanup(plan.plan_id);
+ };
+ if(!legacyNode){
+  const reply=await infer();assert.equal(reply.success,true);assert.equal(reply.state,'completed');assert.equal(requests.length,1);
+  assert.equal(reply.data.completion_complete,true);assert.equal(reply.data.finish_reason,'stop');
+  await rejectedSelection(['--backend','llamacpp','--model','fixture-text']);
+ }
  const status=await json(eef+'/api/status');assert.equal(status.models.length,2);assert(status.models.every(m=>m.model_metadata.schema_version===1));
  if(!legacyNode){
   const ownerConfig=(await json(node+'/api/config')).config;
@@ -142,8 +178,13 @@ try{
   assert.equal((await fetch(node+'/api/commands/models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schema_version:1,expected_node_id:'wrong',command:{operation:'show'}})})).status,400);
   await localRestart();
   await until(async()=>{const m=(await inventory()).nodes[0]?.models.find(m=>m.instance.model_id==='fixture-vision');return m?.roles?.includes('request_interpreter')&&!m.capabilities.includes('vlm.analyze');},'owner hints apply after restart');
-  const denied=await json(eef+`/api/node/${id}/invoke`,{capability:'vlm.analyze',action:'run',params:{model:'fixture-vision',backend:'ollama'},timeout:10});
-  assert.equal(denied.success,false);assert.equal(requests.length,1,'restricted capability must not reach backend');
+  await ordinaryDenied('vlm.analyze');assert.equal(requests.length,1,'restricted capability must not reach backend');
+  assert.equal((await json(eef+'/api/commands/models/route?capability=vlm.analyze')).candidates.length,0);
+  const restrictedReceipt=randomUUID();
+  const restricted=await json(node+'/api/commands/requests/submit',{schema_version:1,expected_node_id:id,command:{operation_id:restrictedReceipt,request:{schema_version:1,original_text:'Do not execute a removed capability',title:'Restricted vision fixture',input:{schema_version:1,template:'analyze_image',params:{prompt:'must not execute',model_id:'fixture-vision'},constraints:{node_id:id,backend:'ollama'}}}}});
+  assert.equal(restricted.success,false);assert.equal(restricted.dispatched,false);
+  assert.equal((await nodeJobs(['find','--operation-id',restrictedReceipt])).data.total,0,'undisclosed capability cannot even create a review source');
+  assert.equal(requests.length,1,'explicit request cannot widen the owner model capability hints');
   const preview=await json(eef+'/api/commands/models/route?capability=llm.infer&role=request_interpreter');
   assert.equal(preview.execution_authorized,false);assert.equal(preview.candidates.length,1);assert.equal(preview.candidates[0].instance.model_id,'fixture-vision');
   assert.equal((await json(eef+'/api/commands/models/route?capability=llm.infer&role=missing')).candidates.length,0);
@@ -152,26 +193,29 @@ try{
   assert.equal(previewResult.code,0,previewResult.err);assert.equal(JSON.parse(previewResult.out).candidates[0].instance.model_id,'fixture-vision');
   assert.equal(requests.length,1,'preview must not run inference');
   assert.equal((await fetch(eef+'/api/commands/models/route?capability=llm.infer',{headers:{Origin:'https://untrusted.example'}})).status,403);
-  const job=await json(eef+'/api/jobs',{description:'role-routing fixture',template:'generate_text',params:{prompt:'fixture only'},constraints:{model_role:'request_interpreter',node_id:id}});
-  await until(async()=>(await json(eef+'/api/jobs/'+job.id)).status==='completed','role-constrained model job');
+  const job=await reviewed.save({template:'generate_text',params:{prompt:'fixture only'},constraints:{model_role:'request_interpreter',node_id:id}});
+  assert.equal(requests.length,1,'compilation and review must not run inference');
+  await reviewed.start(await reviewed.approve(job));assert.equal((await reviewed.result(job.id)).success,true);
   const assignment=(await json(eef+'/api/jobs/'+job.id)).tasks[0].assignment;
   assert.equal(assignment.node_id,id);assert.equal(assignment.model_id,'fixture-vision');assert.equal(assignment.backend,'ollama');
   assert.equal(requests.length,2);assert.equal(requests.at(-1).model,'fixture-vision');
-  const missing=await json(eef+'/api/jobs',{description:'missing role fixture',template:'generate_text',params:{prompt:'must not execute'},constraints:{model_role:'missing',node_id:id}});
-  await until(async()=>(await json(eef+'/api/jobs/'+missing.id)).status==='failed','missing role does not fall back');
+  assert.equal((await nodeJobs(['get',job.id])).data.request_context.origin_node,id);
+  assert.equal((await nodeJobs(['output',job.id])).data.outputs[0].content,'fixture response; not real inference');
+  await reviewed.cleanup(job.id);
+  await rejectedSelection(['--role','missing','--target-node',id]);
   assert.equal(requests.length,2,'missing role must not use unrelated model');
   for(const prompt of ['response-fixture-missing','response-fixture-oversize','response-fixture-chunked']) {
-   assert.equal((await invoke({backend:'ollama',prompt})).success,false,prompt);
+   const report=await infer(prompt);assert.equal(report.success,false,prompt);assert.equal(report.state,'unknown',prompt);
   }
-  const partial=await invoke({backend:'ollama',prompt:'response-fixture-length'});
+  const partial=await infer('response-fixture-length');
   assert.equal(partial.success,true);assert.equal(partial.data.completion_complete,false);assert.equal(partial.data.content,'partial fixture');
-  const unknown=await invoke({backend:'ollama',prompt:'response-fixture-unknown'});
+  const unknown=await infer('response-fixture-unknown');
   assert.equal(unknown.success,true);assert.equal(unknown.data.completion_complete,null);assert.equal(unknown.data.finish_reason,null);
   const timeoutStart=Date.now(),beforeTimeout=requests.length;
-  assert.equal((await invoke({backend:'ollama',prompt:'response-fixture-stalled',timeout:1})).success,false);
+  assert.equal((await infer('response-fixture-stalled',{max_execution_ms:1000,max_result_bytes:65536})).success,false);
   assert(Date.now()-timeoutStart<8000,'request timeout covers stalled response bodies');
   assert.equal(requests.length,beforeTimeout+1,'inference timeout never retries the request');
-  assert.equal((await nodeJobs(['list'])).data.jobs.length,0,'coordinator-owner jobs are not node-origin jobs');
+  assert.equal((await nodeJobs(['list'])).data.jobs.length,0,'all isolated sources explicitly cleaned up');
   const limitRuntime=(await json(node+'/api/diagnostics')).runtime_id;
   const limitShow=await nodeConnection('limits');assert.equal(limitShow.report_type,'node_request_limits');
   assert.deepEqual(limitShow.saved_request_limits,{work:1,control:2});
@@ -189,16 +233,19 @@ try{
    const prompt='gated-job-'+action;
    const submitted=await nodeJobs(['generate-text','--prompt',prompt,'--role','request_interpreter','--target-node',id]);
    const jobId=submitted.data.id;assert.equal(submitted.acknowledged,true);
+   assert.equal(submitted.data.status,'awaiting_approval');
    assert.equal(submitted.data.request_context.origin_node,id);
    assert.equal(submitted.creation_correlated,true);
    assert.equal(submitted.data.request_context.request_id,submitted.operation_id);
    const found=await nodeJobs(['find','--operation-id',submitted.operation_id]);
    assert.equal(found.data.total,1);assert.equal(found.data.jobs[0].id,jobId);
+   const countBeforeGrant=requests.length;assert(!gates.has(prompt),'saving work cannot execute it');
+   await reviewed.start(await reviewed.approve(submitted.data,{max_execution_ms:30000,max_result_bytes:65536}));
    await until(()=>gates.has(prompt),'backend gate for '+action);
+   assert.equal(requests.length,countBeforeGrant+1);
    const saturationCount=requests.length;
-   const busy=await invoke({backend:'ollama',prompt:'must not run while full'});
-   assert.equal(busy.success,false);assert.equal(busy.error_type,'NodeBusy');assert.equal(busy.not_started,true);
-   assert.equal(requests.length,saturationCount,'busy rejection must happen before invoking backend');
+   await ordinaryDenied('llm.infer');
+   assert.equal(requests.length,saturationCount,'ordinary workload refused even while full');
    const controlPing=await json(eef+`/api/node/${id}/invoke`,{capability:'system.ping',action:'run',params:{},timeout:3});
    assert.equal(controlPing.success,true,'work saturation must leave ping capacity');
    const controlStatus=await json(eef+`/api/node/${id}/invoke`,{capability:'node.configure',action:'status',params:{},timeout:3});
@@ -230,17 +277,18 @@ try{
    assert(duplicates.every(r=>r.success&&r.creation_correlated&&r.data.id===jobId&&r.data.admission.reused));
    assert.equal(requests.length,beforeDuplicates,'repeated receipt must not dispatch another inference');
    const conflict=await json(node+'/api/commands/jobs',{...receiptRequest,command:{...receiptRequest.command,prompt:'different work'}});
-   assert.equal(conflict.success,false);assert.equal(conflict.error_code,'job_rejected');
+   assert.equal(conflict.success,false);assert.equal(conflict.error_code,'concrete_unconfirmed');
+   assert.equal(conflict.outcome_unknown,true,'adapter conservatively requires receipt inspection');
    assert.equal(requests.length,beforeDuplicates,'conflicting receipt must not run different work');
-   const controls=await nodeJobs([action,jobId]);assert.equal(controls.data.status,action==='pause'?'pausing':'stopping');
-   gates.get(prompt)();gates.delete(prompt);
-   await until(async()=>(await json(node+'/api/jobs/'+jobId)).status===(action==='pause'?'paused':'cancelled'),'settled node job '+action);
    if(action==='pause'){
-    const count=requests.length;
-    await nodeJobs(['resume',jobId]);
-    await until(async()=>(await json(node+'/api/jobs/'+jobId)).status==='completed','resumed job complete');
-    assert.equal(requests.length,count,'resume must not rerun a completed step');
-   }
+    const beforePause=await reviewed.get(jobId);
+    assert.equal((await nodeJobs(['pause',jobId],false)).error_code,'job_rejected');
+    assert.deepEqual(await reviewed.get(jobId),beforePause,'unsupported pause cannot mutate the grant');
+    assert.equal((await nodeJobs(['resume',jobId],false)).error_code,'job_rejected');
+   }else assert.equal((await nodeJobs(['stop',jobId])).data.status,'stopping');
+   gates.get(prompt)();gates.delete(prompt);
+   await until(async()=>(await json(node+'/api/jobs/'+jobId)).status===(action==='pause'?'completed':'cancelled'),'settled node job '+action);
+   assert.equal((await reviewed.result(jobId)).state,'completed','inspect actual retained result after backend returns');
    assert.equal((await nodeJobs(['get',jobId])).data.request_context.origin_node,id);
    const output=await nodeJobs(['output',jobId]);assert.equal(output.data.outputs[0].content,'fixture response; not real inference');
    assert.equal(output.data.outputs[0].truncated,false);
@@ -249,7 +297,7 @@ try{
    assert.equal(retained.data.id,jobId);assert.equal(retained.data.admission.reused,true);
    assert.equal(retained.data.status,action==='pause'?'completed':'cancelled');
    assert.equal(requests.length,beforeFinishedReceipt,'finished work must not restart on receipt reuse');
-   const recoveredCapacity=await invoke({backend:'ollama',prompt:'after capacity released'});
+   const recoveredCapacity=await infer('after capacity released');
    assert.equal(recoveredCapacity.success,true,'execution capacity must return after completion');
    assert.equal(requests.length,beforeFinishedReceipt+1);
    assert.equal((await nodeJobs(['remove',jobId])).data.removed,true);
@@ -259,8 +307,8 @@ try{
   // The full approved restart CLI must not require a free work slot for its
   // permission/runtime checks. Only our disposable fixture app is restarted.
   const restartPrompt='gated-job-reserved-restart',beforeReservedRestart=requests.length;
-  const interruptedInvoke=invoke({backend:'ollama',prompt:restartPrompt}).then(
-   reply=>({reply}),error=>({unconfirmed:true}));
+  const interruptedJob=await reviewed.save({template:'generate_text',params:{prompt:restartPrompt},constraints:{node_id:id,model_role:'request_interpreter'}});
+  await reviewed.start(await reviewed.approve(interruptedJob,{max_execution_ms:30000,max_result_bytes:65536}));
   await until(()=>gates.has(restartPrompt),'work occupied before approved remote restart');
   const beforeRemoteRuntime=(await json(node+'/api/diagnostics')).runtime_id;
   const approvedRestart=launch('eef',['--config',eefConfig,'node','restart','--node',id,'--wait-seconds','15','--json']);
@@ -269,9 +317,11 @@ try{
   try{const result=await approvedRestart.result;assert.equal(result.code,0,result.out+result.err);restarted=JSON.parse(result.out);}finally{clearTimeout(approvedTimer);}
   assert.equal(restarted.completed,true);assert.equal(restarted.previous_runtime_id,beforeRemoteRuntime);
   assert.notEqual(restarted.runtime_id,beforeRemoteRuntime);
-  gates.get(restartPrompt)();gates.delete(restartPrompt);await interruptedInvoke;
+  gates.get(restartPrompt)();gates.delete(restartPrompt);
   await until(async()=>(await inventory()).nodes[0]?.models.length===2,'reconnect after reserved remote restart');
   assert.equal(requests.length,beforeReservedRestart+1,'restart cannot replay interrupted inference');
+  assert.equal((await reviewed.wait(interruptedJob.id)).status,'interrupted');
+  await reviewed.cleanup(interruptedJob.id);
   // Capacity-one stress is complete. Test later multi-stage model controls with
   // the normal work budget; a reply may still occupy the final work permit.
   await nodeConnection('limits',['--work','16']);await localRestart();
@@ -298,7 +348,12 @@ try{
    await writeFile(marker,originalMarker);
    const found=await nodeJobs(['find','--operation-id',unconfirmed.operation_id]);
    assert.equal(found.data.total,1);assert.equal(found.data.jobs[0].id,accepted.data.id);
-   await until(async()=>(await json(node+'/api/jobs/'+accepted.data.id)).status==='completed','receipt-recovered job completes');
+   assert.equal(accepted.data.status,'awaiting_approval');
+   const count=requests.length;
+   assert.equal((await reviewed.get(accepted.data.id)).status,'awaiting_approval');
+   assert.equal(requests.length,count,'receipt lookup cannot execute saved work');
+   await reviewed.start(await reviewed.approve(accepted.data));
+   assert.equal((await reviewed.result(accepted.data.id)).success,true);
    await nodeJobs(['remove',accepted.data.id]);
    assert.equal((await nodeJobs(['find','--operation-id',unconfirmed.operation_id])).data.total,0,'lookup searches retained history only');
   }finally{
@@ -356,7 +411,7 @@ try{
   await until(async()=>(await json(node+'/api/status')).connection.state==='connected','node recovers after fixing optional configuration');
   assert.deepEqual((await json(node+'/api/diagnostics')).startup_issues,[]);
  }
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,versioned_inventory:!legacyNode,owner_cli:true,api_only_both_roles:true,saved_ui_preferences:uiConfig,connection_commands:!legacyNode,origin_guard:true,selection_commands:!legacyNode,remote_selection_commands:!legacyNode,old_node_remote_command_refusal:!!legacyNode,node_job_commands:!legacyNode,node_job_origin_scope:!legacyNode,explicit_text_output:!legacyNode,pause_resume_without_reexecution:!legacyNode,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:legacyNode?'not supported by old node':true,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,pinned_tls:!legacyNode,reviewed_grants:!legacyNode,ordinary_workloads_refused:true,versioned_inventory:!legacyNode,owner_cli:true,api_only_both_roles:true,saved_ui_preferences:uiConfig,connection_commands:!legacyNode,origin_guard:true,selection_commands:!legacyNode,remote_selection_commands:!legacyNode,old_node_remote_command_refusal:!!legacyNode,node_job_commands:!legacyNode,node_origin_receipts:!legacyNode,explicit_text_output:!legacyNode,unsupported_pause_resume_refused:!legacyNode,stop_waits_for_returned_backend_evidence:!legacyNode,native_termination_proven:false,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_reviewed_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:!legacyNode,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
  console.log('Model metadata and remote selection protocol checks passed: '+scratch);
 }finally{
  tagGate?.release?.();tagGate=null;

@@ -729,6 +729,20 @@ impl NodeClient {
                                         if result.is_ok(){guard.complete()}
                                         result
                                     }).await,Ok(Ok(()))){let _=write_failed.send(true);return}
+                                    {
+                                        let mut live=status.lock().expect("status");
+                                        live["last_activity"]=json!(grant.capability);
+                                        live["last_request_context"]=json!(grant.request_context);
+                                        live["last_resource_id"]=json!(grant.resource_id);
+                                        // Set only after durable admission and a successful ACK
+                                        // write, immediately before the executor. Control polling
+                                        // may change last_activity, but cannot erase this scope.
+                                        live["last_workload"]=json!({"schema_version":1,
+                                            "grant_id":grant.grant_id,"capability":grant.capability,
+                                            "request_context":grant.request_context,"resource_id":grant.resource_id,
+                                            "model_id":grant.model_id,"backend":grant.backend,
+                                            "execution_may_have_started":true});
+                                    }
                                     accepted.run(&engine).await
                                 }
                             };
@@ -1036,12 +1050,14 @@ mod tests {
         .unwrap();
         server.start().await.unwrap();
         let mut events = server.subscribe();
+        let live = Arc::new(std::sync::Mutex::new(json!({})));
         let config:NodeClientConfig=serde_json::from_value(json!({"node_id":"grant-node","psk":key,"auth_mode":"node_credential",
             "coordinator_certificate":identity.certificate,"endpoints":[format!("127.0.0.1:{}",server.port())],"heartbeat_seconds":0.2})).unwrap();
         let start = || {
             let client = NodeClient::new(config.clone(), engine.clone())
                 .unwrap()
-                .with_grants(&receipts, Default::default());
+                .with_grants(&receipts, Default::default())
+                .with_status(live.clone());
             let endpoint = client.config.endpoints[0].clone();
             tokio::spawn(async move { client.serve_endpoint(&endpoint).await })
         };
@@ -1075,6 +1091,26 @@ mod tests {
             serde_json::from_value(response["grant"].clone()).unwrap();
         assert!(result.confirms(&g));
         assert!(result.success);
+        let workload = live.lock().unwrap()["last_workload"].clone();
+        assert_eq!(workload["grant_id"], g.grant_id);
+        assert_eq!(workload["request_context"], json!(g.request_context));
+        assert_eq!(workload["execution_may_have_started"], true);
+        assert!(workload.get("params").is_none());
+        server
+            .invoke_remote(
+                "grant-node",
+                "system.ping",
+                "run",
+                json!({}),
+                Duration::from_secs(3),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            live.lock().unwrap()["last_workload"],
+            workload,
+            "control polling cannot erase workload scope"
+        );
         assert_eq!(std::fs::read_to_string(&out).unwrap(), "first effect");
         let ack = timeout(Duration::from_secs(3), async {
             loop {
@@ -1143,6 +1179,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(duplicate["grant"]["state"], "rejected");
+        assert_eq!(
+            live.lock().unwrap()["last_workload"]["grant_id"],
+            lost.grant_id,
+            "rejection cannot claim a new workload started"
+        );
         assert_eq!(
             duplicate["grant"]["error_code"],
             "grant_attempt_replayed_or_unresolved"
