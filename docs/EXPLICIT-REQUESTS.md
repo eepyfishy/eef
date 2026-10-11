@@ -72,11 +72,11 @@ wrong-node calls reject. `request-text` uses the same service through typed jobs
 commands; conflicting top-level/command receipt IDs reject before submission.
 An unsupported or unconfirmed command never falls back to legacy jobs/chat/RPC.
 
-This is a usable explicit grant-aware entry point, **not completion of legacy
-migration**. Existing `generate-text`, raw `jobs.create`, task/chat/rule dispatch
-and ordinary sensitive RPC still use legacy behavior. They must be migrated or
-retired before claiming a grant-enforced default. Existing pause/resume/Stop
-regressions remain required while that migration is developed; granted unknown
+This is a usable explicit grant-aware entry point. The subsequent unreleased
+[execution boundary](EXECUTION-BOUNDARY.md) migrates `generate-text`, moves normal
+input to node-owned durable review, and retires unreviewed job/task/chat/rule and
+ordinary workload RPC admission. Automatic source-bound workflows remain open.
+Existing lifecycle regressions remain required for release; granted unknown
 effects cannot be safely resumed just because a legacy path allowed it.
 Delegated approval, automatic policies, real-model quality, physical two-PC and
 complete executor termination/reconciliation remain separate release gates.

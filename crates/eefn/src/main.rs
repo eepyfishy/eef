@@ -50,7 +50,7 @@ struct Args {
     rollback: bool,
     #[arg(
         long,
-        help = "Submit one user message through this node, print the result, and exit"
+        help = "Interpret/save a durable review through the running node; never execute or start a node"
     )]
     ask: Option<String>,
     #[arg(long, help = "List installed Ollama model IDs without selecting them")]
@@ -1584,45 +1584,33 @@ async fn main() -> Result<()> {
             }
         }
     }
-    // Submit through the already running node instead of registering its identity
-    // a second time. Hold the instance lock during standalone --ask as well.
-    let _ask_instance = if let Some(message) = &args.ask {
-        match eefn::setup::instance_lock(&args.config)? {
-            Some(lock) => Some(lock),
-            None => {
-                let file = load_file(&args.config)?;
-                let dashboard = file.dashboard.unwrap_or_default();
-                let address = eefn::local_commands::endpoint(
-                    &args.config,
-                    &file.node_id,
-                    &dashboard.host,
-                    dashboard.port,
-                    dashboard.enabled,
-                )?;
-                let url = format!("http://{}/api/chat", address);
-                let response = reqwest::Client::new()
-                    .post(url)
-                    .timeout(Duration::from_secs(125))
-                    .json(&serde_json::json!({"message":message}))
-                    .send()
-                    .await?;
-                let success = response.status().is_success();
-                let value: serde_json::Value = response.json().await?;
-                if !success {
-                    bail!(
+    // Input is a client command: no ephemeral runtime, registration, pairing,
+    // models or configuration writes if the node is not already running.
+    if let Some(message) = &args.ask {
+        let value = match execute_request_command(&args, message, true, None, true).await {
+            Ok(value) => value,
+            Err(error) => {
+                if args.json {
+                    println!(
                         "{}",
-                        value["error"]
-                            .as_str()
-                            .unwrap_or("running node rejected the message")
-                    )
+                        serde_json::json!({"schema_version":1,"report_type":"request_draft",
+                        "success":false,"error_code":"command_failed","error":error.to_string(),
+                        "execution_authorized":false,"dispatched":false,"automatically_retried":false})
+                    );
                 }
-                println!("{}", serde_json::to_string_pretty(&value)?);
-                return Ok(());
+                return Err(error);
             }
+        };
+        if args.json {
+            println!("{}", serde_json::to_string(&value)?);
+        } else {
+            println!("{}", serde_json::to_string_pretty(&value)?);
         }
-    } else {
-        None
-    };
+        if value["success"] == false {
+            bail!("Input was not confirmed; inspect the receipt before retrying")
+        }
+        return Ok(());
+    }
     let _instance =
         if args.ask.is_none() && !args.check_update && !args.rollback && !args.list_ollama_models {
             match eefn::setup::instance_lock(&args.config)? {
@@ -2031,15 +2019,6 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         std::future::pending::<Result<()>>().await
     };
     let run = async {
-        if let Some(message) = &args.ask {
-            let result = client
-                .as_ref()
-                .context("--ask requires at least one configured EEF coordinator")?
-                .submit_message(message, Duration::from_secs(120))
-                .await?;
-            println!("{}", serde_json::to_string_pretty(&result)?);
-            return Ok(());
-        }
         let update_task =
             start_update_monitor(file.update.as_ref(), install_dir.clone(), dashboard.clone())?
                 .map(AbortTask);

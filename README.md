@@ -12,6 +12,13 @@ Feed-based updates reject prereleases; installing an alpha does not enable alpha
 Alpha.5 adds a separate explicitly approved, artifact-pinned remote update command.
 Alpha.6 fixes uncertain job status during coordinator shutdown and clarifies
 errors when a command needs a newer coordinator.
+
+The unreleased development tree now enforces the
+[reviewed workload boundary](docs/EXECUTION-BOUNDARY.md): normal input opens a
+durable review through the running node, text creation awaits approval, and
+unreviewed workload dispatch/resume is retired. Automatic workflows and several
+legacy client/test migrations remain open. This does not change alpha.6 installers
+or declare stable v0.4.0 complete.
 The builds are unsigned. Both v0.3.2 installers have unresolved Defender reports
 on a second PC; see [the investigation](docs/ANTIVIRUS.md). A passing local scan
 is not a Microsoft false-positive verdict. Do not bypass antivirus detections.

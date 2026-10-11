@@ -334,13 +334,13 @@ mod tests {
         let world_receiver = bus.subscribe();
         let server = eefn::NodeServer::new("isolated-test-secret", "127.0.0.1", 0).unwrap();
         let registry = crate::capability::CapabilityRegistry::default();
-        let llm = LlmService::new(
+        let llm = LlmService::legacy_for_test(
             crate::model::ModelRegistry::default(),
             Default::default(),
             server.clone(),
             bus.clone(),
         );
-        let dispatcher = Dispatcher::new(
+        let dispatcher = Dispatcher::legacy_for_test(
             registry.clone(),
             crate::adapters::AdapterManager::new(registry, json!({})),
             llm.clone(),

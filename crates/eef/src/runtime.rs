@@ -665,16 +665,9 @@ impl Runtime {
             .and_then(Value::as_str)
             .unwrap_or("message");
         let result = match kind {
-            "message" => {
-                let text = message
-                    .pointer("/payload/text")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                self.brain
-                    .handle_message_with_context(text, Some(context.clone()))
-                    .await
-                    .map(|reply| json!({"reply": reply,"request_context":context}))
-            }
+            "message" => Err(anyhow::anyhow!(
+                "Legacy message execution is retired. Interpret through the running node and save a reviewed request; no keyword, model or workload fallback."
+            )),
             "requests.review" => {
                 match self
                     .discovery
@@ -870,8 +863,10 @@ impl Runtime {
         }
     }
 
-    pub async fn handle_message(&self, message: &str) -> Result<String> {
-        self.brain.handle_message(message).await
+    pub async fn handle_message(&self, _message: &str) -> Result<String> {
+        anyhow::bail!(
+            "Submit input through the running node. Coordinator chat has no authenticated origin and cannot plan or execute work."
+        )
     }
 
     pub async fn diagnostics(&self) -> Value {

@@ -85,7 +85,9 @@ may prevent recovery. The source remains unchanged, the node cache remains
 independently inspectable, and no execution is retried to recreate output.
 Logical quotas do not guarantee physical disk space or rollback overhead.
 
-This increment does not retire legacy task/chat/rule/RPC execution, implement
+This recovery increment did not itself retire legacy task/chat/rule/RPC execution;
+the subsequent [execution boundary](EXECUTION-BOUNDARY.md) fences those paths.
+Neither increment implements
 strong native termination, automatic reconciliation, remaining-step continuation,
 continuous pipelines, signing or physical two-PC acceptance. No release version,
 installed app, physical node or stable-only update feed changes here.

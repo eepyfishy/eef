@@ -100,6 +100,9 @@ try {
       selected: [{model_id: 'fixture', modality: 'text', selection: {roles: ['request_interpreter']}}]}, llamacpp: {slots: []}}});
   await writeFile(configPath, JSON.stringify(config));
   assert.equal((await review('Check status', false)).error_code, 'node_not_running'); assert.equal(calls.length, 0);
+  const notRunningBytes=await readFile(configPath,'utf8');
+  assert.equal((await cli(['--ask','Input before starting node'],false)).error_code,'node_not_running');
+  assert.equal(await readFile(configPath,'utf8'),notRunningBytes);assert.equal(calls.length,0);
   const yaml = (await readFile(join(root, 'config/default_identity.yaml'), 'utf8'))
     .replace('port: 51334', `port: ${eefPort}`).replace('port: 51335', `port: ${gatewayPort}`).replace('policy: prompt', 'policy: off');
   await writeFile(eefConfig, yaml);
@@ -113,6 +116,18 @@ try {
   await until(ready, 'registered node');
   for (const base of [node, eef]) assert.equal((await fetch(base + '/')).status, 404);
   const before = await readFile(configPath, 'utf8'), text = '  Is this node running?\n';
+  // Production legacy admission must be fenced independently of model/feature
+  // permissions. None of these routes may call the backend or create a job.
+  for (const [url,body] of [
+    [eef+'/api/jobs',{description:'must not execute',template:'generate_text',params:{prompt:'unsafe'},constraints:{}}],
+    [eef+'/api/assistant/execute',{capability:'llm.infer',action:'run',params:{prompt:'unsafe'},constraints:{}}],
+    [eef+`/api/node/${config.node_id}/invoke`,{capability:'llm.infer',action:'run',params:{prompt:'unsafe'},timeout:5}],
+    [eef+'/api/chat',{message:'read file then generate text'}],
+  ]) {
+    const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    assert.equal(response.status,400, url);assert.equal((await response.json()).success,false);
+  }
+  assert.equal(calls.length,0);assert.equal((await cli(['jobs','list'])).data.total,0);
   const good = await review(text);
   assert.equal(good.report_type, 'request_review'); assert.equal(good.coordinator_acknowledged, true);
   assert.equal(good.automatically_retried, false); assert.equal(good.execution_authorized, false); assert.equal(good.dispatched, false);
@@ -170,6 +185,22 @@ try {
   assert.equal((await preview('Local preview still works')).success, true);
   await cli(['connection', 'resume']); await until(ready, 'resumed connection');
   const jobs = await cli(['jobs', 'list']); assert.deepEqual(jobs.data.jobs, []); assert.equal(jobs.data.total, 0);
+  // --ask never creates a competing node and /api/chat is only a durable-review
+  // adapter. Neither infers a keyword task or dispatches an unreviewed workload.
+  mode='valid';
+  for (const input of [await cli(['--ask','  Normal input through running node\n']),
+    await json(node+'/api/chat',{message:'  HTTP input through node\n',request_id:randomUUID()})]) {
+    assert.equal(input.report_type,'request_draft');assert.equal(input.success,true);
+    assert.equal(input.execution_authorized,false);assert.equal(input.dispatched,false);
+    assert.equal(input.result.request_context.origin_node,config.node_id);
+    assert.equal(input.result.status,'review');
+    await cli(['jobs','stop',input.result.id]);await cli(['jobs','remove',input.result.id]);
+  }
+  assert.equal((await json(eef+'/api/diagnostics')).registered_node_count,1);
+  const generated=await cli(['jobs','generate-text','--prompt','  Text creation is review only\n','--model','fixture','--backend','ollama']);
+  assert.equal(generated.submission_mode,'reviewed_concrete_request');
+  assert.equal(generated.data.status,'awaiting_approval');assert.equal(generated.dispatched,false);
+  await cli(['jobs','stop',generated.data.id]);await cli(['jobs','remove',generated.data.id]);
   // The optional natural-language adapter can retain a proposal, never execute it.
   mode='clarify';
   const durable=await cli(['requests','open','--text','  Inspect that node\n']);
@@ -787,6 +818,7 @@ try {
     cross_node_method_preparation:true,method_disclosure_revocation_rechecked:true,
     explicit_concrete_requests:true,explicit_source_inputs_immutable:true,model_free_explicit_compilation:true,
     explicit_text_grant_execution:true,explicit_receipt_restart_recovery:true,partial_explicit_admission_inspectable:true,
+    legacy_workload_routes_fenced:true,normal_input_through_running_node:true,generate_text_requires_review:true,
     retained_executor_results:true,explicit_origin_owner_result_reads:true,result_restart_recovery:true,result_reads_no_replay_or_reconciliation:true,
     explicit_result_reconciliation:true,lost_coordinator_checkpoint_recovered_after_restart:true,recovery_no_replay_or_fake_ack:true,
     actual_local_disconnect_retains_unknown:true,unknown_result_does_not_reconcile:true,recovery_write_failure_preserves_source:true,

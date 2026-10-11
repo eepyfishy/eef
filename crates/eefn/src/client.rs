@@ -306,122 +306,12 @@ impl NodeClient {
         message
     }
 
-    pub async fn submit_message(&self, text: &str, wait: Duration) -> Result<Value> {
-        if text.trim().is_empty() {
-            bail!("message must not be empty")
-        }
-        let mut last = None;
-        for endpoint in &self.config.endpoints {
-            match self.probe_endpoint(endpoint).await {
-                Ok(stream) => return timeout(wait, self.submit_to_endpoint(stream, text, wait)).await
-                    .context("request timed out; delivery may have occurred and was not automatically retried")?,
-                Err(error) => {
-                    warn!(endpoint = %endpoint.address, priority = endpoint.priority, %error, "message submission failed");
-                    last = Some(error);
-                }
-            }
-        }
-        Err(last.unwrap_or_else(|| anyhow::anyhow!("all coordinator endpoints failed")))
-    }
-
-    async fn submit_to_endpoint(
-        &self,
-        stream: crate::tls::NodeStream,
-        text: &str,
-        wait: Duration,
-    ) -> Result<Value> {
-        let (reader, mut writer) = tokio::io::split(stream);
-        let mut reader = BufReader::new(reader);
-        write_message(
-            &self.crypto,
-            &mut writer,
-            &build_auth(&self.crypto, &self.config.node_id, crate::VERSION),
+    /// Retired one-shot input: use the running node's request service instead.
+    /// This must not register a second runtime or execute ordinary inbound RPC.
+    pub async fn submit_message(&self, _text: &str, _wait: Duration) -> Result<Value> {
+        bail!(
+            "Use the already running node: eefn --ask or requests open. Standalone message submission is retired; no connection or inference was attempted."
         )
-        .await?;
-        let reply = read_message(&self.crypto, &mut reader)
-            .await?
-            .context("coordinator closed during auth")?;
-        if reply.get("type").and_then(Value::as_str) != Some("ok") {
-            bail!("coordinator denied auth: {reply}")
-        }
-        let mut models = discover_models(
-            &self.http,
-            &self.config.ollama_url,
-            &self.config.ollama_models,
-        )
-        .await;
-        if let Some(server) = &self.engine.model_server {
-            models.extend(server.models()?)
-        }
-        let capabilities = advertised_capabilities(&self.engine.capabilities(), &models);
-        write_message(
-            &self.crypto,
-            &mut writer,
-            &self.registration(
-                &self.config.node_id,
-                if self.config.name.is_empty() {
-                    &self.config.node_id
-                } else {
-                    &self.config.name
-                },
-                crate::VERSION,
-                &capabilities,
-                &system_specs(),
-                &models,
-            ),
-        )
-        .await?;
-        let id = Uuid::new_v4().simple().to_string();
-        write_message(
-            &self.crypto,
-            &mut writer,
-            &json!({
-                "type": "submit", "id": id, "node_id": self.config.node_id,
-                "kind": "message", "payload": {"text": text}
-            }),
-        )
-        .await?;
-        timeout(wait, async {
-            while let Some(message) = read_message(&self.crypto, &mut reader).await? {
-                match message.get("type").and_then(Value::as_str) {
-                    Some("submission_result")
-                        if message.get("id").and_then(Value::as_str) == Some(id.as_str()) =>
-                    {
-                        if message.get("success").and_then(Value::as_bool) == Some(true) {
-                            return Ok(message.get("data").cloned().unwrap_or(Value::Null));
-                        }
-                        bail!(
-                            "{}",
-                            message
-                                .get("error")
-                                .and_then(Value::as_str)
-                                .unwrap_or("submission failed")
-                        );
-                    }
-                    Some("request") => {
-                        let request_id = message.get("id").and_then(Value::as_str).unwrap_or("");
-                        let capability = message
-                            .get("capability")
-                            .and_then(Value::as_str)
-                            .unwrap_or("");
-                        let action = message
-                            .get("action")
-                            .and_then(Value::as_str)
-                            .unwrap_or("run");
-                        let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
-                        let response = match self.engine.execute(capability, action, params).await {
-                            Ok(data) => success_response(request_id, data),
-                            Err(error) => error_response(request_id, error),
-                        };
-                        write_message(&self.crypto, &mut writer, &response).await?;
-                    }
-                    _ => {}
-                }
-            }
-            bail!("coordinator disconnected before returning a result")
-        })
-        .await
-        .context("coordinator did not return the message result in time")?
     }
 
     /// Probe the encrypted EEF service before authenticating/registering this node.
@@ -875,6 +765,18 @@ impl NodeClient {
                 .unwrap_or("run")
                 .to_owned();
             let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
+            if !crate::execution_boundary::ordinary_control(&capability) {
+                let response = json!({"type":"response","id":request_id,"success":false,
+                    "error":"Workload execution requires a reviewed execution grant; no fallback was attempted",
+                    "error_type":"ExecutionGrantRequired","error_code":crate::execution_boundary::ERROR_CODE,
+                    "not_started":true});
+                timeout(Duration::from_secs(5), async {
+                    write_message(&self.crypto, &mut *writer.lock().await, &response).await
+                })
+                .await
+                .context("grant-required response timed out; reconnect required")??;
+                continue;
+            }
             let Some(permit) = self.request_budget.admit(&capability, &action) else {
                 {
                     let mut status = self.status.lock().expect("status");

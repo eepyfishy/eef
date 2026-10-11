@@ -670,6 +670,13 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
 }
 
 impl crate::task::TaskEngine {
+    fn job_view(&self, plan: &Plan, details: bool) -> serde_json::Value {
+        let mut value = view(plan, details);
+        if self.require_legacy_execution().is_err() {
+            value["can_resume"] = json!(false);
+        }
+        value
+    }
     /// Node requests are scoped to the immutable authenticated origin, not the executor.
     /// None is reserved for the loopback coordinator owner API.
     pub fn job_request(
@@ -711,11 +718,12 @@ impl crate::task::TaskEngine {
                 })
                 .collect::<Vec<_>>();
             return Ok(
-                json!({"jobs":visible.iter().take(100).map(|p|view(p,false)).collect::<Vec<_>>(),"total":visible.len(),"storage":self.store.usage()?,
+                json!({"jobs":visible.iter().take(100).map(|p|self.job_view(p,false)).collect::<Vec<_>>(),"total":visible.len(),"storage":self.store.usage()?,
                 "operation_id":operation_id,"truncated":visible.len()>100}),
             );
         }
         if kind == "jobs.create" {
+            self.require_legacy_execution()?;
             let mut goal: crate::task::Goal = serde_json::from_value(payload)?;
             goal.request_context = origin;
             let plan = crate::task::TaskPlanner.plan(goal)?;
@@ -734,7 +742,7 @@ impl crate::task::TaskEngine {
             bail!("Job not found for this node")
         }
         match kind {
-            "jobs.get" => return Ok(view(&plan, true)),
+            "jobs.get" => return Ok(self.job_view(&plan, true)),
             "jobs.output" => return Ok(text_output(&plan)),
             "jobs.pause" => {
                 self.pause(id)?;
@@ -749,7 +757,7 @@ impl crate::task::TaskEngine {
             }
             _ => bail!("Unknown job operation"),
         }
-        Ok(view(&self.store.get(id)?, true))
+        Ok(self.job_view(&self.store.get(id)?, true))
     }
 }
 
@@ -1031,7 +1039,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_receipt_admission_dispatches_once_and_rejects_changed_input() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         let executor = Arc::new(Counting(AtomicU32::new(0)));
         engine.set_executor(executor.clone());
         let receipt = uuid::Uuid::new_v4().to_string();
@@ -1125,7 +1133,7 @@ mod tests {
         drop(store);
         let store = open(&path);
         let before = serde_json::to_value(store.get(&id).unwrap()).unwrap();
-        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(20), store);
         let executor = Arc::new(Counting(AtomicU32::new(0)));
         engine.set_executor(executor.clone());
         let reused = engine
@@ -1161,7 +1169,7 @@ mod tests {
     async fn receipt_reuse_at_quota_and_shutdown_do_not_create_new_runners() {
         let store = JobStore::initialize(Connection::open_in_memory().unwrap(), None, 1, 64 * 1024)
             .unwrap();
-        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(20), store);
         let executor = Arc::new(Counting(AtomicU32::new(0)));
         engine.set_executor(executor.clone());
         let origin = receipt_origin("owner", &uuid::Uuid::new_v4().to_string(), "Study");
@@ -1214,7 +1222,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn receipt_admission_racing_shutdown_leaves_no_pending_job() {
         for _ in 0..20 {
-            let engine = TaskEngine::new(EventBus::new(20));
+            let engine = TaskEngine::legacy_for_test(EventBus::new(20));
             let origin = receipt_origin("owner", &uuid::Uuid::new_v4().to_string(), "Study");
             assert!(
                 engine
@@ -1320,7 +1328,7 @@ mod tests {
             )
             .unwrap();
         drop(store);
-        let engine = TaskEngine::with_store(EventBus::new(10), open(&path));
+        let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(10), open(&path));
         let page = engine
             .job_request("jobs.list", json!({}), Some(origin.clone()))
             .unwrap();
@@ -1420,7 +1428,7 @@ mod tests {
     #[tokio::test]
     async fn completed_results_origin_identity_and_assignment_survive_reopen() {
         let (_dir, path) = disk();
-        let engine = TaskEngine::with_store(EventBus::new(20), open(&path));
+        let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(20), open(&path));
         let executor = Arc::new(Counting(AtomicU32::new(0)));
         engine.set_executor(executor.clone());
         let original = plan("read_file");
@@ -1475,7 +1483,7 @@ mod tests {
         let store = open(&path);
         assert_eq!(store.get(&id).unwrap().status, PlanStatus::Interrupted);
         let executor = Arc::new(Counting(AtomicU32::new(0)));
-        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(20), store);
         engine.set_executor(executor.clone());
         tokio::task::yield_now().await;
         assert_eq!(executor.0.load(Ordering::SeqCst), 0);
@@ -1503,7 +1511,7 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        let engine = TaskEngine::with_store(EventBus::new(10), store);
+        let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(10), store);
         engine.set_executor(Arc::new(Counting(AtomicU32::new(0))));
         assert!(
             engine
@@ -1523,7 +1531,7 @@ mod tests {
 
     #[tokio::test]
     async fn pause_finishes_claimed_batch_and_resume_does_not_repeat_it() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         let executor = Blocking::new();
         engine.set_executor(executor.clone());
         let mut job = plan("read_file");
@@ -1549,7 +1557,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_after_resume_before_first_poll_does_not_dispatch() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         let executor = Arc::new(Counting(AtomicU32::new(0)));
         engine.set_executor(executor.clone());
         let job = plan("write_file");
@@ -1568,7 +1576,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_during_execution_keeps_finished_effects_and_skips_dependents() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         let executor = Blocking::new();
         engine.set_executor(executor.clone());
         let mut job = plan("write_file");
@@ -1609,7 +1617,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_paused_job_does_not_wait_or_execute_pending_steps() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         engine.set_executor(Arc::new(Counting(AtomicU32::new(0))));
         let job = plan("read_file");
         let id = job.plan_id.clone();
@@ -1623,7 +1631,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_rejects_new_jobs_without_persisting_pending_work() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         let executor = Arc::new(Counting(AtomicU32::new(0)));
         engine.set_executor(executor.clone());
         engine.shutdown().await;
@@ -1657,7 +1665,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_executor_rejects_both_admission_paths_without_saving() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         assert!(
             engine
                 .enqueue(plan("read_file"))
@@ -1678,7 +1686,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_refuses_resume_without_changing_saved_checkpoints() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         let executor = Arc::new(Counting(AtomicU32::new(0)));
         engine.set_executor(executor.clone());
         let mut ids = Vec::new();
@@ -1716,7 +1724,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_drains_admitted_jobs_before_their_first_poll() {
         // The single-thread runtime cannot poll spawned runners before shutdown.
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         let executor = Arc::new(Counting(AtomicU32::new(0)));
         engine.set_executor(executor.clone());
         let mut ids = Vec::new();
@@ -1736,7 +1744,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_admission_and_shutdown_leave_no_orphan_pending_jobs() {
-        let engine = TaskEngine::new(EventBus::new(100));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(100));
         let executor = Blocking::new();
         engine.set_executor(executor.clone());
         let initial = engine.enqueue(plan("write_file")).unwrap();
@@ -1790,7 +1798,7 @@ mod tests {
     async fn failed_admission_releases_claim_without_changing_existing_jobs() {
         let store =
             JobStore::initialize(Connection::open_in_memory().unwrap(), None, 1, 65536).unwrap();
-        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(20), store);
         engine.set_executor(Arc::new(Counting(AtomicU32::new(0))));
         let existing = plan("read_file");
         let old_id = existing.plan_id.clone();
@@ -1819,7 +1827,7 @@ mod tests {
     #[tokio::test]
     async fn shutdown_interrupts_runner_and_releases_database_ownership() {
         let (_dir, path) = disk();
-        let engine = TaskEngine::with_store(EventBus::new(20), open(&path));
+        let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(20), open(&path));
         let executor = Blocking::new();
         engine.set_executor(executor.clone());
         let id = engine.enqueue(plan("write_file")).unwrap();
@@ -1889,7 +1897,7 @@ mod tests {
 
     #[tokio::test]
     async fn node_controls_are_origin_scoped_and_do_not_accept_forged_context() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         engine.set_executor(Arc::new(Counting(AtomicU32::new(0))));
         let operation_id = uuid::Uuid::new_v4().to_string();
         let origin = eefn::context::RequestContext::new(
@@ -1979,7 +1987,7 @@ mod tests {
 
     #[tokio::test]
     async fn timed_out_predecessor_keeps_pending_dependents_for_explicit_resume() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         let blocking = Blocking::new();
         engine.set_executor(blocking);
         let mut job = plan("read_file");
@@ -2014,7 +2022,7 @@ mod tests {
             size + RECOVERY_RESERVE + 200,
         )
         .unwrap();
-        let engine = TaskEngine::with_store(EventBus::new(20), store);
+        let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(20), store);
         let executor = Arc::new(Counting(AtomicU32::new(0)));
         engine.set_executor(executor.clone());
         assert!(engine.run_plan(job).await.is_err());
@@ -2041,7 +2049,7 @@ mod tests {
         let store = JobStore::open(&path, 1, 1024).unwrap();
         assert_eq!(store.get(&id).unwrap().status, PlanStatus::Interrupted);
         assert_eq!(store.usage().unwrap()["over_limit"], true);
-        let engine = TaskEngine::with_store(EventBus::new(10), store.clone());
+        let engine = TaskEngine::legacy_with_store_for_test(EventBus::new(10), store.clone());
         assert_eq!(engine.cancel(&id).unwrap().status, PlanStatus::Cancelled);
         store.remove_finished(&id).unwrap();
         assert_eq!(store.usage().unwrap()["count"], 0);

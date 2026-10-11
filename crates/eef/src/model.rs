@@ -399,6 +399,7 @@ pub struct LlmService {
     tiers: Arc<RwLock<BTreeMap<String, Vec<String>>>>,
     node_server: NodeServer,
     bus: EventBus,
+    reviewed_only: bool,
 }
 
 impl LlmService {
@@ -408,15 +409,37 @@ impl LlmService {
         node_server: NodeServer,
         bus: EventBus,
     ) -> Arc<Self> {
+        Self::with_boundary(registry, tiers, node_server, bus, true)
+    }
+    #[cfg(test)]
+    pub(crate) fn legacy_for_test(
+        registry: ModelRegistry,
+        tiers: BTreeMap<String, Vec<String>>,
+        node_server: NodeServer,
+        bus: EventBus,
+    ) -> Arc<Self> {
+        Self::with_boundary(registry, tiers, node_server, bus, false)
+    }
+    fn with_boundary(
+        registry: ModelRegistry,
+        tiers: BTreeMap<String, Vec<String>>,
+        node_server: NodeServer,
+        bus: EventBus,
+        reviewed_only: bool,
+    ) -> Arc<Self> {
         Arc::new(Self {
             registry,
             tiers: Arc::new(RwLock::new(tiers)),
             node_server,
             bus,
+            reviewed_only,
         })
     }
 
     pub async fn chat(&self, messages: Value, options: ChatOptions) -> Result<String> {
+        if self.reviewed_only {
+            return Err(eefn::execution_boundary::ExecutionGrantRequired.into());
+        }
         validate_model_constraints(&options.constraints)?;
         let modality = if options
             .images
@@ -613,7 +636,7 @@ mod tests {
         }
         // No sockets/models are started. Offline first provider must leave the
         // second untouched, rather than assigning both within the same attempt.
-        let service = LlmService::new(
+        let service = LlmService::legacy_for_test(
             registry.clone(),
             BTreeMap::new(),
             NodeServer::new("fixture-secret", "127.0.0.1", 0).unwrap(),

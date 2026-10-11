@@ -940,6 +940,31 @@ pub(crate) mod tests {
             expires_at_ms: now + 10_000,
         }
     }
+
+    #[test]
+    fn fractional_result_round_trips_preserve_integrity_digest() {
+        let g = grant();
+        // Timestamp-scale floats plus signed fractions/subnormals. A default
+        // approximate decimal parser may change a last bit after storage/wire
+        // decode; valid retained evidence must not fail its exact checksum.
+        for index in 0..512_u64 {
+            let sample = f64::from_bits(0x41dab2de80000000 + index * 7919);
+            let report = GrantReport::new(
+                &g,
+                ReceiptState::Completed,
+                json!({"time":sample,"signed":-sample,"tiny":f64::from_bits(index+1),"fraction":sample/7.0}),
+                None,
+            );
+            let encoded = serde_json::to_vec(&report).unwrap();
+            let decoded: GrantReport = serde_json::from_slice(&encoded).unwrap();
+            assert_eq!(
+                definition_digest(&json!(report)).unwrap(),
+                definition_digest(&json!(decoded)).unwrap(),
+                "Valid numeric evidence changed at sample {index}"
+            );
+            assert_eq!(serde_json::to_vec(&decoded).unwrap(), encoded);
+        }
+    }
     fn engine(dir: &Path) -> crate::NodeEngine {
         crate::NodeEngine::new(false, vec![], dir.to_owned()).unwrap()
     }

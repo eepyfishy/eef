@@ -1,5 +1,6 @@
-// Two logical headless nodes, pinned TLS, bounded transport gate. No models,
-// installed-node changes, feature grants, shell/device actions or physical claims.
+// Two logical headless nodes, pinned TLS, reviewed one-shot system-info grants
+// and a bounded transport gate. No models, personal apps, shell/device actions
+// or physical two-PC claims.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
@@ -7,6 +8,7 @@ import {spawn} from 'node:child_process';
 import {createServer as tcpServer,connect} from 'node:net';
 import {createServer as httpServer} from 'node:http';
 import {randomBytes} from 'node:crypto';
+import {reviewedFixture} from './reviewed-fixture.mjs';
 const root=resolve(import.meta.dirname,'..'), scratch=await mkdtemp(join(root,'.validation','scheduling-'));
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const config=join(scratch,'eef.yaml'),children=[],sockets=new Set(),upstreams=new Set(),servers=[];
@@ -73,23 +75,30 @@ try {
  assert.equal((await scheduling(['limits','--max-in-flight','1'])).changed,false);
  const view=await json(base+'/api/config');delete view.config.scheduling;await json(base+'/api/config',{config:view.config},'PUT');
  assert.equal((await scheduling(['show'])).saved_policy.max_in_flight,1,'generic saved settings cannot drop scheduling policy');
- const invoke=id=>request(base+'/api/assistant/execute',{capability:'system.info',action:'run',params:{},constraints:{node_id:id}});
- pause();let held=invoke(nodes[0].id);
+ const reviewed=nodes.map(n=>reviewedFixture(base,n.api,n.id));
+ const prepare=async index=>{const plan=await reviewed[index].save({template:'system_info',params:{},constraints:{node_id:nodes[index].id}});return {plan,command:await reviewed[index].approve(plan,{max_execution_ms:15000,max_result_bytes:65536})};};
+ let prepared=await Promise.all([prepare(0),prepare(1)]);
+ pause();await reviewed[0].startOwner(prepared[0].command);
  await until(async()=>(await scheduling(['show'])).admission.total_in_flight===1,'held dispatch before policy applies');
- assert.equal((await invoke(nodes[1].id)).value.success,true,'saved-only ceiling must not affect the old runtime');
- resume();assert.equal((await held).value.success,true);
+ await reviewed[1].startOwner(prepared[1].command);
+ assert.equal((await reviewed[1].wait(prepared[1].plan.id)).status,'completed','saved-only ceiling must not affect the old runtime');
+ resume();assert.equal((await reviewed[0].wait(prepared[0].plan.id)).status,'completed');
  console.log('Scheduling fixture: saved limits leave running policy unchanged');
  await restart();await until(connected,'nodes reconnect after applying policy');
  const applied=await scheduling(['show']);assert.equal(applied.restart_required,false);assert.equal(applied.applied_policy.max_in_flight,1);assert.equal(applied.applied_policy.freshness_seconds,25);
  assert(applied.admission.providers.filter(p=>p.node_id===nodes[0].id).every(p=>p.effective_per_provider_concurrency===1));
  assert.equal((await request(endpoint,body)).status,400,'old runtime command cannot change new generation');
- pause();held=invoke(nodes[0].id);
+ prepared=await Promise.all([prepare(0),prepare(1)]);
+ pause();await reviewed[0].startOwner(prepared[0].command);
  await until(async()=>(await scheduling(['show'])).admission.total_in_flight===1,'applied capacity reservation');
- const blocked=await invoke(nodes[1].id);assert.equal(blocked.status,400);assert(blocked.value.error.includes('no provider available'));
+ const blocked=await request(base+'/api/commands/requests/execute',{schema_version:1,expected_runtime_id:applied.runtime_id,command:prepared[1].command});
+ assert.equal(blocked.status,400);assert.match(blocked.value.error,/provider.*unavailable|scheduling capacity/i);
+ assert.equal((await reviewed[1].get(prepared[1].plan.id)).status,'approved','denied execution must not issue work');
  assert.equal((await coordinator(['diagnostics','--node',nodes[1].id,'--samples','1'])).passed,1,'direct owner recovery does not consume scheduling capacity');
- resume();assert.equal((await held).value.success,true);
+ resume();assert.equal((await reviewed[0].wait(prepared[0].plan.id)).status,'completed');
  await until(async()=>(await scheduling(['show'])).admission.total_in_flight===0,'capacity released');
- assert.equal((await invoke(nodes[1].id)).value.success,true);
+ await reviewed[1].startOwner(prepared[1].command);
+ assert.equal((await reviewed[1].wait(prepared[1].plan.id)).status,'completed');
  console.log('Scheduling fixture: applied budget enforced and released; owner recovery available');
  // Corrupt an otherwise schema-valid mutation reply after real persistence.
  // The CLI must report uncertainty, with exactly one request and no replay.
@@ -107,11 +116,11 @@ try {
  mode='old';await scheduling(['limits','--max-in-flight','4'],false,proxied);assert.equal(writes,1);
  assert.equal((await scheduling(['show'])).saved_policy.max_in_flight,2);
  await scheduling(['remove-node','--node',nodes[0].id]);assert.deepEqual((await scheduling(['show'])).saved_policy.node_limits,{});
- for(const node of nodes){const jobs=await cli('eefn',node.path,['jobs','list']);assert.equal(jobs.data.total,0);assert.equal((await json(node.api+'/api/status')).models.length,0);}
+ for(const node of nodes){const jobs=await cli('eefn',node.path,['jobs','list']);assert.equal(jobs.data.total,2);assert(jobs.data.jobs.every(j=>j.status==='completed'));assert.equal((await json(node.api+'/api/status')).models.length,0);}
  const results={passed:true,physical_two_pc:false,pinned_tls:true,command_only_policy:true,saved_applied_separation:true,
   restart_applies_policy:true,global_budget_enforced:true,owner_recovery_stays_available:true,capacity_released:true,
   stale_runtime_and_cross_site_rejected:true,generic_config_preserves_policy:true,corrupted_reply_unconfirmed_without_replay:true,
-  no_models_or_jobs_created:true};
+  no_models_created:true,reviewed_grants:true,denied_execution_checkpoint_unchanged:true};
  await writeFile(join(scratch,'results.json'),JSON.stringify(results,null,2));console.log('Scheduling command validation passed: '+scratch);
 }finally{
  resume();for(const socket of sockets)socket.destroy();for(const child of children)if(child.exitCode===null)child.kill();

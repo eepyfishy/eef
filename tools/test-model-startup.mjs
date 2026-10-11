@@ -5,6 +5,7 @@ import {resolve,join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
 import {randomBytes} from 'node:crypto';
+import {reviewedFixture} from './reviewed-fixture.mjs';
 const root=resolve(import.meta.dirname,'..');
 const scratch=await mkdtemp(join(root,'.validation/model-startup-'));
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
@@ -46,8 +47,8 @@ try {
  const loading=(await inventory()).nodes[0].models[0];assert.equal(loading.availability,'unavailable');
  const ping=()=>json(eef+`/api/node/${id}/invoke`,{capability:'system.ping',action:'run',params:{},timeout:5});
  assert.equal((await ping()).success,true);
- const denied=await json(eef+`/api/node/${id}/invoke`,{capability:'llm.infer',action:'run',params:{backend:'llamacpp',model:'gated-model',prompt:'must not run'},timeout:5});
- assert.equal(denied.success,false);
+ const denied=await fetch(eef+`/api/node/${id}/invoke`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability:'llm.infer',action:'run',params:{backend:'llamacpp',model:'gated-model',prompt:'must not run'},timeout:5})});
+ assert.equal(denied.status,400);assert.equal((await denied.json()).error_code,'execution_grant_required');
  const command=async(args)=>{const child=launch('eefn',['--config',nodeConfig,...args,'--json']);const timer=setTimeout(()=>child.kill(),65000);try{const r=await child.result;assert.equal(r.code,0,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}};
  assert.equal((await command(['jobs','list'])).success,true);
  const restarted=await command(['restart','--wait-seconds','60']);assert.equal(restarted.completed,true);assert.notEqual(restarted.runtime_id,before.runtime_id);
@@ -56,7 +57,7 @@ try {
  let newPid;
  await until(async()=>{newPid=Number(await readFile(pidFile,'utf8'));return newPid!==oldPid&&alive(newPid);},'replacement startup child');modelPids.add(newPid);
  await until(async()=>(await inventory()).nodes[0]?.models[0]?.lifecycle==='loading'&&(await json(node+'/api/diagnostics')).connection_state==='connected','replacement registers while loading');
- const siblingPid=Number(await readFile(siblingPidFile,'utf8'));modelPids.add(siblingPid);assert(alive(siblingPid));
+ let siblingPid=Number(await readFile(siblingPidFile,'utf8'));modelPids.add(siblingPid);assert(alive(siblingPid));
  const active=await json(node+'/api/diagnostics');
  await writeFile(readyFile,'allow fixture health only');
  await until(async()=>(await inventory()).nodes[0]?.models[0]?.lifecycle==='ready','readiness refresh without reconnect');
@@ -67,7 +68,22 @@ try {
  assert.equal((await ping()).success,true);
  // First verify shared bounded response normalization through the real node
  // command path (the model backend is still only a synthetic fixture).
- const infer=prompt=>json(eef+`/api/node/${id}/invoke`,{capability:'llm.infer',action:'run',params:{backend:'llamacpp',model:'gated-model',prompt},timeout:5});
+ const coordinator=async args=>{const c=launch('eef',['--config',eefConfig,'--json',...args]),timer=setTimeout(()=>c.kill(),30000);try{const r=await c.result;assert.equal(r.code,0,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}};
+ const privateFile=join(scratch,'PRIVATE-pair.json');
+ await writeFile(privateFile,JSON.stringify(await coordinator(['credentials','provision','--node',id,'--address',`127.0.0.1:${gateway}`])));
+ await coordinator(['credentials','legacy','--allow','false']);
+ const coordinatorRuntime=(await json(eef+'/api/diagnostics')).runtime_id;await coordinator(['restart']);
+ await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==coordinatorRuntime,'apply TLS');
+ await command(['connection','pair','--code-file',privateFile]);
+ await until(async()=>(await json(node+'/api/status')).execution_grants.available&&(await inventory()).nodes[0]?.models[0]?.lifecycle==='ready','pinned model provider');
+ newPid=Number(await readFile(pidFile,'utf8'));modelPids.add(newPid);assert(alive(newPid));
+ siblingPid=Number(await readFile(siblingPidFile,'utf8'));modelPids.add(siblingPid);assert(alive(siblingPid));
+ const executionReady=await json(node+'/api/diagnostics');
+ const reviewed=reviewedFixture(eef,node,id);
+ const infer=async prompt=>{
+  const plan=await reviewed.save({template:'generate_text',params:{model_id:'gated-model',prompt},constraints:{backend:'llamacpp',node_id:id}});
+  await reviewed.start(await reviewed.approve(plan));return reviewed.result(plan.id);
+ };
  const completeReply=await infer('fixture-complete');assert.equal(completeReply.success,true);
  assert.equal(completeReply.data.content,'fixture only; no real inference');
  assert.equal(completeReply.data.finish_reason,'stop');assert.equal(completeReply.data.completion_complete,true);
@@ -85,11 +101,11 @@ try {
  await until(()=>!alive(siblingPid),'failed group stops surviving sibling');
  await until(async()=>{const s=await json(node+'/api/status');return s.models.every(m=>m.model_metadata.lifecycle==='error')&&!s.capabilities.includes('llm.infer');},'local error status');
  const failed=await json(node+'/api/diagnostics');
- assert.equal(failed.runtime_id,ready.runtime_id);assert.equal(failed.successful_connections,ready.successful_connections);
+ assert.equal(failed.runtime_id,executionReady.runtime_id);assert.equal(failed.successful_connections,executionReady.successful_connections);
  assert.deepEqual(failed.startup_issues,[]); // A runtime exit is not a startup failure.
  assert.equal((await ping()).success,true);
- const afterExit=await json(eef+`/api/node/${id}/invoke`,{capability:'llm.infer',action:'run',params:{backend:'llamacpp',model:'gated-model',prompt:'must not run'},timeout:5});
- assert.equal(afterExit.success,false);
+ const afterExit=await fetch(eef+`/api/node/${id}/invoke`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({capability:'llm.infer',action:'run',params:{backend:'llamacpp',model:'gated-model',prompt:'must not run'},timeout:5})});
+ assert.equal(afterExit.status,400);assert.equal((await afterExit.json()).error_code,'execution_grant_required');
  assert.equal((await command(['jobs','list'])).success,true);
  assert.equal(Number(await readFile(pidFile,'utf8')),newPid);assert(!alive(newPid));
  const recovery=await command(['restart','--wait-seconds','60']);assert.equal(recovery.completed,true);
@@ -113,7 +129,7 @@ try {
  process.kill(offlinePid);
  await until(async()=>{const s=await json(node+'/api/status');return s.connection.state==='paused'&&s.models.every(m=>m.model_metadata.lifecycle==='error')&&!s.capabilities.includes('llm.infer');},'offline process failure status');
  await until(()=>!alive(offlineSibling),'offline failed group stops sibling');
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,registration_while_loading:true,commands_while_loading:true,inference_refused_while_loading:true,restart_cancels_owned_child:true,readiness_without_reconnect:true,offline_readiness:true,process_exit_withdraws_group:true,failed_group_stops_siblings:true,commands_after_process_exit:true,explicit_restart_recovers:true,offline_process_failure:true,real_inference:false,physical_two_pc:false},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,registration_while_loading:true,commands_while_loading:true,ordinary_inference_refused:true,reviewed_model_grants:true,pinned_tls:true,restart_cancels_owned_child:true,readiness_without_reconnect:true,offline_readiness:true,process_exit_withdraws_group:true,failed_group_stops_siblings:true,commands_after_process_exit:true,explicit_restart_recovers:true,offline_process_failure:true,real_inference:false,physical_two_pc:false},null,2));
  console.log('Nonblocking model startup checks passed: '+scratch);
 } finally {
  for(const child of children)if(child.exitCode===null)child.kill();

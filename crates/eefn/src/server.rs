@@ -387,6 +387,7 @@ impl NodeServer {
         wait: Duration,
         context: Option<&crate::context::RequestContext>,
     ) -> Result<Value> {
+        crate::execution_boundary::require_control(capability)?;
         self.invoke_message(node_id,json!({"type":"request","capability":capability,"action":action,"params":params,"request_context":context}),wait,None,None,None).await
     }
 
@@ -2238,6 +2239,28 @@ mod tests {
     #[tokio::test]
     async fn legacy_routes_cannot_send_a_grant_or_downgrade_it_into_rpc() {
         let (server, mut queue) = queued_test_server().await;
+        for capability in [
+            "llm.infer",
+            "vlm.analyze",
+            "filesystem",
+            "http.request",
+            "system.info",
+            "fixture.work",
+        ] {
+            assert!(
+                server
+                    .invoke_remote(
+                        "owner",
+                        capability,
+                        "run",
+                        json!({}),
+                        Duration::from_millis(10)
+                    )
+                    .await
+                    .unwrap_err()
+                    .is::<crate::execution_boundary::ExecutionGrantRequired>()
+            );
+        }
         assert!(server.grant_session("owner").await.is_err());
         assert!(
             server
@@ -2247,6 +2270,85 @@ mod tests {
         );
         assert!(queue.try_recv().is_err());
         assert!(server.inner.pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn node_rejects_forged_ordinary_work_even_when_feature_is_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("ordinary-must-not-write.txt");
+        let policy: crate::NodePolicy = serde_json::from_value(json!({
+            "filesystem":{"write":true},"full_access":["filesystem.write"]
+        }))
+        .unwrap();
+        let engine = Arc::new(
+            crate::NodeEngine::new(false, vec![], dir.path().into())
+                .unwrap()
+                .with_policy(policy)
+                .unwrap(),
+        );
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        server.start().await.unwrap();
+        let client = crate::NodeClient::new(serde_json::from_value(json!({
+            "endpoints":[format!("127.0.0.1:{}",server.port())],"node_id":"boundary-node","psk":"test-secret"
+        })).unwrap(), engine).unwrap();
+        let running = tokio::spawn(async move { client.connect_once().await });
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if server
+                    .registered_nodes()
+                    .await
+                    .contains_key("boundary-node")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        // Deliberately bypass the sending API's guard to simulate an older or
+        // malicious authenticated coordinator. The receiving node must fence it.
+        for (capability, action, params) in [
+            (
+                "filesystem",
+                "write",
+                json!({"path":out,"content":"forged"}),
+            ),
+            ("llm.infer", "run", json!({"prompt":"must not run"})),
+        ] {
+            let response = server
+                .invoke_message(
+                    "boundary-node",
+                    json!({"type":"request",
+                "capability":capability,"action":action,"params":params}),
+                    Duration::from_secs(3),
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            assert_eq!(response["success"], false);
+            assert_eq!(response["not_started"], true);
+            assert_eq!(response["error_code"], "execution_grant_required");
+        }
+        assert!(!out.exists());
+        assert_eq!(
+            server
+                .invoke_remote(
+                    "boundary-node",
+                    "system.ping",
+                    "run",
+                    json!({}),
+                    Duration::from_secs(3)
+                )
+                .await
+                .unwrap()["success"],
+            true
+        );
+        server.stop().await;
+        running.abort();
+        let _ = running.await;
     }
     #[tokio::test]
     async fn durable_observer_failures_never_confirm_ack_or_completion_via_broadcast() {

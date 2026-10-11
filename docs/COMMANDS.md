@@ -4,6 +4,21 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Default workload boundary (unreleased after alpha.6)
+
+`eefn --ask TEXT` now opens an origin-owned durable review through the already
+running node; it never creates a second runtime. Node `/api/chat` calls the same
+service and returns review/clarification status, not a workload result. Preparation,
+owner approval and execution are still separate commands, not automatic policies.
+
+`jobs generate-text` now shares the explicit `request-text` review/compiler flow.
+Raw job creation, legacy resume/dispatcher/model chat and ordinary workload RPC
+are retired. Pairing/configuration/restart/authorized updates stay available.
+Public core constructors enforce this boundary, with no runtime/config opt-out.
+Use reviewed requests and exact grants instead; preserve receipts after uncertainty.
+See [compatibility and verification limits](EXECUTION-BOUNDARY.md). The older
+release-specific descriptions below must not be read as current dispatch behavior.
+
 ## Explicit interrupted-result reconciliation (unreleased after alpha.6)
 
 `eefn requests recover-result JOB_ID --revision REV --grant-id GRANT_UUID
@@ -1012,8 +1027,9 @@ until separate owner approval and origin execution. Inspect `requests plan` with
 the returned job ID. Preserve the receipt and use `jobs find` after a lost reply
 or partial compilation. Exact retries retain immutable input and never start a
 second model call or silently replace choices. See [explicit request contract](EXPLICIT-REQUESTS.md).
-The older `generate-text` command below still directly executes legacy work; it
-is not grant-enforced and is not silently reinterpreted as the new workflow.
+The subsequent unreleased boundary moves `generate-text` to this same workflow;
+it no longer directly executes legacy work. The syntax below remains available,
+but a compiled request awaits separate approval and execution.
 
 ```powershell
 .\eefn.exe jobs list --json
@@ -1038,13 +1054,15 @@ EEF stamps the origin from the connection. List, status, controls and output are
 restricted to jobs submitted by that stable origin node, not jobs merely executed
 there or created by the coordinator owner. `generate-text` optionally accepts
 `--target-node`, `--backend` and `--model`; `--role` is an exact advertised model
-label, not authority. This creates an existing durable text-inference job, not an
-automatic natural-language plan. Prompt size is bounded to 32768 bytes.
+label, not authority. This now creates an existing durable explicit reviewed
+text request, not an automatic natural-language plan. Prompt size is bounded to
+32768 bytes.
 
 Acknowledgement is not completion. Inspect `data.status`; pausing/stopping may
 remain in progress until the current step finishes. Stop does not undo remote
-effects. Resume retains completed steps and follows the existing uncertain-work
-rules. Remove deletes only finished job history and cannot stop an active job.
+effects. Legacy resume is now refused, including for retained ordinary jobs;
+granted uncertain work cannot be resumed by that path. Remove deletes only
+finished job history and cannot stop an active job.
 List returns the existing bounded view (first 100 visible jobs plus total).
 
 Unreleased coordinator reliability changes after alpha.6 serialize admission,

@@ -34,7 +34,7 @@ pub enum JobCommand {
     Remove {
         id: String,
     },
-    /// Legacy direct text job (not grant-enforced); prefer request-text for review/approval.
+    /// Save/compile text work for separate approval/granted execution; never direct RPC.
     GenerateText {
         #[arg(long)]
         prompt: String,
@@ -163,7 +163,7 @@ impl JobCommand {
                         constraints[key] = json!(value);
                     }
                 }
-                if matches!(self, Self::RequestText { .. }) {
+                {
                     let input = crate::request_submission::ConcreteInput {
                         schema_version: 1,
                         original_text: prompt.clone(),
@@ -176,12 +176,8 @@ impl JobCommand {
                         },
                     };
                     input.validate()?;
-                    return Ok(("requests.concrete", json!(input)));
+                    Ok(("requests.concrete", json!(input)))
                 }
-                Ok((
-                    "jobs.create",
-                    json!({"description":"Text generation","template":"generate_text","params":params,"constraints":constraints}),
-                ))
             }
         }
     }
@@ -365,12 +361,15 @@ mod tests {
             model: Some("fixture".into()),
         };
         let (kind, value) = command.submission().unwrap();
-        assert_eq!(kind, "jobs.create");
+        assert_eq!(kind, "requests.concrete");
         assert!(value.get("request_context").is_none());
-        assert_eq!(value["params"]["prompt"], "original input");
-        assert_eq!(value["params"]["model_id"], "fixture");
-        assert_eq!(value["constraints"]["node_id"], "target");
-        assert_eq!(value["constraints"]["model_role"], "request_interpreter");
+        assert_eq!(value["input"]["params"]["prompt"], "original input");
+        assert_eq!(value["input"]["params"]["model_id"], "fixture");
+        assert_eq!(value["input"]["constraints"]["node_id"], "target");
+        assert_eq!(
+            value["input"]["constraints"]["model_role"],
+            "request_interpreter"
+        );
     }
     #[tokio::test]
     async fn jobs_use_existing_mailbox_once_and_require_instance_identity() {

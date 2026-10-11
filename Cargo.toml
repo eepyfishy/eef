@@ -27,7 +27,8 @@ rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# Persisted/wire grant checksums require exact decimal -> f64 round trips.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 serde_yml = "0.0.12"
 sha2 = "0.10"
 sysinfo = { version = "0.37.2", default-features = false, features = ["disk", "system"] }

@@ -5,6 +5,8 @@ import {resolve,join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
 import {randomBytes} from 'node:crypto';
+import {randomUUID} from 'node:crypto';
+import {reviewedFixture} from './reviewed-fixture.mjs';
 const root=resolve(import.meta.dirname,'..'),scratch=await mkdtemp(join(root,'.validation','peer-discovery-'));
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug')),children=[];
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
@@ -23,7 +25,7 @@ try {
  const [nodePort,eefPort,aPort,bPort]=await Promise.all([port(),port(),port(),port()]);
  const eef=`http://127.0.0.1:${eefPort}`,a=`http://127.0.0.1:${aPort}`,b=`http://127.0.0.1:${bPort}`;
  const secret=randomBytes(24).toString('hex');
- for(const [id,p,address,heartbeat] of [['node-a',aPort,'26.1.2.3',1],['node-b',bPort,'26.4.5.6',60]]) {
+ for(const [id,p,address,heartbeat] of [['node-a',aPort,'26.1.2.3',0.2],['node-b',bPort,'26.4.5.6',60]]) {
   const c=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
   Object.assign(c,{node_id:id,name:id,psk:secret,endpoints:[`127.0.0.1:${nodePort}`],auto_local:false,local_pairing:false,heartbeat_seconds:heartbeat,
    dashboard:{enabled:true,host:'127.0.0.1',port:p},update:{policy:'off'},models:{provider:'llamacpp',llamacpp:{slots:[]}},
@@ -84,10 +86,12 @@ try {
   const p=(await json(eef+'/api/capabilities')).providers.find(p=>p.node_id==='node-b'&&p.capability==='system.info');
   return p&&Date.now()-p.last_heartbeat_ms>10500;
  },'node B becomes stale for non-model scheduling');
- const rejected=await fetch(eef+'/api/assistant/execute',{method:'POST',headers:{'Content-Type':'application/json'},
-  body:JSON.stringify({capability:'system.info',action:'run',params:{},constraints:{node_id:'node-b'}})});
- assert.equal(rejected.status,400);assert((await rejected.json()).error.includes('no provider available'));
- assert.equal((await json(eef+'/api/assistant/execute',{capability:'system.info',action:'run',params:{},constraints:{node_id:'node-a'}})).success,true);
+ const rejected=await json(a+'/api/commands/requests/submit',{schema_version:1,expected_node_id:'node-a',command:{
+  operation_id:randomUUID(),request:{schema_version:1,original_text:'Inspect stale peer',title:'Stale fixture',
+   input:{schema_version:1,template:'system_info',params:{},constraints:{node_id:'node-b'}}}}});
+ assert.equal(rejected.success,false);assert.equal(rejected.error_code,'concrete_unconfirmed');
+ const fresh=await reviewedFixture(eef,a,'node-a').save({template:'system_info',params:{},constraints:{node_id:'node-a'}});
+ assert.equal(fresh.status,'awaiting_approval');assert.equal(fresh.dispatched,false);
  assert.equal((await coordinator(['diagnostics','--node','node-b','--samples','1'])).passed,1,'stale scheduling must not disable owner diagnostics');
  const revokedCommand=await discovery(['revoke','--requester','node-a','--target','node-b']);assert.equal(revokedCommand.restart_required,true);assert.deepEqual(revokedCommand.saved_policy.grants,{});
  await peers('node-a',['--node','node-b']); // still applied until restart

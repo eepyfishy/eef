@@ -25,6 +25,18 @@ impl From<anyhow::Error> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if self
+            .0
+            .is::<eefn::execution_boundary::ExecutionGrantRequired>()
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"success":false,
+                "error":self.0.to_string(),"error_type":"ExecutionGrantRequired",
+                "error_code":eefn::execution_boundary::ERROR_CODE,"not_started":true})),
+            )
+                .into_response();
+        }
         (StatusCode::BAD_REQUEST, Json(json!({"success": false, "error": self.0.to_string(), "error_type": "RequestError"}))).into_response()
     }
 }

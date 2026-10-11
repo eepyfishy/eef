@@ -5,6 +5,7 @@ import {resolve, join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
 import {randomBytes, randomUUID} from 'node:crypto';
+import {reviewedFixture} from './reviewed-fixture.mjs';
 const root = resolve(import.meta.dirname, '..');
 const scratch = await mkdtemp(join(root, '.validation/node-credentials-'));
 const bin = resolve(process.env.EEF_TEST_BINARY_DIR || join(root, 'target/debug'));
@@ -97,10 +98,12 @@ try {
   }
   await until(async()=>(await coordinator(['diagnostics'])).registered_node_count===2,'two registered nodes');
   for(const node of nodes) assert.equal((await coordinator(['diagnostics','--node',node.id,'--samples','1'])).passed,1);
-  // Exercise the actual non-model dispatcher over the pinned TLS sessions.
+  // Exercise reviewed, owner-approved non-model grants over pinned TLS.
   for(const node of nodes) {
-    const data=await json(base+'/api/assistant/execute',{capability:'system.info',action:'run',params:{},constraints:{node_id:node.id}});
-    assert.equal(data.success,true);
+    const reviewed=reviewedFixture(base,node.api,node.id);
+    const plan=await reviewed.save({template:'system_info',params:{},constraints:{node_id:node.id}});
+    await reviewed.start(await reviewed.approve(plan));
+    assert.equal((await reviewed.wait(plan.id)).status,'completed');
   }
   for(const constraints of [false,{node_id:null},{gpu_vram_min_mb:'4096'}]) {
     const r=await fetch(base+'/api/assistant/execute',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -154,7 +157,7 @@ try {
   const results={passed:true,command_pairing:true,two_independent_credentials:true,legacy_disable:true,revocation_and_rotation:true,
     model_free_structured_review:true,
     redacted_inspection:true,generic_save_preserves_policy:true,node_id_and_permissions_preserved:true,physical_two_pc:false,
-    execution_grants:false,execution_attempt_replay_fencing:false};
+    execution_grants:true,execution_attempt_replay_fencing:false};
   results.pinned_tls13=true;results.persistent_coordinator_identity=true;
   results.credential_only_boot_without_legacy_secret=true;results.invalid_legacy_reenable_rejected_atomically=true;
   results.non_model_dispatch_and_rejected_constraints=true;

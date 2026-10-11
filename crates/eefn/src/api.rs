@@ -382,10 +382,52 @@ async fn request_execute_command(
 
 async fn chat(
     State(state): State<Arc<NodeService>>,
-    Json(value): Json<Value>,
+    Json(value): Json<ChatInput>,
 ) -> Result<Json<Value>, ApiError> {
-    let text = value["message"].as_str().context("message is required")?;
-    Ok(Json(state.submissions.submit(text).await?))
+    // Compatibility adapter only: same durable review service as CLI/open.
+    // Never send raw messages or silently fall back to keyword execution.
+    let mut report = state
+        .open_request(crate::request_preview::PreviewRequest {
+            schema_version: 1,
+            expected_node_id: state.node_id.clone(),
+            request_id: value
+                .request_id
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            text: value.message,
+        })
+        .await;
+    // Human-readable compatibility output, not fabricated model output or a
+    // browser-owned execution decision. The complete receipt remains present.
+    report["reply"] = json!(if report["success"] == true {
+        let id = report["result"]["id"].as_str().unwrap_or("unknown");
+        match report
+            .pointer("/result/draft/proposals/0/proposal/clarification")
+            .and_then(Value::as_str)
+        {
+            Some(question) => format!(
+                "Saved request {id}. Clarification required: {question} No workload was executed."
+            ),
+            None => format!(
+                "Saved request {id} for review. Preparation, owner approval and execution are separate steps. No workload was executed."
+            ),
+        }
+    } else {
+        format!(
+            "Request not confirmed ({}). Inspect receipt {} before retrying. No workload execution or automatic retry was requested.",
+            report["error_code"]
+                .as_str()
+                .unwrap_or("request_unconfirmed"),
+            report["request_id"].as_str().unwrap_or("unavailable")
+        )
+    });
+    Ok(Json(report))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChatInput {
+    message: String,
+    request_id: Option<String>,
 }
 
 async fn pause_connection(

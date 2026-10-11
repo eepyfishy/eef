@@ -11,6 +11,7 @@ pub mod context;
 pub mod crypto;
 pub mod dashboard;
 pub mod engine;
+pub mod execution_boundary;
 pub mod firmware;
 pub mod grant_time;
 pub mod grants;

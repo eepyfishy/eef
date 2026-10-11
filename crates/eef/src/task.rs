@@ -282,6 +282,7 @@ pub struct Dispatcher {
     adapters: AdapterManager,
     llm: Arc<LlmService>,
     node_server: eefn::NodeServer,
+    reviewed_only: bool,
 }
 
 impl Dispatcher {
@@ -291,11 +292,30 @@ impl Dispatcher {
         llm: Arc<LlmService>,
         node_server: eefn::NodeServer,
     ) -> Arc<Self> {
+        Self::with_boundary(registry, adapters, llm, node_server, true)
+    }
+    #[cfg(test)]
+    pub(crate) fn legacy_for_test(
+        registry: CapabilityRegistry,
+        adapters: AdapterManager,
+        llm: Arc<LlmService>,
+        node_server: eefn::NodeServer,
+    ) -> Arc<Self> {
+        Self::with_boundary(registry, adapters, llm, node_server, false)
+    }
+    fn with_boundary(
+        registry: CapabilityRegistry,
+        adapters: AdapterManager,
+        llm: Arc<LlmService>,
+        node_server: eefn::NodeServer,
+        reviewed_only: bool,
+    ) -> Arc<Self> {
         Arc::new(Self {
             registry,
             adapters,
             llm,
             node_server,
+            reviewed_only,
         })
     }
 
@@ -357,6 +377,9 @@ impl Dispatcher {
         task: &Task,
         journal: Option<crate::jobs::AttemptJournal>,
     ) -> Result<Value> {
+        if self.reviewed_only {
+            return Err(eefn::execution_boundary::ExecutionGrantRequired.into());
+        }
         let mut constraints = task.constraints.clone();
         if !constraints.is_null() && !constraints.is_object() {
             bail!("task scheduling constraints must be an object")
@@ -468,6 +491,7 @@ pub struct TaskEngine {
     pub store: Arc<crate::jobs::JobStore>,
     active: Arc<std::sync::Mutex<ActiveJobs>>,
     stopping: tokio::sync::watch::Sender<bool>,
+    reviewed_only: bool,
 }
 
 #[derive(Default)]
@@ -510,12 +534,37 @@ impl TaskEngine {
         )
     }
     pub fn with_store(bus: EventBus, store: Arc<crate::jobs::JobStore>) -> Arc<Self> {
+        Self::with_boundary(bus, store, true)
+    }
+    #[cfg(test)]
+    pub(crate) fn legacy_with_store_for_test(
+        bus: EventBus,
+        store: Arc<crate::jobs::JobStore>,
+    ) -> Arc<Self> {
+        Self::with_boundary(bus, store, false)
+    }
+    #[cfg(test)]
+    pub(crate) fn legacy_for_test(bus: EventBus) -> Arc<Self> {
+        Self::legacy_with_store_for_test(bus, crate::jobs::JobStore::in_memory().unwrap())
+    }
+    pub(crate) fn require_legacy_execution(&self) -> Result<()> {
+        if self.reviewed_only {
+            return Err(eefn::execution_boundary::ExecutionGrantRequired.into());
+        }
+        Ok(())
+    }
+    fn with_boundary(
+        bus: EventBus,
+        store: Arc<crate::jobs::JobStore>,
+        reviewed_only: bool,
+    ) -> Arc<Self> {
         Arc::new(Self {
             bus,
             store,
             executor: Arc::new(RwLock::new(None)),
             active: Arc::new(std::sync::Mutex::new(ActiveJobs::default())),
             stopping: tokio::sync::watch::channel(false).0,
+            reviewed_only,
         })
     }
     pub fn set_executor(&self, executor: Arc<dyn TaskExecutor>) {
@@ -605,6 +654,9 @@ impl TaskEngine {
         Ok((p, !changed))
     }
     fn admit_new(&self, plan: Plan) -> Result<ActiveJob> {
+        if self.reviewed_only {
+            return Err(eefn::execution_boundary::ExecutionGrantRequired.into());
+        }
         if plan.status != PlanStatus::Pending || plan.request_review.is_some() {
             bail!("Review records are not executable plans")
         }
@@ -663,6 +715,9 @@ impl TaskEngine {
         result
     }
     pub fn resume_job(self: &Arc<Self>, id: &str) -> Result<()> {
+        if self.reviewed_only {
+            return Err(eefn::execution_boundary::ExecutionGrantRequired.into());
+        }
         if !self.has_executor() {
             bail!("TaskEngine has no executor")
         }
@@ -704,6 +759,9 @@ impl TaskEngine {
         self: &Arc<Self>,
         plan: Plan,
     ) -> Result<crate::jobs::JobAdmission> {
+        if self.reviewed_only {
+            return Err(eefn::execution_boundary::ExecutionGrantRequired.into());
+        }
         if plan.status != PlanStatus::Pending || plan.request_review.is_some() {
             bail!("Review records are not executable plans")
         }
@@ -1068,6 +1126,92 @@ impl<T> ContextOption<T> for Option<T> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn shipping_boundary_denies_legacy_jobs_before_persistence_or_capacity() {
+        let bus = EventBus::new(20);
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let engine = TaskEngine::with_store(bus.clone(), store.clone());
+        let registry = CapabilityRegistry::default();
+        let adapters = AdapterManager::new(registry.clone(), json!({}));
+        let adapter = Arc::new(HeldAdapter {
+            entered: tokio::sync::Semaphore::new(0),
+            calls: std::sync::atomic::AtomicU32::new(0),
+        });
+        adapters.load(adapter.clone()).await.unwrap();
+        let server = eefn::NodeServer::new("fixture-secret", "127.0.0.1", 0).unwrap();
+        let llm = LlmService::new(
+            crate::model::ModelRegistry::default(),
+            BTreeMap::new(),
+            server.clone(),
+            bus.clone(),
+        );
+        let dispatcher = Dispatcher::new(registry.clone(), adapters, llm.clone(), server);
+        engine.set_executor(dispatcher.clone());
+        let plan = TaskPlanner
+            .plan(Goal {
+                request_context: None,
+                description: "legacy job must not run".into(),
+                template: "read_file".into(),
+                params: json!({}),
+                constraints: json!({}),
+            })
+            .unwrap();
+        let assert_denied = |error: anyhow::Error| {
+            assert!(error.is::<eefn::execution_boundary::ExecutionGrantRequired>());
+        };
+        assert_denied(engine.enqueue(plan.clone()).unwrap_err());
+        assert_denied(engine.run_plan(plan.clone()).await.unwrap_err());
+        assert_denied(
+            engine
+                .enqueue_request(plan.clone())
+                .err()
+                .expect("legacy admission denied"),
+        );
+        assert_denied(
+            engine
+                .job_request("jobs.create", json!(plan.goal), None)
+                .unwrap_err(),
+        );
+        assert!(store.list().unwrap().is_empty());
+        // A retained legacy job stays byte-for-byte unchanged when resume is denied.
+        store.insert(plan.clone()).unwrap();
+        store
+            .change(&plan.plan_id, "Retained legacy paused fixture", |p| {
+                p.status = PlanStatus::Paused;
+                Ok(())
+            })
+            .unwrap();
+        let before = json!(store.get(&plan.plan_id).unwrap());
+        assert_eq!(
+            engine
+                .job_request("jobs.get", json!({"id":plan.plan_id}), None)
+                .unwrap()["can_resume"],
+            false
+        );
+        assert_denied(engine.resume_job(&plan.plan_id).unwrap_err());
+        assert_eq!(json!(store.get(&plan.plan_id).unwrap()), before);
+        assert_denied(
+            dispatcher
+                .run_capability("fixture.work", "run", json!({}), json!({}))
+                .await
+                .unwrap_err(),
+        );
+        assert_denied(
+            llm.chat(json!([]), ChatOptions::default())
+                .await
+                .unwrap_err(),
+        );
+        assert_eq!(adapter.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(registry.find("fixture.work", "run")[0].in_flight, 0);
+        assert!(
+            bus.history(20)
+                .await
+                .iter()
+                .all(|e| !matches!(e.topic.as_str(), "task.started" | "model.assigned"))
+        );
+        assert!(engine.active.lock().unwrap().ids.is_empty());
+    }
+
     struct HeldAdapter {
         entered: tokio::sync::Semaphore,
         calls: std::sync::atomic::AtomicU32,
@@ -1100,13 +1244,13 @@ mod tests {
         provider.max_concurrent = 1;
         registry.register(provider);
         let server = eefn::NodeServer::new("fixture-secret", "127.0.0.1", 0).unwrap();
-        let llm = LlmService::new(
+        let llm = LlmService::legacy_for_test(
             crate::model::ModelRegistry::default(),
             BTreeMap::new(),
             server.clone(),
             EventBus::new(20),
         );
-        let dispatcher = Dispatcher::new(registry.clone(), adapters, llm, server);
+        let dispatcher = Dispatcher::legacy_for_test(registry.clone(), adapters, llm, server);
         let caller = dispatcher.clone();
         let active = tokio::spawn(async move {
             caller
@@ -1162,13 +1306,13 @@ mod tests {
         registry.register(provider);
         let adapters = AdapterManager::new(registry.clone(), json!({}));
         let server = eefn::NodeServer::new("fixture-secret", "127.0.0.1", 0).unwrap();
-        let llm = LlmService::new(
+        let llm = LlmService::legacy_for_test(
             crate::model::ModelRegistry::default(),
             BTreeMap::new(),
             server.clone(),
             EventBus::new(20),
         );
-        let dispatcher = Dispatcher::new(registry.clone(), adapters, llm, server);
+        let dispatcher = Dispatcher::legacy_for_test(registry.clone(), adapters, llm, server);
         assert!(
             dispatcher
                 .run_capability("fixture.work", "run", json!({}), json!({}))
@@ -1224,7 +1368,7 @@ mod tests {
     }
     #[tokio::test]
     async fn mutating_tasks_are_not_automatically_replayed() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         let executor = Arc::new(FailsAfterSideEffect(std::sync::atomic::AtomicU32::new(0)));
         engine.set_executor(executor.clone());
         let goal: Goal=serde_json::from_value(json!({"description":"launch app","template":"launch_application","params":{"name":"fixture"}})).unwrap();
@@ -1250,7 +1394,7 @@ mod tests {
         // Model the interval after a runner has checkpointed Paused, but before
         // its guard has retired. Exercise the real cancel and guard-drop paths.
         for _ in 0..512 {
-            let engine = TaskEngine::new(EventBus::new(20));
+            let engine = TaskEngine::legacy_for_test(EventBus::new(20));
             engine.set_executor(Arc::new(Echo));
             let job = TaskPlanner
                 .plan(Goal {
@@ -1296,7 +1440,7 @@ mod tests {
 
     #[tokio::test]
     async fn plans_really_execute() {
-        let engine = TaskEngine::new(EventBus::new(20));
+        let engine = TaskEngine::legacy_for_test(EventBus::new(20));
         engine.set_executor(Arc::new(Echo));
         let plan = TaskPlanner
             .plan(Goal {
