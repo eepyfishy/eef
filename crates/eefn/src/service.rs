@@ -31,9 +31,13 @@ pub struct NodeService {
 impl NodeService {
     pub(crate) fn save_input_policy(
         &self,
-        policy: crate::request_input::InputPolicy,
+        prepare_on_input: Option<bool>,
+        resolve_on_answer: Option<bool>,
     ) -> Result<bool> {
         let _guard = self.config_lock.lock().expect("config lock");
+        if prepare_on_input.is_none() && resolve_on_answer.is_none() {
+            bail!("Choose at least one input workflow policy field")
+        }
         let mut config = self.read_config()?;
         let before: crate::request_input::InputPolicy = serde_json::from_value(
             config
@@ -41,6 +45,10 @@ impl NodeService {
                 .cloned()
                 .unwrap_or_else(|| json!({})),
         )?;
+        let policy = crate::request_input::InputPolicy {
+            prepare_on_input: prepare_on_input.unwrap_or(before.prepare_on_input),
+            resolve_on_answer: resolve_on_answer.unwrap_or(before.resolve_on_answer),
+        };
         if before == policy {
             return Ok(false);
         }

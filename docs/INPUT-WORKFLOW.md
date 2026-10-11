@@ -22,6 +22,9 @@ configuration. Missing node/interpreter/coordinator is an explicit failure.
 
 Fresh/example configurations set `input_workflow.prepare_on_input: true`.
 Older/custom configurations missing this field stay review-only (`false`).
+The subsequent [answer workflow](ANSWER-WORKFLOW.md) adds independently configurable
+`resolve_on_answer`, enabled for fresh configurations and false when absent in
+existing ones. `workflow set` can patch either field without replacing the other.
 The owner can save either value through the workflow command. It reports saved
 and applied policy independently; saving performs no inference or restart and
 does not change existing requests. Restart explicitly to apply it. Interpreter
@@ -81,6 +84,7 @@ The node API adds strict, local-owner-protected POST routes:
   `{schema_version:1, expected_node_id, request_id, text}`.
 - `/api/commands/requests/workflow`: `{schema_version:1, expected_node_id,
   command:{operation:"show"}}` or `command:{operation:"set", prepare_on_input:BOOL}`.
+  `set` also accepts optional `resolve_on_answer`; at least one field is required.
 
 Node `/api/chat` calls the same input service and adds compatibility `reply` text.
 It uses the latest saved question, distinguishes saved-source preparation failure
@@ -102,7 +106,8 @@ preparation, pending approval and persisted plans without dispatch.
 
 These checks do not prove real-model interpreter quality, physical two-PC
 acceptance, strong termination, installer security or complete non-coder setup.
-Answer-triggered resolution/preparation, source-bound durable automation,
+Bounded answer-triggered resolution/preparation is covered by the subsequent
+[answer workflow](ANSWER-WORKFLOW.md). Source-bound durable automation,
 reusable bounded approvals, lightweight model bootstrap and friendly pinned
 pairing/role setup remain required on the [full roadmap](ROADMAP-CORE.md).
 Published alpha.6 artifacts and stable-only update feeds are not replaced here.

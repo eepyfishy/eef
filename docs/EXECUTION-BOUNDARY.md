@@ -28,8 +28,10 @@ Both roles need a new, versioned release before physical network acceptance.
   [result recovery](RESULT-RECOVERY.md).
 
 Natural input opening and configurable one-shot preparation share the bounded
-[input workflow](INPUT-WORKFLOW.md). Answer-trigger policies and reusable bounded
-approvals are **not implemented**.
+[input workflow](INPUT-WORKFLOW.md). The subsequent [answer workflow](ANSWER-WORKFLOW.md)
+adds configurable source-bound resolution/preparation, with receipt reuse limited
+to history inspection. General durable automation and reusable bounded approvals
+are **not implemented**.
 This increment must not be described as a finished non-coder automation workflow.
 
 ## Retired paths

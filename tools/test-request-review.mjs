@@ -825,6 +825,9 @@ try {
     recovery_origin_and_owner_scope:true,recovery_lost_reply_receipt_reuse:true,recovery_without_live_executor:true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request review checks passed: ' + scratch);
+} catch(error) {
+  console.error('Request regression failed in '+scratch,error);
+  throw error;
 } finally {
   for (const response of gates) response.destroy();
   for (const response of recoveryGates) response.destroy();

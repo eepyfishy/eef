@@ -24,6 +24,52 @@ pub struct ClarificationAnswer {
     pub question: String,
     pub text: String,
     pub at_ms: u64,
+    /// Absent in older journals: unknown, never reconstructed from timestamps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AnswerSource>,
+}
+
+/// Coordinator-authored source checkpoint, not model output or execution authority.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnswerSource {
+    pub schema_version: u32,
+    pub revision: u64,
+    pub sha256: String,
+    pub proposal_count: usize,
+    pub answer_count: usize,
+}
+impl AnswerSource {
+    pub fn from_draft(revision: u64, draft: &DraftRecord) -> Result<Self> {
+        draft.validate()?;
+        let source = Self {
+            schema_version: 1,
+            revision,
+            sha256: crate::grants::definition_digest(&json!(draft))?,
+            proposal_count: draft.proposals.len(),
+            answer_count: draft.answers.len(),
+        };
+        if !source.confirms(draft) {
+            bail!("Answer requires a bounded current clarification source")
+        }
+        Ok(source)
+    }
+    pub fn confirms(&self, draft: &DraftRecord) -> bool {
+        self.schema_version == 1
+            && self.revision > 0
+            && self.revision != u64::MAX
+            && self.proposal_count > 0
+            && self.proposal_count <= 17
+            && self.answer_count < 16
+            && self.revision >= (self.proposal_count + self.answer_count) as u64
+            && self.proposal_count == draft.proposals.len()
+            && self.answer_count == draft.answers.len()
+            && draft
+                .proposals
+                .last()
+                .is_some_and(|p| p.proposal.needs_clarification)
+            && crate::grants::definition_digest(&json!(draft)).is_ok_and(|hash| hash == self.sha256)
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -89,7 +135,7 @@ impl DraftRecord {
                 crate::request_preparation::validate_question_lineage(self, index)?;
             }
         }
-        for answer in &self.answers {
+        for (index, answer) in self.answers.iter().enumerate() {
             crate::job_commands::validate_operation_id(&answer.operation_id)?;
             validate_answer(&answer.text)?;
             if !receipts.insert(&answer.operation_id)
@@ -100,6 +146,24 @@ impl DraftRecord {
                     != Some(answer.question.as_str())
             {
                 bail!("invalid clarification answer receipt or question")
+            }
+            if let Some(source) = &answer.source {
+                if source.answer_count != index
+                    || source.proposal_count != answer.proposal_index + 1
+                    || source.proposal_count > self.proposals.len()
+                {
+                    bail!("Answer source history changed")
+                }
+                let before = Self {
+                    schema_version: self.schema_version,
+                    original_text: self.original_text.clone(),
+                    concrete_input: self.concrete_input.clone(),
+                    proposals: self.proposals[..source.proposal_count].to_vec(),
+                    answers: self.answers[..index].to_vec(),
+                };
+                if !source.confirms(&before) {
+                    bail!("Answer source digest or revision is invalid")
+                }
             }
         }
         Ok(())
@@ -311,6 +375,11 @@ pub fn confirmed_report(value: &Value, node: &str, operation_id: &str, id: Optio
             .first()
             .is_some_and(|p| p.operation_id == report.request_context.request_id())
         && report.draft.validate().is_ok()
+        && report.draft.answers.iter().all(|a| {
+            a.source
+                .as_ref()
+                .is_none_or(|s| s.revision < report.revision)
+        })
         && report.review_state == report.draft.state()
         && !report.execution_authorized
         && !report.dispatched
@@ -339,9 +408,12 @@ pub fn confirmed_command(
                     .checked_add(1)
                     .is_some_and(|r| value["revision"] == r))
                 && value["draft"]["answers"].as_array().is_some_and(|answers| {
-                    answers
-                        .iter()
-                        .any(|a| a["operation_id"] == operation_id && a["text"] == *text)
+                    answers.iter().any(|a| {
+                        a["operation_id"] == operation_id
+                            && a["text"] == *text
+                            && a.get("source")
+                                .is_none_or(|s| s.is_null() || s["revision"] == *expected_revision)
+                    })
                 })
         }
         DraftCommand::Revise {

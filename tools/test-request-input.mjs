@@ -40,11 +40,14 @@ const fake=createServer(async(req,res)=>{
  const body=JSON.parse(bytes);calls.push(body);
  const preparing=body.messages[0].content.startsWith('Propose one method');
  if(preparing&&mode==='gate-method'){res.write(' ');gates.add(res);res.on('close',()=>gates.delete(res));return;}
+ if(!preparing&&mode==='gate-resolution'){res.write(' ');gates.add(res);res.on('close',()=>gates.delete(res));return;}
  const value=preparing?method():proposal();
  if(preparing&&mode==='question')Object.assign(value,{method:null,clarification:'Which concrete node should be inspected?'});
  if(preparing&&mode==='invalid-method')value.method.constraints.node_id='invented';
  if(!preparing&&mode==='clarify')Object.assign(value,{needs_clarification:true,clarification:'Which room do you mean?'});
  if(!preparing&&mode==='continuous')value.workload='continuous';
+ if(!preparing&&mode==='resolve-question')Object.assign(value,{needs_clarification:true,clarification:'Which room did you mean after your answer?'});
+ if(!preparing&&mode==='invalid-resolution')value.permissions=['everything'];
  res.end(JSON.stringify({message:{content:JSON.stringify(value)},done:true,done_reason:'stop'}));
 });
 const proxy=createServer(async(req,res)=>{
@@ -54,6 +57,7 @@ const proxy=createServer(async(req,res)=>{
   const response=await fetch(node+req.url,{method:'POST',headers:{'Content-Type':'application/json'},body});const value=await response.json();
   if(proxyMode==='corrupt'){value.result.request_context.origin_node='forged';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='lineage'){value.opening.result.draft.proposals[0].proposal.goal='Different schema-valid source goal';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
+  if(proxyMode==='answer-lineage'){value.source.result.draft.proposals[0].proposal.goal='Different source question goal';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   res.destroy();
  }catch{res.destroy();}
 });
@@ -69,6 +73,9 @@ try {
  const before=await readFile(configPath,'utf8'),absentId=randomUUID();
  const absent=await nodeCli(['requests','input','--text','Not running','--operation-id',absentId],false);
  assert.equal(absent.error_code,'node_not_running');assert.equal(absent.request_id,absentId);assert.equal(await readFile(configPath,'utf8'),before);assert.equal(calls.length,0);
+ const absentResponse=randomUUID(),absentJob=randomUUID().replaceAll('-','');
+ const stoppedResponse=await nodeCli(['requests','respond',absentJob,'--revision','1','--text','Keep this answer','--operation-id',absentResponse],false);
+ assert.equal(stoppedResponse.error_code,'node_not_running');assert.equal(stoppedResponse.command.operation_id,absentResponse);assert.equal(await readFile(configPath,'utf8'),before);assert.equal(calls.length,0);
  const offline=await nodeCli(['requests','workflow','show']);assert.equal(offline.saved_policy.prepare_on_input,true);assert.equal(offline.applied_policy,null);
  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
  await writeFile(eefConfig,yaml);
@@ -115,6 +122,88 @@ try {
  mode='question';count=calls.length;const question=await json(node+'/api/chat',{message:'Inspect the concrete node I mean',request_id:randomUUID()});
  assert.equal(question.status,'clarification_required');assert.equal(calls.length,count+2);assert.equal(question.result.revision,2);
  assert(question.reply.includes('Which concrete node should be inspected?'));assert.equal(question.result.input,null);
+ // Answers are explicit typed inputs with source revision/digest evidence. The
+ // selected policy resolves/prepares them, never approves or starts a workload.
+ const respond=(job,revision,text,operation=randomUUID(),success=true)=>nodeCli(['requests','respond',job,'--revision',String(revision),'--text',text,'--operation-id',operation],success);
+ const newQuestion=async text=>{mode='clarify';return(await input(text)).result;};
+ const original=await newQuestion('  Inspect a node after my answer\n');mode='valid';count=calls.length;
+ const responseId=randomUUID(),answerText='  This bedroom node\n',response=await respond(original.id,1,answerText,responseId);
+ assert.equal(response.report_type,'node_answer_workflow');assert.equal(response.status,'awaiting_approval');assert.equal(response.result.revision,4);assert.equal(calls.length,count+2);
+ assert.equal(response.answer_confirmed,true);assert.equal(response.answer.result.draft.answers[0].source.revision,1);
+ assert.equal(response.answer.result.draft.answers[0].text,answerText);assert.equal(response.result.draft.original_text,original.draft.original_text);
+ assert.deepEqual(response.result.request_context,original.request_context);assert.equal(response.result.request_context.request_id,original.request_context.request_id);
+ assert.equal(response.resolution_command.expected_revision,2);assert.equal(response.preparation_command.expected_revision,3);
+ assert.notEqual(response.resolution_command.operation_id,response.preparation_command.operation_id);assert.notEqual(response.resolution_command.operation_id,responseId);
+ assert.equal(response.result.tasks[0].status,'pending');assert.equal(response.execution_authorized,false);assert.equal(response.dispatched,false);
+ const responseSnapshot=(await plan(original.id)).result;
+ assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count+2);
+ assert.equal((await respond(original.id,2,answerText,responseId,false)).error_code,'answer_receipt_conflict');
+ assert.equal((await respond(original.id,1,'Changed answer',responseId,false)).error_code,'answer_receipt_conflict');
+ assert.equal((await respond(original.id,1,answerText,randomUUID(),false)).error_code,'answer_source_revision_changed');
+ assert.equal(calls.length,count+2);assert.deepEqual((await plan(original.id)).result,responseSnapshot);
+ const chatSource=await newQuestion('Answer through chat adapter');mode='valid';count=calls.length;
+ const chatAnswer=await json(node+'/api/chat',{message:'This node',request_id:randomUUID(),response_to:{id:chatSource.id,expected_revision:1}});
+ assert.equal(chatAnswer.status,'awaiting_approval');assert(chatAnswer.reply.includes('Prepared request'));assert.equal(calls.length,count+2);
+ const respondUrl=node+'/api/commands/requests/respond',guarded={schema_version:1,expected_node_id:id,command:{id:original.id,expected_revision:1,text:answerText,operation_id:responseId}};
+ assert.equal((await fetch(respondUrl,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(guarded)})).status,403);
+ assert.equal((await fetch(respondUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...guarded,request_context:{origin_node:'forged'}})})).status,422);
+ assert.equal((await json(respondUrl,{...guarded,expected_node_id:'other'})).error_code,'invalid_response_request');
+ assert.equal((await fetch(node+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Forged answer',response_to:{id:original.id,expected_revision:1,origin_node:'forged'}})})).status,422);
+ const stillQuestion=await newQuestion('Still ambiguous after answering');mode='resolve-question';count=calls.length;
+ const unresolved=await respond(stillQuestion.id,1,'Unknown room');assert.equal(unresolved.status,'clarification_required');assert.equal(unresolved.result.revision,3);assert.equal(unresolved.preparation,null);assert.equal(calls.length,count+1);
+ const methodQuestionSource=await newQuestion('Needs concrete input after resolution');mode='question';count=calls.length;
+ const methodQuestion=await json(node+'/api/chat',{message:'This node I think',request_id:randomUUID(),response_to:{id:methodQuestionSource.id,expected_revision:1}});
+ assert.equal(methodQuestion.status,'clarification_required');assert.equal(methodQuestion.result.revision,4);assert(methodQuestion.reply.includes('Which concrete node should be inspected?'));assert.equal(calls.length,count+2);
+ mode='valid';const secondRound=await respond(methodQuestionSource.id,4,'This node explicitly');assert.equal(secondRound.status,'awaiting_approval');assert.equal(secondRound.result.revision,7);
+ assert.equal(secondRound.result.draft.answers.length,2);assert.equal(secondRound.result.draft.answers[1].source.revision,4);assert.equal(calls.length,count+4);
+ const badResolve=await newQuestion('Invalid resolution check');mode='invalid-resolution';count=calls.length;const badResolveId=randomUUID();
+ const rejectedResolve=await respond(badResolve.id,1,'This node',badResolveId,false);
+ assert.equal(rejectedResolve.error_code,'answer_resolution_not_confirmed');assert.equal(rejectedResolve.answer_confirmed,true);assert.equal(rejectedResolve.result.revision,2);assert.equal(rejectedResolve.preparation_command,null);assert.equal(calls.length,count+1);
+ mode='valid';assert.equal((await respond(badResolve.id,1,'This node',badResolveId)).status,'historical_snapshot');assert.equal(calls.length,count+1);
+ const badPrepare=await newQuestion('Invalid method after answer');mode='invalid-method';count=calls.length;const badPrepareId=randomUUID();
+ const rejectedPrepare=await respond(badPrepare.id,1,'This node',badPrepareId,false);
+ assert.equal(rejectedPrepare.error_code,'answer_preparation_not_confirmed');assert.equal(rejectedPrepare.answer_confirmed,true);assert.equal(rejectedPrepare.result.revision,3);assert.equal(calls.length,count+2);
+ mode='valid';assert.equal((await respond(badPrepare.id,1,'This node',badPrepareId)).status,'historical_snapshot');assert.equal(calls.length,count+2);
+ // Saving one optional policy field preserves the other and changes no live
+ // behavior until a verified restart. Disabled resolution records an answer only.
+ const answerPolicy=await nodeCli(['requests','workflow','set','--resolve-on-answer','false']);assert.equal(answerPolicy.applied_policy.resolve_on_answer,true);assert.equal(answerPolicy.saved_policy.prepare_on_input,true);
+ const appliedSource=await newQuestion('Applied answer policy before restart');mode='valid';count=calls.length;
+ assert.equal((await respond(appliedSource.id,1,'This node')).status,'awaiting_approval');assert.equal(calls.length,count+2);
+ await nodeCli(['restart','--wait-seconds','20']);await until(ready,'disabled answer policy applied');
+ const disabledSource=await newQuestion('Record only answer');mode='valid';count=calls.length;const disabledId=randomUUID();
+ const recordOnly=await respond(disabledSource.id,1,'Keep exact answer',disabledId);assert.equal(recordOnly.status,'answer_recorded');assert.equal(recordOnly.result.revision,2);assert.equal(recordOnly.resolution_command,null);assert.equal(calls.length,count);
+ await nodeCli(['requests','workflow','set','--resolve-on-answer','true','--prepare-on-input','false']);await nodeCli(['restart','--wait-seconds','20']);await until(ready,'resolve only policy applied');
+ assert.equal((await respond(disabledSource.id,1,'Keep exact answer',disabledId)).status,'historical_snapshot');assert.equal(calls.length,count);
+ const resolveOnly=await newQuestion('Resolve without preparation');mode='valid';count=calls.length;
+ const only=await respond(resolveOnly.id,1,'This node');assert.equal(only.status,'review_only');assert.equal(only.result.revision,3);assert.equal(only.preparation_command,null);assert.equal(calls.length,count+1);
+ await nodeCli(['requests','workflow','set','--resolve-on-answer','true','--prepare-on-input','true']);await nodeCli(['restart','--wait-seconds','20']);await until(ready,'restore both input policies');
+ // A concurrent explicit source edit while resolution runs invalidates its
+ // checkpoint. Neither old candidate nor a retry overwrites the newer answer.
+ const raceSource=await newQuestion('Race answer resolution');mode='gate-resolution';count=calls.length;const raceId=randomUUID();
+ const racing=respond(raceSource.id,1,'First answer',raceId,false);await until(()=>gates.size===1,'gated resolution');
+ assert.equal((await input('Must not queue input during answer',randomUUID(),false)).error_code,'input_workflow_busy');
+ assert.equal((await respond(raceSource.id,1,'Must not queue another answer',randomUUID(),false)).error_code,'input_workflow_busy');assert.equal(calls.length,count+1);
+ const concurrent=await nodeCli(['requests','answer',raceSource.id,'--revision','2','--text','Concurrent explicit answer']);assert.equal(concurrent.result.revision,3);
+ for(const gate of gates)gate.end(JSON.stringify({message:{content:JSON.stringify(proposal())},done:true,done_reason:'stop'}));
+ const raceReport=await racing;assert.equal(raceReport.success,false);assert.equal(raceReport.answer_confirmed,true);assert.equal(raceReport.preparation,null);
+ const afterRace=(await plan(raceSource.id)).result;assert.equal(afterRace.revision,3);assert.equal(afterRace.status,'review');assert.equal(afterRace.draft.answers.length,2);assert.equal(afterRace.input,null);
+ mode='valid';assert.equal((await respond(raceSource.id,1,'First answer',raceId)).status,'historical_snapshot');assert.equal(calls.length,count+1);
+ // Lost/corrupt replies preserve the entire response command. Reusing it only
+ // reads durable history, including after interpreter withdrawal/restart below.
+ let lostAnswerId,lostAnswerSource;for(const transport of ['drop','answer-lineage','old']) {
+  const q=await newQuestion('Answer transport '+transport);mode='valid';proxyMode=transport;const responseReceipt=randomUUID();count=calls.length;
+  const originalMarker=await readFile(marker,'utf8'),value=JSON.parse(originalMarker);value.address=`127.0.0.1:${proxyPort}`;await writeFile(marker,JSON.stringify(value));
+  try {
+   const lost=await respond(q.id,1,'This node',responseReceipt,false);assert.equal(lost.command.operation_id,responseReceipt);assert.equal(lost.command.id,q.id);
+   assert.equal(lost.error_code,transport==='old'?'unsupported_command':'local_answer_reply_unconfirmed');assert.equal(lost.outcome_unknown,transport!=='old');assert.equal(calls.length,count+(transport==='old'?0:2));
+  }finally{await writeFile(marker,originalMarker);}
+  if(transport!=='old'){assert.equal((await respond(q.id,1,'This node',responseReceipt)).status,'historical_snapshot');assert.equal(calls.length,count+2);lostAnswerId=responseReceipt;lostAnswerSource=q.id;}
+ }
+ const restartAnswerSource=await newQuestion('Restart during answer preparation');mode='gate-method';count=calls.length;const restartAnswerId=randomUUID(),restartPending=respond(restartAnswerSource.id,1,'This node',restartAnswerId,false);
+ await until(()=>gates.size===1,'gated answer preparation');await nodeCli(['restart','--wait-seconds','20']);await until(ready,'answer workflow runtime replaced');
+ const restartedAnswer=await restartPending;assert.equal(restartedAnswer.success,false);assert.equal(restartedAnswer.answer_confirmed,true);assert.equal(restartedAnswer.outcome_unknown,true);
+ for(const gate of gates)gate.destroy();mode='valid';
+ const restartSnapshot=await respond(restartAnswerSource.id,1,'This node',restartAnswerId);assert.equal(restartSnapshot.status,'historical_snapshot');assert.equal(restartSnapshot.result.revision,3);assert.equal(calls.length,count+2);
  mode='invalid-method';count=calls.length;const invalidId=randomUUID(),invalid=await input('Reject invented authority',invalidId,false);
  assert.equal(invalid.error_code,'input_preparation_not_confirmed');assert.equal(invalid.source_confirmed,true);assert.equal(calls.length,count+2);assert(invalid.preparation_command.operation_id);
  const partial=(await plan(invalid.result.id)).result;assert.equal(partial.revision,1);assert.equal(partial.status,'review');assert.equal(partial.input,null);
@@ -155,6 +244,7 @@ try {
  await nodeCli(['models','hints','--backend','ollama','--model','fixture','--role','unselected_role']);await nodeCli(['restart','--wait-seconds','20']);await until(ready,'withdraw interpreter');
  count=calls.length;assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal((await input(lostText,lostReceipt)).status,'historical_snapshot');
  const missing=await input('New input without role',randomUUID(),false);assert.equal(missing.error_code,'interpreter_unavailable');assert(missing.setup_hint.includes('request_interpreter'));assert.equal(calls.length,count);
+ assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal((await respond(lostAnswerSource,1,'This node',lostAnswerId)).status,'historical_snapshot');assert.equal(calls.length,count);
  assert.deepEqual((await plan(prepared.result.id)).result,saved);assert.equal((await json(node+'/api/status')).last_workload,null);
  const jobs=(await nodeCli(['jobs','list'])).data.jobs;assert(jobs.length>0);
  for(const job of jobs) {
@@ -181,12 +271,19 @@ try {
  const foreign=await cli('eefn',peerPath,['requests','input','--text',text,'--operation-id',receipt],false);
  assert.equal(foreign.error_code,'interpreter_unavailable');assert.equal(foreign.source_confirmed,false);assert.equal(foreign.inspection,null);assert.equal(foreign.result,null);
  assert.equal((await cli('eefn',peerPath,['jobs','find','--operation-id',receipt])).data.total,0);assert.equal(calls.length,count);
+ const foreignAnswer=await cli('eefn',peerPath,['requests','respond',original.id,'--revision','1','--text',answerText,'--operation-id',responseId],false);
+ assert.equal(foreignAnswer.error_code,'answer_source_unconfirmed');assert.equal(foreignAnswer.source_confirmed,false);assert.equal(foreignAnswer.answer_attempted,false);assert.equal(foreignAnswer.result,null);
  assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal(calls.length,count);
+ assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count);
  evidence={passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   immutable_input_context:true,read_only_receipt_reuse:true,partial_preparation_no_implicit_retry:true,current_question_returned:true,
   clarification_and_continuous_not_auto_prepared:true,saved_applied_policy_separate:true,runtime_change_cancels_workflow:true,
   concurrent_input_not_queued:true,lost_and_corrupt_replies_retained:true,full_preparation_source_lineage_checked:true,older_node_no_fallback:true,role_withdrawn_history_readable:true,
-  separately_authenticated_origins_isolated:true,coordinator_restart_receipt_read_only:true};
+  separately_authenticated_origins_isolated:true,coordinator_restart_receipt_read_only:true,
+  answer_source_revision_and_digest_retained:true,answer_triggered_resolution_and_preparation:true,
+  response_to_chat_adapter:true,two_round_question_history_preserved:true,partial_response_no_implicit_continuation:true,
+  answer_policy_saved_applied_separate:true,source_edit_during_resolution_rejected:true,answer_receipts_private_across_origins:true,
+  lost_answer_reply_and_substituted_source_rejected:true,answer_workflow_never_approves_or_executes:true};
  await writeFile(join(scratch,'results.json'),JSON.stringify(evidence,null,2));console.log('Input workflow validation passed: '+scratch);
 }finally {
  for(const gate of gates)gate.destroy();for(const child of children)if(child.exitCode===null)child.kill();await Promise.allSettled(children.map(c=>c.result));

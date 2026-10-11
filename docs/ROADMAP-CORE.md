@@ -65,6 +65,14 @@ runtime change. Reusing input only inspects origin-owned history. Owner approval
 execution, answer-triggered workflows, durable automation and reusable bounded
 approvals are not supplied by preparation policy; the full release scope remains.
 
+The subsequent [answer workflow](ANSWER-WORKFLOW.md) adds a separate applied
+resolution policy and explicit target/revision input through shared node commands.
+EEF records new answers' exact source revision/digest atomically; legacy unknown
+evidence stays unknown. Bounded resolution/preparation keeps original history and
+awaits approval, while partial/reused receipts cannot trigger implicit continuation.
+This covers initial answer triggers, not durable automation definitions, reusable
+approval policy, general planning, complete onboarding or physical acceptance.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;
@@ -217,7 +225,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 2 | Coordinator advertisements + network view | Authenticated, bounded, fresh node listings and coordinator hints; authorized peer lookup; no automatic trust or claimed cluster election. | Scoped pull discovery, registration metadata and freshness implemented; owner grant/revoke and restart CLI added in development; no direct peer transport claim |
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned metadata/inventory and node selection commands added in development; text/vision routing filters capabilities/state and explicit owner role constraints; route inspection available; automatic role-based planning and new executors remain planned |
 | 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
-| 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, bounded preview/stateless review and origin-owned durable review/answer/proposal commands; default input through the running node opens durable review; fresh cross-node vocabulary, explicit selected-model clarification resolution and semantic method/question preparation with pinned source lineage; offline preview stays local; automatic preparation/answer-trigger policies and real-model quality remain planned |
+| 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, origin-owned durable history, fresh cross-node vocabulary and source-bound method/questions. Normal input and explicit-target answers follow configurable bounded preparation/resolution policy, without approval/execution or implicit continuation. Offline preview stays local. Real-model quality, bootstrap and complete non-coder setup remain required |
 | 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: origin-scoped compile/plan inspection, source-bound preparation/questions, immutable explicit inputs, separate owner approval/execution, exact grants and durable issuance/ACK/completion, replay protection, clock-independent leases, restart-to-unknown, explicit abandonment and retained-completion reconciliation without continuation. Public core and node ordinary RPC now fence legacy workloads; text creation uses reviewed compilation. Origin and executor may differ. Automatic triggers/heavy planning, complete client/regression migration, general continuation, stronger termination, physical acceptance and cluster fencing remain required |
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node work/reserved-control limits and coordinator budgets, including granted model futures. Fixed one-shot ACK/completion, read-only recovery evidence and explicit retained-completion reconciliation implemented; no implicit continuation or stop proof. Pipelines, strong termination and physical resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
@@ -347,8 +355,9 @@ prepare` can now produce a source-bound one-step method or answerable clarificat
 using the selected interpreter. EEF atomically checkpoints it against immutable
 review/context; a method still awaits separate approval. Historical snapshots and
 saved preparation receipts do not renew lookup/authority or require inference.
-Automatic triggers/general semantic planning and delegated owner approval are not
-claimed; see [origin planning commands](COMMANDS.md#planning-through-the-input-node-unreleased-after-alpha6).
+Bounded input/answer triggers now share runtime-owned services. General semantic
+planning, durable automation and delegated owner approval are not claimed; see
+[origin planning commands](COMMANDS.md#planning-through-the-input-node-unreleased-after-alpha6).
 
 The latest unreleased owner approval increment saves `approved` against the exact
 compiled digest/revision, original context, issuer fingerprint and explicit

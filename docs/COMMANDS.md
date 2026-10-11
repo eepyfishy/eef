@@ -37,9 +37,24 @@ This changes saved roles, not permissions or plan approval. Multiple interpreter
 models fail as ambiguous instead of choosing automatically. Unreleased `--ask`,
 review and HTTP input failures expose `setup_hint` for these setup cases; node
 HTTP input's human-readable `reply` includes that guidance. The existing browser
-model picker does not configure roles. First-time non-coder setup, answer-triggered
-automation and reusable bounded approvals remain release requirements.
+model picker does not configure roles. First-time non-coder setup, general durable
+automation and reusable bounded approvals remain release requirements. Bounded
+answer-triggered interpretation/preparation is available through the new workflow.
 See [client acceptance](CLIENT-ACCEPTANCE.md).
+
+## Answers through the running node (unreleased after alpha.6)
+
+`eefn requests respond JOB_ID --revision REV --text ANSWER [--operation-id UUID]`
+records an answer and follows the applied `resolve_on_answer` policy. It may
+resolve/prepare an eligible request, never approve or execute it. Reusing its
+receipt only inspects retained history, including partial workflows. New answers
+retain exact source revision/digest; older missing evidence stays unknown.
+`eefn requests workflow set --resolve-on-answer true|false --json` patches this
+field independently; explicitly restart to apply it. Existing configurations
+missing the field default to false; fresh configurations enable it.
+Manual `answer`, `resolve` and `prepare` stay explicit. Node chat can target an
+answer using strict `response_to: {id, expected_revision}`; it never guesses the
+target. See [source, receipts, failure behavior and API](ANSWER-WORKFLOW.md).
 
 Node status includes an optional live `last_workload` scope snapshot after durable
 grant admission and a successful ACK write, immediately before execution. It

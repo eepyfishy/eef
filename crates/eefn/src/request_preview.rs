@@ -8,6 +8,17 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Answer an exact saved question; resolve/prepare according to applied policy, never execute.
+    Respond {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        text: String,
+        /// Preserve this exact command after uncertainty; reuse only inspects history.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Interpret/save input and prepare an eligible method according to node policy; never execute.
     Input {
         #[arg(long)]

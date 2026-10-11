@@ -13,20 +13,30 @@ pub struct InputPolicy {
     // Missing in older/custom configs stays review-only, never surprise inference.
     #[serde(default)]
     pub prepare_on_input: bool,
+    /// Missing in existing configs never enables new answer-triggered inference.
+    #[serde(default)]
+    pub resolve_on_answer: bool,
 }
 #[derive(Debug, clap::Subcommand)]
 pub enum PolicyAction {
     Show,
     Set {
+        #[arg(long,action=clap::ArgAction::Set,required_unless_present="resolve_on_answer")]
+        prepare_on_input: Option<bool>,
         #[arg(long,action=clap::ArgAction::Set)]
-        prepare_on_input: bool,
+        resolve_on_answer: Option<bool>,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PolicyCommand {
     Show,
-    Set { prepare_on_input: bool },
+    Set {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prepare_on_input: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolve_on_answer: Option<bool>,
+    },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -133,9 +143,10 @@ impl NodeService {
         }
         let changed = match request.command {
             PolicyCommand::Show => false,
-            PolicyCommand::Set { prepare_on_input } => {
-                self.save_input_policy(InputPolicy { prepare_on_input })?
-            }
+            PolicyCommand::Set {
+                prepare_on_input,
+                resolve_on_answer,
+            } => self.save_input_policy(prepare_on_input, resolve_on_answer)?,
         };
         let saved: InputPolicy = serde_json::from_value(
             self.read_config()?
@@ -149,7 +160,7 @@ impl NodeService {
             "success":true,"saved_policy":saved,"applied_policy":applied,"changed":changed,
             "restart_required":applied!=Some(saved),"restart_requested":false,
             "execution_authorized":false,"dispatched":false,
-            "note":"Preparation policy only. Saving does not apply it, infer, approve, execute, retry, resume or change existing requests. Restart the node to apply changes."}),
+            "note":"Input/answer interpretation and preparation policy only. Saving does not apply it, infer, approve, execute, retry, resume or change existing requests. Restart the node to apply changes."}),
         )
     }
 
@@ -386,7 +397,7 @@ fn validate_source(
     Ok(())
 }
 
-fn confirms_preparation_source(
+pub(crate) fn confirms_preparation_source(
     prepared: &Value,
     source: &Value,
     command: &crate::request_preparation::PrepareCommand,
@@ -663,17 +674,20 @@ mod tests {
         let shown = policy(PolicyCommand::Show);
         assert!(confirmed_policy(&shown, "node"));
         assert_eq!(shown["saved_policy"]["prepare_on_input"], false);
+        assert_eq!(shown["saved_policy"]["resolve_on_answer"], false);
         assert_eq!(shown["restart_required"], false);
         let before = std::fs::read(&path).unwrap();
         assert_eq!(
             policy(PolicyCommand::Set {
-                prepare_on_input: false
+                prepare_on_input: Some(false),
+                resolve_on_answer: None,
             })["changed"],
             false
         );
         assert_eq!(std::fs::read(&path).unwrap(), before);
         let saved = policy(PolicyCommand::Set {
-            prepare_on_input: true,
+            prepare_on_input: Some(true),
+            resolve_on_answer: None,
         });
         assert!(confirmed_policy(&saved, "node"));
         assert_eq!(saved["applied_policy"]["prepare_on_input"], false);
@@ -681,17 +695,42 @@ mod tests {
         assert_eq!(saved["restart_requested"], false);
         assert_eq!(
             policy(PolicyCommand::Set {
-                prepare_on_input: true
+                prepare_on_input: Some(true),
+                resolve_on_answer: None,
             })["changed"],
             false
         );
         assert_eq!(service.read_config().unwrap()["name"], "Fixture");
+        let answer_policy = policy(PolicyCommand::Set {
+            prepare_on_input: None,
+            resolve_on_answer: Some(true),
+        });
+        assert_eq!(answer_policy["saved_policy"]["prepare_on_input"], true);
+        assert_eq!(answer_policy["saved_policy"]["resolve_on_answer"], true);
+        assert_eq!(answer_policy["applied_policy"]["resolve_on_answer"], false);
+        policy(PolicyCommand::Set {
+            prepare_on_input: None,
+            resolve_on_answer: Some(false),
+        });
+        assert!(
+            service
+                .input_policy_command(PolicyRequest {
+                    schema_version: 1,
+                    expected_node_id: "node".into(),
+                    command: PolicyCommand::Set {
+                        prepare_on_input: None,
+                        resolve_on_answer: None
+                    }
+                })
+                .is_err()
+        );
         drop(guard);
         let _next = service.attach_preview_runtime_with_policy(
             &engine,
             uuid::Uuid::new_v4().to_string(),
             InputPolicy {
                 prepare_on_input: true,
+                ..Default::default()
             },
         );
         assert_eq!(policy(PolicyCommand::Show)["restart_required"], false);
@@ -706,7 +745,8 @@ mod tests {
                     schema_version: 1,
                     expected_node_id: "other".into(),
                     command: PolicyCommand::Set {
-                        prepare_on_input: false
+                        prepare_on_input: Some(false),
+                        resolve_on_answer: None,
                     }
                 })
                 .is_err()
@@ -799,6 +839,7 @@ mod tests {
             uuid::Uuid::new_v4().to_string(),
             InputPolicy {
                 prepare_on_input: true,
+                ..Default::default()
             },
         );
         let mut receiver = service.submissions.connect();

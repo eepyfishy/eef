@@ -102,6 +102,7 @@ impl NodeService {
             .route("/api/commands/requests/review", post(request_review))
             .route("/api/commands/requests/open", post(request_open))
             .route("/api/commands/requests/input", post(request_input))
+            .route("/api/commands/requests/respond", post(request_response))
             .route(
                 "/api/commands/requests/workflow",
                 post(request_input_policy),
@@ -336,6 +337,12 @@ async fn request_input(
 ) -> Json<Value> {
     Json(state.input_request(request).await)
 }
+async fn request_response(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_response::RespondRequest>,
+) -> Json<Value> {
+    Json(state.respond_request(request).await)
+}
 async fn request_input_policy(
     State(state): State<Arc<NodeService>>,
     Json(request): Json<crate::request_input::PolicyRequest>,
@@ -403,19 +410,40 @@ async fn chat(
 ) -> Result<Json<Value>, ApiError> {
     // Compatibility adapter only: same runtime-owned input service as CLI.
     // Never send raw messages or silently fall back to keyword execution.
-    let mut report = state
-        .input_request(crate::request_preview::PreviewRequest {
-            schema_version: 1,
-            expected_node_id: state.node_id.clone(),
-            request_id: value
-                .request_id
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-            text: value.message,
-        })
-        .await;
+    let receipt = value
+        .request_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let is_answer = value.response_to.is_some();
+    let mut report = if let Some(target) = value.response_to {
+        state
+            .respond_request(crate::request_response::RespondRequest {
+                schema_version: 1,
+                expected_node_id: state.node_id.clone(),
+                command: crate::request_response::RespondCommand {
+                    id: target.id,
+                    expected_revision: target.expected_revision,
+                    text: value.message,
+                    operation_id: receipt,
+                },
+            })
+            .await
+    } else {
+        state
+            .input_request(crate::request_preview::PreviewRequest {
+                schema_version: 1,
+                expected_node_id: state.node_id.clone(),
+                request_id: receipt,
+                text: value.message,
+            })
+            .await
+    };
     // Human-readable compatibility output, not fabricated model output or a
     // browser-owned execution decision. The complete receipt remains present.
-    report["reply"] = json!(crate::request_input::input_reply(&report));
+    report["reply"] = json!(if is_answer {
+        crate::request_response::reply(&report)
+    } else {
+        crate::request_input::input_reply(&report)
+    });
     Ok(Json(report))
 }
 
@@ -424,6 +452,13 @@ async fn chat(
 struct ChatInput {
     message: String,
     request_id: Option<String>,
+    response_to: Option<ResponseTarget>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResponseTarget {
+    id: String,
+    expected_revision: u64,
 }
 
 async fn pause_connection(

@@ -149,7 +149,7 @@ pub fn command(
                             .iter()
                             .find(|a| a.operation_id == context.request_id())
                         {
-                            if answer.text != *text {
+                            if answer.text != *text || answer.source.as_ref().is_some_and(|s|s.revision!=*expected_revision) {
                                 bail!("Answer receipt conflicts with retained review")
                             }
                             reused = true;
@@ -171,12 +171,14 @@ pub fn command(
                             .clarification
                             .clone()
                             .context("This proposal has no clarification question")?;
+                        let source=eefn::request_drafts::AnswerSource::from_draft(*expected_revision,draft)?;
                         draft.answers.push(ClarificationAnswer {
                             operation_id: context.request_id().into(),
                             proposal_index: draft.proposals.len() - 1,
                             question,
                             text: text.clone(),
                             at_ms: eefn::protocol::now_ms(),
+                            source:Some(source),
                         });
                     }
                     DraftCommand::Revise {
@@ -474,6 +476,12 @@ mod tests {
         assert_eq!(updated["draft"]["answers"][0]["question"], "Which node?");
         assert_eq!(updated["request_context"], created["request_context"]);
         assert_eq!(updated["draft"]["original_text"], input()["original_text"]);
+        assert_eq!(updated["draft"]["answers"][0]["source"]["revision"], 1);
+        let original: eefn::request_drafts::DraftRecord =
+            serde_json::from_value(created["draft"].clone()).unwrap();
+        let source: eefn::request_drafts::AnswerSource =
+            serde_json::from_value(updated["draft"]["answers"][0]["source"].clone()).unwrap();
+        assert!(source.confirms(&original));
         let before = json!(engine.store.get(id).unwrap());
         let repeated = command(
             &engine,
@@ -491,6 +499,10 @@ mod tests {
             (
                 answer.clone(),
                 json!({"id":id,"expected_revision":1,"text":"Changed answer"}),
+            ),
+            (
+                answer.clone(),
+                json!({"id":id,"expected_revision":2,"text":"The bedroom node"}),
             ),
             (
                 context("owner"),

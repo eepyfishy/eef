@@ -323,8 +323,12 @@ async fn execute_input_policy_command(
     use eefn::request_input::{PolicyAction, PolicyCommand, PolicyRequest};
     let command = match action {
         PolicyAction::Show => PolicyCommand::Show,
-        PolicyAction::Set { prepare_on_input } => PolicyCommand::Set {
+        PolicyAction::Set {
+            prepare_on_input,
+            resolve_on_answer,
+        } => PolicyCommand::Set {
             prepare_on_input: *prepare_on_input,
+            resolve_on_answer: *resolve_on_answer,
         },
     };
     let lock = eefn::setup::instance_lock(&args.config)?;
@@ -361,14 +365,73 @@ async fn execute_input_policy_command(
     let report = eefn::model_manager::bounded_json(response).await?;
     let agrees = match action {
         PolicyAction::Show => true,
-        PolicyAction::Set { prepare_on_input } => {
-            report["saved_policy"]["prepare_on_input"] == *prepare_on_input
+        PolicyAction::Set {
+            prepare_on_input,
+            resolve_on_answer,
+        } => {
+            prepare_on_input.is_none_or(|p| report["saved_policy"]["prepare_on_input"] == p)
+                && resolve_on_answer
+                    .is_none_or(|p| report["saved_policy"]["resolve_on_answer"] == p)
         }
     };
     if !ok || !agrees || !eefn::request_input::confirmed_policy(&report, &file.node_id) {
         bail!("Unconfirmed input policy reply; inspect saved/applied policy before retrying")
     }
     Ok(report)
+}
+
+async fn execute_response_command(
+    args: &Args,
+    command: eefn::request_response::RespondCommand,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    command.validate()?;
+    let failure = |code: &str, unknown: bool| {
+        json!({"schema_version":1,"report_type":"node_answer_workflow","command":command,
+        "success":false,"error_code":code,"outcome_unknown":unknown,"coordinator_acknowledged":false,
+        "execution_authorized":false,"dispatched":false,"automatically_retried":false,
+        "note":"No confirmed response workflow reply. Inspect this job and preserve the entire response command before deciding what to do. No fallback, approval, execution or automatic retry was requested."})
+    };
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        return Ok(failure("node_not_running", false));
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!("http://{address}/api/commands/requests/respond"))
+            .timeout(Duration::from_secs(195))
+            .json(&eefn::request_response::RespondRequest {
+                schema_version: 1,
+                expected_node_id: file.node_id.clone(),
+                command: command.clone(),
+            })
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(failure("unsupported_command", false));
+        }
+        let status = response.status();
+        let report = eefn::model_manager::bounded_json(response).await?;
+        if !status.is_success()
+            || !eefn::request_response::confirmed(&report, &file.node_id, &command)
+        {
+            bail!("Unconfirmed response workflow reply")
+        }
+        Ok::<serde_json::Value, anyhow::Error>(report)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| failure("local_answer_reply_unconfirmed", true)))
 }
 
 async fn execute_draft_command(
@@ -1147,6 +1210,25 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     }
     if let Commands::Requests { command } = command {
         return match command {
+            eefn::request_preview::RequestAction::Respond {
+                id,
+                revision,
+                text,
+                operation_id,
+            } => {
+                execute_response_command(
+                    args,
+                    eefn::request_response::RespondCommand {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                        text: text.clone(),
+                        operation_id: operation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    },
+                )
+                .await
+            }
             eefn::request_preview::RequestAction::Input { text, operation_id } => {
                 execute_input_command(args, text, operation_id.as_deref()).await
             }

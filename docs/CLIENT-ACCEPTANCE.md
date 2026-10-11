@@ -107,3 +107,23 @@ These checks do not prove interpreter quality/default model suitability, physica
 two-PC acceptance, continuous media pipelines, peer transport, cluster safety,
 strong termination, MSI onboarding or Defender/Authenticode acceptance. All
 remain on the full [active roadmap](ROADMAP-CORE.md); no stable release claim.
+
+## Answer workflow checkpoint (2026-10-11)
+
+The [explicit-target answer workflow](ANSWER-WORKFLOW.md) adds six Rust tests
+(403 total, passing with default features and `--no-default-features`). Fresh
+executables pass the expanded input/answer fixture (`request-input-7MhPvK`),
+request regression (`request-review-xzZMAI`), first-run/browser
+(`first-run-P4HtCg`), metadata API-only (`model-metadata-BrmNY5`) and saved-UI
+(`model-metadata-dZU8ZS`) fixtures, and verified-artifact real CPU inference
+(`real-model-TlamQS`). An earlier request-regression invocation exited without
+diagnostics and was not counted as a pass; the rerun adds failure logging.
+
+The answer fixture checks two clarification rounds, exact source digests and
+history, independent saved/applied policies, busy admission, runtime replacement,
+concurrent edits, unknown/lost replies and origin isolation. Reused receipts only
+inspect history, including after policy changes and interpreter withdrawal.
+Prepared methods remain pending approval; no workload is admitted by this workflow.
+These are local logical-node fixtures, not physical two-PC or default interpreter
+quality acceptance. No models were downloaded/copied, installed runtimes changed,
+release artifacts replaced or update feeds modified. All release gates above remain.
