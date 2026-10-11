@@ -147,3 +147,19 @@ After the final command-report change, fresh binaries pass metadata API-only
 again (`model-metadata-whMtGJ`).
 Exact saved role validation is not model quality or applied runtime readiness.
 No UI assets, personal installations, physical nodes or release feeds changed.
+
+## Interpreter formatting and quality checkpoint (2026-10-11)
+
+The bounded generation schema adds one Rust test (411 total, passing in both
+feature modes). Fresh binaries produce passing input/answer
+(`request-input-VUJa5K`), full request regression (`request-review-Ixxtce`) and
+real CPU reviewed inference (`real-model-Rsq7pb`) fixture reports. The expanded
+input fixture verifies backend format refusal never retries unconstrained,
+falls back, or saves an opening receipt. Independent validation still rejects
+invalid model replies; method preparation and ordinary inference are unchanged.
+
+The [production quality harness](INTERPRETER-QUALITY.md) records a separate
+20-case semantic evaluation using the existing verified artifact, no coordinator
+and no grants. Ten proposals are accepted but only three match the fixed rubric.
+This is not default-model approval or physical acceptance. All full-roadmap
+release gates remain open; no UI assets, installed nodes or release feeds change.

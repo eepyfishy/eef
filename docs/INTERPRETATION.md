@@ -170,9 +170,31 @@ still review-only, including when the new proposal has no clarification question
 Stateless preview/review semantics above remain unchanged.
 See [durable review commands](COMMANDS.md#durable-request-review-and-clarification-unreleased-after-alpha6).
 
+### Bounded backend output hints (unreleased after alpha.6)
+
+Preview, initial interpretation and clarification resolution now send an
+internally generated, shallow JSON schema for the ten proposal fields. Ollama
+receives its documented [`format` schema](https://docs.ollama.com/capabilities/structured-outputs);
+the bundled llama.cpp build receives the documented
+[`response_format` JSON object/schema](https://github.com/ggml-org/llama.cpp/blob/c1d0e7a00/tools/server/README.md).
+Capability enums come from the already validated bounded vocabulary. Callers
+cannot supply a custom schema. Ordinary inference and method preparation retain
+their existing payloads; a method proposal has a different contract.
+
+The schema is only a generation hint. A provider may ignore some constraints;
+character-length constraints do not establish UTF-8 byte bounds or cross-field
+clarification consistency. The independent Rust validator remains mandatory.
+There is no JSON repair, alternate provider, unconstrained retry or automatic
+download if a backend rejects the schema. Backend rejection returns
+`interpreter_backend_failed`; the input fixture verifies one call and no saved
+opening receipt. This does not prove prompt-injection resistance or model quality.
+See the [production quality evaluation](INTERPRETER-QUALITY.md): the tested small
+candidate still fails the default-quality gate.
+
 Remaining: reviewed model/bootstrap policy, better candidate/prompt quality,
-automatic answer-triggered clarification resolution and automatic semantic planning. Explicit
-owner planning, approval and grant execution exist as separate commands, not
-automatic consequences of interpretation.
-Automatic input interpretation is still absent. The existing deterministic
-commands continue working without any model. See [command usage](COMMANDS.md#request-preview-development).
+durable automation and general semantic planning. Explicit owner planning,
+approval and grant execution remain separate from interpretation. The shared
+[input](INPUT-WORKFLOW.md) and [explicit-target answer](ANSWER-WORKFLOW.md)
+workflows can perform bounded preparation/resolution under applied policies,
+but never approve or execute. Deterministic commands continue working without
+any model. See [command usage](COMMANDS.md#request-preview-development).

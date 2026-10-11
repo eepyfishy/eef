@@ -970,6 +970,16 @@ impl NodeEngine {
     }
 
     async fn infer(&self, capability: &str, params: Value) -> Result<Value> {
+        self.infer_with_schema(capability, params, None).await
+    }
+
+    /// The schema is internally generated, not a public caller-supplied payload.
+    async fn infer_with_schema(
+        &self,
+        capability: &str,
+        params: Value,
+        schema: Option<Value>,
+    ) -> Result<Value> {
         let backend = params
             .get("backend")
             .map(|value| {
@@ -996,7 +1006,7 @@ impl NodeEngine {
             {
                 bail!("This capability is not enabled for the selected local model")
             }
-            return self.llamacpp(server, &params).await;
+            return self.llamacpp(server, &params, schema).await;
         }
         if backend == Some("llamacpp") {
             bail!("model is not selected on the requested llama.cpp backend")
@@ -1008,7 +1018,7 @@ impl NodeEngine {
         if !metadata.supports(capability) {
             bail!("This capability is not enabled for the selected Ollama model")
         }
-        self.ollama(&params).await
+        self.ollama(&params, schema).await
     }
 
     pub(crate) async fn preview_interpretation(
@@ -1039,7 +1049,11 @@ impl NodeEngine {
         capabilities: &[String],
         messages: Value,
     ) -> std::result::Result<Value, &'static str> {
-        let response = self.selected_interpreter_response(messages, 512).await?;
+        let schema = crate::interpretation::output_schema(capabilities)
+            .map_err(|_| "invalid_interpreter_context")?;
+        let response = self
+            .selected_interpreter_response(messages, 512, Some(schema))
+            .await?;
         let output = response["output"]
             .as_str()
             .ok_or("interpretation_invalid")?;
@@ -1066,7 +1080,9 @@ impl NodeEngine {
         }
         let messages = crate::request_preparation::messages(draft, capabilities)
             .map_err(|_| "invalid_preparation_context")?;
-        let response = self.selected_interpreter_response(messages, 1024).await?;
+        let response = self
+            .selected_interpreter_response(messages, 1024, None)
+            .await?;
         crate::request_preparation::PreparedMethod::from_selected(
             job,
             revision,
@@ -1090,6 +1106,7 @@ impl NodeEngine {
         &self,
         messages: Value,
         max_tokens: u64,
+        schema: Option<Value>,
     ) -> std::result::Result<Value, &'static str> {
         let has_role = |metadata: &crate::model_metadata::ModelMetadata| {
             metadata.supports("llm.infer")
@@ -1122,10 +1139,11 @@ impl NodeEngine {
         }
         let (backend, model) = &candidates[0];
         let response = self
-            .infer(
+            .infer_with_schema(
                 "llm.infer",
                 json!({"backend":backend,"model":model,"messages":messages,
             "temperature":0,"max_tokens":max_tokens,"timeout":30}),
+                schema,
             )
             .await
             .map_err(|_| "interpreter_backend_failed")?;
@@ -1141,7 +1159,7 @@ impl NodeEngine {
         Ok(json!({"model":{"backend":backend,"model_id":model},"output":output}))
     }
 
-    async fn ollama(&self, params: &Value) -> Result<Value> {
+    async fn ollama(&self, params: &Value, schema: Option<Value>) -> Result<Value> {
         let model = params
             .get("model")
             .and_then(Value::as_str)
@@ -1156,26 +1174,31 @@ impl NodeEngine {
         {
             last.insert("images".into(), images.clone());
         }
+        let mut payload = json!({"model": model, "messages": messages, "stream": false, "keep_alive": -1,
+            "options": {"temperature": params.get("temperature").and_then(Value::as_f64).unwrap_or(0.7),
+                "num_predict": params.get("max_tokens").and_then(Value::as_u64).unwrap_or(1024)}});
+        if let Some(schema) = schema {
+            payload["format"] = schema;
+        }
         let response = self
             .http
             .post(format!("{}/api/chat", self.ollama_url))
             .timeout(Duration::from_secs(
                 params.get("timeout").and_then(Value::as_u64).unwrap_or(60),
             ))
-            .json(&json!({
-                "model": model, "messages": messages, "stream": false, "keep_alive": -1,
-                "options": {
-                    "temperature": params.get("temperature").and_then(Value::as_f64).unwrap_or(0.7),
-                    "num_predict": params.get("max_tokens").and_then(Value::as_u64).unwrap_or(1024),
-                }
-            }))
+            .json(&payload)
             .send()
             .await?
             .error_for_status()?;
         crate::model_response::chat(response, crate::model_selection::Backend::Ollama).await
     }
 
-    async fn llamacpp(&self, server: &ModelServer, params: &Value) -> Result<Value> {
+    async fn llamacpp(
+        &self,
+        server: &ModelServer,
+        params: &Value,
+        schema: Option<Value>,
+    ) -> Result<Value> {
         server.require_ready()?;
         let model = params.get("model").and_then(Value::as_str);
         let base = server
@@ -1203,18 +1226,19 @@ impl NodeEngine {
                 message
             })
             .collect::<Vec<_>>();
+        let mut payload = json!({"messages": messages,
+            "temperature": params.get("temperature").and_then(Value::as_f64).unwrap_or(0.7),
+            "max_tokens": params.get("max_tokens").and_then(Value::as_u64).unwrap_or(1024),"stream":false});
+        if let Some(schema) = schema {
+            payload["response_format"] = json!({"type":"json_object","schema":schema});
+        }
         let response = self
             .http
             .post(format!("{base}/v1/chat/completions"))
             .timeout(Duration::from_secs(
                 params.get("timeout").and_then(Value::as_u64).unwrap_or(60),
             ))
-            .json(&json!({
-                "messages": messages,
-                "temperature": params.get("temperature").and_then(Value::as_f64).unwrap_or(0.7),
-                "max_tokens": params.get("max_tokens").and_then(Value::as_u64).unwrap_or(1024),
-                "stream": false,
-            }))
+            .json(&payload)
             .send()
             .await?
             .error_for_status()?;

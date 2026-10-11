@@ -39,6 +39,12 @@ const fake=createServer(async(req,res)=>{
  let bytes='';for await(const b of req){bytes+=b;assert(bytes.length<=65536);}
  const body=JSON.parse(bytes);calls.push(body);
  const preparing=body.messages[0].content.startsWith('Propose one method');
+ if(!preparing){
+  assert.equal(body.format.type,'object');assert.equal(body.format.additionalProperties,false);
+  assert.equal(body.format.required.length,10);assert.deepEqual(body.format.properties.schema_version.enum,[1]);
+  assert(!Object.keys(body.format.properties).includes('permissions'));
+  if(mode==='reject-schema'){res.writeHead(400);return res.end(JSON.stringify({error:'fixture refuses structured output'}));}
+ }else assert.equal(body.format,undefined,'method proposal remains independently validated, not given the interpretation schema');
  if(preparing&&mode==='gate-method'){res.write(' ');gates.add(res);res.on('close',()=>gates.delete(res));return;}
  if(!preparing&&mode==='gate-resolution'){res.write(' ');gates.add(res);res.on('close',()=>gates.delete(res));return;}
  const value=preparing?method():proposal();
@@ -94,6 +100,13 @@ try {
  const inputUrl=node+'/api/commands/requests/input';
  const body=(text,receipt=randomUUID())=>({schema_version:1,expected_node_id:id,request_id:receipt,text});
  const input=(text,receipt=randomUUID(),success=true)=>nodeCli(['requests','input','--text',text,'--operation-id',receipt],success);
+ let rejectionCount=calls.length;mode='reject-schema';
+ const rejectedReceipt=randomUUID(),rejectedFormat=await input('Backend refuses schema',rejectedReceipt,false);
+ assert.equal(rejectedFormat.error_code,'interpreter_backend_failed');assert.equal(rejectedFormat.creation_attempted,true);
+ assert.equal(rejectedFormat.source_confirmed,false);assert.equal(calls.length,rejectionCount+1,'unsupported format cannot trigger unconstrained inference or a retry');
+ assert.equal(rejectedFormat.outcome_unknown,false);assert.equal(rejectedFormat.preparation_command,null);
+ assert.equal((await nodeCli(['jobs','find','--operation-id',rejectedReceipt])).data.total,0,'backend rejection cannot save a source');
+ mode='valid';
  const plan=async job=>{
   const report=await nodeCli(['requests','plan',job]);
   // Each inspection has a new transport receipt, not a persisted job mutation.

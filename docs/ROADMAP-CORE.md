@@ -80,6 +80,13 @@ and applied models stay separate, and no model/provider is chosen automatically.
 This removes multi-write hint editing, not the default bootstrap/quality or
 friendly private pairing requirements. Complete non-coder setup remains open.
 
+The next [production interpreter evaluation](INTERPRETER-QUALITY.md) adds a fixed
+twenty-case semantic rubric through the actual node preview path, plus bounded
+backend JSON generation hints. The tested CPU candidate accepts 10/20 proposals
+but matches only 3/20 semantic expectations; it remains unapproved as a default.
+Formatting hints never replace independent validation, approval or execution
+policy. This is quality evidence, not completion of bootstrap or automation.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

@@ -77,3 +77,18 @@ broader held-out and multilingual evaluation, and a second-PC CPU/memory run.
 Then compare candidate/prompt choices before recording a reviewed, replaceable
 bootstrap manifest. Automatic setup must still respect skip/offline/managed
 policy, existing selections, cancellation and disk limits.
+
+## Production-node follow-up, 2026-10-11
+
+The strict shared validator and explicit interpreter commands are implemented in
+development. The new [production evaluation](INTERPRETER-QUALITY.md) uses the
+actual running-node preview path and twenty fixed synthetic cases, not the
+older three-field classifier or twelve-case fixture. With the original production
+prompt, 9/20 proposals passed the contract and 3/20 matched semantic expectations.
+An experimental example prompt performed worse (1/20 and 1/20) and was reverted.
+The unchanged prompt with bounded backend generation hints accepted 10/20 and
+matched 3/20. These runs are not directly comparable to the earlier profiles.
+
+The candidate remains **unapproved for automatic default use**. More reliable
+formatting does not solve semantic interpretation, faithful questions or planning.
+No new model was downloaded/copied, selected in an installed node or bundled.

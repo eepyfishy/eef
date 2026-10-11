@@ -199,6 +199,42 @@ pub fn validate(
     })
 }
 
+/// Bounded generation hint for supported local backends, never a validator or
+/// permission. Byte limits, unknown-field/enum checks, clarification consistency
+/// and semantic review remain enforced independently by `validate` and EEF.
+pub(crate) fn output_schema(capabilities: &[String]) -> Result<Value> {
+    capability_set(capabilities)?;
+    let text = |length| json!({"type":"string","minLength":1,"maxLength":length});
+    let hints = json!({"type":"array","items":text(256),"maxItems":MAX_HINTS});
+    let mut suggested =
+        json!({"type":"array","items":{"type":"string"},"maxItems":MAX_HINTS,"uniqueItems":true});
+    if capabilities.is_empty() {
+        // Do not send an empty enum to a grammar compiler; only [] is allowed.
+        suggested["maxItems"] = json!(0);
+    } else {
+        suggested["items"]["enum"] = json!(capabilities);
+    }
+    let properties = json!({
+        "schema_version":{"type":"integer","enum":[1]},
+        "intent":{"type":"string","enum":["information","action","conversation","unknown"]},
+        "goal":text(2048),"context_hints":hints,"constraints":hints,
+        "suggested_capabilities":suggested,
+        "complexity":{"type":"string","enum":["simple","moderate","complex","unknown"]},
+        "workload":{"type":"string","enum":["one_shot","continuous","unknown"]},
+        "needs_clarification":{"type":"boolean"},
+        "clarification":{"anyOf":[{"type":"null"},text(1024)]}
+    });
+    let required = properties
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(
+        json!({"type":"object","additionalProperties":false,"properties":properties,"required":required}),
+    )
+}
+
 /// Shared prompt for later adapters/evaluation. Keeping user text in a separate
 /// message is useful structure, not a security boundary or prompt-injection fix.
 pub fn messages(original_text: &str, allowed_capabilities: &[String]) -> Result<Value> {
@@ -259,6 +295,54 @@ mod tests {
             &serde_json::to_vec(value)?,
             &["system.info".into()],
         )
+    }
+    #[test]
+    fn generation_schema_is_bounded_and_cannot_advertise_extra_authority() {
+        for capabilities in [
+            vec![],
+            vec!["system.info".into()],
+            vec!["llm.infer".into(), "system.info".into()],
+        ] {
+            let schema = output_schema(&capabilities).unwrap();
+            assert_eq!(schema["additionalProperties"], false);
+            let fields = schema["properties"].as_object().unwrap();
+            assert_eq!(
+                fields.keys().collect::<Vec<_>>(),
+                candidate().as_object().unwrap().keys().collect::<Vec<_>>()
+            );
+            assert_eq!(schema["required"].as_array().unwrap().len(), fields.len());
+            assert_eq!(fields["schema_version"]["enum"], json!([1]));
+            assert_eq!(fields["context_hints"]["maxItems"], MAX_HINTS);
+            if capabilities.is_empty() {
+                assert_eq!(fields["suggested_capabilities"]["maxItems"], 0);
+                assert!(
+                    fields["suggested_capabilities"]["items"]
+                        .get("enum")
+                        .is_none()
+                );
+            } else {
+                assert_eq!(
+                    fields["suggested_capabilities"]["items"]["enum"],
+                    json!(capabilities)
+                );
+            }
+            assert!(serde_json::to_vec(&schema).unwrap().len() < 16384);
+        }
+        for invalid in [
+            vec!["bad capability".into()],
+            vec!["system.info".into(); 2],
+            vec!["x".into(); 65],
+        ] {
+            assert!(output_schema(&invalid).is_err());
+        }
+        // A provider can ignore constraints. Independent byte/cross-field checks
+        // still reject a superficially schema-shaped unsafe interpretation.
+        let mut inconsistent = candidate();
+        inconsistent["intent"] = json!("unknown");
+        assert!(parse(&inconsistent).is_err());
+        let mut unicode = candidate();
+        unicode["goal"] = json!("é".repeat(1025));
+        assert!(parse(&unicode).is_err());
     }
     #[test]
     fn original_input_is_preserved_and_valid_output_never_grants_execution() {
