@@ -87,6 +87,15 @@ but matches only 3/20 semantic expectations; it remains unapproved as a default.
 Formatting hints never replace independent validation, approval or execution
 policy. This is quality evidence, not completion of bootstrap or automation.
 
+The subsequent [file-free private pairing input](NODE-CREDENTIALS.md#file-free-invitation-input-unreleased-after-alpha6)
+adds a shared exact-node/runtime command for private API bodies and bounded piped
+CLI input. It preserves identity, permissions, models and paused preference,
+separates saved/restart-requested from completion, and rejects unconfirmed replies
+without fallback/replay or secret echo. Existing file pairing remains compatible.
+This removes an intermediate invitation file for clients/automation, not owner
+provisioning, automatic private same-PC pairing, bootstrap or complete non-coder
+onboarding. UI assets and installed nodes are unchanged.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

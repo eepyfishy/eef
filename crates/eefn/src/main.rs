@@ -80,7 +80,7 @@ enum Commands {
     /// Control the outgoing EEF connection while keeping local commands available.
     Connection {
         #[command(subcommand)]
-        command: eefn::connection_commands::ConnectionCommand,
+        command: eefn::connection_commands::ConnectionAction,
     },
     /// Submit and control this node's durable jobs through its running connection.
     Jobs {
@@ -944,8 +944,11 @@ async fn execute_download_command(
 
 async fn execute_connection_command(
     args: &Args,
-    command: &eefn::connection_commands::ConnectionCommand,
+    action: &eefn::connection_commands::ConnectionAction,
 ) -> Result<serde_json::Value> {
+    let Some(command) = action.command() else {
+        return execute_stdin_pairing(args).await;
+    };
     if eefn::setup::instance_lock(&args.config)?.is_some() {
         bail!("node is not running; connection controls do not launch another node")
     }
@@ -967,7 +970,7 @@ async fn execute_connection_command(
         .json(&eefn::connection_commands::ConnectionRequest {
             schema_version: 1,
             expected_node_id: file.node_id,
-            command: command.clone(),
+            command,
         })
         .send()
         .await
@@ -982,6 +985,97 @@ async fn execute_connection_command(
                 .unwrap_or("connection command unavailable; update the node")
         )
     }
+    Ok(value)
+}
+
+/// Input adapter only. A detached bounded reader allows a stalled pipe to time
+/// out without keeping Tokio's blocking pool (and this CLI process) alive.
+async fn private_stdin_code() -> Result<String> {
+    use std::io::{IsTerminal, Read};
+    if std::io::stdin().is_terminal() {
+        bail!("pair-stdin requires piped private input, not an interactive terminal")
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let input = std::io::stdin()
+            .lock()
+            .take(eefn::credential_pairing::MAX_INPUT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| anyhow::anyhow!("private pairing input could not be read"))
+            .and_then(|_| eefn::credential_pairing::input_code(&bytes));
+        let _ = sender.send(input);
+    });
+    tokio::time::timeout(Duration::from_secs(15), receiver)
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("private pairing input timed out; no pairing command was sent")
+        })?
+        .map_err(|_| anyhow::anyhow!("private pairing input unavailable"))?
+}
+
+async fn execute_stdin_pairing(args: &Args) -> Result<serde_json::Value> {
+    use eefn::credential_pairing::PairRequest;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; pairing never launches another runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let code = private_stdin_code().await?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(15))
+        .build()?;
+    let diagnostics = client
+        .get(format!("http://{address}/api/diagnostics"))
+        .send()
+        .await?
+        .error_for_status()?;
+    let before = eefn::model_manager::bounded_json(diagnostics).await?;
+    if before["success"] != true
+        || before["node_id"] != file.node_id
+        || before["report_type"] != "node_diagnostics"
+    {
+        bail!("local pairing diagnostics do not match this node")
+    }
+    let request = PairRequest {
+        schema_version: 1,
+        expected_node_id: file.node_id,
+        expected_runtime_id: before["runtime_id"]
+            .as_str()
+            .context("local pairing runtime unavailable")?
+            .into(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+        code,
+    };
+    request.validate()?;
+    let response = client
+        .post(format!("http://{address}/api/commands/connection/pair"))
+        .json(&request)
+        .send()
+        .await;
+    let value = match response {
+        Ok(response) if response.status() == reqwest::StatusCode::NOT_FOUND => {
+            request.failure("unsupported_command", false)
+        }
+        Ok(response) if response.status().is_success() => {
+            match eefn::model_manager::bounded_json(response).await {
+                Ok(value) if eefn::credential_pairing::confirmed(&value, &request) => value,
+                _ => request.failure("local_pairing_reply_unconfirmed", true),
+            }
+        }
+        // An error is not a rollback guarantee. Do not expose arbitrary body text,
+        // which may contain the private code, or try the legacy file/save adapter.
+        _ => request.failure("local_pairing_reply_unconfirmed", true),
+    };
     Ok(value)
 }
 
@@ -2438,6 +2532,37 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn connection_adapters_preserve_existing_commands_and_keep_secrets_off_arguments() {
+        for argv in [
+            vec!["show"],
+            vec!["limits", "--work", "2"],
+            vec!["pause"],
+            vec!["resume"],
+            vec!["pair-local"],
+            vec!["pair", "--code-file", "private.json"],
+            vec!["pair-stdin"],
+        ] {
+            let args = Args::try_parse_from([vec!["eefn", "connection"], argv].concat()).unwrap();
+            let Some(Commands::Connection { command }) = args.command else {
+                panic!("wrong command")
+            };
+            assert_eq!(
+                command.command().is_none(),
+                matches!(
+                    command,
+                    eefn::connection_commands::ConnectionAction::PairStdin {}
+                )
+            );
+        }
+        for argv in [
+            vec!["pair-stdin", "--code", "private"],
+            vec!["pair-stdin", "private"],
+            vec!["pair"],
+        ] {
+            assert!(Args::try_parse_from([vec!["eefn", "connection"], argv].concat()).is_err());
+        }
+    }
     #[test]
     fn recovery_requires_saved_revision_grant_and_operation_without_retry_or_evidence_flags() {
         let args = [

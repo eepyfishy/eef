@@ -133,74 +133,13 @@ pub(crate) struct CredentialSelector {
 
 impl crate::NodeService {
     pub(crate) fn pair_with_credential_file(&self, path: &std::path::Path) -> Result<()> {
-        use base64::Engine as _;
         use std::io::Read;
-        #[derive(Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Invitation {
-            schema_version: u32,
-            node_id: String,
-            address: String,
-            auth_mode: AuthMode,
-            psk: String,
-            coordinator_certificate: String,
-        }
         let mut bytes = Vec::new();
         std::fs::File::open(path)?
-            .take(128 * 1024 + 1)
+            .take(crate::credential_pairing::MAX_INPUT_BYTES as u64 + 1)
             .read_to_end(&mut bytes)?;
-        if bytes.len() > 128 * 1024 {
-            bail!("pairing file exceeds bounds")
-        }
-        // PowerShell 5 redirects as UTF-16; modern UTF-8/BOM output also works.
-        let raw = if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
-            if bytes.len() % 2 != 0 {
-                bail!("invalid pairing file encoding")
-            }
-            let little = bytes[0] == 0xff;
-            let units = bytes[2..]
-                .chunks_exact(2)
-                .map(|b| {
-                    if little {
-                        u16::from_le_bytes([b[0], b[1]])
-                    } else {
-                        u16::from_be_bytes([b[0], b[1]])
-                    }
-                })
-                .collect::<Vec<_>>();
-            String::from_utf16(&units)
-                .map_err(|_| anyhow::anyhow!("invalid pairing file encoding"))?
-        } else {
-            std::str::from_utf8(&bytes)
-                .map_err(|_| anyhow::anyhow!("invalid pairing file encoding"))?
-                .trim_start_matches('\u{feff}')
-                .to_owned()
-        };
-        // Accept redirected JSON command output, or the raw private code.
-        let report: Option<Value> = serde_json::from_str(&raw).ok();
-        let code = report
-            .as_ref()
-            .and_then(|v| v.get("code"))
-            .and_then(Value::as_str)
-            .unwrap_or(raw.trim());
-        if code.len() > 4096 {
-            bail!("pairing code exceeds bounds")
-        }
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(code)
-            .map_err(|_| anyhow::anyhow!("invalid pairing code"))?;
-        let invitation: Invitation = serde_json::from_slice(&decoded)
-            .map_err(|_| anyhow::anyhow!("invalid pairing invitation"))?;
-        if invitation.schema_version != 2
-            || invitation.node_id != self.node_id
-            || invitation.auth_mode != AuthMode::NodeCredential
-        {
-            bail!("pairing invitation does not match this node")
-        }
-        validate_credential(&invitation.psk)?;
-        crate::network::validate_remote_node_id(&invitation.node_id)?;
-        crate::tls::client_config(&invitation.coordinator_certificate)?;
-        crate::network::validate_address(&invitation.address, true)?;
+        let code = crate::credential_pairing::input_code(&bytes)?;
+        let invitation = crate::credential_pairing::Invitation::parse(&code, &self.node_id)?;
         self.save_credential_pair(
             &invitation.address,
             &invitation.psk,

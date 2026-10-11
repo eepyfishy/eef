@@ -335,8 +335,28 @@ impl NodeService {
         secret: &str,
         certificate: &str,
     ) -> Result<()> {
+        self.save_credential_pair_for_runtime(address, secret, certificate, None)
+            .map(|_| ())
+    }
+
+    pub(crate) fn save_credential_pair_for_runtime(
+        &self,
+        address: &str,
+        secret: &str,
+        certificate: &str,
+        expected_runtime: Option<&str>,
+    ) -> Result<bool> {
         let _guard = self.config_lock.lock().expect("config lock");
+        if expected_runtime
+            .is_some_and(|runtime| self.live.lock().unwrap()["runtime_id"] != runtime)
+        {
+            bail!("pairing command runtime changed")
+        }
         let mut config = self.read_config()?;
+        let connection_enabled = config["connection_enabled"].as_bool().unwrap_or(true);
+        if expected_runtime.is_some() && config["node_id"] != self.node_id {
+            bail!("saved node identity changed; pairing was not applied")
+        }
         config["auth_mode"] = json!("node_credential");
         config["psk"] = json!(secret);
         config["coordinator_certificate"] = json!(certificate);
@@ -347,7 +367,7 @@ impl NodeService {
         self.save_config_locked(config)?;
         self.live.lock().unwrap()["pending_restart"] = json!(true);
         self.restart.notify_one();
-        Ok(())
+        Ok(connection_enabled)
     }
 
     pub fn pair_with_local_coordinator(&self) -> Result<Value> {

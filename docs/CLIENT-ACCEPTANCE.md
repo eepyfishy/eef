@@ -163,3 +163,31 @@ The [production quality harness](INTERPRETER-QUALITY.md) records a separate
 and no grants. Ten proposals are accepted but only three match the fixed rubric.
 This is not default-model approval or physical acceptance. All full-roadmap
 release gates remain open; no UI assets, installed nodes or release feeds change.
+
+## File-free private pairing checkpoint (2026-10-11)
+
+The [shared private-input command](NODE-CREDENTIALS.md#file-free-invitation-input-unreleased-after-alpha6)
+adds four core tests and one CLI parser test (416 total, passing with default
+features and `--no-default-features`). The old private-file adapter shares the
+bounded decoder/validator; it is not removed. Fresh default binaries pass the
+new public CLI/API fixture (`private-pairing-W2pMwa`), existing independent
+credential/TLS/rotation/revocation fixture (`node-credentials-uCnhaG`), browser/
+first-run regression (`first-run-EKcbDd`) and input/answer regression
+(`request-input-Ax2sFl`). The source backend/browser boundary also passes.
+
+The new fixture verifies exact target/runtime, body/input bounds, UTF-16 pipe
+input, unchanged saved identity/permissions/models and paused preference,
+separate explicit coordinator restart/resume, actual pinned TLS registration,
+lost/substituted replies after real saves, unexpected private fields/injected
+prose, unsafe error bodies, old-endpoint refusal and stalled-input timeout.
+No private invitation file or feature approval is created by pairing. Reports
+confirm saving/restart request, not completed restart or model/workload readiness.
+An added fault-injection unit test initially failed because its cleanup tried to
+rename a stable ID through generic settings; cleanup now restores only its own
+simulated external corruption. Both full test modes were rerun successfully.
+
+These are isolated one-PC processes, not physical two-PC or complete non-coder
+onboarding acceptance. UI assets, personal installations, release artifacts and
+update feeds are unchanged. Private same-PC provisioning/orchestration, approved
+model bootstrap, durable automation, full runtime/peer/media/cluster work and
+MSI/Defender/Authenticode gates remain on the full active roadmap.

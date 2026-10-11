@@ -46,6 +46,68 @@ Do not post it in issues, public repos or diagnostics, or put the code in shell
 arguments. Keep only protected copies. Lost provisioning replies are not retried:
 inspect `credentials show` and explicitly rotate if a new private code is needed.
 
+## File-free invitation input (unreleased after alpha.6)
+
+New builds support `eefn connection pair-stdin --json`. Supply a private raw
+base64 invitation or the provisioning command's JSON report through a pipe;
+never put the code in command arguments or shell history. The CLI accepts bounded
+UTF-8/BOM or BOM-marked UTF-16 just like the existing file adapter. It refuses an
+interactive terminal and times out after 15 seconds if a pipe never finishes.
+Input is limited to 128 KiB; the extracted code is limited to 4,096 bytes.
+No intermediate invitation file is created. The credential still persists in
+the node's existing configuration/backup, as with file pairing; this is not a
+secret-erasure or protected-storage guarantee.
+
+Clients can submit a private body directly to the local owner API:
+
+```text
+POST /api/commands/connection/pair
+{
+  "schema_version": 1,
+  "expected_node_id": "EXISTING_NODE_ID",
+  "expected_runtime_id": "CURRENT_NODE_RUNTIME_UUID",
+  "request_id": "NEW_CORRELATION_UUID",
+  "code": "PRIVATE_BASE64_INVITATION"
+}
+```
+
+The body is capped at 8 KiB, denies extra fields and uses the existing local
+owner/cross-origin boundary. The shared service validates the exact invitation
+node, schema, generated credential, endpoint and pinned coordinator certificate,
+then merges under the existing configuration lock. It checks the expected node
+runtime before saving. CLI and future UI are adapters; the core never reads
+its own stdin, needs a browser, or obtains a model for pairing. Requests' debug
+representations and public reports omit the code/credential; do not log raw
+HTTP bodies or deliberately export private configurations.
+
+Successful `node_credential_pairing` reports bind node, correlation, previous
+runtime and certificate fingerprint. `saved: true` and `restart_requested: true`
+confirm configuration saving and a node app restart request, **not completed
+restart, coordinator registration, workload readiness or execution approval**.
+`completed` and `execution_authorized` remain false. Feature permissions,
+models, stable identity/name, unrelated settings and the connection-enabled
+preference are preserved. A paused node stays paused until explicit resume.
+The requested node restart also applies other already-saved pending settings,
+as with existing connection controls; pairing is not a selective reload.
+
+Lost/substituted/error replies return `local_pairing_reply_unconfirmed` with
+`outcome_unknown: true`; `saved`/`restart_requested` are null, not rollback claims.
+The CLI never echoes arbitrary server error text, retries pairing or falls back
+to legacy/file/generic configuration saves. HTTP 404 is `unsupported_command`
+without an automatic alternative. Inspect `connection show` and diagnostics
+before deciding whether to pair again. `request_id` is ephemeral correlation,
+**not a durable deduplication receipt**; reissuing pairing can request another
+restart. No automatic rotation, coordinator restart or permission grant occurs.
+Successful replies must have the exact bounded report fields and fixed public
+note; unexpected fields or substituted prose are unconfirmed instead of being
+printed. This also prevents an invalid reply from echoing the submitted secret.
+
+This removes private-file handling for automation and client adapters, not the
+remaining non-coder onboarding requirement. Same-PC `pair-local` remains the
+explicit legacy shared-key path and cannot silently replace an independent
+credential. Friendly private provisioning and first-run orchestration remain
+open, together with bootstrap/model quality and physical release acceptance.
+
 After all required nodes migrate, optionally disable legacy sign-in:
 
 ```powershell

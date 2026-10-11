@@ -8,6 +8,7 @@ pub mod authentication;
 pub mod client;
 pub mod connection_commands;
 pub mod context;
+pub mod credential_pairing;
 pub mod crypto;
 pub mod dashboard;
 pub mod engine;

@@ -33,3 +33,49 @@ pub struct ConnectionRequest {
     pub expected_node_id: String,
     pub command: ConnectionCommand,
 }
+
+/// CLI input adapters are separate from the core command contract. In particular,
+/// the service never reads its own stdin or accepts a secret command-line flag.
+#[derive(Debug, Subcommand)]
+pub enum ConnectionAction {
+    /// Inspect saved connection settings and current runtime status.
+    Show {},
+    /// Inspect/save request capacity; restart explicitly to apply changes.
+    Limits {
+        #[arg(long)]
+        work: Option<usize>,
+        #[arg(long)]
+        control: Option<usize>,
+    },
+    /// Disable outgoing connections while keeping local commands available.
+    Pause {},
+    /// Enable existing owner-configured connections and trust.
+    Resume {},
+    /// Explicitly use legacy same-user local pairing; not private provisioning.
+    PairLocal {},
+    /// Apply a private exact-node invitation from a protected file.
+    Pair {
+        #[arg(long)]
+        code_file: std::path::PathBuf,
+    },
+    /// Read a PRIVATE invitation from piped stdin, never an argument or public file.
+    PairStdin {},
+}
+impl ConnectionAction {
+    pub fn command(&self) -> Option<ConnectionCommand> {
+        Some(match self {
+            Self::Show {} => ConnectionCommand::Show {},
+            Self::Limits { work, control } => ConnectionCommand::Limits {
+                work: *work,
+                control: *control,
+            },
+            Self::Pause {} => ConnectionCommand::Pause {},
+            Self::Resume {} => ConnectionCommand::Resume {},
+            Self::PairLocal {} => ConnectionCommand::PairLocal {},
+            Self::Pair { code_file } => ConnectionCommand::Pair {
+                code_file: code_file.clone(),
+            },
+            Self::PairStdin {} => return None,
+        })
+    }
+}

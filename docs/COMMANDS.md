@@ -1056,6 +1056,17 @@ same-user local pairing. It is an owner configuration change, not a network scan
 or trust grant for arbitrary peers. It must not be used merely to inspect status.
 No connection command implicitly downloads models or executes inference.
 
+Unreleased private pairing also supports `eefn connection pair-stdin --json`
+for a private piped invitation/report, without a temporary invitation file or
+secret argument. Clients call `POST /api/commands/connection/pair` with strict
+node/runtime/correlation identity and a private code body. The shared core
+preserves feature permissions, identity, models and paused preference, saves
+the certificate/credential, and requests (not verifies) a node restart. It does
+not provision/rotate credentials, restart EEF, enable a paused connection or
+approve work. Lost/substituted replies remain unknown, without fallback/retry;
+inspect `connection show` and diagnostics. The correlation is not a durable
+receipt. See [input, privacy, bounds and setup limits](NODE-CREDENTIALS.md#file-free-invitation-input-unreleased-after-alpha6).
+
 Saved UI preferences are `dashboard.ui_enabled` on the node and `web.ui_enabled`
 on EEF, both defaulting to true. False hides the browser while keeping commands
 available. Apply saved preferences with the role's restart command. On the node,

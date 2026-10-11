@@ -90,6 +90,10 @@ impl NodeService {
             .route("/api/diagnostics", get(diagnostics))
             .route("/api/commands/network", post(network_command))
             .route("/api/commands/connection", post(connection_command))
+            .route(
+                "/api/commands/connection/pair",
+                post(credential_pair).layer(axum::extract::DefaultBodyLimit::max(8192)),
+            )
             .route("/api/commands/models", post(model_command))
             .route(
                 "/api/commands/model-downloads",
@@ -214,6 +218,13 @@ async fn connection_command(
     Json(request): Json<crate::connection_commands::ConnectionRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.connection_command(request)?))
+}
+
+async fn credential_pair(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::credential_pairing::PairRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.pair_credential_command(request)?))
 }
 
 async fn diagnostics(State(state): State<Arc<NodeService>>) -> Json<Value> {
