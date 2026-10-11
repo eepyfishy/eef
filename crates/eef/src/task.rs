@@ -843,6 +843,38 @@ impl TaskEngine {
         }
         self.store.edit(id, event, edit)
     }
+    pub(crate) fn edit_review_policy_checkpoint(
+        &self,
+        id: &str,
+        event: &str,
+        runtime: &str,
+        issuer: &str,
+        edit: impl FnOnce(&mut Plan) -> Result<bool>,
+    ) -> Result<Plan> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no new issuance checkpoint");
+        }
+        self.store
+            .edit_with_policy_fence(id, event, runtime, issuer, edit)
+    }
+    pub(crate) fn reserve_occurrence(
+        &self,
+        command: eefn::automation_occurrence::OccurrenceCommand,
+        runtime: &str,
+        issuer: &str,
+    ) -> Result<serde_json::Value> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no new occurrence reservation");
+        }
+        if matches!(&command,eefn::automation_occurrence::OccurrenceCommand::Reserve { job, .. } if active.ids.contains(job))
+        {
+            bail!("Cannot reserve an active job");
+        }
+        self.store
+            .occurrence_checkpoint_now(command, runtime, Some(issuer))
+    }
     async fn drive(&self, id: &str, _guard: ActiveJob) -> Result<Plan> {
         let mut stopping = self.stopping.subscribe();
         if *stopping.borrow() {

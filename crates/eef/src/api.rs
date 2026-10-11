@@ -159,6 +159,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             "/api/commands/automation-policies",
             post(automation_policy_command),
         )
+        .route(
+            "/api/commands/automation-occurrences",
+            post(automation_occurrence_command),
+        )
         .route("/api/commands/requests/execute", post(request_execute))
         .route("/api/commands/requests/receipt", post(request_receipt))
         .route("/api/commands/requests/result", post(request_result))
@@ -277,6 +281,12 @@ async fn automation_policy_command(
     Json(request): Json<eefn::automation_policy::PolicyRequest>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.automation_policy_command(request).await?))
+}
+async fn automation_occurrence_command(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<eefn::automation_occurrence::OccurrenceRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.automation_occurrence_command(request).await?))
 }
 async fn request_abandon(
     State(runtime): State<Arc<Runtime>>,

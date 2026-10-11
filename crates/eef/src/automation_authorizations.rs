@@ -13,7 +13,7 @@ pub(super) fn bytes(connection: &Connection) -> Result<usize> {
     let n:i64=connection.query_row("SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM automation_authorizations",[],|r|r.get(0))?;
     Ok(usize::try_from(n)?)
 }
-fn read(connection: &Connection, id: &str) -> Result<Option<Authorization>> {
+pub(super) fn read(connection: &Connection, id: &str) -> Result<Option<Authorization>> {
     let row:Option<(String,i64)>=connection.query_row("SELECT record_json,reserved_bytes FROM automation_authorizations WHERE authorization_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     let Some((raw, reserved)) = row else {
         return Ok(None);
@@ -30,7 +30,7 @@ fn read(connection: &Connection, id: &str) -> Result<Option<Authorization>> {
     }
     Ok(Some(record))
 }
-fn records(connection: &Connection) -> Result<Vec<Authorization>> {
+pub(super) fn records(connection: &Connection) -> Result<Vec<Authorization>> {
     let mut statement = connection.prepare(
         "SELECT authorization_id FROM automation_authorizations ORDER BY authorization_id",
     )?;
@@ -98,6 +98,9 @@ impl JobStore {
             let used = usize::try_from(jobs)?
                 .checked_add(usize::try_from(definitions)?)
                 .and_then(|n| n.checked_add(usize::try_from(other).ok()?))
+                .context("Authorization size overflow")?;
+            let used = used
+                .checked_add(automation_occurrences::bytes(connection)?)
                 .context("Authorization size overflow")?;
             if cost > 8 * 1024 * 1024 || cost > self.max_bytes.saturating_sub(used) {
                 bail!("Job/definition/authorization storage is full; no policy saved");
@@ -228,11 +231,11 @@ impl JobStore {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use eefn::automation_policy::PolicyCommand;
     use serde_json::{Value, json};
-    fn fixture(
+    pub(crate) fn fixture(
         store: Arc<JobStore>,
     ) -> (
         Arc<crate::task::TaskEngine>,
@@ -315,7 +318,7 @@ mod tests {
             &record.creation,
             &record.runtime_id
         ));
-        assert_eq!(saved["occurrence_admission_available"], false);
+        assert_eq!(saved["occurrence_admission_available"], true);
         assert_eq!(store.usage().unwrap()["authorization_count"], 1);
         assert_eq!(store.usage().unwrap()["automation_count"], 1);
         assert_eq!(store.usage().unwrap()["count"], 1);

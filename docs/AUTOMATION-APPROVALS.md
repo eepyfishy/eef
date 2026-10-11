@@ -1,11 +1,12 @@
 # Bounded reusable approval records (unreleased after alpha.6)
 
-This is the owner-approval checkpoint stage of durable automation, not completed
-recurring execution. It extends the existing job journal and command services;
-no dashboard controller, timer, second runner, occurrence admission, budget
-consumption, job approval, grant issuance or execution is added yet. Reports say
-`occurrence_admission_available: false` and never claim that saving the policy
-executes its definition. Stable 0.4.0 still requires the remaining acceptance work.
+These owner-approval checkpoints extend the existing journal and command
+services. Saving a policy never admits a job, consumes a run, issues a grant or
+starts execution. The subsequent [explicit occurrence reservation service](AUTOMATION-OCCURRENCES.md)
+now consumes bounded authority for independently compiled matching jobs;
+`occurrence_admission_available: true` refers only to that owner-command path,
+not timers or completed recurring execution. No dashboard controller or second
+runner is added. Stable 0.4.0 still requires the remaining acceptance work.
 
 ## Owner commands
 
@@ -112,7 +113,13 @@ or future records remain intact and fail closed; no automatic repair, partial
 success inventory or activation is performed. Old binaries do not understand
 this table/accounting and downgrade compatibility is not claimed.
 
-## Required next stage
+## Occurrence stage and remaining lifecycle work
+
+The subsequent [reservation stage](AUTOMATION-OCCURRENCES.md) implements the
+atomic compiled-job delegation and start/every-issuance policy fences described
+below. Timer activation, terminal archiving, broader resource/termination evidence
+and the other release requirements remain open. The following invariants also
+apply to future automatic triggering:
 
 Each occurrence must be a new independently compiled, origin-bound job. Do not
 copy old model evidence into a new job identity, fabricate new interpretation

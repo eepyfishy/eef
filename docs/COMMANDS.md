@@ -29,7 +29,8 @@ approval checkpoints to that same journal. Approval requires the exact disabled
 definition, last generation, receipt, expiry, run count, per-task grant bounds and
 aggregate duration/result allowances. It does not approve the original job,
 consume an occurrence budget, issue grants or start timers. Reports explicitly
-say `occurrence_admission_available: false`.
+say `occurrence_admission_available: true` for the subsequent explicit owner
+reservation service; saving a policy itself never reserves or runs work.
 
 Policies retain runtime/issuer identity and generation history. Restart does not
 reactivate them; exact receipt reuse is historical inspection, not renewal.
@@ -37,6 +38,15 @@ Only the guarded coordinator-owner command can create/revoke these records;
 node submission, node management and remote-update permissions cannot grant them.
 Show/approval scope is private. See [exact commands, bounds, revocation, storage
 and the remaining execution stage](AUTOMATION-APPROVALS.md).
+
+`eef automation-occurrences reserve|show|list` now atomically consumes bounded
+policy authority and approves an independently compiled exact matching job,
+without dispatch. It retains original source history and immutable reservation
+receipts, rejects overlap/uncertainty, and checks policy authority at ordinary
+execution start and every issuance. Restart cannot silently reactivate an old
+runtime's authority. Existing grants/receipts/recovery remain the only execution
+path. No timers, hidden retries or budget refunds are supplied. See [commands,
+privacy, lifecycle, storage and remaining work](AUTOMATION-OCCURRENCES.md).
 
 ## Default workload boundary (unreleased after alpha.6)
 

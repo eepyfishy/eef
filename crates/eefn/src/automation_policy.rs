@@ -352,7 +352,7 @@ pub fn confirmed(value: &Value, command: &PolicyCommand, runtime: &str) -> bool 
         || report.report_type != "automation_authorization"
         || report.runtime_id != runtime
         || report.command != *command
-        || report.occurrence_admission_available
+        || !report.occurrence_admission_available
         || report.timers_started
         || report.execution_requested
         || report.dispatched
@@ -640,7 +640,7 @@ mod tests {
             items: vec![],
             next_after: None,
             reused: false,
-            occurrence_admission_available: false,
+            occurrence_admission_available: true,
             timers_started: false,
             execution_requested: false,
             dispatched: false,
@@ -650,7 +650,7 @@ mod tests {
         assert!(confirmed(&value, &command, &runtime));
         for (pointer, replacement) in [
             ("/runtime_id", json!(uuid::Uuid::new_v4().to_string())),
-            ("/occurrence_admission_available", json!(true)),
+            ("/occurrence_admission_available", json!(false)),
             ("/timers_started", json!(true)),
             ("/execution_requested", json!(true)),
             (

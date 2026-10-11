@@ -324,7 +324,7 @@ pub(crate) fn report(
         items,
         next_after,
         reused,
-        occurrence_admission_available: false,
+        occurrence_admission_available: true,
         timers_started: false,
         execution_requested: false,
         dispatched: false,

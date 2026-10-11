@@ -542,6 +542,7 @@ impl GrantObserver for AttemptJournal {
 
 #[derive(Clone)]
 pub(crate) struct Driver {
+    runtime_id: String,
     engine: Arc<TaskEngine>,
     server: eefn::NodeServer,
     registry: crate::capability::CapabilityRegistry,
@@ -551,6 +552,7 @@ pub(crate) struct Driver {
 impl Driver {
     pub(crate) fn new(runtime: &crate::Runtime) -> Self {
         Self {
+            runtime_id: runtime.instance_id.clone(),
             engine: runtime.engine.clone(),
             server: runtime.node_server.clone(),
             registry: runtime.registry.clone(),
@@ -690,9 +692,11 @@ impl Driver {
             let lease_deadline =
                 issued_mono + Duration::from_millis(grant.expires_at_ms - grant.issued_at_ms);
             let revision = p.revision;
-            self.engine.edit_review_checkpoint(
+            self.engine.edit_review_policy_checkpoint(
                 id,
                 "Exact execution grant saved before dispatch",
+                &self.runtime_id,
+                &approval.issuer_id,
                 |p| {
                     if p.status != PlanStatus::Running || p.revision != revision {
                         bail!("Execution state changed before issuance")
@@ -916,9 +920,11 @@ impl crate::Runtime {
         }
         let mut saved = None;
         let guard = self.engine.claim(&command.id, || {
-            saved = Some(self.engine.store.edit(
+            saved = Some(self.engine.store.edit_with_policy_fence(
                 &command.id,
                 "Owner-approved execution requested; grants require a separate durable checkpoint",
+                &self.instance_id,
+                &approval.issuer_id,
                 |p| {
                     start(p, &command, eefn::protocol::now_ms())?;
                     Ok(true)

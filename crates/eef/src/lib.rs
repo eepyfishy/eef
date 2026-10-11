@@ -3,6 +3,7 @@
 pub mod adapters;
 pub mod api;
 pub mod assistant;
+pub mod automation_occurrence;
 pub mod automation_policy;
 pub mod brain;
 pub mod capability;

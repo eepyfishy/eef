@@ -405,3 +405,49 @@ policy fences must precede timers. Safe overlap/restart/missed-trigger behavior,
 the other full roadmap requirements and installer/Defender/Authenticode gates
 remain in scope. Installed nodes, releases, feeds and browser assets are unchanged;
 stable 0.4.0 is not claimed.
+
+## Explicit atomic occurrence reservation (2026-10-12)
+
+[Manual owner reservation](AUTOMATION-OCCURRENCES.md) connects reusable policies
+to independently compiled matching jobs and the existing grant driver. Twelve
+new tests bring both final passing full workspace/all-target feature-mode suites
+to 469. The fresh default executable/example build, formatting, JavaScript/diff
+checks and backend/browser source boundary pass separately.
+
+Nine journal tests verify new-job approval without source mutation or dispatch,
+read-only exact receipt reuse, no overlap/refunds, run/duration/result exhaustion,
+time/runtime/issuer/revocation/generation fences, receipt conflicts, atomic
+insert-fault rollback, retained restart/future-row refusal, second-write byte
+quota rollback, and expiry/backward-clock refusal before commit. Two shared
+contract tests and one CLI test enforce exact options, strict nonexecuting
+correlation and private-scope-free bounded lists.
+
+The public fixture (`automation-occurrences-4vLRpb`) uses two separately
+pinned-TLS logical nodes without models/browser control. Sixteen concurrent
+requests save one reservation. Explicit ordinary node execution completes one
+native `system.info` grant; original/foreign jobs, overlap, revocation and
+old-runtime execution are refused. Revocation/restart cases keep the original
+time window open and check the actual coordinator policy-fence reason, not just
+any failure. Fault-proxy CLI calls preserve uncertainty after dropped,
+substituted or negative-after-commit replies; exact inspection/reuse neither
+creates a new receipt nor dispatches work.
+
+The initial public fixture (`automation-occurrences-2iNrvd`) failed a test-side
+`null` expectation for fields omitted by the existing serializer. It is not
+counted as passing; corrected assertions require absence. No production
+behavior, authority bound or retry policy was changed for that correction.
+
+Fresh definitions/policies (`automation-definitions-RgZ8SC`), input/answers
+(`request-input-tG6LvM`) and broader reviewed execution/recovery
+(`request-review-UoGRUU`) regressions also pass. These remain isolated local
+evidence, not physical two-PC, real semantic bootstrap quality, general pipelines,
+strong native termination or full measured-resource evidence. Previous
+intermittent input/busy failures remain unproven.
+
+Reservations consume declared authority permanently, including after unissued
+cancellation; terminal occurrence jobs currently cannot be removed. Safe
+archiving/retention, unresolved partial-work handling and timer lifecycle remain
+necessary follow-up work. No timer or automatic job creation is enabled. The
+remaining full roadmap and installer/Defender/Authenticode gates stay in scope.
+Installed nodes, releases/installers, feeds and browser assets are unchanged.
+Stable 0.4.0 is not claimed.

@@ -416,7 +416,7 @@ pub(super) fn read_definition(connection: &Connection, id: &str) -> Result<Defin
 }
 pub(super) fn count(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT (SELECT count(*) FROM durable_jobs)+(SELECT count(*) FROM automation_definitions)+(SELECT count(*) FROM automation_authorizations)",
+        "SELECT (SELECT count(*) FROM durable_jobs)+(SELECT count(*) FROM automation_definitions)+(SELECT count(*) FROM automation_authorizations)+(SELECT count(*) FROM automation_occurrences)",
         [],
         |r| r.get(0),
     )?;
@@ -424,7 +424,7 @@ pub(super) fn count(connection: &Connection) -> Result<usize> {
 }
 pub(super) fn definition_bytes(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT (SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM automation_authorizations)",
+        "SELECT (SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM automation_authorizations)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences)",
         [],
         |r| r.get(0),
     )?;
@@ -439,6 +439,7 @@ impl JobStore {
             read_definition(&connection, &id?)?;
         }
         automation_authorizations::validate_all(&connection)?;
+        automation_occurrences::validate_all(&connection)?;
         Ok(())
     }
     fn save_definition(
@@ -456,7 +457,9 @@ impl JobStore {
         if !previous.is_some_and(|old| old >= 0 && encoded.len() as u64 <= old as u64) {
             let jobs:i64=connection.query_row("SELECT COALESCE(SUM(length(CAST(plan_json AS BLOB))+reserved_bytes),0) FROM durable_jobs",[],|r|r.get(0))?;
             let other:i64=connection.query_row("SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions WHERE definition_id<>?1",[&definition.id],|r|r.get(0))?;
-            let authorization_bytes = automation_authorizations::bytes(connection)?;
+            let authorization_bytes = automation_authorizations::bytes(connection)?
+                .checked_add(automation_occurrences::bytes(connection)?)
+                .context("Storage overflow")?;
             let used = usize::try_from(jobs)?
                 .checked_add(usize::try_from(other)?)
                 .and_then(|bytes| bytes.checked_add(authorization_bytes))

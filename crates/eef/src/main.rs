@@ -31,10 +31,15 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Save/inspect/revoke bounded reusable approval as the local owner; no occurrence admission yet.
+    /// Save/inspect/revoke bounded reusable approval as the local owner; never dispatch.
     AutomationPolicies {
         #[command(subcommand)]
         command: eefn::automation_policy::PolicyCommand,
+    },
+    /// Reserve bounded authority for an independently compiled job, without starting work.
+    AutomationOccurrences {
+        #[command(subcommand)]
+        command: eefn::automation_occurrence::OccurrenceCommand,
     },
     /// Author/inspect/remove disabled automation definitions as the local owner; never run them.
     Automations {
@@ -371,6 +376,46 @@ mod credential_cli_tests {
         ));
     }
     #[test]
+    fn occurrence_reservation_requires_exact_receipt_scope_and_cannot_enable_execution() {
+        let args = [
+            "eef",
+            "automation-occurrences",
+            "reserve",
+            "--policy",
+            "policy",
+            "--policy-sha256",
+            "hash",
+            "--job",
+            "job",
+            "--revision",
+            "2",
+            "--plan-sha256",
+            "digest",
+            "--operation-id",
+            "receipt",
+        ];
+        assert!(Args::try_parse_from(args).is_ok());
+        for index in [3, 5, 7, 9, 11, 13] {
+            let mut missing = args.to_vec();
+            missing.drain(index..index + 2);
+            assert!(Args::try_parse_from(missing).is_err());
+        }
+        for flag in [
+            "--execute",
+            "--retry",
+            "--refund",
+            "--renew",
+            "--enable",
+            "--permissions",
+        ] {
+            let mut bad = args.to_vec();
+            bad.push(flag);
+            assert!(Args::try_parse_from(bad).is_err());
+        }
+        assert!(Args::try_parse_from(["eef", "automation-occurrences", "list"]).is_ok());
+        assert!(Args::try_parse_from(["eef", "automation-occurrences", "show", "receipt"]).is_ok());
+    }
+    #[test]
     fn approval_requires_digest_revision_and_all_bounds_and_has_no_execute_flag() {
         let args = [
             "eef",
@@ -489,7 +534,7 @@ async fn owner_automation_exchange(
         "success":success,"coordinator_acknowledged":success,"sending_attempted":sending_attempted,
         "outcome_unknown":!success && sending_attempted && mutation,"error_code":error_code,"result":result,
         "timers_started":false,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
-        "note":"Private definition/approval checkpoints only, not occurrence admission or execution. Inspect the exact receipt after uncertainty. No new receipt, fallback or automatic retry."})
+        "note":"Private automation checkpoints only, never timers or execution. Inspect the exact receipt after uncertainty. No new receipt, fallback or automatic retry."})
 }
 
 async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value> {
@@ -510,6 +555,19 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::AutomationOccurrences { command } => {
+            command.validate()?;
+            return Ok(owner_automation_exchange(
+                &client,
+                &base,
+                json!(command),
+                command.receipt().is_some(),
+                "automation-occurrences",
+                "owner_automation_occurrence_command",
+                |v, runtime| eefn::automation_occurrence::confirmed(v, command, runtime),
+            )
+            .await);
+        }
         Command::Automations { command } => {
             command.validate()?;
             return Ok(owner_automation_exchange(
@@ -1098,6 +1156,7 @@ async fn main() -> Result<()> {
                     Command::Requests { .. }
                         | Command::Automations { .. }
                         | Command::AutomationPolicies { .. }
+                        | Command::AutomationOccurrences { .. }
                 ) && value["success"] == true
                 {
                     eprintln!(

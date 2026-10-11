@@ -147,6 +147,17 @@ inspection, not renewal. This stage does not consume budgets or admit/approve
 occurrences; atomic independently compiled-job delegation, every-issuance fences,
 safe triggering/overlap/restart behavior and full physical execution remain open.
 
+The subsequent [explicit occurrence reservation](AUTOMATION-OCCURRENCES.md)
+connects reusable approval to independently compiled matching jobs in one
+transaction. Retained reservations consume run and worst-case duration/result
+allowances without refund. Current policy authority is checked at start and
+every grant issuance under the journal/admission gates. Existing durable grants,
+node enforcement and explicit recovery remain the only execution path. Original
+source history is not copied or rewritten; overlapping/uncertain previous work
+cannot silently create replacement occurrences. This adds manual owner admission,
+not timers, automatic job creation, terminal archiving, strong native termination,
+measured full resource quotas or completed recurring automation.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

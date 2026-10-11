@@ -120,7 +120,7 @@ try{
     generation:0,operation_id:randomUUID(),valid_for_ms:10000,max_runs:3,max_execution_ms_per_task:1000,max_result_bytes_per_task:1024,
     max_reserved_execution_ms:3000,max_reserved_result_bytes:3072};
   const policy=await owner(policyArgs(policyCommand));assert.equal(policy.success,true);assert.equal(policy.execution_authorized,false);
-  assert.equal(policy.result.authorization.state,'approved');assert.equal(policy.result.occurrence_admission_available,false);
+  assert.equal(policy.result.authorization.state,'approved');assert.equal(policy.result.occurrence_admission_available,true);
   assert.equal(policy.result.authorization.runtime_id,runtime);assert.deepEqual(policy.result.authorization.scope.owner_context,full.goal.request_context);
   assert.equal(policy.result.authorization.scope.operations[0].executor_node,a.id);
   const noBypass=await json(a.url+'/api/commands/requests/execute',{schema_version:1,expected_node_id:a.id,command:{id:source.id,
@@ -138,7 +138,7 @@ try{
   const secondPolicy={...policyCommand,generation:1,operation_id:randomUUID()};
   const policies=await Promise.all(Array.from({length:16},()=>json(eef+'/api/commands/automation-policies',{schema_version:1,expected_runtime_id:runtime,command:secondPolicy})));
   assert.equal(policies.filter(r=>r.reused===false).length,1);
-  for(const value of policies){assert.deepEqual(value.authorization,policies[0].authorization);assert.equal(value.authorization.generation,2);assert.equal(value.occurrence_admission_available,false);assert.equal(value.execution_requested,false);}
+  for(const value of policies){assert.deepEqual(value.authorization,policies[0].authorization);assert.equal(value.authorization.generation,2);assert.equal(value.occurrence_admission_available,true);assert.equal(value.execution_requested,false);}
   const policyPage=await owner(['automation-policies','list','--definition',command.operation_id,'--limit','1']);assert.equal(policyPage.result.items.length,1);assert(policyPage.result.next_after);
   assert(!JSON.stringify(policyPage).includes('operations'));assert(!JSON.stringify(policyPage).includes('Explicit reusable status source'));
   const revoke=['automation-policies','revoke',policyCommand.operation_id,'--revision','1','--operation-id',randomUUID()];
@@ -149,7 +149,7 @@ try{
   await until(async()=>(await json(eef+'/api/diagnostics')).registered_node_count===2,'pinned reconnection');
   const afterPolicyRestart=await owner(['automation-policies','show',secondPolicy.operation_id]);
   assert.notEqual(afterPolicyRestart.result.runtime_id,runtime);assert.deepEqual(afterPolicyRestart.result.authorization,policies[0].authorization);
-  assert.equal(afterPolicyRestart.result.occurrence_admission_available,false);
+  assert.equal(afterPolicyRestart.result.occurrence_admission_available,true);
   assert.equal((await owner(policyArgs(secondPolicy))).result.reused,true);
   assert.deepEqual((await local(a,['automations','show',command.operation_id])).result.definition,saved.result.definition);
   assert.equal(JSON.stringify(await review.inspect(source.id)),sourceBefore,'definition authoring/restart cannot approve, mutate or execute source');
@@ -216,7 +216,7 @@ try{
       faultGeneration++;
       const retained=await owner(['automation-policies','show',receipt.operation_id]);
       assert.equal(retained.result.authorization.state,'approved');assert.equal(retained.result.authorization.generation,faultGeneration);
-      assert.equal(retained.result.occurrence_admission_available,false);
+      assert.equal(retained.result.occurrence_admission_available,true);
       const reused=await owner(policyArgs(receipt));assert.equal(reused.result.reused,true);
       assert.deepEqual(reused.result.authorization,retained.result.authorization);
     }

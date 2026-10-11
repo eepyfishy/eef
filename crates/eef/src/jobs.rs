@@ -13,6 +13,8 @@ use std::{
 
 #[path = "automation_authorizations.rs"]
 mod automation_authorizations;
+#[path = "automation_occurrences.rs"]
+mod automation_occurrences;
 #[path = "automations.rs"]
 mod automations;
 
@@ -172,6 +174,7 @@ impl JobStore {
         connection.execute_batch("PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS durable_jobs (job_id TEXT PRIMARY KEY, plan_json TEXT NOT NULL, updated_ms INTEGER NOT NULL, reserved_bytes INTEGER NOT NULL DEFAULT 0);")?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_definitions (definition_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);")?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_authorizations (authorization_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, reserved_bytes INTEGER NOT NULL);")?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_occurrences (reservation_id TEXT PRIMARY KEY, job_id TEXT UNIQUE NOT NULL, record_json TEXT NOT NULL);")?;
         let columns = connection
             .prepare("PRAGMA table_info(durable_jobs)")?
             .query_map([], |r| r.get::<_, String>(1))?
@@ -223,6 +226,7 @@ impl JobStore {
                 let plan: Plan = serde_json::from_str(&s)
                     .context("Damaged job record; retained for recovery")?;
                 validate_retained_review(&plan)?;
+                automation_occurrences::validate_job(&connection, &plan)?;
                 Ok(plan)
             })
             .collect()
@@ -335,13 +339,42 @@ impl JobStore {
         event: &str,
         edit: impl FnOnce(&mut Plan) -> Result<bool>,
     ) -> Result<Plan> {
+        self.edit_with_gate(id, event, None, edit)
+    }
+    pub(crate) fn edit_with_policy_fence(
+        &self,
+        id: &str,
+        event: &str,
+        runtime: &str,
+        issuer: &str,
+        edit: impl FnOnce(&mut Plan) -> Result<bool>,
+    ) -> Result<Plan> {
+        self.edit_with_gate(id, event, Some((runtime, issuer)), edit)
+    }
+    fn edit_with_gate(
+        &self,
+        id: &str,
+        event: &str,
+        fence: Option<(&str, &str)>,
+        edit: impl FnOnce(&mut Plan) -> Result<bool>,
+    ) -> Result<Plan> {
         let connection = self.connection.lock().expect("job journal");
         let mut plan = read(&connection, id)?;
+        if let Some((runtime, issuer)) = fence {
+            automation_occurrences::fence(
+                &connection,
+                &plan,
+                runtime,
+                issuer,
+                eefn::protocol::now_ms,
+            )?;
+        }
         if !edit(&mut plan)? {
             return Ok(plan);
         }
         stamp(&mut plan, event)?;
         validate_retained_review(&plan)?;
+        automation_occurrences::validate_job(&connection, &plan)?;
         let encoded = serde_json::to_string(&plan)?;
         self.check_size(&connection, id, encoded.len(), reserve(&plan))?;
         connection.execute(
@@ -387,14 +420,17 @@ impl JobStore {
         let (count,payload,reserved):(i64,i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(plan_json AS BLOB))),0),COALESCE(SUM(reserved_bytes),0) FROM durable_jobs",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
         let (automation_count,automation_bytes):(i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
         let (authorization_count,authorization_bytes,authorization_reserved_bytes):(i64,i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0),COALESCE(SUM(reserved_bytes),0) FROM automation_authorizations",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+        let (occurrence_count,occurrence_bytes):(i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences", [], |r|Ok((r.get(0)?,r.get(1)?)))?;
         let used = usize::try_from(payload)?
             .saturating_add(usize::try_from(reserved)?)
             .saturating_add(usize::try_from(automation_bytes)?)
             .saturating_add(usize::try_from(authorization_bytes)?)
-            .saturating_add(usize::try_from(authorization_reserved_bytes)?);
+            .saturating_add(usize::try_from(authorization_reserved_bytes)?)
+            .saturating_add(usize::try_from(occurrence_bytes)?);
         Ok(
             serde_json::json!({"count":count,"automation_count":automation_count,"automation_bytes":automation_bytes,"authorization_count":authorization_count,
-                "authorization_bytes":authorization_bytes,"authorization_reserved_bytes":authorization_reserved_bytes,"max_count":self.max_count,
+                "authorization_bytes":authorization_bytes,"authorization_reserved_bytes":authorization_reserved_bytes,
+                "occurrence_count":occurrence_count,"occurrence_bytes":occurrence_bytes,"max_count":self.max_count,
                 "payload_bytes":payload,"reserved_bytes":reserved,"max_bytes":self.max_bytes,"available_bytes":self.max_bytes.saturating_sub(used),
                 "over_limit":used>self.max_bytes||automations::count(&connection)?>self.max_count}),
         )
@@ -437,6 +473,15 @@ impl JobStore {
     pub fn remove_finished(&self, id: &str) -> Result<()> {
         let connection = self.connection.lock().expect("job journal");
         let plan = read(&connection, id)?;
+        if connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM automation_occurrences WHERE job_id=?1)",
+            [id],
+            |r| r.get::<_, bool>(0),
+        )? {
+            bail!(
+                "Occurrence lineage must be retained; terminal archiving is not implemented. No budget refund or replacement authorized"
+            );
+        }
         if !matches!(
             plan.status,
             PlanStatus::Completed
@@ -461,6 +506,7 @@ fn read(connection: &Connection, id: &str) -> Result<Plan> {
     let plan: Plan =
         serde_json::from_str(&raw).context("Damaged job record; retained for recovery")?;
     validate_retained_review(&plan)?;
+    automation_occurrences::validate_job(connection, &plan)?;
     Ok(plan)
 }
 pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {

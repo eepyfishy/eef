@@ -23,6 +23,8 @@ pub struct ApprovalRecord {
     pub expires_at_ms: u64,
     pub limits: GrantLimits,
     pub approval_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<eefn::automation_occurrence::Delegation>,
 }
 pub(crate) fn validate_options(
     plan_sha256: &str,
@@ -44,7 +46,7 @@ fn hex_digest(s: &str) -> bool {
         && s.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
-fn digest(record: &ApprovalRecord) -> Result<String> {
+pub(crate) fn digest(record: &ApprovalRecord) -> Result<String> {
     let mut value = serde_json::to_value(record)?;
     value.as_object_mut().unwrap().remove("approval_sha256");
     eefn::grants::definition_digest(&value)
@@ -58,7 +60,8 @@ impl ApprovalRecord {
             && now < self.expires_at_ms
     }
     pub(crate) fn confirms(&self, command: &PlanningCommand) -> bool {
-        matches!(command, PlanningCommand::Approve { operation_id, expected_revision, plan_sha256, valid_for_ms, limits, .. }
+        self.delegation.is_none()
+            && matches!(command, PlanningCommand::Approve { operation_id, expected_revision, plan_sha256, valid_for_ms, limits, .. }
             if self.operation_id == *operation_id && self.source_revision == *expected_revision
             && self.plan_sha256 == *plan_sha256 && self.valid_for_ms == *valid_for_ms && self.limits == *limits)
     }
@@ -127,6 +130,12 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
         .context("Approval lacks a request review")?;
     validate_options(&record.plan_sha256, record.valid_for_ms, &record.limits)?;
     eefn::job_commands::validate_operation_id(&record.operation_id)?;
+    if let Some(delegation) = &record.delegation {
+        delegation.validate()?;
+        if delegation.reservation_id != record.operation_id {
+            bail!("Delegation receipt differs from approval");
+        }
+    }
     if uuid::Uuid::parse_str(&record.operation_id)?.is_nil()
         || record.schema_version != 1
         || !hex_digest(&record.issuer_id)
@@ -238,6 +247,7 @@ pub(crate) async fn approve(
             .context("Approval time overflow")?,
         limits: limits.clone(),
         approval_sha256: String::new(),
+        delegation: None,
     };
     let driver = crate::request_execution::Driver::new(runtime);
     for index in 0..saved.tasks.len() {
@@ -337,6 +347,7 @@ pub(crate) mod tests {
             expires_at_ms: now + valid_for_ms,
             limits: limits.clone(),
             approval_sha256: String::new(),
+            delegation: None,
         };
         r.approval_sha256 = digest(&r).unwrap();
         r
