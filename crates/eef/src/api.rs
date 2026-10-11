@@ -154,6 +154,7 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
         .route("/api/status", get(status))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/commands/requests/planning", post(request_planning))
+        .route("/api/commands/automations", post(automation_command))
         .route("/api/commands/requests/execute", post(request_execute))
         .route("/api/commands/requests/receipt", post(request_receipt))
         .route("/api/commands/requests/result", post(request_result))
@@ -244,6 +245,28 @@ async fn request_planning(
     Json(request): Json<crate::request_planning::PlanningRequest>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.planning_command(request).await?))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AutomationRequest {
+    schema_version: u32,
+    expected_runtime_id: String,
+    command: eefn::automation::AutomationCommand,
+}
+async fn automation_command(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<AutomationRequest>,
+) -> ApiResult<Value> {
+    if request.schema_version != 1 || request.expected_runtime_id != runtime.instance_id {
+        return Err(anyhow::anyhow!("Automation schema/coordinator runtime changed").into());
+    }
+    Ok(Json(
+        runtime
+            .engine
+            .store
+            .automation_command(request.command, None)?,
+    ))
 }
 async fn request_abandon(
     State(runtime): State<Arc<Runtime>>,

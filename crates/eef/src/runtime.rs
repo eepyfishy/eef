@@ -665,6 +665,24 @@ impl Runtime {
             .and_then(Value::as_str)
             .unwrap_or("message");
         let result = match kind {
+            "automations.command" => {
+                match serde_json::from_value::<eefn::automation::AutomationCommand>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(command)
+                        if command
+                            .receipt()
+                            .is_none_or(|id| id == context.request_id()) =>
+                    {
+                        self.engine
+                            .store
+                            .automation_command(command, Some(context.origin_node()))
+                    }
+                    _ => Err(anyhow::anyhow!(
+                        "Invalid automation command or receipt; no timer or execution"
+                    )),
+                }
+            }
             "message" => Err(anyhow::anyhow!(
                 "Legacy message execution is retired. Interpret through the running node and save a reviewed request; no keyword, model or workload fallback."
             )),

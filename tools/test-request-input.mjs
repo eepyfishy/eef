@@ -19,7 +19,9 @@ function launch(name,args,extra={}) {
 }
 async function cli(name,path,args,success=true) {
  const child=launch(name,['--config',path,'--json',...args]),timer=setTimeout(()=>child.kill(),60000);
- try {const r=await child.result;assert.equal(r.code,success?0:1,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}
+ try {const r=await child.result;
+  if(r.code!==(success?0:1))await writeFile(join(scratch,'unexpected-cli.json'),JSON.stringify({command:args,expected_exit:success?0:1,...r},null,2));
+  assert.equal(r.code,success?0:1,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}
 }
 const nodeCli=(args,success=true)=>cli('eefn',configPath,args,success);
 async function json(url,body,method) {

@@ -4,6 +4,17 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Automation definition authoring (unreleased after alpha.6)
+
+`eefn automations define|list|show|remove` shares the running node's authenticated
+command service. It retains exact unexecuted compiled-source snapshots, bounded
+timing/run declarations and compact removal receipts in the existing job database
+and quotas. Definitions stay disabled: no timer, approval or workload is started.
+Foreign origins, stale sources and conflicting receipts fail without mutation.
+After an uncertain reply inspect the original definition ID; do not manufacture
+a replacement receipt or assume rollback. See [commands and remaining execution
+requirements](AUTOMATION-DEFINITIONS.md). Browser and model operation are not required.
+
 ## Default workload boundary (unreleased after alpha.6)
 
 `eefn --ask TEXT`, `eefn requests input --text TEXT [--operation-id UUID]`, and

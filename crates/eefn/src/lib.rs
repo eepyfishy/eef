@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod authentication;
+pub mod automation;
 pub mod client;
 pub mod connection_commands;
 pub mod context;

@@ -11,6 +11,9 @@ use std::{
     time::Duration,
 };
 
+#[path = "automations.rs"]
+mod automations;
+
 // Logical quota headroom, not a promise that the physical disk cannot fill.
 const RECOVERY_RESERVE: usize = 4096;
 fn reserve(plan: &Plan) -> usize {
@@ -165,6 +168,7 @@ impl JobStore {
         }
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS durable_jobs (job_id TEXT PRIMARY KEY, plan_json TEXT NOT NULL, updated_ms INTEGER NOT NULL, reserved_bytes INTEGER NOT NULL DEFAULT 0);")?;
+        connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_definitions (definition_id TEXT PRIMARY KEY, record_json TEXT NOT NULL);")?;
         let columns = connection
             .prepare("PRAGMA table_info(durable_jobs)")?
             .query_map([], |r| r.get::<_, String>(1))?
@@ -181,6 +185,7 @@ impl JobStore {
             max_count,
             max_bytes,
         });
+        store.validate_automations()?;
         for plan in store.list()? {
             {
                 // Older development journals did not budget for interruption.
@@ -293,9 +298,7 @@ impl JobStore {
 
     fn insert_locked(&self, connection: &Connection, mut plan: Plan) -> Result<Plan> {
         validate(&plan)?;
-        let count: i64 =
-            connection.query_row("SELECT count(*) FROM durable_jobs", [], |r| r.get(0))?;
-        if usize::try_from(count)? >= self.max_count {
+        if automations::count(connection)? >= self.max_count {
             bail!("Job history is full. Remove finished jobs or increase jobs.max_count.")
         }
         let event = if plan.status == PlanStatus::Review {
@@ -368,7 +371,10 @@ impl JobStore {
             bail!("Job record exceeds 8 MiB; execution cannot advance without a durable checkpoint")
         }
         let other:i64=connection.query_row("SELECT COALESCE(SUM(length(CAST(plan_json AS BLOB))+reserved_bytes),0) FROM durable_jobs WHERE job_id<>?1",[id],|r|r.get(0))?;
-        if cost > self.max_bytes.saturating_sub(usize::try_from(other)?) {
+        let other = usize::try_from(other)?
+            .checked_add(automations::definition_bytes(connection)?)
+            .context("Storage size overflow")?;
+        if cost > self.max_bytes.saturating_sub(other) {
             bail!("Job storage is full. Remove finished jobs or increase jobs.max_bytes.")
         }
         Ok(())
@@ -376,9 +382,14 @@ impl JobStore {
     pub fn usage(&self) -> Result<serde_json::Value> {
         let connection = self.connection.lock().expect("job journal");
         let (count,payload,reserved):(i64,i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(plan_json AS BLOB))),0),COALESCE(SUM(reserved_bytes),0) FROM durable_jobs",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
-        let used = usize::try_from(payload)?.saturating_add(usize::try_from(reserved)?);
+        let automation_bytes = automations::definition_bytes(&connection)?;
+        let automation_count =
+            automations::count(&connection)?.saturating_sub(usize::try_from(count)?);
+        let used = usize::try_from(payload)?
+            .saturating_add(usize::try_from(reserved)?)
+            .saturating_add(automation_bytes);
         Ok(
-            serde_json::json!({"count":count,"max_count":self.max_count,"payload_bytes":payload,"reserved_bytes":reserved,"max_bytes":self.max_bytes,"available_bytes":self.max_bytes.saturating_sub(used),"over_limit":used>self.max_bytes||usize::try_from(count)?>self.max_count}),
+            serde_json::json!({"count":count,"automation_count":automation_count,"automation_bytes":automation_bytes,"max_count":self.max_count,"payload_bytes":payload,"reserved_bytes":reserved,"max_bytes":self.max_bytes,"available_bytes":self.max_bytes.saturating_sub(used),"over_limit":used>self.max_bytes||usize::try_from(count)?.saturating_add(automation_count)>self.max_count}),
         )
     }
     pub fn interrupt(&self, id: &str) -> Result<()> {

@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Author source-bound disabled automations; does not start timers or work.
+    Automations {
+        #[command(subcommand)]
+        command: eefn::automation::AutomationCommand,
+    },
     /// Inspect consumed execution receipts without dispatch, replay or a dashboard.
     Grants {
         #[command(subcommand)]
@@ -1303,6 +1308,42 @@ enum NetworkAction {
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Automations { command } = command {
+        use serde_json::json;
+        command.validate()?;
+        if eefn::setup::instance_lock(&args.config)?.is_some() {
+            bail!("Start this node first; automation commands never launch a runtime")
+        }
+        let file = load_file(&args.config)?;
+        let local = file.dashboard.unwrap_or_default();
+        let address = eefn::local_commands::endpoint(
+            &args.config,
+            &file.node_id,
+            &local.host,
+            local.port,
+            local.enabled,
+        )?;
+        let receipt = command
+            .receipt()
+            .map(str::to_owned)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let exchange=async {
+            let response=reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
+                .post(format!("http://{address}/api/commands/automations")).timeout(Duration::from_secs(25))
+                .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"request_id":receipt,"command":command})).send().await?;
+            let ok=response.status().is_success();let value=eefn::model_manager::bounded_json(response).await?;
+            if !ok || value["schema_version"]!=1 || value["report_type"]!="node_automation_definition" || value["node_id"]!=file.node_id
+                || value["request_id"]!=receipt || value["command"]!=json!(command) || !value["success"].is_boolean()
+                || value["timers_started"]!=false || value["execution_authorized"]!=false || value["dispatched"]!=false || value["automatically_retried"]!=false
+                || (value["success"]==true && (value["coordinator_acknowledged"]!=true || value["outcome_unknown"]!=false
+                    || !eefn::automation::confirmed(&value["result"],command,Some(&file.node_id)))) {bail!("Unconfirmed automation reply")}
+            Ok::<_,anyhow::Error>(value)
+        }.await;
+        return Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"node_automation_definition","node_id":file.node_id,
+            "request_id":receipt,"command":command,"success":false,"coordinator_acknowledged":false,"outcome_unknown":true,
+            "timers_started":false,"execution_authorized":false,"dispatched":false,"automatically_retried":false,"error_code":"automation_unconfirmed",
+            "note":"No confirmed reply. Inspect automations show with the retained definition ID; never generate a new receipt merely to retry."})));
+    }
     if let Commands::Grants { command: action } = command {
         let file = load_file(&args.config)?;
         let node_id = file.node_id;

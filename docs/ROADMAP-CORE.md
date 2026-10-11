@@ -122,6 +122,14 @@ Outgoing encoded frames obey the existing receiver limit. Real TCP fault and
 actual headless-node command fixtures cover retirement/reconnection, not native
 stop, physical two-PC behavior, the intermittent busy reply or automation.
 
+The next [durable automation definition](AUTOMATION-DEFINITIONS.md) increment
+adds exact compiled-source authoring/inspection/removal through shared node
+commands, inside the existing job journal and quotas. Definitions stay disabled;
+compact removal receipts prevent creation-ID reuse from recreating them. Source
+snapshot retention is not reusable approval, current executor readiness or a
+timer. Bounded owner authorization, atomic occurrence admission, safe triggering,
+overlap/restart/missed-trigger handling and full physical execution remain open.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

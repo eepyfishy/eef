@@ -291,3 +291,37 @@ The fix does not diagnose the prior intermittent busy response, prove native
 termination, complete durable automation or replace physical acceptance. Published
 versions, installers, installed nodes, update feeds and UI assets are unchanged.
 Full stable 0.4.0 acceptance remains open.
+
+## Durable automation authoring checkpoint (2026-10-12)
+
+[Source-bound definitions](AUTOMATION-DEFINITIONS.md) add thirteen tests, for
+441 total. Both final full workspace/all-target feature-mode suites and the fresh
+default executable/example build pass. The public CLI/API authoring fixture
+(`automation-definitions-wHI93Z`) uses two pinned-TLS logical nodes, exact source
+submission/retention, scope refusals, lost-reply inspection, pagination, concurrent
+deduplication, coordinator restart and compact removal receipts. Definitions
+remain disabled; no timer, reusable approval, occurrence or execution is claimed.
+
+Fresh public regressions pass node commands (`node-commands-j7CKie`), output
+retirement/reconnection (`node-output-i99KyY`), model metadata with saved UI
+preferences (`model-metadata-7ZVwUU`), first-run/browser (`first-run-xGsFNN`) and
+verified-artifact pinned-TLS CPU inference (`real-model-havd35`). The latter
+reuses the existing exact 1.5B artifact without copying/downloading weights;
+it checks reviewed grants, CPU launch settings, verified restart, retained output
+and model withdrawal, not semantic-model quality or total resource quotas.
+The backend/browser source guard, JavaScript syntax and diff checks pass separately.
+
+An input/answer fixture (`request-input-6Rt7dR`) failed during its second
+clarification round with `preparation_not_confirmed` while other fixtures ran.
+It is not counted as passing. Read-only inspection of its retained journal shows
+revision 6, four proposals, two answers, no compiled plan and no execution record.
+The standalone run (`request-input-NVkYUB`) passes unchanged production behavior.
+The separate reviewed-request regression (`request-review-L2J0xl`) also passes.
+Cause is unproven; no hidden retry, weakened assertion, policy change or claimed
+busy-race fix is introduced. The fixture now retains unexpected CLI replies in
+its isolated directory so a future failure preserves the nested evidence.
+
+Installed nodes, published versions/installers, update feeds and browser assets
+are unchanged. Durable scheduling/reusable authorization, bootstrap quality,
+physical acceptance, complete runtime/peer/media/cluster behavior and
+MSI/Defender/Authenticode release gates remain open.

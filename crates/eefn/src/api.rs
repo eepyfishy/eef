@@ -120,6 +120,7 @@ impl NodeService {
             .route("/api/commands/requests/prepare", post(request_preparation))
             .route("/api/commands/requests/submit", post(request_submission))
             .route("/api/commands/requests/planning", post(request_planning))
+            .route("/api/commands/automations", post(automation_command))
             .route(
                 "/api/commands/requests/abandon",
                 post(request_abandon_command),
@@ -321,6 +322,13 @@ async fn request_preview(
     Json(request): Json<crate::request_preview::PreviewRequest>,
 ) -> Json<Value> {
     Json(state.preview_request(request).await)
+}
+
+async fn automation_command(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::automation::AutomationRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.automation_request(request).await?))
 }
 
 async fn request_review(
