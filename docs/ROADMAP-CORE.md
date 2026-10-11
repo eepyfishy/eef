@@ -87,6 +87,15 @@ but matches only 3/20 semantic expectations; it remains unapproved as a default.
 Formatting hints never replace independent validation, approval or execution
 policy. This is quality evidence, not completion of bootstrap or automation.
 
+The follow-up adds an optional exact-artifact 1.5B manual catalog choice and
+command-driven real download/inference evidence. It accepts 18/20 proposals and
+matches 12/20 labels, but inspection finds copied placeholder goals/questions;
+two value-free prompt experiments regress semantic labels and are reverted.
+Neither candidate is approved as a default. The production harness now records
+a shared-prompt reference hash. Automatic bootstrap, held-out faithful-language
+evaluation and physical resource acceptance remain open; no UI, installed node
+or release/feed mutation occurs.
+
 The subsequent [file-free private pairing input](NODE-CREDENTIALS.md#file-free-invitation-input-unreleased-after-alpha6)
 adds a shared exact-node/runtime command for private API bodies and bounded piped
 CLI input. It preserves identity, permissions, models and paused preference,

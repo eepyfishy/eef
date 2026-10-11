@@ -12,5 +12,18 @@
     "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
     "bytes": 491400032,
     "recommended_ram_gb": 2
+  },
+  {
+    "id": "qwen2.5-1.5b",
+    "name": "Qwen 2.5 — 1.5B text model",
+    "description": "An optional larger text model. Not approved as an automatic request interpreter default.",
+    "modality": "text",
+    "ollama": "qwen2.5:1.5b",
+    "source": "Qwen / Hugging Face",
+    "license": "Apache-2.0",
+    "source_page": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/91cad51170dc346986eccefdc2dd33a9da36ead9/README.md",
+    "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+    "bytes": 1117320736
   }
 ]

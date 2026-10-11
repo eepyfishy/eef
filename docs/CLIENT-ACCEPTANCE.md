@@ -191,3 +191,37 @@ onboarding acceptance. UI assets, personal installations, release artifacts and
 update feeds are unchanged. Private same-PC provisioning/orchestration, approved
 model bootstrap, durable automation, full runtime/peer/media/cluster work and
 MSI/Defender/Authenticode gates remain on the full active roadmap.
+
+## Optional model and production quality checkpoint (2026-10-11)
+
+The manual [1.5B catalog option](MODEL-CANDIDATE-EVALUATION.md#optional-15b-candidate-2026-10-11)
+adds one bundled-catalog contract test (417 total). The exact revision, file size,
+SHA-256 and declared license are recorded; existing first/default catalog
+behavior, owner-managed providers and interpreter role selection are unchanged.
+The real-model fixture's opt-in download now uses public preflight/admission,
+operation-ID status and installed-inventory commands, checking installation
+does not silently select a role. Its one real download/inference run passed
+(`real-model-9JKfMN`); later fixtures reuse that verified artifact without copies.
+
+Three [production quality runs](INTERPRETER-QUALITY.md#larger-candidate-and-rejected-prompt-experiments-2026-10-11)
+complete on the same twenty-case frozen rubric. Placeholder copying makes the
+original prompt's 12/20 label matches misleading; both value-free alternatives
+regress labels and are reverted. The harness now records a shared Rust prompt
+reference hash. Neither candidate is approved as an automatic default, and
+production prompt/validator/approval rules are unchanged.
+
+After reverting the experiments, fresh default binaries pass all 417 Rust tests,
+real CPU reviewed inference/restart/retained output (`real-model-VSXd3e`), input/
+answer workflow (`request-input-txMUlX`), request regression
+(`request-review-AuXEYS`), first-run/browser (`first-run-oi23OO`), model-download
+commands (`model-downloads-myOSwP`), the frozen rubric and source backend/browser
+guard. An initial no-dashboard suite run timed out waiting for a pinned grant
+session while other fixtures ran in parallel; it is not counted as a pass.
+That exact test passed separately, then the full no-dashboard suite passed all
+417 tests without other fixtures running. Timing contention is a possible cause,
+not a proven diagnosis; no timeout or security assertion was loosened.
+
+These are isolated local logical-node tests, not physical second-PC acceptance,
+bootstrap or release acceptance. UI assets, installed nodes, public installers
+and update feeds remain unchanged. Durable automation, full resource/termination,
+peer/media/cluster and MSI/Defender/Authenticode gates remain open.

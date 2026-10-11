@@ -92,3 +92,39 @@ matched 3/20. These runs are not directly comparable to the earlier profiles.
 The candidate remains **unapproved for automatic default use**. More reliable
 formatting does not solve semantic interpretation, faithful questions or planning.
 No new model was downloaded/copied, selected in an installed node or bundled.
+
+## Optional 1.5B candidate, 2026-10-11
+
+The new manual catalog option `qwen2.5-1.5b` pins Qwen2.5-1.5B-Instruct Q4_K_M:
+
+- Revision: `91cad51170dc346986eccefdc2dd33a9da36ead9`.
+- File: `qwen2.5-1.5b-instruct-q4_k_m.gguf`.
+- Bytes: `1117320736`.
+- SHA-256: `6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e`.
+
+The publisher's [pinned model card](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/91cad51170dc346986eccefdc2dd33a9da36ead9/README.md)
+and [pinned license](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/LICENSE)
+declare Apache-2.0. Artifact size/digest were checked against the publisher's
+Hugging Face LFS metadata, then against the downloaded bytes. This is provenance
+and an upstream license declaration, not legal review or model-quality approval.
+Future redistribution must retain applicable license/notices and record changes.
+The mutable Ollama alias `qwen2.5:1.5b` is not the verified GGUF artifact and was
+not evaluated. Owner-managed catalog/provider configuration remains available.
+
+One explicit test-only download was admitted through public `models install-plan`
+and `models install` commands, inspected by its operation ID through
+`models download-status`, and found through `models installed`. The fixture
+verified installation did not select any interpreter/model role. Existing
+transfer disk checks, exact size/SHA verification and partial cleanup were used.
+The verified artifact is retained in the ignored `real-model-9JKfMN` directory,
+not copied into a bundle or personal installation. Subsequent quality runs reuse
+that one artifact without downloads/copies.
+
+`real-model-9JKfMN` passed real CPU text generation through explicit reviewed
+grants, pinned TLS, node restart with a new runtime ID, retained completed output
+without replay, and model withdrawal. These are isolated one-PC processes, not
+physical two-PC acceptance or interpretation quality. The
+[production quality results](INTERPRETER-QUALITY.md#larger-candidate-and-rejected-prompt-experiments-2026-10-11)
+reject both tested value-free prompts and leave this candidate unapproved as an
+automatic default. The existing first catalog entry/default behavior is unchanged;
+no bootstrap, automatic role assignment or update-feed change is introduced.

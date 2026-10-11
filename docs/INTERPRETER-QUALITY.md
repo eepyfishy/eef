@@ -26,6 +26,10 @@ inference, and sends twenty fixed synthetic inputs. It verifies unchanged saved
 configuration, no downloads, no workload and zero successful connections. It
 stops only its owned processes. Reports stay in ignored
 `.validation/interpreter-quality-*` directories, not release artifacts.
+New reports also record a `prompt_reference` hash emitted by the test-only Rust
+fixture using the shared prompt function and the same capability vocabulary.
+This is a reproducibility reference, not intercepted inference or remote
+attestation. Build examples alongside the fresh production binaries.
 
 Rubric version 1 is defined in `tools/interpreter-quality-cases.mjs`; expectations
 were fixed before candidate runs. It covers status, conversation, Thai/Spanish,
@@ -75,3 +79,44 @@ second-PC CPU/memory measurement, and a configurable verified bootstrap with
 offline/skip/cancellation/disk behavior that leaves deterministic commands usable.
 See [candidate provenance](MODEL-CANDIDATE-EVALUATION.md) and
 [interpretation boundaries](INTERPRETATION.md).
+
+## Larger candidate and rejected prompt experiments, 2026-10-11
+
+An optional `qwen2.5-1.5b` catalog entry pins the publisher's 1,117,320,736-byte
+Q4_K_M GGUF. Its source/license and exact digest are recorded in
+[candidate provenance](MODEL-CANDIDATE-EVALUATION.md#optional-15b-candidate-2026-10-11).
+It is not a default, bundled model, automatic download or interpreter-role
+selection. The Ollama alias does not identify the evaluated GGUF bytes.
+
+The same production harness, CPU, runtime, context, generation schema and frozen
+rubric were used. These are individual development runs, not held-out tests,
+controlled accuracy comparisons or physical second-PC acceptance.
+
+| 1.5B production variant | Accepted | Semantic matches | Startup | Peak working set | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| Original prompt, bounded generation schema | 18/20 | 12/20 | 4,311 ms | 1,868,947,456 bytes | `interpreter-quality-a5yFhr` |
+| Value-free ten-field definitions | 19/20 | 0/20 | 4,748 ms | 1,882,906,624 bytes | `interpreter-quality-0f6ATc` |
+| Value-free definitions with explicit intent/workload guidance | 18/20 | 1/20 | 4,491 ms | 1,933,471,744 bytes | `interpreter-quality-wTy4XM` |
+
+Independent inspection of the first run found all eighteen accepted goals copied
+the template's placeholder goal and fourteen questions copied its generic
+question. The 12/20 label score therefore overstates usefulness. The value-free
+prompts produced more request-specific goals/questions, but repeatedly labeled
+actions and greetings as information, requested an address for this-node status,
+or failed to ask about underspecified ongoing/destructive work. Thai output also
+needs language/faithfulness review. Neither experimental prompt is retained;
+the production prompt and independent validator remain unchanged.
+
+Reference prompt hashes for the rejected variants are
+`3fa19f536c9ee2b26093163de6993f3e71f0d873c821ef2c4f6b8dc5db138579`
+and `614de73f39e10efe690e89aa965d55bd91e2b8f7b25a33a48844d252298a8cbe`,
+respectively. Their local reports retain actual synthetic inputs/proposals and
+binary hashes; current source reproduces the retained prompt, not the rejected
+variants. No expected answers, validator rules or approval boundaries were
+relaxed to improve these counts. All runs completed without coordinator access,
+workloads, downloads/copies or saved configuration changes.
+
+**Neither evaluated candidate is approved for automatic default use.** Further
+work must improve faithful interpretation and specific clarification, then use
+independently reviewed held-out multilingual cases and physical CPU/memory
+acceptance. Successful reviewed text generation is not this quality gate.

@@ -44,19 +44,30 @@ try{
  let modelPath=reused,last=-1;
  if(!reused){
  console.log('Explicit test-only model download: '+entry.name+' ('+entry.bytes+' bytes)');
- await json(node+'/api/models/install',{id:entry.id});
+ const preflight=await cli('eefn',configPath,['models','install-plan','--model',entry.id]);
+ assert.equal(preflight.plan.backend,'llamacpp');assert.equal(preflight.plan.can_request,true);
+ assert.equal(preflight.plan.download_started,false);assert.equal(preflight.plan.artifact.sha256,entry.sha256);
+ assert.equal(preflight.plan.artifact.bytes,entry.bytes);
+ const admitted=await cli('eefn',configPath,['models','install','--model',entry.id]);
+ assert.equal(admitted.accepted,true);assert.equal(admitted.completed,false);assert.equal(admitted.selection_changed,false);
+ const downloadId=admitted.operation_id;
  const deadline=Date.now()+900000;
- while(true){const job=(await json(node+'/api/status')).download;
+ while(true){
+ const inspected=await cli('eefn',configPath,['models','download-status','--id',downloadId]);
+ assert.equal(inspected.known,true);const job=inspected.download;assert.equal(job.id,downloadId);
   if(job.state==='error')throw Error(job.error);
   if(job.state==='installed')break;
   const percent=Math.floor(100*(job.completed||0)/(job.total||1));if(percent>=last+10){console.log('Model download '+percent+'%');last=percent;}
   if(Date.now()>deadline)throw Error('Model download timed out');await sleep(1000);
  }
- const model=(await json(node+'/api/models')).installed.find(m=>m.id===entry.id);assert(model);modelPath=model.path;
+ const installed=await cli('eefn',configPath,['models','installed']);
+ const model=installed.inventory.installed.find(m=>m.id===entry.id);assert(model);modelPath=model.path;
+ assert.equal((await cli('eefn',configPath,['models','show'])).saved_selections.length,0,'installation cannot silently select an interpreter');
  }else assert.equal((await json(node+'/api/status')).download.state,'idle');
  assert.equal((await stat(modelPath)).size,entry.bytes);
  const hash=createHash('sha256');for await(const chunk of createReadStream(modelPath))hash.update(chunk);
  assert.equal(hash.digest('hex'),entry.sha256,'existing artifacts must still pass exact verification');
+ console.log('Verified test artifact: '+modelPath);
  const selected=(await json(node+'/api/config')).config;selected.models.llamacpp.slots=[{model_id:entry.id,model_path:modelPath,port:modelPort,context:2048,gpu_layers:0}];
  await json(node+'/api/config',{config:selected},'PUT');await cli('eefn',configPath,['restart','--wait-seconds','60']);
  const ready=async()=>{const status=await json(node+'/api/status');const models=(await json(eef+'/api/commands/models')).nodes.find(n=>n.node_id===initial.node_id)?.models;return status.connection.state==='connected'&&models?.some(m=>m.instance.model_id===entry.id&&m.lifecycle==='ready');};

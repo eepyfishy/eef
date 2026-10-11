@@ -49,6 +49,34 @@ mod tests {
     use super::*;
     use serde_json::json;
     #[test]
+    fn bundled_catalog_has_unique_ids_and_revision_pinned_verified_shapes() {
+        let catalog: Vec<Value> =
+            serde_json::from_str(include_str!("../../../config/model-catalog.json")).unwrap();
+        assert!(!catalog.is_empty() && catalog.len() <= 64);
+        let mut ids = std::collections::BTreeSet::new();
+        for entry in catalog {
+            let id = entry["id"].as_str().unwrap();
+            assert!(!id.is_empty() && id.len() <= 128 && ids.insert(id.to_owned()));
+            let artifact = GgufArtifact::from_catalog(&entry).unwrap();
+            let revision = artifact
+                .url
+                .split("/resolve/")
+                .nth(1)
+                .unwrap()
+                .split('/')
+                .next()
+                .unwrap();
+            assert_eq!(revision.len(), 40);
+            assert!(revision.bytes().all(|c| c.is_ascii_hexdigit()));
+            assert!(entry["license"].as_str().is_some_and(|s| !s.is_empty()));
+            assert!(
+                reqwest::Url::parse(entry["source_page"].as_str().unwrap())
+                    .is_ok_and(|url| url.scheme() == "https")
+            );
+            assert!(entry.get("request_interpreter").is_none());
+        }
+    }
+    #[test]
     fn shared_artifact_contract_rejects_incomplete_or_unsafe_metadata() {
         let valid = json!({"url":"https://example.invalid/model.gguf", "sha256":"a".repeat(64), "bytes":10});
         let artifact = GgufArtifact::from_catalog(&valid).unwrap();

@@ -39,6 +39,21 @@ async function port(){const s=createServer();await new Promise(r=>s.listen(0,'12
 async function json(path){const r=await fetch(node+path,{signal:AbortSignal.timeout(5000)});assert(r.ok);return r.json();}
 async function until(fn,label){const end=Date.now()+120000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,200));}throw Error('Timeout: '+label);}
 const exec=promisify(execFile);
+async function referencePrompt(capabilities){
+ // Same shared Rust function, emitted by the test-only executable. This is a
+ // reproducibility reference, not interception/attestation of a remote model.
+ const path=join(bin,'examples','interpretation_fixture.exe');
+ const child=spawn(path,[],{cwd:bundle,windowsHide:true,env:{...env,EEF_INTERPRETATION_FIXTURE:'1'},stdio:['pipe','pipe','pipe']});
+ let out='';child.stdout.on('data',b=>out=(out+b).slice(-65536));child.stderr.resume();
+ child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r(code));});children.push(child);
+ child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify({mode:'prompt',input:cases[0].input,allowed_capabilities:capabilities}));
+ const timer=setTimeout(()=>child.kill(),10000);
+ try{
+  assert.equal(await child.result,0,'shared prompt fixture failed');const value=JSON.parse(out);assert.equal(value.success,true);
+  assert.equal(value.messages[1].content,cases[0].input);assert.equal(value.messages[0].role,'system');
+  return {sha256:createHash('sha256').update(value.messages[0].content).digest('hex'),fixture_sha256:await digest(path)};
+ }finally{clearTimeout(timer);}
+}
 async function sample(nodeProcess){
  if(process.platform!=='win32')return null;
  assert(Number.isInteger(nodeProcess.pid)&&nodeProcess.pid>0);
@@ -74,6 +89,7 @@ try{
  await until(async()=>{const s=await json('/api/status');return s.connection.state==='paused'&&s.models.some(m=>m.model_id===entry.id&&m.model_metadata.lifecycle==='ready');},'isolated CPU model ready');
  report.startup_ms=Math.round(performance.now()-started);runtimeId=(await json('/api/diagnostics')).runtime_id;
  report.allowed_capabilities=(await json('/api/status')).capabilities;report.node_version=(await json('/api/status')).version;
+ report.prompt_reference=await referencePrompt(report.allowed_capabilities);
  assert.equal((await fetch(node+'/')).status,404);const saved=await readFile(configPath,'utf8');
  for(const item of cases){
   const begin=performance.now(),value=await cli(['requests','preview','--text',item.input]);
@@ -98,6 +114,7 @@ try{
 finally{
  // Stop only the test's owned process trees, including its owned model runtime.
  for(const child of children)if(child.exitCode===null){
+  if(child.pid===undefined)continue; // Spawn failed: there is no owned process to stop.
   assert(Number.isInteger(child.pid)&&child.pid>0);
   if(process.platform==='win32')await exec('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,timeout:10000}).catch(()=>child.kill());
   else child.kill();
