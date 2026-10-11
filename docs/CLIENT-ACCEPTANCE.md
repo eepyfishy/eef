@@ -325,3 +325,47 @@ Installed nodes, published versions/installers, update feeds and browser assets
 are unchanged. Durable scheduling/reusable authorization, bootstrap quality,
 physical acceptance, complete runtime/peer/media/cluster behavior and
 MSI/Defender/Authenticode release gates remain open.
+
+## Checkpoint diagnosis and owner automation commands (2026-10-12)
+
+Four new tests bring the full workspace/all-target total to 445, passing both
+default and no-default-feature modes. The subsequent fresh default executable
+and example build passes. Formatting, JavaScript syntax, diff checks and the
+backend/browser source boundary also pass.
+
+Targeted recovery of the original fixture's full saved tool output shows
+`preparation_unconfirmed`, with inference requested, saving attempted and
+uncertainty true. It does not establish whether the coordinator rejected,
+transport failed or success confirmation failed. Three unchanged concurrent
+fixtures (`request-input-bIhk3P`, `request-input-NUn14n`,
+`request-input-YYWtLP`) passed before the diagnostic increment; those passes are
+not treated as a fix for the original intermittent failure.
+
+[Checkpoint diagnostics](SEMANTIC-PREPARATION.md) now preserve bounded private
+text on authenticated rejection, separately from transport/invalid-success
+uncertainty. Rejection still does not prove no commit. The two concurrent public
+input/answer fixtures (`request-input-R7O0LS`, `request-input-BklB8J`) pass with
+the new deterministic source-edit race: a stale method checkpoint is rejected,
+newer history remains intact, and repeating the original answer receipt only
+inspects history without inference or execution. Unexpected CLI failures now
+retain bounded coordinator/node runtime logs, not credential-provisioning output.
+
+The stronger authoring fixture (`automation-definitions-W3oFmF`) passes with the
+new `eef automations` local-owner adapter, two pinned-TLS logical nodes and no
+UI/models. It verifies owner authoring/show/list/removal, immutable source origin,
+foreign node refusals, removed-receipt reuse and all previous durable-definition
+checks. Actual owner CLI calls through a fault proxy cover a dropped reply,
+substituted source context, negative response after commit, stale runtime and
+invalid-runtime preflight. Invalid preflight sends no definition command;
+uncertain mutation replies retain exact receipts, and explicit inspection/reuse
+finds only one disabled definition. No timer, reusable approval, scheduled
+occurrence or execution is claimed.
+
+Fresh final-build regressions also pass the input/answer workflow
+(`request-input-94891w`) and the broader reviewed execution/recovery workflow
+(`request-review-KFnYa3`). The latter remains isolated fake-backend/pinned-TLS
+evidence, not physical two-PC, native termination or real-model quality evidence.
+
+The prior intermittent input/busy failures remain open investigation items.
+Installed nodes, browser assets, releases/installers and update feeds remain
+unchanged. The full stable-0.4.0 requirements and release gates remain in scope.

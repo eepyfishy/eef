@@ -10,7 +10,7 @@ import {randomBytes,randomUUID} from 'node:crypto';
 import {reviewedFixture} from './reviewed-fixture.mjs';
 const root=resolve(import.meta.dirname,'..'),bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const scratch=await mkdtemp(join(root,'.validation','automation-definitions-')),children=[],nodes=[];
-const eefConfig=join(scratch,'eef.yaml');let eef,proxy,proxyError,forwarded=0,confirmedSave=false;
+const eefConfig=join(scratch,'eef.yaml');let eef,proxy,ownerProxy,proxyError,forwarded=0,confirmedSave=false;
 const tags=httpServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end('{"models":[]}');});
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),
   PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
@@ -24,7 +24,7 @@ async function cli(name,config,args,success=true,input){
   const child=launch(name,config,['--json',...args],input),timer=setTimeout(()=>child.kill(),70000);
   try{const value=await child.result;assert.equal(value.code,success?0:1,'CLI failed (private output withheld)');return JSON.parse(value.out);}finally{clearTimeout(timer);}
 }
-const owner=(args)=>cli('eef',eefConfig,args);
+const owner=(args,success=true,config=eefConfig)=>cli('eef',config,args,success);
 const local=(node,args,success=true)=>cli('eefn',node.config,args,success);
 async function json(url,body){const r=await fetch(url,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(15000)});const v=await r.json();assert(r.ok,JSON.stringify(v));return v;}
 async function until(fn,label){const end=Date.now()+65000;while(Date.now()<end){if(proxyError)throw proxyError;try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,150));}throw Error('Timeout: '+label);}
@@ -63,6 +63,21 @@ try{
   const saved=await local(a,args(command));assert.equal(saved.success,true);assert.equal(saved.result.definition.state,'disabled');assert.equal(saved.result.timers_started,false);
   assert.equal(saved.result.definition.source.plan_id,source.id);assert.equal(saved.result.definition.owner_context.origin_node,a.id);
   const repeated=await local(a,args(command));assert.equal(repeated.result.reused,true);assert.deepEqual(repeated.result.definition,saved.result.definition);
+  const ownerView=await owner(['automations','show',command.operation_id]);assert.equal(ownerView.actor,'coordinator_owner');
+  assert.equal(ownerView.success,true);assert.equal(ownerView.coordinator_acknowledged,true);assert.equal(ownerView.outcome_unknown,false);
+  assert.deepEqual(ownerView.result.definition,saved.result.definition);assert.equal(ownerView.execution_authorized,false);
+  const ownerCommand={...command,operation_id:randomUUID(),name:'Owner-authored definition'};
+  const ownerSaved=await owner(args(ownerCommand));assert.equal(ownerSaved.result.definition.state,'disabled');
+  assert.equal(ownerSaved.result.definition.owner_context.origin_node,a.id,'local coordinator ownership cannot rewrite immutable node origin');
+  assert.equal((await owner(args(ownerCommand))).result.reused,true);
+  const ownerRemoval=['automations','remove',ownerCommand.operation_id,'--revision','1','--operation-id',randomUUID()];
+  const ownerRemoved=await owner(ownerRemoval);assert.equal(ownerRemoved.result.definition.state,'removed');
+  assert.equal((await owner(ownerRemoval)).result.reused,true);
+  assert.equal((await owner(args(ownerCommand))).result.definition.state,'removed');
+  assert.equal((await local(a,['automations','show',ownerCommand.operation_id])).result.definition.state,'removed');
+  await local(b,['automations','show',ownerCommand.operation_id],false);
+  const ownerPage=await owner(['automations','list','--limit','1']);assert.equal(ownerPage.result.items.length,1);
+  assert(ownerPage.result.next_after);assert(!JSON.stringify(ownerPage).includes('Explicit reusable status source'));
   await local(b,['automations','show',command.operation_id],false);await local(b,args({...command,operation_id:randomUUID()}),false);
   await local(b,['automations','remove',command.operation_id,'--revision','1','--operation-id',randomUUID()],false);
   assert.deepEqual((await local(b,['automations','list'])).result.items,[]);
@@ -83,7 +98,8 @@ try{
   assert.equal(forwarded,1);assert.equal(confirmedSave,true);if(proxyError)throw proxyError;
   assert.equal((await local(a,['automations','show',lost.operation_id])).result.definition.state,'disabled');
   const page=await local(a,['automations','list','--limit','1']);assert.equal(page.result.items.length,1);assert(page.result.next_after);
-  const second=await local(a,['automations','list','--limit','1','--after',page.result.next_after]);assert.equal(second.result.items.length,1);assert.equal(second.result.next_after,null);
+  const second=await local(a,['automations','list','--limit','1','--after',page.result.next_after]);assert.equal(second.result.items.length,1);assert(second.result.next_after);
+  const third=await local(a,['automations','list','--limit','1','--after',second.result.next_after]);assert.equal(third.result.items.length,1);assert.equal(third.result.next_after,null);
   assert.notEqual(page.result.items[0].id,second.result.items[0].id);assert(!JSON.stringify(page).includes('Explicit reusable status source'));
   const concurrent={...command,operation_id:randomUUID(),name:'Concurrent definition'};
   const responses=await Promise.all(Array.from({length:16},()=>json(eef+'/api/commands/automations',{
@@ -98,13 +114,51 @@ try{
   const removed=await local(a,remove);assert.equal(removed.result.definition.source,null);assert.equal(removed.result.definition.state,'removed');
   assert.equal((await local(a,remove)).result.reused,true);
   const old=await local(a,args(command));assert.equal(old.result.reused,true);assert.equal(old.result.definition.state,'removed');
-  const inventory=await json(eef+'/api/jobs');assert.equal(inventory.jobs.length,1);assert.equal(inventory.storage.automation_count,3);
+  // Actual owner CLI fault handling: inspect the same receipt, never synthesize
+  // another one after a lost/corrupt/negative reply, including a post-commit error.
+  let ownerMode='drop',ownerPosts=0;
+  ownerProxy=httpServer(async(req,res)=>{
+    try {
+      const isRead=req.url==='/api/diagnostics';
+      if(isRead){const value=await json(eef+'/api/diagnostics');
+        if(ownerMode==='invalid-runtime')value.runtime_id='invalid';
+        if(ownerMode==='stale-runtime')value.runtime_id=randomUUID();
+        res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
+      assert.equal(req.url,'/api/commands/automations');ownerPosts++;
+      let body='';for await(const bytes of req){body+=bytes;assert(body.length<=65536);}
+      const r=await fetch(eef+req.url,{method:'POST',headers:{'Content-Type':'application/json'},body,signal:AbortSignal.timeout(20000)});
+      const value=await r.json();
+      if(ownerMode==='stale-runtime'){assert.equal(r.status,400);res.writeHead(400);return res.end(JSON.stringify(value));}
+      assert(r.ok);assert.equal(value.definition.state,'disabled');
+      if(ownerMode==='drop')return res.destroy();
+      if(ownerMode==='corrupt')value.definition.owner_context.origin_node='forged';
+      if(ownerMode==='reject')res.statusCode=409;
+      res.setHeader('Content-Type','application/json');res.end(JSON.stringify(value));
+    }catch(error){proxyError=error;res.destroy();}
+  });await new Promise(r=>ownerProxy.listen(0,'127.0.0.1',r));
+  const ownerProxyConfig=join(scratch,'owner-proxy.yaml');
+  await writeFile(ownerProxyConfig,yaml.replace(`port: ${eefPort}`,`port: ${ownerProxy.address().port}`));
+  for(const failure of ['drop','corrupt','reject','stale-runtime','invalid-runtime']) {
+    ownerMode=failure;const receipt={...command,operation_id:randomUUID(),name:'Owner fault '+failure},beforePosts=ownerPosts;
+    const report=await owner(args(receipt),false,ownerProxyConfig);if(proxyError)throw proxyError;
+    assert.equal(report.command.operation_id,receipt.operation_id);assert.equal(report.success,false);assert.equal(report.result,null);
+    assert.equal(report.automatically_retried,false);assert.equal(report.timers_started,false);assert.equal(report.execution_authorized,false);
+    assert.equal(report.sending_attempted,failure!=='invalid-runtime');assert.equal(report.outcome_unknown,failure!=='invalid-runtime');
+    assert.equal(report.error_code,failure==='invalid-runtime'?'coordinator_unconfirmed':
+      ['reject','stale-runtime'].includes(failure)?'automation_rejected':'automation_reply_unconfirmed');
+    assert.equal(ownerPosts,beforePosts+(failure==='invalid-runtime'?0:1));
+    if(['stale-runtime','invalid-runtime'].includes(failure))await owner(['automations','show',receipt.operation_id],false);
+    else {const retained=await owner(['automations','show',receipt.operation_id]);assert.equal(retained.result.definition.state,'disabled');
+      const repeated=await owner(args(receipt));assert.equal(repeated.result.reused,true);assert.deepEqual(repeated.result.definition,retained.result.definition);}
+  }
+  const inventory=await json(eef+'/api/jobs');assert.equal(inventory.jobs.length,1);assert.equal(inventory.storage.automation_count,7);
   assert.equal(JSON.stringify(await review.inspect(source.id)),sourceBefore);
   await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,
     no_models:true,no_ui_controller:true,immutable_compiled_source:true,origin_isolation:true,restart_retention:true,lost_reply_inspection:true,
-    removal_receipt_prevents_recreation:true,concurrent_creation_deduplicated:true,definitions_disabled:true,timers_started:false,execution_authorized:false},null,2));
+    removal_receipt_prevents_recreation:true,concurrent_creation_deduplicated:true,owner_cli:true,owner_cli_uncertain_receipts_inspected:true,
+    definitions_disabled:true,timers_started:false,execution_authorized:false},null,2));
   console.log('Automation definition validation passed: '+scratch);
 }finally{
   for(const child of children)if(child.exitCode===null)child.kill();await Promise.allSettled(children.map(c=>c.result));
-  await Promise.all([new Promise(r=>tags.close(r)),...(proxy?[new Promise(r=>proxy.close(r))]:[])]);
+  await Promise.all([new Promise(r=>tags.close(r)),...(proxy?[new Promise(r=>proxy.close(r))]:[]),...(ownerProxy?[new Promise(r=>ownerProxy.close(r))]:[])]);
 }

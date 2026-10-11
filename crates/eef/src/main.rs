@@ -31,6 +31,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Author/inspect/remove disabled automation definitions as the local owner; never run them.
+    Automations {
+        #[command(subcommand)]
+        command: eefn::automation::AutomationCommand,
+    },
     /// Inspect/compile/approve reviewed requests as the local owner, without dispatch.
     Requests {
         #[command(subcommand)]
@@ -150,6 +155,76 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn automation_authoring_requires_explicit_source_and_bounded_declarations() {
+        let args = [
+            "eef",
+            "automations",
+            "define",
+            "--operation-id",
+            "receipt",
+            "--from-job",
+            "source",
+            "--revision",
+            "2",
+            "--plan-sha256",
+            "digest",
+            "--name",
+            "Observation",
+            "--every-ms",
+            "1000",
+            "--max-runs",
+            "3",
+            "--valid-for-ms",
+            "10000",
+        ];
+        assert!(Args::try_parse_from(args).is_ok());
+        for index in (3..args.len()).step_by(2) {
+            let mut missing = args.to_vec();
+            missing.drain(index..index + 2);
+            assert!(Args::try_parse_from(missing).is_err(), "{}", args[index]);
+        }
+        for flag in [
+            "--execute",
+            "--enable",
+            "--approve",
+            "--retry",
+            "--node",
+            "--auto-approve",
+        ] {
+            let mut extra = args.to_vec();
+            extra.push(flag);
+            assert!(Args::try_parse_from(extra).is_err(), "{flag}");
+        }
+    }
+    #[test]
+    fn automation_inventory_and_removal_cannot_start_or_authorize_work() {
+        assert!(Args::try_parse_from(["eef", "automations", "list", "--limit", "1"]).is_ok());
+        assert!(Args::try_parse_from(["eef", "automations", "show", "receipt"]).is_ok());
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "automations",
+                "remove",
+                "receipt",
+                "--revision",
+                "1",
+                "--operation-id",
+                "removal"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Args::try_parse_from(["eef", "automations", "remove", "receipt", "--revision", "1"])
+                .is_err()
+        );
+        for action in ["run", "enable", "approve", "resume", "renew"] {
+            assert!(
+                Args::try_parse_from(["eef", "automations", action, "receipt"]).is_err(),
+                "{action}"
+            );
+        }
+    }
     #[test]
     fn recovery_requires_saved_revision_grant_and_operation_without_retry_or_evidence_flags() {
         let args = [
@@ -310,6 +385,48 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::Automations { command } => {
+            command.validate()?;
+            let mut sending_attempted = false;
+            let mut runtime_id: Option<String> = None;
+            let exchange: std::result::Result<serde_json::Value, &str> = async {
+                let response = client.get(format!("{base}/api/diagnostics")).send().await
+                    .map_err(|_| "coordinator_unavailable")?;
+                if !response.status().is_success() { return Err("coordinator_unavailable"); }
+                let diagnostics = eefn::model_manager::bounded_json(response).await
+                    .map_err(|_| "coordinator_unconfirmed")?;
+                let runtime = diagnostics["runtime_id"].as_str().ok_or("coordinator_unconfirmed")?;
+                if diagnostics["schema_version"] != 1 || eefn::job_commands::validate_operation_id(runtime).is_err() {
+                    return Err("coordinator_unconfirmed");
+                }
+                runtime_id = Some(runtime.to_owned());
+                sending_attempted = true;
+                let response = client.post(format!("{base}/api/commands/automations"))
+                    .json(&json!({"schema_version":1,"expected_runtime_id":runtime,"command":command}))
+                    .send().await.map_err(|_| "automation_reply_unconfirmed")?;
+                if !response.status().is_success() { return Err("automation_rejected"); }
+                let report = eefn::model_manager::bounded_json(response).await.map_err(|_| "automation_reply_unconfirmed")?;
+                if !eefn::automation::confirmed(&report, command, None) { return Err("automation_reply_unconfirmed"); }
+                Ok(report)
+            }.await;
+            let (result, error_code) = match exchange {
+                Ok(report) => (Some(report), None),
+                Err(code) => (None, Some(code)),
+            };
+            let success = result.is_some();
+            // Negative replies can follow a commit. A mutation remains unknown
+            // until exact receipt inspection; neither this adapter nor a repeat
+            // of its command creates a new receipt or automatically retries.
+            return Ok(
+                json!({"schema_version":1,"report_type":"owner_automation_command",
+                "actor":"coordinator_owner","command":command,"runtime_id":runtime_id,
+                "success":success,"coordinator_acknowledged":success,"sending_attempted":sending_attempted,
+                "outcome_unknown":!success && sending_attempted && command.receipt().is_some(),
+                "error_code":error_code,"result":result,"timers_started":false,"execution_authorized":false,
+                "dispatched":false,"automatically_retried":false,
+                "note":"Private source-bound definitions only, not approval or execution. Inspect the exact definition/receipt after uncertainty. No new receipt, fallback or automatic retry."}),
+            );
+        }
         Command::Requests { command } => {
             if let eef::request_planning::PlanningAction::Abandon {
                 id,
@@ -867,7 +984,11 @@ async fn main() -> Result<()> {
                     eprintln!(
                         "Private connection code: share only with the node owner, not in reports or issues."
                     );
-                } else if matches!(command, Command::Requests { .. }) && value["success"] == true {
+                } else if matches!(
+                    command,
+                    Command::Requests { .. } | Command::Automations { .. }
+                ) && value["success"] == true
+                {
                     eprintln!(
                         "Private request/plan report: may contain user text, task inputs and target bindings; do not publish it in reports or issues."
                     );

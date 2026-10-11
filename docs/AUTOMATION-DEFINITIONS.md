@@ -20,6 +20,23 @@ eefn automations show DEFINITION_UUID --json
 eefn automations remove DEFINITION_UUID --revision 1 --operation-id REMOVAL_UUID --json
 ```
 
+The local coordinator owner can now use `eef automations` with these same
+subcommands and flags. It calls the same core service via the configured loopback
+API; it neither starts a coordinator nor requires a dashboard. Owner inspection
+can cross node origins, but authoring/removal cannot rewrite the source's
+immutable node/area/request context. Node CLI scope remains origin-owned.
+Full `show` and `define` replies are private and can contain user text/parameters.
+
+The owner adapter validates the command before sending, obtains the current
+coordinator runtime for the API's exact runtime fence, disables proxy/redirect
+fallback and independently validates the shared reply contract. Its wrapper is
+`owner_automation_command` with the exact command, runtime, sending attempt,
+acknowledgement and uncertainty state. A failed preflight sends no automation
+command. A lost/corrupt/negative mutation reply stays uncertain even if an error
+arrived after commit; inspect the exact ID or explicitly repeat the same receipt.
+No command generates a replacement receipt or automatically retries. There is
+still no `enable`, `approve`, `run`, `resume` or timer.
+
 Replace the placeholders with actual retained IDs, revisions and hashes. `JOB_ID`
 is the compact lowercase job UUID; definition/removal IDs are canonical UUIDs.
 Retain the creation ID before sending it. If delivery is uncertain, inspect that
@@ -134,3 +151,14 @@ new contract tests. It was corrected to an actual compact UUID; production ID,
 scope, lifecycle and timing validation were not weakened. The first public
 fixture (`automation-definitions-wZ0EEC`) passes before the additional CLI-source
 and concurrency checks; it is not substituted for the final stronger fixture.
+
+The owner CLI follow-up passes all 445 full workspace/all-target tests in both
+feature modes, with a fresh default executable/example build. The stronger
+`automation-definitions-W3oFmF` fixture adds actual owner CLI authoring,
+inspection, pagination, removal, immutable origin and tombstone reuse. Fault
+proxy cases drop a committed reply, substitute source context, report a negative
+status after commit, use a stale runtime and supply an invalid preflight runtime.
+Invalid preflight sends no definition command. Uncertain replies retain exact
+receipts; explicit inspection/reuse does not duplicate or activate definitions.
+These remain one-PC, disabled-definition checks, not physical execution,
+reusable approval or recurring-work acceptance.

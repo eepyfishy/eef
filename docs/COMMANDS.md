@@ -15,6 +15,13 @@ After an uncertain reply inspect the original definition ID; do not manufacture
 a replacement receipt or assume rollback. See [commands and remaining execution
 requirements](AUTOMATION-DEFINITIONS.md). Browser and model operation are not required.
 
+`eef automations define|list|show|remove` exposes that same service to the local
+coordinator owner. It uses the configured loopback API and current runtime fence,
+never starts a second coordinator, and can inspect multiple origins without
+rewriting their immutable context. Negative/lost/corrupt mutation replies remain
+uncertain; retain the exact command/receipt and inspect. Source-bearing reports
+are private. No timer, approval, execution, fallback or automatic retry is added.
+
 ## Default workload boundary (unreleased after alpha.6)
 
 `eefn --ask TEXT`, `eefn requests input --text TEXT [--operation-id UUID]`, and

@@ -130,6 +130,14 @@ snapshot retention is not reusable approval, current executor readiness or a
 timer. Bounded owner authorization, atomic occurrence admission, safe triggering,
 overlap/restart/missed-trigger handling and full physical execution remain open.
 
+The follow-up adds an `eef automations` local-owner CLI adapter for the same
+disabled-definition service, preserving node-origin lineage and exact receipts.
+Lost/corrupt/negative writes are inspected rather than replayed; this is command
+coverage, not reusable authorization or scheduling. A separate checkpoint
+diagnostic increment preserves bounded private coordinator rejection text while
+keeping possible writes uncertain. The prior intermittent preparation failure
+remains unproven; successful reruns are not treated as its fix.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;
