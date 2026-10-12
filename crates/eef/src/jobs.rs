@@ -311,6 +311,9 @@ impl JobStore {
 
     fn insert_locked(&self, connection: &Connection, mut plan: Plan) -> Result<Plan> {
         validate(&plan)?;
+        if let Some(context) = &plan.goal.request_context {
+            automation_schedules::source_authority(connection, context)?;
+        }
         if connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM automation_occurrence_archives WHERE job_id=?1)",
             [&plan.plan_id],
@@ -373,6 +376,7 @@ impl JobStore {
     ) -> Result<Plan> {
         let connection = self.connection.lock().expect("job journal");
         let mut plan = read(&connection, id)?;
+        let uncompiled = plan.planning.is_none();
         if let Some((runtime, issuer)) = fence {
             automation_occurrences::fence(
                 &connection,
@@ -384,6 +388,11 @@ impl JobStore {
         }
         if !edit(&mut plan)? {
             return Ok(plan);
+        }
+        if uncompiled && plan.planning.is_some() {
+            if let Some(context) = &plan.goal.request_context {
+                automation_schedules::source_authority(&connection, context)?;
+            }
         }
         stamp(&mut plan, event)?;
         validate_retained_review(&plan)?;

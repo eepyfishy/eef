@@ -892,6 +892,13 @@ impl TaskEngine {
         }
         self.store.occurrence_checkpoint_now(command, runtime, None)
     }
+    pub(crate) fn begin_trigger_launch(&self, id: &str, runtime: &str) -> Result<bool> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no new trigger launch");
+        }
+        self.store.trigger_begin_launch(id, runtime)
+    }
     async fn drive(&self, id: &str, _guard: ActiveJob) -> Result<Plan> {
         let mut stopping = self.stopping.subscribe();
         if *stopping.borrow() {

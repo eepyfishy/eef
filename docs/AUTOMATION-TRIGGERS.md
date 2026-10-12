@@ -94,10 +94,11 @@ and explicit unresolved-claim handling remain necessary follow-up work.
 ## Still required before public activation
 
 Connect shared owner enable/stop/inspect commands to the engine's admission/
-shutdown gate and a bounded runtime-owned timer task. Generate a **fresh ordinary
-explicit request** from the approved fixed input, validate current origin/provider/
-disclosure/model/grant bounds, use the existing compiler/reservation/driver, and
-retain actual partial outcomes. Never relabel old model inference as new evidence.
+shutdown gate and a bounded runtime-owned timer task. Exercise the subsequent
+internal fresh-request bridge through those adapters, validate current origin/
+provider/disclosure/model/grant bounds and retain actual partial outcomes. The
+bridge uses the existing compiler/reservation/driver and must never relabel old
+model inference as new evidence.
 Integrate monotonic sleep/suspend discontinuity detection; the core's durable-wall-
 clock checks alone do not detect every intervening clock change.
 
@@ -106,7 +107,7 @@ shutdown, provider disappearance, partial compilation/reservation/dispatch,
 lease/native termination, backlog/backpressure, disk failures and physical two-PC
 behavior together. Define an explicit no-work/recovery path for claims without
 terminal evidence; a missing job cannot authorize automatic retry. Public timer
-activation stays unavailable until that bridge is implemented and validated.
+activation stays unavailable until the bridge/worker/adapter path is validated.
 Full lightweight interpreter bootstrap, heavy planning, measured resource budgets,
 peer/media/cluster, non-coder onboarding and installer/Defender/Authenticode
 acceptance remain in scope. Stable 0.4.0 is not claimed.
@@ -144,3 +145,50 @@ The scheduler tests are internal journal/clock/compiler checks, not a running
 timer, native scheduled workload or physical two-PC acceptance. No runtime worker
 or public activation adapter is enabled. Installed nodes, published versions/
 installers, update feeds, browser assets and model files remain unchanged.
+
+## Internal fresh-admission bridge (subsequent increment)
+
+The internal runtime bridge now creates a fresh ordinary explicit owner-directed
+request from the fixed input, checks the current origin registration/age/area and
+exact providers/issuer/grant bounds, and calls existing ordinary compilation,
+atomic occurrence reservation and reviewed execution. The source goal title may
+describe the fixed operation, but its LM interpretation/preparation history,
+task identities, approval and execution evidence are never copied. Origin moves
+cannot retag the old scope. This service is not yet called by a public owner
+adapter or runtime timer task; compiling it does not prove native scheduled work.
+
+A durable one-shot launch marker precedes any source admission. Sixteen concurrent
+begin calls authorize one launch; repeated marked callbacks only inspect actual
+retained state, including after a crash with no source job. Preexisting source or
+reservation receipts cannot become implicit continuation. Marker write/clock
+failure rolls back before source work. Stop and changed policy also fence source
+insertion and new compilation under their existing SQL/admission checkpoints;
+historical receipt reads and explicit cancellation remain possible.
+
+A failed/stale callback may interrupt **only its own current claim**. It cannot
+overwrite owner stop or interrupt a successor claim. Partial admission resolves
+only from an actual retained cancelled source with no approval/execution, or the
+existing reserved occurrence's terminal proof. Missing jobs stay unknown and do
+not permit automatic retry. Unreserved cancelled sources remain retained: there
+is no silent deletion, fabricated reservation or claim/budget refund. A missing-
+source recovery/closure command and safe partial-source compaction are still open.
+
+Ten added journal tests bring final workspace/all-target suites to **499** in
+both feature modes (EEF library 207, owner CLI 11, installer 6, EEFN library 269,
+node CLI 6). They cover late stop/admission/compilation, policy revocation,
+origin substitution, retained partial cancellation and missing-history refusal,
+one-shot concurrent launch, rollback, preexisting/stopped launch refusal,
+marked-but-unadmitted restart and stale callback/successor ownership. The fresh
+default binaries/examples, formatting, diff and backend/browser source guard
+also pass. An initial 498-test run preceded the final stale-callback test.
+These are journal/compiler/clock tests, not native bridge or timer acceptance.
+Public activation, the bounded timer manager/monotonic discontinuity handling,
+stop/worker/network/disk fault acceptance and the full remaining roadmap stay open.
+
+Fresh public regressions also pass native manual occurrences/archives
+(`automation-occurrences-SdlG5T`), definitions/policies
+(`automation-definitions-oAk0yu`), input/answers (`request-input-Mqi85z`) and
+reviewed execution/recovery (`request-review-xiFubs`). The native execution is
+manual, not through the new internal bridge; the review fixture uses fake
+inference. These regressions do not prove native bridge/automatic timer behavior
+or interpreter quality. Earlier intermittent input/busy failures remain unproven.

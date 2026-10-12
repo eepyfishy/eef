@@ -5,6 +5,7 @@ pub mod api;
 pub mod assistant;
 pub mod automation_occurrence;
 pub mod automation_policy;
+mod automation_trigger;
 pub mod brain;
 pub mod capability;
 pub mod config;

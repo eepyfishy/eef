@@ -178,6 +178,16 @@ remain unimplemented: no timer or automatic job is enabled by this checkpoint.
 Monotonic suspend/clock detection, partial-claim recovery, physical execution
 acceptance and the full recurring-automation milestone remain open.
 
+The following internal fresh-admission bridge creates ordinary explicit requests
+and uses existing compilation/reservation/execution, with a durable one-shot
+launch marker and current origin/provider checks. Late source admission or
+compilation is fenced after stop/policy change; stale callbacks cannot interrupt
+successor claims. Actual retained unapproved cancellation can resolve partial
+admission without inventing reservation or completion evidence. Public owner
+adapters, runtime timer integration and native scheduled-workflow acceptance are
+still absent; this service is not publicly activated and does not complete the
+recurring-automation milestone. See [bridge limits/evidence](AUTOMATION-TRIGGERS.md#internal-fresh-admission-bridge-subsequent-increment).
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

@@ -521,3 +521,33 @@ still has zero schedules/triggers/headroom; this is not native timer evidence.
 The review fixture uses fake inference, not real semantic quality. Earlier
 intermittent input/busy failures remain unproven. Installed nodes, release/feed
 artifacts, browser assets and model files are unchanged.
+
+## Fresh-admission source/launch fencing (2026-10-12)
+
+Ten journal tests bring final workspace/all-target suites to **499** in both
+feature modes (207 EEF library, 11 owner CLI, 6 installer, 269 EEFN library,
+6 node CLI). Fresh default binaries/examples, formatting, diff and the backend/
+browser source guard pass. The internal runtime bridge is compiled against
+the existing ordinary explicit compiler, atomic reservation and grant driver;
+there is no second workload runner or dashboard controller.
+
+Late source insertion/compilation fails after stop or policy change. A one-shot
+launch marker survives unknown pre-admission restart; marked/preexisting receipts
+cannot resume work implicitly. Claim-bound failure reporting preserves owner
+stop/successor authority. Actual cancelled unapproved/unexecuted source evidence
+can resolve partial admission, while missing history stays unknown. Source
+retention, no-refund and no-replay boundaries remain.
+
+These tests are journal/compiler/clock evidence, not a native scheduled workload.
+Public owner adapters, timer manager/monotonic discontinuity handling, bridge
+acceptance and partial-source/no-work recovery remain required. All remaining
+full roadmap and physical/installer/signing gates stay open. Stable 0.4.0 is not
+claimed; installed nodes, release/feed artifacts, browser assets and models are
+unchanged.
+
+Fresh public regressions pass manual occurrence/native execution/archive
+(`automation-occurrences-SdlG5T`), definitions/policies
+(`automation-definitions-oAk0yu`), input/answers (`request-input-Mqi85z`) and
+reviewed execution/recovery (`request-review-xiFubs`). These do not exercise the
+new internal bridge or a running timer; the review fixture uses fake inference.
+Prior intermittent input/busy failures remain unproven.
