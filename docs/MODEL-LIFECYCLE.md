@@ -76,12 +76,13 @@ Unload retains the process/tree handle through a bounded root termination wait.
 No user model/projector files are deleted. State/PID withdrawal is not a measured
 physical RAM/VRAM release guarantee or proof that arbitrary external effects ended.
 
-The first implementation serializes operations with an eight-entry queue,
-retains at most 256 receipts without eviction, bounds load health readiness to
-300 seconds and root termination wait to five seconds. Queue rejection releases
+The implementation defaults to an eight-entry queue, 256 retained receipts
+without eviction, 300-second load health readiness and a five-second root
+termination wait. The subsequent [owner lifecycle policy](MODEL-LIFECYCLE-POLICY.md)
+configures these bounds, startup mode and optional monotonic idle unloading.
+Queue rejection releases
 only the rejected reservation; receipt exhaustion refuses new admission rather
-than discarding replay protection. These internal bounds are not yet an owner
-configurable lifecycle policy. Status and exact load cancellation use existing
+than discarding replay protection. Status and exact load cancellation use existing
 bounded reserved network control capacity; load/unload use workload admission.
 Reserved action names reject substituted mutating commands.
 
@@ -111,8 +112,8 @@ exact-hash artifact without copying or downloading it. Passing that test is not
 interpreter-quality, physical RAM/VRAM-release or second-PC acceptance.
 
 Remaining full-release work includes physical-network lifecycle acceptance,
-explicitly owned versus shared Ollama control, configurable on-demand and idle
-policies, memory/VRAM measurement, resource-aware model-instance admission,
+explicitly owned versus shared Ollama control, on-demand loading and broader
+per-model policies, memory/VRAM measurement, resource-aware model-instance admission,
 startup-cost routing, default interpreter quality/bootstrap and release packaging.
 Selecting Ollama currently reports owned-GGUF lifecycle unsupported and refuses
 these mutations; it does not kill the user's Ollama service or switch backend.

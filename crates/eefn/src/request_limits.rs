@@ -49,7 +49,11 @@ impl RequestBudget {
             || (capability == "node.configure"
                 && matches!(
                     action,
-                    "status" | "restart" | "model_lifecycle_status" | "model_lifecycle_cancel"
+                    "status"
+                        | "restart"
+                        | "model_lifecycle_status"
+                        | "model_lifecycle_cancel"
+                        | "model_lifecycle_policy_status"
                 ));
         let pool = if control { &self.control } else { &self.work };
         pool.clone().try_acquire_owned().ok()
@@ -72,6 +76,20 @@ mod tests {
         })
         .unwrap();
         let work = budget.admit("llm.infer", "run").unwrap();
+        assert!(
+            budget
+                .admit("node.configure", "model_lifecycle_policy")
+                .is_none()
+        );
+        let policy_status = budget
+            .admit("node.configure", "model_lifecycle_policy_status")
+            .unwrap();
+        assert!(
+            budget
+                .admit("node.configure", "model_lifecycle_status")
+                .is_none()
+        );
+        drop(policy_status);
         assert!(budget.admit("node.configure", "model_lifecycle").is_none());
         let status = budget
             .admit("node.configure", "model_lifecycle_status")

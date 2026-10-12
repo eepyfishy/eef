@@ -97,6 +97,10 @@ impl NodeService {
             .route("/api/commands/models", post(model_command))
             .route("/api/commands/model-lifecycle", post(model_lifecycle))
             .route(
+                "/api/commands/model-lifecycle-policy",
+                post(model_lifecycle_policy),
+            )
+            .route(
                 "/api/commands/model-downloads",
                 post(model_download_command),
             )
@@ -198,6 +202,14 @@ async fn model_lifecycle(
     Json(request): Json<crate::model_lifecycle::LifecycleRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.model_lifecycle_command(request, false).await?))
+}
+async fn model_lifecycle_policy(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::model_lifecycle_policy::PolicyRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        state.model_lifecycle_policy_command(request, false, false)?,
+    ))
 }
 
 async fn model_download_command(

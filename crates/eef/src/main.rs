@@ -134,6 +134,13 @@ enum NodeCommand {
         #[command(flatten)]
         command: eefn::model_lifecycle::LifecycleArgs,
     },
+    /// Inspect/save the node's lifecycle policy; applying it requires explicit restart.
+    ModelLifecyclePolicy {
+        #[arg(long)]
+        node: String,
+        #[command(flatten)]
+        command: eefn::model_lifecycle_policy::PolicyArgs,
+    },
     /// Restart the node app, not Windows. Requires local node management approval.
     Restart {
         #[arg(long)]
@@ -177,6 +184,52 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn remote_lifecycle_policy_cli_requires_target_and_exact_saved_digest() {
+        let args = Args::try_parse_from([
+            "eef",
+            "node",
+            "model-lifecycle-policy",
+            "--node",
+            "owner",
+            "--runtime",
+            "11111111-1111-4111-8111-111111111111",
+            "set",
+            "--expected-digest",
+            &"a".repeat(64),
+            "--startup",
+            "manual",
+            "--idle-unload-seconds",
+            "2",
+        ])
+        .unwrap();
+        let Some(Command::Node {
+            command: NodeCommand::ModelLifecyclePolicy { node, command },
+        }) = args.command
+        else {
+            panic!("wrong adapter")
+        };
+        let request = eefn::model_lifecycle_policy::PolicyRequest {
+            schema_version: 1,
+            expected_node_id: node,
+            expected_runtime_id: command.runtime,
+            command: command.command,
+        };
+        assert!(request.validate().is_ok());
+        assert!(Args::try_parse_from(["eef", "node", "model-lifecycle-policy", "show"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "node",
+                "model-lifecycle-policy",
+                "--node",
+                "owner",
+                "set",
+                "--force"
+            ])
+            .is_err()
+        );
+    }
     #[test]
     fn remote_model_lifecycle_cli_preserves_exact_target_runtime_generation_and_receipt() {
         let args = Args::try_parse_from([
@@ -1192,6 +1245,22 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             request.validate()?;
             client
                 .post(format!("{base}/api/commands/node/model-lifecycle"))
+                .json(&request)
+                .send()
+                .await?
+        }
+        Command::Node {
+            command: NodeCommand::ModelLifecyclePolicy { node, command },
+        } => {
+            let request = eefn::model_lifecycle_policy::PolicyRequest {
+                schema_version: 1,
+                expected_node_id: node.clone(),
+                expected_runtime_id: command.runtime.clone(),
+                command: command.command.clone(),
+            };
+            request.validate()?;
+            client
+                .post(format!("{base}/api/commands/node/model-lifecycle-policy"))
                 .json(&request)
                 .send()
                 .await?

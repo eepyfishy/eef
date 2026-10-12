@@ -243,6 +243,17 @@ pub(super) mod tests {
         eefn::automation::Definition,
         Authorization,
     ) {
+        fixture_with_validity(store, 10000)
+    }
+    pub(crate) fn fixture_with_validity(
+        store: Arc<JobStore>,
+        valid_for_ms: u64,
+    ) -> (
+        Arc<crate::task::TaskEngine>,
+        Plan,
+        eefn::automation::Definition,
+        Authorization,
+    ) {
         let engine =
             crate::task::TaskEngine::with_store(crate::event::EventBus::new(20), store.clone());
         let plan = crate::request_approval::tests::compiled(&engine);
@@ -256,7 +267,7 @@ pub(super) mod tests {
                     name: "Reusable status".into(),
                     every_ms: 1000,
                     max_runs: 3,
-                    valid_for_ms: 10000,
+                    valid_for_ms,
                 },
                 None,
             )
@@ -269,7 +280,7 @@ pub(super) mod tests {
             definition_sha256: definition.definition_sha256.clone(),
             generation: 0,
             operation_id: uuid::Uuid::new_v4().to_string(),
-            valid_for_ms: 10000,
+            valid_for_ms,
             max_runs: 3,
             max_execution_ms_per_task: 1000,
             max_result_bytes_per_task: 1024,
@@ -285,7 +296,7 @@ pub(super) mod tests {
             runtime_id: uuid::Uuid::new_v4().to_string(),
             issuer_id: "a".repeat(64),
             approved_at_ms: definition.created_at_ms + 1,
-            expires_at_ms: definition.created_at_ms + 10001,
+            expires_at_ms: definition.created_at_ms + valid_for_ms + 1,
             scope_sha256: eefn::grants::definition_digest(&json!(scope)).unwrap(),
             scope,
             authorization_sha256: String::new(),

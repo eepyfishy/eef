@@ -132,11 +132,37 @@ impl NodeService {
         self.save_config_locked(value)
     }
 
-    fn save_config_locked(&self, mut value: Value) -> Result<()> {
+    pub(crate) fn save_config_locked(&self, mut value: Value) -> Result<()> {
         if !value.is_object() {
             bail!("node configuration must be a JSON object")
         }
         let old = self.read_config()?;
+        // Backend-owned version survives generic saves/restore as well as the
+        // typed policy command. Content rollback must not revive an old CAS.
+        let previous_policy =
+            crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(&old)?;
+        let incoming_policy =
+            serde_json::from_value::<crate::model_lifecycle_policy::ModelLifecyclePolicy>(
+                value
+                    .get("model_lifecycle")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})),
+            )?;
+        incoming_policy.validate()?;
+        let previous_revision =
+            crate::model_lifecycle_policy::ModelLifecyclePolicy::revision_from_config(&old)?;
+        let revision = if previous_policy != incoming_policy {
+            previous_revision.checked_add(1).ok_or_else(|| {
+                anyhow::anyhow!("Model policy revision exhausted; no wrap or reset")
+            })?
+        } else {
+            previous_revision
+        };
+        if revision != 0 || old.get("model_lifecycle_revision").is_some() {
+            value["model_lifecycle_revision"] = json!(revision);
+        } else if let Some(object) = value.as_object_mut() {
+            object.remove("model_lifecycle_revision");
+        }
         if value.get("auth_mode").is_none() {
             if let Some(mode) = old.get("auth_mode") {
                 value["auth_mode"] = mode.clone();
@@ -757,6 +783,20 @@ impl NodeService {
             .and_then(Value::as_bool)
             == Some(true);
         match action {
+            "model_lifecycle_policy" => {
+                self.model_lifecycle_policy_command(serde_json::from_value(params)?, true, false)
+            }
+            "model_lifecycle_policy_status" => {
+                let request: crate::model_lifecycle_policy::PolicyRequest =
+                    serde_json::from_value(params)?;
+                if !matches!(
+                    request.command,
+                    crate::model_lifecycle_policy::PolicyCommand::Show {}
+                ) {
+                    bail!("reserved model policy action mismatch")
+                }
+                self.model_lifecycle_policy_command(request, true, false)
+            }
             "model_command" => self.model_command_authorized(serde_json::from_value(params)?, true),
             "model_lifecycle" => {
                 self.model_lifecycle_command(serde_json::from_value(params)?, true)
@@ -811,6 +851,7 @@ impl NodeService {
 }
 
 fn validate_config(value: &Value) -> Result<()> {
+    crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(value)?;
     if let Some(policy) = value.get("input_workflow") {
         serde_json::from_value::<crate::request_input::InputPolicy>(policy.clone())?;
     }

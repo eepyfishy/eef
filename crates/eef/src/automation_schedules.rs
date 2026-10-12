@@ -1223,8 +1223,17 @@ mod tests {
     use crate::task::TaskEngine;
     use eefn::automation_occurrence::OccurrenceCommand;
     fn fixture(store: Arc<JobStore>) -> (Arc<TaskEngine>, Plan, Authorization, Schedule) {
+        fixture_with_validity(store, 10000)
+    }
+    fn fixture_with_validity(
+        store: Arc<JobStore>,
+        valid_for_ms: u64,
+    ) -> (Arc<TaskEngine>, Plan, Authorization, Schedule) {
         let (engine, source, _, p) =
-            super::super::automation_authorizations::tests::fixture(store.clone());
+            super::super::automation_authorizations::tests::fixture_with_validity(
+                store.clone(),
+                valid_for_ms,
+            );
         store
             .automation_policy_checkpoint(
                 p.creation.clone(),
@@ -2263,7 +2272,10 @@ mod tests {
     #[test]
     fn next_fixed_delay_needs_actual_terminal_proof_and_never_refunds_claims_or_reservations() {
         let store = JobStore::in_memory().unwrap();
-        let (engine, source, p, mut s) = fixture(store.clone());
+        // Test spent-run authority independently of the real compilation clock.
+        // A ten-second fixture can hit expiry margin before the budget check on
+        // overloaded machines; expiry refusal is checked separately below.
+        let (engine, source, p, mut s) = fixture_with_validity(store.clone(), 60000);
         for ordinal in 1..=3 {
             let t = claim(&store, &p, &s);
             let job = fresh(&engine, &source, &t);
@@ -2309,13 +2321,22 @@ mod tests {
         assert_eq!(store.usage().unwrap()["trigger_count"], 3);
         assert_eq!(store.usage().unwrap()["occurrence_count"], 3);
         assert_eq!(store.usage().unwrap()["occurrence_archive_count"], 3);
+        let spent = store
+            .schedule_arm(arm(&p), &p.runtime_id, &p.issuer_id, || {
+                s.observed_at_ms + 1
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(spent.contains("budget exhausted"), "{spent}");
+        let near_expiry = store
+            .schedule_arm(arm(&p), &p.runtime_id, &p.issuer_id, || {
+                p.expires_at_ms - 1001
+            })
+            .unwrap_err()
+            .to_string();
         assert!(
-            store
-                .schedule_arm(arm(&p), &p.runtime_id, &p.issuer_id, || s.observed_at_ms
-                    + 1)
-                .unwrap_err()
-                .to_string()
-                .contains("budget exhausted")
+            near_expiry.contains("Current policy/time budget"),
+            "{near_expiry}"
         );
         assert_eq!(store.usage().unwrap()["schedule_count"], 1);
     }

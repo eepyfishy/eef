@@ -100,7 +100,7 @@ mod advertisement_tests {
             std::thread::sleep(Duration::from_secs(20));
         }
     }
-    fn resident_server() -> Arc<ModelServer> {
+    pub(super) fn resident_server() -> Arc<ModelServer> {
         let slot = serde_json::from_value(json!({"model_id":"owned-model"})).unwrap();
         let server = ModelServer::new(PathBuf::new(), vec![slot]);
         server.initialize_residency().unwrap();
@@ -209,6 +209,43 @@ mod advertisement_tests {
                 )
                 .is_err()
         );
+    }
+    #[tokio::test]
+    async fn idle_reservation_rechecks_elapsed_activity_and_blocks_new_pins_atomically() {
+        let server = resident_server();
+        let idle = Duration::from_secs(1);
+        server.test_age_idle(Duration::from_secs(2));
+        let candidates = server.idle_candidates(idle).unwrap();
+        assert_eq!(candidates.len(), 1);
+        let (model, generation) = &candidates[0];
+        let operation = uuid::Uuid::new_v4().to_string();
+        let pin = server.pin(Some(model)).unwrap();
+        assert!(server.idle_candidates(idle).unwrap().is_empty());
+        assert!(
+            server
+                .reserve_idle(model, *generation, idle, &operation)
+                .is_err()
+        );
+        drop(pin);
+        assert!(
+            server
+                .reserve_idle(model, *generation, idle, &operation)
+                .is_err(),
+            "a fresh last-use event invalidates the earlier candidate without a process generation change"
+        );
+        server.test_age_idle(Duration::from_secs(2));
+        server
+            .reserve_idle(model, *generation, idle, &operation)
+            .unwrap();
+        assert!(server.pin(Some(model)).is_err());
+        assert!(server.idle_candidates(idle).unwrap().is_empty());
+        server
+            .unload_reserved_with_timeout(model, &operation, Duration::from_secs(2), || Ok(()))
+            .await
+            .unwrap();
+        assert!(server.snapshot().unwrap()[0]["owned_pid"].is_null());
+        assert!(server.idle_candidates(idle).unwrap().is_empty());
+        server.close();
     }
     #[tokio::test]
     async fn unload_rechecks_authority_after_waiting_and_preserves_residency_on_denial() {
@@ -437,6 +474,7 @@ struct SlotResidency {
     generation: u64,
     active: u32,
     control: Option<String>,
+    idle_since: Option<tokio::time::Instant>,
 }
 struct Residency {
     closed: bool,
@@ -456,6 +494,7 @@ impl Drop for ModelUse<'_> {
                 slot.active -= 1;
                 if slot.active == 0 && slot.state == ModelLifecycle::Active {
                     slot.state = ModelLifecycle::WarmIdle;
+                    slot.idle_since = Some(tokio::time::Instant::now());
                 }
             }
         }
@@ -465,6 +504,16 @@ impl Drop for ModelUse<'_> {
 }
 
 impl ModelServer {
+    #[cfg(test)]
+    pub(crate) fn test_resident() -> Arc<Self> {
+        advertisement_tests::resident_server()
+    }
+    #[cfg(test)]
+    pub(crate) fn test_age_idle(&self, age: Duration) {
+        for state in self.residency.lock().unwrap().slots.values_mut() {
+            state.idle_since = Some(tokio::time::Instant::now() - age);
+        }
+    }
     pub fn new(binary: PathBuf, slots: Vec<ModelSlot>) -> Arc<Self> {
         Arc::new(Self {
             host: "127.0.0.1".into(),
@@ -501,6 +550,7 @@ impl ModelServer {
                             generation: 0,
                             active: 0,
                             control: None,
+                            idle_since: None,
                         },
                     )
                     .is_some()
@@ -547,6 +597,7 @@ impl ModelServer {
             slot.generation = slot.generation.saturating_add(1);
             slot.active = 0;
             slot.control = None;
+            slot.idle_since = (state == ModelLifecycle::Ready).then(tokio::time::Instant::now);
         }
         self.lifecycle.send_replace(state);
     }
@@ -614,6 +665,7 @@ impl ModelServer {
             .checked_add(1)
             .context("model pin capacity exceeded")?;
         s.state = ModelLifecycle::Active;
+        s.idle_since = None;
         let generation = s.generation;
         drop(gate);
         self.changed();
@@ -664,6 +716,47 @@ impl ModelServer {
         drop(gate);
         self.changed();
     }
+    pub(crate) fn idle_candidates(&self, idle: Duration) -> Result<Vec<(String, u64)>> {
+        self.initialize_residency()?;
+        let gate = self.residency.lock().unwrap();
+        let mut rows = gate
+            .slots
+            .iter()
+            .filter(|(_, s)| Self::idle_eligible(s, idle))
+            .map(|(id, s)| (id.clone(), s.generation))
+            .collect::<Vec<_>>();
+        rows.sort();
+        Ok(rows)
+    }
+    fn idle_eligible(slot: &SlotResidency, idle: Duration) -> bool {
+        slot.active == 0
+            && slot.control.is_none()
+            && matches!(slot.state, ModelLifecycle::Ready | ModelLifecycle::WarmIdle)
+            && slot.idle_since.is_some_and(|since| since.elapsed() >= idle)
+    }
+    /// The elapsed check and control reservation share the inference-pin gate.
+    /// A candidate snapshot alone never authorizes unloading a recently used model.
+    pub(crate) fn reserve_idle(
+        &self,
+        model: &str,
+        generation: u64,
+        idle: Duration,
+        id: &str,
+    ) -> Result<()> {
+        self.initialize_residency()?;
+        let mut gate = self.residency.lock().unwrap();
+        if gate.closed {
+            bail!("model runtime closed")
+        }
+        let state = gate.slots.get_mut(model).context("idle model missing")?;
+        if state.generation != generation || !Self::idle_eligible(state, idle) {
+            bail!("idle candidate changed, pending or in use")
+        }
+        state.control = Some(id.into());
+        drop(gate);
+        self.changed();
+        Ok(())
+    }
     pub(crate) fn close(&self) {
         let mut gate = self.residency.lock().unwrap();
         gate.closed = true;
@@ -672,6 +765,7 @@ impl ModelServer {
             s.state = ModelLifecycle::Unloaded;
             s.active = 0;
             s.control = None;
+            s.idle_since = None;
         }
         self.processes.lock().unwrap().clear();
         drop(gate);
@@ -813,6 +907,7 @@ impl ModelServer {
                 .checked_add(1)
                 .context("model generation exhausted")?;
             s.state = ModelLifecycle::Loading;
+            s.idle_since = None;
             s.generation = generation;
         }
         self.changed();
@@ -856,6 +951,7 @@ impl ModelServer {
                 bail!("model load ownership changed")
             }
             s.state = ModelLifecycle::Ready;
+            s.idle_since = Some(tokio::time::Instant::now());
             s.control = None;
             cleanup.armed = false;
             drop(gate);
@@ -863,12 +959,26 @@ impl ModelServer {
         }
         outcome
     }
+    #[cfg(test)]
     pub(crate) async fn unload_reserved<G>(
         &self,
         model: &str,
         id: &str,
         authorize: impl FnOnce() -> Result<G>,
     ) -> Result<()> {
+        self.unload_reserved_with_timeout(model, id, Duration::from_secs(5), authorize)
+            .await
+    }
+    pub(crate) async fn unload_reserved_with_timeout<G>(
+        &self,
+        model: &str,
+        id: &str,
+        timeout: Duration,
+        authorize: impl FnOnce() -> Result<G>,
+    ) -> Result<()> {
+        if timeout.is_zero() || timeout > Duration::from_secs(30) {
+            bail!("invalid model termination wait")
+        }
         let _operation = self.operation.lock().await;
         let process = {
             // Acquire current authority only after asynchronous operation admission.
@@ -890,6 +1000,7 @@ impl ModelServer {
                 .checked_add(1)
                 .context("model generation exhausted")?;
             s.state = ModelLifecycle::Unloaded;
+            s.idle_since = None;
             s.generation = generation;
             s.control = None;
             self.processes.lock().unwrap().remove(model)
@@ -897,7 +1008,7 @@ impl ModelServer {
         self.changed();
         if let Some(mut process) = process {
             // The OS job handle remains owned until this bounded root wait ends.
-            tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::time::timeout(timeout, async {
                 process.child.kill().await?;
                 process.child.wait().await?;
                 Ok::<_, anyhow::Error>(())
@@ -1088,6 +1199,7 @@ impl Drop for SlotStartupCleanup<'_> {
         if let Some(s) = gate.slots.get_mut(&self.model) {
             if s.control.as_deref() == Some(&self.id) {
                 s.state = ModelLifecycle::Error;
+                s.idle_since = None;
                 s.control = None;
                 s.generation = s.generation.saturating_add(1);
             }

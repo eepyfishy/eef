@@ -130,13 +130,22 @@ try{
  assert.deepEqual(await reviewed.result(first.id),first.report,'retained result survives replacement session');
  assert.equal((await cli('eefn',configPath,['models','show'])).registered_models.find(m=>m.model_id===entry.id).cpu_threads,2);
  const second=await infer('Say hello.',16);
+ const policy=(await cli('eefn',configPath,['model-lifecycle-policy','show'])).result;
+ const idleSaved=await cli('eefn',configPath,['model-lifecycle-policy','--runtime',policy.runtime_id,'set','--expected-digest',policy.saved_digest,'--idle-unload-seconds','2']);
+ assert.equal(idleSaved.result.restart_required,true);assert.equal(idleSaved.restart_requested,false);
+ await cli('eefn',configPath,['restart','--wait-seconds','60']);
+ const idleRuntime=(await json(node+'/api/diagnostics')).runtime_id;assert.notEqual(idleRuntime,policy.runtime_id);
+ await until(async()=>{const current=await lifecycle();return current.models.some(m=>m.model_id===entry.id&&m.state==='ready')||current.idle_events.some(e=>e.model_id===entry.id&&e.outcome==='completed');},'real eager model under applied idle policy',330000);
+ await until(async()=>{const current=await lifecycle();return current.models.find(m=>m.model_id===entry.id)?.state==='unloaded'&&current.idle_events.some(e=>e.model_id===entry.id&&e.outcome==='completed');},'real automatic inactive unload',330000);
+ assert.equal((await json(node+'/api/diagnostics')).runtime_id,idleRuntime,'idle cleanup cannot restart the node');
+ assert.equal((await stat(modelPath)).size,entry.bytes);assert.deepEqual(await reviewed.get(second.id),second.metadata,'idle cleanup cannot replay completed work');
  const auto=await cli('eefn',configPath,['models','cpu-threads','--model',entry.id,'--auto']);
  assert.equal(auto.saved_selections.find(m=>m.model_id===entry.id).cpu_threads,undefined);
  assert.equal(auto.registered_models.find(m=>m.model_id===entry.id).cpu_threads,2,'reset is saved only until restart');
  await cli('eefn',configPath,['models','remove','--backend','llamacpp','--model',entry.id]);await cli('eefn',configPath,['restart','--wait-seconds','60']);
  await until(async()=>{const s=await json(node+'/api/status');return s.connection?.state==='connected'&&s.models.length===0;},'stop selected model');
  await reviewed.cleanup(first.id);await reviewed.cleanup(afterReload.id);await reviewed.cleanup(second.id);
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,model:entry.id,bytes:entry.bytes,sha256:entry.sha256,real_cpu_inference:true,model_quality_accepted:false,reused_verified_artifact:!!reused,model_downloads:!reused,pinned_tls:true,reviewed_grants:true,reply:content,stable_identity:true,verified_restart_with_selected_model:true,retained_result_after_restart:true,completed_work_not_replayed:true,model_withdrawal:true,selection_by_owner_command:true,cpu_threads:2,saved_applied_threads_checked:true,remote_tuning_refusal_checked:true,explicit_cpu_launch_arguments_checked:process.platform==='win32',resource_quota_enforced:false,real_owned_model_unload_reload:true,lifecycle_without_node_restart:true,historical_unload_receipt_no_replay:true,inference_after_explicit_reload:true,model_artifact_not_deleted:true,physical_memory_release_measured:false},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,model:entry.id,bytes:entry.bytes,sha256:entry.sha256,real_cpu_inference:true,model_quality_accepted:false,reused_verified_artifact:!!reused,model_downloads:!reused,pinned_tls:true,reviewed_grants:true,reply:content,stable_identity:true,verified_restart_with_selected_model:true,retained_result_after_restart:true,completed_work_not_replayed:true,model_withdrawal:true,selection_by_owner_command:true,cpu_threads:2,saved_applied_threads_checked:true,remote_tuning_refusal_checked:true,explicit_cpu_launch_arguments_checked:process.platform==='win32',resource_quota_enforced:false,real_owned_model_unload_reload:true,lifecycle_without_node_restart:true,historical_unload_receipt_no_replay:true,inference_after_explicit_reload:true,model_artifact_not_deleted:true,physical_memory_release_measured:false,owner_policy_saved_not_applied:true,real_automatic_owned_idle_unload:true,idle_unload_without_node_restart:true},null,2));
  console.log('Real model validation passed: '+scratch);
 }finally{
  for(const child of children)if(child.exitCode===null){await new Promise(r=>{const stop=spawn('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});stop.on('exit',r);stop.on('error',r);});}

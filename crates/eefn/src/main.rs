@@ -107,6 +107,11 @@ enum Commands {
         #[command(flatten)]
         command: eefn::model_lifecycle::LifecycleArgs,
     },
+    /// Inspect/save model startup, idle unloading and bounded operation policy.
+    ModelLifecyclePolicy {
+        #[command(flatten)]
+        command: eefn::model_lifecycle_policy::PolicyArgs,
+    },
     /// Inspect or configure node identity and advertised network metadata.
     Network {
         #[command(subcommand)]
@@ -246,6 +251,51 @@ async fn execute_model_lifecycle(
         let ok=response.status().is_success();let data=eefn::model_manager::bounded_json(response).await?;
         if !ok||!eefn::model_lifecycle::confirmed(&data,&request){bail!("Unconfirmed model lifecycle reply")}
         Ok(json!({"schema_version":1,"report_type":"local_model_lifecycle","success":true,"outcome_unknown":false,"automatically_retried":false,"model_inference_requested":false,"result":data}))
+    }.await;
+    Ok(result.unwrap_or_else(|_| failure()))
+}
+
+async fn execute_model_lifecycle_policy(
+    args: &Args,
+    action: &eefn::model_lifecycle_policy::PolicyArgs,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let file = load_file(&args.config)?;
+    let request = eefn::model_lifecycle_policy::PolicyRequest {
+        schema_version: 1,
+        expected_node_id: file.node_id.clone(),
+        expected_runtime_id: action.runtime.clone(),
+        command: action.command.clone(),
+    };
+    request.validate()?;
+    let failure = || {
+        json!({"schema_version":1,"report_type":"local_model_lifecycle_policy","success":false,
+        "outcome_unknown":!matches!(request.command,eefn::model_lifecycle_policy::PolicyCommand::Show{}),
+        "automatically_retried":false,"restart_requested":false,"model_inference_requested":false,"result":null})
+    };
+    if let Some(_offline_lock) = eefn::setup::instance_lock(&args.config)? {
+        let service = NodeService::new(args.config.clone(), file.node_id);
+        let result = service.model_lifecycle_policy_command(request, false, true)?;
+        return Ok(
+            json!({"schema_version":1,"report_type":"local_model_lifecycle_policy","success":true,
+            "outcome_unknown":false,"automatically_retried":false,"restart_requested":false,"model_inference_requested":false,"result":result}),
+        );
+    }
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let result:Result<serde_json::Value>=async {
+        let response=reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
+            .post(format!("http://{address}/api/commands/model-lifecycle-policy")).timeout(Duration::from_secs(10)).json(&request).send().await?;
+        let ok=response.status().is_success();let data=eefn::model_manager::bounded_json(response).await?;
+        if !ok||!eefn::model_lifecycle_policy::confirmed(&data,&request) {bail!("Unconfirmed model policy reply")}
+        Ok(json!({"schema_version":1,"report_type":"local_model_lifecycle_policy","success":true,
+            "outcome_unknown":false,"automatically_retried":false,"restart_requested":false,"model_inference_requested":false,"result":data}))
     }.await;
     Ok(result.unwrap_or_else(|_| failure()))
 }
@@ -1430,6 +1480,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     if let Commands::ModelLifecycle { command } = command {
         return execute_model_lifecycle(args, command).await;
     }
+    if let Commands::ModelLifecyclePolicy { command } = command {
+        return execute_model_lifecycle_policy(args, command).await;
+    }
     if let Commands::Requests { command } = command {
         return match command {
             eefn::request_preview::RequestAction::Respond {
@@ -1826,6 +1879,10 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
 #[derive(Clone, Debug, Deserialize)]
 struct FileConfig {
     #[serde(default)]
+    model_lifecycle_revision: u64,
+    #[serde(default)]
+    model_lifecycle: eefn::model_lifecycle_policy::ModelLifecyclePolicy,
+    #[serde(default)]
     input_workflow: eefn::request_input::InputPolicy,
     #[serde(default)]
     grants: eefn::grants::GrantPolicy,
@@ -2177,6 +2234,7 @@ impl Drop for AbortTask {
 
 async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>) -> Result<()> {
     let mut file = load_file(&args.config)?;
+    file.model_lifecycle.validate()?;
     merge_args(&mut file, &args);
     file.network.validate()?;
 
@@ -2386,7 +2444,12 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         runtime_id.clone(),
         file.input_workflow,
     );
-    let model_runtime = dashboard.bind_model_runtime(&engine, runtime_id)?;
+    let model_runtime = dashboard.bind_model_runtime_with_policy(
+        &engine,
+        runtime_id,
+        file.model_lifecycle.clone(),
+        file.model_lifecycle_revision,
+    )?;
     let client = if file.endpoints.is_empty() || !file.connection_enabled {
         None
     } else {
@@ -2425,14 +2488,22 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
     // and process monitoring before another runtime begins.
     let model_startup = async {
         if let Some(server) = &model_server {
-            let mut snapshot = server.models()?;
-            for model in &mut snapshot {
-                model["model_metadata"]["lifecycle"] = serde_json::json!("loading");
-            }
-            dashboard.live.lock().unwrap()["models"] = serde_json::json!(snapshot);
-            if let Err(error) = server.start(Duration::from_secs(300)).await {
-                warn!(%error, "local models unavailable; node core remains controllable");
-                dashboard.record_startup_issue(eefn::service::StartupIssue::LlamacppStartupFailed);
+            if model_runtime.policy().startup == eefn::model_lifecycle_policy::StartupMode::Eager {
+                let mut snapshot = server.models()?;
+                for model in &mut snapshot {
+                    model["model_metadata"]["lifecycle"] = serde_json::json!("loading");
+                }
+                dashboard.live.lock().unwrap()["models"] = serde_json::json!(snapshot);
+                if let Err(error) = server
+                    .start(Duration::from_secs(
+                        model_runtime.policy().load_timeout_seconds,
+                    ))
+                    .await
+                {
+                    warn!(%error, "local models unavailable; node core remains controllable");
+                    dashboard
+                        .record_startup_issue(eefn::service::StartupIssue::LlamacppStartupFailed);
+                }
             }
             {
                 let mut status = dashboard.live.lock().unwrap();
@@ -2653,6 +2724,48 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn lifecycle_policy_cli_preserves_bounded_choices_and_exact_snapshot() {
+        let args = Args::try_parse_from([
+            "eefn",
+            "model-lifecycle-policy",
+            "--runtime",
+            "11111111-1111-4111-8111-111111111111",
+            "set",
+            "--expected-digest",
+            &"a".repeat(64),
+            "--startup",
+            "manual",
+            "--idle-unload-seconds",
+            "0",
+            "--queue-capacity",
+            "2",
+        ])
+        .unwrap();
+        let Some(Commands::ModelLifecyclePolicy { command }) = args.command else {
+            panic!("wrong adapter")
+        };
+        let request = eefn::model_lifecycle_policy::PolicyRequest {
+            schema_version: 1,
+            expected_node_id: "owner".into(),
+            expected_runtime_id: command.runtime,
+            command: command.command,
+        };
+        assert!(request.validate().is_ok());
+        assert!(
+            Args::try_parse_from(["eefn", "model-lifecycle-policy", "show", "--force"]).is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "model-lifecycle-policy",
+                "set",
+                "--startup",
+                "manual"
+            ])
+            .is_err()
+        );
+    }
     #[test]
     fn model_lifecycle_cli_requires_exact_mutation_runtime_and_refuses_force_or_infer() {
         let args = Args::try_parse_from(["eefn", "model-lifecycle", "show"]).unwrap();

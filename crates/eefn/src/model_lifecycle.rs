@@ -3,7 +3,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{
         Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
@@ -118,10 +118,20 @@ pub(crate) struct ModelRuntime {
     service: Weak<crate::NodeService>,
     server: Option<Arc<crate::ModelServer>>,
     models: Value,
+    policy: crate::model_lifecycle_policy::ModelLifecyclePolicy,
+    policy_revision: u64,
+    idle_events: Mutex<VecDeque<IdleEvent>>,
     closed: AtomicBool,
     records: Mutex<BTreeMap<String, Operation>>,
     queue: mpsc::Sender<String>,
     receiver: tokio::sync::Mutex<Option<mpsc::Receiver<String>>>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IdleEvent {
+    model_id: String,
+    generation: u64,
+    outcome: String,
 }
 pub struct ModelRuntimeGuard {
     service: Weak<crate::NodeService>,
@@ -144,14 +154,31 @@ impl crate::NodeService {
         engine: &Arc<crate::NodeEngine>,
         id: String,
     ) -> Result<ModelRuntimeGuard> {
+        let config = self.read_config()?;
+        let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(&config)?;
+        let revision =
+            crate::model_lifecycle_policy::ModelLifecyclePolicy::revision_from_config(&config)?;
+        self.bind_model_runtime_with_policy(engine, id, policy, revision)
+    }
+    pub fn bind_model_runtime_with_policy(
+        self: &Arc<Self>,
+        engine: &Arc<crate::NodeEngine>,
+        id: String,
+        policy: crate::model_lifecycle_policy::ModelLifecyclePolicy,
+        policy_revision: u64,
+    ) -> Result<ModelRuntimeGuard> {
         crate::automation_occurrence::uuid(&id)?;
-        let (queue, receiver) = mpsc::channel(8);
+        policy.validate()?;
+        let (queue, receiver) = mpsc::channel(policy.queue_capacity);
         let runtime = Arc::new(ModelRuntime {
             id,
             engine: Arc::downgrade(engine),
             service: Arc::downgrade(self),
             server: engine.model_server.clone(),
             models: self.read_config()?["models"].clone(),
+            policy,
+            policy_revision,
+            idle_events: Mutex::new(VecDeque::new()),
             closed: AtomicBool::new(false),
             records: Mutex::new(BTreeMap::new()),
             queue,
@@ -236,7 +263,7 @@ impl crate::NodeService {
                     }
                     reused = true;
                 } else {
-                    if records.len() >= 256 {
+                    if records.len() >= runtime.policy.receipt_capacity {
                         bail!("Model lifecycle receipt capacity reached; no admission")
                     }
                     let server = runtime.server.as_ref().context("Owned GGUF lifecycle unavailable for this active backend; no fallback or external unload")?;
@@ -244,7 +271,9 @@ impl crate::NodeService {
                         if runtime.closed.load(Ordering::SeqCst) || runtime.engine.upgrade().is_none() {
                             bail!("Model runtime closed")
                         }
-                        if config["node_id"] != self.node_id || config["models"] != runtime.models {
+                        if config["node_id"] != self.node_id || config["models"] != runtime.models
+                            || crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(config)? != runtime.policy
+                            || crate::model_lifecycle_policy::ModelLifecyclePolicy::revision_from_config(config)? != runtime.policy_revision {
                             bail!("Saved model settings changed; explicitly restart before lifecycle changes")
                         }
                         if remote && config.pointer("/management/allow_remote") != Some(&json!(true)) {
@@ -286,6 +315,7 @@ impl crate::NodeService {
             .unwrap_or_default();
         let reply = json!({"schema_version":1,"report_type":"model_lifecycle","node_id":self.node_id,"runtime_id":runtime.id,
             "command":request.command,"supported":runtime.server.is_some(),"models":models,"receipt":receipt,"reused":reused,
+            "idle_events":runtime.idle_events.lock().unwrap().iter().cloned().collect::<Vec<_>>(),
             "execution_authorized":false,"model_inference_requested":false,"file_deletion":false,"automatically_retried":false,
             "note":"Private selected-GGUF runtime state. Load/unload controls owned processes, not inference permission or physical memory guarantees. Exact receipt reuse never replays. Runtime restart interrupts, never resumes, model operations."});
         if !confirmed(&reply, &request) {
@@ -295,11 +325,26 @@ impl crate::NodeService {
     }
 }
 impl ModelRuntimeGuard {
+    pub fn policy(&self) -> &crate::model_lifecycle_policy::ModelLifecyclePolicy {
+        &self.runtime.policy
+    }
     pub async fn run(&self) -> Result<()> {
         self.runtime.run().await
     }
 }
 impl ModelRuntime {
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+    pub(crate) fn policy(&self) -> &crate::model_lifecycle_policy::ModelLifecyclePolicy {
+        &self.policy
+    }
+    pub(crate) fn policy_revision(&self) -> u64 {
+        self.policy_revision
+    }
     fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
         for op in self.records.lock().unwrap().values_mut() {
@@ -324,7 +369,17 @@ impl ModelRuntime {
             .await
             .take()
             .context("Model lifecycle worker already owned")?;
-        while let Some(id) = receiver.recv().await {
+        let mut idle_tick = tokio::time::interval(Duration::from_secs(1));
+        idle_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            let id = tokio::select! {biased;
+                next=receiver.recv()=>{let Some(id)=next else {break};id},
+                _=idle_tick.tick(),if self.policy.idle_unload_seconds.is_some()=>{
+                    if self.closed.load(Ordering::SeqCst) {break;}
+                    self.unload_idle().await;
+                    continue;
+                },
+            };
             if self.closed.load(Ordering::SeqCst) {
                 break;
             }
@@ -356,7 +411,7 @@ impl ModelRuntime {
                 tokio::select! {biased;
                     _=cancel.changed()=>{cancelled=true;Ok(())},
                     result=async {match &command {
-                        LifecycleCommand::Load{..}=>server.load_reserved(model,&id,Duration::from_secs(300),|slot|{
+                        LifecycleCommand::Load{..}=>server.load_reserved(model,&id,Duration::from_secs(self.policy.load_timeout_seconds),|slot|{
                             let service=self.service.upgrade().context("model owner service closed")?;
                             service.inspect_grant_configuration(|config| {
                                 self.authorized(config,remote)?;
@@ -365,7 +420,7 @@ impl ModelRuntime {
                         }).await,
                         LifecycleCommand::Unload{..}=>{
                             let service=self.service.upgrade().context("model owner service closed")?;
-                            server.unload_reserved(model,&id,||service.guard_grant_configuration(|config|self.authorized(config,remote))).await
+                            server.unload_reserved_with_timeout(model,&id,Duration::from_secs(self.policy.termination_wait_seconds),||service.guard_grant_configuration(|config|self.authorized(config,remote))).await
                         },
                         _=>unreachable!(),
                     }}=>result,
@@ -389,6 +444,52 @@ impl ModelRuntime {
         }
         Ok(())
     }
+    async fn unload_idle(&self) {
+        let Some(seconds) = self.policy.idle_unload_seconds else {
+            return;
+        };
+        let Some(server) = &self.server else { return };
+        let Some(service) = self.service.upgrade() else {
+            return;
+        };
+        let idle = Duration::from_secs(seconds);
+        let Ok(candidates) = server.idle_candidates(idle) else {
+            return;
+        };
+        for (model, generation) in candidates {
+            let id = uuid::Uuid::new_v4().to_string();
+            let reserved = service.inspect_grant_configuration(|config| {
+                self.authorized(config, false)?;
+                server.reserve_idle(&model, generation, idle, &id)
+            });
+            if reserved.is_err() {
+                continue;
+            }
+            let outcome = server
+                .unload_reserved_with_timeout(
+                    &model,
+                    &id,
+                    Duration::from_secs(self.policy.termination_wait_seconds),
+                    || service.guard_grant_configuration(|config| self.authorized(config, false)),
+                )
+                .await;
+            server.release_control(&model, &id);
+            let mut events = self.idle_events.lock().unwrap();
+            if events.len() == 32 {
+                events.pop_front();
+            }
+            events.push_back(IdleEvent {
+                model_id: model,
+                generation,
+                outcome: if outcome.is_ok() {
+                    "completed"
+                } else {
+                    "failed"
+                }
+                .into(),
+            });
+        }
+    }
     fn authorized(&self, config: &Value, remote: bool) -> Result<()> {
         let owner = self
             .service
@@ -398,6 +499,10 @@ impl ModelRuntime {
             || self.engine.upgrade().is_none()
             || config["node_id"] != owner.node_id
             || config["models"] != self.models
+            || crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(config)?
+                != self.policy
+            || crate::model_lifecycle_policy::ModelLifecyclePolicy::revision_from_config(config)?
+                != self.policy_revision
         {
             bail!("model runtime/settings changed before application")
         }
@@ -427,6 +532,8 @@ struct Report {
     command: LifecycleCommand,
     supported: bool,
     models: Vec<Snapshot>,
+    #[serde(default)]
+    idle_events: Vec<IdleEvent>,
     receipt: Option<Receipt>,
     reused: bool,
     execution_authorized: bool,
@@ -455,10 +562,17 @@ pub fn confirmed(value: &Value, request: &LifecycleRequest) -> bool {
         || r.automatically_retried
         || r.note.len() > 1024
         || r.models.len() > 256
+        || r.idle_events.len() > 32
     {
         return false;
     }
     let mut last = None;
+    if r.idle_events.iter().any(|event| {
+        crate::model_selection::validate_id(&event.model_id).is_err()
+            || !matches!(event.outcome.as_str(), "completed" | "failed")
+    }) {
+        return false;
+    }
     for s in &r.models {
         if crate::model_selection::validate_id(&s.model_id).is_err()
             || last.is_some_and(|id: &str| id >= s.model_id.as_str())
@@ -470,7 +584,7 @@ pub fn confirmed(value: &Value, request: &LifecycleRequest) -> bool {
         let _ = (s.generation, s.control_pending);
         last = Some(s.model_id.as_str());
     }
-    if !r.supported && !r.models.is_empty() {
+    if !r.supported && (!r.models.is_empty() || !r.idle_events.is_empty()) {
         return false;
     }
     if matches!(request.command, LifecycleCommand::Show { .. }) && r.reused {
@@ -975,5 +1089,151 @@ mod tests {
             task.await.unwrap().unwrap();
             drop(retained_engine);
         }
+    }
+    #[tokio::test]
+    async fn applied_idle_policy_uses_owned_unload_without_consuming_manual_receipts() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("node.json");
+        let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+            idle_unload_seconds: Some(1),
+            ..Default::default()
+        };
+        crate::setup::write_json(
+            &path,
+            &json!({"node_id":"owner","models":{"provider":"llamacpp"},"model_lifecycle":policy}),
+        )
+        .unwrap();
+        let service = crate::NodeService::new(path, "owner".into());
+        let server = crate::ModelServer::test_resident();
+        let engine = Arc::new(
+            crate::NodeEngine::new(false, vec![], directory.path().into())
+                .unwrap()
+                .with_service(service.clone())
+                .with_model_server(server.clone()),
+        );
+        let guard = service
+            .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        server.test_age_idle(Duration::from_secs(2));
+        let pin = server.pin(Some("owned-model")).unwrap();
+        guard.runtime.unload_idle().await;
+        assert!(server.snapshot().unwrap()[0]["owned_pid"].is_number());
+        drop(pin);
+        guard.runtime.unload_idle().await;
+        assert!(guard.runtime.idle_events.lock().unwrap().is_empty());
+        server.test_age_idle(Duration::from_secs(2));
+        let worker = guard.runtime.clone();
+        let task = tokio::spawn(async move { worker.run().await });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if !guard.runtime.idle_events.lock().unwrap().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(server.snapshot().unwrap()[0]["owned_pid"].is_null());
+        assert!(guard.runtime.records.lock().unwrap().is_empty());
+        let shown = service
+            .model_lifecycle_command(
+                request(&guard, LifecycleCommand::Show { operation_id: None }),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(shown["idle_events"].as_array().unwrap().len(), 1);
+        assert_eq!(shown["idle_events"][0]["outcome"], "completed");
+        guard.runtime.close();
+        task.await.unwrap().unwrap();
+    }
+    #[tokio::test]
+    async fn default_disabled_or_saved_policy_mismatch_never_autonomously_unloads() {
+        for idle_enabled in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("node.json");
+            let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+                idle_unload_seconds: idle_enabled.then_some(1),
+                ..Default::default()
+            };
+            crate::setup::write_json(&path,&json!({"node_id":"owner","models":{"provider":"llamacpp"},"model_lifecycle":policy})).unwrap();
+            let service = crate::NodeService::new(path, "owner".into());
+            let server = crate::ModelServer::test_resident();
+            let engine = Arc::new(
+                crate::NodeEngine::new(false, vec![], directory.path().into())
+                    .unwrap()
+                    .with_service(service.clone())
+                    .with_model_server(server.clone()),
+            );
+            let guard = service
+                .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+                .unwrap();
+            server.test_age_idle(Duration::from_secs(2));
+            if idle_enabled {
+                let mut config = service.read_config().unwrap();
+                config["model_lifecycle"]["idle_unload_seconds"] = json!(null);
+                service.save_config(config).unwrap();
+            }
+            guard.runtime.unload_idle().await;
+            assert!(server.snapshot().unwrap()[0]["owned_pid"].is_number());
+            assert!(guard.runtime.idle_events.lock().unwrap().is_empty());
+            guard.runtime.close();
+            guard.runtime.unload_idle().await;
+            assert!(guard.runtime.idle_events.lock().unwrap().is_empty());
+        }
+    }
+    #[tokio::test]
+    async fn restoring_same_policy_content_cannot_resume_an_old_idle_runtime() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("node.json");
+        let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+            idle_unload_seconds: Some(1),
+            ..Default::default()
+        };
+        let original =
+            json!({"node_id":"owner","models":{"provider":"llamacpp"},"model_lifecycle":policy});
+        crate::setup::write_json(&path, &original).unwrap();
+        let service = crate::NodeService::new(path, "owner".into());
+        let server = crate::ModelServer::test_resident();
+        let engine = Arc::new(
+            crate::NodeEngine::new(false, vec![], directory.path().into())
+                .unwrap()
+                .with_service(service.clone())
+                .with_model_server(server.clone()),
+        );
+        let guard = service
+            .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        let mut disabled = original.clone();
+        disabled["model_lifecycle"]["idle_unload_seconds"] = Value::Null;
+        service.save_config(disabled).unwrap();
+        service.save_config(original).unwrap();
+        assert_eq!(
+            crate::model_lifecycle_policy::ModelLifecyclePolicy::revision_from_config(
+                &service.read_config().unwrap()
+            )
+            .unwrap(),
+            2
+        );
+        server.test_age_idle(Duration::from_secs(2));
+        guard.runtime.unload_idle().await;
+        assert!(server.snapshot().unwrap()[0]["owned_pid"].is_number());
+        assert!(guard.runtime.idle_events.lock().unwrap().is_empty());
+        let shown = service
+            .model_lifecycle_policy_command(
+                crate::model_lifecycle_policy::PolicyRequest {
+                    schema_version: 1,
+                    expected_node_id: "owner".into(),
+                    expected_runtime_id: None,
+                    command: crate::model_lifecycle_policy::PolicyCommand::Show {},
+                },
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(shown["saved_policy"], shown["applied_policy"]);
+        assert_eq!(shown["restart_required"], true);
+        guard.runtime.close();
     }
 }

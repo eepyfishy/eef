@@ -15,6 +15,14 @@ See [explicit input/receipt semantics](EXPLICIT-REQUESTS.md).
 
 ## Selected model residency (unreleased after alpha.6)
 
+`eefn model-lifecycle-policy show|set` and
+`eef node model-lifecycle-policy --node NODE_ID show|set` configure eager/manual
+startup, optional idle unload and operation bounds in the same backend service.
+Use the exact saved-policy digest and, when running, runtime ID. Saving does not
+restart or infer; explicit restart applies changed policy, while a saved mismatch
+pauses new idle unloads immediately. Local locked offline setup is also supported.
+See [choices, bounds and idle timing](MODEL-LIFECYCLE-POLICY.md).
+
 `eefn model-lifecycle show|load|unload|cancel` and
 `eef node model-lifecycle --node NODE_ID show|load|unload|cancel` share the running
 node's owned-GGUF service. Load/unload require exact runtime, generation and

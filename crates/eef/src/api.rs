@@ -185,6 +185,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(node_model_lifecycle),
         )
         .route(
+            "/api/commands/node/model-lifecycle-policy",
+            post(node_model_lifecycle_policy),
+        )
+        .route(
             "/api/commands/discovery",
             get(discovery_status).post(discovery_command),
         )
@@ -398,6 +402,14 @@ async fn node_model_lifecycle(
 ) -> ApiResult<Value> {
     Ok(Json(
         crate::node_control::model_lifecycle(&runtime.node_server, request).await?,
+    ))
+}
+async fn node_model_lifecycle_policy(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<eefn::model_lifecycle_policy::PolicyRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_control::model_lifecycle_policy(&runtime.node_server, request).await?,
     ))
 }
 

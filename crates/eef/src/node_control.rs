@@ -117,6 +117,46 @@ pub async fn model_lifecycle(
     Ok(result)
 }
 
+pub async fn model_lifecycle_policy(
+    server: &eefn::NodeServer,
+    request: eefn::model_lifecycle_policy::PolicyRequest,
+) -> Result<Value> {
+    request.validate()?;
+    let mutation = !matches!(
+        request.command,
+        eefn::model_lifecycle_policy::PolicyCommand::Show {}
+    );
+    if mutation && request.expected_runtime_id.is_none() {
+        bail!("Exact remote runtime required")
+    }
+    let mut result = json!({"schema_version":1,"report_type":"remote_model_lifecycle_policy","success":false,
+        "command":request.command,"expected_node_id":request.expected_node_id,"expected_runtime_id":request.expected_runtime_id,
+        "mutation_requested":mutation,"outcome_unknown":mutation,"automatically_retried":false,"restart_requested":false,"result":null});
+    let reply = server
+        .invoke_remote(
+            &request.expected_node_id,
+            "node.configure",
+            if mutation {
+                "model_lifecycle_policy"
+            } else {
+                "model_lifecycle_policy_status"
+            },
+            serde_json::to_value(&request)?,
+            Duration::from_secs(10),
+        )
+        .await;
+    if let Ok(reply) = reply {
+        if reply["success"] == true
+            && eefn::model_lifecycle_policy::confirmed(&reply["data"], &request)
+        {
+            result["success"] = json!(true);
+            result["outcome_unknown"] = json!(false);
+            result["result"] = reply["data"].clone();
+        }
+    }
+    Ok(result)
+}
+
 async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<Value> {
     use eefn::model_selection::{ModelCommand, ModelCommandRequest};
     eefn::network::validate_node_id(&request.node_id)?;
