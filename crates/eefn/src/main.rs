@@ -1606,6 +1606,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
+            eefn::request_preview::RequestAction::SubmitProcess(input) => {
+                execute_concrete_command(args, input.command()?).await
+            }
             eefn::request_preview::RequestAction::Submit {
                 text,
                 title,
@@ -2586,6 +2589,83 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn submit_process_cli_preserves_literal_args_and_uses_the_existing_concrete_service() {
+        let args = Args::try_parse_from([
+            "eefn",
+            "requests",
+            "submit-process",
+            "--text",
+            "  Check the tool\n",
+            "--program",
+            "C:\\Program Files\\Owner Tool\\tool.exe",
+            "--arg=--version",
+            "--arg=literal spaces ; $()",
+            "--arg=",
+            "--cwd",
+            "C:\\Owner workspace",
+            "--timeout-seconds",
+            "5",
+            "--node",
+            "other-node",
+            "--operation-id",
+            "11111111-1111-4111-8111-111111111111",
+        ])
+        .unwrap();
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::SubmitProcess(input),
+        }) = args.command
+        else {
+            panic!("wrong adapter")
+        };
+        let source = input.command().unwrap();
+        assert_eq!(source.request.original_text, "  Check the tool\n");
+        assert_eq!(
+            source.request.input.params["args"],
+            serde_json::json!(["--version", "literal spaces ; $()", ""])
+        );
+        assert_eq!(source.request.input.template, "execute_process");
+        assert_eq!(source.operation_id, "11111111-1111-4111-8111-111111111111");
+    }
+    #[test]
+    fn submit_process_cli_requires_input_and_refuses_authority_or_template_overrides() {
+        for extra in [
+            vec!["--execute"],
+            vec!["--force"],
+            vec!["--permissions", "all"],
+            vec!["--template", "http_request"],
+            vec!["--file", "input.json"],
+            vec!["--origin-node", "forged"],
+            vec!["--timeout-seconds", "0"],
+            vec!["--timeout-seconds", "3601"],
+        ] {
+            let mut argv = vec![
+                "eefn",
+                "requests",
+                "submit-process",
+                "--text",
+                "Check tool",
+                "--program",
+                "tool.exe",
+            ];
+            argv.extend(extra);
+            assert!(Args::try_parse_from(argv).is_err());
+        }
+        assert!(
+            Args::try_parse_from(["eefn", "requests", "submit-process", "--text", "Check"])
+                .is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "requests",
+                "submit-process",
+                "--program",
+                "tool.exe"
+            ])
+            .is_err()
+        );
+    }
     #[test]
     fn connection_adapters_preserve_existing_commands_and_keep_secrets_off_arguments() {
         for argv in [

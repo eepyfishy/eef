@@ -1223,6 +1223,31 @@ mod tests {
             None,
         )
     }
+    #[test]
+    fn completed_unsuccessful_report_fails_job_without_losing_evidence_or_allowing_resume() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        let (p, g, journal) = issued(&engine);
+        journal.record(&ack(&g)).unwrap();
+        let failed = GrantReport::new(
+            &g,
+            ReceiptState::Completed,
+            json!({"success":false,"exit_code":17,"stdout":"bounded"}),
+            Some("process_exit_unsuccessful"),
+        );
+        journal.record(&failed).unwrap();
+        let saved = engine.store.get(&p.plan_id).unwrap();
+        assert_eq!(saved.status, PlanStatus::Failed);
+        assert_eq!(saved.tasks[0].status, TaskStatus::Failed);
+        assert!(!saved.results[&g.task_id].success);
+        assert_eq!(
+            json!(saved.execution.as_ref().unwrap().attempts[0].report),
+            json!(Some(&failed))
+        );
+        assert_eq!(saved.execution.as_ref().unwrap().attempts.len(), 1);
+        assert!(engine.resume_job(&p.plan_id).is_err());
+        journal.record(&failed).unwrap();
+        assert_eq!(json!(engine.store.get(&p.plan_id).unwrap()), json!(saved));
+    }
     fn retained(g: &ExecutionGrant, report: GrantReport) -> eefn::request_result::RetainedResult {
         eefn::request_result::RetainedResult {
             schema_version: 1,

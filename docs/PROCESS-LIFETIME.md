@@ -124,3 +124,40 @@ that abrupt exit's cause. Default role binaries are restored after this check.
 Final default-binary `process-lifetime-qNeb1d` passes the same strengthened six
 cases after restoration. Final both-mode suites remain 519 tests, with formatting,
 JS syntax, diff and backend guard passing. Installed artifacts remain unchanged.
+
+## Typed process authoring and unsuccessful exits (subsequent increment)
+
+`eefn requests submit-process` now builds that same exact concrete request from
+literal program/argument/working-directory/timeout options, without a JSON file
+or model. It only submits/compiles for review; owner approval, grants, local
+permissions, fixed executor and original source/receipt checks remain. The public
+lifetime fixture uses this adapter and inspects its exact source reuse before
+approval to establish no execution. [Options and scope](EXPLICIT-REQUESTS.md).
+
+The fixture additionally exposed a real status bug: `process-lifetime-SWGvia`
+observed native exit 17 with `data.success:false`, but the grant marked success
+and EEF marked the job completed. That failed run is not acceptance evidence.
+The node now uses the existing completed-but-unsuccessful report shape with
+`process_exit_unsuccessful`, retaining bounded exit/stdout/stderr evidence and
+`success:false`. EEF's existing unsuccessful-task path records `failed`, not
+completed, and does not replay the command. Other capability payloads' unrelated
+`success` fields are not reinterpreted. No schema or permission is widened.
+Matched-grant confirmation also rejects a contradictory native report claiming
+success while its process payload says failure. Older/forged contradictory
+records are retained and fail validation/recovery rather than being rewritten,
+silently repaired or used as successful automation evidence. Preserve journal
+backups; stricter evidence checks are not automatic old-record remediation.
+
+Completion means the bounded invocation returned; it is distinct from the
+program succeeding. A failed command may already have caused effects; neither
+failure nor observed process exit undoes them or authorizes retry, migration or
+refunding an automation allowance. Deadline/permission/restart uncertainty still
+reports `unknown`. The new failed-exit case retains one attempt and original
+native identities under exact receipt inspection.
+
+Final `process-lifetime-oSCVSl` passes all seven typed-source/public-path cases
+after the false-success confirmation guard. It records the failed command's
+grant success/error/exit fields and failed job status explicitly in its results,
+not merely a generic completed receipt. Final both-mode suites pass 529 tests;
+initial failed test/compile runs and the reproduced false-success defect remain
+separate from that acceptance evidence. No published/installed artifact is updated.

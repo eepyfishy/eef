@@ -397,6 +397,10 @@ impl GrantReport {
                 == matches!(self.state, ReceiptState::Completed | ReceiptState::Unknown)
             && (!self.success
                 || (self.state == ReceiptState::Completed && self.error_code.is_none()))
+            && !(self.success
+                && g.capability == "process.exec"
+                && g.action == "run"
+                && self.data.get("success").and_then(Value::as_bool) == Some(false))
             && (self.state != ReceiptState::Accepted
                 || (self.persisted
                     && self.data.is_null()
@@ -777,7 +781,7 @@ impl AcceptedGrant {
                 _=tokio::time::sleep_until(deadline)=>break GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some("grant_deadline_exceeded")),
                 _=tick.tick()=>{},
                 value=&mut operation=>break match value {
-                    Ok(data) if serde_json::to_vec(&data).is_ok_and(|v|v.len()<=g.limits.max_result_bytes)=>GrantReport::new(g,ReceiptState::Completed,data,None),
+                    Ok(data) if serde_json::to_vec(&data).is_ok_and(|v|v.len()<=g.limits.max_result_bytes)=>completed_outcome(g,data),
                     Ok(_)=>GrantReport::new(g,ReceiptState::Completed,Value::Null,Some("result_too_large")),
                     Err(_)=>GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some("execution_failed_effects_unknown")),
                 }
@@ -805,9 +809,56 @@ impl AcceptedGrant {
     }
 }
 
+fn completed_outcome(grant: &ExecutionGrant, data: Value) -> GrantReport {
+    // Process completion is not command success. Keep its bounded exit/output
+    // evidence and the existing completed-but-unsuccessful report contract so
+    // the coordinator fails the task and cancels unissued dependencies. Other
+    // capability payloads may legitimately contain an unrelated `success` key.
+    let error = (grant.capability == "process.exec"
+        && grant.action == "run"
+        && data.get("success").and_then(Value::as_bool) == Some(false))
+    .then_some("process_exit_unsuccessful");
+    GrantReport::new(grant, ReceiptState::Completed, data, error)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn completed_process_failure_preserves_exit_evidence_but_never_claims_success() {
+        let mut g = grant();
+        g.capability = "process.exec".into();
+        g.params = json!({"program":"owner-selected-tool"});
+        let data = json!({"success":false,"exit_code":17,"stdout":"bounded output","stderr":"failed check","truncated":false});
+        let report = completed_outcome(&g, data.clone());
+        assert_eq!(report.state, ReceiptState::Completed);
+        assert!(!report.success);
+        assert_eq!(
+            report.error_code.as_deref(),
+            Some("process_exit_unsuccessful")
+        );
+        assert_eq!(report.data, data);
+        assert!(report.confirms(&g));
+        let old_false_success = GrantReport::new(&g, ReceiptState::Completed, data, None);
+        assert!(
+            !old_false_success.confirms(&g),
+            "Older/forged false-success reports must not validate or authorize recovery"
+        );
+        let successful = completed_outcome(&g, json!({"success":true,"exit_code":0}));
+        assert!(successful.success);
+        assert!(successful.error_code.is_none());
+        assert!(successful.confirms(&g));
+    }
+    #[test]
+    fn arbitrary_payload_success_fields_do_not_reinterpret_other_capabilities() {
+        let g = grant();
+        let data = json!({"success":false,"exit_code":17});
+        let report = completed_outcome(&g, data.clone());
+        assert!(report.success);
+        assert!(report.error_code.is_none());
+        assert_eq!(report.data, data);
+        assert!(report.confirms(&g));
+    }
     #[tokio::test]
     async fn dropped_grant_retains_uncertainty_without_replay_and_never_overwrites_completed_evidence()
      {

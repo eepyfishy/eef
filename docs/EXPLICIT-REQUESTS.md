@@ -6,6 +6,7 @@ workflow without an interpreter, proposed-input JSON or direct RPC execution:
 ```powershell
 eefn requests submit --text "Show status" --template system_info --operation-id UUID --json
 eefn jobs request-text --prompt "Explain this topic" --role USER_SELECTED_ROLE --operation-id UUID --json
+eefn requests submit-process --text "Check this tool" --program TOOL --arg=--version --node NODE_ID --operation-id UUID --json
 eefn requests plan JOB_ID --json
 ```
 
@@ -15,6 +16,19 @@ templates, `requests submit --text ORIGINAL_TEXT --file concrete-plan.json` acce
 the existing bounded `PlanInput` file. `--template` is parameter-free; optional
 `--node` is exact and conflicts with file mode. `--title` is configurable display
 text. Omitted operation IDs are generated and returned; retain the exact receipt.
+
+`submit-process` is the subsequent typed adapter for `execute_process`. Repeat
+`--arg` for separate literal arguments (use `--arg=-flag` for a leading hyphen);
+spaces, empty arguments and original input text are retained without shell
+joining. Optional `--cwd`, `--timeout-seconds` (1-3600), `--node` and `--title`
+become the same exact concrete input used by the existing submit service.
+No JSON file, model, ephemeral node or new execution runner is needed. Argument
+count/byte and wire bounds match existing helpers; invalid/NUL input rejects
+locally before submission. Executor permissions, working-directory scope, local
+timeout and separately approved grant duration still apply independently.
+Submission/receipt reuse cannot start the program or grant permission. Changing
+any parameter/title/text under a retained operation ID conflicts. This is native
+command authoring for review, not a command-line shortcut to owner approval.
 
 The backend does not interpret or execute these inputs. It describes the explicit
 template using the shared capability catalogue, leaves compute complexity unknown,

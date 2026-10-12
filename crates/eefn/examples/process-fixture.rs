@@ -55,7 +55,7 @@ fn main() -> anyhow::Result<()> {
             println!("isolated descendant holding inherited output");
             std::thread::sleep(Duration::from_secs(30));
         }
-        "complete" | "loop" => {
+        "complete" | "fail" | "loop" => {
             let child = Command::new(std::env::current_exe()?)
                 .arg("child")
                 .arg(&root)
@@ -77,10 +77,13 @@ fn main() -> anyhow::Result<()> {
             println!("isolated root started");
             let end = Instant::now() + Duration::from_secs(30);
             while Instant::now() < end {
-                if mode == "complete" && root.join("release").is_file() {
+                if (mode == "complete" || mode == "fail") && root.join("release").is_file() {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(10));
+            }
+            if mode == "fail" {
+                std::process::exit(17);
             }
         }
         "observe" => {

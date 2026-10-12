@@ -58,6 +58,8 @@ pub enum RequestAction {
         #[arg(long)]
         operation_id: Option<String>,
     },
+    /// Save/compile a literal program/argument request without JSON or a model; never execute.
+    SubmitProcess(crate::request_submission::ProcessSubmission),
     /// Propose and save a source-bound method or clarification; never approve/execute.
     Prepare {
         id: String,

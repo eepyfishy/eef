@@ -4,6 +4,15 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Explicit native command authoring (unreleased after alpha.6)
+
+`eefn requests submit-process --text PURPOSE --program PROGRAM --arg=VALUE`
+authors a native command without a JSON file or model. Repeat literal arguments;
+optional working directory, timeout and exact executor choices are preserved in
+the existing concrete request. It stops at compilation, normally
+`awaiting_approval`; separate owner approval/execution and node permissions remain.
+See [explicit input/receipt semantics](EXPLICIT-REQUESTS.md).
+
 ## Automation definition authoring (unreleased after alpha.6)
 
 The subsequent `eef automation-schedules enable|stop|show|list|resolve-refusal` connects exact

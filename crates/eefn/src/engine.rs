@@ -1500,7 +1500,7 @@ fn is_allowed_program(program: &str, allowlist: &[String]) -> bool {
     })
 }
 
-fn validated_arguments(value: &Value) -> Result<Vec<String>> {
+pub(crate) fn validated_arguments(value: &Value) -> Result<Vec<String>> {
     let arguments = value
         .as_array()
         .context("args must be an array of strings")?;

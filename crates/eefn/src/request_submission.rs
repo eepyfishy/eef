@@ -61,6 +61,81 @@ impl ConcreteCommand {
         self.request.validate()
     }
 }
+/// File-free typed source authoring. This constructs the same concrete request;
+/// it never interprets shell text, changes permissions or authorizes execution.
+#[derive(Clone, Debug, clap::Args)]
+pub struct ProcessSubmission {
+    #[arg(long)]
+    pub text: String,
+    #[arg(long, default_value = "Explicit process request")]
+    pub title: String,
+    #[arg(long, value_name = "PROGRAM")]
+    pub program: String,
+    /// One literal argument; repeat this option. Use --arg=-flag for leading hyphens.
+    #[arg(long = "arg", value_name = "ARG")]
+    pub args: Vec<String>,
+    #[arg(long)]
+    pub cwd: Option<String>,
+    /// Requested process timeout, still limited independently by executor policy/grants.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    pub timeout_seconds: Option<u64>,
+    /// Exact executor selection; only fresh self/owner-disclosed nodes are eligible.
+    #[arg(long)]
+    pub node: Option<String>,
+    /// Retain the returned receipt after uncertainty; no automatic retry or execution.
+    #[arg(long)]
+    pub operation_id: Option<String>,
+}
+impl ProcessSubmission {
+    pub fn command(&self) -> Result<ConcreteCommand> {
+        if self.program.trim().is_empty()
+            || self.program.contains('\0')
+            || self.args.iter().any(|arg| arg.contains('\0'))
+            || self
+                .cwd
+                .as_ref()
+                .is_some_and(|cwd| cwd.trim().is_empty() || cwd.contains('\0'))
+            || self
+                .timeout_seconds
+                .is_some_and(|n| !(1..=3600).contains(&n))
+        {
+            bail!(
+                "Invalid explicit process source; use a program and literal arguments, not shell text"
+            );
+        }
+        let args = crate::engine::validated_arguments(&json!(self.args))?;
+        let mut params = json!({"program":self.program,"args":args});
+        if let Some(cwd) = &self.cwd {
+            params["cwd"] = json!(cwd);
+        }
+        if let Some(seconds) = self.timeout_seconds {
+            params["timeout_seconds"] = json!(seconds);
+        }
+        let command = ConcreteCommand {
+            operation_id: self
+                .operation_id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            request: ConcreteInput {
+                schema_version: 1,
+                original_text: self.text.clone(),
+                title: self.title.clone(),
+                input: PlanInput {
+                    schema_version: 1,
+                    template: "execute_process".into(),
+                    params,
+                    constraints: self
+                        .node
+                        .as_ref()
+                        .map(|node| json!({"node_id":node}))
+                        .unwrap_or_else(|| json!({})),
+                },
+            },
+        };
+        command.validate()?;
+        Ok(command)
+    }
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConcreteRequest {
@@ -190,6 +265,116 @@ impl crate::NodeService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn process_input() -> ProcessSubmission {
+        ProcessSubmission {
+            text: "  Check the selected tool\n".into(),
+            title: "Selected tool check".into(),
+            program: "C:\\Program Files\\Owner Tool\\tool.exe".into(),
+            args: vec![
+                "--version".into(),
+                "literal spaces ; $()".into(),
+                String::new(),
+            ],
+            cwd: Some("C:\\Owner workspace".into()),
+            timeout_seconds: Some(12),
+            node: Some("other-node".into()),
+            operation_id: Some(uuid::Uuid::new_v4().to_string()),
+        }
+    }
+    #[test]
+    fn typed_process_source_preserves_literal_parameters_text_and_exact_receipt() {
+        let input = process_input();
+        let command = input.command().unwrap();
+        assert_eq!(
+            command.operation_id,
+            input.operation_id.as_ref().unwrap().as_str()
+        );
+        assert_eq!(command.request.original_text, input.text);
+        assert_eq!(command.request.title, input.title);
+        assert_eq!(command.request.input.template, "execute_process");
+        assert_eq!(
+            command.request.input.params,
+            json!({"program":input.program,"args":input.args,"cwd":input.cwd,"timeout_seconds":12})
+        );
+        assert_eq!(
+            command.request.input.constraints,
+            json!({"node_id":"other-node"})
+        );
+        assert_eq!(input.command().unwrap(), command);
+        let wire = json!(command);
+        for field in ["origin_node", "approval", "grant", "execute", "permissions"] {
+            assert!(wire.get(field).is_none());
+            assert!(wire["request"].get(field).is_none());
+        }
+    }
+    #[test]
+    fn typed_process_defaults_omit_unselected_limits_targets_and_generate_returnable_receipts() {
+        let mut input = process_input();
+        input.operation_id = None;
+        input.cwd = None;
+        input.timeout_seconds = None;
+        input.node = None;
+        input.args.clear();
+        let one = input.command().unwrap();
+        let two = input.command().unwrap();
+        assert_ne!(one.operation_id, two.operation_id);
+        assert!(!uuid::Uuid::parse_str(&one.operation_id).unwrap().is_nil());
+        assert_eq!(
+            one.request.input.params,
+            json!({"program":input.program,"args":[]})
+        );
+        assert_eq!(one.request.input.constraints, json!({}));
+    }
+    #[test]
+    fn typed_process_invalid_arguments_and_source_fields_fail_before_submission() {
+        for field in [
+            "program",
+            "program_nul",
+            "args_nul",
+            "cwd",
+            "cwd_nul",
+            "text",
+            "title",
+            "node",
+            "receipt",
+            "timeout_zero",
+            "timeout_large",
+        ] {
+            let mut bad = process_input();
+            match field {
+                "program" => bad.program = "  ".into(),
+                "program_nul" => bad.program = "tool\0.exe".into(),
+                "args_nul" => bad.args = vec!["one\0two".into()],
+                "cwd" => bad.cwd = Some(" ".into()),
+                "cwd_nul" => bad.cwd = Some("C:\\one\0two".into()),
+                "text" => bad.text = String::new(),
+                "title" => bad.title = "invalid\ntitle".into(),
+                "node" => bad.node = Some("invalid\nnode".into()),
+                "receipt" => bad.operation_id = Some("not-a-receipt".into()),
+                "timeout_zero" => bad.timeout_seconds = Some(0),
+                "timeout_large" => bad.timeout_seconds = Some(3601),
+                _ => unreachable!(),
+            }
+            assert!(bad.command().is_err(), "{field}");
+        }
+    }
+    #[test]
+    fn typed_process_uses_existing_argument_count_byte_and_wire_bounds() {
+        let mut input = process_input();
+        input.args = vec![String::new(); 128];
+        assert!(input.command().is_ok());
+        input.args.push(String::new());
+        assert!(input.command().is_err());
+        input.args = vec!["x".repeat(8192)];
+        assert!(input.command().is_ok());
+        input.args = vec!["x".repeat(8193)];
+        assert!(input.command().is_err());
+        input.args = vec!["x".repeat(8192); 9];
+        assert!(input.command().is_err());
+        input.args.clear();
+        input.program = "x".repeat(64 * 1024);
+        assert!(input.command().is_err());
+    }
     fn input() -> ConcreteInput {
         ConcreteInput {
             schema_version: 1,

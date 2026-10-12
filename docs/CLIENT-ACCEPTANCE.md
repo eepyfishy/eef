@@ -711,3 +711,47 @@ The dashboard-free fixture observed permission-loss exit after 102 ms, executor
 restart after 578 ms and coordinator restart after 388 ms from live observer
 admission. These are local fixture measurements, not latency guarantees for other
 devices, suspended/overloaded systems or different adapters.
+
+## Typed native process authoring and unsuccessful exit handling (2026-10-12)
+
+Final workspace/all-target suites pass **529** tests in both feature modes:
+EEF library 219, owner CLI 13, installer 6, EEFN library 283, node CLI 8.
+Fresh default binaries/examples, formatting/diff/JS syntax and backend source
+guard pass. Six added typed-source/CLI tests preserve raw text, literal/empty/
+hyphen arguments, exact receipts and optional choices, enforce existing argument/
+wire/timeout bounds and reject authority/template overrides before submission.
+Four additional outcome tests retain native failed-exit evidence and deny replay,
+reject contradictory success, preserve unrelated capability payloads, and record
+an unsuccessful completed report as a failed coordinator task/job.
+
+Public `process-lifetime-SWGvia` reproduced the bug before the outcome fix:
+native exit 17 and `data.success:false` became grant success and job completed.
+That failed run is not acceptance. Subsequent `process-lifetime-c1zlH3` passed
+seven typed-CLI/public-path cases after the outcome fix but before the final
+false-success confirmation guard. Exact source receipt reuse starts no work;
+the known failed command keeps completed-but-unsuccessful evidence, a failed
+job, one attempt and unchanged native identities. Other deadline/permission/
+restart cases remain unknown. [Contract and remaining scope](PROCESS-LIFETIME.md#typed-process-authoring-and-unsuccessful-exits-subsequent-increment).
+
+An initial typed-source test incorrectly assumed spaces were invalid in stable
+node IDs; the test now uses an actually invalid control character without
+changing the existing identity validator. An initial test-only equality compile
+error was corrected by comparing serialized evidence, not changing production
+types. Neither failed run is counted as passing. Earlier unexplained exits remain
+unproven. No installed runtime/release/feed/UI/model changes or signing/security
+acceptance follow from these source checks; all full 0.4.0 requirements stay open.
+
+Final-binary `process-lifetime-oSCVSl` passes all seven cases after the stricter
+confirmation guard, now using `submit-process` for file-free authoring and exact
+source reuse before owner approval. Exit 17 retains grant completion with
+`success:false`, `process_exit_unsuccessful`, output/exit evidence and job status
+failed. Other non-normal cases remain unknown; no repeated native identities or
+second attempt is created. This is local two-logical-node acceptance, not physical
+two-PC or interpreter/general pipeline quality.
+
+Fresh scheduling/refusal recovery (`automation-schedules-FuBdWK`), manual
+occurrence/native execution/archive (`automation-occurrences-L4ITdv`), definitions/
+policies (`automation-definitions-h4ByyH`) and input/answers (`request-input-CcIlfV`)
+regressions also pass with the final source binaries.
+Reviewed execution/recovery (`request-review-SQF2BM`) also passes; that fixture
+uses fake inference, not real interpreter quality or physical two-PC acceptance.

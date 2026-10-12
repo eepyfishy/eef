@@ -219,7 +219,10 @@ mod tests {
         // Finite fallback even if a test fails; these are only our own children.
         let end = std::time::Instant::now() + Duration::from_secs(30);
         while std::time::Instant::now() < end {
-            if mode == "exit" && root.join("release").is_file() {
+            if (mode == "exit" || mode == "fail") && root.join("release").is_file() {
+                if mode == "fail" {
+                    std::process::exit(17);
+                }
                 return;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -375,6 +378,69 @@ mod tests {
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
         processes.exited().await;
+    }
+    #[tokio::test]
+    async fn completed_failed_process_retains_unsuccessful_report_and_denies_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner = engine(dir.path(), 30);
+        let mut grant = crate::grants::tests::grant();
+        grant.capability = "process.exec".into();
+        grant.action = "run".into();
+        grant.params = params("fail", dir.path());
+        let ledger = crate::grants::GrantLedger::open(
+            &dir.path().join("receipts.db"),
+            Default::default(),
+            "owner",
+        )
+        .unwrap();
+        let accepted = crate::grants::AcceptedGrant::prepare(
+            grant.clone(),
+            ledger.clone(),
+            &runner,
+            &grant.issuer_id,
+            &grant.session_id,
+            "owner",
+        )
+        .unwrap();
+        let task = tokio::spawn(async move { accepted.run(&runner).await });
+        let processes = Processes::observe(dir.path()).await;
+        processes.alive();
+        std::fs::write(dir.path().join("release"), b"own failed helper may exit").unwrap();
+        let report = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.state, crate::grants::ReceiptState::Completed);
+        assert!(!report.success);
+        assert!(report.persisted);
+        assert!(report.confirms(&grant));
+        assert_eq!(report.data["success"], false);
+        assert_eq!(report.data["exit_code"], 17);
+        assert_eq!(
+            report.error_code.as_deref(),
+            Some("process_exit_unsuccessful")
+        );
+        processes.exited().await;
+        let saved = ledger
+            .result(
+                &grant.issuer_id,
+                &grant.grant_id,
+                &crate::grants::definition_digest(&json!(grant)).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(saved["report"], json!(report));
+        let runner = engine(dir.path(), 30);
+        assert!(
+            crate::grants::AcceptedGrant::prepare(
+                grant.clone(),
+                ledger,
+                &runner,
+                &grant.issuer_id,
+                &grant.session_id,
+                "owner"
+            )
+            .is_err()
+        );
     }
     #[tokio::test]
     async fn granted_deadline_terminates_tree_but_retains_unknown_effects_and_denies_replay() {

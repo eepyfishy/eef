@@ -226,6 +226,15 @@ results remain unknown and exact receipts do not replay. This closes a local
 reviewed Windows process acceptance gap, not physical two-PC, universal native
 stop/migration, full resource/pipeline/media/model or release acceptance.
 
+The next explicit process authoring increment adds `eefn requests submit-process`
+with typed literal options rather than a JSON file. It still uses the existing
+review/compiler/owner approval/grant path. Native acceptance exposed a nonzero
+exit incorrectly treated as successful; the node now retains an unsuccessful
+completed report and EEF records a failed job. Exact-grant confirmation rejects
+contradictory false-success native evidence without rewriting old history.
+This advances command usability and failure-aware execution, not automatic
+code upgrades, universal stop acknowledgement, general pipelines or stable 0.4.0.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;
