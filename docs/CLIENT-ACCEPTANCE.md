@@ -664,3 +664,50 @@ reviewed execution/recovery (`request-review-oqAYTp`, fake inference). They
 establish regression coverage for those paths, not public reviewed process-tree
 or physical two-PC acceptance. Earlier unexplained exits/link failures remain
 unproven; no security/signing claim follows from the passes.
+
+## Public cross-node native process lifetime (2026-10-12)
+
+`process-lifetime-TpFkkR` passes six public reviewed-path scenarios: root
+completion with inherited descendant pipes, local timeout, grant deadline,
+local saved permission revocation, executor restart and coordinator restart.
+Two separately authenticated pinned-TLS logical nodes run on one PC with no
+models or dashboard controller. Origin process permission remains disabled;
+directional owner disclosure permits the independently configured executor.
+Submission and approval start no processes. Each actual grant retains the
+exact parameters, immutable origin and fixed executor with one attempt.
+
+A read-only native observer holds both live root/child process handles, verifies
+creation times and observes both exit signals without killing by PID or treating
+missing PID listings as proof. All non-normal cases still retain persisted
+`unknown` effects; exact receipt inspection cannot repeat work or replace native
+identities. This is fixture evidence, not a production stop acknowledgement or
+safe migration/replay authority. The isolated finite native helper is excluded
+from installed bundles. [Details and reproduction](PROCESS-LIFETIME.md#public-reviewed-path-acceptance-subsequent-increment).
+
+Preceding `process-lifetime-1ivWWA` passed the six cases before added exact grant
+assertions; `process-lifetime-BHKIlg` passed five and `process-lifetime-1xzKba`
+passed three. Initial `process-lifetime-5O7xtV` failed on a diagnostic keep-alive
+socket closed during restart and is not passing evidence. Only read-only
+diagnostic/file polls tolerate transient observations; no mutation/work is retried.
+Final both-mode workspace/all-target suites remain **519**, and the fresh default
+workspace binaries/examples plus formatting, diff, JS syntax and backend source
+guard pass. Full physical/resource/media/plugin/model/installer/signing and other
+0.4.0 roadmap gates remain open; installed nodes/releases/feeds/UI/models are unchanged.
+
+Strengthened public `process-lifetime-pmU8lz` passes against actual
+`--no-default-features` binaries for both roles. The live held-handle observer's
+monotonic timer requires permission-loss and both restart exits within 2000 ms,
+before those grants' 10000 ms deadline, so eventual lease expiry cannot substitute
+for lifecycle cleanup. Exact scope/one-attempt/no-replay assertions remain.
+Earlier dashboard-free invocation `process-lifetime-EH59gk` exited 1 with no
+normal result/failure report and no remaining fixture processes; its cause is
+unproven. The subsequent passing run with bounded private exit diagnostics does
+not prove a fix. Default binaries are restored afterward; no release/update or
+full physical/native-stop/sandbox/resource acceptance is claimed.
+
+Final default-binary `process-lifetime-qNeb1d` passes all six strengthened cases
+after restoration; both final workspace feature modes remain **519** tests.
+The dashboard-free fixture observed permission-loss exit after 102 ms, executor
+restart after 578 ms and coordinator restart after 388 ms from live observer
+admission. These are local fixture measurements, not latency guarantees for other
+devices, suspended/overloaded systems or different adapters.

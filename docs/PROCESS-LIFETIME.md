@@ -47,8 +47,8 @@ This increment covers Windows `process.exec` only. Intentional persistent
 application launch/control, model-server lifetimes, Python plugins, camera/audio
 and other adapters retain their own existing behavior and need separate measured
 lifecycle work. Non-Windows keeps existing root-child kill-on-drop behavior;
-there is no non-Windows descendant-containment claim. Full physical two-PC,
-public reviewed-process planning, suspend/disk/power faults and versioned release
+there is no non-Windows descendant-containment claim. Public reviewed-process
+acceptance is now covered below; full physical two-PC, suspend/disk/power faults and versioned release
 acceptance remain required. Stable 0.4.0 is not claimed.
 
 ## Validation
@@ -67,3 +67,60 @@ Full workspace/feature-mode and public regression results are recorded in
 feed, browser assets or model files are changed by this source increment.
 Final both-mode suites pass 519 tests and the fresh default workspace executable/
 example build passes; earlier failed link evidence is retained separately.
+
+## Public reviewed-path acceptance (subsequent increment)
+
+`tools/test-process-lifetime.mjs` runs two separate pinned-TLS logical nodes on
+one PC, without models or a dashboard controller. The origin's process feature
+stays disabled; only the explicitly disclosed executor allows the isolated
+native example. Submission/compilation and owner approval create no processes.
+Execution uses the existing public reviewed grant path with exact operation,
+parameters, immutable origin, fixed executor and one retained attempt.
+
+Six scenarios check normal root completion with a child holding inherited pipes,
+local process timeout, grant deadline, saved local permission revocation,
+executor restart and coordinator restart. A separate read-only native observer
+opens handles while both processes are alive, verifies their recorded creation
+times, retains those handles and observes both exit signals. It does not kill
+by PID or infer termination from missing/stale PID listings. See Microsoft's
+[process timing API](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes)
+and [held-handle wait semantics](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject).
+
+Only normal completion reports `completed`; the other cases retain `unknown`
+effects, with exact receipt inspection leaving one attempt and unchanged native
+identities. The observed exit is fixture evidence, not a new production remote
+stop acknowledgement, successful grant or permission to replay/migrate.
+The example is a development helper, not part of installed bundles or a new
+shipping invocation backdoor. Both root and child have finite safety lifetimes.
+
+Build the helper with `cargo build -p eefn --example process-fixture --locked`,
+then run `node tools/test-process-lifetime.mjs` against fresh default role binaries.
+The test changes only isolated fixture permissions/configuration and its own
+temporary files/processes; it never updates installed nodes or changes ordinary
+production permission/approval rules. Native exit observations do not establish
+model/plugin/media lifetime, every hostile program/external service, physical
+two-PC, full resources or installer/security acceptance.
+
+Final public fixture `process-lifetime-TpFkkR` passes all six cases and exact
+grant parameter/origin/executor checks. Earlier `process-lifetime-1ivWWA`
+passed the six cases before the additional grant-scope assertions;
+`process-lifetime-BHKIlg` passed five cases, and `process-lifetime-1xzKba`
+passed the initial three. The first `process-lifetime-5O7xtV` run failed on a
+closed diagnostic keep-alive socket during restart; it is not a pass. Only
+read-only observation predicates now tolerate transient fetch failures; no
+mutation, approval or execution is implicitly retried. Final workspace suites
+still pass 519 tests in both feature modes with the new helper included.
+
+The strengthened dashboard-free-binary fixture `process-lifetime-pmU8lz` also
+passes all six cases. Its held-handle observer adds monotonic elapsed timings:
+permission revocation and both restart cases must close the processes within
+2000 ms of live observer admission, well before their 10000 ms grant deadline.
+This distinguishes lifecycle cleanup from merely waiting for lease expiry.
+No production deadline or authority rule is relaxed. The preceding dashboard-free
+attempt `process-lifetime-EH59gk` exited 1 without a normal result/failure report;
+no fixture processes remained. It is not a pass or a diagnosed/fixed failure.
+A traced rerun with private bounded exit diagnostics passing does not establish
+that abrupt exit's cause. Default role binaries are restored after this check.
+Final default-binary `process-lifetime-qNeb1d` passes the same strengthened six
+cases after restoration. Final both-mode suites remain 519 tests, with formatting,
+JS syntax, diff and backend guard passing. Installed artifacts remain unchanged.

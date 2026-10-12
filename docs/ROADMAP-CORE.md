@@ -217,6 +217,15 @@ This advances one native lifetime boundary, not universal process sandboxing,
 remote-stop acknowledgement, full physical resource enforcement, Python/model/
 media lifecycle acceptance or the completed workload-runtime milestone.
 
+The following public-path lifetime acceptance now exercises six native command
+scenarios through separate origin/executor logical nodes, explicit disclosure,
+source compilation, owner approval, grant issuance and retained result inspection.
+Held creation-verified handles observe both root/child exit on completion,
+timeout, deadline, local permission loss and either-role restart. Non-normal
+results remain unknown and exact receipts do not replay. This closes a local
+reviewed Windows process acceptance gap, not physical two-PC, universal native
+stop/migration, full resource/pipeline/media/model or release acceptance.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;
