@@ -899,6 +899,39 @@ impl TaskEngine {
         }
         self.store.trigger_begin_launch(id, runtime)
     }
+    pub(crate) fn arm_schedule(
+        &self,
+        command: crate::jobs::automation_schedules::Arm,
+        runtime: &str,
+        issuer: &str,
+    ) -> Result<(crate::jobs::automation_schedules::Schedule, bool)> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no schedule activation");
+        }
+        self.store.schedule_arm_now(command, runtime, issuer)
+    }
+    pub(crate) fn claim_schedule_due(
+        &self,
+        id: &str,
+        runtime: &str,
+        issuer: &str,
+    ) -> Result<Option<crate::jobs::automation_schedules::Trigger>> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no trigger claim");
+        }
+        self.store.schedule_claim_due_now(id, runtime, issuer)
+    }
+    pub(crate) fn stop_schedule(
+        &self,
+        id: &str,
+        revision: u64,
+        operation: &str,
+    ) -> Result<(crate::jobs::automation_schedules::Schedule, bool)> {
+        let _active = self.active.lock().expect("active jobs");
+        self.store.schedule_stop_now(id, revision, operation)
+    }
     async fn drive(&self, id: &str, _guard: ActiveJob) -> Result<Plan> {
         let mut stopping = self.stopping.subscribe();
         if *stopping.borrow() {

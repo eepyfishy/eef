@@ -2,9 +2,11 @@
 
 This extends the existing single-coordinator job journal and grant authority
 checks. It is **internal infrastructure**, not a publicly enabled automation
-feature. No CLI/API currently arms schedules, no background timer starts, no
-fresh request is submitted automatically, and no grant is dispatched by this
-increment. Existing definition authoring remains disabled; manual occurrence
+feature **at this foundation checkpoint**. The subsequent [automatic schedule
+increment](AUTOMATION-SCHEDULES.md) now connects owner activation and a bounded
+timer to it; the older evidence below is historical. The foundation increment
+itself added no public activation, automatic submission or grant dispatch.
+Definition authoring itself remains disabled; manual occurrence
 reservation/explicit execution and terminal archiving remain available.
 
 ## Ownership and persistence

@@ -47,6 +47,7 @@ pub struct Runtime {
     pub coordinator_priority: i32,
     discovery: crate::discovery::DiscoveryPolicy,
     pub(crate) instance_id: String,
+    pub(crate) automation_timers: Arc<crate::automation_timer::TimerManager>,
     pub restart: Arc<tokio::sync::Notify>,
     pub pending_restart: AtomicBool,
     initialized: AtomicBool,
@@ -175,6 +176,7 @@ impl Runtime {
         );
 
         let runtime = Arc::new(Self {
+            automation_timers: crate::automation_timer::TimerManager::new(&config)?,
             config,
             bus,
             identity,
@@ -381,6 +383,10 @@ impl Runtime {
             self.brain.start().await;
         }
         self.initialized.store(true, Ordering::SeqCst);
+        self.background
+            .lock()
+            .await
+            .push(self.automation_timers.start(self.clone()));
         self.bus
             .publish(
                 "runtime.started",
@@ -989,6 +995,9 @@ impl Runtime {
     pub async fn shutdown(&self) {
         if !self.initialized.swap(false, Ordering::SeqCst) {
             return;
+        }
+        if let Err(error) = self.automation_timers.close(&self.engine.store) {
+            warn!(%error,"Schedule shutdown checkpoint failed; no cancellation proof");
         }
         self.brain.stop().await;
         for task in self.background.lock().await.drain(..) {

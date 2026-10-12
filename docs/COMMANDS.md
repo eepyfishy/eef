@@ -6,6 +6,12 @@ Older v0.4.0a installers do not contain them.
 
 ## Automation definition authoring (unreleased after alpha.6)
 
+The subsequent `eef automation-schedules enable|stop|show|list` connects exact
+owner policies to bounded automatic fixed-input work through the existing core
+compiler/grant driver. Enable permits future execution; exact receipt reuse
+never re-arms authority. Stop/restart/unknown outcomes do not replay work. See
+[commands, limits and native acceptance](AUTOMATION-SCHEDULES.md).
+
 `eefn automations define|list|show|remove` shares the running node's authenticated
 command service. It retains exact unexecuted compiled-source snapshots, bounded
 timing/run declarations and compact removal receipts in the existing job database

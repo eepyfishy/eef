@@ -551,3 +551,38 @@ Fresh public regressions pass manual occurrence/native execution/archive
 reviewed execution/recovery (`request-review-xiFubs`). These do not exercise the
 new internal bridge or a running timer; the review fixture uses fake inference.
 Prior intermittent input/busy failures remain unproven.
+
+## Bounded automatic fixed-input scheduling (2026-10-12)
+
+Five added tests bring final workspace/all-target suites to **504** in both
+feature modes (EEF library 211, owner CLI 12, installer 6, EEFN library 269,
+node CLI 6). Fresh default binaries/examples, formatting, script syntax, diff
+and backend/browser source guard pass. Guarded owner commands now enable/stop/
+inspect schedules; a bounded runtime timer calls the existing one-shot bridge,
+compiler, reservation and grant driver without a dashboard or second runner.
+
+Public `automation-schedules-yn74OE` runs two pinned-TLS logical nodes on one PC,
+without models or a UI controller. One activation under sixteen concurrent calls
+produces three fresh native system-information jobs/completions automatically,
+with original source unchanged. It refuses budget reset/foreign authority,
+stops before due and after one actual run, prevents another run after revocation,
+interrupts on restart without re-arm/catch-up, and retains uncertainty under
+dropped/substituted/negative post-commit enable replies. Exact receipt inspection
+finds one actual occurrence, not a replay. The preceding shorter fixture
+`automation-schedules-YdNdmD` also passed before the additional cases.
+
+Fresh manual occurrence/archive (`automation-occurrences-49gsFD`), definitions/
+policies (`automation-definitions-6vgTMy`), input/answers (`request-input-oDPwa4`)
+and reviewed execution/recovery (`request-review-VDmOHj`) regressions pass. The
+first occurrence invocation (`automation-occurrences-5gLDQt`) exited with
+`-1073740791` and no normal result; it is not counted as passing. No fixture
+processes remained and no matching application event was found in the checked
+interval. A fresh source-unchanged rerun does not prove the cause or a fix.
+Earlier intermittent input/busy failures remain unproven.
+
+This proves local native fixed-input scheduling, not general semantic/heavy
+pipelines, full partial/no-work recovery, measured resource/hard native-stop
+behavior, all worker/network/disk/power races, physical two-PC, peer/media/cluster,
+default interpreter/non-coder onboarding or installer/Defender/Authenticode
+acceptance. Those full roadmap requirements remain open. Installed nodes,
+releases/feeds, browser assets and models are unchanged. Stable 0.4.0 is not claimed.

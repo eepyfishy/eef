@@ -89,6 +89,13 @@ firmware:
   ssid: ""
   wifi_pass: ""
 
+# No schedule activates until an explicit owner command selects an approved policy.
+automations:
+  poll_ms: 200
+  max_active: 8
+  max_launches: 2
+  launch_timeout_ms: 30000
+
 update:
   # Editable in the dashboard; forks may replace this with their own feed.
   manifest_url: https://raw.githubusercontent.com/eepyfishy/eef/main/update/eef.json

@@ -188,6 +188,17 @@ adapters, runtime timer integration and native scheduled-workflow acceptance are
 still absent; this service is not publicly activated and does not complete the
 recurring-automation milestone. See [bridge limits/evidence](AUTOMATION-TRIGGERS.md#internal-fresh-admission-bridge-subsequent-increment).
 
+The subsequent [automatic schedule increment](AUTOMATION-SCHEDULES.md) connects
+guarded owner enable/stop/inspection to a bounded runtime timer task and fresh
+ordinary compilation/reservation/execution. Local native checks demonstrate three
+automatic system-information jobs, one activation under concurrency, stop after
+completion, revocation/no-next-run, restart/no-rearm and uncertain reply reuse.
+Original source evidence and permanent policy budgets remain. This is fixed-input
+one-template scheduling, not general semantic automation or completed durable/
+continuous workloads. Partial-source/no-work recovery, full resource/native-stop
+and physical acceptance, peer/media/cluster, bootstrap/non-coder onboarding and
+installer/signing gates remain open. UI work remains paused.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

@@ -156,6 +156,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
         .route("/api/commands/requests/planning", post(request_planning))
         .route("/api/commands/automations", post(automation_command))
         .route(
+            "/api/commands/automation-schedules",
+            post(automation_schedule_command),
+        )
+        .route(
             "/api/commands/automation-policies",
             post(automation_policy_command),
         )
@@ -287,6 +291,12 @@ async fn automation_occurrence_command(
     Json(request): Json<eefn::automation_occurrence::OccurrenceRequest>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.automation_occurrence_command(request).await?))
+}
+async fn automation_schedule_command(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::automation_schedule::ScheduleRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.automation_schedule_command(request).await?))
 }
 async fn request_abandon(
     State(runtime): State<Arc<Runtime>>,

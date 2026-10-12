@@ -161,7 +161,11 @@ fn validate_schedule(connection: &Connection, s: &Schedule) -> Result<()> {
                     s.reason.as_deref(),
                     Some("restart" | "backward_clock" | "missed_trigger" | "policy_changed")
                         | Some(
-                            "launch_failed" | "source_present" | "shutdown" | "clock_discontinuity"
+                            "launch_failed"
+                                | "source_present"
+                                | "shutdown"
+                                | "clock_discontinuity"
+                                | "job_unresolved"
                         )
                 )
         }
@@ -555,6 +559,11 @@ pub(super) fn source_authority(
 // Internal entry points only. No CLI/API arms them in this increment.
 #[allow(dead_code)]
 impl JobStore {
+    pub(crate) fn schedule_list(&self) -> Result<Vec<Schedule>> {
+        let connection = self.connection.lock().expect("job journal");
+        validate_all(&connection)?;
+        schedules(&connection)
+    }
     pub(crate) fn schedule_get(&self, id: &str) -> Result<Schedule> {
         uuid(id)?;
         let connection = self.connection.lock().expect("job journal");

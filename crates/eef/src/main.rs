@@ -31,6 +31,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Enable/inspect/stop bounded automatic fixed-input work as the local owner.
+    AutomationSchedules {
+        #[command(subcommand)]
+        command: eef::automation_schedule::ScheduleCommand,
+    },
     /// Save/inspect/revoke bounded reusable approval as the local owner; never dispatch.
     AutomationPolicies {
         #[command(subcommand)]
@@ -165,6 +170,55 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn automatic_schedule_cli_requires_exact_policy_receipt_and_stop_revision() {
+        let args = [
+            "eef",
+            "automation-schedules",
+            "enable",
+            "--policy",
+            "policy",
+            "--policy-sha256",
+            "hash",
+            "--operation-id",
+            "receipt",
+        ];
+        assert!(Args::try_parse_from(args).is_ok());
+        for index in (3..args.len()).step_by(2) {
+            let mut missing = args.to_vec();
+            missing.drain(index..index + 2);
+            assert!(Args::try_parse_from(missing).is_err());
+        }
+        for flag in ["--force", "--renew", "--retry", "--permissions"] {
+            let mut extra = args.to_vec();
+            extra.push(flag);
+            assert!(Args::try_parse_from(extra).is_err());
+        }
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "automation-schedules",
+                "stop",
+                "id",
+                "--revision",
+                "2",
+                "--operation-id",
+                "receipt"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "automation-schedules",
+                "stop",
+                "id",
+                "--operation-id",
+                "receipt"
+            ])
+            .is_err()
+        );
+    }
     #[test]
     fn archive_cli_needs_exact_terminal_revision_receipt_and_cannot_refund_or_execute() {
         let args = [
@@ -595,6 +649,29 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::AutomationSchedules { command } => {
+            command.validate()?;
+            let mut value = owner_automation_exchange(
+                &client,
+                &base,
+                json!(command),
+                command.receipt().is_some(),
+                "automation-schedules",
+                "owner_automation_schedule_command",
+                |v, runtime| eef::automation_schedule::confirmed(v, command, runtime),
+            )
+            .await;
+            // Enable may authorize later automatic work even if its reply was
+            // lost. Do not carry the record-only adapter's no-timer claims.
+            for field in ["timers_started", "execution_authorized", "dispatched"] {
+                value.as_object_mut().unwrap().remove(field);
+            }
+            value["timer_active"] = value["result"]["timer_active"].clone();
+            value["note"] = json!(
+                "Private bounded automatic scheduling. Enable permits future fixed-scope work; uncertain replies require exact receipt inspection, never replacement or automatic retry. Stop is not physical-stop proof."
+            );
+            return Ok(value);
+        }
         Command::AutomationOccurrences { command } => {
             command.validate()?;
             return Ok(owner_automation_exchange(
@@ -1197,6 +1274,7 @@ async fn main() -> Result<()> {
                         | Command::Automations { .. }
                         | Command::AutomationPolicies { .. }
                         | Command::AutomationOccurrences { .. }
+                        | Command::AutomationSchedules { .. }
                 ) && value["success"] == true
                 {
                     eprintln!(
