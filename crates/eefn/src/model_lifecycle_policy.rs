@@ -1,4 +1,4 @@
-//! Saved/applied owned-model policy. No browser, inference or restart controller.
+//! Saved/applied model policy. No browser, inference or restart controller.
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -22,6 +22,9 @@ pub struct ModelLifecyclePolicy {
     pub receipt_capacity: usize,
     pub load_timeout_seconds: u64,
     pub termination_wait_seconds: u64,
+    /// Shared Ollama request hint: null inherits backend policy; -1 is explicit
+    /// indefinite retention. This does not confer ownership of service/models.
+    pub ollama_keep_alive_seconds: Option<i64>,
 }
 impl Default for ModelLifecyclePolicy {
     fn default() -> Self {
@@ -32,6 +35,7 @@ impl Default for ModelLifecyclePolicy {
             receipt_capacity: 256,
             load_timeout_seconds: 300,
             termination_wait_seconds: 5,
+            ollama_keep_alive_seconds: None,
         }
     }
 }
@@ -45,8 +49,11 @@ impl ModelLifecyclePolicy {
             || self
                 .idle_unload_seconds
                 .is_some_and(|n| !(1..=86400).contains(&n))
+            || self
+                .ollama_keep_alive_seconds
+                .is_some_and(|n| !(-1..=86400).contains(&n))
         {
-            bail!("Invalid owned-model lifecycle policy bounds")
+            bail!("Invalid model lifecycle policy bounds")
         }
         Ok(())
     }
@@ -106,6 +113,18 @@ pub enum PolicyCommand {
         load_timeout_seconds: Option<u64>,
         #[arg(long)]
         termination_wait_seconds: Option<u64>,
+        /// Ollama retention hint for future inference: -1 indefinite, 0 after
+        /// response, or 1-86400 seconds. Does not stop the shared service.
+        #[arg(
+            long,
+            allow_hyphen_values = true,
+            conflicts_with = "ollama_keep_alive_default"
+        )]
+        ollama_keep_alive_seconds: Option<i64>,
+        /// Omit the Ollama keep_alive hint and inherit its server policy.
+        #[arg(long, conflicts_with = "ollama_keep_alive_seconds")]
+        #[serde(default)]
+        ollama_keep_alive_default: bool,
     },
 }
 #[derive(Debug, clap::Args)]
@@ -141,6 +160,8 @@ impl PolicyRequest {
             receipt_capacity,
             load_timeout_seconds,
             termination_wait_seconds,
+            ollama_keep_alive_seconds,
+            ollama_keep_alive_default,
         } = &self.command
         {
             if expected_digest.len() != 64
@@ -156,6 +177,8 @@ impl PolicyRequest {
                 && receipt_capacity.is_none()
                 && load_timeout_seconds.is_none()
                 && termination_wait_seconds.is_none()
+                && ollama_keep_alive_seconds.is_none()
+                && !ollama_keep_alive_default
             {
                 bail!("Choose at least one lifecycle policy field")
             }
@@ -165,6 +188,8 @@ impl PolicyRequest {
                 || receipt_capacity.is_some_and(|n| !(1..=4096).contains(&n))
                 || load_timeout_seconds.is_some_and(|n| !(1..=3600).contains(&n))
                 || termination_wait_seconds.is_some_and(|n| !(1..=30).contains(&n))
+                || ollama_keep_alive_seconds.is_some_and(|n| !(-1..=86400).contains(&n))
+                || (*ollama_keep_alive_default && ollama_keep_alive_seconds.is_some())
             {
                 bail!("Invalid lifecycle policy choice")
             }
@@ -183,6 +208,8 @@ impl PolicyCommand {
             receipt_capacity,
             load_timeout_seconds,
             termination_wait_seconds,
+            ollama_keep_alive_seconds,
+            ollama_keep_alive_default,
         } = self
         {
             if *expected_digest != current.versioned_digest(revision)? {
@@ -205,6 +232,11 @@ impl PolicyCommand {
             }
             if let Some(value) = termination_wait_seconds {
                 next.termination_wait_seconds = *value;
+            }
+            if *ollama_keep_alive_default {
+                next.ollama_keep_alive_seconds = None;
+            } else if let Some(value) = ollama_keep_alive_seconds {
+                next.ollama_keep_alive_seconds = Some(*value);
             }
         }
         next.validate()?;
@@ -345,6 +377,8 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
         receipt_capacity,
         load_timeout_seconds,
         termination_wait_seconds,
+        ollama_keep_alive_seconds,
+        ollama_keep_alive_default,
         ..
     } = &request.command
     {
@@ -356,6 +390,9 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
             || load_timeout_seconds.is_some_and(|v| v != r.saved_policy.load_timeout_seconds)
             || termination_wait_seconds
                 .is_some_and(|v| v != r.saved_policy.termination_wait_seconds)
+            || ollama_keep_alive_seconds
+                .is_some_and(|v| Some(v) != r.saved_policy.ollama_keep_alive_seconds)
+            || (*ollama_keep_alive_default && r.saved_policy.ollama_keep_alive_seconds.is_some())
         {
             return false;
         }
@@ -376,6 +413,8 @@ mod tests {
             receipt_capacity: Some(16),
             load_timeout_seconds: Some(8),
             termination_wait_seconds: Some(2),
+            ollama_keep_alive_seconds: None,
+            ollama_keep_alive_default: false,
         }
     }
     fn request(command: PolicyCommand, runtime: Option<String>) -> PolicyRequest {
@@ -432,6 +471,90 @@ mod tests {
             *idle_unload_seconds = Some(0);
         }
         assert_eq!(reset.apply(&next, 1).unwrap().idle_unload_seconds, None);
+    }
+    #[test]
+    fn ollama_preferences_normalize_legacy_policy_and_enforce_bounds() {
+        assert_eq!(
+            ModelLifecyclePolicy::from_config(&json!({}))
+                .unwrap()
+                .ollama_keep_alive_seconds,
+            None
+        );
+        for seconds in [json!(null), json!(-1), json!(0), json!(1), json!(86400)] {
+            let policy = ModelLifecyclePolicy::from_config(
+                &json!({"model_lifecycle":{"ollama_keep_alive_seconds":seconds}}),
+            )
+            .unwrap();
+            assert_eq!(json!(policy.ollama_keep_alive_seconds), seconds);
+        }
+        for seconds in [
+            json!(-2),
+            json!(86401),
+            json!("120"),
+            json!(1.5),
+            json!(true),
+        ] {
+            assert!(
+                ModelLifecyclePolicy::from_config(
+                    &json!({"model_lifecycle":{"ollama_keep_alive_seconds":seconds}})
+                )
+                .is_err()
+            );
+        }
+    }
+    #[test]
+    fn ollama_only_set_reset_and_conflicting_wire_choices_are_validated() {
+        let old = ModelLifecyclePolicy::default();
+        let raw = json!({"operation":"set","expected_digest":old.versioned_digest(0).unwrap(),"ollama_keep_alive_seconds":120});
+        let set: PolicyCommand = serde_json::from_value(raw.clone()).unwrap();
+        request(set.clone(), None).validate().unwrap();
+        let saved = set.apply(&old, 0).unwrap();
+        assert_eq!(saved.ollama_keep_alive_seconds, Some(120));
+        assert_eq!(saved.startup, old.startup);
+        let mut reset = raw.clone();
+        reset["expected_digest"] = json!(saved.versioned_digest(1).unwrap());
+        reset["ollama_keep_alive_seconds"] = Value::Null;
+        reset["ollama_keep_alive_default"] = json!(true);
+        let reset: PolicyCommand = serde_json::from_value(reset).unwrap();
+        request(reset.clone(), None).validate().unwrap();
+        assert_eq!(reset.apply(&saved, 1).unwrap(), old);
+        for (seconds, clear) in [
+            (Some(-2), false),
+            (Some(86401), false),
+            (Some(120), true),
+            (None, false),
+        ] {
+            let mut bad = raw.clone();
+            bad["ollama_keep_alive_seconds"] = json!(seconds);
+            bad["ollama_keep_alive_default"] = json!(clear);
+            let bad: PolicyCommand = serde_json::from_value(bad).unwrap();
+            assert!(request(bad, None).validate().is_err());
+        }
+    }
+    #[test]
+    fn ollama_saved_preference_substitution_cannot_confirm_even_with_recomputed_digest() {
+        let (_directory, service) = fixture();
+        let show = service
+            .model_lifecycle_policy_command(request(PolicyCommand::Show {}, None), false, true)
+            .unwrap();
+        let cmd:PolicyCommand=serde_json::from_value(json!({"operation":"set","expected_digest":show["saved_digest"],"ollama_keep_alive_seconds":120})).unwrap();
+        let req = request(cmd, None);
+        let good = service
+            .model_lifecycle_policy_command(req.clone(), false, true)
+            .unwrap();
+        assert!(confirmed(&good, &req));
+        for seconds in [json!(null), json!(-1), json!(0), json!(121)] {
+            let mut bad = good.clone();
+            bad["saved_policy"]["ollama_keep_alive_seconds"] = seconds;
+            let substituted: ModelLifecyclePolicy =
+                serde_json::from_value(bad["saved_policy"].clone()).unwrap();
+            bad["saved_digest"] = json!(
+                substituted
+                    .versioned_digest(bad["saved_revision"].as_u64().unwrap())
+                    .unwrap()
+            );
+            assert!(!confirmed(&bad, &req));
+        }
     }
     #[test]
     fn offline_policy_cas_preserves_config_and_never_restarts_or_replays() {

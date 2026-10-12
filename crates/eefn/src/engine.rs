@@ -224,6 +224,7 @@ pub struct NodeEngine {
     http: reqwest::Client,
     ollama_url: String,
     ollama_models: HashMap<String, crate::model_metadata::ModelMetadata>,
+    ollama_keep_alive_seconds: Option<i64>,
     service: Option<Arc<crate::NodeService>>,
     resource_owner: String,
     resources: Vec<crate::context::Resource>,
@@ -263,6 +264,7 @@ impl NodeEngine {
                 .build()?,
             ollama_url: String::new(),
             ollama_models: HashMap::new(),
+            ollama_keep_alive_seconds: None,
             service: None,
             granted_model_config: None,
             resource_owner: String::new(),
@@ -304,6 +306,20 @@ impl NodeEngine {
     pub fn with_update_manifest(mut self, manifest: Option<String>) -> Self {
         self.update_manifest = manifest;
         self
+    }
+
+    /// Applied owner preference for shared backend requests, not a background
+    /// unload loop or permission to stop other applications' model service.
+    pub fn with_ollama_residency(
+        mut self,
+        policy: &crate::model_lifecycle_policy::ModelLifecyclePolicy,
+    ) -> Result<Self> {
+        policy.validate()?;
+        self.ollama_keep_alive_seconds = policy.ollama_keep_alive_seconds;
+        Ok(self)
+    }
+    pub(crate) fn applied_ollama_keep_alive_seconds(&self) -> Option<i64> {
+        self.ollama_keep_alive_seconds
     }
 
     pub fn with_ollama(
@@ -1179,7 +1195,7 @@ impl NodeEngine {
         Ok(json!({"model":{"backend":backend,"model_id":model},"output":output}))
     }
 
-    async fn ollama(&self, params: &Value, schema: Option<Value>) -> Result<Value> {
+    fn ollama_payload(&self, params: &Value, schema: Option<Value>) -> Result<Value> {
         let model = params
             .get("model")
             .and_then(Value::as_str)
@@ -1194,12 +1210,20 @@ impl NodeEngine {
         {
             last.insert("images".into(), images.clone());
         }
-        let mut payload = json!({"model": model, "messages": messages, "stream": false, "keep_alive": -1,
+        let mut payload = json!({"model": model, "messages": messages, "stream": false,
             "options": {"temperature": params.get("temperature").and_then(Value::as_f64).unwrap_or(0.7),
                 "num_predict": params.get("max_tokens").and_then(Value::as_u64).unwrap_or(1024)}});
+        if let Some(seconds) = self.ollama_keep_alive_seconds {
+            payload["keep_alive"] = json!(seconds);
+        }
         if let Some(schema) = schema {
             payload["format"] = schema;
         }
+        Ok(payload)
+    }
+
+    async fn ollama(&self, params: &Value, schema: Option<Value>) -> Result<Value> {
+        let payload = self.ollama_payload(params, schema)?;
         let response = self
             .http
             .post(format!("{}/api/chat", self.ollama_url))
@@ -1941,6 +1965,51 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("not enabled"));
+    }
+
+    #[test]
+    fn ollama_residency_is_applied_owner_preference_not_request_override() {
+        let directory = tempfile::tempdir().unwrap();
+        for seconds in [None, Some(-1), Some(0), Some(120), Some(86400)] {
+            let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+                ollama_keep_alive_seconds: seconds,
+                ..Default::default()
+            };
+            let engine = NodeEngine::new(false, vec![], directory.path().into())
+                .unwrap()
+                .with_ollama_residency(&policy)
+                .unwrap();
+            let schema = json!({"type":"object"});
+            let payload = engine.ollama_payload(&json!({"model":"selected","prompt":"owner approved prompt",
+                "images":["synthetic"],"keep_alive":999999,"ollama_keep_alive_seconds":999999,"max_tokens":16}),Some(schema.clone())).unwrap();
+            assert_eq!(
+                payload.get("keep_alive"),
+                seconds.map(|v| json!(v)).as_ref()
+            );
+            assert_eq!(payload["model"], "selected");
+            assert_eq!(payload["messages"][0]["content"], "owner approved prompt");
+            assert_eq!(payload["messages"][0]["images"], json!(["synthetic"]));
+            assert_eq!(payload["format"], schema);
+            assert_eq!(payload["options"]["num_predict"], 16);
+            assert_eq!(payload["stream"], false);
+        }
+    }
+
+    #[test]
+    fn invalid_ollama_owner_preference_never_creates_an_applied_engine() {
+        let directory = tempfile::tempdir().unwrap();
+        for seconds in [-2, 86401, i64::MIN, i64::MAX] {
+            let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+                ollama_keep_alive_seconds: Some(seconds),
+                ..Default::default()
+            };
+            assert!(
+                NodeEngine::new(false, vec![], directory.path().into())
+                    .unwrap()
+                    .with_ollama_residency(&policy)
+                    .is_err()
+            );
+        }
     }
 
     #[test]

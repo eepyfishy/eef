@@ -1,10 +1,11 @@
 # Reviewed client acceptance (unreleased after alpha.6)
 
-Latest selected-GGUF checkpoint: **563 workspace/all-target tests per feature
+Latest model-policy checkpoint: **571 workspace/all-target tests per feature
 mode**, with command-owned eager/manual/on-demand and idle policy,
 revision-fenced rollback, atomic request-owned load/pin handoff, failed-load
 no-retry, public lifecycle fault injection and reused-artifact real CPU
-unload/reload/demand-inference/idle acceptance. See [exact scope and evidence](MODEL-LIFECYCLE-POLICY.md#2026-10-13-on-demand-verification-checkpoint).
+unload/reload/demand-inference/idle acceptance, plus shared Ollama applied request
+retention preferences without service ownership. See [exact scope and evidence](MODEL-LIFECYCLE-POLICY.md#2026-10-13-shared-request-policy-verification-checkpoint).
 Earlier counts below describe their historical checkpoints, not the latest suite.
 
 This checkpoint adapts remaining protocol/browser/model fixtures to the mandatory

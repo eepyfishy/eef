@@ -2367,6 +2367,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         .with_service(dashboard.clone())
         .with_policy(permissions)?
         .with_update_manifest(manifest)
+        .with_ollama_residency(&file.model_lifecycle)?
         .with_ollama(ollama_url.clone(), active_ollama_models.iter().cloned())?;
     if let Some(server) = &model_server {
         engine = engine.with_model_server(server.clone())
@@ -2724,6 +2725,45 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Value, json};
+    #[test]
+    fn ollama_residency_cli_preserves_negative_choice_and_rejects_conflicting_reset() {
+        for (extra, value) in [
+            (vec!["--ollama-keep-alive-seconds", "-1"], json!(-1)),
+            (vec!["--ollama-keep-alive-seconds", "0"], json!(0)),
+            (vec!["--ollama-keep-alive-default"], Value::Null),
+        ] {
+            let mut argv = vec!["eefn", "model-lifecycle-policy", "set", "--expected-digest"];
+            let digest = "a".repeat(64);
+            argv.push(&digest);
+            argv.extend(extra);
+            let args = Args::try_parse_from(argv).unwrap();
+            let Some(Commands::ModelLifecyclePolicy { command }) = args.command else {
+                panic!("wrong adapter")
+            };
+            let req = eefn::model_lifecycle_policy::PolicyRequest {
+                schema_version: 1,
+                expected_node_id: "owner".into(),
+                expected_runtime_id: None,
+                command: command.command,
+            };
+            req.validate().unwrap();
+            assert_eq!(json!(req.command)["ollama_keep_alive_seconds"], value);
+        }
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "model-lifecycle-policy",
+                "set",
+                "--expected-digest",
+                &"a".repeat(64),
+                "--ollama-keep-alive-seconds",
+                "120",
+                "--ollama-keep-alive-default"
+            ])
+            .is_err()
+        );
+    }
     #[test]
     fn lifecycle_policy_cli_preserves_bounded_choices_and_exact_snapshot() {
         let args = Args::try_parse_from([

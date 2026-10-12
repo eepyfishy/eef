@@ -202,6 +202,9 @@ impl crate::NodeService {
     ) -> Result<ModelRuntimeGuard> {
         crate::automation_occurrence::uuid(&id)?;
         policy.validate()?;
+        if engine.applied_ollama_keep_alive_seconds() != policy.ollama_keep_alive_seconds {
+            bail!("Applied Ollama preference does not match the engine; no runtime replacement")
+        }
         let (queue, receiver) = mpsc::channel(policy.queue_capacity);
         let runtime = Arc::new(ModelRuntime {
             id,
@@ -1282,6 +1285,64 @@ mod tests {
         assert_eq!(shown["restart_required"], true);
         guard.runtime.close();
     }
+    #[test]
+    fn applied_ollama_report_cannot_claim_a_preference_missing_from_the_engine() {
+        let (_directory, service, engine, guard) = fixture();
+        let original = guard.runtime.id.clone();
+        let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+            ollama_keep_alive_seconds: Some(120),
+            ..guard.policy().clone()
+        };
+        assert!(
+            service
+                .bind_model_runtime_with_policy(
+                    &engine,
+                    uuid::Uuid::new_v4().to_string(),
+                    policy.clone(),
+                    0
+                )
+                .is_err()
+        );
+        assert_eq!(
+            service.model_runtime.lock().unwrap().as_ref().unwrap().id,
+            original
+        );
+        assert!(
+            !guard.runtime.is_closed(),
+            "a rejected replacement must retain the running owner"
+        );
+        let mut config = service.read_config().unwrap();
+        config["model_lifecycle"] = json!(policy);
+        service.save_config(config).unwrap();
+        let next = Arc::new(
+            crate::NodeEngine::new(false, vec![], std::env::temp_dir())
+                .unwrap()
+                .with_service(service.clone())
+                .with_ollama_residency(&policy)
+                .unwrap(),
+        );
+        let applied = service
+            .bind_model_runtime(&next, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        assert_eq!(applied.policy().ollama_keep_alive_seconds, Some(120));
+        assert_eq!(next.applied_ollama_keep_alive_seconds(), Some(120));
+        assert!(guard.runtime.is_closed());
+        let report = service
+            .model_lifecycle_policy_command(
+                crate::model_lifecycle_policy::PolicyRequest {
+                    schema_version: 1,
+                    expected_node_id: service.node_id.clone(),
+                    expected_runtime_id: None,
+                    command: crate::model_lifecycle_policy::PolicyCommand::Show {},
+                },
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(report["applied_policy"]["ollama_keep_alive_seconds"], 120);
+        assert_eq!(report["restart_required"], false);
+    }
+
     #[tokio::test]
     async fn demand_cold_availability_never_spawns_on_read_and_failed_load_never_retries() {
         let (_directory, service, engine, old_guard) = fixture();

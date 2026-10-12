@@ -1,4 +1,4 @@
-# Owned-model lifecycle policy
+# Model lifecycle policy
 
 Unreleased after alpha.6 and the [manual lifecycle checkpoint](MODEL-LIFECYCLE.md).
 This extends the existing node service and runtime-owned model worker, not a
@@ -63,6 +63,7 @@ The optional `model_lifecycle` node configuration uses these validated fields:
 | `receipt_capacity` | 256 | 1-4096 retained manual receipts, at least queue capacity. No replay-protection eviction. |
 | `load_timeout_seconds` | 300 | 1-3600 seconds for configured group startup, explicit and demand load health readiness. Existing request deadlines can end demand loading earlier. |
 | `termination_wait_seconds` | 5 | 1-30 seconds for explicit/idle owned-root termination wait. |
+| `ollama_keep_alive_seconds` | null (inherit backend) | Ollama inference request preference: -1 indefinite, 0 request unload after its response, or 1-86400 seconds. Not ownership or observed residency. |
 
 Each numeric field has the corresponding hyphenated `set` option. Missing
 policy fields retain defaults; malformed/null policy objects, unknown fields,
@@ -89,8 +90,49 @@ eligible for implicit retry. Explicit owner repair/load/restart is required.
 No provider switch, download, selection or grant authorization is added.
 Default behavior is unchanged; this is an optional resource preference, not
 completed bootstrap or measured startup-cost/resource optimization.
-The policy controls owned GGUF processes only, not the user's shared Ollama
-service. Ollama lifecycle controls remain separate required work.
+Startup/idle/native-control settings govern owned GGUF processes, not the user's
+shared Ollama service. The separate Ollama request preference below does not
+implement exclusive/shared ownership, observed residency or autonomous unload.
+
+### Shared Ollama request preference
+
+```text
+eefn --json model-lifecycle-policy --runtime RUNTIME_UUID set --expected-digest SAVED_DIGEST --ollama-keep-alive-seconds 120
+eef --json node model-lifecycle-policy --node NODE_ID --runtime RUNTIME_UUID set --expected-digest SAVED_DIGEST --ollama-keep-alive-default
+```
+
+These choices use the same exact node/runtime, CAS revision, local owner and
+approved remote-management checks as other policy settings. The duration and
+reset options conflict, including on the wire. Zero means an Ollama post-response
+unload preference, unlike the owned-GGUF idle option where zero disables unloading.
+Negative values other than -1 and durations above one day are rejected. Restoring
+the backend default saves null; it does not send a backend command.
+
+Saving never contacts Ollama or restarts the node. Until explicit restart,
+inference uses the old applied preference; the new runtime uses the saved one.
+Runtime binding verifies that the claimed applied preference matches the engine;
+a mismatch rejects replacement without closing the existing runtime.
+The engine constructs the backend request from this applied owner setting, not
+caller/model-supplied `keep_alive` parameters. Read-only policy, compilation,
+approval and result inspection never send inference or empty preload/unload.
+
+Previously EEFN always sent `keep_alive:-1`, forcing indefinite residency. New
+unreleased code intentionally omits the hint by default so the backend owner’s
+policy applies. Select -1 explicitly if that retention is wanted. Published
+alpha.6 behavior/artifacts are unchanged. Older configs normalize to the new
+inherit choice; fresh policy inspection is required because canonical digests
+include the new normalized field. Old CAS values do not silently gain new scope.
+
+Ollama documents numeric seconds, negative indefinite retention, zero after-response
+unload, and omission inheriting its server settings in its [FAQ](https://docs.ollama.com/faq)
+and [chat API](https://docs.ollama.com/api/chat). This is a preference submitted only
+with ordinary authorized inference/owned preview. It can affect shared cache
+residency; another application may change it and EEF cannot promise a release
+time or exclusive ownership. Cancellation of a client future does not prove
+shared backend computation stopped. No service termination, environment edit,
+model deletion/download, background unload loop or physical-memory guarantee is
+added. Owned lifecycle commands still truthfully report Ollama unsupported.
+Full ownership/coexistence and observed-resource acceptance remain required.
 
 ## Idle behavior and observability
 
@@ -138,6 +180,47 @@ two-PC acceptance. Existing manual lifecycle/startup and real-GGUF fixtures must
 also stay passing. Resource measurement, measured startup-cost routing, shared
 Ollama controls, measured startup-cost/resource optimization, broader workload/
 mesh/cluster scope and release acceptance remain.
+
+`tools/test-ollama-residency-policy.mjs` verifies the separate shared request
+preference using two headless roles, independently provisioned credentials,
+pinned TLS and a synthetic HTTP backend. It covers offline save without backend
+contact, inherited/default omission, current remote owner approval, CAS refusal,
+saved/applied separation, explicit restart, reviewed requests with numeric hints,
+default restoration, no background preload/unload and truthful unsupported owned
+lifecycle. It is not actual Ollama coexistence or physical memory acceptance.
+
+## 2026-10-13 shared-request policy verification checkpoint
+
+Final workspace/all-target suites pass **571 tests** in each feature mode:
+EEF library 220, owner CLI 16, installer 6, EEFN library 318, node CLI 11.
+Fresh default workspace binaries/examples, formatting/diff/JavaScript syntax
+and the backend/browser dependency guard pass. New units cover normalized older
+configs, strict numeric bounds, duration/default conflicts on the wire and CLI,
+CAS/default restoration, substituted policy confirmation, caller-independent
+payload construction, invalid engine preferences and applied-policy/engine
+consistency without closing a valid previous runtime on rejected replacement.
+
+Final-binary `ollama-residency-ZywaF2` passes the public shared-preference path.
+Model metadata/selection `model-metadata-NcfkRE`, owned policy/on-demand
+`model-policy-K98jld`, cached real CPU inference/lifecycle `real-model-HVdDZX`
+and manual lifecycle `model-lifecycle-56LGBs` also pass; the full five-fixture
+chain exits **0**. The real test uses the existing exact-size/hash-verified 1.5B
+artifact and cached alpha.6 runtime without downloads/copies. It proves the
+owned-GGUF regression path, not actual shared Ollama residence, interpreter
+quality, physical memory release or physical two-PC operation.
+
+The initial compile failed because a new node CLI test lacked test-only
+`serde_json` imports; those imports were added without production changes.
+An atomic documentation patch failed on mismatched context, made no changes and
+was reapplied against actual content. Intermediate both-mode suites passed 570
+tests and `ollama-residency-xZ5D6D` passed public commands before the final
+runtime-binding consistency guard; these are not final-guard acceptance evidence.
+
+This increment does not finish full Ollama ownership/lifecycle, per-model
+resource policy, measured routing, bootstrap quality, general pipelines/media,
+authenticated peer transfer, mesh/cluster or physical/versioned release gates.
+No installed app, physical node, release/feed, UI asset, real shared Ollama
+service or signing/Defender acceptance is changed by this source checkpoint.
 
 ## 2026-10-13 on-demand verification checkpoint
 

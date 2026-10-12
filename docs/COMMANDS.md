@@ -27,6 +27,13 @@ consumes the original request deadline and transfers readiness directly to an
 active-use pin; failure/cancellation never silently retries or switches provider.
 See [choices, bounds and idle timing](MODEL-LIFECYCLE-POLICY.md).
 
+Shared Ollama inference has a separate applied request preference:
+`set --ollama-keep-alive-seconds SECONDS` (-1 indefinite, 0 after response,
+1-86400 seconds) or `set --ollama-keep-alive-default` (inherit server policy).
+New code defaults to inheritance rather than forcing indefinite retention.
+Saved changes require explicit restart. This does not stop/control the shared
+service, prove residency or enable owned lifecycle commands for Ollama.
+
 `eefn model-lifecycle show|load|unload|cancel` and
 `eef node model-lifecycle --node NODE_ID show|load|unload|cancel` share the running
 node's owned-GGUF service. Load/unload require exact runtime, generation and

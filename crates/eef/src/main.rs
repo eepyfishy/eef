@@ -185,6 +185,59 @@ enum ModelsCommand {
 mod credential_cli_tests {
     use super::*;
     #[test]
+    fn remote_ollama_residency_cli_preserves_exact_policy_choices() {
+        for extra in [
+            vec!["--ollama-keep-alive-seconds", "-1"],
+            vec!["--ollama-keep-alive-default"],
+        ] {
+            let digest = "a".repeat(64);
+            let mut argv = vec![
+                "eef",
+                "node",
+                "model-lifecycle-policy",
+                "--node",
+                "owner",
+                "--runtime",
+                "11111111-1111-4111-8111-111111111111",
+                "set",
+                "--expected-digest",
+                &digest,
+            ];
+            argv.extend(extra);
+            let args = Args::try_parse_from(argv).unwrap();
+            let Some(Command::Node {
+                command: NodeCommand::ModelLifecyclePolicy { node, command },
+            }) = args.command
+            else {
+                panic!("wrong adapter")
+            };
+            eefn::model_lifecycle_policy::PolicyRequest {
+                schema_version: 1,
+                expected_node_id: node,
+                expected_runtime_id: command.runtime,
+                command: command.command,
+            }
+            .validate()
+            .unwrap();
+        }
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "node",
+                "model-lifecycle-policy",
+                "--node",
+                "owner",
+                "set",
+                "--expected-digest",
+                &"a".repeat(64),
+                "--ollama-keep-alive-seconds",
+                "0",
+                "--ollama-keep-alive-default"
+            ])
+            .is_err()
+        );
+    }
+    #[test]
     fn remote_lifecycle_policy_cli_requires_target_and_exact_saved_digest() {
         let args = Args::try_parse_from([
             "eef",
