@@ -31,6 +31,7 @@ mod model_response;
 pub mod model_selection;
 pub mod model_server;
 pub mod network;
+mod process_lifetime;
 pub mod protocol;
 pub mod python;
 pub mod request_abandon;

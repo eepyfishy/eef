@@ -735,29 +735,45 @@ impl NodeEngine {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let mut child = command
-            .spawn()
+        let (mut child, tree) = crate::process_lifetime::spawn(&mut command)
             .with_context(|| format!("could not start allowed program '{program}'"))?;
+        let mut tree = Some(tree);
         let stdout = child.stdout.take().context("process stdout unavailable")?;
         let stderr = child.stderr.take().context("process stderr unavailable")?;
         let limit = self.policy.process.max_output_bytes;
-        let stdout_task = tokio::spawn(read_limited(stdout, limit));
-        let stderr_task = tokio::spawn(read_limited(stderr, limit));
         let seconds = params
             .get("timeout_seconds")
             .and_then(Value::as_u64)
             .unwrap_or(self.policy.process.max_seconds)
             .clamp(1, self.policy.process.max_seconds);
-        let status = match tokio::time::timeout(Duration::from_secs(seconds), child.wait()).await {
-            Ok(status) => status?,
+        // Readers belong to this future rather than detached Tokio tasks. The
+        // timeout covers root wait AND pipe collection; cancellation drops both
+        // readers, the root child and the Windows tree lifetime handle.
+        let collected = tokio::time::timeout(Duration::from_secs(seconds), async {
+            let wait = async {
+                let result = child.wait().await;
+                // A completed bounded command cannot leave a persistent child
+                // holding its output pipes. Application launching is separate.
+                drop(tree.take());
+                result
+            };
+            let (status, stdout, stderr) = tokio::join!(
+                wait,
+                read_limited(stdout, limit),
+                read_limited(stderr, limit)
+            );
+            Ok::<_, anyhow::Error>((status?, stdout?, stderr?))
+        })
+        .await;
+        let (status, (stdout, stdout_truncated), (stderr, stderr_truncated)) = match collected {
+            Ok(result) => result?,
             Err(_) => {
+                drop(tree.take());
                 let _ = child.kill().await;
                 let _ = child.wait().await;
                 bail!("allowed process exceeded the {seconds}-second timeout")
             }
         };
-        let (stdout, stdout_truncated) = stdout_task.await??;
-        let (stderr, stderr_truncated) = stderr_task.await??;
         Ok(json!({
             "success": status.success(),
             "exit_code": status.code(),

@@ -630,3 +630,37 @@ resolution and no replay. Previous `automation-schedules-9dV8KM` exited 1 with
 no normal result/failure report, retained an unresolved refusal, and left no
 fixture processes. No matching application/Defender event was found in the
 checked interval. Its cause is unproven; a passing traced rerun is not a fix claim.
+
+## Bounded Windows process lifetime (2026-10-12)
+
+Final workspace/all-target suites pass **519** tests in both feature modes:
+EEF library 218, owner CLI 13, installer 6, EEFN library 276, node CLI 6.
+Fresh default executables/examples, formatting/diff/script syntax and backend
+dependency guard pass. Seven added Windows entries include six real native
+lifetime scenarios and a test-only helper. They observe held root/descendant
+handles after normal completion, process timeout, execution-future cancellation
+and grant expiry, preserve unknown-effect/replay refusal, prove independent-job
+isolation and reject pre-resume containment failure without running user code.
+See [scope and OS references](PROCESS-LIFETIME.md).
+
+The first focused suite and both earlier full 519-test suites passed before the
+final incomplete-thread-snapshot refusal. A subsequent parallel executable link
+failed; the full diagnostic was truncated and its cause is not established.
+It is not a successful build. A single-job node build succeeded, and the final
+single-job both-mode suites plus workspace executables/examples succeeded after
+that guard hardening. Generated old test executables were cleaned for low disk
+space, but no cause/fix attribution follows from the succeeding link.
+
+This is Windows bounded process lifetime, not universal sandboxing, undo/stop
+acknowledgement, all adapters, non-Windows descendants, measured full resources,
+physical two-PC or installer/Defender/Authenticode acceptance. No installed node,
+release/feed, browser asset or model is changed. Full 0.4.0 scope remains open.
+
+Fresh final-binary public regressions pass automatic native scheduling/refusal
+recovery (`automation-schedules-sej5Pb`), manual occurrence/native execution/
+archive (`automation-occurrences-CfhF9J`), definitions/policies
+(`automation-definitions-eNLFQ6`), input/answers (`request-input-28CuKI`) and
+reviewed execution/recovery (`request-review-oqAYTp`, fake inference). They
+establish regression coverage for those paths, not public reviewed process-tree
+or physical two-PC acceptance. Earlier unexplained exits/link failures remain
+unproven; no security/signing claim follows from the passes.

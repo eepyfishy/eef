@@ -209,6 +209,14 @@ journal processing as a suspend gap without relaxing safety thresholds. This
 advances durable automation reliability, not general continuation or stable
 release acceptance. See [contract and evidence](AUTOMATION-SCHEDULES.md#explicit-pre-launch-refusal-recovery-subsequent-increment).
 
+The following [bounded process lifetime](PROCESS-LIFETIME.md) increment contains
+Windows `process.exec` descendants before resuming user code and owns readers
+within the execution future. Completion/timeout/cancellation cannot intentionally
+leave persistent children behind; grant uncertainty and replay refusal remain.
+This advances one native lifetime boundary, not universal process sandboxing,
+remote-stop acknowledgement, full physical resource enforcement, Python/model/
+media lifecycle acceptance or the completed workload-runtime milestone.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;
