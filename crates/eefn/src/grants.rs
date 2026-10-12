@@ -234,8 +234,41 @@ impl ExecutionGrant {
         {
             bail!("Invalid execution grant scope or limits")
         }
+        OperationShape {
+            capability: &self.capability,
+            action: &self.action,
+            params: &self.params,
+            resource_id: self.resource_id.as_deref(),
+            model_id: self.model_id.as_deref(),
+            backend: self.backend.as_deref(),
+            model_role: self.model_role.as_deref(),
+        }
+        .validate(Some(&self.executor_node))
+    }
+    pub fn matches_session(&self, issuer: &str, session: &str, node: &str) -> bool {
+        self.issuer_id == issuer && self.session_id == session && self.executor_node == node
+    }
+}
+
+/// Shared operation-shape validation, not a grant, credential, lease or journal
+/// claim. A compound definition must eventually be licensed by its own exact
+/// reviewed parent; these borrowed fields alone never authorize execution.
+pub(crate) struct OperationShape<'a> {
+    pub capability: &'a str,
+    pub action: &'a str,
+    pub params: &'a Value,
+    pub resource_id: Option<&'a str>,
+    pub model_id: Option<&'a str>,
+    pub backend: Option<&'a str>,
+    pub model_role: Option<&'a str>,
+}
+impl OperationShape<'_> {
+    pub(crate) fn validate(&self, executor: Option<&str>) -> Result<()> {
+        if !self.params.is_object() || serde_json::to_vec(self.params)?.len() > 64 * 1024 {
+            bail!("Invalid or oversized operation parameters")
+        }
         if !matches!(
-            (self.capability.as_str(), self.action.as_str()),
+            (self.capability, self.action),
             ("system.info" | "system.ping", "run")
                 | ("filesystem", "read" | "write" | "list")
                 | ("process.exec", "run")
@@ -255,11 +288,18 @@ impl ExecutionGrant {
         ) {
             bail!("Unsupported granted operation contract")
         }
-        if let Some(resource) = &self.resource_id {
-            let prefix = format!("{}::", self.executor_node);
+        if let Some(resource) = self.resource_id {
+            let owned = match executor {
+                Some(node) => {
+                    let prefix = format!("{node}::");
+                    resource.len() > prefix.len() && resource.starts_with(&prefix)
+                }
+                None => resource.split_once("::").is_some_and(|(node, local)| {
+                    !local.is_empty() && crate::network::validate_remote_node_id(node).is_ok()
+                }),
+            };
             if resource.len() > 256
-                || resource.len() <= prefix.len()
-                || !resource.starts_with(&prefix)
+                || !owned
                 || resource.chars().any(char::is_control)
                 || self.params["resource_id"] != json!(resource)
             {
@@ -268,16 +308,10 @@ impl ExecutionGrant {
         } else if self.params.get("resource_id").is_some() {
             bail!("Ungranted physical resource")
         }
-        if matches!(self.capability.as_str(), "llm.infer" | "vlm.analyze") {
-            let model = self
-                .model_id
-                .as_deref()
-                .context("Grant requires an exact model")?;
+        if matches!(self.capability, "llm.infer" | "vlm.analyze") {
+            let model = self.model_id.context("Grant requires an exact model")?;
             crate::model_selection::validate_id(model)?;
-            let backend = self
-                .backend
-                .as_deref()
-                .context("Grant requires an exact backend")?;
+            let backend = self.backend.context("Grant requires an exact backend")?;
             if !matches!(backend, "ollama" | "llamacpp")
                 || self.resource_id.is_some()
                 || self.params["model_id"] != json!(model)
@@ -289,16 +323,13 @@ impl ExecutionGrant {
             {
                 bail!("Conflicting granted model/backend")
             }
-            if self.model_role.as_deref().is_some_and(|r| !identifier(r)) {
+            if self.model_role.is_some_and(|r| !identifier(r)) {
                 bail!("Invalid model role")
             }
         } else if self.model_id.is_some() || self.backend.is_some() || self.model_role.is_some() {
             bail!("Non-model operation cannot claim a model")
         }
         Ok(())
-    }
-    pub fn matches_session(&self, issuer: &str, session: &str, node: &str) -> bool {
-        self.issuer_id == issuer && self.session_id == session && self.executor_node == node
     }
 }
 /// Explicit sorted-map canonicalization: stable across serde_json feature modes.
@@ -824,6 +855,20 @@ fn completed_outcome(grant: &ExecutionGrant, data: Value) -> GrantReport {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn a_structural_pipeline_never_authorizes_an_existing_one_operation_grant() {
+        let definition: crate::pipeline::FinitePipeline =
+            serde_json::from_value(json!({"schema_version":1,"max_retained_bytes":1024,
+            "steps":[{"id":"inspect","capability":"system.info","action":"run","params":{}}]}))
+            .unwrap();
+        definition.validate().unwrap();
+        let mut attempted = grant();
+        attempted.capability = "pipeline.run".into();
+        attempted.params = json!({"pipeline":definition});
+        assert!(attempted.validate().is_err());
+        assert!(!crate::engine::CAPABILITIES.contains(&"pipeline.run"));
+        assert!(crate::execution_boundary::require_control("pipeline.run").is_err());
+    }
     #[test]
     fn completed_process_failure_preserves_exit_evidence_but_never_claims_success() {
         let mut g = grant();

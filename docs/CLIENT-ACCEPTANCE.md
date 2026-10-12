@@ -1,5 +1,9 @@
 # Reviewed client acceptance (unreleased after alpha.6)
 
+Latest backend checkpoint: **581 workspace/all-target tests per feature mode**,
+including the [finite pipeline structural foundation](LOCAL-PIPELINES.md#structural-verification-checkpoint-2026-10-13).
+This does not expose pipeline execution or complete the full runtime/media gates.
+
 Latest model-policy checkpoint: **571 workspace/all-target tests per feature
 mode**, with command-owned eager/manual/on-demand and idle policy,
 revision-fenced rollback, atomic request-owned load/pin handoff, failed-load

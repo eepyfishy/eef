@@ -33,6 +33,7 @@ mod model_response;
 pub mod model_selection;
 pub mod model_server;
 pub mod network;
+pub mod pipeline;
 mod process_lifetime;
 pub mod protocol;
 pub mod python;

@@ -660,6 +660,12 @@ old authority is known to be stopped/expired; clustering remains a later gate.
 
 ## 8-9. Peer paths, continuous work and listening
 
+The subsequent [local pipeline structural foundation](LOCAL-PIPELINES.md) adds
+strict finite graph/data-reference types sharing existing operation-shape checks.
+It does not yet add a compiler, parent pipeline grant, executor, progress/stop
+acknowledgement or public pipeline capability. Continue those on the existing
+durable runtime; the full finite/continuous/media/peer scope below is unchanged.
+
 Owner clarification, 2026-09-22: see [presence and supervised media sessions](PRESENCE-AND-MEDIA.md).
 EEF approves and supervises sessions; payloads may use approved peer paths or a
 user-selected bounded coordinator relay. This replaces the intermediate proposal
