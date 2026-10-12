@@ -148,6 +148,7 @@ try{
   assert.equal((await owner(archiveArgs(thirdArchiveCommand))).result.reused,true);
  }
  const archivedStorage=(await json(eef+'/api/jobs')).storage;assert.equal(archivedStorage.occurrence_count,3);assert.equal(archivedStorage.occurrence_archive_count,3);
+ assert.equal(archivedStorage.schedule_count,0);assert.equal(archivedStorage.trigger_count,0);assert.equal(archivedStorage.schedule_reserved_bytes,0);
  assert(archivedStorage.occurrence_archive_bytes>0);
  assert.equal((await owner(reservationArgs(thirdCommand))).result.reused,true);
  assert.equal(JSON.stringify(await review.inspect(source.id)),sourceBefore);

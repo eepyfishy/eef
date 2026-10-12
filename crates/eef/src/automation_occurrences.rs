@@ -2,11 +2,11 @@
 use super::*;
 use eefn::automation_occurrence::{Delegation, OccurrenceCommand, Reservation};
 #[path = "automation_occurrence_archives.rs"]
-mod archives;
+pub(super) mod archives;
 
 pub(super) fn bytes(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT (SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrence_archives)",
+        "SELECT (SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrence_archives)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM automation_schedules)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_triggers)",
         [],
         |r| r.get(0),
     )?;
@@ -47,6 +47,7 @@ fn validate_record(connection: &Connection, record: &Reservation) -> Result<()> 
         bail!("Future/noncanonical approved occurrence snapshot; retain without migration");
     }
     validate_retained_review(&snapshot)?;
+    automation_schedules::validate_delegation(connection, &snapshot)?;
     matching_scope(&snapshot, &policy)?;
     let approval = snapshot
         .approval
@@ -74,7 +75,7 @@ fn validate_record(connection: &Connection, record: &Reservation) -> Result<()> 
     }
     Ok(())
 }
-fn row(connection: &Connection, id: &str) -> Result<Option<Reservation>> {
+pub(super) fn row(connection: &Connection, id: &str) -> Result<Option<Reservation>> {
     let value: Option<(String, String)> = connection
         .query_row(
             "SELECT job_id,record_json FROM automation_occurrences WHERE reservation_id=?1",
@@ -109,6 +110,7 @@ fn live_matches(record: &Reservation, plan: &Plan) -> Result<()> {
     Ok(())
 }
 pub(super) fn validate_job(connection: &Connection, plan: &Plan) -> Result<()> {
+    automation_schedules::validate_delegation(connection, plan)?;
     if connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM automation_occurrence_archives WHERE job_id=?1)",
         [&plan.plan_id],
@@ -135,6 +137,7 @@ pub(super) fn validate_job(connection: &Connection, plan: &Plan) -> Result<()> {
     Ok(())
 }
 fn records(connection: &Connection) -> Result<Vec<Reservation>> {
+    automation_schedules::validate_all(connection)?;
     archives::validate_all(connection)?;
     let mut statement = connection
         .prepare("SELECT reservation_id FROM automation_occurrences ORDER BY reservation_id")?;
@@ -189,6 +192,50 @@ pub(super) fn validate_all(connection: &Connection) -> Result<()> {
     records(connection)?;
     Ok(())
 }
+pub(super) fn definition_resolved(connection: &Connection, definition: &str) -> Result<bool> {
+    for record in records(connection)?
+        .iter()
+        .filter(|r| r.delegation.definition_id == definition)
+    {
+        if !archives::resolved(&archives::retained_plan(connection, record)?) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+pub(super) fn allowance_available(
+    connection: &Connection,
+    policy: &eefn::automation_policy::Authorization,
+) -> Result<bool> {
+    let retained = records(connection)?;
+    let own = retained
+        .iter()
+        .filter(|r| r.delegation.policy_id == policy.id)
+        .collect::<Vec<_>>();
+    let eefn::automation_policy::PolicyCommand::Approve {
+        max_runs,
+        max_reserved_execution_ms,
+        max_reserved_result_bytes,
+        ..
+    } = &policy.creation
+    else {
+        unreachable!()
+    };
+    let used_ms = own
+        .iter()
+        .try_fold(0u64, |n, r| n.checked_add(r.reserved_execution_ms))
+        .context("Budget overflow")?;
+    let used_bytes = own
+        .iter()
+        .try_fold(0u64, |n, r| n.checked_add(r.reserved_result_bytes))
+        .context("Budget overflow")?;
+    let (duration, bytes) = policy
+        .scope
+        .run_allowance(&policy.creation.limits().unwrap())?;
+    Ok(own.len() < *max_runs as usize
+        && duration <= max_reserved_execution_ms.saturating_sub(used_ms)
+        && bytes <= max_reserved_result_bytes.saturating_sub(used_bytes))
+}
 pub(super) fn refuse_archived_request(
     connection: &Connection,
     origin: &eefn::context::RequestContext,
@@ -215,11 +262,13 @@ pub(super) fn fence(
         .context("Policy missing")?;
     let definition = automations::read_definition(connection, &delegation.definition_id)?;
     let generation = automation_authorizations::records(connection)?.iter().filter(|r| matches!(&r.creation, eefn::automation_policy::PolicyCommand::Approve { definition, .. } if definition == &delegation.definition_id)).map(|r|r.generation).max().unwrap_or(0);
-    if !policy.current_at(runtime, issuer, generation, &definition, clock()) {
+    let now = clock();
+    if !policy.current_at(runtime, issuer, generation, &definition, now) {
         bail!(
             "Delegated occurrence policy expired, revoked, superseded, removed or from an old runtime"
         );
     }
+    automation_schedules::fence(connection, plan, runtime, now)?;
     Ok(())
 }
 impl JobStore {
@@ -410,6 +459,13 @@ impl JobStore {
                         definition_id: definition.clone(),
                         generation,
                         runtime_id: runtime.into(),
+                        trigger: automation_schedules::reservation_link(
+                            &connection,
+                            &plan,
+                            &policy_record,
+                            operation_id,
+                            now,
+                        )?,
                     };
                     let mut approval = crate::request_approval::ApprovalRecord {
                         schema_version: 1,
@@ -560,6 +616,9 @@ mod tests {
             "authorization_reserved_bytes",
             "occurrence_bytes",
             "occurrence_archive_bytes",
+            "schedule_bytes",
+            "schedule_reserved_bytes",
+            "trigger_bytes",
         ]
         .iter()
         .map(|k| value[k].as_u64().unwrap() as usize)

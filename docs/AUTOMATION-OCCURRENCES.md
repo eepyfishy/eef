@@ -152,6 +152,12 @@ reusable pipeline grants, bootstrap quality, measured full resource enforcement,
 strong native termination, peer/media/cluster behavior, physical two-PC and
 installer/Defender/Authenticode release acceptance remain in scope.
 
+The subsequent [durable trigger foundation](AUTOMATION-TRIGGERS.md) adds internal
+claim ownership and schedule-stop fences to these existing reservation/issuance
+checks. Its optional delegation link is omitted for ordinary manual reservations,
+preserving their previous serialized shape/digests. Public activation and fresh-
+request dispatch are not yet connected; there is still no running timer.
+
 ## Reservation checkpoint evidence (2026-10-12)
 
 The preceding reservation increment added twelve tests and was verified with

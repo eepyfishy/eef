@@ -416,7 +416,7 @@ pub(super) fn read_definition(connection: &Connection, id: &str) -> Result<Defin
 }
 pub(super) fn count(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT (SELECT count(*) FROM durable_jobs)+(SELECT count(*) FROM automation_definitions)+(SELECT count(*) FROM automation_authorizations)+(SELECT count(*) FROM automation_occurrences)+(SELECT count(*) FROM automation_occurrence_archives)",
+        "SELECT (SELECT count(*) FROM durable_jobs)+(SELECT count(*) FROM automation_definitions)+(SELECT count(*) FROM automation_authorizations)+(SELECT count(*) FROM automation_occurrences)+(SELECT count(*) FROM automation_occurrence_archives)+(SELECT count(*) FROM automation_schedules)+(SELECT count(*) FROM automation_triggers)",
         [],
         |r| r.get(0),
     )?;
@@ -424,7 +424,7 @@ pub(super) fn count(connection: &Connection) -> Result<usize> {
 }
 pub(super) fn definition_bytes(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT (SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM automation_authorizations)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrence_archives)",
+        "SELECT (SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM automation_authorizations)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrence_archives)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM automation_schedules)+(SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_triggers)",
         [],
         |r| r.get(0),
     )?;
@@ -439,6 +439,7 @@ impl JobStore {
             read_definition(&connection, &id?)?;
         }
         automation_authorizations::validate_all(&connection)?;
+        automation_schedules::validate_all(&connection)?;
         automation_occurrences::validate_all(&connection)?;
         Ok(())
     }

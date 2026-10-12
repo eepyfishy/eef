@@ -167,6 +167,17 @@ bounded to 2 MiB; payload compaction, automated retention and partial-work
 resolution remain open. This improves the durable lifecycle foundation, without
 claiming timer activation or the full recurring-automation milestone.
 
+The next [durable trigger foundation](AUTOMATION-TRIGGERS.md) adds internal
+schedule/cursor/claim state in the same journal, with preallocated fresh request/
+reservation/execution IDs, atomic due claims, fixed-delay/no-catch-up semantics,
+restart interruption and stop/issuance authority fences. Terminal resolution uses
+actual retained or archived occurrence proof; missing work remains uncertain.
+Shared quotas include stop/interruption headroom. Public enable/stop adapters,
+the runtime timer task and fresh ordinary request/compile/reserve/dispatch bridge
+remain unimplemented: no timer or automatic job is enabled by this checkpoint.
+Monotonic suspend/clock detection, partial-claim recovery, physical execution
+acceptance and the full recurring-automation milestone remain open.
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

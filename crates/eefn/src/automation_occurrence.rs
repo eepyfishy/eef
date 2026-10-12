@@ -131,9 +131,27 @@ pub struct Delegation {
     pub definition_id: String,
     pub generation: u64,
     pub runtime_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<TriggerLink>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerLink {
+    pub schedule_id: String,
+    pub trigger_id: String,
 }
 impl Delegation {
     pub fn validate(&self) -> Result<()> {
+        if let Some(link) = &self.trigger {
+            uuid(&link.schedule_id)?;
+            uuid(&link.trigger_id)?;
+            if link.schedule_id == link.trigger_id
+                || link.schedule_id == self.policy_id
+                || link.trigger_id == self.reservation_id
+            {
+                bail!("Invalid durable trigger reference");
+            }
+        }
         for id in [
             &self.reservation_id,
             &self.policy_id,
@@ -409,6 +427,39 @@ struct Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn optional_trigger_link_preserves_old_shape_and_rejects_invalid_authority_ids() {
+        let mut d = Delegation {
+            schema_version: 1,
+            reservation_id: uuid::Uuid::new_v4().to_string(),
+            policy_id: uuid::Uuid::new_v4().to_string(),
+            policy_sha256: "a".repeat(64),
+            definition_id: uuid::Uuid::new_v4().to_string(),
+            generation: 1,
+            runtime_id: uuid::Uuid::new_v4().to_string(),
+            trigger: None,
+        };
+        let old = json!(d);
+        assert!(old.get("trigger").is_none());
+        assert_eq!(serde_json::from_value::<Delegation>(old).unwrap(), d);
+        d.trigger = Some(TriggerLink {
+            schedule_id: uuid::Uuid::new_v4().to_string(),
+            trigger_id: uuid::Uuid::new_v4().to_string(),
+        });
+        d.validate().unwrap();
+        for id in [
+            uuid::Uuid::nil().to_string(),
+            d.trigger.as_ref().unwrap().schedule_id.clone(),
+            d.reservation_id.clone(),
+        ] {
+            let mut bad = d.clone();
+            bad.trigger.as_mut().unwrap().trigger_id = id;
+            assert!(bad.validate().is_err());
+        }
+        let mut bad = json!(d);
+        bad["trigger"]["resume"] = json!(true);
+        assert!(serde_json::from_value::<Delegation>(bad).is_err());
+    }
     fn archive_fixture() -> Archive {
         let job = "a".repeat(32);
         let operation_id = uuid::Uuid::new_v4().to_string();
@@ -558,6 +609,7 @@ mod tests {
             definition_id: uuid::Uuid::new_v4().to_string(),
             generation: 1,
             runtime_id: uuid::Uuid::new_v4().to_string(),
+            trigger: None,
         };
         assert!(d.validate().is_ok());
         let mut bad = d;

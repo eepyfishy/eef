@@ -487,3 +487,37 @@ timer/recurrence lifecycle, partial-work resolution, real bootstrap quality,
 heavy planning, measured resource limits, media/mesh/cluster and installer/
 Defender/Authenticode gates remain in scope. Installed nodes, published
 releases/feeds and browser assets are unchanged. Stable 0.4.0 is not claimed.
+
+## Durable trigger ownership foundation (2026-10-12)
+
+Twelve added tests bring final workspace/all-target suites to **489** in each
+feature mode (EEF library 197, owner CLI 11, installer 6, EEFN library 269,
+node CLI 6). The fresh default binaries/examples, formatting, diff and backend/
+browser source guard pass. This extends the same journal and grant checkpoints,
+not a dashboard controller or a second workload runner.
+
+Internal schedules own immutable fresh request/reservation/execution claims;
+cursor/claim writes and final clock/budget checks are atomic. Stop/restart/
+missed-window authority cannot silently reactivate work. Existing reservation
+and every-issuance checks enforce optional trigger lineage; direct approval and
+substitute receipts cannot bypass it. Actual cancellation/archive evidence is
+needed for the next fixed-delay claim, while missing admission remains unknown.
+Permanent policy allowances cannot be reset by a replacement arm. Seven record
+types share count/byte limits, including 4096-byte schedule lifecycle headroom.
+
+These are journal/compiler/fake-clock checks, not native timer execution. Public
+enable/stop/inspect adapters, the bounded runtime timer task, fresh ordinary
+request/compile/reserve/dispatch, monotonic suspend/clock detection and partial-
+claim recovery remain required before public activation. No timer starts and no
+job is created automatically. All remaining roadmap, physical two-PC, bootstrap
+quality, native termination, resource/media/mesh/cluster and installer/signing
+gates remain in scope. Stable 0.4.0 is not claimed.
+
+Fresh current-build public regressions pass occurrence/native execution/archive
+(`automation-occurrences-Lf22nd`), definitions/policies
+(`automation-definitions-ggPMGn`), input/answers (`request-input-A8wVkQ`) and
+reviewed execution/recovery (`request-review-kii2bf`). Public occurrence use
+still has zero schedules/triggers/headroom; this is not native timer evidence.
+The review fixture uses fake inference, not real semantic quality. Earlier
+intermittent input/busy failures remain unproven. Installed nodes, release/feed
+artifacts, browser assets and model files are unchanged.

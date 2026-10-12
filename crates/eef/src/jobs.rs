@@ -15,6 +15,8 @@ use std::{
 mod automation_authorizations;
 #[path = "automation_occurrences.rs"]
 mod automation_occurrences;
+#[path = "automation_schedules.rs"]
+pub(crate) mod automation_schedules;
 #[path = "automations.rs"]
 mod automations;
 
@@ -176,6 +178,7 @@ impl JobStore {
         connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_authorizations (authorization_id TEXT PRIMARY KEY, record_json TEXT NOT NULL, reserved_bytes INTEGER NOT NULL);")?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_occurrences (reservation_id TEXT PRIMARY KEY, job_id TEXT UNIQUE NOT NULL, record_json TEXT NOT NULL);")?;
         connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_occurrence_archives (archive_id TEXT PRIMARY KEY, reservation_id TEXT UNIQUE NOT NULL, job_id TEXT UNIQUE NOT NULL, record_json TEXT NOT NULL);")?;
+        automation_schedules::initialize(&connection)?;
         let columns = connection
             .prepare("PRAGMA table_info(durable_jobs)")?
             .query_map([], |r| r.get::<_, String>(1))?
@@ -193,6 +196,7 @@ impl JobStore {
             max_bytes,
         });
         store.validate_automations()?;
+        automation_schedules::interrupt_on_open(&store)?;
         for plan in store.list()? {
             {
                 // Older development journals did not budget for interruption.
@@ -431,18 +435,25 @@ impl JobStore {
         let (authorization_count,authorization_bytes,authorization_reserved_bytes):(i64,i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0),COALESCE(SUM(reserved_bytes),0) FROM automation_authorizations",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
         let (occurrence_count,occurrence_bytes):(i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrences", [], |r|Ok((r.get(0)?,r.get(1)?)))?;
         let (occurrence_archive_count,occurrence_archive_bytes):(i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_occurrence_archives", [], |r|Ok((r.get(0)?,r.get(1)?)))?;
+        let (schedule_count,schedule_bytes,schedule_reserved_bytes):(i64,i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0),COALESCE(SUM(reserved_bytes),0) FROM automation_schedules", [], |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+        let (trigger_count,trigger_bytes):(i64,i64)=connection.query_row("SELECT count(*),COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_triggers", [], |r|Ok((r.get(0)?,r.get(1)?)))?;
         let used = usize::try_from(payload)?
             .saturating_add(usize::try_from(reserved)?)
             .saturating_add(usize::try_from(automation_bytes)?)
             .saturating_add(usize::try_from(authorization_bytes)?)
             .saturating_add(usize::try_from(authorization_reserved_bytes)?)
             .saturating_add(usize::try_from(occurrence_bytes)?)
-            .saturating_add(usize::try_from(occurrence_archive_bytes)?);
+            .saturating_add(usize::try_from(occurrence_archive_bytes)?)
+            .saturating_add(usize::try_from(schedule_bytes)?)
+            .saturating_add(usize::try_from(schedule_reserved_bytes)?)
+            .saturating_add(usize::try_from(trigger_bytes)?);
         Ok(
             serde_json::json!({"count":count,"automation_count":automation_count,"automation_bytes":automation_bytes,"authorization_count":authorization_count,
                 "authorization_bytes":authorization_bytes,"authorization_reserved_bytes":authorization_reserved_bytes,
                 "occurrence_count":occurrence_count,"occurrence_bytes":occurrence_bytes,"max_count":self.max_count,
                 "occurrence_archive_count":occurrence_archive_count,"occurrence_archive_bytes":occurrence_archive_bytes,
+                "schedule_count":schedule_count,"schedule_bytes":schedule_bytes,"schedule_reserved_bytes":schedule_reserved_bytes,
+                "trigger_count":trigger_count,"trigger_bytes":trigger_bytes,
                 "payload_bytes":payload,"reserved_bytes":reserved,"max_bytes":self.max_bytes,"available_bytes":self.max_bytes.saturating_sub(used),
                 "over_limit":used>self.max_bytes||automations::count(&connection)?>self.max_count}),
         )
@@ -485,6 +496,7 @@ impl JobStore {
     pub fn remove_finished(&self, id: &str) -> Result<()> {
         let connection = self.connection.lock().expect("job journal");
         let plan = read(&connection, id)?;
+        automation_schedules::refuse_removal(&connection, &plan)?;
         if connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM automation_occurrences WHERE job_id=?1)",
             [id],

@@ -1,0 +1,1550 @@
+//! Durable trigger ledger and authority fences. No public activation/worker yet.
+use super::*;
+use eefn::automation_occurrence::{TriggerLink, uuid};
+use eefn::automation_policy::{Authorization, PolicyCommand};
+const SCHEDULE_COST: usize = 4096;
+
+// Production activation remains unavailable until the fresh-request bridge is
+// integrated. These internal records do not claim an LM ran or a grant was sent.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Arm {
+    pub policy: String,
+    pub policy_sha256: String,
+    pub operation_id: String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum State {
+    Waiting,
+    InFlight,
+    Stopped,
+    Interrupted,
+    Exhausted,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Stop {
+    pub operation_id: String,
+    pub source_revision: u64,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Schedule {
+    pub schema_version: u32,
+    pub id: String,
+    pub creation: Arm,
+    pub definition_id: String,
+    pub runtime_id: String,
+    pub issuer_id: String,
+    pub generation: u64,
+    pub armed_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub every_ms: u64,
+    pub revision: u64,
+    pub state: State,
+    pub observed_at_ms: u64,
+    pub next_due_ms: Option<u64>,
+    pub active_trigger: Option<String>,
+    pub claimed_runs: u16,
+    pub stop: Option<Stop>,
+    pub reason: Option<String>,
+    pub record_sha256: String,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Trigger {
+    pub schema_version: u32,
+    pub id: String,
+    pub schedule_id: String,
+    pub ordinal: u16,
+    pub due_at_ms: u64,
+    pub claimed_at_ms: u64,
+    pub request_context: eefn::context::RequestContext,
+    pub reservation_id: String,
+    pub execution_id: String,
+    pub record_sha256: String,
+}
+fn digest<T: Serialize>(value: &T) -> Result<String> {
+    let mut value = serde_json::to_value(value)?;
+    value.as_object_mut().unwrap().remove("record_sha256");
+    eefn::grants::definition_digest(&value)
+}
+pub(super) fn initialize(connection: &Connection) -> Result<()> {
+    connection.execute_batch("CREATE TABLE IF NOT EXISTS automation_schedules(schedule_id TEXT PRIMARY KEY,record_json TEXT NOT NULL,reserved_bytes INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS automation_triggers(trigger_id TEXT PRIMARY KEY,schedule_id TEXT NOT NULL,ordinal INTEGER NOT NULL,request_id TEXT UNIQUE NOT NULL,reservation_id TEXT UNIQUE NOT NULL,record_json TEXT NOT NULL,UNIQUE(schedule_id,ordinal));")?;
+    Ok(())
+}
+fn policy(connection: &Connection, record: &Schedule) -> Result<Authorization> {
+    automation_authorizations::read(connection, &record.creation.policy)?
+        .context("Trigger policy missing")
+}
+fn validate_schedule(connection: &Connection, s: &Schedule) -> Result<()> {
+    for id in [&s.id, &s.definition_id, &s.runtime_id, &s.creation.policy] {
+        uuid(id)?;
+    }
+    let p = policy(connection, s)?;
+    let PolicyCommand::Approve {
+        definition,
+        max_runs,
+        ..
+    } = &p.creation
+    else {
+        unreachable!()
+    };
+    let d = automations::read_definition(connection, definition)?;
+    let eefn::automation::AutomationCommand::Define { every_ms, .. } = d.creation else {
+        unreachable!()
+    };
+    if s.schema_version != 1
+        || s.creation.operation_id != s.id
+        || s.creation.policy_sha256 != p.authorization_sha256
+        || s.id == p.id
+        || s.id == s.definition_id
+        || s.id == s.runtime_id
+        || s.definition_id != *definition
+        || s.runtime_id != p.runtime_id
+        || s.issuer_id != p.issuer_id
+        || s.generation != p.generation
+        || s.expires_at_ms != p.expires_at_ms
+        || s.armed_at_ms < p.approved_at_ms
+        || s.armed_at_ms >= s.expires_at_ms
+        || s.every_ms != every_ms
+        || s.revision == 0
+        || s.revision < u64::from(s.claimed_runs) * 2
+        || s.claimed_runs > *max_runs
+        || s.observed_at_ms == 0
+        || s.record_sha256 != digest(s)?
+        || serde_json::to_vec(s)?.len() > 4096
+    {
+        bail!("Damaged/future schedule; retain without activation");
+    }
+    if let Some(id) = &s.active_trigger {
+        uuid(id)?;
+    }
+    if let Some(stop) = &s.stop {
+        uuid(&stop.operation_id)?;
+        if stop.operation_id == s.id
+            || stop.source_revision.checked_add(1) != Some(s.revision)
+            || s.state != State::Stopped
+        {
+            bail!("Damaged schedule stop receipt");
+        }
+    }
+    let shape = match s.state {
+        State::Waiting => {
+            s.stop.is_none()
+                && s.reason.is_none()
+                && s.active_trigger.is_none()
+                && s.observed_at_ms >= s.armed_at_ms
+                && s.next_due_ms
+                    .is_some_and(|n| n > s.observed_at_ms && n < s.expires_at_ms)
+        }
+        State::InFlight => {
+            s.stop.is_none()
+                && s.reason.is_none()
+                && s.active_trigger.is_some()
+                && s.next_due_ms.is_none()
+                && s.observed_at_ms >= s.armed_at_ms
+                && s.claimed_runs > 0
+        }
+        State::Stopped => {
+            s.stop.is_some() && s.next_due_ms.is_none() && s.reason.as_deref() == Some("owner_stop")
+        }
+        State::Interrupted => {
+            s.stop.is_none()
+                && s.next_due_ms.is_none()
+                && matches!(
+                    s.reason.as_deref(),
+                    Some("restart" | "backward_clock" | "missed_trigger" | "policy_changed")
+                )
+        }
+        State::Exhausted => {
+            s.stop.is_none()
+                && s.next_due_ms.is_none()
+                && s.active_trigger.is_none()
+                && matches!(
+                    s.reason.as_deref(),
+                    Some("run_budget" | "time_budget" | "policy_budget")
+                )
+        }
+    };
+    if !shape {
+        bail!("Schedule lifecycle is inconsistent; no catch-up or replay");
+    }
+    Ok(())
+}
+fn read_schedule(connection: &Connection, id: &str) -> Result<Option<Schedule>> {
+    let raw: Option<(String, i64)> = connection
+        .query_row(
+            "SELECT record_json,reserved_bytes FROM automation_schedules WHERE schedule_id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((raw, reserved)) = raw else {
+        return Ok(None);
+    };
+    let s: Schedule = serde_json::from_str(&raw).context("Damaged/future schedule retained")?;
+    validate_schedule(connection, &s)?;
+    if s.id != id
+        || raw.len() > SCHEDULE_COST
+        || usize::try_from(reserved)? != SCHEDULE_COST - raw.len()
+    {
+        bail!("Schedule row identity/headroom differs");
+    }
+    Ok(Some(s))
+}
+fn schedules(connection: &Connection) -> Result<Vec<Schedule>> {
+    let mut statement =
+        connection.prepare("SELECT schedule_id FROM automation_schedules ORDER BY schedule_id")?;
+    statement
+        .query_map([], |r| r.get::<_, String>(0))?
+        .map(|id| read_schedule(connection, &id?)?.context("Schedule missing"))
+        .collect()
+}
+fn read_trigger(connection: &Connection, id: &str) -> Result<Option<Trigger>> {
+    let raw:Option<(String,u16,String,String,String)>=connection.query_row("SELECT schedule_id,ordinal,request_id,reservation_id,record_json FROM automation_triggers WHERE trigger_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+    let Some((schedule_id, ordinal, request_id, reservation_id, raw)) = raw else {
+        return Ok(None);
+    };
+    let t: Trigger = serde_json::from_str(&raw).context("Damaged/future trigger retained")?;
+    let s = read_schedule(connection, &t.schedule_id)?.context("Trigger schedule missing")?;
+    let p = policy(connection, &s)?;
+    let identities = [&t.id, &t.schedule_id, &t.reservation_id, &t.execution_id];
+    for id in identities {
+        uuid(id)?;
+    }
+    uuid(t.request_context.request_id())?;
+    let unique = identities
+        .into_iter()
+        .map(|id| id.as_str())
+        .chain([t.request_context.request_id(), p.id.as_str()])
+        .collect::<std::collections::BTreeSet<_>>();
+    if t.schema_version != 1
+        || t.id != id
+        || t.schedule_id != schedule_id
+        || t.ordinal != ordinal
+        || t.reservation_id != reservation_id
+        || t.request_context.request_id() != request_id
+        || t.ordinal == 0
+        || t.ordinal > s.claimed_runs
+        || t.claimed_at_ms < t.due_at_ms
+        || t.due_at_ms < s.armed_at_ms.saturating_add(s.every_ms)
+        || t.claimed_at_ms >= s.expires_at_ms
+        || t.claimed_at_ms.saturating_sub(t.due_at_ms) >= s.every_ms
+        || t.request_context.origin_node() != p.scope.owner_context.origin_node()
+        || t.request_context.origin_area() != p.scope.owner_context.origin_area()
+        || t.request_context.request_id() == p.scope.owner_context.request_id()
+        || unique.len() != 6
+        || t.record_sha256 != digest(&t)?
+        || serde_json::to_vec(&t)?.len() > 4096
+    {
+        bail!("Damaged trigger identity/time/context; no replacement");
+    }
+    Ok(Some(t))
+}
+fn triggers(connection: &Connection) -> Result<Vec<Trigger>> {
+    let mut statement = connection
+        .prepare("SELECT trigger_id FROM automation_triggers ORDER BY schedule_id,ordinal")?;
+    statement
+        .query_map([], |r| r.get::<_, String>(0))?
+        .map(|id| read_trigger(connection, &id?)?.context("Trigger missing"))
+        .collect()
+}
+pub(super) fn validate_all(connection: &Connection) -> Result<()> {
+    let claims = triggers(connection)?;
+    let mut active_definitions = std::collections::BTreeSet::new();
+    let mut identities = std::collections::BTreeSet::new();
+    for t in &claims {
+        for id in [&t.id, &t.reservation_id, &t.execution_id] {
+            if !identities.insert(id.as_str()) {
+                bail!("Trigger identity is reused across retained claims");
+            }
+        }
+        if !identities.insert(t.request_context.request_id()) {
+            bail!("Trigger request identity is reused");
+        }
+    }
+    for s in schedules(connection)? {
+        if matches!(s.state, State::Waiting | State::InFlight)
+            && !active_definitions.insert(s.definition_id.clone())
+        {
+            bail!("Multiple active schedules own the same definition; no trigger overlap");
+        }
+        let own = claims
+            .iter()
+            .filter(|t| t.schedule_id == s.id)
+            .collect::<Vec<_>>();
+        if own.len() != s.claimed_runs as usize
+            || own
+                .iter()
+                .enumerate()
+                .any(|(i, t)| t.ordinal as usize != i + 1)
+            || s.active_trigger
+                .as_ref()
+                .is_some_and(|id| own.last().is_none_or(|t| t.id != *id))
+        {
+            bail!("Trigger ordinal/count/ownership history differs; no budget reset");
+        }
+        if s.state == State::InFlight
+            && own
+                .last()
+                .is_none_or(|t| t.claimed_at_ms != s.observed_at_ms)
+        {
+            bail!("In-flight schedule clock differs from its claim");
+        }
+    }
+    Ok(())
+}
+fn current(
+    connection: &Connection,
+    s: &Schedule,
+    runtime: &str,
+    issuer: &str,
+    now: u64,
+) -> Result<bool> {
+    let p = policy(connection, s)?;
+    let d = automations::read_definition(connection, &s.definition_id)?;
+    let latest=automation_authorizations::records(connection)?.iter().filter(|p|matches!(&p.creation,PolicyCommand::Approve{definition,..} if definition==&s.definition_id)).map(|p|p.generation).max().unwrap_or(0);
+    Ok(s.runtime_id == runtime
+        && s.issuer_id == issuer
+        && p.current_at(runtime, issuer, latest, &d, now))
+}
+fn save_schedule(
+    store: &JobStore,
+    connection: &Connection,
+    s: &mut Schedule,
+    new: bool,
+) -> Result<()> {
+    s.record_sha256 = digest(s)?;
+    validate_schedule(connection, s)?;
+    let raw = serde_json::to_string(s)?;
+    quota(
+        store,
+        connection,
+        "automation_schedules",
+        "schedule_id",
+        &s.id,
+        SCHEDULE_COST,
+        new,
+    )?;
+    let reserved = i64::try_from(SCHEDULE_COST - raw.len())?;
+    if new {
+        connection.execute("INSERT INTO automation_schedules(schedule_id,record_json,reserved_bytes) VALUES(?1,?2,?3)",params![s.id,raw,reserved])?;
+    } else {
+        connection.execute(
+            "UPDATE automation_schedules SET record_json=?2,reserved_bytes=?3 WHERE schedule_id=?1",
+            params![s.id, raw, reserved],
+        )?;
+    }
+    Ok(())
+}
+fn quota(
+    store: &JobStore,
+    connection: &Connection,
+    table: &str,
+    key: &str,
+    id: &str,
+    cost: usize,
+    new: bool,
+) -> Result<()> {
+    if new && automations::count(connection)? >= store.max_count {
+        bail!("Trigger history count quota exhausted");
+    }
+    // Only internal constant identifiers call this helper, never caller strings.
+    let reserve = if table == "automation_schedules" {
+        "+reserved_bytes"
+    } else {
+        ""
+    };
+    let previous: Option<i64> = connection
+        .query_row(
+            &format!(
+                "SELECT length(CAST(record_json AS BLOB)){reserve} FROM {table} WHERE {key}=?1"
+            ),
+            [id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if previous.is_some_and(|old| old >= cost as i64) {
+        return Ok(());
+    }
+    let jobs: i64 = connection.query_row(
+        "SELECT COALESCE(SUM(length(CAST(plan_json AS BLOB))+reserved_bytes),0) FROM durable_jobs",
+        [],
+        |r| r.get(0),
+    )?;
+    let used = usize::try_from(jobs)?
+        .checked_add(automations::definition_bytes(connection)?)
+        .context("Trigger storage overflow")?
+        .checked_sub(usize::try_from(previous.unwrap_or(0))?)
+        .context("Trigger storage underflow")?;
+    if cost > store.max_bytes.saturating_sub(used) {
+        bail!("Trigger byte quota exhausted; no claim advanced");
+    }
+    Ok(())
+}
+fn advance(s: &mut Schedule, now: u64) -> Result<()> {
+    s.revision = s
+        .revision
+        .checked_add(1)
+        .context("Schedule revision exhausted")?;
+    s.observed_at_ms = now;
+    Ok(())
+}
+fn interrupted(s: &mut Schedule, reason: &str, now: u64) -> Result<()> {
+    advance(s, now)?;
+    s.state = State::Interrupted;
+    s.reason = Some(reason.into());
+    s.next_due_ms = None;
+    Ok(())
+}
+pub(super) fn interrupt_on_open(store: &JobStore) -> Result<()> {
+    let connection = store.connection.lock().expect("job journal");
+    let retained = schedules(&connection)?;
+    let tx = connection.unchecked_transaction()?;
+    for mut s in retained {
+        if matches!(s.state, State::Waiting | State::InFlight) {
+            interrupted(&mut s, "restart", eefn::protocol::now_ms())?;
+            save_schedule(store, &tx, &mut s, false)?;
+        }
+    }
+    validate_all(&tx)?;
+    tx.commit()?;
+    Ok(())
+}
+fn trigger_for_request(connection: &Connection, request: &str) -> Result<Option<Trigger>> {
+    let id: Option<String> = connection
+        .query_row(
+            "SELECT trigger_id FROM automation_triggers WHERE request_id=?1",
+            [request],
+            |r| r.get(0),
+        )
+        .optional()?;
+    id.map(|id| read_trigger(connection, &id)?.context("Trigger missing"))
+        .transpose()
+}
+pub(super) fn validate_delegation(connection: &Connection, plan: &Plan) -> Result<()> {
+    let Some(context) = &plan.goal.request_context else {
+        return Ok(());
+    };
+    let claim = trigger_for_request(connection, context.request_id())?;
+    let delegation = plan.approval.as_ref().and_then(|a| a.delegation.as_ref());
+    match (claim, delegation.and_then(|d| d.trigger.as_ref())) {
+        (None, None) => Ok(()),
+        (Some(t), Some(link)) => {
+            let s = read_schedule(connection, &t.schedule_id)?.context("Schedule missing")?;
+            let d = delegation.unwrap();
+            if link.schedule_id != s.id
+                || link.trigger_id != t.id
+                || d.policy_id != s.creation.policy
+                || d.reservation_id != t.reservation_id
+                || d.runtime_id != s.runtime_id
+                || *context != t.request_context
+                || plan
+                    .execution
+                    .as_ref()
+                    .is_some_and(|e| e.command.operation_id != t.execution_id)
+            {
+                bail!("Delegation differs from durable trigger lineage");
+            }
+            Ok(())
+        }
+        // A fresh unapproved source is permitted, but cannot use direct approval
+        // or a different reservation/execution receipt to bypass its schedule.
+        (Some(_), None) if plan.approval.is_none() => Ok(()),
+        _ => bail!("Trigger-linked job cannot omit or import schedule authority"),
+    }
+}
+pub(super) fn reservation_link(
+    connection: &Connection,
+    plan: &Plan,
+    p: &Authorization,
+    reservation: &str,
+    now: u64,
+) -> Result<Option<TriggerLink>> {
+    let Some(context) = &plan.goal.request_context else {
+        return Ok(None);
+    };
+    let Some(t) = trigger_for_request(connection, context.request_id())? else {
+        return Ok(None);
+    };
+    let s = read_schedule(connection, &t.schedule_id)?.context("Schedule missing")?;
+    if t.request_context != *context
+        || t.reservation_id != reservation
+        || s.creation.policy != p.id
+        || s.state != State::InFlight
+        || s.active_trigger.as_deref() != Some(&t.id)
+        || now < s.observed_at_ms
+        || !current(connection, &s, &p.runtime_id, &p.issuer_id, now)?
+    {
+        bail!("Durable trigger stopped/interrupted/stale; no new reservation");
+    }
+    Ok(Some(TriggerLink {
+        schedule_id: s.id,
+        trigger_id: t.id,
+    }))
+}
+pub(super) fn fence(connection: &Connection, plan: &Plan, runtime: &str, now: u64) -> Result<()> {
+    validate_delegation(connection, plan)?;
+    let Some(link) = plan
+        .approval
+        .as_ref()
+        .and_then(|a| a.delegation.as_ref())
+        .and_then(|d| d.trigger.as_ref())
+    else {
+        return Ok(());
+    };
+    let s = read_schedule(connection, &link.schedule_id)?.context("Schedule missing")?;
+    if s.state != State::InFlight
+        || s.active_trigger.as_deref() != Some(&link.trigger_id)
+        || s.runtime_id != runtime
+        || now < s.observed_at_ms
+        || now >= s.expires_at_ms
+    {
+        bail!("Durable trigger stopped/interrupted/expired; no new issuance");
+    }
+    Ok(())
+}
+pub(super) fn refuse_removal(connection: &Connection, plan: &Plan) -> Result<()> {
+    if let Some(context) = &plan.goal.request_context {
+        if trigger_for_request(connection, context.request_id())?.is_some() {
+            bail!(
+                "Trigger lineage must be retained; use exact occurrence archiving after resolution"
+            );
+        }
+    }
+    Ok(())
+}
+
+// Internal entry points only. No CLI/API arms them in this increment.
+#[allow(dead_code)]
+impl JobStore {
+    pub(crate) fn schedule_arm_now(
+        &self,
+        command: Arm,
+        runtime: &str,
+        issuer: &str,
+    ) -> Result<(Schedule, bool)> {
+        self.schedule_arm(command, runtime, issuer, eefn::protocol::now_ms)
+    }
+    pub(crate) fn schedule_claim_due_now(
+        &self,
+        id: &str,
+        runtime: &str,
+        issuer: &str,
+    ) -> Result<Option<Trigger>> {
+        self.schedule_claim_due(id, runtime, issuer, eefn::protocol::now_ms)
+    }
+    pub(crate) fn schedule_stop_now(
+        &self,
+        id: &str,
+        revision: u64,
+        operation: &str,
+    ) -> Result<(Schedule, bool)> {
+        self.schedule_stop(id, revision, operation, eefn::protocol::now_ms())
+    }
+    pub(crate) fn schedule_settle_now(
+        &self,
+        id: &str,
+        runtime: &str,
+        issuer: &str,
+    ) -> Result<Schedule> {
+        self.schedule_settle(id, runtime, issuer, eefn::protocol::now_ms())
+    }
+    fn schedule_arm(
+        &self,
+        command: Arm,
+        runtime: &str,
+        issuer: &str,
+        clock: impl Fn() -> u64,
+    ) -> Result<(Schedule, bool)> {
+        uuid(&command.operation_id)?;
+        uuid(&command.policy)?;
+        uuid(runtime)?;
+        if command.operation_id == command.policy
+            || command.policy_sha256.len() != 64
+            || !command.policy_sha256.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            bail!("Invalid exact schedule arm");
+        }
+        let connection = self.connection.lock().expect("job journal");
+        validate_all(&connection)?;
+        if let Some(s) = read_schedule(&connection, &command.operation_id)? {
+            if s.creation != command {
+                bail!("Schedule receipt conflicts");
+            }
+            return Ok((s, true));
+        }
+        let p = automation_authorizations::read(&connection, &command.policy)?
+            .context("Policy missing")?;
+        let PolicyCommand::Approve { definition, .. } = &p.creation else {
+            unreachable!()
+        };
+        let source = automations::read_definition(&connection, definition)?;
+        let eefn::automation::AutomationCommand::Define { every_ms, .. } = source.creation else {
+            unreachable!()
+        };
+        let now = clock();
+        let due = now.checked_add(every_ms).context("Trigger time overflow")?;
+        let mut s = Schedule {
+            schema_version: 1,
+            id: command.operation_id.clone(),
+            creation: command,
+            definition_id: definition.clone(),
+            runtime_id: runtime.into(),
+            issuer_id: issuer.into(),
+            generation: p.generation,
+            armed_at_ms: now,
+            expires_at_ms: p.expires_at_ms,
+            every_ms,
+            revision: 1,
+            state: State::Waiting,
+            observed_at_ms: now,
+            next_due_ms: Some(due),
+            active_trigger: None,
+            claimed_runs: 0,
+            stop: None,
+            reason: None,
+            record_sha256: String::new(),
+        };
+        if s.creation.policy_sha256 != p.authorization_sha256
+            || !current(&connection, &s, runtime, issuer, now)?
+            || p.scope.run_allowance(&p.creation.limits().unwrap())?.0
+                > p.expires_at_ms.saturating_sub(due)
+        {
+            bail!("Current policy/time budget cannot arm schedule");
+        }
+        for old in schedules(&connection)?
+            .iter()
+            .filter(|old| old.definition_id == *definition)
+        {
+            if matches!(old.state, State::Waiting | State::InFlight)
+                || triggers(&connection)?
+                    .iter()
+                    .filter(|t| t.schedule_id == old.id)
+                    .any(|t| !resolved_claim(&connection, t).unwrap_or(false))
+            {
+                bail!("Previous schedule/claim is active or unresolved; no overlap");
+            }
+        }
+        if !automation_occurrences::definition_resolved(&connection, definition)? {
+            bail!("Previous occurrence is unresolved; no schedule replacement");
+        }
+        if !automation_occurrences::allowance_available(&connection, &p)? {
+            bail!("Policy occurrence budget exhausted; no schedule armed");
+        }
+        let tx = connection.unchecked_transaction()?;
+        save_schedule(self, &tx, &mut s, true)?;
+        let commit = clock();
+        if commit < now
+            || !current(&tx, &s, runtime, issuer, commit)?
+            || p.scope.run_allowance(&p.creation.limits().unwrap())?.0
+                > p.expires_at_ms.saturating_sub(due.max(commit))
+        {
+            bail!("Schedule clock/policy changed before commit");
+        }
+        tx.commit()?;
+        Ok((s, false))
+    }
+    fn schedule_claim_due(
+        &self,
+        id: &str,
+        runtime: &str,
+        issuer: &str,
+        clock: impl Fn() -> u64,
+    ) -> Result<Option<Trigger>> {
+        let connection = self.connection.lock().expect("job journal");
+        validate_all(&connection)?;
+        let mut s = read_schedule(&connection, id)?.context("Schedule missing")?;
+        if s.state != State::Waiting {
+            return Ok(None);
+        };
+        let now = clock();
+        let due = s.next_due_ms.unwrap();
+        let reason = if now < s.observed_at_ms {
+            Some("backward_clock")
+        } else if !current(&connection, &s, runtime, issuer, now)? {
+            Some("policy_changed")
+        } else if now >= due.saturating_add(s.every_ms) {
+            Some("missed_trigger")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            interrupted(&mut s, reason, now)?;
+            save_schedule(self, &connection, &mut s, false)?;
+            return Ok(None);
+        };
+        if now < due {
+            return Ok(None);
+        };
+        if !automation_occurrences::definition_resolved(&connection, &s.definition_id)? {
+            bail!("Previous occurrence is unfinished/uncertain; no trigger overlap");
+        }
+        let p = policy(&connection, &s)?;
+        let PolicyCommand::Approve { max_runs, .. } = p.creation else {
+            unreachable!()
+        };
+        let budget_available = automation_occurrences::allowance_available(&connection, &p)?;
+        if s.claimed_runs >= max_runs
+            || !budget_available
+            || p.scope.run_allowance(&p.creation.limits().unwrap())?.0
+                > s.expires_at_ms.saturating_sub(now)
+        {
+            advance(&mut s, now)?;
+            s.state = State::Exhausted;
+            s.reason = Some(
+                if s.claimed_runs >= max_runs {
+                    "run_budget"
+                } else if !budget_available {
+                    "policy_budget"
+                } else {
+                    "time_budget"
+                }
+                .into(),
+            );
+            s.next_due_ms = None;
+            save_schedule(self, &connection, &mut s, false)?;
+            return Ok(None);
+        }
+        let mut t = Trigger {
+            schema_version: 1,
+            id: uuid::Uuid::new_v4().to_string(),
+            schedule_id: s.id.clone(),
+            ordinal: s.claimed_runs + 1,
+            due_at_ms: due,
+            claimed_at_ms: now,
+            request_context: eefn::context::RequestContext::new(
+                uuid::Uuid::new_v4().to_string(),
+                p.scope.owner_context.origin_node().into(),
+                p.scope.owner_context.origin_area().to_vec(),
+            )?,
+            reservation_id: uuid::Uuid::new_v4().to_string(),
+            execution_id: uuid::Uuid::new_v4().to_string(),
+            record_sha256: String::new(),
+        };
+        t.record_sha256 = digest(&t)?;
+        advance(&mut s, now)?;
+        s.claimed_runs = t.ordinal;
+        s.state = State::InFlight;
+        s.next_due_ms = None;
+        s.active_trigger = Some(t.id.clone());
+        let tx = connection.unchecked_transaction()?;
+        save_schedule(self, &tx, &mut s, false)?;
+        let raw = serde_json::to_string(&t)?;
+        quota(
+            self,
+            &tx,
+            "automation_triggers",
+            "trigger_id",
+            &t.id,
+            raw.len(),
+            true,
+        )?;
+        tx.execute("INSERT INTO automation_triggers(trigger_id,schedule_id,ordinal,request_id,reservation_id,record_json) VALUES(?1,?2,?3,?4,?5,?6)",params![t.id,t.schedule_id,t.ordinal,t.request_context.request_id(),t.reservation_id,raw])?;
+        validate_all(&tx)?;
+        let commit = clock();
+        if commit < now
+            || commit >= due.saturating_add(s.every_ms)
+            || !current(&tx, &s, runtime, issuer, commit)?
+            || p.scope.run_allowance(&p.creation.limits().unwrap())?.0
+                > s.expires_at_ms.saturating_sub(commit)
+        {
+            bail!("Trigger clock/policy changed before commit; no claim saved");
+        }
+        tx.commit()?;
+        Ok(Some(t))
+    }
+    fn schedule_stop(
+        &self,
+        id: &str,
+        revision: u64,
+        operation: &str,
+        now: u64,
+    ) -> Result<(Schedule, bool)> {
+        uuid(operation)?;
+        let connection = self.connection.lock().expect("job journal");
+        validate_all(&connection)?;
+        let mut s = read_schedule(&connection, id)?.context("Schedule missing")?;
+        let stop = Stop {
+            operation_id: operation.into(),
+            source_revision: revision,
+        };
+        if let Some(old) = &s.stop {
+            if old != &stop {
+                bail!("Stop receipt conflicts");
+            }
+            return Ok((s, true));
+        }
+        if revision != s.revision || operation == id || operation == s.creation.policy {
+            bail!("Exact current stop revision/receipt required");
+        }
+        if triggers(&connection)?.iter().any(|t| {
+            [
+                t.id.as_str(),
+                t.reservation_id.as_str(),
+                t.execution_id.as_str(),
+                t.request_context.request_id(),
+            ]
+            .contains(&operation)
+        }) {
+            bail!("Stop receipt conflicts with retained trigger identity");
+        }
+        advance(&mut s, now)?;
+        s.state = State::Stopped;
+        s.stop = Some(stop);
+        s.next_due_ms = None;
+        s.reason = Some("owner_stop".into());
+        save_schedule(self, &connection, &mut s, false)?;
+        Ok((s, false))
+    }
+    fn schedule_settle(&self, id: &str, runtime: &str, issuer: &str, now: u64) -> Result<Schedule> {
+        let connection = self.connection.lock().expect("job journal");
+        validate_all(&connection)?;
+        let mut s = read_schedule(&connection, id)?.context("Schedule missing")?;
+        if s.state != State::InFlight {
+            bail!("Only an in-flight claim can settle; no automatic restart");
+        }
+        let t = read_trigger(&connection, s.active_trigger.as_deref().unwrap())?
+            .context("Trigger missing")?;
+        if !resolved_claim(&connection, &t)? {
+            bail!("Trigger admission/completion is unresolved; no replacement");
+        }
+        if now < s.observed_at_ms {
+            interrupted(&mut s, "backward_clock", now)?;
+        } else if !current(&connection, &s, runtime, issuer, now)? {
+            interrupted(&mut s, "policy_changed", now)?;
+        } else {
+            let p = policy(&connection, &s)?;
+            let PolicyCommand::Approve { max_runs, .. } = p.creation else {
+                unreachable!()
+            };
+            let next = now
+                .checked_add(s.every_ms)
+                .context("Trigger time overflow")?;
+            advance(&mut s, now)?;
+            s.active_trigger = None;
+            let budget_available = automation_occurrences::allowance_available(&connection, &p)?;
+            if s.claimed_runs >= max_runs
+                || !budget_available
+                || p.scope.run_allowance(&p.creation.limits().unwrap())?.0
+                    > s.expires_at_ms.saturating_sub(next)
+            {
+                s.state = State::Exhausted;
+                s.next_due_ms = None;
+                s.reason = Some(
+                    if s.claimed_runs >= max_runs {
+                        "run_budget"
+                    } else if !budget_available {
+                        "policy_budget"
+                    } else {
+                        "time_budget"
+                    }
+                    .into(),
+                );
+            } else {
+                s.state = State::Waiting;
+                s.next_due_ms = Some(next);
+            }
+        }
+        save_schedule(self, &connection, &mut s, false)?;
+        Ok(s)
+    }
+}
+fn resolved_claim(connection: &Connection, t: &Trigger) -> Result<bool> {
+    let Some(record) = automation_occurrences::row(connection, &t.reservation_id)? else {
+        return Ok(false);
+    };
+    let plan = automation_occurrences::archives::retained_plan(connection, &record)?;
+    validate_delegation(connection, &plan)?;
+    Ok(automation_occurrences::archives::resolved(&plan))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task::TaskEngine;
+    use eefn::automation_occurrence::OccurrenceCommand;
+    fn fixture(store: Arc<JobStore>) -> (Arc<TaskEngine>, Plan, Authorization, Schedule) {
+        let (engine, source, _, p) =
+            super::super::automation_authorizations::tests::fixture(store.clone());
+        store
+            .automation_policy_checkpoint(
+                p.creation.clone(),
+                Some(p.clone()),
+                &p.runtime_id,
+                p.approved_at_ms,
+            )
+            .unwrap();
+        let s = store
+            .schedule_arm(arm(&p), &p.runtime_id, &p.issuer_id, || {
+                p.approved_at_ms + 1
+            })
+            .unwrap()
+            .0;
+        (engine, source, p, s)
+    }
+    fn arm(p: &Authorization) -> Arm {
+        Arm {
+            policy: p.id.clone(),
+            policy_sha256: p.authorization_sha256.clone(),
+            operation_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+    fn claim(store: &JobStore, p: &Authorization, s: &Schedule) -> Trigger {
+        store
+            .schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || {
+                s.next_due_ms.unwrap()
+            })
+            .unwrap()
+            .unwrap()
+    }
+    fn fresh(engine: &TaskEngine, source: &Plan, t: &Trigger) -> Plan {
+        let saved = crate::request_drafts::open(
+            engine,
+            json!({"schema_version":1,"original_text":" Inspect status ",
+            "proposal":source.request_review.as_ref().unwrap().proposals[0].proposal}),
+            &t.request_context,
+            &["system.info".into()],
+        )
+        .unwrap();
+        let saved = engine.store.get(saved["id"].as_str().unwrap()).unwrap();
+        let compiled = crate::request_planning::tests::compiled(&saved);
+        engine
+            .edit_review_plan(&saved.plan_id, |p| {
+                p.goal = compiled.goal;
+                p.tasks = compiled.tasks;
+                p.planning = compiled.planning;
+                p.status = PlanStatus::AwaitingApproval;
+                Ok(true)
+            })
+            .unwrap()
+    }
+    fn reserve_command(p: &Authorization, job: &Plan, t: &Trigger) -> OccurrenceCommand {
+        OccurrenceCommand::Reserve {
+            policy: p.id.clone(),
+            policy_sha256: p.authorization_sha256.clone(),
+            job: job.plan_id.clone(),
+            revision: job.revision,
+            plan_sha256: job.planning.as_ref().unwrap().plan_sha256.clone(),
+            operation_id: t.reservation_id.clone(),
+        }
+    }
+    fn reserve(store: &JobStore, p: &Authorization, job: &Plan, t: &Trigger) -> serde_json::Value {
+        store
+            .occurrence_checkpoint(
+                reserve_command(p, job, t),
+                &p.runtime_id,
+                Some(&p.issuer_id),
+                t.claimed_at_ms + 1,
+            )
+            .unwrap()
+    }
+    #[test]
+    fn arm_references_and_final_clock_are_exact_without_refreshing_old_receipts() {
+        let store = JobStore::in_memory().unwrap();
+        let (_engine, _source, p, s) = fixture(store.clone());
+        let count = store.usage().unwrap()["schedule_count"].clone();
+        for field in ["hash", "runtime", "issuer", "nil", "time"] {
+            let mut command = arm(&p);
+            if field == "hash" {
+                command.policy_sha256 = "a".repeat(64);
+            }
+            if field == "nil" {
+                command.operation_id = uuid::Uuid::nil().to_string();
+            }
+            let runtime = if field == "runtime" {
+                uuid::Uuid::new_v4().to_string()
+            } else {
+                p.runtime_id.clone()
+            };
+            let issuer = if field == "issuer" {
+                "b".repeat(64)
+            } else {
+                p.issuer_id.clone()
+            };
+            let now = if field == "time" {
+                p.expires_at_ms - 1
+            } else {
+                p.approved_at_ms + 1
+            };
+            assert!(
+                store
+                    .schedule_arm(command, &runtime, &issuer, || now)
+                    .is_err(),
+                "{field}"
+            );
+        }
+        assert_eq!(store.usage().unwrap()["schedule_count"], count);
+        store
+            .schedule_stop(
+                &s.id,
+                1,
+                &uuid::Uuid::new_v4().to_string(),
+                p.approved_at_ms + 2,
+            )
+            .unwrap();
+        let calls = std::cell::Cell::new(0u8);
+        assert!(
+            store
+                .schedule_arm(arm(&p), &p.runtime_id, &p.issuer_id, || {
+                    let n = calls.get();
+                    calls.set(n + 1);
+                    if n == 0 {
+                        p.approved_at_ms + 3
+                    } else {
+                        p.expires_at_ms
+                    }
+                })
+                .is_err()
+        );
+        assert_eq!(store.usage().unwrap()["schedule_count"], count);
+    }
+    #[test]
+    fn settling_near_expiry_exhausts_time_instead_of_scheduling_a_shortened_run() {
+        let store = JobStore::in_memory().unwrap();
+        let (engine, source, p, s) = fixture(store.clone());
+        let t = claim(&store, &p, &s);
+        let job = fresh(&engine, &source, &t);
+        reserve(&store, &p, &job, &t);
+        engine.cancel(&job.plan_id).unwrap();
+        let allowance = p
+            .scope
+            .run_allowance(&p.creation.limits().unwrap())
+            .unwrap()
+            .0;
+        let now = p.expires_at_ms - s.every_ms - allowance + 1;
+        let ended = store
+            .schedule_settle(&s.id, &p.runtime_id, &p.issuer_id, now)
+            .unwrap();
+        assert_eq!(ended.state, State::Exhausted);
+        assert_eq!(ended.reason.as_deref(), Some("time_budget"));
+        assert_eq!(ended.claimed_runs, 1);
+        assert!(ended.next_due_ms.is_none());
+        assert_eq!(store.usage().unwrap()["occurrence_count"], 1);
+    }
+    #[test]
+    fn concurrent_due_claim_is_one_durable_identity_and_never_creates_a_job() {
+        let store = JobStore::in_memory().unwrap();
+        let (_engine, source, p, s) = fixture(store.clone());
+        let original = json!(store.get(&source.plan_id).unwrap());
+        assert!(
+            store
+                .schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || s.armed_at_ms)
+                .unwrap()
+                .is_none()
+        );
+        let barrier = std::sync::Barrier::new(16);
+        let claims = std::thread::scope(|scope| {
+            (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        store
+                            .schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || {
+                                s.next_due_ms.unwrap()
+                            })
+                            .unwrap()
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .filter_map(|h| h.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(claims.len(), 1);
+        let t = &claims[0];
+        assert_eq!(t.ordinal, 1);
+        assert_ne!(
+            t.request_context.request_id(),
+            p.scope.owner_context.request_id()
+        );
+        assert_eq!(
+            t.request_context.origin_area(),
+            p.scope.owner_context.origin_area()
+        );
+        assert_eq!(store.usage().unwrap()["trigger_count"], 1);
+        assert_eq!(store.usage().unwrap()["count"], 1);
+        assert_eq!(store.usage().unwrap()["occurrence_count"], 0);
+        assert!(
+            store
+                .schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || p.expires_at_ms + 1)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(json!(store.get(&source.plan_id).unwrap()), original);
+    }
+    #[test]
+    fn claim_insert_quota_and_final_clock_faults_roll_back_cursor_and_all_ids() {
+        for fault in ["insert", "count", "bytes", "backward", "late"] {
+            let mut store = JobStore::in_memory().unwrap();
+            let (engine, _source, p, s) = fixture(store.clone());
+            drop(engine);
+            let before = store.usage().unwrap();
+            if fault == "count" {
+                let count = automations::count(&store.connection.lock().unwrap()).unwrap();
+                Arc::get_mut(&mut store).unwrap().max_count = count;
+            }
+            if fault == "bytes" {
+                Arc::get_mut(&mut store).unwrap().max_bytes = 1;
+            }
+            if fault == "insert" {
+                store.connection.lock().unwrap().execute_batch("CREATE TRIGGER claim_fault BEFORE INSERT ON automation_triggers BEGIN SELECT RAISE(FAIL,'isolated trigger insert fault'); END;").unwrap();
+            }
+            let calls = std::cell::Cell::new(0);
+            let due = s.next_due_ms.unwrap();
+            let result = store.schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || {
+                let n = calls.get();
+                calls.set(n + 1);
+                if n > 0 && fault == "backward" {
+                    due - 1
+                } else if n > 0 && fault == "late" {
+                    due + s.every_ms
+                } else {
+                    due
+                }
+            });
+            assert!(result.is_err(), "{fault}");
+            let connection = store.connection.lock().unwrap();
+            assert_eq!(read_schedule(&connection, &s.id).unwrap().unwrap(), s);
+            assert!(triggers(&connection).unwrap().is_empty());
+            drop(connection);
+            assert_eq!(
+                store.usage().unwrap()["trigger_count"],
+                before["trigger_count"]
+            );
+        }
+    }
+    #[test]
+    fn missed_backward_or_changed_authority_interrupts_without_catchup() {
+        for fault in ["missed", "backward", "runtime", "issuer", "revoked"] {
+            let store = JobStore::in_memory().unwrap();
+            let (_engine, _source, p, s) = fixture(store.clone());
+            let due = s.next_due_ms.unwrap();
+            if fault == "revoked" {
+                store
+                    .automation_policy_checkpoint(
+                        PolicyCommand::Revoke {
+                            id: p.id.clone(),
+                            revision: 1,
+                            operation_id: uuid::Uuid::new_v4().to_string(),
+                        },
+                        None,
+                        &p.runtime_id,
+                        due - 1,
+                    )
+                    .unwrap();
+            }
+            let runtime = if fault == "runtime" {
+                uuid::Uuid::new_v4().to_string()
+            } else {
+                p.runtime_id.clone()
+            };
+            let issuer = if fault == "issuer" {
+                "b".repeat(64)
+            } else {
+                p.issuer_id.clone()
+            };
+            let now = if fault == "missed" {
+                due + s.every_ms
+            } else if fault == "backward" {
+                s.armed_at_ms - 1
+            } else {
+                due
+            };
+            assert!(
+                store
+                    .schedule_claim_due(&s.id, &runtime, &issuer, || now)
+                    .unwrap()
+                    .is_none()
+            );
+            let interrupted = read_schedule(&store.connection.lock().unwrap(), &s.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(interrupted.state, State::Interrupted);
+            assert!(interrupted.next_due_ms.is_none());
+            assert_eq!(store.usage().unwrap()["trigger_count"], 0);
+            assert!(
+                store
+                    .schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || due + 1)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+    #[test]
+    fn unadmitted_claim_stays_uncertain_and_stop_reuse_never_rearms_it() {
+        let store = JobStore::in_memory().unwrap();
+        let (_engine, _source, p, s) = fixture(store.clone());
+        let t = claim(&store, &p, &s);
+        assert!(
+            store
+                .schedule_settle(&s.id, &p.runtime_id, &p.issuer_id, t.claimed_at_ms + 1)
+                .unwrap_err()
+                .to_string()
+                .contains("unresolved")
+        );
+        let op = uuid::Uuid::new_v4().to_string();
+        let (stopped, reused) = store
+            .schedule_stop(&s.id, 2, &op, t.claimed_at_ms + 1)
+            .unwrap();
+        assert!(!reused);
+        assert_eq!(stopped.active_trigger.as_deref(), Some(t.id.as_str()));
+        assert!(
+            store
+                .schedule_stop(&s.id, 2, &op, p.expires_at_ms + 1)
+                .unwrap()
+                .1
+        );
+        assert_eq!(
+            store
+                .schedule_arm(
+                    s.creation.clone(),
+                    &uuid::Uuid::new_v4().to_string(),
+                    "b",
+                    || p.expires_at_ms + 1
+                )
+                .unwrap(),
+            (stopped, true)
+        );
+        assert!(
+            store
+                .schedule_arm(arm(&p), &p.runtime_id, &p.issuer_id, || t.claimed_at_ms + 1)
+                .unwrap_err()
+                .to_string()
+                .contains("overlap")
+        );
+        assert!(
+            store
+                .schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || t.claimed_at_ms + 1)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .schedule_stop(
+                    &s.id,
+                    2,
+                    &uuid::Uuid::new_v4().to_string(),
+                    t.claimed_at_ms + 1
+                )
+                .is_err()
+        );
+    }
+    #[test]
+    fn linked_reservation_rejects_direct_approval_receipt_substitution_and_stopped_issuance() {
+        let store = JobStore::in_memory().unwrap();
+        let (engine, source, p, s) = fixture(store.clone());
+        let t = claim(&store, &p, &s);
+        let job = fresh(&engine, &source, &t);
+        let direct = crate::request_approval::tests::command(&job);
+        assert!(
+            crate::request_approval::tests::save(
+                &engine,
+                &job,
+                &direct,
+                crate::request_approval::tests::record(&direct)
+            )
+            .is_err()
+        );
+        let mut wrong = reserve_command(&p, &job, &t);
+        if let OccurrenceCommand::Reserve { operation_id, .. } = &mut wrong {
+            *operation_id = uuid::Uuid::new_v4().to_string();
+        }
+        assert!(
+            store
+                .occurrence_checkpoint(
+                    wrong,
+                    &p.runtime_id,
+                    Some(&p.issuer_id),
+                    t.claimed_at_ms + 1
+                )
+                .is_err()
+        );
+        let result = reserve(&store, &p, &job, &t);
+        let approved = store.get(&job.plan_id).unwrap();
+        assert_eq!(
+            result["reservation"]["delegation"]["trigger"],
+            json!(TriggerLink {
+                schedule_id: s.id.clone(),
+                trigger_id: t.id.clone()
+            })
+        );
+        {
+            let connection = store.connection.lock().unwrap();
+            automation_occurrences::fence(
+                &connection,
+                &approved,
+                &p.runtime_id,
+                &p.issuer_id,
+                || t.claimed_at_ms + 2,
+            )
+            .unwrap();
+        }
+        let wrong_exec = uuid::Uuid::new_v4().to_string();
+        assert!(
+            store
+                .change(&job.plan_id, "isolated wrong execution receipt", |plan| {
+                    plan.status = PlanStatus::Running;
+                    plan.execution = Some(crate::request_execution::ExecutionRecord {
+                        schema_version: 1,
+                        command: eefn::request_execution::ExecuteCommand {
+                            id: job.plan_id.clone(),
+                            expected_revision: approved.revision,
+                            operation_id: wrong_exec,
+                            approval_sha256: approved
+                                .approval
+                                .as_ref()
+                                .unwrap()
+                                .approval_sha256
+                                .clone(),
+                        },
+                        started_at_ms: t.claimed_at_ms + 1,
+                        attempts: vec![],
+                        abandonment: None,
+                    });
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(json!(store.get(&job.plan_id).unwrap()), json!(approved));
+        store
+            .schedule_stop(
+                &s.id,
+                2,
+                &uuid::Uuid::new_v4().to_string(),
+                t.claimed_at_ms + 2,
+            )
+            .unwrap();
+        let connection = store.connection.lock().unwrap();
+        assert!(
+            automation_occurrences::fence(
+                &connection,
+                &approved,
+                &p.runtime_id,
+                &p.issuer_id,
+                || t.claimed_at_ms + 3
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("Durable trigger stopped")
+        );
+        drop(connection);
+        assert!(
+            store
+                .occurrence_checkpoint(
+                    reserve_command(&p, &job, &t),
+                    &p.runtime_id,
+                    None,
+                    t.claimed_at_ms + 3
+                )
+                .unwrap()["reused"]
+                .as_bool()
+                .unwrap()
+        );
+    }
+    #[test]
+    fn next_fixed_delay_needs_actual_terminal_proof_and_never_refunds_claims_or_reservations() {
+        let store = JobStore::in_memory().unwrap();
+        let (engine, source, p, mut s) = fixture(store.clone());
+        for ordinal in 1..=3 {
+            let t = claim(&store, &p, &s);
+            let job = fresh(&engine, &source, &t);
+            let result = reserve(&store, &p, &job, &t);
+            assert_eq!(result["reservation"]["ordinal"], ordinal);
+            assert!(
+                store
+                    .schedule_settle(&s.id, &p.runtime_id, &p.issuer_id, t.claimed_at_ms + 2)
+                    .is_err()
+            );
+            let cancelled = engine.cancel(&job.plan_id).unwrap();
+            store
+                .occurrence_checkpoint(
+                    OccurrenceCommand::Archive {
+                        reservation: t.reservation_id.clone(),
+                        reservation_sha256: result["reservation"]["reservation_sha256"]
+                            .as_str()
+                            .unwrap()
+                            .into(),
+                        job: job.plan_id.clone(),
+                        revision: cancelled.revision,
+                        operation_id: uuid::Uuid::new_v4().to_string(),
+                    },
+                    &p.runtime_id,
+                    None,
+                    t.claimed_at_ms + 2,
+                )
+                .unwrap();
+            s = store
+                .schedule_settle(&s.id, &p.runtime_id, &p.issuer_id, t.claimed_at_ms + 2)
+                .unwrap();
+            assert_eq!(s.claimed_runs, ordinal);
+            if ordinal < 3 {
+                assert_eq!(s.next_due_ms, Some(t.claimed_at_ms + 2 + s.every_ms));
+            }
+        }
+        assert_eq!(s.state, State::Exhausted);
+        assert_eq!(s.reason.as_deref(), Some("run_budget"));
+        assert_eq!(store.usage().unwrap()["trigger_count"], 3);
+        assert_eq!(store.usage().unwrap()["occurrence_count"], 3);
+        assert_eq!(store.usage().unwrap()["occurrence_archive_count"], 3);
+        assert!(
+            store
+                .schedule_arm(arm(&p), &p.runtime_id, &p.issuer_id, || s.observed_at_ms
+                    + 1)
+                .unwrap_err()
+                .to_string()
+                .contains("budget exhausted")
+        );
+        assert_eq!(store.usage().unwrap()["schedule_count"], 1);
+    }
+    #[test]
+    fn restart_interrupts_waiting_and_inflight_even_under_lowered_storage_limits() {
+        for inflight in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("jobs.db");
+            Connection::open(&path).unwrap();
+            let store = JobStore::open(&path, 30, 1024 * 1024).unwrap();
+            let (engine, source, p, s) = fixture(store.clone());
+            let t = inflight.then(|| claim(&store, &p, &s));
+            let original = json!(store.get(&source.plan_id).unwrap());
+            drop(engine);
+            drop(store);
+            let store = JobStore::open(&path, 1, 1024).unwrap();
+            let saved = read_schedule(&store.connection.lock().unwrap(), &s.id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(saved.state, State::Interrupted);
+            assert_eq!(saved.reason.as_deref(), Some("restart"));
+            assert_eq!(saved.active_trigger, t.as_ref().map(|t| t.id.clone()));
+            if let Some(t) = t {
+                assert_eq!(
+                    read_trigger(&store.connection.lock().unwrap(), &t.id)
+                        .unwrap()
+                        .unwrap(),
+                    t
+                );
+            }
+            assert_eq!(json!(store.get(&source.plan_id).unwrap()), original);
+            let op = uuid::Uuid::new_v4().to_string();
+            store
+                .schedule_stop(&s.id, saved.revision, &op, eefn::protocol::now_ms())
+                .unwrap();
+            assert!(
+                store
+                    .schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || p.approved_at_ms
+                        + 2000)
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(store.usage().unwrap()["over_limit"].as_bool().unwrap());
+        }
+    }
+    #[test]
+    fn damaged_missing_or_future_trigger_history_is_retained_without_restart_repair() {
+        for fault in ["future", "missing", "scope"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("jobs.db");
+            Connection::open(&path).unwrap();
+            let store = JobStore::open(&path, 30, 1024 * 1024).unwrap();
+            let (engine, _source, p, s) = fixture(store.clone());
+            let t = claim(&store, &p, &s);
+            {
+                let connection = store.connection.lock().unwrap();
+                if fault == "missing" {
+                    connection
+                        .execute("DELETE FROM automation_triggers", [])
+                        .unwrap();
+                } else {
+                    let mut raw = json!(t);
+                    if fault == "future" {
+                        raw["schema_version"] = json!(2);
+                    } else {
+                        raw["request_context"]["origin_node"] = json!("other");
+                    }
+                    connection
+                        .execute(
+                            "UPDATE automation_triggers SET record_json=?1",
+                            [serde_json::to_string(&raw).unwrap()],
+                        )
+                        .unwrap();
+                }
+            }
+            drop(engine);
+            drop(store);
+            assert!(JobStore::open(&path, 30, 1024 * 1024).is_err(), "{fault}");
+            let connection = Connection::open(&path).unwrap();
+            let raw: String = connection
+                .query_row("SELECT record_json FROM automation_schedules", [], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Schedule>(&raw).unwrap().state,
+                State::InFlight
+            );
+        }
+    }
+    #[test]
+    fn duplicate_active_ownership_and_cross_claim_identity_aliases_fail_closed() {
+        let store = JobStore::in_memory().unwrap();
+        let (engine, source, p, s) = fixture(store.clone());
+        let mut duplicate = s.clone();
+        duplicate.id = uuid::Uuid::new_v4().to_string();
+        duplicate.creation.operation_id = duplicate.id.clone();
+        duplicate.record_sha256 = digest(&duplicate).unwrap();
+        {
+            let connection = store.connection.lock().unwrap();
+            let raw = serde_json::to_string(&duplicate).unwrap();
+            connection.execute("INSERT INTO automation_schedules(schedule_id,record_json,reserved_bytes) VALUES(?1,?2,?3)",params![duplicate.id,raw,(SCHEDULE_COST-raw.len()) as i64]).unwrap();
+            assert!(
+                validate_all(&connection)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Multiple active")
+            );
+            // Isolated fault injection cleanup only; the core never repairs it.
+            connection
+                .execute(
+                    "DELETE FROM automation_schedules WHERE schedule_id=?1",
+                    [&duplicate.id],
+                )
+                .unwrap();
+        }
+        let first = claim(&store, &p, &s);
+        let job = fresh(&engine, &source, &first);
+        reserve(&store, &p, &job, &first);
+        engine.cancel(&job.plan_id).unwrap();
+        let waiting = store
+            .schedule_settle(&s.id, &p.runtime_id, &p.issuer_id, first.claimed_at_ms + 2)
+            .unwrap();
+        let mut second = claim(&store, &p, &waiting);
+        assert!(
+            store
+                .schedule_stop(
+                    &s.id,
+                    waiting.revision + 1,
+                    &second.execution_id,
+                    second.claimed_at_ms + 1
+                )
+                .is_err()
+        );
+        second.execution_id = first.reservation_id;
+        second.record_sha256 = digest(&second).unwrap();
+        let connection = store.connection.lock().unwrap();
+        connection
+            .execute(
+                "UPDATE automation_triggers SET record_json=?2 WHERE trigger_id=?1",
+                params![second.id, serde_json::to_string(&second).unwrap()],
+            )
+            .unwrap();
+        assert!(
+            validate_all(&connection)
+                .unwrap_err()
+                .to_string()
+                .contains("identity is reused")
+        );
+    }
+}

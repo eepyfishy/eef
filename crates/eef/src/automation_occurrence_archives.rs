@@ -2,7 +2,7 @@
 use super::*;
 use eefn::automation_occurrence::Archive;
 
-pub(super) fn resolved(plan: &Plan) -> bool {
+pub(in crate::jobs) fn resolved(plan: &Plan) -> bool {
     match plan.status {
         PlanStatus::Completed => {
             !plan.tasks.is_empty()
@@ -88,7 +88,10 @@ pub(super) fn validate_all(connection: &Connection) -> Result<()> {
     all(connection)?;
     Ok(())
 }
-pub(super) fn retained_plan(connection: &Connection, record: &Reservation) -> Result<Plan> {
+pub(in crate::jobs) fn retained_plan(
+    connection: &Connection,
+    record: &Reservation,
+) -> Result<Plan> {
     let id: Option<String> = connection
         .query_row(
             "SELECT archive_id FROM automation_occurrence_archives WHERE reservation_id=?1",
