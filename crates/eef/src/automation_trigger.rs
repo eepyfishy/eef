@@ -1,5 +1,5 @@
 //! Fresh trigger admission through the existing compiler/reservation/grant driver.
-//! No public activation adapter or independent workload runner.
+//! The bounded timer owns triggering; there is no independent workload runner.
 use crate::{
     Runtime,
     jobs::automation_schedules::{State, Trigger},
@@ -13,7 +13,6 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 impl Runtime {
-    #[allow(dead_code)] // Connected to the bounded timer/owner adapter next.
     pub(crate) async fn launch_automation_trigger(&self, id: &str) -> Result<Value> {
         let t = self.engine.store.trigger_get(id)?;
         let schedule = self.engine.store.schedule_get(&t.schedule_id)?;
@@ -32,9 +31,15 @@ impl Runtime {
                 // continuation. Already-issued work retains its native lease/result
                 // lifecycle. Failed interruption is also an error, not rollback proof.
                 tracing::warn!(trigger_id=%t.id,%error,"Trigger launch needs inspection; no replay");
-                self.engine
+                if !self
+                    .engine
                     .store
-                    .trigger_interrupt_now(&t.id, "launch_failed")?;
+                    .trigger_record_refusal(&t.id, &self.instance_id)?
+                {
+                    self.engine
+                        .store
+                        .trigger_interrupt_now(&t.id, "launch_failed")?;
+                }
                 return Err(error);
             }
         };

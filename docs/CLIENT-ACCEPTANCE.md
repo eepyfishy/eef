@@ -586,3 +586,47 @@ behavior, all worker/network/disk/power races, physical two-PC, peer/media/clust
 default interpreter/non-coder onboarding or installer/Defender/Authenticode
 acceptance. Those full roadmap requirements remain open. Installed nodes,
 releases/feeds, browser assets and models are unchanged. Stable 0.4.0 is not claimed.
+
+## Proof-bound pre-launch refusal recovery (2026-10-12)
+
+Final workspace/all-target suites pass **512** tests in both feature modes
+(EEF library 218, owner CLI 13, installer 6, EEFN library 269, node CLI 6),
+with fresh default binaries/examples and formatting/diff/script/backend checks.
+Eight added tests cover exact concurrent resolution, transactional rollback,
+marked/missing/partial refusal, stale/corrupt proof, restart/lowered quotas,
+passive correlated owner reports/CLI references, and independent clock samples
+during normal processing pauses.
+
+Native `automation-schedules-g9fgE0` passes the earlier schedule cases plus
+actual origin disconnect before launch, a retained backend refusal, explicit
+resolution without replay on reconnect, and a separately enabled fresh native
+completion. Two logical pinned-TLS nodes run on one PC without models/UI; this
+is not physical two-PC or semantic interpreter acceptance.
+
+Earlier extended fixtures `automation-schedules-bbadFt`,
+`automation-schedules-A26GJQ` and `automation-schedules-TAM4Be` failed after
+replacement admission with false clock-discontinuity interruptions. Diagnostics
+showed ordinary journal processing included in the long-gap measurement. The
+independent bounded monitor removes that measurement error with unchanged
+thresholds and due/expiry/no-replay checks. Failed runs are not passing evidence;
+the separate older unexplained process exit and intermittent failures remain
+unproven. General partial/issued-work recovery and all full roadmap/release gates
+remain open; no installed runtime, release/feed, model or UI change is made.
+
+Fresh regressions pass occurrences/native execution/archive
+(`automation-occurrences-r5BOzh`), definitions/policies
+(`automation-definitions-VRWStm`), input/answers (`request-input-FQpbRn`) and
+reviewed execution/recovery (`request-review-EFdrAP`, fake inference). These
+runs preceded the final passive nested-proof confirmation hardening and do not
+prove its acceptance; the execution/recovery code is unchanged by that hardening.
+One subsequent full-suite run rejected an existing fixture's synthetic archive
+timestamp preceding its actual cancellation under parallel load. The fixture
+now dates archive/settlement no earlier than the cancellation. Production
+validation was not weakened; both final 512-test suites pass afterward.
+
+Final native `automation-schedules-mlHTYT` passes with the final binaries and
+adds lost/substituted/negative post-commit resolution replies, one exact retained
+resolution and no replay. Previous `automation-schedules-9dV8KM` exited 1 with
+no normal result/failure report, retained an unresolved refusal, and left no
+fixture processes. No matching application/Defender event was found in the
+checked interval. Its cause is unproven; a passing traced rerun is not a fix claim.

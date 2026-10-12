@@ -5,7 +5,7 @@ use std::{
     collections::BTreeSet,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -17,6 +17,9 @@ pub(crate) struct TimerManager {
     max_launches: usize,
     poll: Duration,
     timeout: Duration,
+    clock_epoch: AtomicU64,
+    clock_samples: AtomicU64,
+    clock_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 impl TimerManager {
     pub(crate) fn new(config: &crate::config::Config) -> Result<Arc<Self>> {
@@ -47,10 +50,18 @@ impl TimerManager {
             max_launches: launches as usize,
             poll: Duration::from_millis(poll),
             timeout: Duration::from_millis(timeout),
+            clock_epoch: AtomicU64::new(0),
+            clock_samples: AtomicU64::new(0),
+            clock_thread: Mutex::new(None),
         }))
     }
     pub(crate) fn close(&self, store: &crate::jobs::JobStore) -> Result<()> {
         self.closing.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.clock_thread.lock().expect("timer clock").take() {
+            thread
+                .join()
+                .map_err(|_| anyhow::anyhow!("Timer clock monitor failed; no suspension proof"))?;
+        }
         let ids = self.active.lock().expect("timer active").clone();
         for id in ids {
             store.schedule_interrupt_now(&id, "shutdown")?;
@@ -58,12 +69,60 @@ impl TimerManager {
         self.active.lock().expect("timer active").clear();
         Ok(())
     }
-    pub(crate) fn start(self: &Arc<Self>, runtime: Arc<Runtime>) -> tokio::task::JoinHandle<()> {
+    fn start_clock(self: &Arc<Self>) -> Result<()> {
+        let mut handle = self.clock_thread.lock().expect("timer clock");
+        if handle.is_some() {
+            return Ok(());
+        }
         let manager = self.clone();
-        tokio::spawn(async move {
+        *handle = Some(
+            std::thread::Builder::new()
+                .name("eef-timer-clock".into())
+                .spawn(move || {
+                    let mut previous = (Instant::now(), eefn::protocol::now_ms());
+                    while !manager.closing.load(Ordering::SeqCst) {
+                        std::thread::sleep(manager.poll);
+                        let now = (Instant::now(), eefn::protocol::now_ms());
+                        let elapsed = now
+                            .0
+                            .duration_since(previous.0)
+                            .as_millis()
+                            .min(u128::from(u64::MAX)) as u64;
+                        if clock_discontinuity(
+                            previous.1,
+                            now.1,
+                            elapsed,
+                            manager.poll.as_millis() as u64,
+                        ) {
+                            let _ = manager.clock_epoch.fetch_update(
+                                Ordering::SeqCst,
+                                Ordering::SeqCst,
+                                |n| Some(n.saturating_add(1)),
+                            );
+                            tracing::warn!(
+                                before_wall_ms = previous.1,
+                                after_wall_ms = now.1,
+                                elapsed_ms = elapsed,
+                                "Independent timer clock discontinuity"
+                            );
+                        }
+                        manager.clock_samples.fetch_add(1, Ordering::Relaxed);
+                        previous = now;
+                    }
+                })?,
+        );
+        Ok(())
+    }
+    pub(crate) fn start(
+        self: &Arc<Self>,
+        runtime: Arc<Runtime>,
+    ) -> Result<tokio::task::JoinHandle<()>> {
+        self.start_clock()?;
+        let manager = self.clone();
+        Ok(tokio::spawn(async move {
             let mut pending = tokio::task::JoinSet::<(String, Result<serde_json::Value>)>::new();
             let mut launching = BTreeSet::<String>::new();
-            let mut previous = (Instant::now(), eefn::protocol::now_ms());
+            let mut observed_clock_epoch = manager.clock_epoch.load(Ordering::SeqCst);
             loop {
                 tokio::time::sleep(manager.poll).await;
                 if manager.closing.load(Ordering::SeqCst) {
@@ -89,21 +148,14 @@ impl TimerManager {
                         }
                     }
                 }
-                let now = (Instant::now(), eefn::protocol::now_ms());
-                let elapsed = now
-                    .0
-                    .duration_since(previous.0)
-                    .as_millis()
-                    .min(u128::from(u64::MAX)) as u64;
-                let discontinuity = clock_discontinuity(
-                    previous.1,
-                    now.1,
-                    elapsed,
-                    manager.poll.as_millis() as u64,
-                );
-                previous = now;
+                // Journal/lock processing is not an OS clock/suspend sample.
+                // The independent bounded monitor keeps the same thresholds.
+                let epoch = manager.clock_epoch.load(Ordering::SeqCst);
+                let discontinuity = epoch != observed_clock_epoch;
+                observed_clock_epoch = epoch;
                 let ids = manager.active.lock().expect("timer active").clone();
                 for id in ids {
+                    let checkpoint_started = Instant::now();
                     let step:Result<()>=async {
                         if discontinuity {runtime.engine.store.schedule_interrupt_now(&id,"clock_discontinuity")?;}
                         let s=runtime.engine.store.schedule_get(&id)?;
@@ -133,6 +185,9 @@ impl TimerManager {
                             _=>{manager.active.lock().expect("timer active").remove(&id);}
                         }Ok(())
                     }.await;
+                    if checkpoint_started.elapsed() > Duration::from_millis(500) {
+                        tracing::warn!(schedule_id=%id,elapsed_ms=checkpoint_started.elapsed().as_millis(),"Slow timer journal checkpoint");
+                    }
                     if let Err(error) = step {
                         tracing::warn!(schedule_id=%id,%error,"Timer checkpoint failed; no catch-up or retry");
                         let _ = runtime
@@ -144,7 +199,7 @@ impl TimerManager {
                 }
             }
             pending.shutdown().await;
-        })
+        }))
     }
 }
 fn clock_discontinuity(before: u64, now: u64, elapsed: u64, poll: u64) -> bool {
@@ -182,5 +237,18 @@ mod tests {
         let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
         assert!(manager.active.lock().unwrap().is_empty());
         assert!(!manager.closing.load(Ordering::SeqCst));
+    }
+    #[test]
+    fn independent_clock_monitor_keeps_sampling_during_coordinator_processing_pause() {
+        let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+        manager.start_clock().unwrap();
+        // Stand-in for ordinary coordinator processing, not a monitor sleep.
+        std::thread::sleep(Duration::from_millis(2300));
+        assert!(manager.clock_samples.load(Ordering::Relaxed) >= 5);
+        assert_eq!(manager.clock_epoch.load(Ordering::SeqCst), 0);
+        manager
+            .close(&crate::jobs::JobStore::in_memory().unwrap())
+            .unwrap();
+        assert!(manager.clock_thread.lock().unwrap().is_none());
     }
 }

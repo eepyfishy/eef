@@ -932,6 +932,18 @@ impl TaskEngine {
         let _active = self.active.lock().expect("active jobs");
         self.store.schedule_stop_now(id, revision, operation)
     }
+    pub(crate) fn resolve_schedule_refusal(
+        &self,
+        id: &str,
+        revision: u64,
+        trigger: &str,
+        hash: &str,
+        operation: &str,
+    ) -> Result<(crate::jobs::automation_schedules::Schedule, bool)> {
+        let _active = self.active.lock().expect("active jobs");
+        self.store
+            .resolve_trigger_refusal(id, revision, trigger, hash, operation)
+    }
     async fn drive(&self, id: &str, _guard: ActiveJob) -> Result<Plan> {
         let mut stopping = self.stopping.subscribe();
         if *stopping.borrow() {

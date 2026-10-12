@@ -28,6 +28,18 @@ pub enum ScheduleCommand {
         #[arg(long)]
         operation_id: String,
     },
+    /// Resolve only a retained backend pre-launch refusal; never missing work.
+    ResolveRefusal {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        trigger_id: String,
+        #[arg(long)]
+        refusal_sha256: String,
+        #[arg(long)]
+        operation_id: String,
+    },
     Show {
         id: String,
     },
@@ -41,9 +53,9 @@ pub enum ScheduleCommand {
 impl ScheduleCommand {
     pub fn receipt(&self) -> Option<&str> {
         match self {
-            Self::Enable { operation_id, .. } | Self::Stop { operation_id, .. } => {
-                Some(operation_id)
-            }
+            Self::Enable { operation_id, .. }
+            | Self::Stop { operation_id, .. }
+            | Self::ResolveRefusal { operation_id, .. } => Some(operation_id),
             _ => None,
         }
     }
@@ -69,6 +81,23 @@ impl ScheduleCommand {
                 eefn::automation_occurrence::uuid(id)?;
                 if *revision == 0 || *revision == u64::MAX {
                     bail!("Exact schedule revision required");
+                }
+            }
+            Self::ResolveRefusal {
+                id,
+                revision,
+                trigger_id,
+                refusal_sha256,
+                ..
+            } => {
+                eefn::automation_occurrence::uuid(id)?;
+                eefn::automation_occurrence::uuid(trigger_id)?;
+                if *revision == 0
+                    || *revision == u64::MAX
+                    || refusal_sha256.len() != 64
+                    || !refusal_sha256.bytes().all(|b| b.is_ascii_hexdigit())
+                {
+                    bail!("Exact backend refusal revision/hash/trigger required");
                 }
             }
             Self::Show { id } => eefn::automation_occurrence::uuid(id)?,
@@ -142,6 +171,28 @@ impl Runtime {
         let mut next = None;
         let mut stopped = false;
         match command {
+            ScheduleCommand::ResolveRefusal {
+                id,
+                revision,
+                trigger_id,
+                refusal_sha256,
+                operation_id,
+            } => {
+                let (s, was_reused) = self.engine.resolve_schedule_refusal(
+                    id,
+                    *revision,
+                    trigger_id,
+                    refusal_sha256,
+                    operation_id,
+                )?;
+                self.automation_timers
+                    .active
+                    .lock()
+                    .expect("timer active")
+                    .remove(id);
+                selected = Some(s);
+                reused = was_reused;
+            }
             ScheduleCommand::Enable {
                 policy,
                 policy_sha256,
@@ -429,6 +480,7 @@ pub fn confirmed(value: &Value, command: &ScheduleCommand, runtime: &str) -> boo
                 || (r.timer_active
                     && (s.runtime_id != runtime
                         || !matches!(s.state, State::Waiting | State::InFlight)))
+                || !confirmed_refusal(&s, r.current_job_id.as_deref())
             {
                 return false;
             }
@@ -450,7 +502,7 @@ pub fn confirmed(value: &Value, command: &ScheduleCommand, runtime: &str) -> boo
                     operation_id,
                 } => {
                     s.id == *id
-                        && s.state == State::Stopped
+                        && matches!(s.state, State::Stopped | State::Resolved)
                         && s.stop.as_ref().is_some_and(|stop| {
                             stop.source_revision == *revision && stop.operation_id == *operation_id
                         })
@@ -461,8 +513,75 @@ pub fn confirmed(value: &Value, command: &ScheduleCommand, runtime: &str) -> boo
                 ScheduleCommand::Show { id } => {
                     s.id == *id && !r.reused && !r.activation_requested && !r.job_stop_requested
                 }
+                ScheduleCommand::ResolveRefusal {
+                    id,
+                    revision,
+                    trigger_id,
+                    refusal_sha256,
+                    operation_id,
+                } => {
+                    s.id == *id
+                        && s.state == State::Resolved
+                        && !r.timer_active
+                        && !r.activation_requested
+                        && !r.job_stop_requested
+                        && s.refusal_resolution.as_ref().is_some_and(|v| {
+                            v.source_revision == *revision
+                                && v.trigger_id == *trigger_id
+                                && v.refusal_sha256 == *refusal_sha256
+                                && v.operation_id == *operation_id
+                        })
+                        && s.refusal.as_ref().is_some_and(|v| {
+                            v.trigger_id == *trigger_id && v.refusal_sha256 == *refusal_sha256
+                        })
+                }
                 _ => false,
             }
+        }
+    }
+}
+// Check the nested no-work proof too: an outer digest is only integrity, not
+// permission to accept contradictory or future refusal/lifecycle evidence.
+fn confirmed_refusal(s: &Schedule, job: Option<&str>) -> bool {
+    let Some(refusal) = &s.refusal else {
+        return s.refusal_resolution.is_none() && s.state != State::Resolved;
+    };
+    let mut raw = json!(refusal);
+    raw.as_object_mut().unwrap().remove("refusal_sha256");
+    if refusal.schema_version != 1
+        || refusal.runtime_id != s.runtime_id
+        || refusal.observed_at_ms == 0
+        || refusal.phase != "refused_before_launch"
+        || refusal.trigger_sha256.len() != 64
+        || !refusal
+            .trigger_sha256
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit())
+        || eefn::automation_occurrence::uuid(&refusal.trigger_id).is_err()
+        || s.active_trigger.as_deref() != Some(&refusal.trigger_id)
+        || s.launch_started_at_ms.is_some()
+        || job.is_some()
+        || s.next_due_ms.is_some()
+        || !matches!(
+            s.state,
+            State::Interrupted | State::Stopped | State::Resolved
+        )
+        || refusal.refusal_sha256 != eefn::grants::definition_digest(&raw).unwrap_or_default()
+    {
+        return false;
+    }
+    match &s.refusal_resolution {
+        None => s.state != State::Resolved,
+        Some(r) => {
+            s.state == State::Resolved
+                && s.reason.as_deref() == Some("refusal_resolved")
+                && r.source_revision.checked_add(1) == Some(s.revision)
+                && r.trigger_id == refusal.trigger_id
+                && r.refusal_sha256 == refusal.refusal_sha256
+                && r.resolved_at_ms != 0
+                && eefn::automation_occurrence::uuid(&r.operation_id).is_ok()
+                && r.operation_id != s.id
+                && r.operation_id != refusal.trigger_id
         }
     }
 }
@@ -499,6 +618,8 @@ mod tests {
             next_due_ms: Some(1010),
             active_trigger: None,
             launch_started_at_ms: None,
+            refusal: None,
+            refusal_resolution: None,
             claimed_runs: 0,
             stop: None,
             reason: None,
@@ -526,6 +647,102 @@ mod tests {
             note: "Actual schedule state".into()
         });
         (command, value, runtime)
+    }
+    #[test]
+    fn refusal_resolution_reply_is_exact_and_does_not_enable_work_or_forge_stop() {
+        let (_, mut value, runtime) = fixture();
+        let mut s: Schedule = serde_json::from_value(value["schedule"].clone()).unwrap();
+        let trigger = uuid::Uuid::new_v4().to_string();
+        let op = uuid::Uuid::new_v4().to_string();
+        s.state = State::Resolved;
+        s.revision = 4;
+        s.next_due_ms = None;
+        s.active_trigger = Some(trigger.clone());
+        s.reason = Some("refusal_resolved".into());
+        s.claimed_runs = 1;
+        s.refusal = Some(crate::jobs::automation_schedules::Refusal {
+            schema_version: 1,
+            trigger_id: trigger.clone(),
+            trigger_sha256: "d".repeat(64),
+            runtime_id: runtime.clone(),
+            observed_at_ms: 20,
+            phase: "refused_before_launch".into(),
+            refusal_sha256: String::new(),
+        });
+        let mut refusal_raw = json!(s.refusal.as_ref().unwrap());
+        refusal_raw
+            .as_object_mut()
+            .unwrap()
+            .remove("refusal_sha256");
+        let hash = eefn::grants::definition_digest(&refusal_raw).unwrap();
+        s.refusal.as_mut().unwrap().refusal_sha256 = hash.clone();
+        s.refusal_resolution = Some(crate::jobs::automation_schedules::RefusalResolution {
+            operation_id: op.clone(),
+            source_revision: 3,
+            trigger_id: trigger.clone(),
+            refusal_sha256: hash.clone(),
+            resolved_at_ms: 30,
+        });
+        let mut raw = json!(s);
+        raw.as_object_mut().unwrap().remove("record_sha256");
+        s.record_sha256 = eefn::grants::definition_digest(&raw).unwrap();
+        let command = ScheduleCommand::ResolveRefusal {
+            id: s.id.clone(),
+            revision: 3,
+            trigger_id: trigger.clone(),
+            refusal_sha256: hash,
+            operation_id: op,
+        };
+        value["command"] = json!(command);
+        value["schedule"] = json!(s);
+        value["current_trigger_id"] = json!(trigger);
+        value["activation_requested"] = json!(false);
+        value["timer_active"] = json!(false);
+        assert!(confirmed(&value, &command, &runtime));
+        for field in [
+            "timer_active",
+            "activation_requested",
+            "job_stop_requested",
+            "automatically_retried",
+        ] {
+            let mut bad = value.clone();
+            bad[field] = json!(true);
+            assert!(!confirmed(&bad, &command, &runtime));
+        }
+        // Recomputed outer digests must not hide an invalid nested proof.
+        for field in ["schema_version", "phase", "runtime_id", "refusal_sha256"] {
+            let mut bad = value.clone();
+            bad["schedule"]["refusal"][field] = if field == "schema_version" {
+                json!(2)
+            } else {
+                json!("contradictory")
+            };
+            let mut raw = bad["schedule"].clone();
+            raw.as_object_mut().unwrap().remove("record_sha256");
+            bad["schedule"]["record_sha256"] =
+                json!(eefn::grants::definition_digest(&raw).unwrap());
+            assert!(!confirmed(&bad, &command, &runtime), "{field}");
+        }
+        for field in ["launch_started_at_ms", "revision", "reason"] {
+            let mut bad = value.clone();
+            bad["schedule"][field] = match field {
+                "launch_started_at_ms" => json!(20),
+                "revision" => json!(5),
+                _ => json!("job_unresolved"),
+            };
+            let mut raw = bad["schedule"].clone();
+            raw.as_object_mut().unwrap().remove("record_sha256");
+            bad["schedule"]["record_sha256"] =
+                json!(eefn::grants::definition_digest(&raw).unwrap());
+            assert!(!confirmed(&bad, &command, &runtime), "{field}");
+        }
+        let mut bad = value.clone();
+        bad["current_job_id"] = json!("existing-job");
+        bad["current_job_status"] = json!("cancelled");
+        assert!(!confirmed(&bad, &command, &runtime));
+        value["schedule"]["refusal_resolution"]["operation_id"] =
+            json!(uuid::Uuid::new_v4().to_string());
+        assert!(!confirmed(&value, &command, &runtime));
     }
     #[test]
     fn strict_enable_reply_is_correlated_and_rejects_substitution_or_hidden_retry() {

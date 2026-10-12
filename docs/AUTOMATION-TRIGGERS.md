@@ -32,8 +32,9 @@ Hashes check integrity/references; they are not signatures or remote attestation
 
 ## Timing, lifecycle and stop authority
 
-The internal schedule states are waiting, in-flight, stopped, interrupted and
-exhausted. The planned execution cadence is **fixed delay**: first due after one
+The internal schedule states are waiting, in-flight, stopped, interrupted,
+exhausted and (in the subsequent proof-bound recovery increment) resolved.
+The planned execution cadence is **fixed delay**: first due after one
 declared interval; another due time only after observed, validated terminal
 resolution of the previous occurrence, plus one interval. It is not catch-up
 replay or an overlapping fixed-rate job queue.
@@ -174,6 +175,10 @@ existing reserved occurrence's terminal proof. Missing jobs stay unknown and do
 not permit automatic retry. Unreserved cancelled sources remain retained: there
 is no silent deletion, fabricated reservation or claim/budget refund. A missing-
 source recovery/closure command and safe partial-source compaction are still open.
+The subsequent [explicit pre-launch refusal recovery](AUTOMATION-SCHEDULES.md#explicit-pre-launch-refusal-recovery-subsequent-increment)
+closes only actual backend refusals recorded before the launch marker. It does
+not close marked missing sources or uncertain/partially issued work, and it
+neither replays claims nor refunds reserved budgets.
 
 Ten added journal tests bring final workspace/all-target suites to **499** in
 both feature modes (EEF library 207, owner CLI 11, installer 6, EEFN library 269,

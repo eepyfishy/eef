@@ -1,11 +1,10 @@
-//! Durable trigger ledger and authority fences. No public activation/worker yet.
+//! Durable trigger ledger and authority fences for the existing timer/grant driver.
 use super::*;
 use eefn::automation_occurrence::{TriggerLink, uuid};
 use eefn::automation_policy::{Authorization, PolicyCommand};
 const SCHEDULE_COST: usize = 4096;
 
-// Production activation remains unavailable until the fresh-request bridge is
-// integrated. These internal records do not claim an LM ran or a grant was sent.
+// These records never fabricate LM history, grant dispatch or completion.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Arm {
@@ -21,12 +20,33 @@ pub(crate) enum State {
     Stopped,
     Interrupted,
     Exhausted,
+    Resolved,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Stop {
     pub operation_id: String,
     pub source_revision: u64,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Refusal {
+    pub schema_version: u32,
+    pub trigger_id: String,
+    pub trigger_sha256: String,
+    pub runtime_id: String,
+    pub observed_at_ms: u64,
+    pub phase: String,
+    pub refusal_sha256: String,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RefusalResolution {
+    pub operation_id: String,
+    pub source_revision: u64,
+    pub trigger_id: String,
+    pub refusal_sha256: String,
+    pub resolved_at_ms: u64,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +68,10 @@ pub(crate) struct Schedule {
     pub active_trigger: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_started_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<Refusal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_resolution: Option<RefusalResolution>,
     pub claimed_runs: u16,
     pub stop: Option<Stop>,
     pub reason: Option<String>,
@@ -127,11 +151,53 @@ fn validate_schedule(connection: &Connection, s: &Schedule) -> Result<()> {
     if let Some(stop) = &s.stop {
         uuid(&stop.operation_id)?;
         if stop.operation_id == s.id
-            || stop.source_revision.checked_add(1) != Some(s.revision)
-            || s.state != State::Stopped
+            || (s.refusal_resolution.is_none()
+                && stop.source_revision.checked_add(1) != Some(s.revision))
+            || (s.refusal_resolution.is_some()
+                && stop.source_revision.saturating_add(1) >= s.revision)
+            || !matches!(s.state, State::Stopped | State::Resolved)
         {
             bail!("Damaged schedule stop receipt");
         }
+    }
+    if let Some(refusal) = &s.refusal {
+        uuid(&refusal.trigger_id)?;
+        uuid(&refusal.runtime_id)?;
+        let mut value = json!(refusal);
+        value.as_object_mut().unwrap().remove("refusal_sha256");
+        if refusal.schema_version != 1
+            || refusal.runtime_id != s.runtime_id
+            || refusal.observed_at_ms == 0
+            || s.active_trigger.as_deref() != Some(&refusal.trigger_id)
+            || s.launch_started_at_ms.is_some()
+            || !matches!(
+                s.state,
+                State::Interrupted | State::Stopped | State::Resolved
+            )
+            || refusal.phase != "refused_before_launch"
+            || refusal.refusal_sha256 != eefn::grants::definition_digest(&value)?
+        {
+            bail!("Damaged backend refusal evidence; no no-work inference");
+        }
+    }
+    if let Some(resolution) = &s.refusal_resolution {
+        uuid(&resolution.operation_id)?;
+        let refusal = s
+            .refusal
+            .as_ref()
+            .context("Resolution lacks actual backend refusal")?;
+        if s.state != State::Resolved
+            || resolution.operation_id == s.id
+            || resolution.operation_id == refusal.trigger_id
+            || resolution.source_revision.checked_add(1) != Some(s.revision)
+            || resolution.resolved_at_ms == 0
+            || resolution.refusal_sha256 != refusal.refusal_sha256
+            || resolution.trigger_id != refusal.trigger_id
+        {
+            bail!("Damaged exact refusal-resolution receipt");
+        }
+    } else if s.state == State::Resolved {
+        bail!("Resolved schedule lacks its exact receipt");
     }
     let shape = match s.state {
         State::Waiting => {
@@ -166,6 +232,7 @@ fn validate_schedule(connection: &Connection, s: &Schedule) -> Result<()> {
                                 | "shutdown"
                                 | "clock_discontinuity"
                                 | "job_unresolved"
+                                | "preflight_refused"
                         )
                 )
         }
@@ -178,6 +245,13 @@ fn validate_schedule(connection: &Connection, s: &Schedule) -> Result<()> {
                     s.reason.as_deref(),
                     Some("run_budget" | "time_budget" | "policy_budget")
                 )
+        }
+        State::Resolved => {
+            s.refusal_resolution.is_some()
+                && s.refusal.is_some()
+                && s.next_due_ms.is_none()
+                && s.active_trigger.is_some()
+                && s.reason.as_deref() == Some("refusal_resolved")
         }
     };
     if !shape {
@@ -306,6 +380,21 @@ pub(super) fn validate_all(connection: &Connection) -> Result<()> {
             })
         {
             bail!("In-flight schedule clock differs from its claim");
+        }
+        if let Some(refusal) = &s.refusal {
+            let t = own.last().context("Refusal lacks actual durable claim")?;
+            if refusal.trigger_id != t.id || refusal.trigger_sha256 != t.record_sha256 {
+                bail!("Backend refusal differs from immutable claim");
+            }
+            let reserved: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM automation_occurrences WHERE reservation_id=?1)",
+                [&t.reservation_id],
+                |r| r.get(0),
+            )?;
+            let source:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM durable_jobs WHERE json_extract(plan_json,'$.goal.request_context.request_id')=?1)",[t.request_context.request_id()],|r|r.get(0))?;
+            if reserved || source {
+                bail!("Refused-before-launch evidence conflicts with retained work; no resolution");
+            }
         }
     }
     Ok(())
@@ -556,9 +645,111 @@ pub(super) fn source_authority(
     Ok(())
 }
 
-// Internal entry points only. No CLI/API arms them in this increment.
+// Journal entry points used by the guarded owner service and bounded timer.
 #[allow(dead_code)]
 impl JobStore {
+    /// Called only by the bridge after its pre-launch path actually refused.
+    /// Absence alone is not a caller-supplied recovery assertion.
+    pub(crate) fn trigger_record_refusal(&self, id: &str, runtime: &str) -> Result<bool> {
+        let connection = self.connection.lock().expect("job journal");
+        validate_all(&connection)?;
+        let t = read_trigger(&connection, id)?.context("Trigger missing")?;
+        let mut s = read_schedule(&connection, &t.schedule_id)?.context("Schedule missing")?;
+        if s.refusal.is_some() {
+            return Ok(true);
+        }
+        if s.runtime_id != runtime
+            || s.state != State::InFlight
+            || s.active_trigger.as_deref() != Some(id)
+            || s.launch_started_at_ms.is_some()
+            || source_job(&connection, &t)?.is_some()
+        {
+            return Ok(false);
+        }
+        let now = eefn::protocol::now_ms();
+        let mut refusal = Refusal {
+            schema_version: 1,
+            trigger_id: t.id,
+            trigger_sha256: t.record_sha256,
+            runtime_id: runtime.into(),
+            observed_at_ms: now,
+            phase: "refused_before_launch".into(),
+            refusal_sha256: String::new(),
+        };
+        let mut raw = json!(refusal);
+        raw.as_object_mut().unwrap().remove("refusal_sha256");
+        refusal.refusal_sha256 = eefn::grants::definition_digest(&raw)?;
+        interrupted(&mut s, "preflight_refused", now)?;
+        s.refusal = Some(refusal);
+        let tx = connection.unchecked_transaction()?;
+        save_schedule(self, &tx, &mut s, false)?;
+        validate_all(&tx)?;
+        tx.commit()?;
+        Ok(true)
+    }
+    pub(crate) fn resolve_trigger_refusal(
+        &self,
+        id: &str,
+        revision: u64,
+        trigger: &str,
+        hash: &str,
+        operation: &str,
+    ) -> Result<(Schedule, bool)> {
+        uuid(operation)?;
+        uuid(trigger)?;
+        let connection = self.connection.lock().expect("job journal");
+        validate_all(&connection)?;
+        let mut s = read_schedule(&connection, id)?.context("Schedule missing")?;
+        if let Some(old) = &s.refusal_resolution {
+            if old.source_revision != revision
+                || old.trigger_id != trigger
+                || old.refusal_sha256 != hash
+                || old.operation_id != operation
+            {
+                bail!("Refusal-resolution receipt conflicts; inspect original state");
+            }
+            return Ok((s, true));
+        }
+        let refusal = s
+            .refusal
+            .as_ref()
+            .context("No backend refusal proof; missing source is not no-work evidence")?;
+        if s.revision != revision
+            || !matches!(s.state, State::Interrupted | State::Stopped)
+            || refusal.trigger_id != trigger
+            || refusal.refusal_sha256 != hash
+            || operation == s.id
+            || operation == s.creation.policy
+            || triggers(&connection)?.iter().any(|t| {
+                [
+                    t.id.as_str(),
+                    t.reservation_id.as_str(),
+                    t.execution_id.as_str(),
+                    t.request_context.request_id(),
+                ]
+                .contains(&operation)
+            })
+        {
+            bail!("Exact current refusal revision/hash/receipt required; no forced resolution");
+        }
+        let now = eefn::protocol::now_ms();
+        advance(&mut s, now)?;
+        s.state = State::Resolved;
+        s.next_due_ms = None;
+        s.reason = Some("refusal_resolved".into());
+        s.refusal_resolution = Some(RefusalResolution {
+            operation_id: operation.into(),
+            source_revision: revision,
+            trigger_id: trigger.into(),
+            refusal_sha256: hash.into(),
+            resolved_at_ms: now,
+        });
+        let tx = connection.unchecked_transaction()?;
+        save_schedule(self, &tx, &mut s, false)?;
+        validate_all(&tx)?;
+        tx.commit()?;
+        Ok((s, false))
+    }
     pub(crate) fn schedule_list(&self) -> Result<Vec<Schedule>> {
         let connection = self.connection.lock().expect("job journal");
         validate_all(&connection)?;
@@ -727,6 +918,8 @@ impl JobStore {
             next_due_ms: Some(due),
             active_trigger: None,
             launch_started_at_ms: None,
+            refusal: None,
+            refusal_resolution: None,
             claimed_runs: 0,
             stop: None,
             reason: None,
@@ -979,6 +1172,15 @@ impl JobStore {
     }
 }
 fn resolved_claim(connection: &Connection, t: &Trigger) -> Result<bool> {
+    let s = read_schedule(connection, &t.schedule_id)?.context("Schedule missing")?;
+    if s.refusal_resolution
+        .as_ref()
+        .is_some_and(|r| r.trigger_id == t.id)
+    {
+        // Check the complete retained refusal/claim consistency before using it.
+        validate_all(connection)?;
+        return Ok(true);
+    }
     if let Some(record) = automation_occurrences::row(connection, &t.reservation_id)? {
         let plan = automation_occurrences::archives::retained_plan(connection, &record)?;
         validate_delegation(connection, &plan)?;
@@ -1054,6 +1256,223 @@ mod tests {
             &t.request_context,
             &["system.info".into()],
         )
+    }
+    #[test]
+    fn backend_refusal_resolution_is_explicit_deduplicated_and_never_replays_or_refunds() {
+        let store = JobStore::in_memory().unwrap();
+        let (_engine, _source, p, s) = fixture(store.clone());
+        let t = claim(&store, &p, &s);
+        assert!(store.trigger_record_refusal(&t.id, &p.runtime_id).unwrap());
+        let refused = store.schedule_get(&s.id).unwrap();
+        assert_eq!(refused.state, State::Interrupted);
+        assert_eq!(refused.reason.as_deref(), Some("preflight_refused"));
+        let evidence = refused.refusal.as_ref().unwrap();
+        let op = uuid::Uuid::new_v4().to_string();
+        let barrier = std::sync::Barrier::new(16);
+        let results = std::thread::scope(|scope| {
+            (0..16)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        store
+                            .resolve_trigger_refusal(
+                                &s.id,
+                                refused.revision,
+                                &t.id,
+                                &evidence.refusal_sha256,
+                                &op,
+                            )
+                            .unwrap()
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(results.iter().filter(|(_, reused)| !*reused).count(), 1);
+        for (record, _) in &results {
+            assert_eq!(record, &results[0].0);
+        }
+        assert_eq!(results[0].0.state, State::Resolved);
+        assert_eq!(results[0].0.claimed_runs, 1);
+        assert_eq!(results[0].0.refusal, refused.refusal);
+        assert!(store.trigger_job(&t.id).unwrap().is_none());
+        assert_eq!(store.usage().unwrap()["trigger_count"], 1);
+        assert_eq!(store.usage().unwrap()["occurrence_count"], 0);
+        assert!(
+            store
+                .schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || t.claimed_at_ms + 2)
+                .unwrap()
+                .is_none()
+        );
+        let fresh = store
+            .schedule_arm(arm(&p), &p.runtime_id, &p.issuer_id, || t.claimed_at_ms + 2)
+            .unwrap();
+        assert!(!fresh.1);
+        assert_eq!(fresh.0.claimed_runs, 0);
+    }
+    #[test]
+    fn marked_missing_source_or_actual_partial_admission_cannot_be_called_refused_no_work() {
+        for marked in [false, true] {
+            let store = JobStore::in_memory().unwrap();
+            let (engine, source, p, s) = fixture(store.clone());
+            let t = claim(&store, &p, &s);
+            if marked {
+                store
+                    .trigger_begin_launch_clock(&t.id, &p.runtime_id, || t.claimed_at_ms + 1)
+                    .unwrap();
+            } else {
+                opening(&engine, &source, &t).unwrap();
+            }
+            assert!(!store.trigger_record_refusal(&t.id, &p.runtime_id).unwrap());
+            let current = store.schedule_get(&s.id).unwrap();
+            assert!(current.refusal.is_none());
+            assert!(
+                store
+                    .resolve_trigger_refusal(
+                        &s.id,
+                        current.revision,
+                        &t.id,
+                        &"a".repeat(64),
+                        &uuid::Uuid::new_v4().to_string()
+                    )
+                    .unwrap_err()
+                    .to_string()
+                    .contains("missing source")
+            );
+        }
+    }
+    #[test]
+    fn refusal_resolution_write_fault_or_stale_binding_keeps_all_claim_and_proof_state() {
+        let store = JobStore::in_memory().unwrap();
+        let (_engine, _source, p, s) = fixture(store.clone());
+        let t = claim(&store, &p, &s);
+        store.trigger_record_refusal(&t.id, &p.runtime_id).unwrap();
+        let before = store.schedule_get(&s.id).unwrap();
+        let hash = before.refusal.as_ref().unwrap().refusal_sha256.clone();
+        let op = uuid::Uuid::new_v4().to_string();
+        let wrong_hash = "b".repeat(64);
+        for field in ["revision", "hash", "trigger"] {
+            assert!(
+                store
+                    .resolve_trigger_refusal(
+                        &s.id,
+                        if field == "revision" {
+                            before.revision + 1
+                        } else {
+                            before.revision
+                        },
+                        if field == "trigger" { &s.id } else { &t.id },
+                        if field == "hash" { &wrong_hash } else { &hash },
+                        &op
+                    )
+                    .is_err()
+            );
+        }
+        store.connection.lock().unwrap().execute_batch("CREATE TRIGGER refusal_fault BEFORE UPDATE ON automation_schedules BEGIN SELECT RAISE(FAIL,'isolated refusal resolution write fault'); END;").unwrap();
+        assert!(
+            store
+                .resolve_trigger_refusal(&s.id, before.revision, &t.id, &hash, &op)
+                .is_err()
+        );
+        assert_eq!(store.schedule_get(&s.id).unwrap(), before);
+        store
+            .connection
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER refusal_fault")
+            .unwrap();
+        store
+            .resolve_trigger_refusal(&s.id, before.revision, &t.id, &hash, &op)
+            .unwrap();
+        assert!(
+            store
+                .resolve_trigger_refusal(&s.id, before.revision + 1, &t.id, &hash, &op)
+                .is_err()
+        );
+    }
+    #[test]
+    fn refusal_and_resolution_survive_restart_lowered_quota_and_retained_owner_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.db");
+        Connection::open(&path).unwrap();
+        let store = JobStore::open(&path, 30, 1024 * 1024).unwrap();
+        let (engine, _source, p, s) = fixture(store.clone());
+        let t = claim(&store, &p, &s);
+        store.trigger_record_refusal(&t.id, &p.runtime_id).unwrap();
+        let refused = store.schedule_get(&s.id).unwrap();
+        let stop = uuid::Uuid::new_v4().to_string();
+        let stopped = store
+            .schedule_stop(&s.id, refused.revision, &stop, eefn::protocol::now_ms())
+            .unwrap()
+            .0;
+        let op = uuid::Uuid::new_v4().to_string();
+        let hash = stopped.refusal.as_ref().unwrap().refusal_sha256.clone();
+        drop(engine);
+        drop(store);
+        let store = JobStore::open(&path, 1, 1024).unwrap();
+        let resolved = store
+            .resolve_trigger_refusal(&s.id, stopped.revision, &t.id, &hash, &op)
+            .unwrap();
+        assert!(!resolved.1);
+        assert_eq!(resolved.0.stop, stopped.stop);
+        assert!(
+            store
+                .schedule_stop(&s.id, refused.revision, &stop, p.expires_at_ms + 1)
+                .unwrap()
+                .1
+        );
+        drop(store);
+        let store = JobStore::open(&path, 1, 1024).unwrap();
+        assert_eq!(
+            store
+                .resolve_trigger_refusal(&s.id, stopped.revision, &t.id, &hash, &op)
+                .unwrap(),
+            (resolved.0, true)
+        );
+    }
+    #[test]
+    fn corrupt_refusal_claim_binding_or_conflicting_source_fails_closed_without_repair() {
+        for fault in ["claim", "source", "future"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("jobs.db");
+            Connection::open(&path).unwrap();
+            let store = JobStore::open(&path, 30, 1024 * 1024).unwrap();
+            let (engine, source, p, s) = fixture(store.clone());
+            let t = claim(&store, &p, &s);
+            store.trigger_record_refusal(&t.id, &p.runtime_id).unwrap();
+            {
+                let connection = store.connection.lock().unwrap();
+                if fault == "source" {
+                    let mut plan = source.clone();
+                    plan.goal.request_context = Some(t.request_context.clone());
+                    connection
+                        .execute(
+                            "UPDATE durable_jobs SET plan_json=?1 WHERE job_id=?2",
+                            params![serde_json::to_string(&plan).unwrap(), source.plan_id],
+                        )
+                        .unwrap();
+                } else {
+                    let mut row = read_schedule(&connection, &s.id).unwrap().unwrap();
+                    let refusal = row.refusal.as_mut().unwrap();
+                    if fault == "claim" {
+                        refusal.trigger_sha256 = "a".repeat(64);
+                    } else {
+                        refusal.schema_version = 2;
+                    }
+                    let mut raw = json!(refusal);
+                    raw.as_object_mut().unwrap().remove("refusal_sha256");
+                    refusal.refusal_sha256 = eefn::grants::definition_digest(&raw).unwrap();
+                    row.record_sha256 = digest(&row).unwrap();
+                    let raw = serde_json::to_string(&row).unwrap();
+                    connection.execute("UPDATE automation_schedules SET record_json=?2,reserved_bytes=?3 WHERE schedule_id=?1",params![row.id,raw,(SCHEDULE_COST-raw.len())as i64]).unwrap();
+                }
+            }
+            drop(engine);
+            drop(store);
+            assert!(JobStore::open(&path, 30, 1024 * 1024).is_err(), "{fault}");
+        }
     }
     #[test]
     fn launch_marker_is_one_shot_under_concurrency_and_never_creates_source_work() {
@@ -1854,6 +2273,10 @@ mod tests {
                     .is_err()
             );
             let cancelled = engine.cancel(&job.plan_id).unwrap();
+            // Source/cancellation checkpoints use the actual wall clock. The
+            // synthetic due clock must not date their archive before them when
+            // other parallel tests make this fixture take more than one interval.
+            let settled_at = (t.claimed_at_ms + 2).max(cancelled.updated_at_ms);
             store
                 .occurrence_checkpoint(
                     OccurrenceCommand::Archive {
@@ -1868,15 +2291,15 @@ mod tests {
                     },
                     &p.runtime_id,
                     None,
-                    t.claimed_at_ms + 2,
+                    settled_at,
                 )
                 .unwrap();
             s = store
-                .schedule_settle(&s.id, &p.runtime_id, &p.issuer_id, t.claimed_at_ms + 2)
+                .schedule_settle(&s.id, &p.runtime_id, &p.issuer_id, settled_at)
                 .unwrap();
             assert_eq!(s.claimed_runs, ordinal);
             if ordinal < 3 {
-                assert_eq!(s.next_due_ms, Some(t.claimed_at_ms + 2 + s.every_ms));
+                assert_eq!(s.next_due_ms, Some(settled_at + s.every_ms));
             }
         }
         assert_eq!(s.state, State::Exhausted);

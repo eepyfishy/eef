@@ -199,6 +199,16 @@ continuous workloads. Partial-source/no-work recovery, full resource/native-stop
 and physical acceptance, peer/media/cluster, bootstrap/non-coder onboarding and
 installer/signing gates remain open. UI work remains paused.
 
+The subsequent proof-bound pre-launch refusal recovery adds an owner command
+that resolves only actual retained backend refusals before the one-shot launch
+marker. Missing jobs, partial admission and issued uncertainty remain blocked;
+resolution does not re-arm, replay or refund reserved budgets. A local native
+origin-disconnect/reconnect fixture proves resolution and separate fresh owner
+activation. An independent bounded clock monitor also avoids treating ordinary
+journal processing as a suspend gap without relaxing safety thresholds. This
+advances durable automation reliability, not general continuation or stable
+release acceptance. See [contract and evidence](AUTOMATION-SCHEDULES.md#explicit-pre-launch-refusal-recovery-subsequent-increment).
+
 The 2026-10-06 unreleased diagnostic increment distinguishes authenticated
 connections from gateway-accepted registration and scheduler provider counts.
 It addresses the observed reconnect-before-provider race in troubleshooting;

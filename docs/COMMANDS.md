@@ -6,11 +6,16 @@ Older v0.4.0a installers do not contain them.
 
 ## Automation definition authoring (unreleased after alpha.6)
 
-The subsequent `eef automation-schedules enable|stop|show|list` connects exact
+The subsequent `eef automation-schedules enable|stop|show|list|resolve-refusal` connects exact
 owner policies to bounded automatic fixed-input work through the existing core
 compiler/grant driver. Enable permits future execution; exact receipt reuse
 never re-arms authority. Stop/restart/unknown outcomes do not replay work. See
 [commands, limits and native acceptance](AUTOMATION-SCHEDULES.md).
+
+`resolve-refusal` closes only a retained backend pre-launch refusal using its
+exact schedule revision, trigger, digest and operation receipt. It never infers
+no work from a missing job, re-arms a timer, retries a grant or refunds a reserved
+allowance. Any fresh activation is a separate owner command with current checks.
 
 `eefn automations define|list|show|remove` shares the running node's authenticated
 command service. It retains exact unexecuted compiled-source snapshots, bounded

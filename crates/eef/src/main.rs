@@ -171,6 +171,34 @@ enum ModelsCommand {
 mod credential_cli_tests {
     use super::*;
     #[test]
+    fn refusal_resolution_cli_requires_proof_and_rejects_force_or_unknown_ack() {
+        let args = [
+            "eef",
+            "automation-schedules",
+            "resolve-refusal",
+            "id",
+            "--revision",
+            "3",
+            "--trigger-id",
+            "trigger",
+            "--refusal-sha256",
+            "hash",
+            "--operation-id",
+            "receipt",
+        ];
+        assert!(Args::try_parse_from(args).is_ok());
+        for index in (4..args.len()).step_by(2) {
+            let mut missing = args.to_vec();
+            missing.drain(index..index + 2);
+            assert!(Args::try_parse_from(missing).is_err());
+        }
+        for flag in ["--force", "--retry", "--renew", "--acknowledge-unknown"] {
+            let mut extra = args.to_vec();
+            extra.push(flag);
+            assert!(Args::try_parse_from(extra).is_err());
+        }
+    }
+    #[test]
     fn automatic_schedule_cli_requires_exact_policy_receipt_and_stop_revision() {
         let args = [
             "eef",

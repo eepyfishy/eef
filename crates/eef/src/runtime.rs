@@ -386,7 +386,7 @@ impl Runtime {
         self.background
             .lock()
             .await
-            .push(self.automation_timers.start(self.clone()));
+            .push(self.automation_timers.start(self.clone())?);
         self.bus
             .publish(
                 "runtime.started",

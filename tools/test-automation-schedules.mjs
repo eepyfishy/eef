@@ -15,7 +15,7 @@ const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DI
 const tags=httpServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end('{"models":[]}');});
 function launch(name,config,args,input,extra={}){
  const c=spawn(join(bin,name+'.exe'),['--config',config,...args],{cwd:root,windowsHide:true,env:{...env,...extra},stdio:[input===undefined?'ignore':'pipe','pipe','pipe']});
- let out='',err='';c.stdout.on('data',b=>out=(out+b).slice(-2*1048576));c.stderr.on('data',b=>err=(err+b).slice(-1048576));
+ let out='',err='';c.stdout.on('data',b=>out=(out+b).slice(-2*1048576));c.stderr.on('data',b=>err=(err+b).slice(-1048576));c.privateLogs=()=>({out,err});
  c.result=new Promise((r,j)=>{c.on('error',j);c.on('close',code=>r({code,out,err}));});children.push(c);
  if(input!==undefined){c.stdin.on('error',()=>{});c.stdin.end(input);}return c;
 }
@@ -105,13 +105,37 @@ try{
  await until(async()=>{const r=(await show(fourth.command.operation_id)).result;if(r.schedule.state==='interrupted')throw Error('Lost-reply schedule interrupted; private '+scratch);return r.schedule.state==='exhausted';},'lost reply creates one actual occurrence');
  assert.equal((await owner(['automation-occurrences','list','--policy',fourth.policy.id])).result.items.length,1);
  const list=(await owner(['automation-schedules','list','--limit','1'])).result;assert.equal(list.items.length,1);assert(list.next_after);assert(!JSON.stringify(list).includes('concrete_input'));
+ const refused=await prepared('Refused before native launch',5000,1);await owner(enableArgs(refused.command));
+ await local(a,['connection','pause']);await until(async()=>(await json(eef+'/api/diagnostics')).registered_node_count===1,'origin disconnect before due');
+ await until(async()=>{const r=(await show(refused.command.operation_id)).result;return r.schedule.state==='interrupted'&&!!r.schedule.refusal;},'backend records actual pre-launch refusal');
+ const refusalBefore=(await show(refused.command.operation_id)).result,proof=refusalBefore.schedule.refusal;
+ assert.equal(refusalBefore.current_job_id,null);assert.equal(proof.phase,'refused_before_launch');assert.equal(refusalBefore.schedule.claimed_runs,1);assert.equal(Object.hasOwn(refusalBefore.schedule,'launch_started_at_ms'),false);
+ assert.equal((await owner(['automation-occurrences','list','--policy',refused.policy.id])).result.items.length,0);
+ const resolution=randomUUID(),resolveArgs=['automation-schedules','resolve-refusal',refused.command.operation_id,'--revision',String(refusalBefore.schedule.revision),'--trigger-id',proof.trigger_id,'--refusal-sha256',proof.refusal_sha256,'--operation-id',resolution];
+ const badArgs=resolveArgs.slice();badArgs[badArgs.indexOf('--refusal-sha256')+1]='a'.repeat(64);await owner(badArgs,false);
+ console.log('Native refusal retained; checking uncertain resolution receipts');
+ for(const mode of ['drop','corrupt','negative']){proxyMode=mode;const before=posts;const uncertain=await owner(resolveArgs,false,proxyConfig);
+  assert.equal(uncertain.outcome_unknown,true);assert.equal(uncertain.timer_active,null);assert.equal(posts,before+1);assert.equal(uncertain.automatically_retried,false);
+  const inspected=(await owner(resolveArgs)).result;assert.equal(inspected.reused,true);assert.equal(inspected.schedule.state,'resolved');
+  console.log('Resolution receipt check passed: '+mode);
+ }
+ const resolved=(await show(refused.command.operation_id)).result;assert.equal(resolved.schedule.state,'resolved');assert.equal(resolved.timer_active,false);assert.deepEqual(resolved.schedule.refusal,proof);assert.equal(resolved.schedule.claimed_runs,1);
+ assert.equal((await owner(resolveArgs)).result.reused,true);assert.equal((await owner(enableArgs(refused.command))).result.reused,true);
+ await local(a,['connection','resume']);await until(async()=>(await json(eef+'/api/diagnostics')).registered_node_count===2,'origin reconnects without claim replay');
+ await new Promise(r=>setTimeout(r,5500));assert.equal((await owner(['automation-occurrences','list','--policy',refused.policy.id])).result.items.length,0,'resolution cannot replay refused IDs');
+ const replacement={...refused.command,operation_id:randomUUID()};await owner(enableArgs(replacement));
+ await until(async()=>{const r=(await show(replacement.operation_id)).result;if(r.schedule.state==='interrupted')throw Error('Explicit replacement interrupted; '+scratch);return r.schedule.state==='exhausted';},'new explicit activation uses a fresh claim');
+ const replacementReceipt=(await owner(['automation-occurrences','list','--policy',refused.policy.id])).result.items;assert.equal(replacementReceipt.length,1);
+ const replacementJob=await review.inspect(replacementReceipt[0].job_id);assert.equal(replacementJob.status,'completed');assert.notEqual(replacementJob.approval.delegation.trigger.trigger_id,proof.trigger_id);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,no_models:true,no_ui_controller:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,
   one_concurrent_activation:true,three_native_automatic_occurrences:true,fresh_compiled_sources:true,immutable_original_source:true,no_policy_budget_reset:true,
   stop_prevents_future_claims:true,stop_after_completion_no_second_run:true,revocation_no_next_occurrence:true,restart_no_rearm_or_catchup:true,
-  lost_substituted_negative_enable_reply_one_occurrence:true,owner_and_origin_authority:true},null,2));
+  lost_substituted_negative_enable_reply_one_occurrence:true,owner_and_origin_authority:true,
+  actual_prelaunch_origin_refusal:true,explicit_proof_bound_resolution:true,lost_substituted_negative_resolution_reply_one_checkpoint:true,resolution_no_replay_or_refund:true,explicit_fresh_replacement_after_resolution:true},null,2));
  console.log('Automatic schedule validation passed: '+scratch);
 }catch(error){
- await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));throw error;
+ await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));
+ const daemon=children.find(c=>c.spawnargs.includes('--database'));if(daemon)await writeFile(join(scratch,'PRIVATE-coordinator-failure.json'),JSON.stringify(daemon.privateLogs(),null,2));throw error;
 }finally{
  for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));
  await Promise.all([new Promise(r=>tags.close(r)),...(proxy?[new Promise(r=>proxy.close(r))]:[])]);

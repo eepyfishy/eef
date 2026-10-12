@@ -17,6 +17,7 @@ eef automation-schedules enable --policy POLICY_UUID --policy-sha256 POLICY_HASH
 eef automation-schedules show SCHEDULE_UUID --json
 eef automation-schedules list --limit 25 --json
 eef automation-schedules stop SCHEDULE_UUID --revision CURRENT_REVISION --operation-id STOP_UUID --json
+eef automation-schedules resolve-refusal SCHEDULE_UUID --revision CURRENT_REVISION --trigger-id TRIGGER_UUID --refusal-sha256 REFUSAL_HASH --operation-id RESOLUTION_UUID --json
 ```
 
 Only the local coordinator owner endpoint
@@ -69,7 +70,8 @@ not rollback, remote cancellation or permission to replay. Durable claims/launch
 markers remain after uncertain admission. CPU/RAM/bandwidth/power budgets and
 hard native termination are not established by these concurrency bounds.
 
-Backward wall time, wall/monotonic delta disagreement above 500 ms, or a polling
+An independent bounded clock-monitor thread samples without journal processing.
+Backward wall time, wall/monotonic delta disagreement above 500 ms, or a monitor polling
 gap above `max(2000 ms,10*poll_ms)` conservatively interrupts active schedules.
 This is bounded engineering detection, not a claim to detect every hardware
 sleep/clock condition. Journal checks still enforce due-window/current-policy/
@@ -88,7 +90,7 @@ Shutdown closes manager admission and checkpoints interruption before aborting
 timer work. Restart never re-registers/re-arms stored schedules or replays old
 triggers; explicit owner activation requires a new valid policy/receipt and
 resolved earlier work. Missing source jobs stay unknown, not no-work proof.
-Partial-source/no-work closure, payload compaction and first-time friendly
+General partial-source/no-work closure, payload compaction and first-time friendly
 automation authoring remain usability work. No browser visual/controller change,
 model download, installed-node update or release/feed replacement occurs here.
 
@@ -132,3 +134,73 @@ rerun passed without source changes. This does not prove the cause or a fix.
 Earlier intermittent input/busy failures also remain unproven. Installed nodes,
 published versions/installers, update feeds, browser assets and model files are
 unchanged; no Defender/Authenticode safety claim follows from these tests.
+
+## Explicit pre-launch refusal recovery (subsequent increment)
+
+The existing bridge can now checkpoint factual `refused_before_launch` evidence
+when its current-runtime preflight returns an error before the durable launch
+marker. The transaction verifies the exact active immutable trigger, absent
+marker, and no source job/reservation, then interrupts that schedule. Absence by
+itself is never proof: marked-but-missing, partially admitted or uncertain issued
+work cannot use this path. Hashes bind retained records, not remote attestation.
+
+Inspect `show`, retain `schedule.refusal`, and explicitly use `resolve-refusal`
+with the exact schedule revision, trigger ID, refusal digest and operation ID.
+Concurrent identical commands produce one retained resolution. Conflicting or
+stale references fail; lost/negative/corrupt replies remain uncertain and require
+exact inspection/reuse, not a replacement operation or a force override.
+
+Resolution changes the historical schedule to `resolved`, not waiting. It
+creates no job, timer or grant, preserves all claim identities/counts and any
+stop receipt, and refunds no reserved occurrence allowance. A refusal before
+reservation has consumed no occurrence allowance in the first place. A separate
+explicit enable may create a fresh schedule only while current policy, provider,
+origin and permanent allowance checks pass. Restart never replays the old claim.
+Lifecycle headroom allows resolution under a lowered logical quota; it is not
+physical disk reservation. General partial/issued-work recovery remains open.
+
+Eight added tests bring final workspace/all-target suites to **512** in both
+feature modes: EEF library 218, owner CLI 13, installer 6, EEFN library 269,
+node CLI 6. They cover concurrent exact resolution, missing/marked/partial refusal,
+stale references and transactional rollback, restart/lowered-quota/stop receipt
+preservation, corrupted proof/history, correlated passive reports, mandatory CLI
+references, and independent monitor sampling during ordinary processing pauses.
+The passive owner confirmation also checks the nested refusal digest/lifecycle
+and rejects contradictory job/launch evidence even with a recomputed outer hash.
+Fresh default binaries/examples, formatting, script syntax, diff and backend
+boundary guard pass.
+
+Extended native fixture `automation-schedules-g9fgE0` passes the earlier cases
+plus actual origin disconnection before launch, explicit proof-bound resolution,
+no replay after reconnection, and a fresh separately enabled native completion.
+It is two logical nodes on one PC, not physical two-PC acceptance.
+
+Earlier extended runs `automation-schedules-bbadFt`, `automation-schedules-A26GJQ`
+and `automation-schedules-TAM4Be` failed after replacement admission because the
+timer included ordinary journal processing in its long-gap measurement.
+Diagnostics captured a 2366 ms processing-loop gap and a 556 ms checkpoint.
+These runs are not counted as passing. The independent monitor separates that
+work from clock/suspend samples; all existing thresholds, due-window, expiry and
+no-replay checks remain. This does not prove every suspend/resource race or fix
+the separate older unexplained process exit.
+
+A later full-suite run rejected an existing test archive timestamp that could
+precede its actual cancellation checkpoint under parallel load. The fixture now
+dates archive/settlement no earlier than that cancellation. Production evidence
+validation is unchanged; the failed run is not counted as passing.
+
+Fresh regressions pass manual occurrence/native execution/archive
+(`automation-occurrences-r5BOzh`), definitions/policies
+(`automation-definitions-VRWStm`), input/answers (`request-input-FQpbRn`) and
+reviewed execution/recovery (`request-review-EFdrAP`). The review fixture uses
+fake inference. These runs preceded the final passive nested-proof confirmation
+hardening; they use the same execution/recovery code, not a new readiness claim.
+
+Final native `automation-schedules-mlHTYT` passes against the final rebuilt
+binaries, including dropped, substituted and negative-after-commit resolution
+replies: each stays unknown to that client, exact reuse finds one resolution,
+and no old claim replays. The preceding `automation-schedules-9dV8KM` invocation
+exited 1 without a normal result/failure report; its journal retained the refusal
+without resolution or replay and no fixture processes remained. No matching
+application/Defender event appeared in the checked interval. It is not a pass,
+and the subsequent traced rerun does not prove its cause or a fix.
