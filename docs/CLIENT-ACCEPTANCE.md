@@ -1,5 +1,10 @@
 # Reviewed client acceptance (unreleased after alpha.6)
 
+Latest selected-GGUF checkpoint: **545 workspace/all-target tests per feature
+mode**, with public lifecycle fault injection and reused-artifact real CPU
+unload/reload/inference acceptance. See [exact scope and evidence](MODEL-LIFECYCLE.md#2026-10-12-verification-checkpoint).
+Earlier counts below describe their historical checkpoints, not the latest suite.
+
 This checkpoint adapts remaining protocol/browser/model fixtures to the mandatory
 [reviewed boundary](EXECUTION-BOUNDARY.md). Both production roles remain at the
 unreleased development state after alpha.6. No published installer, update feed,

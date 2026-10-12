@@ -46,7 +46,11 @@ impl RequestBudget {
     pub fn admit(&self, capability: &str, action: &str) -> Option<OwnedSemaphorePermit> {
         // Scheduling allowance only; NodeEngine still performs all policy checks.
         let control = capability == "system.ping"
-            || (capability == "node.configure" && matches!(action, "status" | "restart"));
+            || (capability == "node.configure"
+                && matches!(
+                    action,
+                    "status" | "restart" | "model_lifecycle_status" | "model_lifecycle_cancel"
+                ));
         let pool = if control { &self.control } else { &self.work };
         pool.clone().try_acquire_owned().ok()
     }
@@ -60,6 +64,31 @@ impl RequestBudget {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn model_lifecycle_inspection_and_cancel_keep_bounded_control_capacity_not_load_unload() {
+        let budget = RequestBudget::new(&RequestLimits {
+            work: 1,
+            control: 1,
+        })
+        .unwrap();
+        let work = budget.admit("llm.infer", "run").unwrap();
+        assert!(budget.admit("node.configure", "model_lifecycle").is_none());
+        let status = budget
+            .admit("node.configure", "model_lifecycle_status")
+            .unwrap();
+        assert!(
+            budget
+                .admit("node.configure", "model_lifecycle_cancel")
+                .is_none()
+        );
+        drop(status);
+        let cancel = budget
+            .admit("node.configure", "model_lifecycle_cancel")
+            .unwrap();
+        assert!(budget.admit("system.ping", "run").is_none());
+        drop(cancel);
+        drop(work);
+    }
 
     #[test]
     fn limits_are_compatible_bounded_and_strict() {

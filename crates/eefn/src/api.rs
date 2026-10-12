@@ -95,6 +95,7 @@ impl NodeService {
                 post(credential_pair).layer(axum::extract::DefaultBodyLimit::max(8192)),
             )
             .route("/api/commands/models", post(model_command))
+            .route("/api/commands/model-lifecycle", post(model_lifecycle))
             .route(
                 "/api/commands/model-downloads",
                 post(model_download_command),
@@ -191,6 +192,12 @@ async fn model_command(
     Json(request): Json<crate::model_selection::ModelCommandRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.model_command(request)?))
+}
+async fn model_lifecycle(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::model_lifecycle::LifecycleRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.model_lifecycle_command(request, false).await?))
 }
 
 async fn model_download_command(

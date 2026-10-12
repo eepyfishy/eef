@@ -102,6 +102,11 @@ enum Commands {
         #[command(subcommand)]
         command: eefn::model_downloads::NodeModelsAction,
     },
+    /// Control selected owned GGUF residency without changing selection or invoking a model.
+    ModelLifecycle {
+        #[command(flatten)]
+        command: eefn::model_lifecycle::LifecycleArgs,
+    },
     /// Inspect or configure node identity and advertised network metadata.
     Network {
         #[command(subcommand)]
@@ -206,6 +211,43 @@ async fn execute_model_command(
     } else {
         exchange
     }
+}
+async fn execute_model_lifecycle(
+    args: &Args,
+    action: &eefn::model_lifecycle::LifecycleArgs,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let file = load_file(&args.config)?;
+    let request = eefn::model_lifecycle::LifecycleRequest {
+        schema_version: 1,
+        expected_node_id: file.node_id.clone(),
+        expected_runtime_id: action.runtime.clone(),
+        command: action.command.clone(),
+    };
+    request.validate()?;
+    let failure = || {
+        json!({"schema_version":1,"report_type":"local_model_lifecycle","success":false,"command":request.command,"expected_runtime_id":request.expected_runtime_id,
+        "outcome_unknown":!matches!(request.command,eefn::model_lifecycle::LifecycleCommand::Show{..}),"automatically_retried":false,"model_inference_requested":false,"result":null})
+    };
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        return Ok(failure());
+    }
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let result:Result<serde_json::Value>=async {
+        let response=reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?.post(format!("http://{address}/api/commands/model-lifecycle"))
+            .timeout(Duration::from_secs(10)).json(&request).send().await?;
+        let ok=response.status().is_success();let data=eefn::model_manager::bounded_json(response).await?;
+        if !ok||!eefn::model_lifecycle::confirmed(&data,&request){bail!("Unconfirmed model lifecycle reply")}
+        Ok(json!({"schema_version":1,"report_type":"local_model_lifecycle","success":true,"outcome_unknown":false,"automatically_retried":false,"model_inference_requested":false,"result":data}))
+    }.await;
+    Ok(result.unwrap_or_else(|_| failure()))
 }
 
 async fn execute_request_command(
@@ -1385,6 +1427,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
             }
         };
     }
+    if let Commands::ModelLifecycle { command } = command {
+        return execute_model_lifecycle(args, command).await;
+    }
     if let Commands::Requests { command } = command {
         return match command {
             eefn::request_preview::RequestAction::Respond {
@@ -2336,8 +2381,12 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         status["connection"] =
             serde_json::json!({"state":if file.connection_enabled {"waiting"} else {"paused"}});
     }
-    let _preview_runtime =
-        dashboard.attach_preview_runtime_with_policy(&engine, runtime_id, file.input_workflow);
+    let _preview_runtime = dashboard.attach_preview_runtime_with_policy(
+        &engine,
+        runtime_id.clone(),
+        file.input_workflow,
+    );
+    let model_runtime = dashboard.bind_model_runtime(&engine, runtime_id)?;
     let client = if file.endpoints.is_empty() || !file.connection_enabled {
         None
     } else {
@@ -2392,11 +2441,25 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
                 status["models"] = serde_json::json!(server.models()?);
                 status["capabilities"] = serde_json::json!(engine.capabilities());
             }
-            if let Err(error) = server.monitor_processes().await {
-                warn!(%error, "local model process failed; explicit restart required");
-                let mut status = dashboard.live.lock().unwrap();
-                status["models"] = serde_json::json!(server.models()?);
-                status["capabilities"] = serde_json::json!(engine.capabilities());
+            let mut changes = server.subscribe();
+            loop {
+                let monitor = server.monitor_processes();
+                tokio::pin!(monitor);
+                loop {
+                    tokio::select! {
+                        result=&mut monitor=>{if let Err(error)=result {warn!(%error,"owned model process failed; inspect lifecycle before explicit reload");}break;},
+                        _=changes.changed()=>{},
+                    }
+                    let mut status = dashboard.live.lock().unwrap();
+                    status["models"] = serde_json::json!(server.models()?);
+                    status["capabilities"] = serde_json::json!(engine.capabilities());
+                }
+                {
+                    let mut status = dashboard.live.lock().unwrap();
+                    status["models"] = serde_json::json!(server.models()?);
+                    status["capabilities"] = serde_json::json!(engine.capabilities());
+                }
+                changes.changed().await?;
             }
         }
         std::future::pending::<Result<()>>().await
@@ -2420,6 +2483,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
     let result = tokio::select! {
         result = model_startup => result,
         result = run => result,
+        result = model_runtime.run()=>result,
     };
     if let Some(server) = &model_server {
         server.stop().await;
@@ -2589,6 +2653,44 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn model_lifecycle_cli_requires_exact_mutation_runtime_and_refuses_force_or_infer() {
+        let args = Args::try_parse_from(["eefn", "model-lifecycle", "show"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Commands::ModelLifecycle { .. })
+        ));
+        let args = Args::try_parse_from([
+            "eefn",
+            "model-lifecycle",
+            "--runtime",
+            "11111111-1111-4111-8111-111111111111",
+            "load",
+            "--model",
+            "owner-selected",
+            "--generation",
+            "2",
+            "--operation-id",
+            "22222222-2222-4222-8222-222222222222",
+        ])
+        .unwrap();
+        let Some(Commands::ModelLifecycle { command }) = args.command else {
+            panic!("wrong adapter")
+        };
+        let req = eefn::model_lifecycle::LifecycleRequest {
+            schema_version: 1,
+            expected_node_id: "owner".into(),
+            expected_runtime_id: command.runtime,
+            command: command.command,
+        };
+        assert!(req.validate().is_ok());
+        let mut missing = req;
+        missing.expected_runtime_id = None;
+        assert!(missing.validate().is_err());
+        for flag in ["--force", "--infer", "--download"] {
+            assert!(Args::try_parse_from(["eefn", "model-lifecycle", "show", flag]).is_err());
+        }
+    }
     #[test]
     fn submit_process_cli_preserves_literal_args_and_uses_the_existing_concrete_service() {
         let args = Args::try_parse_from([

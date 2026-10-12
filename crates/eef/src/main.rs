@@ -127,6 +127,13 @@ enum NodeCommand {
         #[command(subcommand)]
         command: eefn::model_cli::ModelsAction,
     },
+    /// Control owned selected GGUF residency with current node owner approval.
+    ModelLifecycle {
+        #[arg(long)]
+        node: String,
+        #[command(flatten)]
+        command: eefn::model_lifecycle::LifecycleArgs,
+    },
     /// Restart the node app, not Windows. Requires local node management approval.
     Restart {
         #[arg(long)]
@@ -170,6 +177,51 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn remote_model_lifecycle_cli_preserves_exact_target_runtime_generation_and_receipt() {
+        let args = Args::try_parse_from([
+            "eef",
+            "node",
+            "model-lifecycle",
+            "--node",
+            "target",
+            "--runtime",
+            "11111111-1111-4111-8111-111111111111",
+            "unload",
+            "--model",
+            "owner-selected",
+            "--generation",
+            "2",
+            "--operation-id",
+            "22222222-2222-4222-8222-222222222222",
+        ])
+        .unwrap();
+        let Some(Command::Node {
+            command: NodeCommand::ModelLifecycle { node, command },
+        }) = args.command
+        else {
+            panic!("wrong adapter")
+        };
+        let req = eefn::model_lifecycle::LifecycleRequest {
+            schema_version: 1,
+            expected_node_id: node,
+            expected_runtime_id: command.runtime,
+            command: command.command,
+        };
+        assert!(req.validate().is_ok());
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "node",
+                "model-lifecycle",
+                "--node",
+                "target",
+                "show",
+                "--force"
+            ])
+            .is_err()
+        );
+    }
     #[test]
     fn refusal_resolution_cli_requires_proof_and_rejects_force_or_unknown_ack() {
         let args = [
@@ -1127,6 +1179,22 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             client.post(format!("{base}/api/commands/node/models"))
                 .json(&json!({"schema_version":1,"node_id":node,"command":command.to_command(false)?}))
                 .send().await?
+        }
+        Command::Node {
+            command: NodeCommand::ModelLifecycle { node, command },
+        } => {
+            let request = eefn::model_lifecycle::LifecycleRequest {
+                schema_version: 1,
+                expected_node_id: node.clone(),
+                expected_runtime_id: command.runtime.clone(),
+                command: command.command.clone(),
+            };
+            request.validate()?;
+            client
+                .post(format!("{base}/api/commands/node/model-lifecycle"))
+                .json(&request)
+                .send()
+                .await?
         }
         Command::Node {
             command: NodeCommand::Restart { node, wait_seconds },

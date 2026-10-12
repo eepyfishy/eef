@@ -31,6 +31,16 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The subsequent unreleased [selected-GGUF lifecycle](MODEL-LIFECYCLE.md) provides
+runtime-owned per-selection load/unload/status/cancel commands through the node
+and approved EEF owner adapters. Exact runtime/generation receipts prevent
+replay; active inference pins block unload; current owner authority and load
+ownership are checked at application. The existing Windows process-tree guard
+also contains GGUF children. This does not finish full lifecycle, general local
+pipelines, default interpreter bootstrap or physical/versioned release acceptance.
+Ollama control, configurable on-demand/idle policy, measured resource admission
+and startup-cost scheduling remain open. The dashboard owns none of this behavior.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It
@@ -392,7 +402,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node work/reserved-control limits and coordinator budgets, including granted model futures. Fixed one-shot ACK/completion, read-only recovery evidence and explicit retained-completion reconciliation implemented; no implicit continuation or stop proof. Pipelines, strong termination and physical resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
-| 10 | Full model lifecycle + unload | Measured transitions, load cancellation, active-use pinning and configurable idle unload; scheduler considers startup cost and actual usage. | Planned |
+| 10 | Full model lifecycle + unload | Measured transitions, load cancellation, active-use pinning and configurable idle unload; scheduler considers startup cost and actual usage. | Partial, unreleased: selected owned-GGUF load/unload/status/cancel, exact runtime/generation receipts, active inference pins and scoped native lifetime. Ollama control, configurable idle/on-demand policy, measured resources, startup-cost scheduling and physical acceptance remain required |
 
 The development increment after v0.4.0a3 runs local GGUF startup concurrently
 with node registration/control, reports bounded group readiness/error metadata,

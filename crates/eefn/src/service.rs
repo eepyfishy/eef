@@ -24,6 +24,8 @@ pub struct NodeService {
     pub restart: Arc<tokio::sync::Notify>,
     pub submissions: Arc<crate::submission::SubmissionMailbox>,
     pub(crate) preview: Arc<crate::request_preview::PreviewRuntime>,
+    pub(crate) model_runtime:
+        Arc<std::sync::Mutex<Option<Arc<crate::model_lifecycle::ModelRuntime>>>>,
     config_lock: Arc<std::sync::Mutex<()>>,
     started: std::time::Instant,
 }
@@ -63,6 +65,14 @@ impl NodeService {
         let _guard = self.config_lock.lock().expect("config lock");
         check(&self.read_config()?)
     }
+    pub(crate) fn guard_grant_configuration(
+        &self,
+        check: impl FnOnce(&Value) -> Result<()>,
+    ) -> Result<std::sync::MutexGuard<'_, ()>> {
+        let guard = self.config_lock.lock().expect("config lock");
+        check(&self.read_config()?)?;
+        Ok(guard)
+    }
     pub(crate) fn require_remote_update_permission(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
         let guard = self.config_lock.lock().expect("config lock");
         if self.read_config()?.pointer("/permissions/remote_updates") != Some(&json!(true)) {
@@ -84,6 +94,7 @@ impl NodeService {
         Arc::new(Self {
             config_path,
             node_id,
+            model_runtime: Arc::new(std::sync::Mutex::new(None)),
             live: Arc::new(std::sync::Mutex::new(
                 json!({"connection":{"state":"starting"},"pending_restart":false,"download":{"state":"idle"}}),
             )),
@@ -747,6 +758,28 @@ impl NodeService {
             == Some(true);
         match action {
             "model_command" => self.model_command_authorized(serde_json::from_value(params)?, true),
+            "model_lifecycle" => {
+                self.model_lifecycle_command(serde_json::from_value(params)?, true)
+                    .await
+            }
+            "model_lifecycle_status" | "model_lifecycle_cancel" => {
+                let request: crate::model_lifecycle::LifecycleRequest =
+                    serde_json::from_value(params)?;
+                if !(action == "model_lifecycle_status"
+                    && matches!(
+                        request.command,
+                        crate::model_lifecycle::LifecycleCommand::Show { .. }
+                    )
+                    || action == "model_lifecycle_cancel"
+                        && matches!(
+                            request.command,
+                            crate::model_lifecycle::LifecycleCommand::Cancel { .. }
+                        ))
+                {
+                    bail!("reserved model control action mismatch")
+                }
+                self.model_lifecycle_command(request, true).await
+            }
             "diagnostics" => Ok(self.diagnostics()),
             "get" => {
                 config["psk"] = json!(SECRET_PLACEHOLDER);

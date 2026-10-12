@@ -23,12 +23,18 @@ async fn main() -> anyhow::Result<()> {
     let config: serde_json::Value = serde_json::from_slice(&std::fs::read(arg("--model")?)?)?;
     let ready = PathBuf::from(config["ready_file"].as_str().unwrap());
     let marker = PathBuf::from(config["pid_file"].as_str().unwrap());
+    let infer_gate = config["infer_gate"].as_str().map(PathBuf::from);
+    let infer_started = config["infer_started"].as_str().map(PathBuf::from);
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", arg("--port")?)).await?;
     std::fs::write(marker, std::process::id().to_string())?;
     axum::serve(
         listener,
-        Router::new().route("/v1/chat/completions", post(|Json(request): Json<Value>| async move {
+        Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {let gate=infer_gate.clone();let started=infer_started.clone();async move {
             let prompt = request["messages"].as_array().and_then(|v|v.last()).and_then(|v|v["content"].as_str());
+            if prompt==Some("fixture-gate") {
+                if let Some(file)=started {std::fs::write(file,b"synthetic request active").unwrap();}
+                if let Some(file)=gate {while !file.is_file(){tokio::time::sleep(std::time::Duration::from_millis(10)).await;}}
+            }
                     Json(match prompt {
                         Some("fixture-preview") => json!({"choices":[{"message":{"content":json!({
                             "schema_version":1,"intent":"information","goal":"Inspect node status",
@@ -39,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
                 Some("fixture-length") => json!({"choices":[{"message":{"content":"fixture partial"},"finish_reason":"length"}]}),
                 _ => json!({"choices":[{"message":{"content":"fixture only; no real inference"},"finish_reason":"stop"}]}),
             })
-        })).route(
+        }})).route(
             "/health",
             get(move || {
                 let ready = ready.clone();

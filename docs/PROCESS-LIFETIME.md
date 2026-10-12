@@ -43,10 +43,12 @@ refuses replay. OS cleanup is not a fabricated successful grant, recovery proof,
 remote stop acknowledgement or authority for migration/continuation. General
 native stop/result protocols remain roadmap work.
 
-This increment covers Windows `process.exec` only. Intentional persistent
-application launch/control, model-server lifetimes, Python plugins, camera/audio
-and other adapters retain their own existing behavior and need separate measured
-lifecycle work. Non-Windows keeps existing root-child kill-on-drop behavior;
+The original increment covers Windows `process.exec`. The subsequent unreleased
+[selected-GGUF lifecycle](MODEL-LIFECYCLE.md) also uses this typed native tree
+ownership for model-server startup and explicit load/unload/cancellation.
+Intentional persistent application launch/control, Python plugins, camera/audio
+and other adapters still need separate measured lifecycle work.
+Non-Windows keeps existing root-child kill-on-drop behavior;
 there is no non-Windows descendant-containment claim. Public reviewed-process
 acceptance is now covered below; full physical two-PC, suspend/disk/power faults and versioned release
 acceptance remain required. Stable 0.4.0 is not claimed.

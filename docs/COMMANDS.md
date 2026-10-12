@@ -13,6 +13,18 @@ the existing concrete request. It stops at compilation, normally
 `awaiting_approval`; separate owner approval/execution and node permissions remain.
 See [explicit input/receipt semantics](EXPLICIT-REQUESTS.md).
 
+## Selected model residency (unreleased after alpha.6)
+
+`eefn model-lifecycle show|load|unload|cancel` and
+`eef node model-lifecycle --node NODE_ID show|load|unload|cancel` share the running
+node's owned-GGUF service. Load/unload require exact runtime, generation and
+operation UUID; acceptance is queued, not completion. Active inference blocks
+unload, cancellation targets only one load, and exact receipt reuse never replays.
+Remote mutations require current node-owner management approval. No model files
+are deleted, no model is selected/downloaded and no inference is authorized.
+Ollama is not controlled by this increment. See [commands, bounds and remaining
+lifecycle work](MODEL-LIFECYCLE.md).
+
 ## Automation definition authoring (unreleased after alpha.6)
 
 The subsequent `eef automation-schedules enable|stop|show|list|resolve-refusal` connects exact

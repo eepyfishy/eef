@@ -3,6 +3,11 @@
 The EEF distribution contains no model and never downloads one. Model choice
 belongs to the owner of each node.
 
+The subsequent unreleased [selected GGUF lifecycle commands](MODEL-LIFECYCLE.md)
+control load/unload and exact load cancellation independently of selection or
+inference. Active use blocks unload. This manual increment does not yet add
+Ollama residency control or automatic/on-demand/idle loading policy.
+
 `models.provider` controls the backend:
 
 - `auto` (default) uses Ollama when its local API is reachable; otherwise it

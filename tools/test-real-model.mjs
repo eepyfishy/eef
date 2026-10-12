@@ -7,7 +7,7 @@ import {mkdtemp,readFile,writeFile,stat} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
-import {randomBytes,createHash} from 'node:crypto';
+import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {createReadStream} from 'node:fs';
 import {reviewedFixture} from './reviewed-fixture.mjs';
 assert(process.argv[2],'Pass the runtime bundle directory explicitly; no old-version default');
@@ -103,6 +103,25 @@ try{
  };
  const first=await infer('Reply with a short greeting.',24),content=first.report.data.content;
  console.log('Real CPU inference returned: '+content);
+ // Real selected residency control, without copying/downloading model weights.
+ const lifecycle=async(operation)=>(await cli('eefn',configPath,['model-lifecycle','show',...(operation?['--operation-id',operation]:[])])).result;
+ const owned=await lifecycle(),resident=owned.models.find(m=>m.model_id===entry.id);assert(resident?.owned_pid);
+ assert.equal(resident.state,'warm_idle');assert.equal(resident.active_requests,0);
+ const unloadId=randomUUID();
+ await cli('eefn',configPath,['model-lifecycle','--runtime',owned.runtime_id,'unload','--model',entry.id,'--generation',String(resident.generation),'--operation-id',unloadId]);
+ await until(async()=>(await lifecycle(unloadId)).receipt.phase==='completed','real targeted unload');
+ const cold=(await lifecycle()).models.find(m=>m.model_id===entry.id);
+ assert.equal(cold.state,'unloaded');assert.equal(cold.owned_pid,null);assert.equal((await json(node+'/api/diagnostics')).runtime_id,owned.runtime_id);
+ assert.equal((await stat(modelPath)).size,entry.bytes,'unload cannot delete the verified artifact');
+ const loadId=randomUUID();
+ await cli('eefn',configPath,['model-lifecycle','--runtime',owned.runtime_id,'load','--model',entry.id,'--generation',String(cold.generation),'--operation-id',loadId]);
+ await until(async()=>(await lifecycle(loadId)).receipt.phase==='completed','real targeted reload',330000);
+ await until(ready,'reloaded real model registered',330000);
+ const reloaded=(await lifecycle()).models.find(m=>m.model_id===entry.id);assert(reloaded.owned_pid);assert.notEqual(reloaded.owned_pid,resident.owned_pid);
+ const historical=await cli('eefn',configPath,['model-lifecycle','--runtime',owned.runtime_id,'unload','--model',entry.id,'--generation',String(resident.generation),'--operation-id',unloadId]);
+ assert.equal(historical.result.reused,true);assert.equal((await lifecycle()).models.find(m=>m.model_id===entry.id).owned_pid,reloaded.owned_pid);
+ const afterReload=await infer('Say hello again.',16);
+ assert.deepEqual(await reviewed.get(first.id),first.metadata,'load/unload cannot replay completed work');
  const beforeRestart=(await json(node+'/api/diagnostics')).runtime_id;
  await cli('eefn',configPath,['restart','--wait-seconds','60']);
  assert.notEqual((await json(node+'/api/diagnostics')).runtime_id,beforeRestart);
@@ -116,8 +135,8 @@ try{
  assert.equal(auto.registered_models.find(m=>m.model_id===entry.id).cpu_threads,2,'reset is saved only until restart');
  await cli('eefn',configPath,['models','remove','--backend','llamacpp','--model',entry.id]);await cli('eefn',configPath,['restart','--wait-seconds','60']);
  await until(async()=>{const s=await json(node+'/api/status');return s.connection?.state==='connected'&&s.models.length===0;},'stop selected model');
- await reviewed.cleanup(first.id);await reviewed.cleanup(second.id);
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,model:entry.id,bytes:entry.bytes,sha256:entry.sha256,real_cpu_inference:true,model_quality_accepted:false,reused_verified_artifact:!!reused,model_downloads:!reused,pinned_tls:true,reviewed_grants:true,reply:content,stable_identity:true,verified_restart_with_selected_model:true,retained_result_after_restart:true,completed_work_not_replayed:true,model_withdrawal:true,selection_by_owner_command:true,cpu_threads:2,saved_applied_threads_checked:true,remote_tuning_refusal_checked:true,explicit_cpu_launch_arguments_checked:process.platform==='win32',resource_quota_enforced:false},null,2));
+ await reviewed.cleanup(first.id);await reviewed.cleanup(afterReload.id);await reviewed.cleanup(second.id);
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,model:entry.id,bytes:entry.bytes,sha256:entry.sha256,real_cpu_inference:true,model_quality_accepted:false,reused_verified_artifact:!!reused,model_downloads:!reused,pinned_tls:true,reviewed_grants:true,reply:content,stable_identity:true,verified_restart_with_selected_model:true,retained_result_after_restart:true,completed_work_not_replayed:true,model_withdrawal:true,selection_by_owner_command:true,cpu_threads:2,saved_applied_threads_checked:true,remote_tuning_refusal_checked:true,explicit_cpu_launch_arguments_checked:process.platform==='win32',resource_quota_enforced:false,real_owned_model_unload_reload:true,lifecycle_without_node_restart:true,historical_unload_receipt_no_replay:true,inference_after_explicit_reload:true,model_artifact_not_deleted:true,physical_memory_release_measured:false},null,2));
  console.log('Real model validation passed: '+scratch);
 }finally{
  for(const child of children)if(child.exitCode===null){await new Promise(r=>{const stop=spawn('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});stop.on('exit',r);stop.on('error',r);});}

@@ -181,6 +181,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
         .route("/api/commands/node/restart", post(node_restart))
         .route("/api/commands/node/models", post(node_models))
         .route(
+            "/api/commands/node/model-lifecycle",
+            post(node_model_lifecycle),
+        )
+        .route(
             "/api/commands/discovery",
             get(discovery_status).post(discovery_command),
         )
@@ -386,6 +390,14 @@ async fn node_models(
 ) -> ApiResult<Value> {
     Ok(Json(
         crate::node_control::models(&runtime.node_server, request).await?,
+    ))
+}
+async fn node_model_lifecycle(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<eefn::model_lifecycle::LifecycleRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_control::model_lifecycle(&runtime.node_server, request).await?,
     ))
 }
 

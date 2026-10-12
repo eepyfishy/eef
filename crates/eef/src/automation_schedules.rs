@@ -1851,7 +1851,9 @@ mod tests {
                 reserve_command(p, job, t),
                 &p.runtime_id,
                 Some(&p.issuer_id),
-                t.claimed_at_ms + 1,
+                // Compilation uses the real journal clock; injected approval
+                // time must not precede that source under parallel test load.
+                (t.claimed_at_ms + 1).max(job.updated_at_ms),
             )
             .unwrap()
     }

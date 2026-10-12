@@ -372,22 +372,24 @@ impl NodeEngine {
             .values()
             .any(|value| value.supports("llm.infer"))
             || self.model_server.as_ref().is_some_and(|server| {
-                server.require_ready().is_ok()
-                    && server.slots.iter().any(|slot| {
-                        slot.selection_metadata()
+                server.slots.iter().any(|slot| {
+                    server.model_ready(Some(&slot.model_id))
+                        && slot
+                            .selection_metadata()
                             .is_ok_and(|m| m.supports("llm.infer"))
-                    })
+                })
             });
         let has_vlm = self
             .ollama_models
             .values()
             .any(|value| value.supports("vlm.analyze"))
             || self.model_server.as_ref().is_some_and(|server| {
-                server.require_ready().is_ok()
-                    && server.slots.iter().any(|slot| {
-                        slot.selection_metadata()
+                server.slots.iter().any(|slot| {
+                    server.model_ready(Some(&slot.model_id))
+                        && slot
+                            .selection_metadata()
                             .is_ok_and(|m| m.supports("vlm.analyze"))
-                    })
+                })
             });
         if has_text {
             values.push("llm.infer".into());
@@ -473,7 +475,9 @@ impl NodeEngine {
                     .model_server
                     .as_ref()
                     .context("Granted local model is not configured")?;
-                server.require_ready()?;
+                if !server.model_ready(Some(model)) {
+                    bail!("Granted local model is not ready")
+                }
                 server
                     .slot(Some(model))
                     .context("Granted local model is not selected")?
@@ -1215,8 +1219,8 @@ impl NodeEngine {
         params: &Value,
         schema: Option<Value>,
     ) -> Result<Value> {
-        server.require_ready()?;
         let model = params.get("model").and_then(Value::as_str);
+        let _use_pin = server.pin(model)?;
         let base = server
             .base_url(model)
             .context("no llama.cpp model configured")?;

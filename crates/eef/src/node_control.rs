@@ -85,6 +85,37 @@ pub struct ModelsRequest {
 pub async fn models(server: &eefn::NodeServer, request: ModelsRequest) -> Result<Value> {
     models_on(server, request).await
 }
+pub async fn model_lifecycle(
+    server: &eefn::NodeServer,
+    request: eefn::model_lifecycle::LifecycleRequest,
+) -> Result<Value> {
+    request.validate()?;
+    let mut result = json!({"schema_version":1,"report_type":"remote_model_lifecycle","success":false,
+        "command":request.command,"expected_node_id":request.expected_node_id,"expected_runtime_id":request.expected_runtime_id,
+        "mutation_requested":!matches!(request.command,eefn::model_lifecycle::LifecycleCommand::Show{..}),
+        "outcome_unknown":!matches!(request.command,eefn::model_lifecycle::LifecycleCommand::Show{..}),"automatically_retried":false,"result":null});
+    let reply = server
+        .invoke_remote(
+            &request.expected_node_id,
+            "node.configure",
+            match request.command {
+                eefn::model_lifecycle::LifecycleCommand::Show { .. } => "model_lifecycle_status",
+                eefn::model_lifecycle::LifecycleCommand::Cancel { .. } => "model_lifecycle_cancel",
+                _ => "model_lifecycle",
+            },
+            serde_json::to_value(&request)?,
+            Duration::from_secs(10),
+        )
+        .await;
+    if let Ok(reply) = reply {
+        if reply["success"] == true && eefn::model_lifecycle::confirmed(&reply["data"], &request) {
+            result["success"] = json!(true);
+            result["outcome_unknown"] = json!(false);
+            result["result"] = reply["data"].clone();
+        }
+    }
+    Ok(result)
+}
 
 async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<Value> {
     use eefn::model_selection::{ModelCommand, ModelCommandRequest};
