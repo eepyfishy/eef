@@ -149,6 +149,39 @@ impl Drop for ModelRuntimeGuard {
     }
 }
 impl crate::NodeService {
+    pub(crate) async fn acquire_demand_model<'a>(
+        &self,
+        server: &'a crate::ModelServer,
+        model: &str,
+    ) -> Result<crate::model_server::ModelUse<'a>> {
+        let runtime = self
+            .model_runtime
+            .lock()
+            .unwrap()
+            .clone()
+            .context("model runtime unavailable")?;
+        if !runtime
+            .server
+            .as_ref()
+            .is_some_and(|owned| std::ptr::eq(owned.as_ref(), server))
+            || !runtime.demand_authorized()
+        {
+            bail!("on-demand model policy unavailable or changed")
+        }
+        server
+            .acquire_demand_pin(
+                model,
+                Duration::from_secs(runtime.policy.load_timeout_seconds),
+                |slot, id| {
+                    self.inspect_grant_configuration(|config| {
+                        runtime.authorized(config, false)?;
+                        server.spawn_slot(slot, Some(id))
+                    })
+                },
+                || self.guard_grant_configuration(|config| runtime.authorized(config, false)),
+            )
+            .await
+    }
     pub fn bind_model_runtime(
         self: &Arc<Self>,
         engine: &Arc<crate::NodeEngine>,
@@ -189,6 +222,9 @@ impl crate::NodeService {
             old.close();
         }
         *current = Some(runtime.clone());
+        if let Some(server) = &runtime.server {
+            server.bind_demand_runtime(Arc::downgrade(&runtime));
+        }
         Ok(ModelRuntimeGuard {
             service: Arc::downgrade(self),
             runtime,
@@ -333,6 +369,14 @@ impl ModelRuntimeGuard {
     }
 }
 impl ModelRuntime {
+    pub(crate) fn demand_authorized(&self) -> bool {
+        self.policy.startup == crate::model_lifecycle_policy::StartupMode::OnDemand
+            && self
+                .service
+                .upgrade()
+                .and_then(|service| service.read_config().ok())
+                .is_some_and(|config| self.authorized(&config, false).is_ok())
+    }
     pub(crate) fn id(&self) -> &str {
         &self.id
     }
@@ -411,13 +455,15 @@ impl ModelRuntime {
                 tokio::select! {biased;
                     _=cancel.changed()=>{cancelled=true;Ok(())},
                     result=async {match &command {
-                        LifecycleCommand::Load{..}=>server.load_reserved(model,&id,Duration::from_secs(self.policy.load_timeout_seconds),|slot|{
+                        LifecycleCommand::Load{..}=>{
                             let service=self.service.upgrade().context("model owner service closed")?;
+                            server.load_reserved_checked(model,&id,Duration::from_secs(self.policy.load_timeout_seconds),|slot|{
                             service.inspect_grant_configuration(|config| {
                                 self.authorized(config,remote)?;
                                 server.spawn_slot(slot,Some(&id))
                             })
-                        }).await,
+                            },||service.guard_grant_configuration(|config|self.authorized(config,remote))).await
+                        },
                         LifecycleCommand::Unload{..}=>{
                             let service=self.service.upgrade().context("model owner service closed")?;
                             server.unload_reserved_with_timeout(model,&id,Duration::from_secs(self.policy.termination_wait_seconds),||service.guard_grant_configuration(|config|self.authorized(config,remote))).await
@@ -1235,5 +1281,117 @@ mod tests {
         assert_eq!(shown["saved_policy"], shown["applied_policy"]);
         assert_eq!(shown["restart_required"], true);
         guard.runtime.close();
+    }
+    #[tokio::test]
+    async fn demand_cold_availability_never_spawns_on_read_and_failed_load_never_retries() {
+        let (_directory, service, engine, old_guard) = fixture();
+        drop(old_guard);
+        let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+            startup: crate::model_lifecycle_policy::StartupMode::OnDemand,
+            ..Default::default()
+        };
+        let mut config = service.read_config().unwrap();
+        config["model_lifecycle"] = json!(policy);
+        service.save_config(config).unwrap();
+        let guard = service
+            .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        // A new runtime owns a fresh server; retained closed servers cannot revive.
+        assert!(
+            !engine
+                .model_server
+                .as_ref()
+                .unwrap()
+                .can_infer(Some("selected"))
+        );
+        drop(guard);
+        let artifact = _directory.path().join("synthetic.gguf");
+        std::fs::write(&artifact, b"test-only").unwrap();
+        let slot =
+            serde_json::from_value(json!({"model_id":"selected","model_path":artifact})).unwrap();
+        let server = crate::ModelServer::new(std::env::current_exe().unwrap(), vec![slot]);
+        let engine = Arc::new(
+            crate::NodeEngine::new(false, vec![], std::env::temp_dir())
+                .unwrap()
+                .with_service(service.clone())
+                .with_model_server(server.clone()),
+        );
+        let guard = service
+            .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        assert!(server.can_infer(Some("selected")));
+        assert!(!server.model_ready(Some("selected")));
+        assert!(engine.capabilities().contains(&"llm.infer".to_owned()));
+        assert_eq!(
+            server.models().unwrap()[0]["model_metadata"]["lifecycle"],
+            "unloaded"
+        );
+        assert_eq!(
+            server.models().unwrap()[0]["model_metadata"]["availability"],
+            "available"
+        );
+        assert!(server.snapshot().unwrap()[0]["owned_pid"].is_null());
+        assert!(
+            service
+                .acquire_demand_model(&server, "selected")
+                .await
+                .is_err()
+        );
+        let failed = server.snapshot().unwrap();
+        assert_eq!(failed[0]["state"], "error");
+        assert!(failed[0]["owned_pid"].is_null());
+        assert!(!server.can_infer(Some("selected")));
+        assert!(
+            service
+                .acquire_demand_model(&server, "selected")
+                .await
+                .is_err()
+        );
+        assert_eq!(server.snapshot().unwrap(), failed);
+        assert!(guard.runtime.records.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn demand_authority_is_withdrawn_by_policy_revision_and_old_runtime_close() {
+        let (_directory, service, _old_engine, old_guard) = fixture();
+        drop(old_guard);
+        let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+            startup: crate::model_lifecycle_policy::StartupMode::OnDemand,
+            ..Default::default()
+        };
+        let mut config = service.read_config().unwrap();
+        config["model_lifecycle"] = json!(policy);
+        service.save_config(config.clone()).unwrap();
+        let artifact = _directory.path().join("synthetic.gguf");
+        std::fs::write(&artifact, b"test-only").unwrap();
+        let slot =
+            serde_json::from_value(json!({"model_id":"selected","model_path":artifact})).unwrap();
+        let server = crate::ModelServer::new(std::env::current_exe().unwrap(), vec![slot]);
+        let engine = Arc::new(
+            crate::NodeEngine::new(false, vec![], std::env::temp_dir())
+                .unwrap()
+                .with_service(service.clone())
+                .with_model_server(server.clone()),
+        );
+        let guard = service
+            .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        assert!(server.can_infer(Some("selected")));
+        let mut changed = config.clone();
+        changed["model_lifecycle"]["startup"] = json!("manual");
+        service.save_config(changed).unwrap();
+        service.save_config(config).unwrap();
+        assert!(!server.can_infer(Some("selected")));
+        assert_eq!(
+            server.models().unwrap()[0]["model_metadata"]["availability"],
+            "unavailable"
+        );
+        assert!(
+            service
+                .acquire_demand_model(&server, "selected")
+                .await
+                .is_err()
+        );
+        guard.runtime.close();
+        assert!(!server.can_infer(Some("selected")));
     }
 }

@@ -10,6 +10,7 @@ pub enum StartupMode {
     #[default]
     Eager,
     Manual,
+    OnDemand,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -413,7 +414,7 @@ mod tests {
             json!({"load_timeout_seconds":0}),
             json!({"termination_wait_seconds":31}),
             json!({"idle_unload_seconds":0}),
-            json!({"startup":"on_demand"}),
+            json!({"startup":"unsupported"}),
             json!({"force":true}),
         ] {
             assert!(ModelLifecyclePolicy::from_config(&json!({"model_lifecycle":value})).is_err());

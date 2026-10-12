@@ -139,12 +139,22 @@ try{
  await until(async()=>{const current=await lifecycle();return current.models.find(m=>m.model_id===entry.id)?.state==='unloaded'&&current.idle_events.some(e=>e.model_id===entry.id&&e.outcome==='completed');},'real automatic inactive unload',330000);
  assert.equal((await json(node+'/api/diagnostics')).runtime_id,idleRuntime,'idle cleanup cannot restart the node');
  assert.equal((await stat(modelPath)).size,entry.bytes);assert.deepEqual(await reviewed.get(second.id),second.metadata,'idle cleanup cannot replay completed work');
+ const demandPolicy=(await cli('eefn',configPath,['model-lifecycle-policy','show'])).result;
+ await cli('eefn',configPath,['model-lifecycle-policy','--runtime',demandPolicy.runtime_id,'set','--expected-digest',demandPolicy.saved_digest,'--startup','on-demand']);
+ await cli('eefn',configPath,['restart','--wait-seconds','60']);
+ const demandRuntime=(await json(node+'/api/diagnostics')).runtime_id;
+ await until(async()=>{const models=(await json(eef+'/api/commands/models')).nodes.find(n=>n.node_id===initial.node_id)?.models;return models?.some(m=>m.instance.model_id===entry.id&&m.lifecycle==='unloaded'&&m.availability==='available');},'real cold model eligible without startup',330000);
+ assert.equal((await lifecycle()).models.find(m=>m.model_id===entry.id).owned_pid,null);
+ const demand=await infer('Say hello from the newly loaded model.',16);assert.equal((await json(node+'/api/diagnostics')).runtime_id,demandRuntime);
+ await until(async()=>(await lifecycle()).models.find(m=>m.model_id===entry.id)?.state==='unloaded','real demanded model returns to idle-unloaded',330000);
  const auto=await cli('eefn',configPath,['models','cpu-threads','--model',entry.id,'--auto']);
  assert.equal(auto.saved_selections.find(m=>m.model_id===entry.id).cpu_threads,undefined);
  assert.equal(auto.registered_models.find(m=>m.model_id===entry.id).cpu_threads,2,'reset is saved only until restart');
  await cli('eefn',configPath,['models','remove','--backend','llamacpp','--model',entry.id]);await cli('eefn',configPath,['restart','--wait-seconds','60']);
  await until(async()=>{const s=await json(node+'/api/status');return s.connection?.state==='connected'&&s.models.length===0;},'stop selected model');
- await reviewed.cleanup(first.id);await reviewed.cleanup(afterReload.id);await reviewed.cleanup(second.id);
+ await reviewed.cleanup(first.id);await reviewed.cleanup(afterReload.id);await reviewed.cleanup(second.id);await reviewed.cleanup(demand.id);
+ await writeFile(join(scratch,'on-demand-results.json'),JSON.stringify({passed:true,real_cpu_inference:true,reused_verified_artifact:!!reused,physical_two_pc:false,
+  on_demand_startup_left_model_unloaded:true,reviewed_request_loaded_selected_model:true,inference_and_idle_cleanup_without_node_restart:true,completed_work_not_replayed:true},null,2));
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,model:entry.id,bytes:entry.bytes,sha256:entry.sha256,real_cpu_inference:true,model_quality_accepted:false,reused_verified_artifact:!!reused,model_downloads:!reused,pinned_tls:true,reviewed_grants:true,reply:content,stable_identity:true,verified_restart_with_selected_model:true,retained_result_after_restart:true,completed_work_not_replayed:true,model_withdrawal:true,selection_by_owner_command:true,cpu_threads:2,saved_applied_threads_checked:true,remote_tuning_refusal_checked:true,explicit_cpu_launch_arguments_checked:process.platform==='win32',resource_quota_enforced:false,real_owned_model_unload_reload:true,lifecycle_without_node_restart:true,historical_unload_receipt_no_replay:true,inference_after_explicit_reload:true,model_artifact_not_deleted:true,physical_memory_release_measured:false,owner_policy_saved_not_applied:true,real_automatic_owned_idle_unload:true,idle_unload_without_node_restart:true},null,2));
  console.log('Real model validation passed: '+scratch);
 }finally{

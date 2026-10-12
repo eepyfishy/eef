@@ -373,7 +373,7 @@ impl NodeEngine {
             .any(|value| value.supports("llm.infer"))
             || self.model_server.as_ref().is_some_and(|server| {
                 server.slots.iter().any(|slot| {
-                    server.model_ready(Some(&slot.model_id))
+                    server.can_infer(Some(&slot.model_id))
                         && slot
                             .selection_metadata()
                             .is_ok_and(|m| m.supports("llm.infer"))
@@ -385,7 +385,7 @@ impl NodeEngine {
             .any(|value| value.supports("vlm.analyze"))
             || self.model_server.as_ref().is_some_and(|server| {
                 server.slots.iter().any(|slot| {
-                    server.model_ready(Some(&slot.model_id))
+                    server.can_infer(Some(&slot.model_id))
                         && slot
                             .selection_metadata()
                             .is_ok_and(|m| m.supports("vlm.analyze"))
@@ -475,7 +475,7 @@ impl NodeEngine {
                     .model_server
                     .as_ref()
                     .context("Granted local model is not configured")?;
-                if !server.model_ready(Some(model)) {
+                if !server.can_infer(Some(model)) {
                     bail!("Granted local model is not ready")
                 }
                 server
@@ -1220,7 +1220,16 @@ impl NodeEngine {
         schema: Option<Value>,
     ) -> Result<Value> {
         let model = params.get("model").and_then(Value::as_str);
-        let _use_pin = server.pin(model)?;
+        let _use_pin = match server.pin(model) {
+            Ok(pin) => pin,
+            Err(_) => {
+                self.service
+                    .as_ref()
+                    .context("selected model not ready")?
+                    .acquire_demand_model(server, model.context("explicit demand model required")?)
+                    .await?
+            }
+        };
         let base = server
             .base_url(model)
             .context("no llama.cpp model configured")?;

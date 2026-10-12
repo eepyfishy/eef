@@ -1,6 +1,6 @@
 // Headless command/service acceptance. Synthetic backend, not model quality.
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,writeFile,stat} from 'node:fs/promises';
+import {mkdtemp,readFile,writeFile,stat,unlink} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
@@ -79,9 +79,29 @@ try {
  const beforeRestart=runtime;await local(['restart']);await until(async()=>(await policy()).runtime_id!==beforeRestart,'explicit eager policy application');runtime=(await policy()).runtime_id;
  await until(async()=>slot(await show()).state==='ready','configured eager startup');assert.equal((await policy()).applied_policy.idle_unload_seconds,null);
  await new Promise(r=>setTimeout(r,2500));assert.equal(slot(await show()).state,'ready');assert.equal((await show()).idle_events.length,0);
+ // Opt-in cold routing: compilation/approval/status never load a model.
+ current=await policy();await setPolicy(current.saved_digest,['--startup','on-demand','--idle-unload-seconds','1']);
+ const demandOldRuntime=runtime;await local(['restart']);await until(async()=>(await policy()).runtime_id!==demandOldRuntime,'explicit on-demand policy application');runtime=(await policy()).runtime_id;
+ assert.equal(slot(await show()).state,'unloaded');assert.equal(slot(await show()).owned_pid,null);
+ await until(async()=>{const rows=(await json(eef+'/api/commands/models')).nodes.find(n=>n.node_id===id)?.models;return rows?.some(m=>m.instance.model_id==='selected'&&m.lifecycle==='unloaded'&&m.availability==='available');},'truthful cold availability');
+ const coldPlan=await review.save({template:'generate_text',params:{model_id:'selected',prompt:'demand greeting'},constraints:{backend:'llamacpp',node_id:id}});
+ const approvedCold=await review.approve(coldPlan,{max_execution_ms:8000,max_result_bytes:16384});assert.equal(slot(await show()).owned_pid,null,'authoring and approval cannot load');
+ await review.start(approvedCold);assert.equal((await review.result(coldPlan.id)).success,true);
+ const demandPid=slot(await show()).owned_pid;assert(demandPid);await until(async()=>slot(await show()).state==='unloaded','on-demand model returns to idle-unloaded');
+ const again=await review.save({template:'generate_text',params:{model_id:'selected',prompt:'fresh demand greeting'},constraints:{backend:'llamacpp',node_id:id}});
+ await review.start(await review.approve(again,{max_execution_ms:8000,max_result_bytes:16384}));assert.equal((await review.result(again.id)).success,true);
+ assert.notEqual(slot(await show()).owned_pid,demandPid);assert.equal((await policy()).runtime_id,runtime);
+ await until(async()=>slot(await show()).state==='unloaded','second demand idle cleanup');
+ // A cold load belongs to the grant lifetime: no health, no inference, no retry.
+ const expires=await review.save({template:'generate_text',params:{model_id:'selected',prompt:'must not infer before health'},constraints:{backend:'llamacpp',node_id:id}});
+ await unlink(ready);await review.start(await review.approve(expires,{max_execution_ms:1000,max_result_bytes:16384}));
+ const uncertain=await review.result(expires.id);assert.equal(uncertain.state,'unknown');
+ await until(async()=>slot(await show()).state==='error'&&slot(await show()).owned_pid===null,'expired demand cleans partial startup');
+ const afterExpiry=await show();await new Promise(r=>setTimeout(r,1500));assert.equal(slot(await show()).generation,slot(afterExpiry).generation);assert.equal(slot(await show()).owned_pid,null);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,no_ui_controller:true,pinned_tls:true,physical_two_pc:false,synthetic_backend:true,real_model_inference:false,
   locked_offline_policy_setup:true,default_compatibility:true,manual_startup_without_model_process:true,remote_owner_approval:true,cas_policy_fence:true,saved_applied_separation:true,explicit_restart_only:true,
-  active_pin_blocks_idle_unload:true,last_pin_release_resets_monotonic_idle_deadline:true,automatic_owned_idle_unload:true,historical_load_no_replay:true,reserved_policy_status:true,saved_policy_change_pauses_automatic_unload:true,eager_startup_after_explicit_restart:true,disabled_idle_keeps_residency:true,rollback_cannot_revive_old_cas_or_idle_policy:true},null,2));
+  active_pin_blocks_idle_unload:true,last_pin_release_resets_monotonic_idle_deadline:true,automatic_owned_idle_unload:true,historical_load_no_replay:true,reserved_policy_status:true,saved_policy_change_pauses_automatic_unload:true,eager_startup_after_explicit_restart:true,disabled_idle_keeps_residency:true,rollback_cannot_revive_old_cas_or_idle_policy:true,
+  on_demand_cold_availability_truthful:true,authoring_approval_status_no_model_load:true,authorized_request_loads_once:true,next_request_reloads_after_idle:true,expired_demand_retains_unknown_and_cleans_partial_startup:true,demand_failure_not_automatically_retried:true},null,2));
  console.log('Model lifecycle policy validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;
 }finally{for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));}

@@ -41,7 +41,11 @@ pipelines, default interpreter bootstrap or physical/versioned release acceptanc
 The following [owner policy](MODEL-LIFECYCLE-POLICY.md) adds configurable eager/
 manual startup, operation bounds and opt-in monotonic idle unload, preserving
 default behavior and saved/applied separation through command services.
-Ollama control, on-demand loading, broader per-model policy, measured resource admission
+An additional owned-GGUF on-demand path loads only for the requesting operation,
+hands health readiness directly to an inference pin, and retains deadline/failure
+uncertainty without implicit retry. Cold availability remains distinct from
+readiness. Actual resident metadata now feeds the existing warm routing score.
+Ollama control, broader per-model policy, measured resource admission
 and startup-cost scheduling remain open. The dashboard owns none of this behavior.
 
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
@@ -405,7 +409,7 @@ before proceeding. "Planned" includes extensions to working baseline components.
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Admission foundation: node work/reserved-control limits and coordinator budgets, including granted model futures. Fixed one-shot ACK/completion, read-only recovery evidence and explicit retained-completion reconciliation implemented; no implicit continuation or stop proof. Pipelines, strong termination and physical resource budgets remain planned |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Planned |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
-| 10 | Full model lifecycle + unload | Measured transitions, load cancellation, active-use pinning and configurable idle unload; scheduler considers startup cost and actual usage. | Partial, unreleased: selected owned-GGUF load/unload/status/cancel, exact runtime/generation receipts, active inference pins, scoped native lifetime, command-configurable eager/manual startup and opt-in monotonic idle unload. Ollama control, on-demand loading, broader per-model policy, measured resources, startup-cost scheduling and physical acceptance remain required |
+| 10 | Full model lifecycle + unload | Measured transitions, load cancellation, active-use pinning and configurable idle unload; scheduler considers startup cost and actual usage. | Partial, unreleased: selected owned-GGUF load/unload/status/cancel, exact runtime/generation receipts, active inference pins, scoped native lifetime, command-configurable eager/manual/on-demand startup and opt-in monotonic idle unload. Ollama control, broader per-model policy, measured resources/startup-cost scheduling and physical acceptance remain required |
 
 The development increment after v0.4.0a3 runs local GGUF startup concurrently
 with node registration/control, reports bounded group readiness/error metadata,

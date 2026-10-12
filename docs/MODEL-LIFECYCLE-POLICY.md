@@ -57,11 +57,11 @@ The optional `model_lifecycle` node configuration uses these validated fields:
 
 | Field | Default | Accepted choices |
 | --- | --- | --- |
-| `startup` | `eager` | `eager` starts configured GGUF selections as before; `manual` leaves them unloaded until an explicit load command. |
+| `startup` | `eager` | `eager` starts configured GGUF selections; `manual` leaves them unloaded until an explicit load; `on_demand` leaves them cold until an authorized inference/owned preview needs them. CLI spelling: `on-demand`. |
 | `idle_unload_seconds` | null (disabled) | 1-86400 seconds; command value zero saves null/disabled. |
 | `queue_capacity` | 8 | 1-64 queued manual model operations. |
 | `receipt_capacity` | 256 | 1-4096 retained manual receipts, at least queue capacity. No replay-protection eviction. |
-| `load_timeout_seconds` | 300 | 1-3600 seconds for configured group startup and explicit load health readiness. |
+| `load_timeout_seconds` | 300 | 1-3600 seconds for configured group startup, explicit and demand load health readiness. Existing request deadlines can end demand loading earlier. |
 | `termination_wait_seconds` | 5 | 1-30 seconds for explicit/idle owned-root termination wait. |
 
 Each numeric field has the corresponding hyphenated `set` option. Missing
@@ -71,11 +71,24 @@ Older configurations remain eager with idle unloading disabled. These limits
 bound model control, not CPU percentage, physical memory, VRAM or job grants.
 The separate node work/reserved-control request limits still apply.
 
-Manual startup is not on-demand loading. Until cold-model routing is implemented,
-an owner must explicitly load a manually started or idle-unloaded model before
-it can serve inference or request interpretation. Enabling idle unloading may
-make an interpreter unavailable until that explicit load. Default behavior is
-unchanged; this is an optional resource preference, not completed bootstrap.
+Manual startup is not on-demand loading. A manually started or idle-unloaded
+model still needs an explicit load unless the owner selects `on_demand`.
+On-demand policy advertises eligible cold selections as `unloaded`/`available`,
+not ready. Status, compilation, approval and heartbeat do not load anything.
+Actual inference uses the existing model-server operation lock, with current
+runtime/selection/policy checks at native creation and readiness confirmation.
+The owned root must still be live at handoff; a successful HTTP health response
+alone cannot turn an already-exited owned process into readiness.
+The load is owned by the requesting future, not a detached resource job. Its
+health readiness transfers atomically to an active inference pin before idle
+withdrawal can race it. Already-admitted concurrent requests can share that load
+and receive separate pins; ordinary node work/preview admission still bounds
+their lifetimes. Long loads consume the existing request/grant deadline, never
+extend it. Cancelled/failed partial loads are cleaned and become error, not
+eligible for implicit retry. Explicit owner repair/load/restart is required.
+No provider switch, download, selection or grant authorization is added.
+Default behavior is unchanged; this is an optional resource preference, not
+completed bootstrap or measured startup-cost/resource optimization.
 The policy controls owned GGUF processes only, not the user's shared Ollama
 service. Ollama lifecycle controls remain separate required work.
 
@@ -122,8 +135,59 @@ saved-policy pause, rollback without CAS/idle-policy revival, and explicit eager
 startup with idle unloading disabled.
 It uses a synthetic backend on one PC, not real interpreter quality or physical
 two-PC acceptance. Existing manual lifecycle/startup and real-GGUF fixtures must
-also stay passing. Resource measurement, on-demand/startup-cost routing, shared
-Ollama controls, broader workload/mesh/cluster scope and release acceptance remain.
+also stay passing. Resource measurement, measured startup-cost routing, shared
+Ollama controls, measured startup-cost/resource optimization, broader workload/
+mesh/cluster scope and release acceptance remain.
+
+## 2026-10-13 on-demand verification checkpoint
+
+Final workspace/all-target suites pass **563 tests** in each feature mode:
+EEF library 220, owner CLI 15, installer 6, EEFN library 312, node CLI 10.
+Fresh default workspace binaries/examples, formatting/diff/JavaScript syntax
+and the backend/browser dependency guard pass. Tests use serial execution to
+avoid oversubscribing real-clock authorization fixtures on this machine.
+
+New units cover read-only cold availability without spawning, saved-policy
+revision and runtime closure withdrawing demand authority, failed-load no-retry,
+concurrent waiters sharing one owned load with separate atomic active pins,
+current authority refusal after health readiness, and an owned root exiting
+before handoff without fabricated readiness. Explicit resident metadata feeds
+the existing warm routing score; legacy unknown residency remains unloaded.
+This is not measured startup-cost or memory-aware admission.
+
+Final-binary public `model-policy-ZcUfgW` passes existing policy/CAS/idle behavior
+and on-demand cold availability, approval/status without loading, reviewed
+request load, reload after idle, and expired partial-load cleanup with persisted
+unknown outcome and no implicit retry. `real-model-H1Jx9L` passes real CPU demand
+inference using the existing exact-size/hash-verified 1.5B artifact and cached
+alpha.6 runtime: cold startup, request-owned load, completion, subsequent idle
+unload without a node restart, and unchanged completed history. No model
+download/copy is made; physical two-PC operation, interpreter quality and
+physical RAM/VRAM release are not proved.
+
+Fresh public manual lifecycle `model-lifecycle-1rRWfI` and non-blocking group
+startup `model-startup-haMn9P` also pass. The complete policy/real-model/manual/
+startup fixture chain exits **0**, not merely the individual intermediate steps.
+Final-source regressions pass model metadata/selection `model-metadata-XaEOGd`,
+automatic scheduling/refusal `automation-schedules-gZJHBU`, manual occurrence/
+archive `automation-occurrences-wUEyTP`, node input/answers `request-input-dOfcJF`
+and reviewed execution/recovery `request-review-PWZ7Qo`; that full chain also
+exits **0**. Reviewed regression inference is synthetic, not interpreter quality.
+
+An initial native coalescing unit used a synthetic HTTP fixture that closed
+without draining the incoming request; it timed out. The test server now reads
+the request before replying, and the final-authorization refusal test verifies
+that it actually reaches that check rather than passing through timeout alone.
+An initial full suite also expired an archive/no-refund test's short approval;
+only that fixture now uses a longer bounded validity. Default expiry fixtures
+and production authorization/deadline/recovery behavior remain unchanged.
+Failed runs are not acceptance evidence. An atomic documentation patch failed
+on mismatched context, made no changes and was reapplied against actual content.
+
+Ollama lifecycle, per-model resource policy, measured startup costs, bootstrap
+quality, full pipelines/media/mesh/cluster and physical/versioned release gates
+remain required. No installed app, physical node, release/feed, UI asset or
+signing/Defender acceptance is changed by this source checkpoint.
 
 ## 2026-10-12 verification checkpoint
 

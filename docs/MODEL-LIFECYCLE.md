@@ -112,9 +112,11 @@ exact-hash artifact without copying or downloading it. Passing that test is not
 interpreter-quality, physical RAM/VRAM-release or second-PC acceptance.
 
 Remaining full-release work includes physical-network lifecycle acceptance,
-explicitly owned versus shared Ollama control, on-demand loading and broader
-per-model policies, memory/VRAM measurement, resource-aware model-instance admission,
+explicitly owned versus shared Ollama control, broader per-model policies,
+memory/VRAM measurement, resource-aware model-instance admission,
 startup-cost routing, default interpreter quality/bootstrap and release packaging.
+Optional owned-GGUF on-demand loading is implemented in the subsequent
+[lifecycle policy increment](MODEL-LIFECYCLE-POLICY.md); it does not complete those gates.
 Selecting Ollama currently reports owned-GGUF lifecycle unsupported and refuses
 these mutations; it does not kill the user's Ollama service or switch backend.
 

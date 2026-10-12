@@ -561,8 +561,17 @@ mod tests {
     use crate::task::TaskEngine;
     use eefn::automation_policy::{Authorization, PolicyCommand};
     fn setup(store: Arc<JobStore>) -> (Arc<TaskEngine>, Plan, Authorization) {
+        setup_with_validity(store, 10000)
+    }
+    fn setup_with_validity(
+        store: Arc<JobStore>,
+        valid_for_ms: u64,
+    ) -> (Arc<TaskEngine>, Plan, Authorization) {
         let (engine, source, _definition, policy) =
-            super::super::automation_authorizations::tests::fixture(store.clone());
+            super::super::automation_authorizations::tests::fixture_with_validity(
+                store.clone(),
+                valid_for_ms,
+            );
         store
             .automation_policy_checkpoint(
                 policy.creation.clone(),
@@ -645,7 +654,8 @@ mod tests {
     #[test]
     fn terminal_archive_removes_only_live_history_and_never_refunds_or_recreates() {
         let store = JobStore::in_memory().unwrap();
-        let (engine, source, policy) = setup(store.clone());
+        // Archive/no-refund behavior is independent of short expiry timing.
+        let (engine, source, policy) = setup_with_validity(store.clone(), 60000);
         let original = json!(store.get(&source.plan_id).unwrap());
         for ordinal in 1..=3 {
             let job = fresh(&engine);

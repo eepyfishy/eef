@@ -94,6 +94,190 @@ fn configure_cpu_threads(command: &mut Command, threads: Option<u16>) -> Result<
 #[cfg(test)]
 mod advertisement_tests {
     use super::*;
+    #[tokio::test]
+    async fn concurrent_demand_waiters_share_one_load_and_atomic_active_pin_handoff() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("node.json");
+        crate::setup::write_json(&path,&json!({"node_id":"owner","models":{"provider":"llamacpp"},"model_lifecycle":{"startup":"on_demand"}})).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let healthy = Arc::new(tokio::sync::Notify::new());
+        let release = healthy.clone();
+        let http = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 8192];
+            socket.read(&mut request).await.unwrap();
+            healthy.notified().await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .await
+                .unwrap();
+        });
+        let artifact = directory.path().join("synthetic.gguf");
+        std::fs::write(&artifact, b"test-only").unwrap();
+        let slot = serde_json::from_value(
+            json!({"model_id":"selected","port":port,"model_path":artifact}),
+        )
+        .unwrap();
+        let server = ModelServer::new(std::env::current_exe().unwrap(), vec![slot]);
+        let service = crate::NodeService::new(path, "owner".into());
+        let engine = Arc::new(
+            crate::NodeEngine::new(false, vec![], directory.path().into())
+                .unwrap()
+                .with_service(service.clone())
+                .with_model_server(server.clone()),
+        );
+        let guard = service
+            .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        let starts = std::sync::atomic::AtomicUsize::new(0);
+        let spawn = |_: &ModelSlot, _: &str| {
+            starts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            server.test_spawn_resident("selected")
+        };
+        let (one, two, _) = tokio::join!(
+            server.acquire_demand_pin("selected", Duration::from_secs(3), spawn, || Ok(())),
+            server.acquire_demand_pin("selected", Duration::from_secs(3), spawn, || Ok(())),
+            async {
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        if server.snapshot().unwrap()[0]["state"] == "loading" {
+                            break;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+                assert!(server.can_infer(Some("selected")));
+                release.notify_one();
+            }
+        );
+        let one = one.unwrap();
+        let two = two.unwrap();
+        assert_eq!(starts.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(server.snapshot().unwrap()[0]["active_requests"], 2);
+        assert_eq!(server.snapshot().unwrap()[0]["state"], "active");
+        let generation = server.snapshot().unwrap()[0]["generation"]
+            .as_u64()
+            .unwrap();
+        assert!(
+            server
+                .reserve_control(
+                    "selected",
+                    generation,
+                    &uuid::Uuid::new_v4().to_string(),
+                    false
+                )
+                .is_err()
+        );
+        drop(one);
+        drop(two);
+        assert_eq!(server.snapshot().unwrap()[0]["state"], "warm_idle");
+        http.await.unwrap();
+        drop(guard);
+    }
+    #[tokio::test]
+    async fn final_load_authority_refusal_cleans_owned_process_before_any_pin() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let http = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 8192];
+            socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .await
+                .unwrap();
+        });
+        let slot = serde_json::from_value(json!({"model_id":"selected","port":port})).unwrap();
+        let server = ModelServer::new(PathBuf::new(), vec![slot]);
+        let id = uuid::Uuid::new_v4().to_string();
+        server.reserve_control("selected", 0, &id, true).unwrap();
+        let confirmed = std::sync::atomic::AtomicBool::new(false);
+        assert!(
+            server
+                .load_reserved_checked(
+                    "selected",
+                    &id,
+                    Duration::from_secs(3),
+                    |_| server.test_spawn_resident("selected"),
+                    || {
+                        confirmed.store(true, std::sync::atomic::Ordering::SeqCst);
+                        Err::<(), _>(anyhow::anyhow!(
+                            "current authority changed before readiness"
+                        ))
+                    }
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            confirmed.load(std::sync::atomic::Ordering::SeqCst),
+            "must reach final authority, not merely time out"
+        );
+        let row = server.snapshot().unwrap();
+        assert_eq!(row[0]["state"], "error");
+        assert_eq!(row[0]["active_requests"], 0);
+        assert!(row[0]["owned_pid"].is_null());
+        http.await.unwrap();
+        server.close();
+    }
+    #[tokio::test]
+    async fn owned_process_exit_before_health_handoff_never_fabricates_readiness() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let http = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 8192];
+            socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .await
+                .unwrap();
+        });
+        let slot = serde_json::from_value(json!({"model_id":"selected","port":port})).unwrap();
+        let server = ModelServer::new(PathBuf::new(), vec![slot]);
+        let id = uuid::Uuid::new_v4().to_string();
+        server.reserve_control("selected", 0, &id, true).unwrap();
+        let final_check = std::sync::atomic::AtomicBool::new(false);
+        let result = server
+            .load_reserved_checked(
+                "selected",
+                &id,
+                Duration::from_secs(3),
+                |_| server.test_spawn_resident("selected"),
+                || {
+                    final_check.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let mut processes = server.processes.lock().unwrap();
+                    let owned = processes.get_mut("selected").unwrap();
+                    owned.child.start_kill()?;
+                    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+                    loop {
+                        if owned.child.try_wait()?.is_some() {
+                            break;
+                        }
+                        if std::time::Instant::now() >= deadline {
+                            bail!("test child termination unconfirmed")
+                        };
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Ok(())
+                },
+            )
+            .await;
+        assert!(final_check.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(result.is_err());
+        let row = server.snapshot().unwrap();
+        assert_eq!(row[0]["state"], "error");
+        assert_eq!(row[0]["active_requests"], 0);
+        assert!(row[0]["owned_pid"].is_null());
+        http.await.unwrap();
+        server.close();
+    }
     #[test]
     fn resident_child_helper() {
         if std::env::args().any(|s| s == "eef-owned-model-lifecycle-test") {
@@ -462,6 +646,7 @@ pub struct ModelServer {
     operation: Mutex<()>,
     lifecycle: watch::Sender<ModelLifecycle>,
     client: reqwest::Client,
+    demand_runtime: SyncMutex<Option<std::sync::Weak<crate::model_lifecycle::ModelRuntime>>>,
 }
 
 struct OwnedProcess {
@@ -504,9 +689,75 @@ impl Drop for ModelUse<'_> {
 }
 
 impl ModelServer {
+    pub(crate) fn bind_demand_runtime(
+        &self,
+        runtime: std::sync::Weak<crate::model_lifecycle::ModelRuntime>,
+    ) {
+        *self.demand_runtime.lock().unwrap() = Some(runtime);
+        self.changed();
+    }
+    fn demand_authorized(&self) -> bool {
+        self.demand_runtime
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|r| r.upgrade())
+            .is_some_and(|r| r.demand_authorized())
+    }
+    fn demand_artifacts_present(&self, slot: &ModelSlot) -> bool {
+        self.binary.is_file()
+            && slot.model_path.is_file()
+            && slot.mmproj_path.as_ref().is_none_or(|path| path.is_file())
+    }
+    /// Cold availability is distinct from resident readiness. Only opt-in,
+    /// current runtime-owned demand loads can keep admitted requests waiting.
+    pub fn can_infer(&self, model: Option<&str>) -> bool {
+        if self.model_ready(model) {
+            return true;
+        }
+        if !self.demand_authorized() {
+            return false;
+        }
+        let Some(slot) = self.slot(model) else {
+            return false;
+        };
+        if !self.demand_artifacts_present(slot) {
+            return false;
+        }
+        let gate = self.residency.lock().unwrap();
+        !gate.closed
+            && gate.slots.get(&slot.model_id).is_some_and(|s| {
+                (s.state == ModelLifecycle::Unloaded && s.control.is_none())
+                    || (s.state == ModelLifecycle::Loading
+                        && s.control
+                            .as_deref()
+                            .is_some_and(|id| id.starts_with("demand:")))
+            })
+    }
     #[cfg(test)]
     pub(crate) fn test_resident() -> Arc<Self> {
         advertisement_tests::resident_server()
+    }
+    #[cfg(test)]
+    fn test_spawn_resident(&self, model: &str) -> Result<()> {
+        let mut command = Command::new(std::env::current_exe()?);
+        command
+            .args([
+                "--exact",
+                "model_server::advertisement_tests::resident_child_helper",
+                "--skip",
+                "eef-owned-model-lifecycle-test",
+                "--test-threads=1",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let (child, tree) = crate::process_lifetime::spawn(&mut command)?;
+        self.processes
+            .lock()
+            .unwrap()
+            .insert(model.to_owned(), OwnedProcess { child, _tree: tree });
+        Ok(())
     }
     #[cfg(test)]
     pub(crate) fn test_age_idle(&self, age: Duration) {
@@ -516,6 +767,7 @@ impl ModelServer {
     }
     pub fn new(binary: PathBuf, slots: Vec<ModelSlot>) -> Arc<Self> {
         Arc::new(Self {
+            demand_runtime: SyncMutex::new(None),
             host: "127.0.0.1".into(),
             binary,
             slots,
@@ -881,6 +1133,7 @@ impl ModelServer {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub(crate) async fn load_reserved(
         &self,
         model: &str,
@@ -888,7 +1141,38 @@ impl ModelServer {
         timeout: Duration,
         spawn_authorized: impl FnOnce(&ModelSlot) -> Result<()>,
     ) -> Result<()> {
+        self.load_reserved_checked(model, id, timeout, spawn_authorized, || Ok(()))
+            .await
+    }
+    pub(crate) async fn load_reserved_checked<G>(
+        &self,
+        model: &str,
+        id: &str,
+        timeout: Duration,
+        spawn_authorized: impl FnOnce(&ModelSlot) -> Result<()>,
+        complete_authorized: impl FnOnce() -> Result<G>,
+    ) -> Result<()> {
         let _operation = self.operation.lock().await;
+        self.load_reserved_inner(
+            model,
+            id,
+            timeout,
+            spawn_authorized,
+            complete_authorized,
+            false,
+        )
+        .await
+        .map(|_| ())
+    }
+    async fn load_reserved_inner<G>(
+        &self,
+        model: &str,
+        id: &str,
+        timeout: Duration,
+        spawn_authorized: impl FnOnce(&ModelSlot) -> Result<()>,
+        complete_authorized: impl FnOnce() -> Result<G>,
+        pin: bool,
+    ) -> Result<Option<ModelUse<'_>>> {
         let slot = self.slot(Some(model)).context("selected model missing")?;
         {
             let mut gate = self.residency.lock().unwrap();
@@ -942,22 +1226,83 @@ impl ModelServer {
         .context("model load timed out")
         .and_then(|r| r);
         if outcome.is_ok() {
+            let _authority = complete_authorized()?;
             let mut gate = self.residency.lock().unwrap();
             if gate.closed {
                 bail!("model runtime closed before load confirmation")
+            }
+            {
+                let mut processes = self.processes.lock().unwrap();
+                let owned = processes
+                    .get_mut(model)
+                    .context("owned model missing before readiness handoff")?;
+                if owned.child.try_wait()?.is_some() {
+                    bail!("owned model exited before readiness handoff")
+                }
             }
             let s = gate.slots.get_mut(model).unwrap();
             if s.control.as_deref() != Some(id) {
                 bail!("model load ownership changed")
             }
-            s.state = ModelLifecycle::Ready;
-            s.idle_since = Some(tokio::time::Instant::now());
+            s.state = if pin {
+                ModelLifecycle::Active
+            } else {
+                ModelLifecycle::Ready
+            };
+            s.active = if pin { 1 } else { 0 };
+            s.idle_since = (!pin).then(tokio::time::Instant::now);
             s.control = None;
+            let generation = s.generation;
             cleanup.armed = false;
             drop(gate);
             self.changed();
+            return Ok(pin.then(|| ModelUse {
+                server: self,
+                model: model.to_owned(),
+                generation,
+            }));
         }
-        outcome
+        outcome.map(|_| None)
+    }
+    pub(crate) async fn acquire_demand_pin<G>(
+        &self,
+        model: &str,
+        timeout: Duration,
+        spawn_authorized: impl FnOnce(&ModelSlot, &str) -> Result<()>,
+        authorize: impl Fn() -> Result<G>,
+    ) -> Result<ModelUse<'_>> {
+        if !self.can_infer(Some(model)) {
+            bail!("model unavailable; no demand retry or fallback")
+        }
+        let _operation = self.operation.lock().await;
+        {
+            let _authority = authorize()?;
+            if self.model_ready(Some(model)) {
+                return self.pin(Some(model));
+            }
+            // An earlier cancelled/failed load is Error, not a fresh cold start.
+            if !self.can_infer(Some(model)) {
+                bail!("demand model state changed; no retry")
+            }
+        }
+        let generation = self
+            .snapshot()?
+            .iter()
+            .find(|s| s["model_id"] == model)
+            .and_then(|s| s["generation"].as_u64())
+            .context("demand model state missing")?;
+        let id = format!("demand:{}", uuid::Uuid::new_v4());
+        self.reserve_control(model, generation, &id, true)?;
+        self.load_reserved_inner(
+            model,
+            &id,
+            timeout,
+            |slot| spawn_authorized(slot, &id),
+            authorize,
+            true,
+        )
+        .await?
+        .context("demand load did not transfer its inference pin")
     }
     #[cfg(test)]
     pub(crate) async fn unload_reserved<G>(
@@ -1122,6 +1467,7 @@ impl ModelServer {
     pub fn models(&self) -> Result<Vec<Value>> {
         // Invalid selections remain unroutable; do not poison node control.
         let _ = self.initialize_residency();
+        let demand = self.demand_authorized();
         let gate = self.residency.lock().unwrap();
         self.slots
             .iter()
@@ -1139,12 +1485,14 @@ impl ModelServer {
                 metadata.lifecycle = Some(state);
                 metadata.availability = Some(
                     if !busy
-                        && matches!(
+                        && (matches!(
                             state,
                             ModelLifecycle::Ready
                                 | ModelLifecycle::Active
                                 | ModelLifecycle::WarmIdle
-                        )
+                        ) || (demand
+                            && self.demand_artifacts_present(slot)
+                            && state == ModelLifecycle::Unloaded))
                     {
                         ModelAvailability::Available
                     } else {

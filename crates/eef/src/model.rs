@@ -193,7 +193,18 @@ impl ModelRegistry {
                     .unwrap_or("unknown")
                     .into(),
                 node_id: node_id.into(),
-                status: ModelStatus::Unloaded,
+                status: if matches!(
+                    metadata.lifecycle,
+                    Some(
+                        eefn::model_metadata::ModelLifecycle::Ready
+                            | eefn::model_metadata::ModelLifecycle::Active
+                            | eefn::model_metadata::ModelLifecycle::WarmIdle
+                    )
+                ) {
+                    ModelStatus::Warm
+                } else {
+                    ModelStatus::Unloaded
+                },
                 size_bytes: 0,
                 model_metadata: Some(metadata),
             });
@@ -589,6 +600,47 @@ impl Default for ChatOptions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn resident_metadata_warms_existing_score_without_inventing_legacy_readiness() {
+        use super::*;
+        let registry = ModelRegistry::default();
+        let mut metadata = eefn::model_metadata::ModelMetadata::from_legacy(Some("text"));
+        metadata.availability = Some(eefn::model_metadata::ModelAvailability::Available);
+        for (node, state) in [
+            ("cold", eefn::model_metadata::ModelLifecycle::Unloaded),
+            ("resident", eefn::model_metadata::ModelLifecycle::WarmIdle),
+        ] {
+            metadata.lifecycle = Some(state);
+            registry.register_remote(node,&[json!({"model_id":"m","backend":"llamacpp","modality":"text","model_metadata":metadata})]).unwrap();
+        }
+        registry.update_metrics("resident", 1.0, 1000.0);
+        registry.update_metrics("cold", 0.0, 0.0);
+        let request = ModelRequest {
+            modality: Modality::Text,
+            tier: None,
+            model_id: Some("m".into()),
+            constraints: json!({}),
+        };
+        let ordered = registry.route(&request, &BTreeMap::new());
+        assert_eq!(ordered[0].node_id, "resident");
+        assert_eq!(ordered[0].status, ModelStatus::Warm);
+        assert_eq!(ordered[1].status, ModelStatus::Unloaded);
+        registry
+            .register_remote(
+                "legacy",
+                &[json!({"model_id":"old","backend":"ollama","modality":"text"})],
+            )
+            .unwrap();
+        assert_eq!(
+            registry
+                .list()
+                .iter()
+                .find(|m| m.node_id == "legacy")
+                .unwrap()
+                .status,
+            ModelStatus::Unloaded
+        );
+    }
     use super::*;
 
     #[tokio::test]
