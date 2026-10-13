@@ -47,6 +47,29 @@ checked again; late release cannot decrement replacement registrations. All
 providers remain conservatively reserved for the parent lifetime. These counters
 are coordinator-local future admission, not physical quotas or remote stop proof.
 
+## Bounded recurring finite graphs (subsequent increment)
+
+An exact unexecuted compiled graph may be frozen with the existing `automations
+define` command, separately owner-approved with `automation-policies approve`,
+and explicitly armed with `automation-schedules enable`. The frozen-scope
+validation envelope now uses the full deterministic pipeline capability union,
+not only `pipeline.run`. This envelope is neither a model proposal nor a new
+authorization, grant or occurrence receipt. Ordinary fixed-scope reconstruction
+keeps its existing behavior.
+
+The existing timer, policy budget, compiler, occurrence journal and grant driver
+own every run. Each occurrence has fresh source/context/task/grant identity under
+the same fixed graph, executor and total run/duration/result allowances. Defining
+or approving a policy starts no work. Changing a child operation or executor
+cannot be authorized merely by recalculating digests. Current disclosure, local
+permissions, full graph availability and atomic child admission still apply.
+
+Run exhaustion, missed triggers, unknown work, revocation and restart retain the
+existing refusal/no-overlap/no-catch-up/no-unsafe-replay rules. Exact retained
+enable receipts inspect history rather than rearm authority. This is bounded
+recurrence of finite work, not a persistent media loop, event trigger, ambient
+listening, continuous backpressure or restart-safe continuation.
+
 ## Definition and dataflow
 
 `eefn::pipeline::FinitePipeline` has schema version 1, 1-16 ordered steps,
@@ -141,10 +164,10 @@ Continue on the existing durable job/task/attempt and grant machinery:
   ignores, rather than presenting that setting as active.
 - Keep public headless command/one-PC acceptance, then add physical multi-node/media
   acceptance. Pure schema/dataflow tests do not demonstrate camera or audio use.
-- Integrate and accept reusable automation authorization for frozen finite graphs.
-  Its reconstructed review must retain the complete deterministic child capability
-  union, not just the parent operation. Disabled definitions alone do not prove
-  pipeline policy approval, fresh trigger admission or safe recurring execution.
+- Expand recurring finite-graph acceptance across model/resource withdrawal,
+  stop/revocation and physical devices. Keep the reconstructed review's exact
+  child capability union, fresh trigger identities and existing aggregate limits;
+  recurrence is not continuous capture or permission to continue unknown work.
 
 Continuous loops, triggers, detection/VAD/STT/event pipelines, backpressure,
 offline buffering/privacy retention, peer transport, media relays/presence,
@@ -288,3 +311,56 @@ published artifacts/feed, installers, UI assets, real services or model files.
 Synthetic inference and two logical nodes on one PC do not demonstrate real
 interpreter/model quality or physical two-PC/media/resource acceptance. Full
 continuous, peer, stop, bootstrap, cluster and stable-release gates remain open.
+
+## Bounded recurrence checkpoint (2026-10-13)
+
+Final workspace/all-target suites pass **602 tests** in both feature modes:
+EEF library 228, owner CLI 16, installer 6, EEFN library 341, node CLI 11.
+Fresh default binaries/examples, formatting/diff, JS syntax and the backend/browser
+source guard pass. The new frozen-scope unit keeps the child capability union and
+rejects rewritten paths or executors, including a rewritten operation with new
+scope/authorization digests. An initial test setup tried to access a private
+fixture module; it was replaced with local test construction without widening
+production visibility or authority.
+
+Public `local-pipelines-mRsr4h` passes the existing finite/admission/native/restart
+cases plus explicit disabled definition, separate reusable owner policy approval
+without work, explicit schedule enable, two fresh source/context/parent-grant
+occurrences and exhausted schedule inspection. Each graph keeps exact input and
+executor, both local read/write steps complete, the original compiled source is
+unchanged, and receipt reuse/EEF restart cannot rearm or repeat either occurrence.
+No new runner, implicit approval, changed budgets or uncertainty continuation is
+introduced. These copies require no interpreter/model invocation.
+
+Earlier `local-pipelines-tGmWBs` timed out awaiting two occurrences while Cargo
+compilation ran concurrently. Retained read-only inspection proves one completed
+scheduled job and schedule interruption with `missed_trigger`, one claimed run
+and no next due time; warnings measured slow journal checkpoints (up to 5106 ms).
+This is failed acceptance, not a passing two-run result. The public fixture now
+uses an explicit five-second interval and runs separately from compilation;
+terminal schedule interruptions fail inspection immediately instead of being
+hidden by a generic poller. Production missed-trigger, budget and no-catch-up
+rules are unchanged. The passing isolated run does not establish a performance
+guarantee under compilation, disk pressure or other hardware/load.
+
+The subsequent ordinary regression `automation-schedules-DVNvnb` also fails:
+read-only inspection finds two completed system-information jobs, two claimed
+runs and an interrupted schedule labelled `job_unresolved`. Its timer logged
+`Trigger clock/policy changed before commit; no claim saved`, with slow journal
+checkpoints up to 1767 ms. No third job/grant exists. This is an open timer/
+journal reliability and diagnostic-classification gate, not passing automation
+acceptance or a failure that can be erased by the successful five-second pipeline
+fixture. No catch-up, budget refund or automatic continuation was authorized.
+
+Isolated `automation-schedules-m1C9Ta` reproduces the same third-claim refusal
+after two completed jobs and two claimed runs, with no next due time or third
+job/grant. Checkpoints reached 2191 ms and the same pre-commit clock/policy error
+was logged. Ordinary one-second scheduling acceptance therefore remains failed;
+the successful five-second finite-graph test does not clear this gate. Investigate
+journal/timer cost and truthful failure classification without extending authority,
+silently catching up or treating missing issuance as replay permission.
+
+No installed runtime, physical node, release/feed, installer, UI, shared service
+or model changes follow from this source increment. Bounded recurrence does not
+complete continuous media, strong stop, resource enforcement, bootstrap, peer/
+cluster or physical/stable-release acceptance. All full 0.4.0 gates remain.

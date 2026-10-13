@@ -142,13 +142,20 @@ fn validate_scope_compilation(record: &Authorization) -> Result<()> {
     if plan.tasks.len() != scope.operations.len() {
         bail!("Fixed scope template shape changed; migration required");
     }
-    let capabilities = scope
-        .operations
-        .iter()
-        .map(|o| o.capability.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
+    let capabilities = if scope.input.template == "local_pipeline" {
+        // A compound parent is one scoped operation but its immutable source
+        // review must still disclose every child. This validation envelope is
+        // neither a model proposal nor a new authorization/occurrence receipt.
+        eefn::request_planning::concrete_capabilities(&scope.input)?
+    } else {
+        scope
+            .operations
+            .iter()
+            .map(|o| o.capability.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+    };
     plan.request_review = Some(serde_json::from_value(
         json!({"schema_version":1,"original_text":description,
         "concrete_input":scope.input,"answers":[],"proposals":[{"operation_id":scope.owner_context.request_id(),
@@ -330,4 +337,74 @@ pub(crate) fn report(
         dispatched: false,
         automatically_retried: false
     })
+}
+
+#[cfg(test)]
+mod pipeline_tests {
+    use super::*;
+    #[test]
+    fn frozen_pipeline_reconstruction_keeps_children_and_rejects_operation_rewrites() {
+        let engine = crate::task::TaskEngine::new(crate::event::EventBus::new(20));
+        let plan = crate::request_approval::tests::compiled(&engine);
+        let id = uuid::Uuid::new_v4().to_string();
+        let creation = PolicyCommand::Approve {
+            definition: uuid::Uuid::new_v4().to_string(),
+            revision: 1,
+            definition_sha256: "b".repeat(64),
+            generation: 0,
+            operation_id: id.clone(),
+            valid_for_ms: 10000,
+            max_runs: 2,
+            max_execution_ms_per_task: 1000,
+            max_result_bytes_per_task: 1024,
+            max_reserved_execution_ms: 2000,
+            max_reserved_result_bytes: 2048,
+        };
+        let scope = fixed_scope(&plan).unwrap();
+        let mut record = Authorization {
+            schema_version: 1,
+            id,
+            creation,
+            generation: 1,
+            runtime_id: uuid::Uuid::new_v4().to_string(),
+            issuer_id: "a".repeat(64),
+            approved_at_ms: 1,
+            expires_at_ms: 10001,
+            scope_sha256: eefn::grants::definition_digest(&json!(scope)).unwrap(),
+            scope,
+            authorization_sha256: String::new(),
+            revision: 1,
+            state: "approved".into(),
+            revocation: None,
+        };
+        record.authorization_sha256 = record.digest().unwrap();
+        record.validate().unwrap();
+        let node = record.scope.operations[0].executor_node.clone();
+        record.scope.input = serde_json::from_value(json!({"schema_version":1,
+            "template":"local_pipeline","constraints":{"node_id":node},"params":{"pipeline":{
+            "schema_version":1,"max_retained_bytes":1024,"steps":[
+                {"id":"status","capability":"system.info","action":"run","params":{}},
+                {"id":"write","capability":"filesystem","action":"write","params":{"path":"owner-fixed.txt","content":"fixed"}}
+            ]}}})).unwrap();
+        let operation = &mut record.scope.operations[0];
+        operation.capability = "pipeline.run".into();
+        operation.action = "run".into();
+        operation.params = record.scope.input.params.clone();
+        operation.constraints = record.scope.input.constraints.clone();
+        record.scope_sha256 = eefn::grants::definition_digest(&json!(record.scope)).unwrap();
+        record.authorization_sha256 = record.digest().unwrap();
+        record.validate().unwrap();
+        validate_scope_compilation(&record).unwrap();
+        let mut changed = record.clone();
+        changed.scope.operations[0].params["pipeline"]["steps"][1]["params"]["path"] =
+            json!("other.txt");
+        changed.scope_sha256 = eefn::grants::definition_digest(&json!(changed.scope)).unwrap();
+        changed.authorization_sha256 = changed.digest().unwrap();
+        assert!(validate_scope_compilation(&changed).is_err());
+        let mut changed = record.clone();
+        changed.scope.operations[0].executor_node = "other".into();
+        changed.scope.operations[0].constraints["node_id"] = json!("other");
+        assert!(validate_scope_compilation(&changed).is_err());
+        assert_eq!(record.scope.operations.len(), 1);
+    }
 }

@@ -789,3 +789,20 @@ No installed app/node, published installer/feed, UI, real shared service or mode
 changed. This is not continuous capture, general acknowledged stop, physical
 resource enforcement, real model quality, physical two-PC or stable-release
 acceptance. Full bootstrap/media/peer/cluster/signing and other 0.4.0 gates remain.
+
+The subsequent bounded recurring-graph increment passes **602** all-target tests
+in both feature modes and fresh-binary `local-pipelines-mRsr4h`. Existing owner
+definitions/policies/timers issue two fresh finite read/write parent grants,
+preserving the entire immutable child scope and original unexecuted source.
+Definition/approval start no work; explicit enable is required. Exhaustion,
+receipt reuse and coordinator restart cannot rearm either occurrence. Earlier
+concurrent-compilation `missed_trigger` failure is separately retained in the
+pipeline checkpoint, not counted as passing or evidence of a performance fix.
+Continuous capture, physical acceptance and all other stable gates stay open.
+
+Ordinary one-second automation regressions `automation-schedules-DVNvnb` and
+isolated `automation-schedules-m1C9Ta` fail after two completed jobs: a later
+pre-commit timer clock/policy check refuses the claim, preserving interruption
+without a third grant. Slow checkpoint cost and the generic `job_unresolved`
+classification remain open reliability/diagnostic gates. Neither failure is
+counted as passing or cleared by the successful five-second pipeline fixture.

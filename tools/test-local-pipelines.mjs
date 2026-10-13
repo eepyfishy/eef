@@ -121,15 +121,59 @@ try{
  await review.start(failedCommand);assert.equal((await review.inspect(failed.id)).execution.attempts.length,1);
  assert.equal(await readFile(join(native,'pids.json'),'utf8'),identities,'failed graph cannot replay native work');
  const failedBefore=JSON.stringify(await review.inspect(failed.id));
+ // Explicit bounded recurring graph uses the existing definition/policy/timer.
+ // No implicit approval or second workload system; no ambient/continuous claim.
+ const automaticDest=join(work,'scheduled-copy.txt');
+ const automaticInput={template:'local_pipeline',constraints:{node_id:executor.id},params:{pipeline:{schema_version:1,max_retained_bytes:2048,steps:[
+  {id:'read',capability:'filesystem',action:'read',params:{path:source}},
+  {id:'write',capability:'filesystem',action:'write',params:{path:automaticDest},inputs:[{parameter:'content',source_step:'read',pointer:'/content'}]}
+ ]}}};
+ const automaticSource=await review.save(automaticInput),automaticSourceBefore=JSON.stringify(await review.inspect(automaticSource.id));
+ const definition=randomUUID();
+ const defined=await owner(['automations','define','--operation-id',definition,'--from-job',automaticSource.id,'--revision',String(automaticSource.revision),
+  '--plan-sha256',automaticSource.plan_sha256,'--name','Bounded local copies','--every-ms','5000','--max-runs','2','--valid-for-ms','60000']);
+ assert.equal(await exists(automaticDest),false);
+ const authorization=await owner(['automation-policies','approve','--definition',definition,'--revision','1','--definition-sha256',defined.result.definition.definition_sha256,
+  '--generation','0','--operation-id',randomUUID(),'--valid-for-ms','60000','--max-runs','2','--max-execution-ms-per-task','5000','--max-result-bytes-per-task','4096',
+  '--max-reserved-execution-ms','10000','--max-reserved-result-bytes','8192']);
+ assert.equal(authorization.result.execution_requested,false);assert.equal(authorization.result.timers_started,false);assert.equal(await exists(automaticDest),false);
+ const policy=authorization.result.authorization,schedule=randomUUID();
+ const enableArgs=['automation-schedules','enable','--policy',policy.id,'--policy-sha256',policy.authorization_sha256,'--operation-id',schedule];
+ await owner(enableArgs);
+ const scheduleDeadline=Date.now()+45000;
+ for(;;){
+  const current=(await owner(['automation-schedules','show',schedule])).result.schedule;
+  if(current.state==='exhausted')break;
+  assert(!['interrupted','stopped','resolved'].includes(current.state),'schedule stopped for inspection: '+current.reason+'; private '+scratch);
+  assert(Date.now()<scheduleDeadline,'two finite occurrences did not settle');await new Promise(r=>setTimeout(r,200));
+ }
+ const scheduled=(await owner(['automation-schedules','show',schedule])).result;assert.equal(scheduled.schedule.claimed_runs,2);assert.equal(scheduled.timer_active,false);
+ const occurrences=(await owner(['automation-occurrences','list','--policy',policy.id])).result.items;assert.equal(occurrences.length,2);
+ const automaticJobs=[];
+ for(const occurrence of occurrences){const p=await review.inspect(occurrence.job_id);assert.equal(p.status,'completed');assert.equal(p.execution.attempts.length,1);
+  assert.equal(p.execution.attempts[0].grant.capability,'pipeline.run');assert.deepEqual(p.execution.attempts[0].grant.params,automaticInput.params);
+  assert.deepEqual(p.request_review.proposals[0].proposal.suggested_capabilities,['pipeline.run','filesystem']);
+  assert.deepEqual((await review.result(p.plan_id)).data.completed_steps,['read','write']);automaticJobs.push(p);
+ }
+ assert.equal(new Set(automaticJobs.map(p=>p.goal.request_context.request_id)).size,2);
+ assert(automaticJobs.every(p=>p.goal.request_context.request_id!==JSON.parse(automaticSourceBefore).goal.request_context.request_id));
+ assert.equal(JSON.stringify(await review.inspect(automaticSource.id)),automaticSourceBefore);
+ assert.equal(await readFile(automaticDest,'utf8'),'public pipeline input');
+ assert.equal((await owner(enableArgs)).result.reused,true);assert.equal((await owner(['automation-occurrences','list','--policy',policy.id])).result.items.length,2);
  const completedBefore=JSON.stringify(await review.inspect(plan.id));const coordinatorBefore=(await json(eef+'/api/diagnostics')).runtime_id;
  await owner(['restart']);await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==coordinatorBefore&&(await json(eef+'/api/diagnostics')).registered_node_count===2,'coordinator restart');
  assert.equal(JSON.stringify(await review.inspect(plan.id)),completedBefore);assert.equal(calls.length,2);assert.equal(await exists(gatedDest),false);
  assert.equal(JSON.stringify(await review.inspect(failed.id)),failedBefore);assert.equal(await exists(failedDest),false);
+ assert.equal((await owner(enableArgs)).result.reused,true);assert.equal((await owner(['automation-schedules','show',schedule])).result.timer_active,false);
+ assert.equal((await owner(['automation-occurrences','list','--policy',policy.id])).result.items.length,2);
+ for(const p of automaticJobs)assert.equal(JSON.stringify(await review.inspect(p.plan_id)),JSON.stringify(p));
  assert.equal((await json(origin.url+'/api/config')).config.permissions.filesystem.read,false,'origin feature is never widened');
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,no_ui_controller:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,synthetic_model:true,real_model_quality:false,
   explicit_source_compilation:true,no_work_before_approval_and_execution:true,one_local_compound_parent:true,atomic_child_provider_accounting:true,exact_stage_definitions:true,local_dataflow:true,one_selected_model_call:true,
   no_intermediate_coordinator_payload:true,one_attempt_no_replay:true,later_permission_loss_stops_pending_work:true,unknown_retained_after_restart:true,completed_history_unchanged:true,origin_permissions_unchanged:true,
   known_failed_native_stage_stops_later_work:true,native_creation_verified_exit_observed:true,failed_history_unchanged:true,
+  bounded_explicit_recurring_graph:true,two_fresh_approved_parent_occurrences:true,no_work_before_policy_and_enable:true,immutable_automatic_source:true,
+  exhausted_schedule_no_receipt_rearm_or_restart_replay:true,
   continuous_workloads:false,physical_resource_quota_proven:false,strong_stop_acknowledgement:false},null,2));
  console.log('Public local pipeline validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}

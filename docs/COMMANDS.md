@@ -52,6 +52,13 @@ pipeline.json` path with a schema-1 `PlanInput`, `template:"local_pipeline"` and
 owner approval/execution is still required. Stage identities are fixed and data
 remains local between steps. See [definition, commands and limits](LOCAL-PIPELINES.md).
 
+The subsequent recurring-graph increment reuses `automations define`, separate
+owner `automation-policies approve` and explicit `automation-schedules enable`.
+Its frozen review includes all child capabilities; every bounded run gets fresh
+job/grant identities under the same fixed graph and allowances. No timer starts
+at definition/approval, and exhausted/restarted receipts cannot implicitly rearm.
+This is finite recurrence, not continuous ambient capture or safe continuation.
+
 ## Automation definition authoring (unreleased after alpha.6)
 
 The subsequent `eef automation-schedules enable|stop|show|list|resolve-refusal` connects exact
