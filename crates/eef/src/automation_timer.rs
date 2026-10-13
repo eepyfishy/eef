@@ -193,7 +193,7 @@ impl TimerManager {
                         let _ = runtime
                             .engine
                             .store
-                            .schedule_interrupt_now(&id, "job_unresolved");
+                            .schedule_interrupt_now(&id, "checkpoint_failed");
                         manager.active.lock().expect("timer active").remove(&id);
                     }
                 }

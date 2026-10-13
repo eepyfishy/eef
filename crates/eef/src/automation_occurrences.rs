@@ -208,6 +208,12 @@ pub(super) fn allowance_available(
     policy: &eefn::automation_policy::Authorization,
 ) -> Result<bool> {
     let retained = records(connection)?;
+    allowance_from_records(&retained, policy)
+}
+fn allowance_from_records(
+    retained: &[Reservation],
+    policy: &eefn::automation_policy::Authorization,
+) -> Result<bool> {
     let own = retained
         .iter()
         .filter(|r| r.delegation.policy_id == policy.id)
@@ -235,6 +241,25 @@ pub(super) fn allowance_available(
     Ok(own.len() < *max_runs as usize
         && duration <= max_reserved_execution_ms.saturating_sub(used_ms)
         && bytes <= max_reserved_result_bytes.saturating_sub(used_bytes))
+}
+/// Both admission gates inspect ONE freshly fully validated journal view under
+/// the caller's existing connection lock. No cross-call cache, time extension,
+/// authority, reservation, repair or mutation. The commit fence remains required.
+pub(super) fn trigger_admission_state(
+    connection: &Connection,
+    definition: &str,
+    policy: &eefn::automation_policy::Authorization,
+) -> Result<(bool, bool)> {
+    let retained = records(connection)?;
+    for record in retained
+        .iter()
+        .filter(|r| r.delegation.definition_id == definition)
+    {
+        if !archives::resolved(&archives::retained_plan(connection, record)?) {
+            return Ok((false, false));
+        }
+    }
+    Ok((true, allowance_from_records(&retained, policy)?))
 }
 pub(super) fn refuse_archived_request(
     connection: &Connection,
@@ -930,6 +955,54 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn joint_trigger_gate_is_fresh_read_only_and_preserves_overlap_and_no_refund() {
+        let store = JobStore::in_memory().unwrap();
+        let (engine, _, policy) = setup_with_validity(store.clone(), 60000);
+        let PolicyCommand::Approve { definition, .. } = &policy.creation else {
+            unreachable!()
+        };
+        let inspect = |expected| {
+            let db = store.connection.lock().unwrap();
+            let changes = db.total_changes();
+            let combined = trigger_admission_state(&db, definition, &policy).unwrap();
+            assert_eq!(combined, expected);
+            assert_eq!(combined.0, definition_resolved(&db, definition).unwrap());
+            if combined.0 {
+                assert_eq!(combined.1, allowance_available(&db, &policy).unwrap());
+            }
+            assert_eq!(
+                db.total_changes(),
+                changes,
+                "inspection cannot mutate, repair or refund"
+            );
+        };
+        inspect((true, true));
+        for ordinal in 1..=3 {
+            let job = fresh(&engine);
+            let saved = save(&store, &policy, &job, &command(&policy, &job));
+            inspect((false, false));
+            let cancelled = engine.cancel(&job.plan_id).unwrap();
+            inspect((true, ordinal < 3));
+            archive(
+                &store,
+                archive_command(&saved["reservation"], &cancelled),
+                &policy,
+            );
+            inspect((true, ordinal < 3));
+        }
+        let db = store.connection.lock().unwrap();
+        db.execute(
+            "UPDATE automation_occurrences SET record_json='{}' WHERE json_extract(record_json,'$.ordinal')=1",
+            [],
+        )
+        .unwrap();
+        assert!(
+            trigger_admission_state(&db, definition, &policy).is_err(),
+            "a previous validated view cannot hide later damage"
+        );
+    }
+
     #[test]
     fn atomic_reservation_is_new_job_approval_not_source_mutation_or_dispatch() {
         let store = JobStore::in_memory().unwrap();

@@ -106,10 +106,21 @@ fn policy(connection: &Connection, record: &Schedule) -> Result<Authorization> {
         .context("Trigger policy missing")
 }
 fn validate_schedule(connection: &Connection, s: &Schedule) -> Result<()> {
+    let p = policy(connection, s)?;
+    let PolicyCommand::Approve { definition, .. } = &p.creation else {
+        unreachable!()
+    };
+    let d = automations::read_definition(connection, definition)?;
+    validate_schedule_data(s, &p, &d)
+}
+fn validate_schedule_data(
+    s: &Schedule,
+    p: &Authorization,
+    d: &eefn::automation::Definition,
+) -> Result<()> {
     for id in [&s.id, &s.definition_id, &s.runtime_id, &s.creation.policy] {
         uuid(id)?;
     }
-    let p = policy(connection, s)?;
     let PolicyCommand::Approve {
         definition,
         max_runs,
@@ -118,8 +129,7 @@ fn validate_schedule(connection: &Connection, s: &Schedule) -> Result<()> {
     else {
         unreachable!()
     };
-    let d = automations::read_definition(connection, definition)?;
-    let eefn::automation::AutomationCommand::Define { every_ms, .. } = d.creation else {
+    let eefn::automation::AutomationCommand::Define { every_ms, .. } = &d.creation else {
         unreachable!()
     };
     if s.schema_version != 1
@@ -135,7 +145,7 @@ fn validate_schedule(connection: &Connection, s: &Schedule) -> Result<()> {
         || s.expires_at_ms != p.expires_at_ms
         || s.armed_at_ms < p.approved_at_ms
         || s.armed_at_ms >= s.expires_at_ms
-        || s.every_ms != every_ms
+        || s.every_ms != *every_ms
         || s.revision == 0
         || s.revision < u64::from(s.claimed_runs) * 2
         || s.claimed_runs > *max_runs
@@ -232,6 +242,7 @@ fn validate_schedule(connection: &Connection, s: &Schedule) -> Result<()> {
                                 | "shutdown"
                                 | "clock_discontinuity"
                                 | "job_unresolved"
+                                | "checkpoint_failed"
                                 | "preflight_refused"
                         )
                 )
@@ -296,6 +307,28 @@ fn read_trigger(connection: &Connection, id: &str) -> Result<Option<Trigger>> {
     let t: Trigger = serde_json::from_str(&raw).context("Damaged/future trigger retained")?;
     let s = read_schedule(connection, &t.schedule_id)?.context("Trigger schedule missing")?;
     let p = policy(connection, &s)?;
+    validate_trigger_data(
+        &t,
+        id,
+        &schedule_id,
+        ordinal,
+        &request_id,
+        &reservation_id,
+        &s,
+        &p,
+    )?;
+    Ok(Some(t))
+}
+fn validate_trigger_data(
+    t: &Trigger,
+    id: &str,
+    schedule_id: &str,
+    ordinal: u16,
+    request_id: &str,
+    reservation_id: &str,
+    s: &Schedule,
+    p: &Authorization,
+) -> Result<()> {
     let identities = [&t.id, &t.schedule_id, &t.reservation_id, &t.execution_id];
     for id in identities {
         uuid(id)?;
@@ -327,7 +360,7 @@ fn read_trigger(connection: &Connection, id: &str) -> Result<Option<Trigger>> {
     {
         bail!("Damaged trigger identity/time/context; no replacement");
     }
-    Ok(Some(t))
+    Ok(())
 }
 fn triggers(connection: &Connection) -> Result<Vec<Trigger>> {
     let mut statement = connection
@@ -338,7 +371,89 @@ fn triggers(connection: &Connection) -> Result<Vec<Trigger>> {
         .collect()
 }
 pub(super) fn validate_all(connection: &Connection) -> Result<()> {
-    let claims = triggers(connection)?;
+    // Read and fully validate dependencies once for THIS invocation only. The
+    // caller owns the connection lock/transaction; nothing is cached across a
+    // write, checkpoint or call. Point readers share the exact same predicates.
+    let policies = automation_authorizations::records(connection)?
+        .into_iter()
+        .map(|p| (p.id.clone(), p))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut definitions = std::collections::BTreeMap::new();
+    for p in policies.values() {
+        let PolicyCommand::Approve { definition, .. } = &p.creation else {
+            unreachable!()
+        };
+        if !definitions.contains_key(definition) {
+            definitions.insert(
+                definition.clone(),
+                automations::read_definition(connection, definition)?,
+            );
+        }
+    }
+    let mut retained_schedules = std::collections::BTreeMap::new();
+    let mut statement = connection.prepare("SELECT schedule_id,record_json,reserved_bytes FROM automation_schedules ORDER BY schedule_id")?;
+    for row in statement.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i64>(2)?,
+        ))
+    })? {
+        let (id, raw, reserved) = row?;
+        let s: Schedule = serde_json::from_str(&raw).context("Damaged/future schedule retained")?;
+        let p = policies
+            .get(&s.creation.policy)
+            .context("Trigger policy missing")?;
+        let PolicyCommand::Approve { definition, .. } = &p.creation else {
+            unreachable!()
+        };
+        validate_schedule_data(
+            &s,
+            p,
+            definitions
+                .get(definition)
+                .context("Trigger definition missing")?,
+        )?;
+        if s.id != id
+            || raw.len() > SCHEDULE_COST
+            || usize::try_from(reserved)? != SCHEDULE_COST - raw.len()
+        {
+            bail!("Schedule row identity/headroom differs");
+        }
+        retained_schedules.insert(id, s);
+    }
+    let mut claims = Vec::new();
+    let mut statement = connection.prepare("SELECT trigger_id,schedule_id,ordinal,request_id,reservation_id,record_json FROM automation_triggers ORDER BY schedule_id,ordinal")?;
+    for row in statement.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, u16>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, String>(4)?,
+            r.get::<_, String>(5)?,
+        ))
+    })? {
+        let (id, schedule_id, ordinal, request_id, reservation_id, raw) = row?;
+        let t: Trigger = serde_json::from_str(&raw).context("Damaged/future trigger retained")?;
+        let s = retained_schedules
+            .get(&t.schedule_id)
+            .context("Trigger schedule missing")?;
+        let p = policies
+            .get(&s.creation.policy)
+            .context("Trigger policy missing")?;
+        validate_trigger_data(
+            &t,
+            &id,
+            &schedule_id,
+            ordinal,
+            &request_id,
+            &reservation_id,
+            s,
+            p,
+        )?;
+        claims.push(t);
+    }
     let mut active_definitions = std::collections::BTreeSet::new();
     let mut identities = std::collections::BTreeSet::new();
     for t in &claims {
@@ -351,7 +466,7 @@ pub(super) fn validate_all(connection: &Connection) -> Result<()> {
             bail!("Trigger request identity is reused");
         }
     }
-    for s in schedules(connection)? {
+    for s in retained_schedules.into_values() {
         if matches!(s.state, State::Waiting | State::InFlight)
             && !active_definitions.insert(s.definition_id.clone())
         {
@@ -971,9 +1086,13 @@ impl JobStore {
         issuer: &str,
         clock: impl Fn() -> u64,
     ) -> Result<Option<Trigger>> {
+        let checkpoint_started = std::time::Instant::now();
+        let phase = |phase: &str| tracing::debug!(schedule_id=%id,phase,elapsed_us=checkpoint_started.elapsed().as_micros(),"Timer claim phase");
         let connection = self.connection.lock().expect("job journal");
+        phase("lock_acquired");
         validate_all(&connection)?;
         let mut s = read_schedule(&connection, id)?.context("Schedule missing")?;
+        phase("initial_validation");
         if s.state != State::Waiting {
             return Ok(None);
         };
@@ -988,6 +1107,7 @@ impl JobStore {
         } else {
             None
         };
+        phase("eligibility");
         if let Some(reason) = reason {
             interrupted(&mut s, reason, now)?;
             save_schedule(self, &connection, &mut s, false)?;
@@ -996,14 +1116,16 @@ impl JobStore {
         if now < due {
             return Ok(None);
         };
-        if !automation_occurrences::definition_resolved(&connection, &s.definition_id)? {
+        let p = policy(&connection, &s)?;
+        let (resolved, budget_available) =
+            automation_occurrences::trigger_admission_state(&connection, &s.definition_id, &p)?;
+        phase("occurrence_admission");
+        if !resolved {
             bail!("Previous occurrence is unfinished/uncertain; no trigger overlap");
         }
-        let p = policy(&connection, &s)?;
         let PolicyCommand::Approve { max_runs, .. } = p.creation else {
             unreachable!()
         };
-        let budget_available = automation_occurrences::allowance_available(&connection, &p)?;
         if s.claimed_runs >= max_runs
             || !budget_available
             || p.scope.run_allowance(&p.creation.limits().unwrap())?.0
@@ -1062,6 +1184,7 @@ impl JobStore {
         )?;
         tx.execute("INSERT INTO automation_triggers(trigger_id,schedule_id,ordinal,request_id,reservation_id,record_json) VALUES(?1,?2,?3,?4,?5,?6)",params![t.id,t.schedule_id,t.ordinal,t.request_context.request_id(),t.reservation_id,raw])?;
         validate_all(&tx)?;
+        phase("staged_validation");
         let commit = clock();
         if commit < now
             || commit >= due.saturating_add(s.every_ms)
@@ -1069,9 +1192,12 @@ impl JobStore {
             || p.scope.run_allowance(&p.creation.limits().unwrap())?.0
                 > s.expires_at_ms.saturating_sub(commit)
         {
+            phase("commit_fence_refused");
             bail!("Trigger clock/policy changed before commit; no claim saved");
         }
+        phase("commit_fence_accepted");
         tx.commit()?;
+        phase("committed");
         Ok(Some(t))
     }
     fn schedule_stop(
@@ -1222,6 +1348,43 @@ mod tests {
     use super::*;
     use crate::task::TaskEngine;
     use eefn::automation_occurrence::OccurrenceCommand;
+    /// Opt-in diagnostic: opens the supplied journal strictly read-only and
+    /// reports timings only, never source/credentials, recovery or a new claim.
+    #[test]
+    #[ignore = "set EEF_PROFILE_JOURNAL to an existing isolated fixture database"]
+    fn profile_read_only_timer_journal() {
+        let path = std::env::var_os("EEF_PROFILE_JOURNAL").expect("EEF_PROFILE_JOURNAL required");
+        let db =
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let measure = |name: &str, operation: &dyn Fn() -> Result<()>| {
+            let start = std::time::Instant::now();
+            operation().unwrap();
+            println!("{name}: {} us", start.elapsed().as_micros());
+        };
+        let policies = automation_authorizations::records(&db).unwrap();
+        let policy = policies
+            .first()
+            .expect("at least one fixture authorization required");
+        let PolicyCommand::Approve { definition, .. } = &policy.creation else {
+            unreachable!()
+        };
+        for _ in 0..3 {
+            measure("authorizations", &|| {
+                automation_authorizations::validate_all(&db)
+            });
+            measure("schedules", &|| validate_all(&db));
+            measure("occurrences", &|| automation_occurrences::validate_all(&db));
+            measure("separate admission gates", &|| {
+                automation_occurrences::definition_resolved(&db, definition)?;
+                automation_occurrences::allowance_available(&db, policy)?;
+                Ok(())
+            });
+            measure("joint admission gates", &|| {
+                automation_occurrences::trigger_admission_state(&db, definition, policy)?;
+                Ok(())
+            });
+        }
+    }
     fn fixture(store: Arc<JobStore>) -> (Arc<TaskEngine>, Plan, Authorization, Schedule) {
         fixture_with_validity(store, 10000)
     }
@@ -1266,6 +1429,26 @@ mod tests {
             &["system.info".into()],
         )
     }
+    #[test]
+    fn failed_checkpoint_is_distinct_from_unresolved_work_and_does_not_create_a_claim() {
+        let store = JobStore::in_memory().unwrap();
+        let (_, _, _, schedule) = fixture_with_validity(store.clone(), 60000);
+        let failed = store
+            .schedule_interrupt_now(&schedule.id, "checkpoint_failed")
+            .unwrap();
+        assert_eq!(failed.state, State::Interrupted);
+        assert_eq!(failed.reason.as_deref(), Some("checkpoint_failed"));
+        assert_eq!(failed.claimed_runs, 0);
+        assert!(failed.next_due_ms.is_none());
+        let db = store.connection.lock().unwrap();
+        assert!(triggers(&db).unwrap().is_empty());
+        validate_all(&db).unwrap();
+        let mut historical = failed;
+        historical.reason = Some("job_unresolved".into());
+        historical.record_sha256 = digest(&historical).unwrap();
+        validate_schedule(&db, &historical).unwrap();
+    }
+
     #[test]
     fn backend_refusal_resolution_is_explicit_deduplicated_and_never_replays_or_refunds() {
         let store = JobStore::in_memory().unwrap();

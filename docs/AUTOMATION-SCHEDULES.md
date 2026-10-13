@@ -7,6 +7,35 @@ and execute through the existing reviewed grant driver. This is not general
 semantic automation, a second runner, continuous media or stable 0.4.0.
 Nothing activates merely by saving a definition/policy or starting EEF.
 
+## Journal admission and diagnostics (subsequent increment)
+
+Trigger overlap and remaining allowance checks share one fresh fully validated
+occurrence scan under the existing journal connection lock. Schedule history
+validation loads each policy/definition once within that invocation; schedule
+and trigger point readers share the same predicates. No validated state is cached
+across a write, checkpoint or call. Row identity, digest, headroom, ordinal,
+generation, context, archive, no-refund and lineage checks remain. Existing
+due-window, policy validity and final transactional commit fences still apply.
+
+A timer checkpoint failure now records `checkpoint_failed`, not `job_unresolved`.
+The latter remains valid historical evidence and is still used for an actual
+unresolved in-flight job. Neither reason confirms remote stop or no effects,
+refunds authority, rearms the schedule or permits retry/migration.
+
+Opt-in development profiling reads an existing isolated fixture database with
+SQLite read-only flags. It prints phase timings only, not records/credentials:
+
+```powershell
+$env:EEF_PROFILE_JOURNAL = 'PATH_TO_EXISTING_FIXTURE_DB'
+cargo test -p eef --lib profile_read_only_timer_journal -- --ignored --nocapture
+```
+
+Runtime claim phase timings require the explicit development logging filter
+`RUST_LOG=warn,eef::jobs::automation_schedules=debug`. Logs contain only schedule
+IDs, phase names and elapsed microseconds. The ignored profiler is not normal
+test acceptance or an installed command. Measured speedups do not establish a
+timing guarantee or clear short-interval/loaded-system release acceptance.
+
 ## Commands
 
 First create/inspect an ordinary compiled source, save its disabled definition
@@ -204,3 +233,60 @@ exited 1 without a normal result/failure report; its journal retained the refusa
 without resolution or replay and no fixture processes remained. No matching
 application/Defender event appeared in the checked interval. It is not a pass,
 and the subsequent traced rerun does not prove its cause or a fix.
+
+## Journal cost and truthful checkpoint failure (2026-10-13)
+
+The previous source checkpoint reproduced ordinary one-second scheduling failures
+in `automation-schedules-DVNvnb` and isolated `automation-schedules-m1C9Ta`, both
+after two completed jobs. Investigation used the latter database strictly
+read-only. Its SHA-256 remained
+`25166cc8c4dcc20c9c7f0bc6649b3990234c097d4d2e3bb08e77876f3d7d868c`.
+Initial occurrence validation took roughly 169-210 ms for only two records.
+Combining the two admission checks measured 208-255 ms versus 371-493 ms for the
+separate checks in a final focused run. These are local debug-build samples,
+not latency guarantees, release-mode measurements or physical-device acceptance.
+
+The new joint gate preserves unresolved/live overlap refusal, cancelled/archived
+resolution, exhausted allowance/no refund and later corruption detection. Tests
+check that inspection changes no database rows. Per-invocation schedule dependency
+reuse retains row/digest/headroom/time/context/identity/history predicates from
+point readers; all current and commit authority checks remain fresh. A checkpoint
+error now records `checkpoint_failed` rather than incorrectly implying an
+unresolved job. Historical `job_unresolved` remains accepted.
+
+An initial negative-test SQL statement assumed an `ordinal` column that is
+actually inside the retained JSON. The test was corrected to address that JSON
+field; production schema and authority were unchanged. A direct profiler launch
+without its runtime DLL search path exited `0xc0000135` without a harness result;
+the properly configured read-only launch passed. Neither failed setup is counted
+as acceptance or used to explain older unrelated native exits.
+
+Performance acceptance remains open. Joint-scan-only `automation-schedules-e5kodJ`
+failed before its first durable claim. Traced `automation-schedules-lmyq8R` kept
+two completed jobs, then refused its third claim: phase timings showed about
+805 ms inside the claim before the final fence refused it. Subsequent dependency-
+reuse `automation-schedules-fKKHCI` completed one job, then retained `missed_trigger`
+with no next due time. Slow checkpoints/lock and processing contention still
+require investigation. These are failed public regressions, not evidence the
+one-second timer gate is fixed. No timing window, run budget, expiry, no-catch-up
+or no-unsafe-replay condition was relaxed.
+
+Final workspace/all-target suites pass **604 tests** in both feature modes:
+EEF library 230 (plus one ignored opt-in profiler), owner CLI 16, installer 6,
+EEFN library 341, node CLI 11. Passing units do not clear the failed public
+scheduling gate or complete the full bootstrap/media/resource/peer/cluster/
+physical/signing and stable 0.4.0 requirements.
+
+Fresh final workspace binaries/examples, formatting/diff, JS syntax and the
+backend/browser source guard pass. Final public `local-pipelines-dOFmtu` passes
+finite local execution, one-parent child admission, permission loss, known failed
+native stage, bounded five-second recurrence and unchanged histories/no rearm
+after restart. This does not clear ordinary one-second scheduling acceptance.
+
+Preceding `local-pipelines-SuDk94` exited `0xc0000409` without a normal result or
+failure report; read-only inspection found zero jobs and no remaining fixture
+processes, and recent matching Application events did not establish a cause.
+Bounded private harness-exit/phase diagnostics were added before the subsequent
+isolated passing run. That passing run does not explain or prove a fix for the
+native exit. No installed runtime/node, release/feed, installer, UI, model or real
+shared service changed by this source checkpoint.

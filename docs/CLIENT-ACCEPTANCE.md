@@ -806,3 +806,18 @@ pre-commit timer clock/policy check refuses the claim, preserving interruption
 without a third grant. Slow checkpoint cost and the generic `job_unresolved`
 classification remain open reliability/diagnostic gates. Neither failure is
 counted as passing or cleared by the successful five-second pipeline fixture.
+
+The subsequent [journal admission/diagnostic checkpoint](AUTOMATION-SCHEDULES.md#journal-cost-and-truthful-checkpoint-failure-2026-10-13)
+passes **604** all-target tests in both feature modes (one additional opt-in
+read-only profiler stays ignored), fresh default binaries/examples and source
+checks. It combines duplicate admission scans and reuses freshly validated
+schedule dependencies within one invocation; no cross-call cache or authority
+fence relaxation. `checkpoint_failed` distinguishes a checkpoint error from an
+actual unresolved job while retaining historical `job_unresolved` compatibility.
+
+Public `local-pipelines-dOFmtu` passes existing finite/recurring cases, but ordinary
+one-second fixtures remain failed after the optimizations. Phase timing and
+read-only measurements show reduced duplicated work, not a timing guarantee or
+completed reliability gate. Earlier `local-pipelines-SuDk94` native exit remains
+unexplained and is separately recorded. Physical/resource/continuous/bootstrap/
+peer/cluster/signing and all full stable 0.4.0 gates remain open.
