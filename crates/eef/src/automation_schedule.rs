@@ -158,17 +158,98 @@ struct Summary {
     active_trigger: Option<String>,
     reason: Option<String>,
 }
+#[derive(Default)]
+struct Inspection {
+    selected: Option<Schedule>,
+    job: Option<crate::task::Plan>,
+    items: Vec<Value>,
+    next: Option<String>,
+}
+fn read_inspection(store: &crate::jobs::JobStore, command: &ScheduleCommand) -> Result<Inspection> {
+    command.validate()?;
+    let mut view = Inspection::default();
+    match command {
+        ScheduleCommand::Show { id } => {
+            let (schedule, job) = store.schedule_snapshot(id)?;
+            view.selected = Some(schedule);
+            view.job = job;
+        }
+        ScheduleCommand::List { limit, after } => {
+            for schedule in store
+                .schedule_list()?
+                .into_iter()
+                .filter(|s| after.as_ref().is_none_or(|after| s.id > *after))
+            {
+                if view.items.len() == *limit as usize {
+                    view.next = view
+                        .items
+                        .last()
+                        .and_then(|v| v["id"].as_str())
+                        .map(str::to_owned);
+                    break;
+                }
+                view.items.push(summary(&schedule));
+            }
+        }
+        _ => bail!("Read-only schedule inspection cannot manage schedules"),
+    }
+    Ok(view)
+}
+fn report(
+    manager: &crate::automation_timer::TimerManager,
+    runtime: &str,
+    command: &ScheduleCommand,
+    view: Inspection,
+    reused: bool,
+    stopped: bool,
+) -> Result<Value> {
+    let Inspection {
+        selected,
+        job,
+        items,
+        next,
+    } = view;
+    let trigger = selected.as_ref().and_then(|s| s.active_trigger.clone());
+    let timer_active = selected.as_ref().is_some_and(|s| {
+        s.runtime_id == runtime
+            && matches!(s.state, State::Waiting | State::InFlight)
+            && manager.active.lock().expect("timer active").contains(&s.id)
+    });
+    let value = json!(Report {
+        schema_version:1,report_type:"automation_schedule".into(),runtime_id:runtime.into(),command:command.clone(),schedule:selected,
+        items,next_after:next,reused,timer_active,activation_requested:matches!(command,ScheduleCommand::Enable{..})&&!reused,current_trigger_id:trigger,
+        current_job_id:job.as_ref().map(|p|p.plan_id.clone()),current_job_status:job.as_ref().map(|p|serde_json::to_value(p.status).unwrap().as_str().unwrap().into()),job_stop_requested:stopped,
+        automatically_retried:false,note:"Private actual schedule/job snapshot, not readiness, completion or physical-stop proof. Enable permits future fixed-scope automatic work; exact receipt reuse is inspection, never renewal/replay. Failed or unknown work requires inspection.".into()
+    });
+    if !confirmed(&value, command, runtime) {
+        bail!("Schedule confirmation changed; inspect exact receipt without replacement");
+    }
+    Ok(value)
+}
 impl Runtime {
     pub async fn automation_schedule_command(&self, request: ScheduleRequest) -> Result<Value> {
         if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
             bail!("Schedule schema/coordinator runtime changed");
         }
         request.command.validate()?;
+        if matches!(
+            request.command,
+            ScheduleCommand::Show { .. } | ScheduleCommand::List { .. }
+        ) {
+            let store = self.engine.store.clone();
+            let manager = self.automation_timers.clone();
+            let runtime = self.instance_id.clone();
+            return self
+                .automation_timers
+                .inspect(move || {
+                    let view = read_inspection(&store, &request.command)?;
+                    report(&manager, &runtime, &request.command, view, false, false)
+                })
+                .await;
+        }
         let command = &request.command;
-        let mut selected = None;
-        let mut reused = false;
-        let mut items = Vec::new();
-        let mut next = None;
+        let selected;
+        let reused;
         let mut stopped = false;
         match command {
             ScheduleCommand::ResolveRefusal {
@@ -264,24 +345,8 @@ impl Runtime {
                 }
                 selected = Some(s);
             }
-            ScheduleCommand::Show { id } => selected = Some(self.engine.store.schedule_get(id)?),
-            ScheduleCommand::List { limit, after } => {
-                for s in self
-                    .engine
-                    .store
-                    .schedule_list()?
-                    .into_iter()
-                    .filter(|s| after.as_ref().is_none_or(|after| s.id > *after))
-                {
-                    if items.len() == *limit as usize {
-                        next = items
-                            .last()
-                            .and_then(|v: &Value| v["id"].as_str())
-                            .map(str::to_owned);
-                        break;
-                    }
-                    items.push(summary(&s));
-                }
+            ScheduleCommand::Show { .. } | ScheduleCommand::List { .. } => {
+                unreachable!("Read-only commands handled before management")
             }
         }
         let trigger = selected.as_ref().and_then(|s| s.active_trigger.clone());
@@ -290,24 +355,18 @@ impl Runtime {
             .map(|id| self.engine.store.trigger_job(id))
             .transpose()?
             .flatten();
-        let timer_active = selected.as_ref().is_some_and(|s| {
-            s.runtime_id == self.instance_id
-                && matches!(s.state, State::Waiting | State::InFlight)
-                && self
-                    .automation_timers
-                    .active
-                    .lock()
-                    .expect("timer active")
-                    .contains(&s.id)
-        });
-        let value=json!(Report {schema_version:1,report_type:"automation_schedule".into(),runtime_id:self.instance_id.clone(),command:command.clone(),schedule:selected,
-            items,next_after:next,reused,timer_active,activation_requested:matches!(command,ScheduleCommand::Enable{..})&&!reused,current_trigger_id:trigger,
-            current_job_id:job.as_ref().map(|p|p.plan_id.clone()),current_job_status:job.as_ref().map(|p|serde_json::to_value(p.status).unwrap().as_str().unwrap().into()),job_stop_requested:stopped,
-            automatically_retried:false,note:"Private actual schedule/job snapshot, not readiness, completion or physical-stop proof. Enable permits future fixed-scope automatic work; exact receipt reuse is inspection, never renewal/replay. Failed or unknown work requires inspection.".into()});
-        if !confirmed(&value, command, &self.instance_id) {
-            bail!("Schedule confirmation changed; inspect exact receipt without replacement");
-        }
-        Ok(value)
+        report(
+            &self.automation_timers,
+            &self.instance_id,
+            command,
+            Inspection {
+                selected,
+                job,
+                ..Inspection::default()
+            },
+            reused,
+            stopped,
+        )
     }
     async fn schedule_enable_preflight(&self, id: &str, hash: &str) -> Result<String> {
         let p = self
@@ -582,6 +641,28 @@ fn confirmed_refusal(s: &Schedule, job: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn read_only_inspection_cannot_manage_schedules_and_empty_page_keeps_report_contract() {
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let manager =
+            crate::automation_timer::TimerManager::new(&crate::config::Config::load(None).unwrap())
+                .unwrap();
+        let (management, _, runtime) = fixture();
+        assert!(read_inspection(&store, &management).is_err());
+        let command = ScheduleCommand::List {
+            limit: 1,
+            after: None,
+        };
+        let view = read_inspection(&store, &command).unwrap();
+        let value = report(&manager, &runtime, &command, view, false, false).unwrap();
+        assert!(confirmed(&value, &command, &runtime));
+        assert_eq!(value["activation_requested"], false);
+        assert_eq!(value["automatically_retried"], false);
+        assert_eq!(value["timer_active"], false);
+        assert_eq!(value["items"], json!([]));
+        assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
+        manager.close(&store).unwrap();
+    }
     fn fixture() -> (ScheduleCommand, Value, String) {
         let runtime = uuid::Uuid::new_v4().to_string();
         let id = uuid::Uuid::new_v4().to_string();

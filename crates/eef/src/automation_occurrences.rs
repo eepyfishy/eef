@@ -136,7 +136,14 @@ pub(super) fn validate_job(connection: &Connection, plan: &Plan) -> Result<()> {
     }
     Ok(())
 }
-fn records(connection: &Connection) -> Result<Vec<Reservation>> {
+struct CheckedOccurrence {
+    record: Reservation,
+    resolved: bool,
+}
+// Fully checked under the caller's current lock/transaction, never across calls.
+// Retain only the resolution bit of the plan we already validated, not a second
+// copy of its payload or permission to issue work after a checkpoint/write.
+fn checked_records(connection: &Connection) -> Result<Vec<CheckedOccurrence>> {
     automation_schedules::validate_all(connection)?;
     archives::validate_all(connection)?;
     let mut statement = connection
@@ -144,11 +151,15 @@ fn records(connection: &Connection) -> Result<Vec<Reservation>> {
     let mut result = Vec::new();
     for id in statement.query_map([], |r| r.get::<_, String>(0))? {
         let record = row(connection, &id?)?.context("Missing reservation")?;
-        archives::retained_plan(connection, &record)?;
-        result.push(record);
+        let plan = archives::retained_plan(connection, &record)?;
+        result.push(CheckedOccurrence {
+            record,
+            resolved: archives::resolved(&plan),
+        });
     }
     let mut groups = std::collections::BTreeMap::<String, Vec<&Reservation>>::new();
-    for record in &result {
+    for checked in &result {
+        let record = &checked.record;
         groups
             .entry(record.delegation.policy_id.clone())
             .or_default()
@@ -188,16 +199,22 @@ fn records(connection: &Connection) -> Result<Vec<Reservation>> {
     }
     Ok(result)
 }
+fn records(connection: &Connection) -> Result<Vec<Reservation>> {
+    Ok(checked_records(connection)?
+        .into_iter()
+        .map(|checked| checked.record)
+        .collect())
+}
 pub(super) fn validate_all(connection: &Connection) -> Result<()> {
     records(connection)?;
     Ok(())
 }
 pub(super) fn definition_resolved(connection: &Connection, definition: &str) -> Result<bool> {
-    for record in records(connection)?
+    for checked in checked_records(connection)?
         .iter()
-        .filter(|r| r.delegation.definition_id == definition)
+        .filter(|r| r.record.delegation.definition_id == definition)
     {
-        if !archives::resolved(&archives::retained_plan(connection, record)?) {
+        if !checked.resolved {
             return Ok(false);
         }
     }
@@ -250,15 +267,16 @@ pub(super) fn trigger_admission_state(
     definition: &str,
     policy: &eefn::automation_policy::Authorization,
 ) -> Result<(bool, bool)> {
-    let retained = records(connection)?;
-    for record in retained
+    let checked = checked_records(connection)?;
+    for record in checked
         .iter()
-        .filter(|r| r.delegation.definition_id == definition)
+        .filter(|r| r.record.delegation.definition_id == definition)
     {
-        if !archives::resolved(&archives::retained_plan(connection, record)?) {
+        if !record.resolved {
             return Ok((false, false));
         }
     }
+    let retained = checked.into_iter().map(|r| r.record).collect::<Vec<_>>();
     Ok((true, allowance_from_records(&retained, policy)?))
 }
 pub(super) fn refuse_archived_request(
@@ -967,6 +985,12 @@ mod tests {
             let changes = db.total_changes();
             let combined = trigger_admission_state(&db, definition, &policy).unwrap();
             assert_eq!(combined, expected);
+            for checked in checked_records(&db).unwrap() {
+                assert_eq!(
+                    checked.resolved,
+                    archives::resolved(&archives::retained_plan(&db, &checked.record).unwrap())
+                );
+            }
             assert_eq!(combined.0, definition_resolved(&db, definition).unwrap());
             if combined.0 {
                 assert_eq!(combined.1, allowance_available(&db, &policy).unwrap());

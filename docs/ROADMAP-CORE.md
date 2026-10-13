@@ -65,6 +65,16 @@ unchanged ordinary schedule and finite/native public regressions pass locally;
 full suites pass 612 tests in each feature mode. Other journal paths, loaded-
 system/physical acceptance, strong stop and the remaining roadmap stay open.
 
+The next [owned schedule inspection increment](AUTOMATION-SCHEDULES.md#read-only-command-inspection-worker-subsequent-increment)
+keeps read-only Show/List off async workers with a separate single-flight slot,
+drains cancelled/queued callbacks during shutdown and reads the exact linked job
+with its schedule under one validated snapshot. Fresh full suites pass **615
+tests** per feature mode. Public recurrence and commit-time timing failures
+remain open; unchanged failed evidence is retained. Synchronous grant-report
+journaling under the shared pending-request mutex is a confirmed next code path
+to address, not an established complete failure cause. No release, installed
+node update, UI work or relaxation of authorization/deadline fences follows.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It

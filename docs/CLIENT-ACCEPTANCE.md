@@ -1,8 +1,9 @@
 # Reviewed client acceptance (unreleased after alpha.6)
 
-Latest backend checkpoint: **592 workspace/all-target tests per feature mode**,
-including the [private finite-pipeline execution core](LOCAL-PIPELINES.md#private-execution-core-checkpoint-2026-10-13).
-This does not expose pipeline execution or complete the full runtime/media gates.
+Latest backend checkpoint: **615 workspace/all-target tests per feature mode**,
+including [owned read-only schedule inspection](AUTOMATION-SCHEDULES.md#read-only-command-inspection-worker-subsequent-increment).
+Public scheduling/recurrence timing failures remain open; passing units do not
+complete reliability, physical acceptance or the full runtime/media gates.
 
 Latest model-policy checkpoint: **571 workspace/all-target tests per feature
 mode**, with command-owned eager/manual/on-demand and idle policy,
@@ -899,3 +900,27 @@ system timing, all journal paths, physical network or full stable acceptance.
 Trigger launch, owner inspection and other synchronous journal paths remain
 outside this worker slice. No installed app/node, release/feed, UI, model or
 signing change follows; all other full 0.4.0 gates remain open.
+
+## Owned read-only schedule inspection (2026-10-14)
+
+Owner schedule Show/List now has one bounded, shutdown-owned blocking callback
+slot separate from periodic checkpoints. Show returns the validated schedule
+and linked job under one journal lock; readers preserve snapshots and response
+confirmation without granting authority or implicitly retrying busy reads.
+Occurrence admission reuses only the resolution bit of the plan already fully
+validated within that invocation, never a cache across writes or calls.
+
+Default and dashboard-free all-target suites each pass **615 tests**, with one
+ignored opt-in profiler. Exact partial-job/origin, later cancellation, damaged
+history, zero-write inspection, callback cancellation and shutdown tests pass.
+Fresh default binaries/examples, formatting/diff and the backend/browser guard
+pass. This is an unreleased source checkpoint, not an installed-node update.
+
+The fresh public ordinary run `automation-schedules-ccD257` passes, but pipeline
+`local-pipelines-U7orKe` fails its unchanged 45-second recurrence limit: the
+second node grant is retained completed/success while the coordinator lacks its
+saved ACK/result. The later `automation-schedules-pNjBSp` fails a commit-time
+clock/policy fence after one completed occurrence, with no second claim. No
+timing bound or replay rule is relaxed and neither failed run is cleared by
+the unit suites. Journal contention/async-worker blocking and physical-load
+acceptance remain open before stable 0.4.0.

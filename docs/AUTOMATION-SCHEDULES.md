@@ -56,6 +56,88 @@ acceptance. Earlier failed fixtures remain failed evidence.
 
 ## Journal admission and diagnostics (subsequent increment)
 
+### Read-only command inspection worker (subsequent increment)
+
+Owner `automation-schedules show/list` now uses a separately owned blocking
+inspection callback. There is at most one queued/running inspection, independent
+of the one periodic checkpoint slot; excess reads fail busy instead of creating
+an unbounded queue or disabling the timer. No new implicit command retry is added.
+Schema, current-runtime and command validation still precede worker admission.
+Enable, Stop, refusal resolution and execution authority are unchanged.
+
+Show reads the fully validated schedule and its linked job under one journal
+lock and request-local history view, eliminating a second history scan. The
+view is never cached across calls or used as permission to execute. List keeps
+the existing summaries, pagination and private-field exclusions. A shared report
+builder preserves the current response and strict confirmation contract for both
+read-only and management commands. Active timer membership is observed after
+the journal lock is released; these are snapshots, not readiness/stop proof.
+
+The same ownership guard tracks periodic and inspection classes separately.
+Shutdown closes both admissions and drains queued/running callbacks before
+interrupting schedules. A late inspection result after closing is rejected,
+not presented as current readiness. Cancelling an async reader does not forget
+its blocking callback. Storage stalls can still delay completion/shutdown.
+
+Focused automation tests pass 64 cases with one ignored profiler, including
+independent single-flight slots, a held real journal lock with an available
+single-thread async executor, rejected late results and cancellation/shutdown
+ownership for both callback classes. Snapshot checks retain zero writes, observe
+later interruption and reject damaged global history even for a missing ID.
+The empty read page retains the report contract and rejects management commands.
+Initial refactoring emitted unused-initialization warnings; those were removed
+without changing behavior. Final verification is recorded below.
+The first fresh read-worker build passes ordinary scheduling
+`automation-schedules-ccD257`, but `local-pipelines-U7orKe` fails the unchanged
+45-second recurrence bound. Read-only coordinator inspection retains one
+completed automatic job and a second running job with one issued grant but no
+saved ACK/result. The node retains that same grant as persisted completed/success
+with 58 ms between acceptance and final checkpoint. This is missing coordinator
+evidence/timely settlement, not proof of replay, absent effects or a passed run.
+Checkpoint logs reach about 6.2 seconds; the complete delay cause remains unproven.
+
+Investigation keeps the failed coordinator DB SHA-256 unchanged:
+`7413089542155ca9b6ce75928e86deebbc0e2e39e0d1190066fa52215af90972`.
+The opt-in read-only profiler measures occurrence validation at roughly
+0.38-0.62 seconds and joint admission at 0.44-0.51 seconds in initial samples.
+Occurrence admission now reuses only the resolution bit of the retained plan it
+already fully validated in that invocation. It does not retain another payload,
+cache state across calls/writes, bypass row/history/budget checks or issue work
+from a read view. Existing tests compare that bit against point validation,
+observe later cancellation/archive/exhaustion and reject later corruption.
+The automation-focused suite still passes 64 cases with one ignored profiler.
+Post-change joint samples of 0.43-0.48 seconds overlap the initial range; they
+show no established absolute timing guarantee or complete cause/fix. No bound
+is increased and the failed fixture remains failed evidence.
+The subsequent duplicate-plan-reuse build fails ordinary scheduling
+`automation-schedules-pNjBSp`: one automatic job completed, then a claim crossed
+its final commit-time fence and retained `checkpoint_failed` without a second
+claim. Logged checkpoints reach about 1.7 seconds. The chained pipeline test
+did not run. This is not a passing timing gate or proof that reuse solved the
+settlement delay.
+
+Final default and dashboard-free workspace/all-target suites each pass **615
+tests**: EEF library 237 plus one ignored opt-in profiler, owner CLI 16,
+installer 6, node library 345 and node CLI 11. The snapshot regression also
+checks the exact partially admitted job and immutable trigger origin, rejects
+substituting the original template job, observes a subsequent cancellation and
+preserves zero database changes during each inspection. Fresh default workspace
+binaries/examples, formatting/diff and the backend/browser source guard pass.
+The final verification chain exits 0; it does not rerun or clear the failed
+public timing gates. The failed coordinator DB hash remains unchanged.
+
+Source inspection identifies another synchronous path to address:
+`eefn::server` holds its shared pending-request mutex while invoking the durable
+grant observer, and `eef::request_execution::AttemptJournal` performs journal
+validation/writes synchronously. This can stall async workers and unrelated
+correlation management. It is a confirmed code path, not proof of the complete
+cause of either failed fixture. Moving it requires bounded, shutdown-owned
+callbacks, durable ACK-before-completion ordering and exact session correlation;
+detached writes, replay or extending issued lease deadlines are not solutions.
+Other command/launch journal paths, loaded-system/physical acceptance and the full
+stable 0.4.0 requirements remain open. No installed node, release/feed, UI or model
+is changed by this source increment.
+
 Trigger overlap and remaining allowance checks share one fresh fully validated
 occurrence scan under the existing journal connection lock. Schedule history
 validation loads each policy/definition once within that invocation; schedule

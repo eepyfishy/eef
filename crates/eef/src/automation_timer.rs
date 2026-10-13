@@ -24,16 +24,42 @@ pub(crate) struct TimerManager {
     clock_epoch: AtomicU64,
     clock_samples: AtomicU64,
     clock_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
-    journal_work: Mutex<bool>,
+    journal_work: Mutex<JournalWorkState>,
     journal_idle: Condvar,
 }
 
-// Owns the single queued/running periodic checkpoint even if its async waiter
-// is cancelled. Shutdown drains it before interrupting schedules or closing DB.
-struct JournalWork(Arc<TimerManager>);
+#[derive(Default)]
+struct JournalWorkState {
+    periodic: bool,
+    inspection: bool,
+}
+#[derive(Clone, Copy)]
+enum WorkKind {
+    Periodic,
+    Inspection,
+}
+impl JournalWorkState {
+    fn slot(&mut self, kind: WorkKind) -> &mut bool {
+        match kind {
+            WorkKind::Periodic => &mut self.periodic,
+            WorkKind::Inspection => &mut self.inspection,
+        }
+    }
+    fn any(&self) -> bool {
+        self.periodic || self.inspection
+    }
+}
+// One queued/running callback of each class, owned despite waiter cancellation.
+// Inspection cannot steal the periodic slot or grant execution authority.
+struct JournalWork(Arc<TimerManager>, WorkKind);
 impl Drop for JournalWork {
     fn drop(&mut self) {
-        *self.0.journal_work.lock().expect("timer journal worker") = false;
+        *self
+            .0
+            .journal_work
+            .lock()
+            .expect("timer journal worker")
+            .slot(self.1) = false;
         self.0.journal_idle.notify_all();
     }
 }
@@ -69,7 +95,7 @@ impl TimerManager {
             clock_epoch: AtomicU64::new(0),
             clock_samples: AtomicU64::new(0),
             clock_thread: Mutex::new(None),
-            journal_work: Mutex::new(false),
+            journal_work: Mutex::new(JournalWorkState::default()),
             journal_idle: Condvar::new(),
         }))
     }
@@ -81,7 +107,7 @@ impl TimerManager {
                 .map_err(|_| anyhow::anyhow!("Timer clock monitor failed; no suspension proof"))?;
         }
         let mut working = self.journal_work.lock().expect("timer journal worker");
-        while *working {
+        while working.any() {
             working = self
                 .journal_idle
                 .wait(working)
@@ -96,15 +122,48 @@ impl TimerManager {
         Ok(())
     }
     fn begin_journal_work(self: &Arc<Self>) -> Result<Option<JournalWork>> {
+        self.begin_work(WorkKind::Periodic)
+    }
+    fn begin_work(self: &Arc<Self>, kind: WorkKind) -> Result<Option<JournalWork>> {
         let mut working = self.journal_work.lock().expect("timer journal worker");
         if self.closing.load(Ordering::SeqCst) {
             return Ok(None);
         }
-        if *working {
-            bail!("Periodic timer checkpoint already queued/running; no extra worker");
+        let slot = working.slot(kind);
+        if *slot {
+            match kind {
+                WorkKind::Periodic => {
+                    bail!("Periodic timer checkpoint already queued/running; no extra worker")
+                }
+                WorkKind::Inspection => {
+                    bail!("Schedule inspection busy; no extra worker or queued read")
+                }
+            }
         }
-        *working = true;
-        Ok(Some(JournalWork(self.clone())))
+        *slot = true;
+        Ok(Some(JournalWork(self.clone(), kind)))
+    }
+    pub(crate) async fn inspect<T: Send + 'static>(
+        self: &Arc<Self>,
+        read: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let work = self
+            .begin_work(WorkKind::Inspection)?
+            .context("Coordinator stopping; no schedule inspection")?;
+        let manager = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _owned = work;
+            if manager.closing.load(Ordering::SeqCst) {
+                bail!("Coordinator stopping; no schedule inspection");
+            }
+            let value = read()?;
+            if manager.closing.load(Ordering::SeqCst) {
+                bail!("Coordinator stopped during schedule inspection");
+            }
+            Ok(value)
+        })
+        .await
+        .context("Schedule inspection worker lost; no retry or execution")?
     }
     async fn poll_schedule(
         self: &Arc<Self>,
@@ -337,6 +396,74 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn inspection_is_single_flight_independent_of_periodic_slot_and_off_async_executor() {
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+        let periodic = manager.begin_journal_work().unwrap().unwrap();
+        let (ready, held) = tokio::sync::oneshot::channel();
+        let (release, hold) = std::sync::mpsc::channel();
+        let locked = store.clone();
+        let holder = std::thread::spawn(move || {
+            locked.with_test_journal_lock(|_| {
+                ready.send(()).unwrap();
+                let _ = hold.recv_timeout(Duration::from_secs(5));
+            })
+        });
+        held.await.unwrap();
+        let worker = manager.clone();
+        let journal = store.clone();
+        let reader = tokio::spawn(async move {
+            worker
+                .inspect(move || journal.schedule_snapshot(&uuid::Uuid::new_v4().to_string()))
+                .await
+        });
+        wait_for(|| manager.journal_work.lock().unwrap().inspection).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!reader.is_finished());
+        assert!(manager.begin_work(WorkKind::Inspection).is_err());
+        assert!(manager.begin_journal_work().is_err());
+        drop(periodic);
+        let periodic = manager.begin_journal_work().unwrap().unwrap();
+        assert!(manager.journal_work.lock().unwrap().inspection);
+        drop(periodic);
+        release.send(()).unwrap();
+        holder.join().unwrap();
+        assert!(reader.await.unwrap().is_err());
+        assert!(!manager.journal_work.lock().unwrap().any());
+        assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
+        manager.close(&store).unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_drains_inspection_and_discards_result_after_closing() {
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let worker = manager.clone();
+        let reader = tokio::spawn(async move {
+            worker
+                .inspect(move || {
+                    started.send(()).unwrap();
+                    held.recv_timeout(Duration::from_secs(5)).unwrap();
+                    Ok(5u8)
+                })
+                .await
+        });
+        ready.await.unwrap();
+        let closing = manager.clone();
+        let stopped = std::thread::spawn(move || closing.close(&store));
+        wait_for(|| manager.closing.load(Ordering::SeqCst)).await;
+        assert!(manager.journal_work.lock().unwrap().inspection);
+        assert!(manager.begin_work(WorkKind::Inspection).unwrap().is_none());
+        assert!(manager.begin_journal_work().unwrap().is_none());
+        release.send(()).unwrap();
+        assert!(reader.await.unwrap().is_err());
+        stopped.join().unwrap().unwrap();
+        assert!(!manager.journal_work.lock().unwrap().any());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn periodic_checkpoint_keeps_async_executor_available_while_journal_is_held() {
         let store = crate::jobs::JobStore::in_memory().unwrap();
         let engine = TaskEngine::with_store(crate::event::EventBus::new(10), store.clone());
@@ -359,7 +486,7 @@ mod tests {
                 .poll_schedule(engine, id, "fixture-runtime".into(), false, true, false)
                 .await
         });
-        wait_for(|| *manager.journal_work.lock().unwrap()).await;
+        wait_for(|| manager.journal_work.lock().unwrap().periodic).await;
         tokio::time::sleep(Duration::from_millis(10)).await;
         assert!(!checkpoint.is_finished());
         release.send(()).unwrap();
@@ -368,7 +495,7 @@ mod tests {
             checkpoint.await.unwrap().is_err(),
             "missing fixture schedule is not authority"
         );
-        assert!(!*manager.journal_work.lock().unwrap());
+        assert!(!manager.journal_work.lock().unwrap().periodic);
         assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
         manager.close(&store).unwrap();
     }
@@ -390,7 +517,7 @@ mod tests {
         assert!(manager.begin_journal_work().unwrap().is_none());
         drop(owned);
         stopped.await.unwrap().unwrap();
-        assert!(!*manager.journal_work.lock().unwrap());
+        assert!(!manager.journal_work.lock().unwrap().periodic);
     }
 
     #[test]
@@ -400,49 +527,63 @@ mod tests {
             .max_blocking_threads(1)
             .build()
             .unwrap();
-        runtime.block_on(async {
-            let store = crate::jobs::JobStore::in_memory().unwrap();
-            let engine = TaskEngine::with_store(crate::event::EventBus::new(10), store.clone());
-            let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
-            let (started, ready) = tokio::sync::oneshot::channel();
-            let (release, held) = std::sync::mpsc::channel();
-            let occupied = tokio::task::spawn_blocking(move || {
-                started.send(()).unwrap();
-                let _ = held.recv_timeout(Duration::from_secs(5));
+        for kind in [WorkKind::Periodic, WorkKind::Inspection] {
+            runtime.block_on(async {
+                let store = crate::jobs::JobStore::in_memory().unwrap();
+                let engine = TaskEngine::with_store(crate::event::EventBus::new(10), store.clone());
+                let manager =
+                    TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+                let (started, ready) = tokio::sync::oneshot::channel();
+                let (release, held) = std::sync::mpsc::channel();
+                let occupied = tokio::task::spawn_blocking(move || {
+                    started.send(()).unwrap();
+                    let _ = held.recv_timeout(Duration::from_secs(5));
+                });
+                ready.await.unwrap();
+                let worker = manager.clone();
+                let read_ran = Arc::new(AtomicBool::new(false));
+                let read_probe = read_ran.clone();
+                let checkpoint = tokio::spawn(async move {
+                    if matches!(kind, WorkKind::Inspection) {
+                        return worker
+                            .inspect(move || {
+                                read_probe.store(true, Ordering::SeqCst);
+                                Ok(None::<Trigger>)
+                            })
+                            .await;
+                    }
+                    worker
+                        .poll_schedule(
+                            engine,
+                            uuid::Uuid::new_v4().to_string(),
+                            "fixture-runtime".into(),
+                            false,
+                            true,
+                            false,
+                        )
+                        .await
+                });
+                wait_for(|| *manager.journal_work.lock().unwrap().slot(kind)).await;
+                checkpoint.abort();
+                match checkpoint.await {
+                    Err(error) => assert!(error.is_cancelled()),
+                    Ok(_) => panic!("queued waiter should be cancelled"),
+                }
+                assert!(*manager.journal_work.lock().unwrap().slot(kind));
+                let closing = manager.clone();
+                let journal = store.clone();
+                let stopped = std::thread::spawn(move || closing.close(&journal));
+                wait_for(|| manager.closing.load(Ordering::SeqCst)).await;
+                assert!(*manager.journal_work.lock().unwrap().slot(kind));
+                release.send(()).unwrap();
+                occupied.await.unwrap();
+                stopped.join().unwrap().unwrap();
+                assert!(!manager.journal_work.lock().unwrap().any());
+                assert!(!read_ran.load(Ordering::SeqCst));
+                assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
+                assert!(manager.begin_journal_work().unwrap().is_none());
             });
-            ready.await.unwrap();
-            let worker = manager.clone();
-            let checkpoint = tokio::spawn(async move {
-                worker
-                    .poll_schedule(
-                        engine,
-                        uuid::Uuid::new_v4().to_string(),
-                        "fixture-runtime".into(),
-                        false,
-                        true,
-                        false,
-                    )
-                    .await
-            });
-            wait_for(|| *manager.journal_work.lock().unwrap()).await;
-            checkpoint.abort();
-            match checkpoint.await {
-                Err(error) => assert!(error.is_cancelled()),
-                Ok(_) => panic!("queued waiter should be cancelled"),
-            }
-            assert!(*manager.journal_work.lock().unwrap());
-            let closing = manager.clone();
-            let journal = store.clone();
-            let stopped = std::thread::spawn(move || closing.close(&journal));
-            wait_for(|| manager.closing.load(Ordering::SeqCst)).await;
-            assert!(*manager.journal_work.lock().unwrap());
-            release.send(()).unwrap();
-            occupied.await.unwrap();
-            stopped.join().unwrap().unwrap();
-            assert!(!*manager.journal_work.lock().unwrap());
-            assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
-            assert!(manager.begin_journal_work().unwrap().is_none());
-        });
+        }
     }
 
     #[test]

@@ -892,6 +892,27 @@ impl JobStore {
     pub(crate) fn schedule_get(&self, id: &str) -> Result<Schedule> {
         self.schedule_find(id)?.context("Schedule missing")
     }
+    /// One fully validated read under one journal lock, not execution authority.
+    pub(crate) fn schedule_snapshot(&self, id: &str) -> Result<(Schedule, Option<Plan>)> {
+        uuid(id)?;
+        let connection = self.connection.lock().expect("job journal");
+        let mut history = validated_history(&connection)?;
+        let schedule = history.schedules.remove(id).context("Schedule missing")?;
+        let plan = schedule
+            .active_trigger
+            .as_deref()
+            .map(|id| {
+                let trigger = history
+                    .triggers
+                    .iter()
+                    .find(|t| t.id == id)
+                    .context("Trigger missing")?;
+                source_job(&connection, trigger)
+            })
+            .transpose()?
+            .flatten();
+        Ok((schedule, plan))
+    }
     pub(crate) fn trigger_get(&self, id: &str) -> Result<Trigger> {
         uuid(id)?;
         let connection = self.connection.lock().expect("job journal");
@@ -1463,7 +1484,7 @@ mod tests {
     #[test]
     fn request_local_history_readers_match_point_checks_and_do_not_cache_writes() {
         let store = JobStore::in_memory().unwrap();
-        let (_, _, policy, schedule) = fixture_with_validity(store.clone(), 60000);
+        let (engine, source, policy, schedule) = fixture_with_validity(store.clone(), 60000);
         assert_eq!(
             store.schedule_find(&schedule.id).unwrap(),
             Some(schedule.clone())
@@ -1482,6 +1503,11 @@ mod tests {
             .unwrap();
         assert_eq!(store.trigger_get(&trigger.id).unwrap(), trigger);
         assert!(store.trigger_job(&trigger.id).unwrap().is_none());
+        let before = store.connection.lock().unwrap().total_changes();
+        let (snapshot, job) = store.schedule_snapshot(&schedule.id).unwrap();
+        assert_eq!(snapshot, store.schedule_get(&schedule.id).unwrap());
+        assert!(job.is_none());
+        assert_eq!(store.connection.lock().unwrap().total_changes(), before);
         let db = store.connection.lock().unwrap();
         let changes = db.total_changes();
         let view = validated_history(&db).unwrap();
@@ -1492,10 +1518,41 @@ mod tests {
         assert_eq!(view.triggers, triggers(&db).unwrap());
         assert_eq!(db.total_changes(), changes);
         drop(db);
+        let opened = opening(&engine, &source, &trigger).unwrap();
+        let job_id = opened["id"].as_str().unwrap();
+        let before = store.connection.lock().unwrap().total_changes();
+        let (snapshot, job) = store.schedule_snapshot(&schedule.id).unwrap();
+        assert_eq!(
+            snapshot.active_trigger.as_deref(),
+            Some(trigger.id.as_str())
+        );
+        let job = job.expect("snapshot includes the exact partially admitted source");
+        assert_eq!(job.plan_id, job_id);
+        assert_ne!(job.plan_id, source.plan_id);
+        assert_eq!(
+            job.goal.request_context.as_ref(),
+            Some(&trigger.request_context)
+        );
+        assert_eq!(
+            json!(job),
+            json!(store.trigger_job(&trigger.id).unwrap().unwrap())
+        );
+        assert_eq!(store.connection.lock().unwrap().total_changes(), before);
+        let cancelled = engine.cancel(job_id).unwrap();
+        let before = store.connection.lock().unwrap().total_changes();
+        assert_eq!(
+            json!(store.schedule_snapshot(&schedule.id).unwrap().1.unwrap()),
+            json!(cancelled)
+        );
+        assert_eq!(store.connection.lock().unwrap().total_changes(), before);
         let interrupted = store
             .schedule_interrupt_now(&schedule.id, "checkpoint_failed")
             .unwrap();
         assert_eq!(store.schedule_get(&schedule.id).unwrap(), interrupted);
+        assert_eq!(
+            store.schedule_snapshot(&schedule.id).unwrap().0,
+            interrupted
+        );
         assert_eq!(store.schedule_list().unwrap(), vec![interrupted]);
         let db = store.connection.lock().unwrap();
         db.execute(
@@ -1513,6 +1570,12 @@ mod tests {
         assert!(store.schedule_list().is_err());
         assert!(store.trigger_get(&trigger.id).is_err());
         assert!(store.trigger_job(&trigger.id).is_err());
+        assert!(store.schedule_snapshot(&schedule.id).is_err());
+        assert!(
+            store
+                .schedule_snapshot(&uuid::Uuid::new_v4().to_string())
+                .is_err()
+        );
     }
 
     #[test]
