@@ -860,13 +860,19 @@ impl NodeEngine {
         // Readers belong to this future rather than detached Tokio tasks. The
         // timeout covers root wait AND pipe collection; cancellation drops both
         // readers, the root child and the Windows tree lifetime handle.
-        let collected = tokio::time::timeout(Duration::from_secs(seconds), async {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(seconds);
+        let collected = tokio::time::timeout_at(deadline, async {
             let wait = async {
                 let result = child.wait().await;
                 // A completed bounded command cannot leave a persistent child
-                // holding its output pipes. Application launching is separate.
-                drop(tree.take());
-                result
+                // holding its output pipes. Keep ownership until a bounded OS
+                // observation; no new timeout/lease or PID-based termination.
+                if let Some(tree) = tree.take() {
+                    #[cfg(windows)]
+                    tree.terminate_and_observe_until(deadline).await?;
+                    drop(tree);
+                }
+                result.map_err(anyhow::Error::from)
             };
             let (status, stdout, stderr) = tokio::join!(
                 wait,
@@ -891,6 +897,11 @@ impl NodeEngine {
             "stdout": String::from_utf8_lossy(&stdout),
             "stderr": String::from_utf8_lossy(&stderr),
             "truncated": stdout_truncated || stderr_truncated,
+            "process_tree": {
+                "mode": if cfg!(windows) {"windows_owned_job"} else {"root_child_only"},
+                "empty_observed": if cfg!(windows) {Some(true)} else {None::<bool>},
+                "external_effects_stop_confirmed": false,
+            },
         }))
     }
 

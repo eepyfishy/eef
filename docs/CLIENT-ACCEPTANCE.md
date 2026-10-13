@@ -831,3 +831,24 @@ finite/recurring regressions with chain exit 0. Earlier failed/native fixtures a
 retained separately, not retroactively explained. These isolated debug-build
 passes do not prove loaded-system or physical timing guarantees, nor any other
 remaining stable 0.4.0 gate. Installed nodes and published artifacts are unchanged.
+
+## Observed Windows contained cleanup (2026-10-13)
+
+The unreleased [process lifetime increment](PROCESS-LIFETIME.md#observed-contained-cleanup-subsequent-increment)
+observes zero active processes in the exact owned Windows Job before normal
+`process.exec` completion. Its existing deadline remains the bound; cancellation
+or failed/late observation cannot claim cleanup. Root exit status is retained,
+and external effects remain unconfirmed. This is not the remote stop protocol.
+
+Focused native tests and public `process-lifetime-5YZ9Un` pass. Default-feature
+all-target workspace verification passes **607 tests**, with the opt-in journal
+profiler still ignored. Dashboard-free verification is recorded separately when
+complete, not inferred from the default run. Formatting, JS syntax, diff and the
+backend/browser source boundary pass.
+
+Public recurring pipeline runs `local-pipelines-EShnQI` and
+`local-pipelines-wMgqsj` fail with selected-provider staleness before a second
+grant/attempt is issued. Slow checkpoints are observed, but the complete cause
+is not established. These are failed acceptance runs, not successful retries or
+proof that timer/heartbeat reliability is finished. Physical network, bootstrap,
+media, resource, peer, cluster, signing and other stable 0.4.0 gates remain open.

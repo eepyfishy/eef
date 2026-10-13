@@ -26,6 +26,49 @@ OS terminates the associated descendants. The already-cached `windows-sys`
 0.61.2 dependency provides typed Win32 bindings; no new version/toolchain/script
 or model is downloaded.
 
+## Observed contained cleanup (subsequent increment)
+
+On Windows, normal `process.exec` completion now requests termination through
+the exact owned unnamed Job handle and waits for its native accounting to report
+zero active processes before returning. No PID-selected kill, shared-service
+control, administrator elevation, duplicate Job handle or new worker is added.
+Observation uses the existing operation deadline, including pipe collection;
+an expired deadline cannot start the explicit termination request, and a failed/
+late query cannot claim observed cleanup. Dropping the owner still retains the
+existing kill-on-close fallback for cancellation/runtime loss.
+
+This uses Microsoft's [owned-job termination API](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-terminatejobobject)
+and [Job accounting query](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-queryinformationjobobject),
+including the native [active-process count](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_accounting_information).
+The root's original success/exit code and bounded stdout/stderr remain intact.
+Successful completion includes `process_tree.mode:"windows_owned_job"`,
+`empty_observed:true`, and `external_effects_stop_confirmed:false`. Non-Windows
+keeps root-child-only behavior and reports `empty_observed:null`, not a tree proof.
+
+The observation covers processes associated with that owned container, not
+filesystem/network effects, work delegated to outside services, a security
+sandbox or remote stopping. Native deadline/permission/cancellation/restart paths
+still retain unknown consumed grants; no replay, migration, extension or success
+is inferred. The grant timing advertisement remains `rpc_future_only`.
+This is a prerequisite for supported stop acknowledgements, not the remote
+stop command/protocol or full native/model/plugin termination acceptance.
+
+Native unit coverage holds live root/child observer handles while
+the owned Job reports empty, checks that a second owned tree stays alive, and
+checks that an already-expired observation deadline does not explicitly terminate
+a live tree. Normal and unsuccessful completion retain their original exit
+status. Public `process-lifetime-5YZ9Un` passes the seven existing typed reviewed-
+command cases with the new normal/failed-exit metadata assertions.
+
+The broader public pipeline regressions `local-pipelines-EShnQI` and
+`local-pipelines-wMgqsj` fail in recurrence. Read-only inspection retains one
+completed automatic job, then a second job with zero issued attempts: respectively
+an interrupted job (`job_unresolved`) and an approved job (`launch_failed`). Logs
+report a stale/withdrawn selected provider and slow journal checkpoints of about
+3.7 and 6.1 seconds. Neither run is pipeline acceptance, nor proof of the complete
+cause. No freshness window, timer allowance, replay rule or production permission
+was relaxed. Timer/heartbeat responsiveness remains an open release gate.
+
 This follows Microsoft's [Job Object lifetime and child association rules](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
 [assignment requirements](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-assignprocesstojobobject)
 and [thread resume semantics](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-resumethread).

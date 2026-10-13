@@ -37,8 +37,9 @@ mod windows {
             },
             JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-                SetInformationJobObject,
+                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+                QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
             },
             Threading::{
                 CREATE_NO_WINDOW, CREATE_SUSPENDED, GetProcessIdOfThread, OpenThread, ResumeThread,
@@ -56,6 +57,56 @@ mod windows {
         Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
     }
     impl ProcessTree {
+        /// Only the owned unnamed job; no PID-based termination or shared service.
+        /// Caller supplies its existing deadline, never a new cleanup allowance.
+        pub(crate) async fn terminate_and_observe_until(
+            &self,
+            deadline: tokio::time::Instant,
+        ) -> Result<()> {
+            if tokio::time::Instant::now() >= deadline {
+                bail!("Process tree observation deadline expired");
+            }
+            // SAFETY: this live handle belongs exclusively to our contained tree.
+            if unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) } == 0 {
+                return Err(std::io::Error::last_os_error())
+                    .context("Terminate owned process tree");
+            }
+            loop {
+                if tokio::time::Instant::now() >= deadline {
+                    bail!("Owned process tree exit unconfirmed before deadline");
+                }
+                let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+                let mut bytes = 0u32;
+                // SAFETY: exact owned job, initialized correctly sized output buffer.
+                if unsafe {
+                    QueryInformationJobObject(
+                        self.0.as_raw_handle(),
+                        JobObjectBasicAccountingInformation,
+                        (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                        std::mem::size_of_val(&accounting) as u32,
+                        &mut bytes,
+                    )
+                } == 0
+                {
+                    return Err(std::io::Error::last_os_error())
+                        .context("Observe owned process tree accounting");
+                }
+                if bytes as usize != std::mem::size_of_val(&accounting) {
+                    bail!("Owned process tree accounting length changed");
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    bail!("Owned process tree observation completed after deadline");
+                }
+                if accounting.ActiveProcesses == 0 {
+                    return Ok(());
+                }
+                tokio::time::sleep_until(
+                    deadline
+                        .min(tokio::time::Instant::now() + std::time::Duration::from_millis(10)),
+                )
+                .await;
+            }
+        }
         fn new() -> Result<Self> {
             // SAFETY: null attributes/name create an unnamed, non-inheritable job.
             let job = owned(
@@ -318,6 +369,44 @@ mod tests {
         assert!(!dir.path().join("pids.json").exists());
     }
     #[tokio::test]
+    async fn explicit_owned_tree_termination_observes_empty_job_with_live_observer_handles() {
+        let one = tempfile::tempdir().unwrap();
+        let two = tempfile::tempdir().unwrap();
+        let (mut root1, tree1) = spawn(&mut command("loop", one.path())).unwrap();
+        let (mut root2, tree2) = spawn(&mut command("loop", two.path())).unwrap();
+        let p1 = Processes::observe(one.path()).await;
+        let p2 = Processes::observe(two.path()).await;
+        p1.alive();
+        p2.alive();
+        tree1
+            .terminate_and_observe_until(tokio::time::Instant::now() + Duration::from_secs(3))
+            .await
+            .unwrap();
+        p1.exited().await;
+        p2.alive();
+        root1.wait().await.unwrap();
+        drop(tree2);
+        p2.exited().await;
+        root2.wait().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn expired_observation_deadline_does_not_terminate_a_live_owned_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut child, tree) = spawn(&mut command("loop", dir.path())).unwrap();
+        let processes = Processes::observe(dir.path()).await;
+        assert!(
+            tree.terminate_and_observe_until(tokio::time::Instant::now())
+                .await
+                .is_err()
+        );
+        processes.alive();
+        drop(tree);
+        processes.exited().await;
+        child.wait().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn dropping_one_tree_terminates_its_children_without_touching_another_tree() {
         let one = tempfile::tempdir().unwrap();
         let two = tempfile::tempdir().unwrap();
@@ -350,6 +439,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(value["success"], true);
+        assert_eq!(value["process_tree"]["empty_observed"], true);
+        assert_eq!(value["process_tree"]["mode"], "windows_owned_job");
+        assert_eq!(
+            value["process_tree"]["external_effects_stop_confirmed"],
+            false
+        );
         processes.exited().await;
     }
     #[tokio::test]
@@ -416,6 +511,7 @@ mod tests {
         assert!(report.confirms(&grant));
         assert_eq!(report.data["success"], false);
         assert_eq!(report.data["exit_code"], 17);
+        assert_eq!(report.data["process_tree"]["empty_observed"], true);
         assert_eq!(
             report.error_code.as_deref(),
             Some("process_exit_unsuccessful")

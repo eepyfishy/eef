@@ -91,6 +91,11 @@ try {
   if(['permission-revoked','node-restart','coordinator-restart'].includes(scenario.label))assert(proof.observed_after_ms<2000,'lifecycle cleanup must precede the 10-second grant deadline, not merely eventually expire');
   const terminal=await review.wait(plan.id),attempts=terminal.grant_attempts;assert.equal(attempts.length,1);
   const report=await review.result(plan.id);assert.equal(report.state,['complete','fail'].includes(scenario.mode)?'completed':'unknown');assert.equal(report.success,scenario.mode==='complete');assert.equal(report.persisted,true);
+  if(['complete','fail'].includes(scenario.mode)){
+   assert.equal(report.data.process_tree.mode,'windows_owned_job');
+   assert.equal(report.data.process_tree.empty_observed,true,'normal report requires the owned job to be observed empty');
+   assert.equal(report.data.process_tree.external_effects_stop_confirmed,false,'contained cleanup never claims external-effect stop');
+  }
   if(scenario.mode==='fail'){assert.equal(report.error_code,'process_exit_unsuccessful');assert.equal(report.data.exit_code,17);assert.equal(report.data.success,false);}
   if(scenario.label==='permission-revoked')assert.equal(report.error_code,'local_policy_changed');
   assert.equal(terminal.status,scenario.mode==='complete'?'completed':scenario.mode==='fail'?'failed':'interrupted');
