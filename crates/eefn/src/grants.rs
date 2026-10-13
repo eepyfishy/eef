@@ -16,6 +16,8 @@ pub const MAX_DURATION_MS: u64 = 30_000;
 pub(crate) const REPORT_HEADROOM: usize = 8192;
 /// Durable coordinator journal hook. Called on validated, session-bound reports
 /// before acknowledging them to the RPC caller; never relies on broadcast events.
+/// The gateway uses bounded owned blocking workers. A started save may outlive
+/// cancellation of its async waiter; it must finish without issuing more work.
 pub trait GrantObserver: Send + Sync {
     fn record(&self, report: &GrantReport) -> Result<()>;
 }

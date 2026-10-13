@@ -72,8 +72,18 @@ with its schedule under one validated snapshot. Fresh full suites pass **615
 tests** per feature mode. Public recurrence and commit-time timing failures
 remain open; unchanged failed evidence is retained. Synchronous grant-report
 journaling under the shared pending-request mutex is a confirmed next code path
-to address, not an established complete failure cause. No release, installed
+to address at that checkpoint, not an established complete failure cause. No release, installed
 node update, UI work or relaxation of authorization/deadline fences follows.
+
+The subsequent [owned grant-report callbacks](GRANT-REPORT-JOURNAL.md) move
+durable report saves off async workers and out of the shared correlation lock.
+Late ACKs are privately fenced; bounded callback/result ownership is drained
+even after waiter/Stop cancellation. Full suites pass **623 tests** per feature
+mode, and fresh public debug scheduling, finite recurrence and native process
+checks pass locally. Fresh optimized binaries/examples and the same public
+release checks also pass, as recorded in the linked report-worker document. Earlier
+failures, same-session frame blocking, other synchronous paths and physical/load
+acceptance remain open; no stable release or installed-node update is implied.
 
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,

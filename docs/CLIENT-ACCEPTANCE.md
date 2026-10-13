@@ -1,9 +1,10 @@
 # Reviewed client acceptance (unreleased after alpha.6)
 
-Latest backend checkpoint: **615 workspace/all-target tests per feature mode**,
-including [owned read-only schedule inspection](AUTOMATION-SCHEDULES.md#read-only-command-inspection-worker-subsequent-increment).
-Public scheduling/recurrence timing failures remain open; passing units do not
-complete reliability, physical acceptance or the full runtime/media gates.
+Latest backend checkpoint: **623 workspace/all-target tests per feature mode**,
+including [owned grant-report journaling](GRANT-REPORT-JOURNAL.md). Fresh public
+scheduling/recurrence/native checks pass locally; earlier failures remain
+retained and loaded-system/physical reliability and runtime/media gates remain
+open. These tests do not prove full stable-release acceptance.
 
 Latest model-policy checkpoint: **571 workspace/all-target tests per feature
 mode**, with command-owned eager/manual/on-demand and idle policy,
@@ -924,3 +925,24 @@ clock/policy fence after one completed occurrence, with no second claim. No
 timing bound or replay rule is relaxed and neither failed run is cleared by
 the unit suites. Journal contention/async-worker blocking and physical-load
 acceptance remain open before stable 0.4.0.
+
+## Owned grant-report callbacks (2026-10-14)
+
+The [report-worker increment](GRANT-REPORT-JOURNAL.md) keeps journal validation
+and writes off async workers and outside the shared pending-request mutex.
+Private checkpoint IDs prevent late saves from confirming a removed/replaced
+ACK. Bounded callback/result ownership survives cancelled waiters, drains on
+Stop and prevents reopening while old saves remain owned. Durable ACK-before-
+completion ordering and original lease deadlines are unchanged.
+
+Default and dashboard-free full suites each pass **623 tests**, including eight
+new persistence-boundary cases; fresh default binaries/examples and source checks
+pass. Public debug runs `automation-schedules-p34PzH`,
+`local-pipelines-TDLPo0` and `process-lifetime-O7Dtrp` all pass with chain exit 0.
+The pipeline model remains synthetic and both nodes are logical local processes.
+Fresh optimized binaries/examples build successfully; the same public release
+fixtures pass `automation-schedules-BxuBsY`, `local-pipelines-x2PaRJ` and
+`process-lifetime-OXh0FP`, with release-chain exit 0. Previous failed fixtures are
+not erased or treated as explained; physical, loaded-system, same-session frame
+processing and other synchronous journal paths still need acceptance/work.
+No installed node, release/feed, UI, model or security clearance changes follow.

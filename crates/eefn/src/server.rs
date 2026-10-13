@@ -19,10 +19,15 @@ use uuid::Uuid;
 use crate::NodeCrypto;
 use crate::protocol::{PROTOCOL_VERSION, now_ms, read_message, write_message};
 
+#[path = "server_report_workers.rs"]
+mod report_workers;
+
 pub const DEFAULT_PORT: u16 = 51335;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
 const AUTH_CLOCK_SKEW_MS: i64 = 5 * 60 * 1000;
 const MAX_AUTH_NONCES: usize = 8192;
+// Internal safety cap, not a work queue: excess report saves fail uncertain.
+const MAX_REPORT_WORKERS: usize = 64;
 
 #[derive(Debug, Error)]
 #[error("node '{0}' is not connected")]
@@ -80,6 +85,7 @@ struct Inner {
     connections: RwLock<HashMap<String, Connection>>,
     routes: RwLock<HashMap<String, ConnectionInfo>>,
     pending: Mutex<HashMap<String, Pending>>,
+    report_workers: Arc<report_workers::ReportWorkers>,
     nonces: Mutex<HashMap<(String, String), Instant>>,
     events: broadcast::Sender<NodeEvent>,
     accept_task: Mutex<Option<GatewayTask>>,
@@ -122,6 +128,7 @@ struct Pending {
     observer: Option<Arc<dyn crate::grants::GrantObserver>>,
     grant: Option<crate::grants::ExecutionGrant>,
     acknowledged: bool,
+    checkpoint: Option<Uuid>,
     lease_deadline: Option<Instant>,
     lease_probe_id: Option<String>,
     node_id: String,
@@ -183,6 +190,7 @@ impl NodeServer {
                 connections: RwLock::new(HashMap::new()),
                 routes: RwLock::new(HashMap::new()),
                 pending: Mutex::new(HashMap::new()),
+                report_workers: report_workers::ReportWorkers::new(MAX_REPORT_WORKERS),
                 nonces: Mutex::new(HashMap::new()),
                 events,
                 accept_task: Mutex::new(None),
@@ -215,6 +223,7 @@ impl NodeServer {
         self.inner
             .port
             .store(listener.local_addr()?.port(), Ordering::Relaxed);
+        self.inner.report_workers.open()?;
         info!(host = %self.inner.host, port = self.port(), "node gateway listening");
         let server = self.clone();
         let (stop, mut stopped) = oneshot::channel();
@@ -257,6 +266,7 @@ impl NodeServer {
         // Serialize stop/cleanup with start. Retain the handle if this future is
         // cancelled so a subsequent stop can still await the same generation.
         let mut gateway = self.inner.accept_task.lock().await;
+        self.inner.report_workers.close();
         if let Some(task) = gateway.as_mut() {
             if let Some(stop) = task.stop.take() {
                 let _ = stop.send(());
@@ -266,6 +276,9 @@ impl NodeServer {
             }
             task.task = None;
         }
+        // A cancelled session/waiter does not cancel its blocking journal save.
+        // Retain ownership through stop, including queued callbacks.
+        self.inner.report_workers.drain().await;
         let disconnected = self
             .inner
             .connections
@@ -593,6 +606,7 @@ impl NodeServer {
                 observer,
                 grant,
                 acknowledged: false,
+                checkpoint: None,
                 lease_deadline,
                 lease_probe_id: None,
                 node_id: node_id.into(),
@@ -1108,6 +1122,7 @@ impl NodeServer {
         if request.node_id != node
             || request.session_id != session
             || request.acknowledged
+            || request.checkpoint.is_some()
             || request.lease_probe_id.is_some()
             || !request.grant.as_ref().is_some_and(|g| query.confirms(g))
         {
@@ -1138,6 +1153,7 @@ impl NodeServer {
         if !requests.get(&id).is_some_and(|pending| {
             pending.node_id == authenticated_id
                 && pending.session_id == session_id
+                && pending.checkpoint.is_none()
                 && pending.grant.as_ref().is_none_or(|g| {
                     serde_json::from_value::<crate::grants::GrantReport>(message["grant"].clone())
                         .is_ok_and(|r| {
@@ -1155,27 +1171,39 @@ impl NodeServer {
             return;
         }
         if let Some(pending) = requests.remove(&id) {
+            drop(requests);
             if let Some(observer) = &pending.observer {
                 let report =
                     serde_json::from_value::<crate::grants::GrantReport>(message["grant"].clone())
                         .expect("validated grant report");
-                if observer.record(&report).is_err() {
+                let saved = self
+                    .inner
+                    .report_workers
+                    .record(observer.clone(), report)
+                    .await;
+                if saved.is_err() || self.inner.report_workers.is_closing() {
                     let _ = pending.sender.send(json!({"success":false,"error_type":"GrantJournalError","error":"Grant completion checkpoint failed; effects may have happened"}));
                     return;
                 }
+                // Keep the successful checkpoint owned through delivery.
+                let _owned = saved.expect("successful report checkpoint");
+                let _ = pending.sender.send(message);
+                return;
             }
             let _ = pending.sender.send(message);
         }
     }
     async fn resolve_grant_ack(&self, node: &str, session: Uuid, message: Value) {
-        let Some(id) = message["id"].as_str() else {
+        let Some(id) = message["id"].as_str().map(str::to_owned) else {
             return;
         };
         let mut pending = self.inner.pending.lock().await;
-        let Some(p) = pending
-            .get_mut(id)
-            .filter(|p| p.node_id == node && p.session_id == session && !p.acknowledged)
-        else {
+        let Some(p) = pending.get_mut(&id).filter(|p| {
+            p.node_id == node
+                && p.session_id == session
+                && !p.acknowledged
+                && p.checkpoint.is_none()
+        }) else {
             return;
         };
         let Some(g) = &p.grant else { return };
@@ -1189,12 +1217,37 @@ impl NodeServer {
             && p.lease_deadline
                 .is_some_and(|deadline| Instant::now() < deadline)
         {
-            if p.observer.as_ref().is_some_and(|o| o.record(&r).is_err()) {
-                if let Some(p) = pending.remove(id) {
+            let checkpoint = Uuid::new_v4();
+            p.checkpoint = Some(checkpoint);
+            let observer = p.observer.clone();
+            drop(pending);
+            let saved = match observer {
+                Some(observer) => self
+                    .inner
+                    .report_workers
+                    .record(observer, r.clone())
+                    .await
+                    .map(Some),
+                None => Ok(None),
+            };
+            let mut pending = self.inner.pending.lock().await;
+            let Some(p) = pending.get_mut(&id).filter(|p| {
+                p.node_id == node
+                    && p.session_id == session
+                    && p.checkpoint == Some(checkpoint)
+                    && !p.acknowledged
+                    && p.grant.as_ref().is_some_and(|g| r.confirms(g))
+            }) else {
+                // Timeout/disconnect/replacement won; never restore correlation.
+                return;
+            };
+            if saved.is_err() || self.inner.report_workers.is_closing() {
+                if let Some(p) = pending.remove(&id) {
                     let _ = p.sender.send(json!({"success":false,"error_type":"GrantJournalError","error":"Grant acceptance checkpoint failed; effects may have happened"}));
                 }
                 return;
             }
+            p.checkpoint = None;
             p.acknowledged = true;
             let _ = self.inner.events.send(NodeEvent::GrantAccepted(json!(r)));
         }
@@ -2147,6 +2200,7 @@ mod tests {
                 observer: None,
                 grant: None,
                 acknowledged: false,
+                checkpoint: None,
                 lease_deadline: None,
                 lease_probe_id: None,
                 session_id: Uuid::nil(),
@@ -2183,6 +2237,7 @@ mod tests {
                 session_id: session,
                 grant: Some(g.clone()),
                 acknowledged: false,
+                checkpoint: None,
                 lease_deadline: Some(Instant::now() + Duration::from_secs(10)),
                 lease_probe_id: Some(Uuid::new_v4().to_string()),
                 sender,
@@ -2382,6 +2437,7 @@ mod tests {
                     observer: Some(observer.clone()),
                     grant: Some(g.clone()),
                     acknowledged: false,
+                    checkpoint: None,
                     lease_deadline: Some(Instant::now() + Duration::from_secs(10)),
                     lease_probe_id: Some(Uuid::new_v4().to_string()),
                     node_id: "owner".into(),
@@ -2437,6 +2493,7 @@ mod tests {
                 observer: Some(observer.clone()),
                 grant: Some(g.clone()),
                 acknowledged: false,
+                checkpoint: None,
                 lease_deadline: Some(Instant::now() + Duration::from_secs(10)),
                 lease_probe_id: Some(Uuid::new_v4().to_string()),
                 node_id: "owner".into(),
@@ -2459,6 +2516,274 @@ mod tests {
             *observer.0.lock().unwrap(),
             vec![ReceiptState::Accepted, ReceiptState::Completed]
         );
+    }
+
+    struct HeldReportObserver {
+        hold_state: crate::grants::ReceiptState,
+        started: std::sync::Mutex<Option<oneshot::Sender<()>>>,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+        saved: std::sync::Mutex<Vec<crate::grants::ReceiptState>>,
+    }
+    impl crate::grants::GrantObserver for HeldReportObserver {
+        fn record(&self, report: &crate::grants::GrantReport) -> Result<()> {
+            if report.state == self.hold_state {
+                self.started
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .unwrap()
+                    .send(())
+                    .unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))?;
+            }
+            self.saved.lock().unwrap().push(report.state);
+            Ok(())
+        }
+    }
+    async fn held_report_fixture(
+        state: crate::grants::ReceiptState,
+    ) -> (
+        NodeServer,
+        crate::grants::ExecutionGrant,
+        Uuid,
+        Arc<HeldReportObserver>,
+        oneshot::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+        oneshot::Receiver<Value>,
+    ) {
+        let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        let grant = crate::grants::tests::grant();
+        let session = Uuid::parse_str(&grant.session_id).unwrap();
+        let (started, ready) = oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let observer = Arc::new(HeldReportObserver {
+            hold_state: state,
+            started: std::sync::Mutex::new(Some(started)),
+            release: std::sync::Mutex::new(held),
+            saved: std::sync::Mutex::new(vec![]),
+        });
+        let (sender, receiver) = oneshot::channel();
+        server.inner.pending.lock().await.insert(
+            "held".into(),
+            Pending {
+                observer: Some(observer.clone()),
+                grant: Some(grant.clone()),
+                acknowledged: false,
+                checkpoint: None,
+                lease_deadline: Some(Instant::now() + Duration::from_secs(10)),
+                lease_probe_id: Some(Uuid::new_v4().to_string()),
+                node_id: "owner".into(),
+                session_id: session,
+                sender,
+            },
+        );
+        (server, grant, session, observer, ready, release, receiver)
+    }
+    fn held_ack(grant: &crate::grants::ExecutionGrant) -> Value {
+        json!({"type":"grant_ack","id":"held","grant":crate::grants::GrantReport::new(grant,crate::grants::ReceiptState::Accepted,Value::Null,None)})
+    }
+    fn held_completion(grant: &crate::grants::ExecutionGrant) -> Value {
+        json!({"type":"response","id":"held","success":true,"grant":crate::grants::GrantReport::new(grant,crate::grants::ReceiptState::Completed,json!({"ok":true}),None)})
+    }
+    async fn unrelated_reply_during_checkpoint(server: &NodeServer) {
+        let (sender, receiver) = oneshot::channel();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            server.inner.pending.lock().await.insert(
+                "unrelated".into(),
+                Pending {
+                    observer: None,
+                    grant: None,
+                    acknowledged: false,
+                    checkpoint: None,
+                    lease_deadline: None,
+                    lease_probe_id: None,
+                    node_id: "other".into(),
+                    session_id: Uuid::nil(),
+                    sender,
+                },
+            );
+            server
+                .resolve_response(
+                    "other",
+                    Uuid::nil(),
+                    json!({"id":"unrelated","success":true}),
+                )
+                .await;
+            assert_eq!(receiver.await.unwrap()["success"], true);
+        })
+        .await
+        .expect("checkpoint must not hold shared correlation lock");
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn held_ack_keeps_executor_and_registry_available_without_premature_confirmation() {
+        use crate::grants::ReceiptState;
+        let (server, grant, session, observer, ready, release, mut receiver) =
+            held_report_fixture(ReceiptState::Accepted).await;
+        let mut events = server.subscribe();
+        let worker = server.clone();
+        let deadline = server.inner.pending.lock().await["held"].lease_deadline;
+        let ack = held_ack(&grant);
+        let saving = ack.clone();
+        let task =
+            tokio::spawn(async move { worker.resolve_grant_ack("owner", session, saving).await });
+        ready.await.unwrap();
+        unrelated_reply_during_checkpoint(&server).await;
+        {
+            let pending = server.inner.pending.lock().await;
+            assert!(pending["held"].checkpoint.is_some());
+            assert!(!pending["held"].acknowledged);
+        }
+        server.resolve_grant_ack("owner", session, ack).await;
+        server
+            .resolve_response("owner", session, held_completion(&grant))
+            .await;
+        assert!(observer.saved.lock().unwrap().is_empty());
+        assert!(events.try_recv().is_err());
+        assert!(receiver.try_recv().is_err());
+        release.send(()).unwrap();
+        task.await.unwrap();
+        assert!(server.inner.pending.lock().await["held"].acknowledged);
+        assert_eq!(
+            server.inner.pending.lock().await["held"].lease_deadline,
+            deadline
+        );
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            NodeEvent::GrantAccepted(_)
+        ));
+        server
+            .resolve_response("owner", session, held_completion(&grant))
+            .await;
+        assert_eq!(receiver.await.unwrap(), held_completion(&grant));
+        assert_eq!(
+            *observer.saved.lock().unwrap(),
+            vec![ReceiptState::Accepted, ReceiptState::Completed]
+        );
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn held_completion_keeps_registry_available_and_reply_waits_for_durable_save() {
+        use crate::grants::ReceiptState;
+        let (server, grant, session, observer, ready, release, mut receiver) =
+            held_report_fixture(ReceiptState::Completed).await;
+        server
+            .resolve_grant_ack("owner", session, held_ack(&grant))
+            .await;
+        let worker = server.clone();
+        let completion = held_completion(&grant);
+        let expected = completion.clone();
+        let task =
+            tokio::spawn(
+                async move { worker.resolve_response("owner", session, completion).await },
+            );
+        ready.await.unwrap();
+        unrelated_reply_during_checkpoint(&server).await;
+        assert!(!server.inner.pending.lock().await.contains_key("held"));
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(
+            *observer.saved.lock().unwrap(),
+            vec![ReceiptState::Accepted]
+        );
+        release.send(()).unwrap();
+        task.await.unwrap();
+        assert_eq!(receiver.await.unwrap(), expected);
+        assert_eq!(
+            *observer.saved.lock().unwrap(),
+            vec![ReceiptState::Accepted, ReceiptState::Completed]
+        );
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn disconnect_and_replacement_cannot_resurrect_late_durable_ack() {
+        use crate::grants::ReceiptState;
+        for replace in [false, true] {
+            let (server, grant, session, observer, ready, release, receiver) =
+                held_report_fixture(ReceiptState::Accepted).await;
+            let mut events = server.subscribe();
+            let worker = server.clone();
+            let ack = held_ack(&grant);
+            let task =
+                tokio::spawn(async move { worker.resolve_grant_ack("owner", session, ack).await });
+            ready.await.unwrap();
+            server.fail_pending_for("owner", session).await;
+            assert_eq!(receiver.await.unwrap()["success"], false);
+            let (sender, mut replacement) = oneshot::channel();
+            if replace {
+                server.inner.pending.lock().await.insert(
+                    "held".into(),
+                    Pending {
+                        observer: None,
+                        grant: Some(grant.clone()),
+                        acknowledged: false,
+                        checkpoint: Some(Uuid::new_v4()),
+                        lease_deadline: None,
+                        lease_probe_id: None,
+                        node_id: "owner".into(),
+                        session_id: session,
+                        sender,
+                    },
+                );
+            }
+            release.send(()).unwrap();
+            task.await.unwrap();
+            assert_eq!(
+                *observer.saved.lock().unwrap(),
+                vec![ReceiptState::Accepted]
+            );
+            assert!(events.try_recv().is_err());
+            if replace {
+                assert!(!server.inner.pending.lock().await["held"].acknowledged);
+                assert!(replacement.try_recv().is_err());
+            } else {
+                assert!(!server.inner.pending.lock().await.contains_key("held"));
+            }
+            server.stop().await;
+        }
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_session_and_stop_keep_started_save_owned_until_it_finishes() {
+        use crate::grants::ReceiptState;
+        let (server, grant, session, observer, ready, release, receiver) =
+            held_report_fixture(ReceiptState::Accepted).await;
+        let mut events = server.subscribe();
+        let worker = server.clone();
+        let ack = held_ack(&grant);
+        let task =
+            tokio::spawn(async move { worker.resolve_grant_ack("owner", session, ack).await });
+        ready.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let stopping = server.clone();
+        let stopped = tokio::spawn(async move { stopping.stop().await });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !server.inner.report_workers.is_closing() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(server.inner.report_workers.active_count(), 1);
+        assert!(!stopped.is_finished());
+        stopped.abort();
+        assert!(stopped.await.unwrap_err().is_cancelled());
+        assert_eq!(server.inner.report_workers.active_count(), 1);
+        let stopping = server.clone();
+        let stopped = tokio::spawn(async move { stopping.stop().await });
+        tokio::task::yield_now().await;
+        assert!(!stopped.is_finished());
+        release.send(()).unwrap();
+        stopped.await.unwrap();
+        assert_eq!(server.inner.report_workers.active_count(), 0);
+        assert_eq!(
+            *observer.saved.lock().unwrap(),
+            vec![ReceiptState::Accepted]
+        );
+        assert_eq!(receiver.await.unwrap()["success"], false);
+        assert!(events.try_recv().is_err());
+        assert!(server.inner.pending.lock().await.is_empty());
+        server.start().await.unwrap();
+        server.stop().await;
     }
 
     async fn queued_test_server() -> (NodeServer, mpsc::Receiver<Value>) {
@@ -2510,6 +2835,7 @@ mod tests {
                 observer: None,
                 grant: Some(g.clone()),
                 acknowledged: false,
+                checkpoint: None,
                 lease_deadline: Some(deadline),
                 lease_probe_id: None,
                 node_id: "owner".into(),

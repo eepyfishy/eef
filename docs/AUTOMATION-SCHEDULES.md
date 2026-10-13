@@ -126,14 +126,19 @@ binaries/examples, formatting/diff and the backend/browser source guard pass.
 The final verification chain exits 0; it does not rerun or clear the failed
 public timing gates. The failed coordinator DB hash remains unchanged.
 
-Source inspection identifies another synchronous path to address:
-`eefn::server` holds its shared pending-request mutex while invoking the durable
-grant observer, and `eef::request_execution::AttemptJournal` performs journal
-validation/writes synchronously. This can stall async workers and unrelated
+Source inspection at this checkpoint identified another synchronous path:
+`eefn::server` held its shared pending-request mutex while invoking the durable
+grant observer, and `eef::request_execution::AttemptJournal` performed journal
+validation/writes synchronously. This could stall async workers and unrelated
 correlation management. It is a confirmed code path, not proof of the complete
 cause of either failed fixture. Moving it requires bounded, shutdown-owned
 callbacks, durable ACK-before-completion ordering and exact session correlation;
 detached writes, replay or extending issued lease deadlines are not solutions.
+The subsequent [owned report-worker increment](GRANT-REPORT-JOURNAL.md) moves
+these saves off async workers, releases the shared correlation mutex during
+storage, fences late ACKs and drains callback/result ownership on Stop. Fresh
+public ordinary scheduling, pipelines and native lifetime pass in that source
+checkpoint. Other paths and loaded-system/physical timing acceptance remain open.
 Other command/launch journal paths, loaded-system/physical acceptance and the full
 stable 0.4.0 requirements remain open. No installed node, release/feed, UI or model
 is changed by this source increment.
