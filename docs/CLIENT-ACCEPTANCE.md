@@ -874,3 +874,28 @@ gate or a complete diagnosis; no time window or replay rule is relaxed.
 
 No physical acceptance, release/feed/node update, model download, UI change or
 signing clearance follows. All other full stable 0.4.0 requirements remain open.
+
+## Owned periodic timer checkpoints (2026-10-14)
+
+The [periodic journal worker](AUTOMATION-SCHEDULES.md#owned-periodic-journal-worker-subsequent-increment)
+keeps its synchronous checks off async workers without a new workload runner,
+queue, cache or timing allowance. One queued/running callback remains owned
+after its async waiter is cancelled; shutdown drains it before interrupting
+schedules, and queued callbacks skip journal work after closing begins.
+
+All six focused timer tests pass. Default and dashboard-free all-target suites
+each pass **612 tests**: EEF library 234 plus one ignored profiler, owner CLI 16,
+installer 6, node library 345 and node CLI 11. Fresh default executables/examples,
+formatting/diff and the backend/browser source guard pass.
+
+Unchanged ordinary scheduling `automation-schedules-zU1995` passes, including
+the explicit replacement activation previously interrupted with zero attempts.
+Final `local-pipelines-kTb27e` and `process-lifetime-CnDq3Q` pass, with complete
+verification-chain exit 0. The initial new-test event-module import error was
+corrected before passing verification, not counted as a pass. Historical failures
+remain retained; these local results do not prove their complete cause, loaded-
+system timing, all journal paths, physical network or full stable acceptance.
+
+Trigger launch, owner inspection and other synchronous journal paths remain
+outside this worker slice. No installed app/node, release/feed, UI, model or
+signing change follows; all other full 0.4.0 gates remain open.

@@ -58,6 +58,13 @@ fails a later activation with confirmed stale heartbeat age and zero issued
 attempts. Journal/runtime responsiveness remains an open reliability gate; no
 freshness, expiry, replay or authority fence has been relaxed.
 
+The next [owned timer checkpoint worker](AUTOMATION-SCHEDULES.md#owned-periodic-journal-worker-subsequent-increment)
+keeps periodic journal processing off async workers and drains even queued
+callbacks during shutdown, without replay or new execution authority. The
+unchanged ordinary schedule and finite/native public regressions pass locally;
+full suites pass 612 tests in each feature mode. Other journal paths, loaded-
+system/physical acceptance, strong stop and the remaining roadmap stay open.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It

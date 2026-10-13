@@ -1,10 +1,14 @@
 //! Bounded trigger coordination; workload execution remains in the grant driver.
-use crate::{Runtime, jobs::automation_schedules::State, task::PlanStatus};
-use anyhow::{Result, bail};
+use crate::{
+    Runtime,
+    jobs::automation_schedules::{State, Trigger},
+    task::{PlanStatus, TaskEngine},
+};
+use anyhow::{Context, Result, bail};
 use std::{
     collections::BTreeSet,
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -20,6 +24,18 @@ pub(crate) struct TimerManager {
     clock_epoch: AtomicU64,
     clock_samples: AtomicU64,
     clock_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    journal_work: Mutex<bool>,
+    journal_idle: Condvar,
+}
+
+// Owns the single queued/running periodic checkpoint even if its async waiter
+// is cancelled. Shutdown drains it before interrupting schedules or closing DB.
+struct JournalWork(Arc<TimerManager>);
+impl Drop for JournalWork {
+    fn drop(&mut self) {
+        *self.0.journal_work.lock().expect("timer journal worker") = false;
+        self.0.journal_idle.notify_all();
+    }
 }
 impl TimerManager {
     pub(crate) fn new(config: &crate::config::Config) -> Result<Arc<Self>> {
@@ -53,6 +69,8 @@ impl TimerManager {
             clock_epoch: AtomicU64::new(0),
             clock_samples: AtomicU64::new(0),
             clock_thread: Mutex::new(None),
+            journal_work: Mutex::new(false),
+            journal_idle: Condvar::new(),
         }))
     }
     pub(crate) fn close(&self, store: &crate::jobs::JobStore) -> Result<()> {
@@ -62,12 +80,114 @@ impl TimerManager {
                 .join()
                 .map_err(|_| anyhow::anyhow!("Timer clock monitor failed; no suspension proof"))?;
         }
+        let mut working = self.journal_work.lock().expect("timer journal worker");
+        while *working {
+            working = self
+                .journal_idle
+                .wait(working)
+                .expect("timer journal worker");
+        }
+        drop(working);
         let ids = self.active.lock().expect("timer active").clone();
         for id in ids {
             store.schedule_interrupt_now(&id, "shutdown")?;
         }
         self.active.lock().expect("timer active").clear();
         Ok(())
+    }
+    fn begin_journal_work(self: &Arc<Self>) -> Result<Option<JournalWork>> {
+        let mut working = self.journal_work.lock().expect("timer journal worker");
+        if self.closing.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        if *working {
+            bail!("Periodic timer checkpoint already queued/running; no extra worker");
+        }
+        *working = true;
+        Ok(Some(JournalWork(self.clone())))
+    }
+    async fn poll_schedule(
+        self: &Arc<Self>,
+        engine: Arc<TaskEngine>,
+        id: String,
+        runtime: String,
+        discontinuity: bool,
+        may_launch: bool,
+        launching: bool,
+    ) -> Result<Option<Trigger>> {
+        let Some(work) = self.begin_journal_work()? else {
+            return Ok(None);
+        };
+        let manager = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _owned = work;
+            // A queued callback cannot admit work after shutdown begins.
+            if manager.closing.load(Ordering::SeqCst) {
+                return Ok(None);
+            }
+            let started = Instant::now();
+            let step = manager.checkpoint(&engine, &id, &runtime, discontinuity, may_launch, launching);
+            if started.elapsed() > Duration::from_millis(500) {
+                tracing::warn!(schedule_id=%id,elapsed_ms=started.elapsed().as_millis(),"Slow timer journal checkpoint");
+            }
+            if let Err(error) = &step {
+                tracing::warn!(schedule_id=%id,%error,"Timer checkpoint failed; no catch-up or retry");
+                let _ = engine.store.schedule_interrupt_now(&id, "checkpoint_failed");
+                manager.active.lock().expect("timer active").remove(&id);
+            }
+            step
+        })
+        .await
+        .context("Periodic timer worker lost; inspect retained IDs, no retry")?
+    }
+    fn checkpoint(
+        &self,
+        engine: &TaskEngine,
+        id: &str,
+        runtime: &str,
+        discontinuity: bool,
+        may_launch: bool,
+        launching: bool,
+    ) -> Result<Option<Trigger>> {
+        if !self.active.lock().expect("timer active").contains(id) {
+            return Ok(None);
+        }
+        if discontinuity {
+            engine
+                .store
+                .schedule_interrupt_now(id, "clock_discontinuity")?;
+        }
+        let schedule = engine.store.schedule_get(id)?;
+        match schedule.state {
+            State::Waiting if may_launch && !self.closing.load(Ordering::SeqCst) => {
+                return engine.claim_schedule_due(id, runtime, &schedule.issuer_id);
+            }
+            State::InFlight if !launching => {
+                let trigger = schedule
+                    .active_trigger
+                    .as_deref()
+                    .context("Missing active trigger")?;
+                let plan = engine.store.trigger_job(trigger)?;
+                match plan.as_ref().map(|p| p.status) {
+                    Some(PlanStatus::Completed | PlanStatus::Cancelled) => {
+                        engine
+                            .store
+                            .schedule_settle_now(id, runtime, &schedule.issuer_id)?;
+                    }
+                    Some(PlanStatus::Running | PlanStatus::Stopping) => {}
+                    _ => {
+                        engine
+                            .store
+                            .trigger_interrupt_now(trigger, "job_unresolved")?;
+                    }
+                }
+            }
+            State::Waiting | State::InFlight => {}
+            _ => {
+                self.active.lock().expect("timer active").remove(id);
+            }
+        }
+        Ok(None)
     }
     fn start_clock(self: &Arc<Self>) -> Result<()> {
         let mut handle = self.clock_thread.lock().expect("timer clock");
@@ -155,46 +275,41 @@ impl TimerManager {
                 observed_clock_epoch = epoch;
                 let ids = manager.active.lock().expect("timer active").clone();
                 for id in ids {
-                    let checkpoint_started = Instant::now();
-                    let step:Result<()>=async {
-                        if discontinuity {runtime.engine.store.schedule_interrupt_now(&id,"clock_discontinuity")?;}
-                        let s=runtime.engine.store.schedule_get(&id)?;
-                        match s.state {
-                            State::Waiting=>{
-                                if launching.len()>=manager.max_launches {return Ok(());}
-                                if let Some(t)=runtime.engine.claim_schedule_due(&id,&runtime.instance_id,&s.issuer_id)? {
-                                    launching.insert(id.clone());let worker=runtime.clone();let timeout=manager.timeout;let schedule_id=id.clone();
-                                    pending.spawn(async move {
-                                        let result=match tokio::time::timeout(timeout,worker.launch_automation_trigger(&t.id)).await {
-                                            Ok(result)=>result,
-                                            Err(_)=>{let _=worker.engine.store.trigger_interrupt_now(&t.id,"launch_failed");Err(anyhow::anyhow!("Trigger launch timed out; inspect exact retained IDs, no retry"))}
-                                        };(schedule_id,result)
-                                    });
-                                }
-                            }
-                            State::InFlight if !launching.contains(&id)=>{
-                                let trigger=s.active_trigger.as_deref().ok_or_else(||anyhow::anyhow!("Missing active trigger"))?;
-                                let p=runtime.engine.store.trigger_job(trigger)?;
-                                match p.as_ref().map(|p|p.status) {
-                                    Some(PlanStatus::Completed|PlanStatus::Cancelled)=>{runtime.engine.store.schedule_settle_now(&id,&runtime.instance_id,&s.issuer_id)?;},
-                                    Some(PlanStatus::Running|PlanStatus::Stopping)=>{},
-                                    _=>{runtime.engine.store.trigger_interrupt_now(trigger,"job_unresolved")?;}
-                                }
-                            }
-                            State::InFlight=>{},
-                            _=>{manager.active.lock().expect("timer active").remove(&id);}
-                        }Ok(())
-                    }.await;
-                    if checkpoint_started.elapsed() > Duration::from_millis(500) {
-                        tracing::warn!(schedule_id=%id,elapsed_ms=checkpoint_started.elapsed().as_millis(),"Slow timer journal checkpoint");
+                    let step = manager
+                        .poll_schedule(
+                            runtime.engine.clone(),
+                            id.clone(),
+                            runtime.instance_id.clone(),
+                            discontinuity,
+                            launching.len() < manager.max_launches,
+                            launching.contains(&id),
+                        )
+                        .await;
+                    if manager.closing.load(Ordering::SeqCst) {
+                        break;
                     }
-                    if let Err(error) = step {
-                        tracing::warn!(schedule_id=%id,%error,"Timer checkpoint failed; no catch-up or retry");
-                        let _ = runtime
-                            .engine
-                            .store
-                            .schedule_interrupt_now(&id, "checkpoint_failed");
-                        manager.active.lock().expect("timer active").remove(&id);
+                    match step {
+                        Ok(Some(trigger))
+                            if manager.active.lock().expect("timer active").contains(&id) =>
+                        {
+                            launching.insert(id.clone());
+                            let worker = runtime.clone();
+                            let timeout = manager.timeout;
+                            pending.spawn(async move {
+                                let result = match tokio::time::timeout(timeout,worker.launch_automation_trigger(&trigger.id)).await {
+                                    Ok(result) => result,
+                                    Err(_) => { let _=worker.engine.store.trigger_interrupt_now(&trigger.id,"launch_failed"); Err(anyhow::anyhow!("Trigger launch timed out; inspect exact retained IDs, no retry")) }
+                                };
+                                (id,result)
+                            });
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            // The worker attempted its one error checkpoint. A
+                            // lost/panicked worker is not permission to repeat it.
+                            tracing::warn!(schedule_id=%id,%error,"Periodic checkpoint needs inspection; no retry");
+                            manager.active.lock().expect("timer active").remove(&id);
+                        }
                     }
                 }
             }
@@ -210,6 +325,126 @@ fn clock_discontinuity(before: u64, now: u64, elapsed: u64, poll: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn wait_for(check: impl Fn() -> bool) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !check() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("bounded worker transition");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn periodic_checkpoint_keeps_async_executor_available_while_journal_is_held() {
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let engine = TaskEngine::with_store(crate::event::EventBus::new(10), store.clone());
+        let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        manager.active.lock().unwrap().insert(id.clone());
+        let (ready, held) = tokio::sync::oneshot::channel();
+        let (release, hold) = std::sync::mpsc::channel();
+        let locked = store.clone();
+        let holder = std::thread::spawn(move || {
+            locked.with_test_journal_lock(|_| {
+                ready.send(()).unwrap();
+                let _ = hold.recv_timeout(Duration::from_secs(5));
+            })
+        });
+        held.await.unwrap();
+        let worker = manager.clone();
+        let checkpoint = tokio::spawn(async move {
+            worker
+                .poll_schedule(engine, id, "fixture-runtime".into(), false, true, false)
+                .await
+        });
+        wait_for(|| *manager.journal_work.lock().unwrap()).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!checkpoint.is_finished());
+        release.send(()).unwrap();
+        holder.join().unwrap();
+        assert!(
+            checkpoint.await.unwrap().is_err(),
+            "missing fixture schedule is not authority"
+        );
+        assert!(!*manager.journal_work.lock().unwrap());
+        assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
+        manager.close(&store).unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_drains_owned_checkpoint_and_refuses_extra_or_later_workers() {
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+        let owned = manager.begin_journal_work().unwrap().unwrap();
+        assert!(manager.begin_journal_work().is_err());
+        let closing = manager.clone();
+        let stopped = tokio::task::spawn_blocking(move || closing.close(&store));
+        wait_for(|| manager.closing.load(Ordering::SeqCst)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(
+            !stopped.is_finished(),
+            "shutdown must not forget an owned callback"
+        );
+        assert!(manager.begin_journal_work().unwrap().is_none());
+        drop(owned);
+        stopped.await.unwrap().unwrap();
+        assert!(!*manager.journal_work.lock().unwrap());
+    }
+
+    #[test]
+    fn cancelled_waiter_keeps_queued_callback_owned_until_shutdown_observes_it() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let store = crate::jobs::JobStore::in_memory().unwrap();
+            let engine = TaskEngine::with_store(crate::event::EventBus::new(10), store.clone());
+            let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let (release, held) = std::sync::mpsc::channel();
+            let occupied = tokio::task::spawn_blocking(move || {
+                started.send(()).unwrap();
+                let _ = held.recv_timeout(Duration::from_secs(5));
+            });
+            ready.await.unwrap();
+            let worker = manager.clone();
+            let checkpoint = tokio::spawn(async move {
+                worker
+                    .poll_schedule(
+                        engine,
+                        uuid::Uuid::new_v4().to_string(),
+                        "fixture-runtime".into(),
+                        false,
+                        true,
+                        false,
+                    )
+                    .await
+            });
+            wait_for(|| *manager.journal_work.lock().unwrap()).await;
+            checkpoint.abort();
+            match checkpoint.await {
+                Err(error) => assert!(error.is_cancelled()),
+                Ok(_) => panic!("queued waiter should be cancelled"),
+            }
+            assert!(*manager.journal_work.lock().unwrap());
+            let closing = manager.clone();
+            let journal = store.clone();
+            let stopped = std::thread::spawn(move || closing.close(&journal));
+            wait_for(|| manager.closing.load(Ordering::SeqCst)).await;
+            assert!(*manager.journal_work.lock().unwrap());
+            release.send(()).unwrap();
+            occupied.await.unwrap();
+            stopped.join().unwrap().unwrap();
+            assert!(!*manager.journal_work.lock().unwrap());
+            assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
+            assert!(manager.begin_journal_work().unwrap().is_none());
+        });
+    }
+
     #[test]
     fn backward_wall_steps_forward_jumps_and_long_gaps_suspend_without_catchup() {
         assert!(!clock_discontinuity(1000, 1200, 200, 200));

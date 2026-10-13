@@ -7,6 +7,53 @@ and execute through the existing reviewed grant driver. This is not general
 semantic automation, a second runner, continuous media or stable 0.4.0.
 Nothing activates merely by saving a definition/policy or starting EEF.
 
+## Owned periodic journal worker (subsequent increment)
+
+Periodic schedule reads, due claims, settlement and checkpoint-error housekeeping
+now run on a blocking worker, keeping their synchronous journal lock/validation
+off async workers. The timer still awaits each checkpoint serially: at most one
+periodic callback is queued/running, with no extra schedule/work queue, cached
+authority, changed poll interval or new workload executor. Launching remains in
+the existing compiler/reservation/grant driver with its existing bounded slots.
+
+A guard owns that queued/running callback independently of its async waiter.
+Shutdown closes admission, drains the guard, then interrupts schedules; dropping
+a waiter does not pretend the blocking callback was aborted. A callback that
+starts after closing skips journal processing, and a returned claim is not
+launched after closing or removal from the active schedule set. This follows
+Tokio's [blocking task lifetime contract](https://docs.rs/tokio/latest/tokio/task/fn.spawn_blocking.html).
+Worker count is bounded, not guaranteed I/O/shutdown duration. A stuck storage
+operation can still delay shutdown; no timeout falsely confirms its termination.
+
+Current-row validation, transactional final time/policy fences, overlap/refund
+rules, identities and no replay remain. A normal checkpoint error gets its one
+existing `checkpoint_failed` attempt inside the worker. Lost/panicked workers
+need inspection, not a repeated write or new claim. Trigger launch, owner command
+inspection and other synchronous journal paths are not offloaded by this slice.
+It is not the general DB actor, strong stop or completed responsiveness gate.
+
+The six focused timer tests pass, including the three new worker cases: a held
+real journal lock leaves the single-thread async executor available; shutdown
+drains the owned checkpoint and refuses extra/later workers; a cancelled waiter
+retains its queued callback until closing skips it with zero journal changes.
+Default and dashboard-free workspace/all-target suites each pass **612 tests**
+(EEF library 234 plus one ignored opt-in profiler, owner CLI 16, installer 6,
+node library 345 and node CLI 11).
+
+The fresh default build and unchanged ordinary scheduling fixture
+`automation-schedules-zU1995` pass, including the final explicit replacement
+activation that failed in telemetry-only `automation-schedules-57c0Sr` with
+confirmed stale heartbeat age and zero issued attempts. The initial new-test
+compile failed on an incorrect event-module import; only that test import was
+corrected before the passing focused run. It is not counted as a pass.
+Final fresh default executables/examples build and public regressions
+`local-pipelines-kTb27e` and `process-lifetime-CnDq3Q` pass, with the complete
+verification-chain exit 0. Formatting, diff and the backend/browser source
+boundary pass. These local passes do not isolate every previous timing failure
+or prove loaded-system,
+physical network, general journal responsiveness, strong stop or stable release
+acceptance. Earlier failed fixtures remain failed evidence.
+
 ## Journal admission and diagnostics (subsequent increment)
 
 Trigger overlap and remaining allowance checks share one fresh fully validated

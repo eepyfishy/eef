@@ -65,6 +65,13 @@ pub struct JobStore {
     max_bytes: usize,
 }
 
+#[cfg(test)]
+impl JobStore {
+    pub(crate) fn with_test_journal_lock<T>(&self, check: impl FnOnce(&Connection) -> T) -> T {
+        check(&self.connection.lock().expect("test journal"))
+    }
+}
+
 pub(crate) struct JobAdmission {
     pub plan: Plan,
     pub reused: bool,
