@@ -371,6 +371,15 @@ fn triggers(connection: &Connection) -> Result<Vec<Trigger>> {
         .collect()
 }
 pub(super) fn validate_all(connection: &Connection) -> Result<()> {
+    validated_history(connection).map(|_| ())
+}
+/// A fully checked, request-local read view. Not authority and never retained
+/// across database operations. Constructed only by the complete history checks.
+struct HistoryView {
+    schedules: std::collections::BTreeMap<String, Schedule>,
+    triggers: Vec<Trigger>,
+}
+fn validated_history(connection: &Connection) -> Result<HistoryView> {
     // Read and fully validate dependencies once for THIS invocation only. The
     // caller owns the connection lock/transaction; nothing is cached across a
     // write, checkpoint or call. Point readers share the exact same predicates.
@@ -466,7 +475,7 @@ pub(super) fn validate_all(connection: &Connection) -> Result<()> {
             bail!("Trigger request identity is reused");
         }
     }
-    for s in retained_schedules.into_values() {
+    for s in retained_schedules.values() {
         if matches!(s.state, State::Waiting | State::InFlight)
             && !active_definitions.insert(s.definition_id.clone())
         {
@@ -512,7 +521,10 @@ pub(super) fn validate_all(connection: &Connection) -> Result<()> {
             }
         }
     }
-    Ok(())
+    Ok(HistoryView {
+        schedules: retained_schedules,
+        triggers: claims,
+    })
 }
 fn current(
     connection: &Connection,
@@ -867,25 +879,35 @@ impl JobStore {
     }
     pub(crate) fn schedule_list(&self) -> Result<Vec<Schedule>> {
         let connection = self.connection.lock().expect("job journal");
-        validate_all(&connection)?;
-        schedules(&connection)
+        Ok(validated_history(&connection)?
+            .schedules
+            .into_values()
+            .collect())
     }
-    pub(crate) fn schedule_get(&self, id: &str) -> Result<Schedule> {
+    pub(crate) fn schedule_find(&self, id: &str) -> Result<Option<Schedule>> {
         uuid(id)?;
         let connection = self.connection.lock().expect("job journal");
-        validate_all(&connection)?;
-        read_schedule(&connection, id)?.context("Schedule missing")
+        Ok(validated_history(&connection)?.schedules.remove(id))
+    }
+    pub(crate) fn schedule_get(&self, id: &str) -> Result<Schedule> {
+        self.schedule_find(id)?.context("Schedule missing")
     }
     pub(crate) fn trigger_get(&self, id: &str) -> Result<Trigger> {
         uuid(id)?;
         let connection = self.connection.lock().expect("job journal");
-        validate_all(&connection)?;
-        read_trigger(&connection, id)?.context("Trigger missing")
+        validated_history(&connection)?
+            .triggers
+            .into_iter()
+            .find(|t| t.id == id)
+            .context("Trigger missing")
     }
     pub(crate) fn trigger_job(&self, id: &str) -> Result<Option<Plan>> {
         let connection = self.connection.lock().expect("job journal");
-        validate_all(&connection)?;
-        let t = read_trigger(&connection, id)?.context("Trigger missing")?;
+        let t = validated_history(&connection)?
+            .triggers
+            .into_iter()
+            .find(|t| t.id == id)
+            .context("Trigger missing")?;
         source_job(&connection, &t)
     }
     pub(crate) fn trigger_begin_launch(&self, id: &str, runtime: &str) -> Result<bool> {
@@ -1373,6 +1395,15 @@ mod tests {
                 automation_authorizations::validate_all(&db)
             });
             measure("schedules", &|| validate_all(&db));
+            measure("reloaded schedule list", &|| {
+                validate_all(&db)?;
+                schedules(&db)?;
+                Ok(())
+            });
+            measure("single-view schedule list", &|| {
+                validated_history(&db)?;
+                Ok(())
+            });
             measure("occurrences", &|| automation_occurrences::validate_all(&db));
             measure("separate admission gates", &|| {
                 automation_occurrences::definition_resolved(&db, definition)?;
@@ -1429,6 +1460,61 @@ mod tests {
             &["system.info".into()],
         )
     }
+    #[test]
+    fn request_local_history_readers_match_point_checks_and_do_not_cache_writes() {
+        let store = JobStore::in_memory().unwrap();
+        let (_, _, policy, schedule) = fixture_with_validity(store.clone(), 60000);
+        assert_eq!(
+            store.schedule_find(&schedule.id).unwrap(),
+            Some(schedule.clone())
+        );
+        assert!(
+            store
+                .schedule_find(&uuid::Uuid::new_v4().to_string())
+                .unwrap()
+                .is_none()
+        );
+        let trigger = store
+            .schedule_claim_due(&schedule.id, &policy.runtime_id, &policy.issuer_id, || {
+                schedule.next_due_ms.unwrap()
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(store.trigger_get(&trigger.id).unwrap(), trigger);
+        assert!(store.trigger_job(&trigger.id).unwrap().is_none());
+        let db = store.connection.lock().unwrap();
+        let changes = db.total_changes();
+        let view = validated_history(&db).unwrap();
+        assert_eq!(
+            view.schedules.into_values().collect::<Vec<_>>(),
+            schedules(&db).unwrap()
+        );
+        assert_eq!(view.triggers, triggers(&db).unwrap());
+        assert_eq!(db.total_changes(), changes);
+        drop(db);
+        let interrupted = store
+            .schedule_interrupt_now(&schedule.id, "checkpoint_failed")
+            .unwrap();
+        assert_eq!(store.schedule_get(&schedule.id).unwrap(), interrupted);
+        assert_eq!(store.schedule_list().unwrap(), vec![interrupted]);
+        let db = store.connection.lock().unwrap();
+        db.execute(
+            "UPDATE automation_triggers SET request_id='damaged' WHERE trigger_id=?1",
+            [&trigger.id],
+        )
+        .unwrap();
+        drop(db);
+        assert!(store.schedule_get(&schedule.id).is_err());
+        assert!(
+            store
+                .schedule_find(&uuid::Uuid::new_v4().to_string())
+                .is_err()
+        );
+        assert!(store.schedule_list().is_err());
+        assert!(store.trigger_get(&trigger.id).is_err());
+        assert!(store.trigger_job(&trigger.id).is_err());
+    }
+
     #[test]
     fn failed_checkpoint_is_distinct_from_unresolved_work_and_does_not_create_a_claim() {
         let store = JobStore::in_memory().unwrap();

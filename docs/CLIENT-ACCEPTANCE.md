@@ -821,3 +821,13 @@ read-only measurements show reduced duplicated work, not a timing guarantee or
 completed reliability gate. Earlier `local-pipelines-SuDk94` native exit remains
 unexplained and is separately recorded. Physical/resource/continuous/bootstrap/
 peer/cluster/signing and all full stable 0.4.0 gates remain open.
+
+The subsequent request-local history reader increment passes **605** all-target
+tests in both feature modes and preserves full fresh validation without a cross-
+call cache. It eliminates repeated record reloads in status/receipt inspection.
+Unchanged ordinary one-second automation passes `automation-schedules-g6UcnO`
+and final `automation-schedules-GGKXkH`; final `local-pipelines-Ee7aNY` passes the
+finite/recurring regressions with chain exit 0. Earlier failed/native fixtures are
+retained separately, not retroactively explained. These isolated debug-build
+passes do not prove loaded-system or physical timing guarantees, nor any other
+remaining stable 0.4.0 gate. Installed nodes and published artifacts are unchanged.

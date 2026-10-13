@@ -203,13 +203,7 @@ impl Runtime {
                     policy_sha256: policy_sha256.clone(),
                     operation_id: operation_id.clone(),
                 };
-                if let Some(old) = self
-                    .engine
-                    .store
-                    .schedule_list()?
-                    .into_iter()
-                    .find(|s| s.id == *operation_id)
-                {
+                if let Some(old) = self.engine.store.schedule_find(operation_id)? {
                     if old.creation != arm {
                         bail!("Schedule receipt conflicts; inspect original state");
                     }

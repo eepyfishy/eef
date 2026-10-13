@@ -290,3 +290,38 @@ Bounded private harness-exit/phase diagnostics were added before the subsequent
 isolated passing run. That passing run does not explain or prove a fix for the
 native exit. No installed runtime/node, release/feed, installer, UI, model or real
 shared service changed by this source checkpoint.
+
+## Request-local history readers (2026-10-13)
+
+Read-only schedule list/find/get and trigger get/job now return data from the
+complete validated history view created for that request, instead of validating
+the same records again after the history scan. Exact enable-receipt lookup uses
+that same view. Each invocation loads and checks current rows; the view is neither
+execution authority nor a cache across calls/writes. Global identity/count/lineage
+validation remains mandatory even when the requested ID is missing.
+
+The new reader case matches batch results against point readers, checks zero
+database changes during inspection, observes a later interruption and rejects
+subsequent trigger-row damage across every reader (including a missing-ID lookup).
+On the unchanged read-only failed fixture, back-to-back list measurements were
+3.5-4.9 ms for one view versus 7.8-8.6 ms for validation followed by reload. Absolute
+timings differ from earlier samples; these numbers do not prove a hardware/load
+guarantee or isolate every contributor to the previous latency.
+
+Final workspace/all-target suites pass **605 tests** in both feature modes:
+EEF library 231 plus one ignored opt-in profiler, owner CLI 16, installer 6,
+EEFN library 341, node CLI 11. Fresh default binaries/examples, formatting/diff
+and the backend/browser source guard pass.
+
+Unchanged public ordinary scheduling passes `automation-schedules-g6UcnO` and
+fresh final-binary `automation-schedules-GGKXkH`, including one-second native runs,
+concurrent enable receipts, stop/revocation, restart, uncertain replies, actual
+pre-launch refusal, resolution and explicitly fresh replacement. Final public
+`local-pipelines-Ee7aNY` also passes its finite/admission/native/restart/recurrence
+cases, with complete regression-chain exit 0. These are two logical nodes on one
+PC, not physical two-PC or heavy-load guarantees. Earlier failures remain recorded;
+the isolated passes do not establish their complete cause or erase resource-
+contention/clock/physical release gates. No timing window or authority limit changed.
+
+No installed runtime, physical node, release/feed, installer, UI, model or shared
+service changes follow. Full 0.4.0 acceptance remains incomplete.
