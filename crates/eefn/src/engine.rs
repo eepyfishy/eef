@@ -229,6 +229,7 @@ pub struct NodeEngine {
     resource_owner: String,
     resources: Vec<crate::context::Resource>,
     granted_model_config: Option<Value>,
+    pipeline_enabled: bool,
 }
 
 impl NodeEngine {
@@ -267,6 +268,7 @@ impl NodeEngine {
             ollama_keep_alive_seconds: None,
             service: None,
             granted_model_config: None,
+            pipeline_enabled: false,
             resource_owner: String::new(),
             resources: Vec::new(),
         })
@@ -301,6 +303,21 @@ impl NodeEngine {
     pub fn with_model_server(mut self, server: Arc<ModelServer>) -> Self {
         self.model_server = Some(server);
         self
+    }
+    /// The compiler/public command integration must opt in explicitly. A config
+    /// value, model output, or plugin name cannot enable compound authority.
+    #[allow(dead_code)]
+    pub(crate) fn with_pipeline_runtime(mut self) -> Self {
+        self.pipeline_enabled = true;
+        self
+    }
+    pub(crate) fn record_pipeline_progress(&self, g: &crate::grants::ExecutionGrant, value: Value) {
+        if let Some(service) = &self.service {
+            let mut live = service.live.lock().unwrap();
+            if live["last_workload"]["grant_id"] == json!(g.grant_id) {
+                live["last_workload"]["pipeline"] = value;
+            }
+        }
     }
 
     pub fn with_update_manifest(mut self, manifest: Option<String>) -> Self {
@@ -360,6 +377,9 @@ impl NodeEngine {
             .iter()
             .map(|value| (*value).to_owned())
             .collect::<Vec<_>>();
+        if self.pipeline_enabled {
+            values.push("pipeline.run".into());
+        }
         if self.service.is_some() {
             values.push("node.configure".into());
         }
@@ -424,10 +444,65 @@ impl NodeEngine {
     /// Grants never widen applied node policy. Changed relevant saved scopes fail
     /// closed until restart, and revocation is checked before/pending execution.
     pub(crate) fn check_grant_policy(&self, g: &crate::grants::ExecutionGrant) -> Result<()> {
-        if !self.capabilities().contains(&g.capability) {
+        self.check_parent_policy(g, false)
+    }
+    pub(crate) fn check_grant_admission(&self, g: &crate::grants::ExecutionGrant) -> Result<()> {
+        self.check_parent_policy(g, true)
+    }
+    fn check_parent_policy(
+        &self,
+        g: &crate::grants::ExecutionGrant,
+        admission: bool,
+    ) -> Result<()> {
+        if g.capability == "pipeline.run" {
+            if !self.pipeline_enabled {
+                bail!("Pipeline compiler/runtime integration is not enabled")
+            }
+            let definition = crate::pipeline::FinitePipeline::from_grant(g)?;
+            for step in &definition.steps {
+                let params = step.bound_params()?;
+                self.check_operation_policy(step.operation(&params), &g.limits, admission)?;
+            }
+            Ok(())
+        } else {
+            self.check_operation_policy(
+                crate::grants::OperationShape {
+                    capability: &g.capability,
+                    action: &g.action,
+                    params: &g.params,
+                    resource_id: g.resource_id.as_deref(),
+                    model_id: g.model_id.as_deref(),
+                    backend: g.backend.as_deref(),
+                    model_role: g.model_role.as_deref(),
+                },
+                &g.limits,
+                true,
+            )
+        }
+    }
+    /// Applied/current local operation intersection, not separate child grants.
+    pub(crate) fn check_operation_policy(
+        &self,
+        g: crate::grants::OperationShape<'_>,
+        granted_limits: &crate::grants::GrantLimits,
+        require_ready: bool,
+    ) -> Result<()> {
+        let model_operation = matches!(g.capability, "llm.infer" | "vlm.analyze");
+        if g.capability == "filesystem"
+            && if g.action == "write" {
+                !self.policy.filesystem.write
+            } else {
+                !self.policy.filesystem.read
+            }
+        {
+            bail!("Granted filesystem action is not enabled on this node")
+        }
+        if (require_ready || !model_operation)
+            && !self.capabilities().iter().any(|c| c == g.capability)
+        {
             bail!("Granted capability is not enabled on this node")
         }
-        let section = match g.capability.as_str() {
+        let section = match g.capability {
             "system.info" | "system.ping" => None,
             "filesystem" => Some("filesystem"),
             "process.exec" => Some("process"),
@@ -446,8 +521,8 @@ impl NodeEngine {
                     config.get("grants").cloned().unwrap_or_else(|| json!({})),
                 )?;
                 limits.validate()?;
-                if g.limits.max_execution_ms > limits.max_duration_ms
-                    || g.limits.max_result_bytes > limits.max_result_bytes
+                if granted_limits.max_execution_ms > limits.max_duration_ms
+                    || granted_limits.max_result_bytes > limits.max_result_bytes
                 {
                     bail!("Saved node grant limits were reduced")
                 }
@@ -463,8 +538,8 @@ impl NodeEngine {
                             .unwrap_or_else(|| json!({})),
                     )?;
                     let current = normalize_policy(current)?;
-                    if grant_policy_scope(&self.policy, g, section)
-                        != grant_policy_scope(&current, g, section)
+                    if grant_policy_scope(&self.policy, g.capability, g.action, section)
+                        != grant_policy_scope(&current, g.capability, g.action, section)
                     {
                         bail!("Relevant local permissions changed; restart/replan required")
                     }
@@ -480,8 +555,8 @@ impl NodeEngine {
                 Ok(())
             })?;
         }
-        if let Some(model) = &g.model_id {
-            let metadata = if g.backend.as_deref() == Some("ollama") {
+        if let Some(model) = g.model_id {
+            let metadata = if g.backend == Some("ollama") {
                 self.ollama_models
                     .get(model)
                     .context("Granted Ollama model is not selected")?
@@ -491,7 +566,7 @@ impl NodeEngine {
                     .model_server
                     .as_ref()
                     .context("Granted local model is not configured")?;
-                if !server.can_infer(Some(model)) {
+                if require_ready && !server.can_infer(Some(model)) {
                     bail!("Granted local model is not ready")
                 }
                 server
@@ -499,13 +574,27 @@ impl NodeEngine {
                     .context("Granted local model is not selected")?
                     .selection_metadata()?
             };
-            if !metadata.supports(&g.capability)
+            if !metadata.supports(g.capability)
                 || !metadata.routable()
-                || g.model_role
-                    .as_ref()
-                    .is_some_and(|role| metadata.roles.as_ref().is_none_or(|r| !r.contains(role)))
+                || g.model_role.is_some_and(|role| {
+                    metadata
+                        .roles
+                        .as_ref()
+                        .is_none_or(|r| !r.iter().any(|r| r == role))
+                })
             {
                 bail!("Granted model capability/role is not enabled")
+            }
+        }
+        if let Some(id) = g.resource_id {
+            if !self.resources.iter().any(|r| {
+                crate::context::resource_id(&self.resource_owner, &r.id) == id
+                    && r.available
+                    && r.capability == g.capability
+            }) {
+                bail!(
+                    "Granted physical resource is missing, unavailable or bound to another operation"
+                )
             }
         }
         Ok(())
@@ -517,6 +606,9 @@ impl NodeEngine {
         action: &str,
         mut params: Value,
     ) -> Result<Value> {
+        if capability == "pipeline.run" {
+            return Err(crate::execution_boundary::ExecutionGrantRequired.into());
+        }
         if let Some(id) = params.get("resource_id") {
             let id = id.as_str().context("resource_id must be a string")?;
             let resource = self
@@ -1359,28 +1451,24 @@ impl NodeEngine {
     }
 }
 
-fn grant_policy_scope(
-    policy: &NodePolicy,
-    g: &crate::grants::ExecutionGrant,
-    section: &str,
-) -> Value {
+fn grant_policy_scope(policy: &NodePolicy, capability: &str, action: &str, section: &str) -> Value {
     let p = json!(policy);
-    let full = if g.capability == "filesystem" {
+    let full = if capability == "filesystem" {
         format!(
             "filesystem.{}",
-            if g.action == "write" { "write" } else { "read" }
+            if action == "write" { "write" } else { "read" }
         )
     } else {
-        g.capability.clone()
+        capability.to_owned()
     };
-    let scope = match (section, g.action.as_str()) {
+    let scope = match (section, action) {
         ("filesystem", "write") => {
             json!({"enabled":policy.filesystem.write,"roots":policy.filesystem.roots,"max_bytes":policy.filesystem.max_write_bytes})
         }
         ("filesystem", _) => {
             json!({"enabled":policy.filesystem.read,"roots":policy.filesystem.roots,"max_bytes":policy.filesystem.max_read_bytes,"max_entries":policy.filesystem.max_list_entries})
         }
-        ("media", _) => p["media"][match g.capability.as_str() {
+        ("media", _) => p["media"][match capability {
             "audio.capture" => "microphone",
             "audio.play" => "audio_output",
             "tts.speak" => "tts",

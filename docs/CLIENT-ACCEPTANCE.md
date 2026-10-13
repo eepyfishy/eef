@@ -1,7 +1,7 @@
 # Reviewed client acceptance (unreleased after alpha.6)
 
-Latest backend checkpoint: **581 workspace/all-target tests per feature mode**,
-including the [finite pipeline structural foundation](LOCAL-PIPELINES.md#structural-verification-checkpoint-2026-10-13).
+Latest backend checkpoint: **592 workspace/all-target tests per feature mode**,
+including the [private finite-pipeline execution core](LOCAL-PIPELINES.md#private-execution-core-checkpoint-2026-10-13).
 This does not expose pipeline execution or complete the full runtime/media gates.
 
 Latest model-policy checkpoint: **571 workspace/all-target tests per feature

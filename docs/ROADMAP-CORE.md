@@ -662,8 +662,11 @@ old authority is known to be stopped/expired; clustering remains a later gate.
 
 The subsequent [local pipeline structural foundation](LOCAL-PIPELINES.md) adds
 strict finite graph/data-reference types sharing existing operation-shape checks.
-It does not yet add a compiler, parent pipeline grant, executor, progress/stop
-acknowledgement or public pipeline capability. Continue those on the existing
+The next private execution core adds a parent grant shape, serial local dataflow,
+existing deadline/policy watching, retained data accounting and runtime-local
+progress while production pipeline availability remains off. A compiler, public
+command/admission path, durable progress/stop acknowledgements and physical
+acceptance are not complete. Continue those on the existing
 durable runtime; the full finite/continuous/media/peer scope below is unchanged.
 
 Owner clarification, 2026-09-22: see [presence and supervised media sessions](PRESENCE-AND-MEDIA.md).

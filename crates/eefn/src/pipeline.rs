@@ -58,6 +58,29 @@ fn step_id(id: &str) -> Result<()> {
     Ok(())
 }
 impl FinitePipeline {
+    /// Decode an exact compound operation. Common grant identity/lease checks
+    /// remain in ExecutionGrant::validate; this never consumes a receipt.
+    pub(crate) fn from_grant(grant: &crate::grants::ExecutionGrant) -> Result<Self> {
+        if grant.capability != "pipeline.run"
+            || grant.action != "run"
+            || grant.resource_id.is_some()
+            || grant.model_id.is_some()
+            || grant.backend.is_some()
+            || grant.model_role.is_some()
+            || grant
+                .params
+                .as_object()
+                .is_none_or(|p| p.len() != 1 || !p.contains_key("pipeline"))
+        {
+            bail!("Pipeline requires one exact definition and no substituted top-level bindings")
+        }
+        let definition: Self = serde_json::from_value(grant.params["pipeline"].clone())?;
+        definition.validate_for_executor(Some(&grant.executor_node))?;
+        if definition.max_retained_bytes > grant.limits.max_result_bytes {
+            bail!("Pipeline data limit exceeds the parent grant/owner result budget")
+        }
+        Ok(definition)
+    }
     pub fn validate(&self) -> Result<()> {
         self.validate_for_executor(None)
     }
@@ -115,6 +138,17 @@ impl FinitePipeline {
     }
 }
 impl PipelineStep {
+    pub(crate) fn operation<'a>(&'a self, params: &'a Value) -> crate::grants::OperationShape<'a> {
+        crate::grants::OperationShape {
+            capability: &self.capability,
+            action: &self.action,
+            params,
+            resource_id: self.resource_id.as_deref(),
+            model_id: self.model_id.as_deref(),
+            backend: self.backend.as_deref(),
+            model_role: self.model_role.as_deref(),
+        }
+    }
     pub fn bound_params(&self) -> Result<Value> {
         if !self.params.is_object() || encoded_bytes(&self.params, MAX_DEFINITION_BYTES).is_err() {
             bail!("Invalid or oversized pipeline literal parameters")

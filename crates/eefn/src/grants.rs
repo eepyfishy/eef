@@ -234,6 +234,10 @@ impl ExecutionGrant {
         {
             bail!("Invalid execution grant scope or limits")
         }
+        if self.capability == "pipeline.run" {
+            crate::pipeline::FinitePipeline::from_grant(self)?;
+            return Ok(());
+        }
         OperationShape {
             capability: &self.capability,
             action: &self.action,
@@ -432,6 +436,20 @@ impl GrantReport {
                 && g.capability == "process.exec"
                 && g.action == "run"
                 && self.data.get("success").and_then(Value::as_bool) == Some(false))
+            && (g.capability != "pipeline.run"
+                || self.state != ReceiptState::Completed
+                || (self.data.is_null()
+                    && !self.success
+                    && self.error_code.as_deref() == Some("result_too_large"))
+                || crate::pipeline_runtime::confirmed_result(g, &self.data).is_ok_and(|success| {
+                    self.success == success
+                        && self.error_code.as_deref()
+                            == if success {
+                                None
+                            } else {
+                                Some("pipeline_stage_unsuccessful")
+                            }
+                }))
             && (self.state != ReceiptState::Accepted
                 || (self.persisted
                     && self.data.is_null()
@@ -750,7 +768,7 @@ impl AcceptedGrant {
             return Err(GrantDenied("grant_owner_limits_exceeded").into());
         }
         engine
-            .check_grant_policy(&g)
+            .check_grant_admission(&g)
             .map_err(|_| GrantDenied("local_policy_denied_or_changed"))?;
         let accepted = Instant::now();
         // Pair both local clocks before the durable claim. Its I/O consumes
@@ -778,7 +796,13 @@ impl AcceptedGrant {
             params["model"] = json!(model);
             params["backend"] = json!(g.backend);
         }
-        let operation = engine.execute(&g.capability, &g.action, params);
+        let operation = async {
+            if g.capability == "pipeline.run" {
+                crate::pipeline_runtime::execute(engine, g).await
+            } else {
+                engine.execute(&g.capability, &g.action, params).await
+            }
+        };
         tokio::pin!(operation);
         let deadline = tokio::time::Instant::from_std(self.deadline);
         let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -841,6 +865,22 @@ impl AcceptedGrant {
 }
 
 fn completed_outcome(grant: &ExecutionGrant, data: Value) -> GrantReport {
+    if grant.capability == "pipeline.run" {
+        return match crate::pipeline_runtime::confirmed_result(grant, &data) {
+            Ok(success) => GrantReport::new(
+                grant,
+                ReceiptState::Completed,
+                data,
+                (!success).then_some("pipeline_stage_unsuccessful"),
+            ),
+            Err(_) => GrantReport::new(
+                grant,
+                ReceiptState::Unknown,
+                Value::Null,
+                Some("pipeline_result_unconfirmed"),
+            ),
+        };
+    }
     // Process completion is not command success. Keep its bounded exit/output
     // evidence and the existing completed-but-unsuccessful report contract so
     // the coordinator fails the task and cancels unissued dependencies. Other
@@ -865,7 +905,13 @@ pub(crate) mod tests {
         let mut attempted = grant();
         attempted.capability = "pipeline.run".into();
         attempted.params = json!({"pipeline":definition});
-        assert!(attempted.validate().is_err());
+        attempted.validate().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let disabled = crate::NodeEngine::new(false, vec![], directory.path().into()).unwrap();
+        assert!(
+            disabled.check_grant_admission(&attempted).is_err(),
+            "shape is not runtime enablement or node permission"
+        );
         assert!(!crate::engine::CAPABILITIES.contains(&"pipeline.run"));
         assert!(crate::execution_boundary::require_control("pipeline.run").is_err());
     }
