@@ -85,6 +85,21 @@ release checks also pass, as recorded in the linked report-worker document. Earl
 failures, same-session frame blocking, other synchronous paths and physical/load
 acceptance remain open; no stable release or installed-node update is implied.
 
+The next [framed-session responsiveness increment](GRANT-REPORT-JOURNAL.md#framed-session-responsiveness-follow-up-unreleased)
+keeps heartbeats/control replies flowing on a node's connection during journal
+saves, with one session-owned FIFO consumer, count/serialized-byte bounds and
+unchanged processing-time ACK/order/lease fences. Malformed/overloaded sessions
+retire uncertain; started saves remain owned. Full suites pass **631 tests** per
+feature mode and fresh debug public scheduling/pipeline/native checks pass.
+Optimized binaries/helper build; ordinary/native tests pass, while the pipeline
+runner has another unexplained `0xc0000409` exit before any retained job.
+Private phase diagnostics and a verified portable runner produce a subsequent
+passing pipeline check, without proving that original crash's complete cause.
+Both observations and the still-open runner/physical/load acceptance are recorded
+in the linked document. Other synchronous paths,
+physical/load acceptance and the complete bootstrap/media/resource/peer/cluster/
+installer/security requirements remain open before stable 0.4.0.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It

@@ -1,7 +1,7 @@
 # Reviewed client acceptance (unreleased after alpha.6)
 
-Latest backend checkpoint: **623 workspace/all-target tests per feature mode**,
-including [owned grant-report journaling](GRANT-REPORT-JOURNAL.md). Fresh public
+Latest backend checkpoint: **631 workspace/all-target tests per feature mode**,
+including [framed-session responsiveness](GRANT-REPORT-JOURNAL.md#framed-session-responsiveness-follow-up-unreleased). Fresh public
 scheduling/recurrence/native checks pass locally; earlier failures remain
 retained and loaded-system/physical reliability and runtime/media gates remain
 open. These tests do not prove full stable-release acceptance.
@@ -946,3 +946,33 @@ fixtures pass `automation-schedules-BxuBsY`, `local-pipelines-x2PaRJ` and
 not erased or treated as explained; physical, loaded-system, same-session frame
 processing and other synchronous journal paths still need acceptance/work.
 No installed node, release/feed, UI, model or security clearance changes follow.
+
+## Framed-session responsiveness (2026-10-14)
+
+The next [FIFO report-consumer increment](GRANT-REPORT-JOURNAL.md#framed-session-responsiveness-follow-up-unreleased)
+lets same-node heartbeats and control replies continue during report storage.
+The reader and consumer remain session-owned whole futures: no detached task or
+per-message read cancellation. Intake validates correlation/report identity, but
+only the existing consumer-side durable ACK/order/lease checks can confirm work.
+Queues have per-session count and shared serialized-byte ceilings. Pressure
+retires the affected session uncertain; started saves remain separately owned.
+
+Focused framed/queue tests pass, including partial encrypted frames across save
+completion and successful callback-result disposal after consumer cancellation.
+Default and dashboard-free all-target suites each pass **631 tests**; fresh
+default executables/examples and source checks pass. Public debug scheduling
+`automation-schedules-agcSrG`, pipelines `local-pipelines-xtVgqX` and native
+lifetime `process-lifetime-6U0jVG` pass with chain exit 0. Optimized binaries/helper
+build successfully; ordinary `automation-schedules-S888rF` and native
+`process-lifetime-AgxCuj` pass, but the pipeline runner in
+`local-pipelines-Gob8R6` exits `0xc0000409` without normal exit evidence, with
+zero retained jobs. The release chain exits 1, not a complete pass.
+
+Bounded private phase/fatal diagnostics were added before a changed-runner
+release pipeline check `local-pipelines-nyw8eS`, which passes using a checksum/
+publisher-verified portable Node.js 24.20.0 instead of installed 24.15.0.
+Upstream's relevant Windows fix is a hypothesis, not proven crash attribution;
+see [runner evidence and limitations](GRANT-REPORT-JOURNAL.md#pipeline-runner-diagnostics).
+The global runner, installed apps and models are unchanged. The prior failures are still
+retained; no physical/model-quality/load guarantee or stable-release completion
+follows. No installed node, release/feed, UI, model or permission changes follow.

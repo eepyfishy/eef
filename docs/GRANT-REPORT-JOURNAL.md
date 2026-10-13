@@ -83,11 +83,101 @@ The same unchanged public fixtures pass independently against `target/release`:
 `process-lifetime-OXh0FP`, with complete release verification-chain exit 0.
 Their results retain the same scope/exclusions; no installed app, installer,
 bundle or versioned release asset is replaced by rebuilding these private targets.
-Same-session frame processing still awaits its report save, and other command,
-issuance and journal paths remain synchronous. Contention, loaded-system and
+At this checkpoint, same-session frame processing still awaited its report save;
+other command, issuance and journal paths remained synchronous. Contention, loaded-system and
 physical-network acceptance are not proven fixed by these focused tests.
 Existing failed scheduling/recurrence evidence remains failed; isolated passes
 do not establish their complete cause or a universal timing fix. This increment
 does not complete strong remote stop, model bootstrap, continuous media, peer
 transfers, distributed resources, cluster fencing, MSI/signing or stable 0.4.0.
 No installed application/node, release/feed, dashboard or model is changed.
+
+## Framed-session responsiveness follow-up (unreleased)
+
+The next source increment separates each session's whole frame-reading loop
+from its FIFO report consumer. Both futures remain owned inside that session,
+not detached tasks. A report save no longer prevents that same connection from
+accepting heartbeats, submissions, fresh lease queries or correlated control
+responses. Workload ACKs and completions stay in FIFO order and pass the existing
+durable acceptance/authority checks at processing, never from a queued snapshot.
+
+Intake requires an exact pending authenticated node/session/grant and a valid
+matching report kind/success flag. It is only queue admission, not an ACK or
+execution permission. Unknown, substituted or malformed reports are not queued.
+Each session holds at most 64 queued envelopes; the gateway shares a 32 MiB
+serialized-envelope allowance across sessions, including active envelopes until
+processing ends. Size is counted with a bounded writer without allocating another
+serialized payload. The message moves into processing rather than being cloned.
+These bounds are not measured total RAM/CPU/VRAM or physical resource guarantees.
+Cancelled consumers release envelope allowances; started journal callbacks remain
+independently owned by the report-worker manager until save/result disposal.
+
+On queue pressure or malformed framing, the session retires and its pending
+callers retain uncertainty, rather than silently dropping evidence and reporting
+success. Orderly EOF drains already-received reports in the original wire order;
+gateway shutdown still cancels owned sessions and drains started report callbacks.
+No new retry, fallback, expiry allowance or lease renewal is introduced. Queue
+residence uses the original deadline; processing can still refuse an expired ACK.
+
+The reader's pending `read_message` is never selected/cancelled for individual
+report completions: selecting whole loops preserves partially read encrypted
+frames. A held-save framed test receives a heartbeat and control reply, then
+finishes ACK/completion storage halfway through the next encrypted heartbeat,
+which must remain intact. Additional cases verify malformed-frame and byte-
+pressure retirement, discarded successful save tokens after consumer cancellation,
+exact intake identity, FIFO, byte/count limits and permit recovery. The inner
+duplex tests use a known authenticated identity; existing gateway/public tests
+separately cover real credential/TLS establishment.
+
+Final focused server tests pass 62 cases, including eight new queue/framed
+cases. Default and dashboard-free workspace/all-target suites each pass **631
+tests**: EEF library 237 plus one ignored opt-in profiler, owner CLI 16,
+installer 6, node library 361 and node CLI 11. Fresh default executables/examples,
+formatting/diff and the backend/browser source guard pass.
+
+Fresh debug public runs `automation-schedules-agcSrG`,
+`local-pipelines-xtVgqX` and `process-lifetime-6U0jVG` all pass with chain exit 0.
+Their native/recurrence/restart/refusal scopes remain the same as the earlier
+report-worker fixtures above: authenticated logical nodes on one PC, no physical
+network, real-model-quality or loaded-system claim. Optimized workspace binaries
+and the native fixture helper also build successfully offline. Their public
+ordinary scheduling (`automation-schedules-S888rF`) and native lifetime
+(`process-lifetime-AgxCuj`) checks pass, but the pipeline test runner exits
+`0xc0000409` in `local-pipelines-Gob8R6`, making that release verification chain
+exit 1. No normal failure/exit report is emitted. Read-only inspection finds
+zero retained jobs/schedules and no remaining fixture processes; Application
+events inspected do not establish a cause. The failed DB remains unchanged at
+SHA-256 `fc5c37e063f4b81c8a306f061c5acb22fd8f097995ac0d7673dcfb89af35b87b`.
+No timing allowance or historical failed evidence is changed.
+
+Other command/issuance journal paths, storage and
+CPU contention, physical network/load acceptance and the complete stable 0.4.0
+scope remain open. No installed node or published artifact changes follow.
+
+### Pipeline runner diagnostics
+
+The pipeline harness now appends bounded private phase checkpoints as phases
+happen, because a native fail-fast exit may never call a JavaScript exit handler.
+It also enables fatal diagnostic reports in its isolated fixture directory,
+excluding environment and network details. No model/credential inputs or child
+arguments are included in phase records; only phase/time/runner/binary-directory
+and the last sixteen child process identities/statuses. Fatal-report handlers
+are diagnostic opportunities, not guarantees for every native failure.
+
+The installed runner is signed OpenJS Node.js 24.15.0. Upstream's
+[Windows libuv fix](https://github.com/nodejs/node/pull/61999) is included in
+[24.20.0](https://nodejs.org/en/blog/release/v24.20.0). It is a relevant hypothesis,
+not a diagnosis from the exit code alone: our failed run has no native stack or
+matching assertion. A private standalone 24.20.0 runner was downloaded from
+the official release, verified against its published SHA-256
+`5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5` and a valid
+OpenJS publisher signature. It adds about 89 MiB, without npm/archive copies,
+global installation/PATH changes, application bundling or a model download.
+
+The instrumented release pipeline run `local-pipelines-nyw8eS` passes on that
+portable runner; its private phase trace reaches `passed` and identifies 24.20.0.
+The original native failure remains failed evidence. This changed-runner pass
+does not prove the complete crash cause, clear older native exits or guarantee
+every Windows runner is safe. These are development tools, not a Node.js runtime
+dependency added to EEF/EEFN. Physical/load/security and full stable acceptance
+remain incomplete.

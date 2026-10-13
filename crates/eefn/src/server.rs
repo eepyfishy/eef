@@ -19,6 +19,8 @@ use uuid::Uuid;
 use crate::NodeCrypto;
 use crate::protocol::{PROTOCOL_VERSION, now_ms, read_message, write_message};
 
+#[path = "server_report_queue.rs"]
+mod report_queue;
 #[path = "server_report_workers.rs"]
 mod report_workers;
 
@@ -28,6 +30,8 @@ const AUTH_CLOCK_SKEW_MS: i64 = 5 * 60 * 1000;
 const MAX_AUTH_NONCES: usize = 8192;
 // Internal safety cap, not a work queue: excess report saves fail uncertain.
 const MAX_REPORT_WORKERS: usize = 64;
+const MAX_SESSION_REPORTS: usize = 64;
+const MAX_QUEUED_REPORT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 #[error("node '{0}' is not connected")]
@@ -86,6 +90,7 @@ struct Inner {
     routes: RwLock<HashMap<String, ConnectionInfo>>,
     pending: Mutex<HashMap<String, Pending>>,
     report_workers: Arc<report_workers::ReportWorkers>,
+    report_bytes: Arc<tokio::sync::Semaphore>,
     nonces: Mutex<HashMap<(String, String), Instant>>,
     events: broadcast::Sender<NodeEvent>,
     accept_task: Mutex<Option<GatewayTask>>,
@@ -134,6 +139,12 @@ struct Pending {
     node_id: String,
     session_id: Uuid,
     sender: oneshot::Sender<Value>,
+}
+
+enum ReportClass {
+    Ignore,
+    Control,
+    Grant,
 }
 
 // Command callers may stop waiting before the inner response timeout. Always
@@ -191,6 +202,7 @@ impl NodeServer {
                 routes: RwLock::new(HashMap::new()),
                 pending: Mutex::new(HashMap::new()),
                 report_workers: report_workers::ReportWorkers::new(MAX_REPORT_WORKERS),
+                report_bytes: Arc::new(tokio::sync::Semaphore::new(MAX_QUEUED_REPORT_BYTES)),
                 nonces: Mutex::new(HashMap::new()),
                 events,
                 accept_task: Mutex::new(None),
@@ -900,6 +912,84 @@ impl NodeServer {
     where
         R: tokio::io::AsyncBufRead + Unpin,
     {
+        let (queue, mut reports) =
+            report_queue::Queue::new(MAX_SESSION_REPORTS, self.inner.report_bytes.clone());
+        // These futures stay owned by this session. Do not select/cancel an
+        // individual read_message: its partially read frame must stay intact.
+        let mut frames =
+            Box::pin(self.read_session_frames(authenticated_id, session_id, crypto, reader, queue));
+        let mut persistence = Box::pin(async {
+            while let Some(envelope) = reports.recv().await {
+                let (message, _bytes) = envelope.into_parts();
+                if message["type"] == "grant_ack" {
+                    self.resolve_grant_ack(authenticated_id, session_id, message)
+                        .await;
+                } else {
+                    self.resolve_response(authenticated_id, session_id, message)
+                        .await;
+                }
+                // The byte permit includes this active envelope through save.
+            }
+            Ok(())
+        });
+        tokio::select! {
+            result = &mut frames => {
+                drop(frames); // close the sender before draining an orderly EOF
+                result?;
+                persistence.await
+            }
+            result = &mut persistence => result,
+        }
+    }
+
+    async fn classify_report(&self, node: &str, session: Uuid, message: &Value) -> ReportClass {
+        let Some(id) = message["id"].as_str() else {
+            return ReportClass::Ignore;
+        };
+        let pending = self.inner.pending.lock().await;
+        let Some(p) = pending
+            .get(id)
+            .filter(|p| p.node_id == node && p.session_id == session)
+        else {
+            return ReportClass::Ignore;
+        };
+        let Some(grant) = p.grant.clone() else {
+            return if message["type"] == "response" {
+                ReportClass::Control
+            } else {
+                ReportClass::Ignore
+            };
+        };
+        drop(pending);
+        let Ok(report) =
+            serde_json::from_value::<crate::grants::GrantReport>(message["grant"].clone())
+        else {
+            return ReportClass::Ignore;
+        };
+        let kind_valid = if message["type"] == "grant_ack" {
+            report.state == crate::grants::ReceiptState::Accepted
+        } else {
+            report.state != crate::grants::ReceiptState::Accepted
+                && message["success"] == json!(report.success)
+        };
+        if kind_valid && report.confirms(&grant) {
+            ReportClass::Grant
+        } else {
+            ReportClass::Ignore
+        }
+    }
+
+    async fn read_session_frames<R>(
+        &self,
+        authenticated_id: &str,
+        session_id: Uuid,
+        crypto: &NodeCrypto,
+        reader: &mut R,
+        reports: report_queue::Queue,
+    ) -> Result<()>
+    where
+        R: tokio::io::AsyncBufRead + Unpin,
+    {
         let mut metadata = crate::context::NodeMetadata::default();
         let mut interpretation_capabilities = Vec::<String>::new();
         let mut registered = false;
@@ -1028,10 +1118,6 @@ impl NodeServer {
                     message["gateway_session_id"] = json!(session_id.to_string());
                     let _ = self.inner.events.send(NodeEvent::Submission(message));
                 }
-                Some("grant_ack") => {
-                    self.resolve_grant_ack(authenticated_id, session_id, message)
-                        .await
-                }
                 Some("grant_lease_probe") => {
                     if !registered {
                         bail!("register before requesting a grant lease")
@@ -1039,9 +1125,21 @@ impl NodeServer {
                     self.reply_grant_lease(authenticated_id, session_id, message)
                         .await?;
                 }
-                Some("response") => {
-                    self.resolve_response(authenticated_id, session_id, message)
+                Some("grant_ack" | "response") => {
+                    match self
+                        .classify_report(authenticated_id, session_id, &message)
                         .await
+                    {
+                        ReportClass::Ignore => {}
+                        ReportClass::Control => {
+                            self.resolve_response(authenticated_id, session_id, message)
+                                .await
+                        }
+                        ReportClass::Grant => {
+                            reports.try_send(message)?;
+                            tokio::task::yield_now().await;
+                        }
+                    }
                 }
                 Some("announce") => {}
                 Some(kind) => warn!(
@@ -2616,6 +2714,313 @@ mod tests {
         })
         .await
         .expect("checkpoint must not hold shared correlation lock");
+    }
+    async fn framed_report_session(
+        server: &NodeServer,
+        session: Uuid,
+    ) -> (tokio::io::DuplexStream, JoinHandle<Result<()>>) {
+        let (sender, _outbound) = mpsc::channel(1);
+        server.inner.connections.write().await.insert(
+            "owner".into(),
+            Connection {
+                credential_transport: true,
+                session_id: session,
+                info: ConnectionInfo {
+                    node_id: "owner".into(),
+                    source_ip: "127.0.0.1".into(),
+                    source_port: 1,
+                    connected_since_ms: now_ms(),
+                },
+                sender,
+                advertisement: None,
+                state: None,
+                last_seen: Instant::now(),
+            },
+        );
+        let (wire, reader) = tokio::io::duplex(64 * 1024);
+        let handler = server.clone();
+        let crypto = server.inner.crypto.as_ref().unwrap().clone();
+        let task = tokio::spawn(async move {
+            // Exercise the inner framed session with a known authenticated ID.
+            // Full credential/TLS handshakes are covered by the gateway tests.
+            let result = handler
+                .serve_session("owner", session, &crypto, &mut BufReader::new(reader))
+                .await;
+            handler.inner.connections.write().await.remove("owner");
+            handler.fail_pending_for("owner", session).await;
+            result
+        });
+        (wire, task)
+    }
+    async fn next_heartbeat(events: &mut broadcast::Receiver<NodeEvent>) {
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if matches!(events.recv().await.unwrap(), NodeEvent::Heartbeat(_)) {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("heartbeat must not wait for report storage");
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn framed_heartbeat_and_control_bypass_held_save_without_losing_partial_frames_or_order()
+    {
+        use crate::grants::ReceiptState;
+        use tokio::io::AsyncWriteExt;
+        let (server, grant, session, observer, ready, release, mut receiver) =
+            held_report_fixture(ReceiptState::Accepted).await;
+        let mut events = server.subscribe();
+        let (mut wire, task) = framed_report_session(&server, session).await;
+        let crypto = server.inner.crypto.as_ref().unwrap();
+        write_message(
+            crypto,
+            &mut wire,
+            &json!({"type":"register","node_id":"owner"}),
+        )
+        .await
+        .unwrap();
+        write_message(crypto, &mut wire, &held_ack(&grant))
+            .await
+            .unwrap();
+        ready.await.unwrap();
+        // Completion can be received before ACK storage finishes, but cannot
+        // pass the FIFO consumer or its durable acceptance check.
+        write_message(crypto, &mut wire, &held_completion(&grant))
+            .await
+            .unwrap();
+        write_message(
+            crypto,
+            &mut wire,
+            &json!({"type":"heartbeat","node_id":"owner","load":{"sample":1}}),
+        )
+        .await
+        .unwrap();
+        next_heartbeat(&mut events).await;
+        assert_eq!(
+            server.node_heartbeat("owner").await.unwrap()["load"]["sample"],
+            1
+        );
+        assert!(receiver.try_recv().is_err());
+        assert!(observer.saved.lock().unwrap().is_empty());
+        let (sender, control) = oneshot::channel();
+        server.inner.pending.lock().await.insert(
+            "control".into(),
+            Pending {
+                observer: None,
+                grant: None,
+                acknowledged: false,
+                checkpoint: None,
+                lease_deadline: None,
+                lease_probe_id: None,
+                node_id: "owner".into(),
+                session_id: session,
+                sender,
+            },
+        );
+        write_message(
+            crypto,
+            &mut wire,
+            &json!({"type":"response","id":"control","success":true,"data":{"pong":true}}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            timeout(Duration::from_secs(1), control)
+                .await
+                .unwrap()
+                .unwrap()["data"]["pong"],
+            true
+        );
+        // Finish the save while another encrypted frame is only half read.
+        let frame = crate::protocol::encode_line(
+            crypto,
+            &json!({"type":"heartbeat","node_id":"owner","load":{"sample":2}}),
+        )
+        .unwrap();
+        let split = frame.len() / 2;
+        wire.write_all(&frame[..split]).await.unwrap();
+        release.send(()).unwrap();
+        assert_eq!(
+            timeout(Duration::from_secs(2), receiver)
+                .await
+                .unwrap()
+                .unwrap(),
+            held_completion(&grant)
+        );
+        wire.write_all(&frame[split..]).await.unwrap();
+        next_heartbeat(&mut events).await;
+        assert_eq!(
+            server.node_heartbeat("owner").await.unwrap()["load"]["sample"],
+            2
+        );
+        assert_eq!(
+            *observer.saved.lock().unwrap(),
+            vec![ReceiptState::Accepted, ReceiptState::Completed]
+        );
+        wire.shutdown().await.unwrap();
+        timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            server.inner.report_bytes.available_permits(),
+            MAX_QUEUED_REPORT_BYTES
+        );
+        server.stop().await;
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn malformed_frame_retires_session_but_started_save_and_result_token_are_still_owned() {
+        use crate::grants::ReceiptState;
+        use tokio::io::AsyncWriteExt;
+        let (server, grant, session, observer, ready, release, receiver) =
+            held_report_fixture(ReceiptState::Accepted).await;
+        let mut events = server.subscribe();
+        let (mut wire, task) = framed_report_session(&server, session).await;
+        let crypto = server.inner.crypto.as_ref().unwrap();
+        write_message(
+            crypto,
+            &mut wire,
+            &json!({"type":"register","node_id":"owner"}),
+        )
+        .await
+        .unwrap();
+        write_message(crypto, &mut wire, &held_ack(&grant))
+            .await
+            .unwrap();
+        ready.await.unwrap();
+        wire.write_all(b"invalid-encrypted-frame\n").await.unwrap();
+        assert!(
+            timeout(Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(receiver.await.unwrap()["success"], false);
+        assert!(server.inner.pending.lock().await.is_empty());
+        assert_eq!(server.inner.report_workers.active_count(), 1);
+        assert_eq!(
+            server.inner.report_bytes.available_permits(),
+            MAX_QUEUED_REPORT_BYTES
+        );
+        // No gateway close here: the cancelled consumer's successfully saved
+        // output token must be discarded by its dropped blocking JoinHandle.
+        release.send(()).unwrap();
+        timeout(Duration::from_secs(2), server.inner.report_workers.drain())
+            .await
+            .unwrap();
+        assert_eq!(server.inner.report_workers.active_count(), 0);
+        assert_eq!(
+            *observer.saved.lock().unwrap(),
+            vec![ReceiptState::Accepted]
+        );
+        while let Ok(event) = events.try_recv() {
+            assert!(!matches!(event, NodeEvent::GrantAccepted(_)));
+        }
+        server.stop().await;
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn framed_byte_pressure_retires_session_uncertain_without_forgetting_active_save() {
+        use crate::grants::ReceiptState;
+        let (mut server, grant, session, observer, ready, release, receiver) =
+            held_report_fixture(ReceiptState::Accepted).await;
+        let ack = held_ack(&grant);
+        let allowance = serde_json::to_vec(&ack).unwrap().len();
+        // Private fault injection: permit exactly the one held ACK envelope.
+        Arc::get_mut(&mut server.inner).unwrap().report_bytes =
+            Arc::new(tokio::sync::Semaphore::new(allowance));
+        let mut events = server.subscribe();
+        let (mut wire, task) = framed_report_session(&server, session).await;
+        let crypto = server.inner.crypto.as_ref().unwrap();
+        write_message(
+            crypto,
+            &mut wire,
+            &json!({"type":"register","node_id":"owner"}),
+        )
+        .await
+        .unwrap();
+        write_message(crypto, &mut wire, &ack).await.unwrap();
+        ready.await.unwrap();
+        assert_eq!(server.inner.report_bytes.available_permits(), 0);
+        write_message(
+            crypto,
+            &mut wire,
+            &json!({"type":"heartbeat","node_id":"owner"}),
+        )
+        .await
+        .unwrap();
+        next_heartbeat(&mut events).await;
+        write_message(crypto, &mut wire, &held_completion(&grant))
+            .await
+            .unwrap();
+        let error = timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(error.to_string().contains("byte allowance"));
+        assert_eq!(receiver.await.unwrap()["success"], false);
+        assert!(server.inner.pending.lock().await.is_empty());
+        assert_eq!(server.inner.report_bytes.available_permits(), allowance);
+        assert_eq!(server.inner.report_workers.active_count(), 1);
+        release.send(()).unwrap();
+        timeout(Duration::from_secs(2), server.inner.report_workers.drain())
+            .await
+            .unwrap();
+        assert_eq!(server.inner.report_workers.active_count(), 0);
+        assert_eq!(
+            *observer.saved.lock().unwrap(),
+            vec![ReceiptState::Accepted]
+        );
+        while let Ok(event) = events.try_recv() {
+            assert!(!matches!(event, NodeEvent::GrantAccepted(_)));
+        }
+        server.stop().await;
+    }
+    #[tokio::test]
+    async fn report_queue_intake_requires_exact_correlation_and_is_not_acknowledgement_authority() {
+        use crate::grants::ReceiptState;
+        let (server, grant, session, _, _, _, _) =
+            held_report_fixture(ReceiptState::Accepted).await;
+        let ack = held_ack(&grant);
+        assert!(matches!(
+            server.classify_report("owner", session, &ack).await,
+            ReportClass::Grant
+        ));
+        assert!(matches!(
+            server.classify_report("other", session, &ack).await,
+            ReportClass::Ignore
+        ));
+        assert!(matches!(
+            server.classify_report("owner", Uuid::new_v4(), &ack).await,
+            ReportClass::Ignore
+        ));
+        let mut bad = ack.clone();
+        bad["grant"]["persisted"] = json!(false);
+        assert!(matches!(
+            server.classify_report("owner", session, &bad).await,
+            ReportClass::Ignore
+        ));
+        let mut bad = held_completion(&grant);
+        bad["success"] = json!(false);
+        assert!(matches!(
+            server.classify_report("owner", session, &bad).await,
+            ReportClass::Ignore
+        ));
+        assert!(matches!(
+            server
+                .classify_report("owner", session, &held_completion(&grant))
+                .await,
+            ReportClass::Grant
+        ));
+        assert!(!server.inner.pending.lock().await["held"].acknowledged);
+        assert_eq!(
+            server.inner.report_bytes.available_permits(),
+            MAX_QUEUED_REPORT_BYTES
+        );
+        server.stop().await;
     }
     #[tokio::test(flavor = "current_thread")]
     async fn held_ack_keeps_executor_and_registry_available_without_premature_confirmation() {
