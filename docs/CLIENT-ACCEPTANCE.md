@@ -840,11 +840,12 @@ observes zero active processes in the exact owned Windows Job before normal
 or failed/late observation cannot claim cleanup. Root exit status is retained,
 and external effects remain unconfirmed. This is not the remote stop protocol.
 
-Focused native tests and public `process-lifetime-5YZ9Un` pass. Default-feature
-all-target workspace verification passes **607 tests**, with the opt-in journal
-profiler still ignored. Dashboard-free verification is recorded separately when
-complete, not inferred from the default run. Formatting, JS syntax, diff and the
-backend/browser source boundary pass.
+Focused native tests and public `process-lifetime-5YZ9Un` pass. For the native-
+cleanup source snapshot `cb50fe0`, default and dashboard-free all-target workspace
+suites each pass **607 tests**, with the opt-in journal profiler still ignored.
+The subsequent telemetry source increment is verified separately, not covered
+by those already-compiled tests. Formatting, JS syntax, diff and the backend/
+browser source boundary pass.
 
 Public recurring pipeline runs `local-pipelines-EShnQI` and
 `local-pipelines-wMgqsj` fail with selected-provider staleness before a second
@@ -852,3 +853,24 @@ grant/attempt is issued. Slow checkpoints are observed, but the complete cause
 is not established. These are failed acceptance runs, not successful retries or
 proof that timer/heartbeat reliability is finished. Physical network, bootstrap,
 media, resource, peer, cluster, signing and other stable 0.4.0 gates remain open.
+
+## Lightweight heartbeat collection (2026-10-14)
+
+The subsequent [telemetry increment](HEARTBEAT-TELEMETRY.md) uses targeted CPU/RAM
+refreshes, one inventory per heartbeat, blocking-worker OS queries and supervised
+heartbeat-task failure. Provider admission logs distinguish stale age from a
+withdrawn capability; their authority/freshness checks are unchanged. Default
+and dashboard-free all-target suites each pass **609 tests**, plus one ignored
+opt-in profiler. Fresh default executables/examples and source checks pass.
+
+Public finite/recurring pipelines (`local-pipelines-uJumaU`), native lifetime
+(`process-lifetime-xHDCEn`), model metadata (`model-metadata-eIHmw1`) and synthetic
+model owner policy (`model-policy-elPG1I`) pass. Ordinary scheduling
+`automation-schedules-57c0Sr` fails on its final explicit replacement: the
+interrupted job retains zero issued attempts, while the selected provider still
+advertises `system.info` but has heartbeat age 10291 ms against its 10-second
+bound. Slow journal checkpoints remain observed. This is not a passed scheduling
+gate or a complete diagnosis; no time window or replay rule is relaxed.
+
+No physical acceptance, release/feed/node update, model download, UI change or
+signing clearance follows. All other full stable 0.4.0 requirements remain open.

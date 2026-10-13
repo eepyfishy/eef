@@ -51,6 +51,13 @@ from owned process control. It does not imply exclusive/shared backend ownership
 observed residency or autonomous unload. Full Ollama lifecycle, broader per-model policy, measured resource admission
 and startup-cost scheduling remain open. The dashboard owns none of this behavior.
 
+The subsequent [lightweight telemetry increment](HEARTBEAT-TELEMETRY.md) removes
+unused process-table scans from node heartbeats and keeps OS queries off async
+workers. Fresh public finite recurrence passes, but ordinary scheduling still
+fails a later activation with confirmed stale heartbeat age and zero issued
+attempts. Journal/runtime responsiveness remains an open reliability gate; no
+freshness, expiry, replay or authority fence has been relaxed.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It

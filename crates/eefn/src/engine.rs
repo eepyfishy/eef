@@ -814,10 +814,7 @@ impl NodeEngine {
         if !matches!(action, "get" | "read" | "run") {
             bail!("unknown system.info action '{action}'")
         }
-        Ok(json!({
-            "specs": crate::client::system_specs(),
-            "load": crate::client::current_load().await,
-        }))
+        crate::client::system_snapshot().await
     }
 
     async fn process_exec(&self, action: &str, params: Value) -> Result<Value> {

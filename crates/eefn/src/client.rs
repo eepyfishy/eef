@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sysinfo::{Disks, System};
+use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System};
 use tokio::io::BufReader;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
@@ -401,7 +401,7 @@ impl NodeClient {
         if reply.get("type").and_then(Value::as_str) != Some("ok") {
             bail!("coordinator denied auth: {reply}");
         }
-        let specs = system_specs();
+        let specs = telemetry_worker(system_specs).await?;
         let grant_session = reply["grant_session_id"]
             .as_str()
             .filter(|s| crate::job_commands::validate_operation_id(s).is_ok())
@@ -465,12 +465,23 @@ impl NodeClient {
         let heartbeat_id = self.config.node_id.clone();
         let heartbeat_write_failed = output_write_failed.clone();
         let heartbeat_interval = Duration::from_secs_f64(self.config.heartbeat_seconds.max(0.2));
-        let heartbeat = AbortTask(tokio::spawn(async move {
+        let mut heartbeat = AbortTask(tokio::spawn(async move {
             loop {
                 let started = Instant::now();
-                let load = current_load().await;
+                let snapshot = match system_snapshot().await {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        warn!(%error, "System telemetry failed; retiring node session");
+                        break;
+                    }
+                };
                 let latency = started.elapsed().as_secs_f64() * 1000.0;
-                let message = build_heartbeat(&heartbeat_id, &load, latency, &system_specs());
+                let message = build_heartbeat(
+                    &heartbeat_id,
+                    &snapshot["load"],
+                    latency,
+                    &snapshot["specs"],
+                );
                 if write_session_frame(
                     &heartbeat_crypto,
                     &heartbeat_writer,
@@ -501,6 +512,13 @@ impl NodeClient {
             let message = loop {
                 tokio::select! {
                     _ = output_write_failure.changed() => bail!("Framed output delivery failed; reconnect required; sent operations may be unconfirmed"),
+                    result = &mut heartbeat.0 => {
+                        result.context("Node heartbeat task failed")?;
+                        if *output_write_failure.borrow() {
+                            bail!("Framed output delivery failed; reconnect required; sent operations may be unconfirmed");
+                        }
+                        bail!("Node heartbeat stopped; reconnect required; sent operations may be unconfirmed");
+                    }
                     message = &mut incoming => break message?,
                     _ = async {
                         if let Some(changes) = &mut model_changes { let _ = changes.changed().await; }
@@ -831,7 +849,20 @@ fn parse_endpoint(raw: &str) -> Result<(String, u16)> {
 }
 
 pub fn system_specs() -> Value {
-    let system = System::new_all();
+    specs_for(&telemetry_system())
+}
+
+// Telemetry needs CPU and RAM, not every process's identity, memory and I/O.
+// Keep CPU initialization and the second usage sample; avoid a process scan.
+fn telemetry_system() -> System {
+    System::new_with_specifics(
+        RefreshKind::nothing()
+            .with_cpu(CpuRefreshKind::everything())
+            .with_memory(MemoryRefreshKind::nothing().with_ram()),
+    )
+}
+
+fn specs_for(system: &System) -> Value {
     let storage_bytes = Disks::new_with_refreshed_list()
         .iter()
         .map(|disk| disk.available_space())
@@ -850,26 +881,42 @@ pub fn system_specs() -> Value {
     })
 }
 
-pub async fn current_load() -> Value {
-    tokio::task::spawn_blocking(|| {
-        let mut system = System::new_all();
-        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-        system.refresh_cpu_usage();
-        system.refresh_memory();
-        let ram = if system.total_memory() == 0 {
-            0.0
-        } else {
-            system.used_memory() as f64 / system.total_memory() as f64
-        };
-        json!({
-            "cpu": f64::from(system.global_cpu_usage()) / 100.0,
-            "ram": ram,
-            "gpu": 0.0,
-            "queue": 0,
-        })
+fn sample_load(system: &mut System) -> Value {
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    system.refresh_cpu_usage();
+    system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
+    let ram = if system.total_memory() == 0 {
+        0.0
+    } else {
+        system.used_memory() as f64 / system.total_memory() as f64
+    };
+    json!({
+        "cpu": f64::from(system.global_cpu_usage()) / 100.0,
+        "ram": ram,
+        "gpu": 0.0,
+        "queue": 0,
+    })
+}
+
+async fn telemetry_worker(collect: impl FnOnce() -> Value + Send + 'static) -> Result<Value> {
+    tokio::task::spawn_blocking(collect)
+        .await
+        .context("System telemetry worker failed")
+}
+
+pub(crate) async fn system_snapshot() -> Result<Value> {
+    telemetry_worker(|| {
+        let mut system = telemetry_system();
+        let load = sample_load(&mut system);
+        json!({"specs": specs_for(&system), "load": load})
     })
     .await
-    .unwrap_or_else(|_| json!({"cpu": 0.0, "ram": 0.0, "gpu": 0.0, "queue": 0}))
+}
+
+pub async fn current_load() -> Value {
+    telemetry_worker(|| sample_load(&mut telemetry_system()))
+        .await
+        .unwrap_or_else(|_| json!({"cpu": 0.0, "ram": 0.0, "gpu": 0.0, "queue": 0}))
 }
 
 pub async fn discover_models(
@@ -950,6 +997,56 @@ fn advertised_capabilities(configured: &[String], models: &[Value]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn telemetry_refresh_excludes_process_inventory_and_preserves_specs() {
+        let mut system = telemetry_system();
+        assert!(system.processes().is_empty());
+        let load = sample_load(&mut system);
+        assert!(system.processes().is_empty());
+        for key in ["cpu", "ram"] {
+            let value = load[key].as_f64().unwrap();
+            assert!(value.is_finite() && (0.0..=1.0).contains(&value));
+        }
+        let specs = specs_for(&system);
+        assert_eq!(specs["platform"], std::env::consts::OS);
+        assert_eq!(specs["cpu_cores"], system.cpus().len());
+        assert_eq!(specs["ram_mb"], system.total_memory() / 1024 / 1024);
+        assert!(specs["storage_gb"].is_u64());
+        if sysinfo::IS_SUPPORTED_SYSTEM {
+            assert!(!system.cpus().is_empty());
+            assert!(system.total_memory() > 0);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn telemetry_worker_keeps_async_worker_responsive_while_sampling() {
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let worker = tokio::spawn(telemetry_worker(move || {
+            started.send(()).unwrap();
+            // Finite fallback even if the test fails before releasing the sample.
+            held.recv_timeout(Duration::from_secs(5)).unwrap();
+            json!({"sample": "completed"})
+        }));
+        timeout(Duration::from_secs(5), ready)
+            .await
+            .unwrap()
+            .unwrap();
+        // This single async thread must remain available while the sample waits.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!worker.is_finished());
+        release.send(()).unwrap();
+        assert_eq!(
+            worker.await.unwrap().unwrap(),
+            json!({"sample": "completed"})
+        );
+        assert!(
+            telemetry_worker(|| panic!("isolated telemetry fault"))
+                .await
+                .is_err()
+        );
+    }
 
     #[tokio::test]
     async fn unread_peer_retires_session_without_busy_rejection_or_replaying_work() {

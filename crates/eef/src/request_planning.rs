@@ -841,9 +841,16 @@ pub(crate) async fn live_peer(
         .await?
         .pop()
         .context("Selected node is not registered")?;
-    if age.as_millis() > u128::from(freshness * 1000)
-        || !peer.capabilities.iter().any(|c| c == capability)
-    {
+    let capability_advertised = peer.capabilities.iter().any(|c| c == capability);
+    if age.as_millis() > u128::from(freshness * 1000) || !capability_advertised {
+        tracing::warn!(
+            node_id = node,
+            capability,
+            age_ms = age.as_millis(),
+            freshness_seconds = freshness,
+            capability_advertised,
+            "Selected provider failed live admission"
+        );
         bail!("Selected provider is stale or withdrawn")
     }
     Ok(peer)
