@@ -24,24 +24,25 @@ impl ConcreteInput {
             || self.title.trim().is_empty()
             || self.title.len() > 512
             || self.title.chars().any(char::is_control)
-            || !crate::request_planning::METHOD_TEMPLATES.contains(&self.input.template.as_str())
+            || (!crate::request_planning::METHOD_TEMPLATES.contains(&self.input.template.as_str())
+                && self.input.template != "local_pipeline")
             || serde_json::to_vec(self)?.len() > 160 * 1024
         {
-            bail!("Invalid explicit one-step request")
+            bail!("Invalid explicit concrete request")
         }
         Ok(())
     }
     /// Deterministic description of an explicit template, not an LM prediction.
     pub fn proposal(&self) -> Result<Proposal> {
         self.validate()?;
-        let steps = crate::request_planning::template_steps(&self.input.template)?;
+        let capabilities = crate::request_planning::concrete_capabilities(&self.input)?;
         Ok(Proposal {
             schema_version: 1,
             intent: Intent::Action,
             goal: self.title.clone(),
             context_hints: vec![],
             constraints: vec![],
-            suggested_capabilities: vec![steps[0].0.into()],
+            suggested_capabilities: capabilities,
             complexity: Complexity::Unknown,
             workload: Workload::OneShot,
             needs_clarification: false,
@@ -265,6 +266,83 @@ impl crate::NodeService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn durable_pipeline_union_is_exact_without_relaxing_model_hint_limits() {
+        let request:ConcreteInput=serde_json::from_value(json!({"schema_version":1,"original_text":"Run the explicitly selected local stages.","title":"Finite local stages",
+            "input":{"schema_version":1,"template":"local_pipeline","constraints":{},"params":{"pipeline":{"schema_version":1,"max_retained_bytes":1024,"steps":[
+                {"id":"info","capability":"system.info","action":"run","params":{}},
+                {"id":"file","capability":"filesystem","action":"write","params":{"path":"fixed.txt","content":"fixed"}},
+                {"id":"process","capability":"process.exec","action":"run","params":{"program":"owner-fixed"}},
+                {"id":"network","capability":"http.request","action":"send","params":{"url":"https://owner.example"}},
+                {"id":"app","capability":"application.control","action":"launch","params":{"application":"owner-fixed"}},
+                {"id":"tts","capability":"tts.speak","action":"speak","params":{"text":"fixed"}},
+                {"id":"camera","capability":"camera.capture","action":"capture","params":{}},
+                {"id":"audio","capability":"audio.capture","action":"record","params":{}},
+                {"id":"ping","capability":"system.ping","action":"run","params":{}}
+            ]}}}})).unwrap();
+        let proposal = request.proposal().unwrap();
+        assert!(proposal.suggested_capabilities.len() > 8);
+        let allowed = proposal.suggested_capabilities.clone();
+        crate::interpretation::validate_concrete(&request, &allowed).unwrap();
+        assert!(
+            crate::interpretation::validate(
+                &request.original_text,
+                &serde_json::to_vec(&proposal).unwrap(),
+                &allowed
+            )
+            .is_err()
+        );
+        let draft = crate::request_drafts::DraftRecord {
+            schema_version: 1,
+            original_text: request.original_text,
+            concrete_input: Some(request.input),
+            answers: vec![],
+            proposals: vec![crate::request_drafts::ProposalRevision {
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                proposal,
+                allowed_capabilities: allowed,
+                at_ms: 1,
+                resolution: None,
+                preparation: None,
+            }],
+        };
+        draft.validate().unwrap();
+        let mut changed = draft.clone();
+        changed.proposals[0].proposal.suggested_capabilities.pop();
+        assert!(changed.validate().is_err());
+        let mut absent = draft.clone();
+        absent.concrete_input = None;
+        assert!(
+            absent.validate().is_err(),
+            "large model hints cannot claim the explicit-only limit"
+        );
+    }
+    #[test]
+    fn concrete_pipeline_keeps_all_stage_hints_without_semantic_or_authority_options() {
+        let request:ConcreteInput=serde_json::from_value(json!({"schema_version":1,"original_text":"Copy the selected input locally.","title":"Local dataflow",
+            "input":{"schema_version":1,"template":"local_pipeline","constraints":{"node_id":"owner"},"params":{"pipeline":{"schema_version":1,"max_retained_bytes":1024,"steps":[
+                {"id":"read","capability":"filesystem","action":"read","params":{"path":"source.txt"}},
+                {"id":"write","capability":"filesystem","action":"write","params":{"path":"target.txt"},"inputs":[{"parameter":"content","source_step":"read","pointer":"/content"}]}
+            ]}}}})).unwrap();
+        request.validate().unwrap();
+        assert_eq!(
+            request.proposal().unwrap().suggested_capabilities,
+            vec!["pipeline.run", "filesystem"]
+        );
+        assert_eq!(request.proposal().unwrap().workload, Workload::OneShot);
+        assert!(
+            !crate::request_planning::METHOD_TEMPLATES.contains(&"local_pipeline"),
+            "not silently advertised as an LM method"
+        );
+        for key in ["backend", "resource_id", "model_role"] {
+            let mut bad = request.clone();
+            bad.input.constraints[key] = json!("ignored");
+            assert!(bad.validate().is_err());
+        }
+        let mut bad = request.clone();
+        bad.input.params["approval"] = json!(true);
+        assert!(bad.validate().is_err());
+    }
     fn process_input() -> ProcessSubmission {
         ProcessSubmission {
             text: "  Check the selected tool\n".into(),

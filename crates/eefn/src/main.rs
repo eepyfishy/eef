@@ -2366,6 +2366,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         .with_resources(file.node_id.clone(), file.metadata.clone())?
         .with_service(dashboard.clone())
         .with_policy(permissions)?
+        .with_pipeline_runtime()
         .with_update_manifest(manifest)
         .with_ollama_residency(&file.model_lifecycle)?
         .with_ollama(ollama_url.clone(), active_ollama_models.iter().cloned())?;

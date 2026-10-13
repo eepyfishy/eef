@@ -44,6 +44,14 @@ are deleted, no model is selected/downloaded and no inference is authorized.
 Ollama is not controlled by this increment. See [commands, bounds and remaining
 lifecycle work](MODEL-LIFECYCLE.md).
 
+## Finite local pipeline authoring (unreleased after alpha.6)
+
+Finite local dataflow uses the existing `requests submit --text PURPOSE --file
+pipeline.json` path with a schema-1 `PlanInput`, `template:"local_pipeline"` and
+`params:{pipeline:DEFINITION}`. It compiles one source-bound reviewed task; separate
+owner approval/execution is still required. Stage identities are fixed and data
+remains local between steps. See [definition, commands and limits](LOCAL-PIPELINES.md).
+
 ## Automation definition authoring (unreleased after alpha.6)
 
 The subsequent `eef automation-schedules enable|stop|show|list|resolve-refusal` connects exact

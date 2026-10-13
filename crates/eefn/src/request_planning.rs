@@ -7,6 +7,7 @@ pub fn template_steps(
 ) -> Result<Vec<(&'static str, &'static str, &'static [&'static str])>> {
     Ok(match template {
         "system_info" => vec![("system.info", "run", &[])],
+        "local_pipeline" => vec![("pipeline.run", "run", &["pipeline"])],
         "generate_text" => vec![(
             "llm.infer",
             "run",
@@ -100,6 +101,23 @@ pub const METHOD_TEMPLATES: &[&str] = &[
     "http_request",
     "wake_computer",
 ];
+/// Deterministic capability union of immutable concrete input, not LM hints or
+/// execution authority. A finite graph can contain up to MAX_STEPS distinct ops.
+pub fn concrete_capabilities(input: &PlanInput) -> Result<Vec<String>> {
+    input.validate()?;
+    let steps = template_steps(&input.template)?;
+    let mut capabilities = vec![steps[0].0.to_owned()];
+    if input.template == "local_pipeline" {
+        let definition: crate::pipeline::FinitePipeline =
+            serde_json::from_value(input.params["pipeline"].clone())?;
+        for step in definition.steps {
+            if !capabilities.contains(&step.capability) {
+                capabilities.push(step.capability);
+            }
+        }
+    }
+    Ok(capabilities)
+}
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -121,6 +139,30 @@ impl PlanInput {
             || serde_json::to_vec(self)?.len() > 64 * 1024
         {
             bail!("Invalid or oversized concrete plan input")
+        }
+        if self.template == "local_pipeline" {
+            if self
+                .params
+                .as_object()
+                .is_none_or(|p| p.len() != 1 || !p.contains_key("pipeline"))
+            {
+                bail!("Local pipeline input requires one exact definition")
+            }
+            let definition: crate::pipeline::FinitePipeline =
+                serde_json::from_value(self.params["pipeline"].clone())?;
+            definition
+                .validate_for_executor(self.constraints.get("node_id").and_then(Value::as_str))?;
+            if self
+                .constraints
+                .as_object()
+                .unwrap()
+                .keys()
+                .any(|k| matches!(k.as_str(), "resource_id" | "backend" | "model_role"))
+            {
+                bail!(
+                    "Pipeline stage identities belong inside the definition, not ignored root constraints"
+                )
+            }
         }
         for (key, value) in self.constraints.as_object().unwrap() {
             match key.as_str() {

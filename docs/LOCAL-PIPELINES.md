@@ -1,12 +1,51 @@
-# Local pipeline development contract
+# Finite local pipelines
 
-Unreleased after alpha.6. This is the structural/execution-core foundation for
-roadmap stage 7 and later camera/audio workflows, **not an exposed pipeline
-feature**. Production startup does not enable or advertise `pipeline.run`, and
-production node admission rejects it. A config, model output, plugin name or
-dashboard cannot turn that availability switch on. Compiler/public command and
-versioned acceptance integration remain required. No second job system, grant
-bypass, service, listener or workload runner is added.
+Unreleased after alpha.6. The command/compiler integration exposes finite local
+dataflow through the existing reviewed job/grant system. Node startup advertises
+`pipeline.run`; ordinary RPC/generic execute still cannot run it. Local child
+permissions, exact parent authority and the original deadline remain required.
+This is not completed continuous/media support or stable-release acceptance.
+No second job system, grant bypass, service, listener or workload runner is added.
+
+## Submit, review and execute
+
+Use a schema-1 `PlanInput` file containing `template:"local_pipeline"`,
+`params:{pipeline:DEFINITION}` and normal node-selection constraints:
+
+```text
+eefn --json requests submit --text "Process the selected input locally" --title "Local dataflow" --file pipeline.json
+```
+
+Submission saves immutable concrete input and compiles one durable task, normally
+`awaiting_approval`; it does not interpret, infer, create a grant or start stages.
+Inspect it with the existing `requests plan`/EEF owner inspection commands, then
+use the existing separate exact-digest approval and execution commands. Owner
+review sees the complete graph and union of stage capability hints. No JSON,
+model result or browser can insert approval/execution flags into submission.
+
+The coordinator filters disclosed/current candidate nodes against **every**
+declared stage, then uses existing locality/constraint/load ranking among suitable
+executors. A local graph has one executor: resources must belong to that node,
+models/backends/roles must exactly match current eligible registration, and all
+stage capabilities/providers must be current. Resource-backed providers require
+explicit stage resource IDs; no implicit identity substitution or model fallback.
+Root model/resource constraints are rejected instead of silently ignored.
+
+The same checks run again before approval and grant issuance. The retained graph,
+context, binding and digest cannot be rewritten by recalculating a digest alone.
+Stage data references are deferred inputs, not fabricated placeholder values in
+planning; static parameters still receive provider-schema checks. Runtime resolves
+and validates actual data under the parent budget. This template is explicit
+command authoring, not silently added to LM semantic-method suggestions.
+
+Issuance atomically reserves the root and every distinct local stage provider
+under the existing registry lock. Global and exact-node ceilings count one parent
+future; provider ceilings count each used registration once, including repeated
+stages using that registration. A busy/missing/changed child declines the whole
+reservation without incrementing any provider. Exact stage resource choices are
+checked again; late release cannot decrement replacement registrations. All
+providers remain conservatively reserved for the parent lifetime. These counters
+are coordinator-local future admission, not physical quotas or remote stop proof.
 
 ## Definition and dataflow
 
@@ -21,10 +60,9 @@ Operation shape validation reuses the existing grant contract for supported
 one-shot operations. It is a validator, not authority: it contains no issuer,
 session, nonce, lease or journal claim. Actual grant validation still checks all
 existing identity, context, duration/result, exact executor and consumption rules.
-The execution-core increment has an exact parent pipeline grant shape containing
+The execution core has an exact parent pipeline grant shape containing
 one definition, no substituted top-level model/resource bindings and retained
-data no larger than the parent/owner result budget. Production runtime support
-remains off until review/compiler integration is ready. Compound execution must
+data no larger than the parent/owner result budget. Compound execution must
 receive that exact reviewed parent grant; a definition alone never permits work.
 Nested pipelines, management/update operations and unsupported plugin contracts
 are not structurally accepted as steps.
@@ -82,13 +120,13 @@ state and consumed nonce; no stages resume or migrate. The completion validator
 rejects substituted/missing stage identities and false pipeline success. A client
 future drop still does not prove shared backend/native effects have stopped.
 
-## Required integration before exposure
+## Required remaining integration and acceptance
 
 Continue on the existing durable job/task/attempt and grant machinery:
 
-- Compile and review the complete source-bound graph, with all fixed executor,
+- Verify and expand compilation/review of the complete source-bound graph, with all fixed executor,
   resource, model and dataflow choices visible. Keep plain commands model-free.
-- Compile and issue the entire graph under one exact reviewed authority; structural child
+- Verify issuance of the entire graph under one exact reviewed authority; structural child
   projections must never become fabricated standalone grants or new nonce claims.
 - Expose and validate finite stages locally under the original monotonic deadline/work admission.
   Recheck current permissions and actual resources/model availability at safe
@@ -101,8 +139,12 @@ Continue on the existing durable job/task/attempt and grant machinery:
 - Align all literal parameter types/bounds with actual adapters before exposure.
   The prototype rejects click `interval`, which the current bundled adapter
   ignores, rather than presenting that setting as active.
-- Add public headless command/one-PC acceptance, then physical multi-node/media
+- Keep public headless command/one-PC acceptance, then add physical multi-node/media
   acceptance. Pure schema/dataflow tests do not demonstrate camera or audio use.
+- Integrate and accept reusable automation authorization for frozen finite graphs.
+  Its reconstructed review must retain the complete deterministic child capability
+  union, not just the parent operation. Disabled definitions alone do not prove
+  pipeline policy approval, fresh trigger admission or safe recurring execution.
 
 Continuous loops, triggers, detection/VAD/STT/event pipelines, backpressure,
 offline buffering/privacy retention, peer transport, media relays/presence,
@@ -181,3 +223,68 @@ No installed runtime/node, release/feed, installer, UI asset, real shared servic
 or model changed. Public compilation/commands/admission, physical network/media,
 resource budgets, acknowledged stop/restart and all other full 0.4.0 gates remain
 required; the private availability switch is not a user-configured bypass.
+
+## Public compiler and admission checkpoint (2026-10-13)
+
+Final workspace/all-target suites pass **601 tests** in both feature modes:
+EEF library 227, owner CLI 16, installer 6, EEFN library 341, node CLI 11.
+Fresh default binaries/examples, formatting/diff, JS syntax and the backend-browser
+source guard pass. New compiler tests require the whole disclosed current graph,
+exact model/backend/role/resource identities, deferred data versus literal types,
+and unchanged source/digest bindings. Explicit graph capability unions can exceed
+eight only under their immutable concrete-input contract; ordinary untrusted
+model proposals retain their existing eight-hint limit. Durable history checks
+the exact deterministic union, not just the parent capability.
+
+Initial public `local-pipelines-8w2gYm` failed before job/grant creation because
+durable review validation still used the one-step template whitelist and one
+capability hint. The retained read-only database check found zero jobs; this is
+not passing acceptance. The corrected review boundary reuses the common concrete
+capability union without relaxing model proposal validation. Subsequent public
+`local-pipelines-VJJnUV` and fresh-binary `local-pipelines-z00YHQ` passed submission,
+separate approval/execution, local file-model-file dataflow, one parent/no replay,
+later permission loss and exact retained history across restart. These preceded
+the subsequent child-provider admission fix, not final evidence for that fix.
+
+Review then identified parent-only capacity accounting. Compound issuance now
+atomically reserves every distinct child registration for the parent lifetime.
+Four new cases cover concurrent child admission, one-parent global/node counts,
+deduplicated stages, failed-last-child/resource scope without partial mutation,
+and retired/replaced registrations without decrementing successor counters.
+Provider counters need not sum to the parent count; no physical quota or remote
+stop follows from a reservation release.
+
+Before the capacity fix, the fresh-binary regression chain passed native lifetime
+`process-lifetime-6dViBe`, model metadata `model-metadata-4yRqpD`, model policy
+`model-policy-RKRJLu`, input workflow `request-input-HdtyMU` and reviewed requests
+`request-review-Qq9tvH`. Earlier unexplained native exits remain unproven; these
+passing fixtures do not retroactively explain or fix them.
+
+Final-binary public `local-pipelines-Q4rJxx` passes the compound admission
+assertions and known unsuccessful native-stage path. The live read-only observer
+holds creation-verified root/child handles and observes both exit; exit 17 keeps
+`completed`/`success:false`, `pipeline_stage_unsuccessful`, failed-step output and
+a failed coordinator job. Later writes never run, exact execution receipt reuse
+cannot replace native identities, and failed/completed histories survive EEF
+restart unchanged. This is finite local native evidence, not a production stop
+acknowledgement or proof of unrelated external effects.
+
+Preceding `local-pipelines-Lz5uiQ` failed during native graph submission before
+that job/grant existed (two earlier jobs remained completed/interrupted). The
+fixture's local-ready wait did not establish fresh EEF registration after node
+restart. Its barrier now requires both registered nodes and the actual current
+executor-native provider before making a new submission. The fresh isolated run
+passes; the earlier failure is not acceptance and no uncertain mutation was
+automatically replayed. No production permission or admission rule was relaxed.
+
+Final-source regression chain passes scheduling `scheduling-U6lgk3`, native
+lifetime `process-lifetime-9BQ7GU`, model metadata `model-metadata-5uO96e`, model
+policy `model-policy-moidew`, input workflow `request-input-oIeQfC` and reviewed
+execution/recovery `request-review-JjkmPg`, with full chain exit 0. Synthetic
+inference remains synthetic; these passes do not explain earlier native exits.
+
+This integration changes development startup advertisement, not installed nodes,
+published artifacts/feed, installers, UI assets, real services or model files.
+Synthetic inference and two logical nodes on one PC do not demonstrate real
+interpreter/model quality or physical two-PC/media/resource acceptance. Full
+continuous, peer, stop, bootstrap, cluster and stable-release gates remain open.

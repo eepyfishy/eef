@@ -145,6 +145,33 @@ pub fn validate(
     output: &[u8],
     allowed_capabilities: &[String],
 ) -> Result<ValidatedInterpretation> {
+    validate_with_cap_limit(original_text, output, allowed_capabilities, MAX_HINTS)
+}
+/// Explicit immutable definitions have their own bounded deterministic union.
+/// This never broadens untrusted model proposal limits or grants authority.
+pub fn validate_concrete(
+    input: &crate::request_submission::ConcreteInput,
+    allowed_capabilities: &[String],
+) -> Result<ValidatedInterpretation> {
+    input.validate()?;
+    let limit = if input.input.template == "local_pipeline" {
+        crate::pipeline::MAX_STEPS + 1
+    } else {
+        MAX_HINTS
+    };
+    validate_with_cap_limit(
+        &input.original_text,
+        &serde_json::to_vec(&input.proposal()?)?,
+        allowed_capabilities,
+        limit,
+    )
+}
+pub(crate) fn validate_with_cap_limit(
+    original_text: &str,
+    output: &[u8],
+    allowed_capabilities: &[String],
+    cap_limit: usize,
+) -> Result<ValidatedInterpretation> {
     text_bound(original_text, MAX_INPUT_BYTES)?;
     if output.len() > MAX_PROPOSAL_BYTES {
         bail!("interpretation proposal is oversized");
@@ -165,7 +192,7 @@ pub fn validate(
             text_bound(hint, 256)?;
         }
     }
-    if proposal.suggested_capabilities.len() > MAX_HINTS {
+    if proposal.suggested_capabilities.len() > cap_limit {
         bail!("too many suggested capabilities");
     }
     let mut seen = HashSet::new();

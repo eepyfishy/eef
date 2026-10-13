@@ -306,8 +306,7 @@ impl NodeEngine {
     }
     /// The compiler/public command integration must opt in explicitly. A config
     /// value, model output, or plugin name cannot enable compound authority.
-    #[allow(dead_code)]
-    pub(crate) fn with_pipeline_runtime(mut self) -> Self {
+    pub fn with_pipeline_runtime(mut self) -> Self {
         self.pipeline_enabled = true;
         self
     }

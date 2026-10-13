@@ -767,3 +767,25 @@ policies (`automation-definitions-h4ByyH`) and input/answers (`request-input-CcI
 regressions also pass with the final source binaries.
 Reviewed execution/recovery (`request-review-SQF2BM`) also passes; that fixture
 uses fake inference, not real interpreter quality or physical two-PC acceptance.
+
+## Public finite local pipelines (2026-10-13)
+
+The unreleased [finite pipeline integration](LOCAL-PIPELINES.md) now compiles an
+explicit immutable graph through the same node CLI submission, separate owner
+approval/execution and durable parent grant. Default and dashboard-free workspace
+all-target suites pass **601 tests**; fresh default binaries/examples, formatting,
+diff, JS syntax and the backend/browser source boundary pass.
+
+Public `local-pipelines-Q4rJxx` runs two independently authenticated logical nodes
+on this PC without a dashboard controller, actual LM or downloads. It verifies
+fixed executor/stage identities, no effects at submission/approval, local
+file-model-file dataflow, atomic child-provider accounting under one parent,
+later permission loss, one attempt/no replay and exact histories after restart.
+A creation-verified native observer also confirms failed-stage root/child exits;
+known exit 17 marks the graph/job unsuccessful and never executes its later write.
+Failed fixture/setup evidence is retained separately in the pipeline document.
+
+No installed app/node, published installer/feed, UI, real shared service or model
+changed. This is not continuous capture, general acknowledged stop, physical
+resource enforcement, real model quality, physical two-PC or stable-release
+acceptance. Full bootstrap/media/peer/cluster/signing and other 0.4.0 gates remain.

@@ -575,7 +575,16 @@ impl Driver {
         )
         .await?;
         let session = self.server.grant_session(&b.node_id).await?;
-        if b.model_id.is_some() {
+        if t.capability == "pipeline.run" {
+            let definition = crate::pipeline_planning::definition(&t.params, Some(&b.node_id))?;
+            crate::pipeline_planning::validate_peer(
+                &definition,
+                &peer,
+                &self.registry,
+                &self.models,
+                t.request_context.as_ref(),
+            )?;
+        } else if b.model_id.is_some() {
             let candidates = self.models.route(
                 &crate::model::ModelRequest {
                     modality: if t.capability == "vlm.analyze" {
@@ -658,13 +667,30 @@ impl Driver {
             {
                 bail!("Approved issuer or node bounds changed")
             }
+            let dependencies = if t.capability == "pipeline.run" {
+                let node = &p.planning.as_ref().unwrap().bindings[index].node_id;
+                crate::pipeline_planning::definition(&t.params, Some(node))?
+                    .steps
+                    .into_iter()
+                    .map(|step| {
+                        let mut constraints = json!({"node_id":node});
+                        if let Some(resource) = step.resource_id {
+                            constraints["resource_id"] = json!(resource);
+                        }
+                        (step.capability, step.action, constraints)
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
             let reservation = self
                 .registry
-                .reserve_best_with_context(
+                .reserve_bundle_with_context(
                     &t.capability,
                     &t.action,
                     &t.constraints,
                     t.request_context.as_ref(),
+                    &dependencies,
                 )
                 .context("Approved provider has no scheduling capacity")?;
             if reservation.provider().node_id

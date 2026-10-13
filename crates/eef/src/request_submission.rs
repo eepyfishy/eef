@@ -49,11 +49,7 @@ impl crate::Runtime {
                 .disclosed_interpretation_capabilities(context.origin_node())
                 .await?;
             let proposal = input.proposal()?;
-            eefn::interpretation::validate(
-                &input.original_text,
-                &serde_json::to_vec(&proposal)?,
-                &capabilities,
-            )?;
+            eefn::interpretation::validate_concrete(&input, &capabilities)?;
             let draft = eefn::request_drafts::DraftRecord {
                 schema_version: 1,
                 original_text: input.original_text.clone(),

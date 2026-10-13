@@ -87,6 +87,17 @@ fn unbound_plan(plan: &Plan, input: &PlanInput) -> Result<Plan> {
     }) {
         bail!("Concrete template widens the reviewed capability hints; revise the proposal first")
     }
+    if input.template == "local_pipeline" {
+        let definition = crate::pipeline_planning::definition(&input.params, None)?;
+        if definition.steps.iter().any(|step| {
+            !draft
+                .current()
+                .suggested_capabilities
+                .contains(&step.capability)
+        }) {
+            bail!("Pipeline stage widens the reviewed capability hints")
+        }
+    }
     let used: BTreeSet<&str> = compiled
         .tasks
         .iter()
@@ -244,6 +255,15 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             bail!("Binding violates explicit node selection")
         }
         constraints["node_id"] = json!(binding.node_id);
+        if task.capability == "pipeline.run" {
+            crate::pipeline_planning::definition(&params, Some(&binding.node_id))?;
+            if binding.resource_id.is_some()
+                || binding.model_id.is_some()
+                || binding.backend.is_some()
+            {
+                bail!("Pipeline cannot substitute top-level bindings")
+            }
+        }
         if matches!(task.capability.as_str(), "llm.infer" | "vlm.analyze") {
             validate_model_input(&expected.params, task.capability == "vlm.analyze")?;
             if constraints
@@ -849,7 +869,18 @@ async fn bind_tasks(
             model_id: None,
             backend: None,
         };
-        if matches!(task.capability.as_str(), "llm.infer" | "vlm.analyze") {
+        if task.capability == "pipeline.run" {
+            binding.node_id = crate::pipeline_planning::select(
+                &task.params,
+                &constraints,
+                task.request_context.as_ref(),
+                registry,
+                models,
+                server,
+                permitted,
+            )
+            .await?;
+        } else if matches!(task.capability.as_str(), "llm.infer" | "vlm.analyze") {
             if constraints
                 .as_object()
                 .unwrap()
@@ -1023,6 +1054,78 @@ fn validate_model_input(params: &Value, vision: bool) -> Result<()> {
 pub(crate) mod tests {
     use super::*;
     use crate::{event::EventBus, jobs::JobStore, task::TaskEngine};
+    #[test]
+    fn retained_pipeline_is_one_exact_graph_and_cannot_rewrite_stage_or_top_level_identity() {
+        let input:PlanInput=serde_json::from_value(json!({"schema_version":1,"template":"local_pipeline","constraints":{"node_id":"owner"},"params":{"pipeline":{
+            "schema_version":1,"max_retained_bytes":1024,"steps":[
+                {"id":"status","capability":"system.info","action":"run","params":{}},
+                {"id":"write","capability":"filesystem","action":"write","params":{"path":"fixed.txt","content":"fixed"}}
+            ]}}})).unwrap();
+        let request = eefn::request_submission::ConcreteInput {
+            schema_version: 1,
+            original_text: "Inspect and save locally.".into(),
+            title: "Local pipeline".into(),
+            input: input.clone(),
+        };
+        let proposal = request.proposal().unwrap();
+        let engine = TaskEngine::new(EventBus::new(20));
+        let context = eefn::context::RequestContext::new(
+            uuid::Uuid::new_v4().to_string(),
+            "owner".into(),
+            vec![],
+        )
+        .unwrap();
+        let opened = crate::request_drafts::open(
+            &engine,
+            json!({"schema_version":1,"original_text":request.original_text,"proposal":proposal}),
+            &context,
+            &proposal.suggested_capabilities,
+        )
+        .unwrap();
+        let saved = engine.store.get(opened["id"].as_str().unwrap()).unwrap();
+        let mut p = unbound_plan(&saved, &input).unwrap();
+        p.plan_id = saved.plan_id;
+        p.request_review = saved.request_review;
+        p.status = PlanStatus::AwaitingApproval;
+        p.revision = 2;
+        assert_eq!(p.tasks.len(), 1);
+        p.tasks[0].retry_count = 0;
+        p.tasks[0].retry_delay_ms = 0;
+        let mut record = PlanningRecord {
+            schema_version: 1,
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            source_revision: 1,
+            proposal_index: 0,
+            compiled_at_ms: eefn::protocol::now_ms(),
+            input,
+            bindings: vec![PlannedBinding {
+                task_id: p.tasks[0].task_id.clone(),
+                node_id: "owner".into(),
+                resource_id: None,
+                model_id: None,
+                backend: None,
+            }],
+            plan_sha256: String::new(),
+            preparation: None,
+        };
+        record.plan_sha256 = digest(&p, &record).unwrap();
+        p.planning = Some(record);
+        validate_retained(&p).unwrap();
+        let mut altered = p.clone();
+        altered.tasks[0].params["pipeline"]["steps"][1]["params"]["path"] = json!("other.txt");
+        let hash = digest(&altered, altered.planning.as_ref().unwrap()).unwrap();
+        altered.planning.as_mut().unwrap().plan_sha256 = hash;
+        assert!(validate_retained(&altered).is_err());
+        let mut altered = p.clone();
+        altered.planning.as_mut().unwrap().bindings[0].model_id = Some("substituted".into());
+        assert!(validate_retained(&altered).is_err());
+        let mut missing = p.clone();
+        missing.request_review.as_mut().unwrap().proposals[0]
+            .proposal
+            .suggested_capabilities
+            .retain(|c| c != "filesystem");
+        assert!(unbound_plan(&missing, &missing.planning.as_ref().unwrap().input).is_err());
+    }
 
     fn input() -> PlanInput {
         PlanInput {

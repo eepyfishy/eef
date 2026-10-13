@@ -131,6 +131,9 @@ struct RegistryEntries {
     reservations: BTreeMap<String, ReservationEntry>,
 }
 struct ReservationEntry {
+    members: Vec<ReservationMember>,
+}
+struct ReservationMember {
     key: ProviderKey,
     current_registration: bool,
 }
@@ -164,15 +167,17 @@ impl Drop for ProviderReservation {
         let Some(reservation) = providers.reservations.remove(&self.id) else {
             return;
         };
-        if !reservation.current_registration {
-            return;
-        }
-        let key = reservation.key;
-        if let Some(provider) = providers
-            .get_mut(&key.1)
-            .and_then(|values| values.iter_mut().find(|p| provider_key(p) == key))
-        {
-            provider.in_flight = provider.in_flight.saturating_sub(1);
+        for member in reservation.members {
+            if !member.current_registration {
+                continue;
+            }
+            let key = member.key;
+            if let Some(provider) = providers
+                .get_mut(&key.1)
+                .and_then(|values| values.iter_mut().find(|p| provider_key(p) == key))
+            {
+                provider.in_flight = provider.in_flight.saturating_sub(1);
+            }
         }
     }
 }
@@ -200,7 +205,7 @@ impl CapabilityRegistry {
             .filter(|p| !matches!(p.capability.as_str(), "llm.infer" | "vlm.analyze"));
         let provider_count = providers.clone().count();
         json!({"total_in_flight":state.reservations.len(),
-            "retired_in_flight":state.reservations.values().filter(|r|!r.current_registration).count(),
+            "retired_in_flight":state.reservations.values().filter(|r|r.members.iter().any(|m|!m.current_registration)).count(),
             "node_counts":counts.iter().take(256).map(|(node,count)|json!({"node_id":node,"in_flight":count})).collect::<Vec<_>>(),
             "nodes_truncated":counts.len()>256,
             "providers":providers.take(512).map(|p|json!({"node_id":p.node_id,"capability":p.capability,"action":p.action,
@@ -244,8 +249,13 @@ impl CapabilityRegistry {
         // An explicit replacement is a new registration. A late release from
         // its predecessor must never decrement this registration's counters.
         let key = provider_key(&provider);
-        for reservation in providers.reservations.values_mut().filter(|r| r.key == key) {
-            reservation.current_registration = false;
+        for member in providers
+            .reservations
+            .values_mut()
+            .flat_map(|r| &mut r.members)
+            .filter(|m| m.key == key)
+        {
+            member.current_registration = false;
         }
         let entries = providers.entry(provider.capability.clone()).or_default();
         entries.retain(|old| !(old.node_id == provider.node_id && old.action == provider.action));
@@ -254,12 +264,13 @@ impl CapabilityRegistry {
 
     pub fn unregister_node(&self, node_id: &str) {
         let mut providers = self.providers.write().expect("registry lock");
-        for reservation in providers
+        for member in providers
             .reservations
             .values_mut()
-            .filter(|r| r.key.0 == node_id)
+            .flat_map(|r| &mut r.members)
+            .filter(|m| m.key.0 == node_id)
         {
-            reservation.current_registration = false;
+            member.current_registration = false;
         }
         providers.retain(|_, values| {
             values.retain(|provider| provider.node_id != node_id);
@@ -286,12 +297,13 @@ impl CapabilityRegistry {
             .filter(|p| p.node_id == node_id)
             .map(provider_key)
             .collect::<std::collections::BTreeSet<_>>();
-        for reservation in providers
+        for member in providers
             .reservations
             .values_mut()
-            .filter(|r| r.key.0 == node_id && !retained.contains(&r.key))
+            .flat_map(|r| &mut r.members)
+            .filter(|m| m.key.0 == node_id && !retained.contains(&m.key))
         {
-            reservation.current_registration = false;
+            member.current_registration = false;
         }
         for mut provider in replacements.into_iter().filter(|p| p.node_id == node_id) {
             if let Some(old) = previous.get(&(provider.capability.clone(), provider.action.clone()))
@@ -403,25 +415,84 @@ impl CapabilityRegistry {
         constraints: &Value,
         context: Option<&eefn::context::RequestContext>,
     ) -> Option<ProviderReservation> {
+        self.reserve_bundle_with_context(capability, action, constraints, context, &[])
+    }
+
+    /// One coordinator future reserves its root and every distinct local stage
+    /// provider atomically. Global/node ceilings count the parent once; provider
+    /// ceilings count each used registration once, even for repeated stages.
+    /// Conservative lifetime reservation is not a physical quota or remote stop.
+    pub(crate) fn reserve_bundle_with_context(
+        &self,
+        capability: &str,
+        action: &str,
+        constraints: &Value,
+        context: Option<&eefn::context::RequestContext>,
+        dependencies: &[(String, String, Value)],
+    ) -> Option<ProviderReservation> {
+        if dependencies.len() > eefn::pipeline::MAX_STEPS {
+            return None;
+        }
         let mut providers = self.providers.write().expect("registry lock");
         let candidates = self.eligible(&providers, capability, action);
         let mut selected =
             select_provider(candidates, capability, constraints, context, &self.policy)?;
-        let key = provider_key(&selected);
-        let current = providers
-            .get_mut(capability)?
-            .iter_mut()
-            .find(|p| provider_key(p) == key)?;
-        current.in_flight = current.in_flight.checked_add(1)?;
-        selected.in_flight = current.in_flight;
-        let id = uuid::Uuid::new_v4().to_string();
-        providers.reservations.insert(
-            id.clone(),
-            ReservationEntry {
+        let root_key = provider_key(&selected);
+        let mut keys = std::collections::BTreeSet::from([root_key.clone()]);
+        for (capability, action, constraints) in dependencies {
+            // Every dependency must be scoped to this exact root executor.
+            if constraints["node_id"].as_str() != Some(selected.node_id.as_str()) {
+                return None;
+            }
+            let candidate = select_provider(
+                self.eligible(&providers, capability, action),
+                capability,
+                constraints,
+                context,
+                &self.policy,
+            )?;
+            if candidate.node_id != selected.node_id
+                || candidate.properties["selected_resource_id"].as_str()
+                    != constraints["resource_id"].as_str()
+            {
+                return None;
+            }
+            keys.insert(provider_key(&candidate));
+        }
+        // Check the complete set before changing any counter. No await/IO or
+        // registration change can interleave with selection and the increments.
+        for key in &keys {
+            providers
+                .get(&key.1)?
+                .iter()
+                .find(|p| provider_key(p) == *key)?
+                .in_flight
+                .checked_add(1)?;
+        }
+        let mut members = Vec::with_capacity(keys.len());
+        // Root remains first for one-parent node accounting, independent of key order.
+        for key in
+            std::iter::once(root_key.clone()).chain(keys.into_iter().filter(|k| k != &root_key))
+        {
+            let current = providers
+                .get_mut(&key.1)
+                .unwrap()
+                .iter_mut()
+                .find(|p| provider_key(p) == key)
+                .unwrap();
+            current.in_flight += 1;
+            if key == root_key {
+                selected.in_flight = current.in_flight;
+            }
+            members.push(ReservationMember {
                 key,
                 current_registration: true,
-            },
-        );
+            });
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        providers
+            .reservations
+            .insert(id.clone(), ReservationEntry { members });
         Some(ProviderReservation {
             registry: self.clone(),
             id,
@@ -646,7 +717,9 @@ fn provider_ceiling(
 fn reservation_counts(state: &RegistryEntries) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for reservation in state.reservations.values() {
-        *counts.entry(reservation.key.0.clone()).or_insert(0) += 1;
+        *counts
+            .entry(reservation.members[0].key.0.clone())
+            .or_insert(0) += 1;
     }
     counts
 }
@@ -733,6 +806,219 @@ mod tests {
                 )
                 .is_none()
         );
+    }
+
+    fn bundle_fixture(policy: crate::scheduling::SchedulingPolicy) -> CapabilityRegistry {
+        let registry = CapabilityRegistry::with_policy(policy).unwrap();
+        for capability in ["pipeline.run", "filesystem", "process.exec"] {
+            let mut provider = CapabilityProvider::local(capability, "*", json!({}));
+            provider.node_id = "owner".into();
+            // Only the child has a ceiling, so parent capacity cannot mask this test.
+            if capability == "filesystem" {
+                provider.max_concurrent = 1;
+            }
+            registry.register(provider);
+        }
+        registry
+    }
+    fn bundle_dependencies() -> Vec<(String, String, Value)> {
+        vec![
+            (
+                "filesystem".into(),
+                "read".into(),
+                json!({"node_id":"owner"}),
+            ),
+            (
+                "filesystem".into(),
+                "write".into(),
+                json!({"node_id":"owner"}),
+            ),
+            (
+                "process.exec".into(),
+                "run".into(),
+                json!({"node_id":"owner"}),
+            ),
+        ]
+    }
+    #[test]
+    fn compound_capacity_is_one_parent_and_deduplicated_child_providers() {
+        let registry = bundle_fixture(crate::scheduling::SchedulingPolicy {
+            max_in_flight: 1,
+            node_limits: BTreeMap::from([("owner".into(), 1)]),
+            ..Default::default()
+        });
+        let constraints = json!({"node_id":"owner"});
+        let held = registry
+            .reserve_bundle_with_context(
+                "pipeline.run",
+                "run",
+                &constraints,
+                None,
+                &bundle_dependencies(),
+            )
+            .unwrap();
+        let snapshot = registry.admission_snapshot();
+        assert_eq!(snapshot["total_in_flight"], 1);
+        assert_eq!(snapshot["node_counts"][0]["in_flight"], 1);
+        assert!(
+            snapshot["providers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|p| p["in_flight"] == 1)
+        );
+        assert!(
+            registry
+                .reserve_best_with_context("filesystem", "read", &constraints, None)
+                .is_none()
+        );
+        drop(held);
+        assert_eq!(registry.admission_snapshot()["total_in_flight"], 0);
+        assert!(registry.all_providers().iter().all(|p| p.in_flight == 0));
+        let held = registry
+            .reserve_best_with_context("filesystem", "read", &constraints, None)
+            .unwrap();
+        assert!(
+            registry
+                .reserve_bundle_with_context(
+                    "pipeline.run",
+                    "run",
+                    &constraints,
+                    None,
+                    &bundle_dependencies()
+                )
+                .is_none()
+        );
+        assert_eq!(registry.find("pipeline.run", "run")[0].in_flight, 0);
+        drop(held);
+        let mut dependencies = bundle_dependencies();
+        dependencies[2].2["node_id"] = json!("other");
+        assert!(
+            registry
+                .reserve_bundle_with_context(
+                    "pipeline.run",
+                    "run",
+                    &constraints,
+                    None,
+                    &dependencies
+                )
+                .is_none()
+        );
+        assert!(registry.all_providers().iter().all(|p| p.in_flight == 0));
+    }
+    #[test]
+    fn compound_failed_last_child_or_resource_scope_never_partially_reserves() {
+        let registry = bundle_fixture(Default::default());
+        let constraints = json!({"node_id":"owner"});
+        let mut process = registry.find("process.exec", "run")[0].clone();
+        process.max_concurrent = 1;
+        registry.register(process);
+        let held = registry
+            .reserve_best_with_context("process.exec", "run", &constraints, None)
+            .unwrap();
+        assert!(
+            registry
+                .reserve_bundle_with_context(
+                    "pipeline.run",
+                    "run",
+                    &constraints,
+                    None,
+                    &bundle_dependencies()
+                )
+                .is_none()
+        );
+        assert_eq!(registry.find("pipeline.run", "run")[0].in_flight, 0);
+        assert_eq!(registry.find("filesystem", "read")[0].in_flight, 0);
+        assert_eq!(registry.admission_snapshot()["total_in_flight"], 1);
+        drop(held);
+        let mut file = registry.find("filesystem", "read")[0].clone();
+        file.properties = json!({"resources":[{"id":"files","capability":"filesystem","available":true,"area":[]}]});
+        registry.register(file);
+        assert!(
+            registry
+                .reserve_bundle_with_context(
+                    "pipeline.run",
+                    "run",
+                    &constraints,
+                    None,
+                    &bundle_dependencies()
+                )
+                .is_none(),
+            "cannot implicitly bind a newly resource-backed provider"
+        );
+        let mut dependencies = bundle_dependencies();
+        for dependency in &mut dependencies[..2] {
+            dependency.2["resource_id"] = json!("owner::files");
+        }
+        let held = registry
+            .reserve_bundle_with_context("pipeline.run", "run", &constraints, None, &dependencies)
+            .unwrap();
+        assert_eq!(registry.find("filesystem", "read")[0].in_flight, 1);
+        drop(held);
+        assert!(registry.all_providers().iter().all(|p| p.in_flight == 0));
+    }
+    #[test]
+    fn compound_retirement_preserves_parent_and_never_decrements_replacements() {
+        let registry = bundle_fixture(Default::default());
+        let constraints = json!({"node_id":"owner"});
+        let held = registry
+            .reserve_bundle_with_context(
+                "pipeline.run",
+                "run",
+                &constraints,
+                None,
+                &bundle_dependencies(),
+            )
+            .unwrap();
+        let remaining = registry
+            .all_providers()
+            .into_iter()
+            .filter(|p| p.capability != "filesystem")
+            .collect();
+        registry.refresh_node("owner", remaining);
+        assert_eq!(registry.admission_snapshot()["retired_in_flight"], 1);
+        assert_eq!(registry.admission_snapshot()["total_in_flight"], 1);
+        let mut replacement = CapabilityProvider::local("filesystem", "*", json!({}));
+        replacement.node_id = "owner".into();
+        registry.register(replacement);
+        let new = registry
+            .reserve_best_with_context("filesystem", "read", &constraints, None)
+            .unwrap();
+        drop(held);
+        assert_eq!(registry.find("filesystem", "read")[0].in_flight, 1);
+        assert_eq!(registry.find("process.exec", "run")[0].in_flight, 0);
+        assert_eq!(registry.admission_snapshot()["total_in_flight"], 1);
+        drop(new);
+        assert!(registry.all_providers().iter().all(|p| p.in_flight == 0));
+    }
+    #[test]
+    fn concurrent_compound_selection_cannot_overbook_a_child() {
+        let registry = bundle_fixture(Default::default());
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let handles = (0..8)
+            .map(|_| {
+                let registry = registry.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    registry.reserve_bundle_with_context(
+                        "pipeline.run",
+                        "run",
+                        &json!({"node_id":"owner"}),
+                        None,
+                        &bundle_dependencies(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let reservations = handles
+            .into_iter()
+            .filter_map(|h| h.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(reservations.len(), 1);
+        assert_eq!(registry.admission_snapshot()["total_in_flight"], 1);
+        drop(reservations);
+        assert!(registry.all_providers().iter().all(|p| p.in_flight == 0));
     }
 
     #[test]

@@ -20,6 +20,7 @@ pub mod memory;
 pub mod model;
 pub mod model_inventory;
 pub mod node_control;
+mod pipeline_planning;
 pub mod request_approval;
 pub mod request_drafts;
 pub mod request_execution;

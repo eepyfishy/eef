@@ -95,11 +95,14 @@ impl DraftRecord {
         let mut receipts = std::collections::HashSet::new();
         if let Some(input) = &self.concrete_input {
             input.validate()?;
-            if !crate::request_planning::METHOD_TEMPLATES.contains(&input.template.as_str()) {
+            if !crate::request_planning::METHOD_TEMPLATES.contains(&input.template.as_str())
+                && input.template != "local_pipeline"
+            {
                 bail!("Unsupported explicit one-step request template")
             }
-            let steps = crate::request_planning::template_steps(&input.template)?;
-            if self.proposals[0].proposal.suggested_capabilities != vec![steps[0].0.to_string()] {
+            if self.proposals[0].proposal.suggested_capabilities
+                != crate::request_planning::concrete_capabilities(input)?
+            {
                 bail!("Explicit input differs from its retained capability")
             }
         }
@@ -108,11 +111,26 @@ impl DraftRecord {
             if !receipts.insert(&revision.operation_id) {
                 bail!("duplicate review receipt")
             }
-            crate::interpretation::validate(
-                &self.original_text,
-                &serde_json::to_vec(&revision.proposal)?,
-                &revision.allowed_capabilities,
-            )?;
+            let explicit_pipeline = index == 0
+                && self
+                    .concrete_input
+                    .as_ref()
+                    .is_some_and(|input| input.template == "local_pipeline");
+            let output = serde_json::to_vec(&revision.proposal)?;
+            if explicit_pipeline {
+                crate::interpretation::validate_with_cap_limit(
+                    &self.original_text,
+                    &output,
+                    &revision.allowed_capabilities,
+                    crate::pipeline::MAX_STEPS + 1,
+                )?;
+            } else {
+                crate::interpretation::validate(
+                    &self.original_text,
+                    &output,
+                    &revision.allowed_capabilities,
+                )?;
+            }
             if let Some(evidence) = &revision.resolution {
                 evidence.validate()?;
                 if evidence.source_proposal_count != index
