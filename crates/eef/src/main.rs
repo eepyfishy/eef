@@ -1774,7 +1774,8 @@ async fn main() -> Result<()> {
         let requested = restart_requested.clone();
         let restart = runtime.restart.clone();
         let shutdown_runtime = runtime.clone();
-        let result = axum::serve(listener, eef::api::router_with_ui(runtime.clone(), !args.no_ui && runtime.config.bool("web.ui_enabled", true)))
+        let result = axum::serve(listener, eef::api::router_with_ui(runtime.clone(), !args.no_ui && runtime.config.bool("web.ui_enabled", true))
+            .into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(async move {
             tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=restart.notified()=>{requested.store(true,std::sync::atomic::Ordering::Relaxed);} }
             // Stop runners before graceful HTTP draining; an in-flight job must

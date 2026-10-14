@@ -31,6 +31,16 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The next unreleased [owner HTTP socket-boundary fix](OWNER-API-BOUNDARY.md)
+requires real loopback TCP peer metadata before the existing Host/origin checks.
+Forged headers no longer suffice on wildcard owner listeners; missing peer
+metadata fails closed. The authenticated remote node gateway is unchanged.
+OS-user isolation and authenticated remote owner/proxy access remain outside
+this fix; a loopback check alone provides neither guarantee.
+Both suites pass 694 tests. A real non-loopback IPv4 socket fixture changes the
+retained forged-header HTTP 200 baseline to HTTP 403 on both apps, while local
+enrollment/credential/setup regressions pass; physical/OS-user scope remains open.
+
 The next unreleased [explicit local enrollment workflow](LOCAL-ENROLLMENT.md)
 extends same-PC discovery into owner-approved private preparation, separately
 consented/authentication-state-bound coordinator restart, exact applied-state

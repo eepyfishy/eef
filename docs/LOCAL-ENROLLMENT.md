@@ -108,6 +108,9 @@ uses the separate authenticated node gateway. Mapping a wildcard owner listener
 to loopback in discovery is not certification of network-exposed owner access or
 OS-user isolation. Strong owner-API peer-boundary acceptance remains separate
 release work; this checkpoint does not claim remote owner authentication.
+The subsequent [owner socket-boundary increment](OWNER-API-BOUNDARY.md) requires
+actual loopback TCP peers even on wildcard listeners. It does not add OS-user or
+remote-proxy authentication.
 
 ## Verification checkpoint
 

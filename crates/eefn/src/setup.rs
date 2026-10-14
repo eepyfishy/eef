@@ -158,13 +158,23 @@ pub fn pair_local(path: &Path) -> Result<bool> {
     Ok(false)
 }
 
-/// Reject cross-site browser requests and DNS rebinding against the local controls.
+/// Restrict owner controls to a real loopback socket peer, then reject cross-site
+/// browser requests/DNS rebinding. Host and forwarding headers are not peer proof.
 pub async fn local_ui_guard(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::http::{StatusCode, header};
     use axum::response::IntoResponse;
+    let peer_is_local = request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .is_some_and(|peer| match peer.0.ip() {
+            std::net::IpAddr::V4(ip) => ip.is_loopback(),
+            std::net::IpAddr::V6(ip) => {
+                ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|ip| ip.is_loopback())
+            }
+        });
     let host = request
         .headers()
         .get(header::HOST)
@@ -190,10 +200,10 @@ pub async fn local_ui_guard(
         .headers()
         .get("sec-fetch-site")
         .is_some_and(|v| v == "cross-site");
-    if !local || foreign || cross_site {
+    if !peer_is_local || !local || foreign || cross_site {
         return (
             StatusCode::FORBIDDEN,
-            "Open this dashboard on this PC using its app shortcut.",
+            "Open the app on this PC. Owner controls require a local connection.",
         )
             .into_response();
     }
@@ -246,6 +256,107 @@ pub fn open_dashboard(host: &str, port: u16) {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn owner_guard_uses_socket_metadata_not_client_supplied_headers() {
+        use axum::{Extension, Router, extract::ConnectInfo, routing::get};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        for peer in [
+            None,
+            Some("192.0.2.1:12345"),
+            Some("[2001:db8::1]:12345"),
+            Some("[::ffff:192.0.2.1]:12345"),
+            Some("127.0.0.1:12345"),
+            Some("[::1]:12345"),
+            Some("[::ffff:127.0.0.1]:12345"),
+        ] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let reached = hits.clone();
+            let app = Router::new()
+                .route(
+                    "/owner",
+                    get(move || {
+                        reached.fetch_add(1, Ordering::SeqCst);
+                        async { "owner handler" }
+                    }),
+                )
+                .layer(axum::middleware::from_fn(super::local_ui_guard));
+            // Test-only injection simulates trusted transport metadata. Actual
+            // app adapters obtain it from the listener, never a request header.
+            let app = if let Some(peer) = peer {
+                app.layer(Extension(ConnectInfo(
+                    peer.parse::<std::net::SocketAddr>().unwrap(),
+                )))
+            } else {
+                app
+            };
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+            let allowed = matches!(
+                peer,
+                Some("127.0.0.1:12345" | "[::1]:12345" | "[::ffff:127.0.0.1]:12345")
+            );
+            let expected = if allowed { 200 } else { 403 };
+            let url = format!("http://{address}/owner");
+            for forwarded in [false, true] {
+                let request = client.get(&url);
+                let request = if forwarded {
+                    request
+                        .header("X-Forwarded-For", "127.0.0.1")
+                        .header("X-Real-IP", "127.0.0.1")
+                        .header("Forwarded", "for=127.0.0.1;host=localhost")
+                } else {
+                    request
+                };
+                assert_eq!(request.send().await.unwrap().status().as_u16(), expected);
+            }
+            assert_eq!(
+                client
+                    .get(&url)
+                    .header("Origin", "https://untrusted.example")
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16(),
+                403
+            );
+            assert_eq!(
+                client
+                    .get(&url)
+                    .header("Sec-Fetch-Site", "cross-site")
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16(),
+                403
+            );
+            assert_eq!(
+                client
+                    .get(&url)
+                    .header("Host", "untrusted.example")
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16(),
+                403
+            );
+            assert_eq!(hits.load(Ordering::SeqCst), if allowed { 2 } else { 0 });
+            server.abort();
+        }
+    }
     #[test]
     fn invalid_existing_identity_is_not_normalized_or_silently_replaced() {
         let dir = tempfile::tempdir().unwrap();

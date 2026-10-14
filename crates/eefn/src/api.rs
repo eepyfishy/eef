@@ -188,7 +188,12 @@ impl NodeService {
         Ok(ApiServer {
             ui_enabled,
             task: tokio::spawn(async move {
-                if let Err(error) = axum::serve(listener, app).await {
+                if let Err(error) = axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .await
+                {
                     warn!(%error, "EEFN command API stopped");
                 }
             }),
