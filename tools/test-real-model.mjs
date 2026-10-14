@@ -13,6 +13,8 @@ import {reviewedFixture} from './reviewed-fixture.mjs';
 assert(process.argv[2],'Pass the runtime bundle directory explicitly; no old-version default');
 const root=resolve(import.meta.dirname,'..'),bundle=resolve(process.argv[2]);
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||bundle),reused=process.env.EEF_TEST_MODEL_FILE&&resolve(process.env.EEF_TEST_MODEL_FILE);
+const thinkingMode=process.env.EEF_TEST_THINKING_MODE||'inherit';
+assert(['inherit','disabled','enabled'].includes(thinkingMode),'Invalid EEF_TEST_THINKING_MODE');
 assert(reused||process.env.EEF_TEST_ALLOW_MODEL_DOWNLOAD==='1','Choose an existing model or explicitly authorize this isolated download');
 const scratch=await mkdtemp(join(root,'.validation','real-model-')),children=[];
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -78,9 +80,16 @@ try{
  assert(!tuned.registered_models.some(m=>m.model_id===entry.id),'saved tuning cannot load a model');
  assert.equal((await json(node+'/api/diagnostics')).runtime_id,beforeRuntime);
  assert.equal((await cli('eefn',configPath,['models','cpu-threads','--model',entry.id,'--threads','2'])).changed,false);
+ const requestPolicy=(await cli('eefn',configPath,['model-lifecycle-policy','show'])).result;
+ const preference=(await cli('eefn',configPath,['model-lifecycle-policy','--runtime',requestPolicy.runtime_id,
+  'set','--expected-digest',requestPolicy.saved_digest,'--thinking-mode',thinkingMode])).result;
+ assert.equal(preference.saved_policy.thinking_mode||'inherit',thinkingMode);
+ assert.equal(preference.applied_policy.thinking_mode||'inherit','inherit','saved hint cannot mutate the running engine');
+ assert.equal(preference.restart_requested,false);assert.equal(preference.model_inference_requested,false);
  await cli('eefn',configPath,['restart','--wait-seconds','60']);
  const ready=async()=>{const status=await json(node+'/api/status');const models=(await json(eef+'/api/commands/models')).nodes.find(n=>n.node_id===initial.node_id)?.models;return status.connection.state==='connected'&&models?.some(m=>m.instance.model_id===entry.id&&m.lifecycle==='ready');};
  await until(ready,'real CPU model ready and registered',330000);
+ assert.equal((await cli('eefn',configPath,['model-lifecycle-policy','show'])).result.applied_policy.thinking_mode||'inherit',thinkingMode);
  const applied=await cli('eefn',configPath,['models','show']);
  assert.equal(applied.registered_models.find(m=>m.model_id===entry.id).cpu_threads,2);
  assert.equal((await json(eef+'/api/commands/models')).nodes.find(n=>n.node_id===initial.node_id).models.find(m=>m.instance.model_id===entry.id).cpu_threads,2);
@@ -97,11 +106,14 @@ try{
   const plan=await reviewed.save({template:'generate_text',params:{model_id:entry.id,prompt,max_tokens,temperature:0},constraints:{node_id:initial.node_id,backend:'llamacpp'}},prompt);
   await reviewed.start(await reviewed.approve(plan,{max_execution_ms:30000,max_result_bytes:65536}));
   const report=await reviewed.result(plan.id);assert.equal(report.state,'completed',JSON.stringify(report));assert.equal(report.success,true,JSON.stringify(report));
-  assert.equal(typeof report.data.content,'string');assert(report.data.content.trim());
+  assert.equal(typeof report.data.content,'string');assert(report.data.content.trim(),`No final text: finish_reason=${report.data.finish_reason}, completion_complete=${report.data.completion_complete}`);
   const saved=await reviewed.get(plan.id);assert.equal(saved.tasks[0].attempts,1);assert.equal(saved.tasks[0].assignment.backend,'llamacpp');
   return {id:plan.id,report,metadata:saved};
  };
  const first=await infer('Reply with a short greeting.',24),content=first.report.data.content;
+ await writeFile(join(scratch,'first-generation.json'),JSON.stringify({model:entry.id,thinking_mode:thinkingMode,
+  max_tokens:24,content,finish_reason:first.report.data.finish_reason,
+  completion_complete:first.report.data.completion_complete,model_quality_accepted:false},null,2));
  console.log('Real CPU inference returned: '+content);
  // Real selected residency control, without copying/downloading model weights.
  const lifecycle=async(operation)=>(await cli('eefn',configPath,['model-lifecycle','show',...(operation?['--operation-id',operation]:[])])).result;
@@ -155,8 +167,12 @@ try{
  await reviewed.cleanup(first.id);await reviewed.cleanup(afterReload.id);await reviewed.cleanup(second.id);await reviewed.cleanup(demand.id);
  await writeFile(join(scratch,'on-demand-results.json'),JSON.stringify({passed:true,real_cpu_inference:true,reused_verified_artifact:!!reused,physical_two_pc:false,
   on_demand_startup_left_model_unloaded:true,reviewed_request_loaded_selected_model:true,inference_and_idle_cleanup_without_node_restart:true,completed_work_not_replayed:true},null,2));
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,model:entry.id,bytes:entry.bytes,sha256:entry.sha256,real_cpu_inference:true,model_quality_accepted:false,reused_verified_artifact:!!reused,model_downloads:!reused,pinned_tls:true,reviewed_grants:true,reply:content,stable_identity:true,verified_restart_with_selected_model:true,retained_result_after_restart:true,completed_work_not_replayed:true,model_withdrawal:true,selection_by_owner_command:true,cpu_threads:2,saved_applied_threads_checked:true,remote_tuning_refusal_checked:true,explicit_cpu_launch_arguments_checked:process.platform==='win32',resource_quota_enforced:false,real_owned_model_unload_reload:true,lifecycle_without_node_restart:true,historical_unload_receipt_no_replay:true,inference_after_explicit_reload:true,model_artifact_not_deleted:true,physical_memory_release_measured:false,owner_policy_saved_not_applied:true,real_automatic_owned_idle_unload:true,idle_unload_without_node_restart:true},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,model:entry.id,bytes:entry.bytes,sha256:entry.sha256,real_cpu_inference:true,model_quality_accepted:false,reused_verified_artifact:!!reused,model_downloads:!reused,thinking_mode:thinkingMode,thinking_hint_saved_applied_checked:true,pinned_tls:true,reviewed_grants:true,reply:content,stable_identity:true,verified_restart_with_selected_model:true,retained_result_after_restart:true,completed_work_not_replayed:true,model_withdrawal:true,selection_by_owner_command:true,cpu_threads:2,saved_applied_threads_checked:true,remote_tuning_refusal_checked:true,explicit_cpu_launch_arguments_checked:process.platform==='win32',resource_quota_enforced:false,real_owned_model_unload_reload:true,lifecycle_without_node_restart:true,historical_unload_receipt_no_replay:true,inference_after_explicit_reload:true,model_artifact_not_deleted:true,physical_memory_release_measured:false,owner_policy_saved_not_applied:true,real_automatic_owned_idle_unload:true,idle_unload_without_node_restart:true},null,2));
  console.log('Real model validation passed: '+scratch);
+}catch(error){
+ await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error),thinking_mode:thinkingMode,
+  reused_verified_artifact:!!reused,physical_two_pc:false,model_quality_accepted:false},null,2));
+ throw error;
 }finally{
  for(const child of children)if(child.exitCode===null){await new Promise(r=>{const stop=spawn('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});stop.on('exit',r);stop.on('error',r);});}
  await Promise.allSettled(children.map(c=>c.result));

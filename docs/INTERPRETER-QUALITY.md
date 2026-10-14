@@ -21,6 +21,14 @@ $env:EEF_TEST_MODEL_ID = 'qwen2.5-small'
 node tools/test-interpreter-quality.mjs ABSOLUTE_RUNTIME_BUNDLE_DIRECTORY
 ```
 
+Optional `EEF_TEST_THINKING_MODE=inherit|disabled|enabled` uses the public owner
+policy command in the isolated fixture before launch; inheritance remains the
+default. Reports record the choice and check saved/applied agreement. The same
+option is available to `tools/test-real-model.mjs` with explicit restart and no
+token-budget change. It is a request hint, not proof that the backend honored it.
+Compare runs at the same prompt, rubric and bounds; never infer model quality from
+a useful short generation or from reasoning-mode support alone.
+
 The API-only fixture disables coordinator connections, uses CPU-only GGUF
 inference, and sends twenty fixed synthetic inputs. It verifies unchanged saved
 configuration, no downloads, no workload and zero successful connections. It
@@ -188,3 +196,66 @@ The next quality work needs a stronger candidate or separately evaluated method,
 then independent held-out multilingual review and physical CPU/memory acceptance.
 Automatic verified bootstrap, friendly setup and the full stable 0.4.0 roadmap
 remain incomplete. No production model was selected or approved by these runs.
+
+## Qwen 3.5 candidate and thinking request hints, 2026-10-14
+
+Added an optional **text-only experimental** catalog selection, not a new default:
+`qwen3.5-0.8b`, `Qwen3.5-0.8B-Q4_0.gguf`, 563,036,064 bytes, SHA-256
+`57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf`.
+The URL pins [ggml-org's converted artifact and model card](https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF/blob/8fea620810c4afa23dd6443f999a48574c1611a3/README.md)
+at revision `8fea620810c4afa23dd6443f999a48574c1611a3`. Its Apache-2.0/base-model
+metadata was checked against [the original publisher](https://huggingface.co/Qwen/Qwen3.5-0.8B).
+No vision projector is included; the Ollama alias is a separate, unevaluated
+artifact. Existing catalog selections/defaults and published bundles are unchanged.
+
+The first isolated public-command run, `real-model-NSEurh`, downloaded and
+verified exactly that artifact, selected/tuned it only in the disposable fixture,
+and loaded it successfully. It **failed** its first 24-token text assertion:
+the persisted grant operation completed but returned empty content with
+`finish_reason:"length"` and `completion_complete:false`. This is not a useful
+inference success. That failed fixture/artifact remains intact.
+
+The follow-up adds generic [owner thinking preferences](MODEL-LIFECYCLE-POLICY.md#thinking-request-preference-unreleased),
+not model-name special cases, a token increase, reasoning-as-final-content, or
+weaker validation. `model-policy-Ec9VTm` passes the headless public-command
+fixture: remote-owner refusal/approval, saved/applied separation, explicit
+restart, runtime/CAS fencing, and saved-only reset to inheritance. Unit tests
+check both backend payloads, a real synthetic Ollama HTTP exchange, discarded
+reasoning fields, strict enum choices, prior inherited policy digests, forged
+report rejection and rejection of unapplied runtime preferences.
+
+`real-model-GmkvV2` reuses the verified artifact with no download/copy. With the
+owner preference explicitly applied as `disabled`, the same 24-token first
+generation returns a nonempty greeting with `finish_reason:"stop"` and
+`completion_complete:true`. The real CPU/pinned-TLS fixture also passes selected
+load/unload/reload, retained results across restart, historical receipt/no replay,
+automatic idle unload and authorized cold on-demand inference. Its two-thread
+launch is checked; this is one-PC inference/lifecycle acceptance, not default
+quality approval, physical memory release, resource quotas or two-PC acceptance.
+
+`interpreter-quality-aU4FgT` then evaluates the **unchanged production prompt,
+schema, validator, 512-token output limit and fixed 20-case rubric**, with the
+disabled hint and CPU-only context 4096. It completes with **16/20 accepted,
+8/20 matching**. Startup is 4,233 ms; the owned model peak working-set sample is
+1,284,046,848 bytes. Threads are unspecified for this quality run; the sample is
+not total application RAM or an enforced limit. Rubric SHA remains
+`20c3665b0599ae0935128a16285d4d0f28bb0561c1924c22670e4746fec7b189`;
+system prompt SHA remains
+`56ec36c9a3b47393458479c216924d4d0b156aae31b80a1f5c2a1380ccd8ca5c`.
+Full-message references and binary hashes are retained privately by the harness.
+
+Four proposals fail the strict validator. Eleven accepted goals still copy the
+placeholder wording (including escaped variants); six questions copy the generic
+question. Ordinary health/status and greetings still request unnecessary
+clarification or wrong workloads/capabilities. **Not approved as the automatic
+interpreter default.** No expectations, validator or prompt were retuned to make
+this candidate pass. Further method/model work, held-out multilingual review,
+friendly verified bootstrap and physical CPU/memory acceptance remain required.
+
+Fresh workspace/all-target suites pass **638 tests** in both default-feature and
+dashboard-free modes (EEF 237 plus one ignored opt-in profiler, owner CLI 16,
+installer 6, node library 367, node CLI 12). Fresh default binaries/examples,
+format/diff, JS syntax, fixed-rubric checks and backend/browser source guard pass.
+Public `request-preview-Hh1NRT` and `request-review-dgaZ97` pass with chain exit 0.
+No installed app, physical node, shared model store, release artifact, automatic
+update selection or default interpreter was changed. Stable 0.4.0 remains open.

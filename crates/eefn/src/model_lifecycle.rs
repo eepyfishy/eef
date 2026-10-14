@@ -205,6 +205,9 @@ impl crate::NodeService {
         if engine.applied_ollama_keep_alive_seconds() != policy.ollama_keep_alive_seconds {
             bail!("Applied Ollama preference does not match the engine; no runtime replacement")
         }
+        if engine.applied_thinking_mode() != policy.thinking_mode {
+            bail!("Applied thinking preference does not match the engine; no runtime replacement")
+        }
         let (queue, receiver) = mpsc::channel(policy.queue_capacity);
         let runtime = Arc::new(ModelRuntime {
             id,
@@ -1284,6 +1287,47 @@ mod tests {
         assert_eq!(shown["saved_policy"], shown["applied_policy"]);
         assert_eq!(shown["restart_required"], true);
         guard.runtime.close();
+    }
+    #[test]
+    fn applied_thinking_report_cannot_replace_runtime_with_unapplied_preference() {
+        use crate::model_lifecycle_policy::ThinkingMode;
+        let (_directory, service, engine, guard) = fixture();
+        let original = guard.runtime.id.clone();
+        let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+            thinking_mode: ThinkingMode::Disabled,
+            ..guard.policy().clone()
+        };
+        assert!(
+            service
+                .bind_model_runtime_with_policy(
+                    &engine,
+                    uuid::Uuid::new_v4().to_string(),
+                    policy.clone(),
+                    0
+                )
+                .is_err()
+        );
+        assert_eq!(
+            service.model_runtime.lock().unwrap().as_ref().unwrap().id,
+            original
+        );
+        assert!(!guard.runtime.is_closed());
+        let mut config = service.read_config().unwrap();
+        config["model_lifecycle"] = json!(policy);
+        service.save_config(config).unwrap();
+        let next = Arc::new(
+            crate::NodeEngine::new(false, vec![], std::env::temp_dir())
+                .unwrap()
+                .with_service(service.clone())
+                .with_model_request_preferences(&policy)
+                .unwrap(),
+        );
+        let applied = service
+            .bind_model_runtime(&next, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        assert_eq!(applied.policy().thinking_mode, ThinkingMode::Disabled);
+        assert_eq!(next.applied_thinking_mode(), ThinkingMode::Disabled);
+        assert!(guard.runtime.is_closed());
     }
     #[test]
     fn applied_ollama_report_cannot_claim_a_preference_missing_from_the_engine() {

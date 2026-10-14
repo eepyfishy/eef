@@ -13,6 +13,28 @@ pub enum StartupMode {
     OnDemand,
 }
 
+/// Request hint only: a backend/model may not support switching thinking.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingMode {
+    #[default]
+    Inherit,
+    Disabled,
+    Enabled,
+}
+impl ThinkingMode {
+    fn is_inherit(&self) -> bool {
+        *self == Self::Inherit
+    }
+    pub(crate) fn hint(self) -> Option<bool> {
+        match self {
+            Self::Inherit => None,
+            Self::Disabled => Some(false),
+            Self::Enabled => Some(true),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ModelLifecyclePolicy {
@@ -25,6 +47,10 @@ pub struct ModelLifecyclePolicy {
     /// Shared Ollama request hint: null inherits backend policy; -1 is explicit
     /// indefinite retention. This does not confer ownership of service/models.
     pub ollama_keep_alive_seconds: Option<i64>,
+    /// Applied owner request preference, not proof of backend thinking state.
+    /// Omit inherit to preserve pre-extension policy digests and wire reports.
+    #[serde(skip_serializing_if = "ThinkingMode::is_inherit")]
+    pub thinking_mode: ThinkingMode,
 }
 impl Default for ModelLifecyclePolicy {
     fn default() -> Self {
@@ -36,6 +62,7 @@ impl Default for ModelLifecyclePolicy {
             load_timeout_seconds: 300,
             termination_wait_seconds: 5,
             ollama_keep_alive_seconds: None,
+            thinking_mode: ThinkingMode::Inherit,
         }
     }
 }
@@ -125,6 +152,10 @@ pub enum PolicyCommand {
         #[arg(long, conflicts_with = "ollama_keep_alive_seconds")]
         #[serde(default)]
         ollama_keep_alive_default: bool,
+        /// Thinking request hint for future inference; inherit omits the hint.
+        #[arg(long, value_enum)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thinking_mode: Option<ThinkingMode>,
     },
 }
 #[derive(Debug, clap::Args)]
@@ -162,6 +193,7 @@ impl PolicyRequest {
             termination_wait_seconds,
             ollama_keep_alive_seconds,
             ollama_keep_alive_default,
+            thinking_mode,
         } = &self.command
         {
             if expected_digest.len() != 64
@@ -179,6 +211,7 @@ impl PolicyRequest {
                 && termination_wait_seconds.is_none()
                 && ollama_keep_alive_seconds.is_none()
                 && !ollama_keep_alive_default
+                && thinking_mode.is_none()
             {
                 bail!("Choose at least one lifecycle policy field")
             }
@@ -210,6 +243,7 @@ impl PolicyCommand {
             termination_wait_seconds,
             ollama_keep_alive_seconds,
             ollama_keep_alive_default,
+            thinking_mode,
         } = self
         {
             if *expected_digest != current.versioned_digest(revision)? {
@@ -237,6 +271,9 @@ impl PolicyCommand {
                 next.ollama_keep_alive_seconds = None;
             } else if let Some(value) = ollama_keep_alive_seconds {
                 next.ollama_keep_alive_seconds = Some(*value);
+            }
+            if let Some(value) = thinking_mode {
+                next.thinking_mode = *value;
             }
         }
         next.validate()?;
@@ -379,6 +416,7 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
         termination_wait_seconds,
         ollama_keep_alive_seconds,
         ollama_keep_alive_default,
+        thinking_mode,
         ..
     } = &request.command
     {
@@ -393,6 +431,7 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
             || ollama_keep_alive_seconds
                 .is_some_and(|v| Some(v) != r.saved_policy.ollama_keep_alive_seconds)
             || (*ollama_keep_alive_default && r.saved_policy.ollama_keep_alive_seconds.is_some())
+            || thinking_mode.is_some_and(|v| v != r.saved_policy.thinking_mode)
         {
             return false;
         }
@@ -415,6 +454,7 @@ mod tests {
             termination_wait_seconds: Some(2),
             ollama_keep_alive_seconds: None,
             ollama_keep_alive_default: false,
+            thinking_mode: None,
         }
     }
     fn request(command: PolicyCommand, runtime: Option<String>) -> PolicyRequest {
@@ -471,6 +511,96 @@ mod tests {
             *idle_unload_seconds = Some(0);
         }
         assert_eq!(reset.apply(&next, 1).unwrap().idle_unload_seconds, None);
+    }
+    #[test]
+    fn inherited_thinking_preserves_prior_policy_serialization_and_digests() {
+        let old = json!({"startup":"eager","idle_unload_seconds":null,"queue_capacity":8,
+            "receipt_capacity":256,"load_timeout_seconds":300,"termination_wait_seconds":5,
+            "ollama_keep_alive_seconds":null});
+        let policy: ModelLifecyclePolicy = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(policy.thinking_mode, ThinkingMode::Inherit);
+        assert_eq!(json!(policy), old);
+        let prior_digest = format!(
+            "{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&json!({"schema_version":1,"revision":17,"policy":old}))
+                    .unwrap()
+            )
+        );
+        assert_eq!(policy.versioned_digest(17).unwrap(), prior_digest);
+        let mut explicit = old;
+        explicit["thinking_mode"] = json!("inherit");
+        let explicit: ModelLifecyclePolicy = serde_json::from_value(explicit).unwrap();
+        assert_eq!(explicit, policy);
+        assert_eq!(explicit.versioned_digest(17).unwrap(), prior_digest);
+    }
+    #[test]
+    fn thinking_only_set_reset_are_strict_and_revision_fenced() {
+        let old = ModelLifecyclePolicy::default();
+        for mode in [ThinkingMode::Disabled, ThinkingMode::Enabled] {
+            let raw = json!({"operation":"set","expected_digest":old.versioned_digest(0).unwrap(),"thinking_mode":mode});
+            let set: PolicyCommand = serde_json::from_value(raw.clone()).unwrap();
+            request(set.clone(), None).validate().unwrap();
+            let next = set.apply(&old, 0).unwrap();
+            assert_eq!(next.thinking_mode, mode);
+            assert!(set.apply(&next, 1).is_err());
+            let reset: PolicyCommand = serde_json::from_value(json!({"operation":"set",
+                "expected_digest":next.versioned_digest(1).unwrap(),"thinking_mode":"inherit"}))
+            .unwrap();
+            request(reset.clone(), None).validate().unwrap();
+            assert_eq!(reset.apply(&next, 1).unwrap(), old);
+        }
+        for invalid in [
+            json!(true),
+            json!(false),
+            json!(1),
+            json!("none"),
+            json!({}),
+        ] {
+            assert!(
+                serde_json::from_value::<PolicyCommand>(json!({"operation":"set",
+                "expected_digest":old.versioned_digest(0).unwrap(),"thinking_mode":invalid}))
+                .is_err()
+            );
+            assert!(
+                ModelLifecyclePolicy::from_config(
+                    &json!({"model_lifecycle":{"thinking_mode":invalid}})
+                )
+                .is_err()
+            );
+        }
+        let empty: PolicyCommand = serde_json::from_value(json!({"operation":"set",
+            "expected_digest":old.versioned_digest(0).unwrap(),"thinking_mode":null}))
+        .unwrap();
+        assert!(request(empty, None).validate().is_err());
+    }
+    #[test]
+    fn substituted_thinking_report_cannot_confirm_even_with_recomputed_digest() {
+        let (_directory, service) = fixture();
+        let show = service
+            .model_lifecycle_policy_command(request(PolicyCommand::Show {}, None), false, true)
+            .unwrap();
+        let command = serde_json::from_value(json!({"operation":"set",
+            "expected_digest":show["saved_digest"],"thinking_mode":"disabled"}))
+        .unwrap();
+        let req = request(command, None);
+        let good = service
+            .model_lifecycle_policy_command(req.clone(), false, true)
+            .unwrap();
+        assert!(confirmed(&good, &req));
+        for mode in [ThinkingMode::Enabled, ThinkingMode::Inherit] {
+            let mut bad = good.clone();
+            bad["saved_policy"]["thinking_mode"] = json!(mode);
+            let policy: ModelLifecyclePolicy =
+                serde_json::from_value(bad["saved_policy"].clone()).unwrap();
+            bad["saved_digest"] = json!(
+                policy
+                    .versioned_digest(bad["saved_revision"].as_u64().unwrap())
+                    .unwrap()
+            );
+            assert!(!confirmed(&bad, &req));
+        }
+        assert_eq!(service.read_config().unwrap()["unrelated"], "retain");
     }
     #[test]
     fn ollama_preferences_normalize_legacy_policy_and_enforce_bounds() {

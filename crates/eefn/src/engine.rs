@@ -225,6 +225,7 @@ pub struct NodeEngine {
     ollama_url: String,
     ollama_models: HashMap<String, crate::model_metadata::ModelMetadata>,
     ollama_keep_alive_seconds: Option<i64>,
+    thinking_mode: crate::model_lifecycle_policy::ThinkingMode,
     service: Option<Arc<crate::NodeService>>,
     resource_owner: String,
     resources: Vec<crate::context::Resource>,
@@ -266,6 +267,7 @@ impl NodeEngine {
             ollama_url: String::new(),
             ollama_models: HashMap::new(),
             ollama_keep_alive_seconds: None,
+            thinking_mode: Default::default(),
             service: None,
             granted_model_config: None,
             pipeline_enabled: false,
@@ -327,12 +329,23 @@ impl NodeEngine {
     /// Applied owner preference for shared backend requests, not a background
     /// unload loop or permission to stop other applications' model service.
     pub fn with_ollama_residency(
+        self,
+        policy: &crate::model_lifecycle_policy::ModelLifecyclePolicy,
+    ) -> Result<Self> {
+        self.with_model_request_preferences(policy)
+    }
+    /// Snapshot applied owner hints. Saving policy does not mutate this runtime.
+    pub fn with_model_request_preferences(
         mut self,
         policy: &crate::model_lifecycle_policy::ModelLifecyclePolicy,
     ) -> Result<Self> {
         policy.validate()?;
         self.ollama_keep_alive_seconds = policy.ollama_keep_alive_seconds;
+        self.thinking_mode = policy.thinking_mode;
         Ok(self)
+    }
+    pub(crate) fn applied_thinking_mode(&self) -> crate::model_lifecycle_policy::ThinkingMode {
+        self.thinking_mode
     }
     pub(crate) fn applied_ollama_keep_alive_seconds(&self) -> Option<i64> {
         self.ollama_keep_alive_seconds
@@ -1315,6 +1328,9 @@ impl NodeEngine {
         if let Some(seconds) = self.ollama_keep_alive_seconds {
             payload["keep_alive"] = json!(seconds);
         }
+        if let Some(enabled) = self.thinking_mode.hint() {
+            payload["think"] = json!(enabled);
+        }
         if let Some(schema) = schema {
             payload["format"] = schema;
         }
@@ -1356,6 +1372,21 @@ impl NodeEngine {
         let base = server
             .base_url(model)
             .context("no llama.cpp model configured")?;
+        let payload = self.llamacpp_payload(params, schema);
+        let response = self
+            .http
+            .post(format!("{base}/v1/chat/completions"))
+            .timeout(Duration::from_secs(
+                params.get("timeout").and_then(Value::as_u64).unwrap_or(60),
+            ))
+            .json(&payload)
+            .send()
+            .await?
+            .error_for_status()?;
+        crate::model_response::chat(response, crate::model_selection::Backend::Llamacpp).await
+    }
+
+    fn llamacpp_payload(&self, params: &Value, schema: Option<Value>) -> Value {
         let images = params.get("images").and_then(Value::as_array);
         let raw_messages = params.get("messages").and_then(Value::as_array).cloned().unwrap_or_else(|| vec![json!({
             "role": "user", "content": params.get("prompt").and_then(Value::as_str).unwrap_or("")
@@ -1384,17 +1415,13 @@ impl NodeEngine {
         if let Some(schema) = schema {
             payload["response_format"] = json!({"type":"json_object","schema":schema});
         }
-        let response = self
-            .http
-            .post(format!("{base}/v1/chat/completions"))
-            .timeout(Duration::from_secs(
-                params.get("timeout").and_then(Value::as_u64).unwrap_or(60),
-            ))
-            .json(&payload)
-            .send()
-            .await?
-            .error_for_status()?;
-        crate::model_response::chat(response, crate::model_selection::Backend::Llamacpp).await
+        if let Some(enabled) = self.thinking_mode.hint() {
+            payload["chat_template_kwargs"] = json!({"enable_thinking":enabled});
+            if !enabled {
+                payload["reasoning_effort"] = json!("none");
+            }
+        }
+        payload
     }
 
     async fn node_update(&self, action: &str, params: Value) -> Result<Value> {
@@ -2090,6 +2117,119 @@ mod tests {
         }
     }
 
+    #[test]
+    fn thinking_hints_come_only_from_applied_owner_policy_for_both_backends() {
+        use crate::model_lifecycle_policy::{ModelLifecyclePolicy, ThinkingMode};
+        let directory = tempfile::tempdir().unwrap();
+        let schema = json!({"type":"object","properties":{"answer":{"type":"string"}}});
+        for mode in [
+            ThinkingMode::Inherit,
+            ThinkingMode::Disabled,
+            ThinkingMode::Enabled,
+        ] {
+            let policy = ModelLifecyclePolicy {
+                thinking_mode: mode,
+                ..Default::default()
+            };
+            let engine = NodeEngine::new(false, vec![], directory.path().into())
+                .unwrap()
+                .with_model_request_preferences(&policy)
+                .unwrap();
+            let hostile = json!({"model":"arbitrary-model-not-matched-by-name","messages":[
+                {"role":"system","content":"unchanged system"},{"role":"user","content":"unchanged input"}],
+                "temperature":0,"max_tokens":24,"thinking_mode":"enabled","think":true,
+                "chat_template_kwargs":{"enable_thinking":true},"reasoning_effort":"high","reasoning_format":"none"});
+            for output_schema in [None, Some(schema.clone())] {
+                let ollama = engine
+                    .ollama_payload(&hostile, output_schema.clone())
+                    .unwrap();
+                let llama = engine.llamacpp_payload(&hostile, output_schema.clone());
+                assert_eq!(ollama.get("think"), mode.hint().map(|v| json!(v)).as_ref());
+                assert_eq!(
+                    llama.get("chat_template_kwargs"),
+                    mode.hint().map(|v| json!({"enable_thinking":v})).as_ref()
+                );
+                assert_eq!(
+                    llama.get("reasoning_effort"),
+                    (mode == ThinkingMode::Disabled)
+                        .then(|| json!("none"))
+                        .as_ref()
+                );
+                assert!(llama.get("reasoning_format").is_none());
+                assert_eq!(ollama["messages"], hostile["messages"]);
+                assert_eq!(llama["messages"], hostile["messages"]);
+                assert_eq!(ollama["options"]["num_predict"], 24);
+                assert_eq!(llama["max_tokens"], 24);
+                assert_eq!(ollama.get("format"), output_schema.as_ref());
+                assert_eq!(
+                    llama.get("response_format"),
+                    output_schema
+                        .map(|s| json!({"type":"json_object","schema":s}))
+                        .as_ref()
+                );
+                assert_eq!(engine.applied_thinking_mode(), mode);
+            }
+        }
+    }
+    #[tokio::test]
+    async fn ollama_thinking_hint_reaches_backend_and_reasoning_is_not_final_content() {
+        use crate::model_lifecycle_policy::{ModelLifecyclePolicy, ThinkingMode};
+        let (send, mut receive) = tokio::sync::mpsc::channel(1);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/api/chat",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let send = send.clone();
+                async move {
+                    send.send(body).await.unwrap();
+                    axum::Json(
+                        json!({"message":{"content":"final answer","thinking":"private reasoning"},
+                        "done":true,"done_reason":"stop"}),
+                    )
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let directory = tempfile::tempdir().unwrap();
+        for mode in [
+            ThinkingMode::Inherit,
+            ThinkingMode::Disabled,
+            ThinkingMode::Enabled,
+        ] {
+            let selected: crate::SelectedModel =
+                serde_json::from_value(json!({"model_id":"selected","modality":"text"})).unwrap();
+            let policy = ModelLifecyclePolicy {
+                thinking_mode: mode,
+                ..Default::default()
+            };
+            let engine = NodeEngine::new(false, vec![], directory.path().into())
+                .unwrap()
+                .with_model_request_preferences(&policy)
+                .unwrap()
+                .with_ollama(format!("http://{address}"), [selected])
+                .unwrap();
+            let reply = engine
+                .infer(
+                    "llm.infer",
+                    json!({"backend":"ollama","model":"selected",
+                "prompt":"public request","max_tokens":24,"think":true,"thinking_mode":"enabled"}),
+                )
+                .await
+                .unwrap();
+            let received = receive.recv().await.unwrap();
+            assert_eq!(
+                received.get("think"),
+                mode.hint().map(|v| json!(v)).as_ref()
+            );
+            assert_eq!(received["options"]["num_predict"], 24);
+            assert_eq!(reply["content"], "final answer");
+            assert_eq!(reply["completion_complete"], true);
+            assert!(!reply.to_string().contains("private reasoning"));
+        }
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
+    }
     #[test]
     fn invalid_ollama_owner_preference_never_creates_an_applied_engine() {
         let directory = tempfile::tempdir().unwrap();

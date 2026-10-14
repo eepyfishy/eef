@@ -15,6 +15,8 @@ assert(process.argv[2]&&process.env.EEF_TEST_MODEL_FILE,
  'Pass the runtime bundle and set EEF_TEST_MODEL_FILE to an existing catalog artifact. No downloads supported.');
 const root=resolve(import.meta.dirname,'..'),bundle=resolve(process.argv[2]);
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
+const thinkingMode=process.env.EEF_TEST_THINKING_MODE||'inherit';
+assert(['inherit','disabled','enabled'].includes(thinkingMode),'Invalid EEF_TEST_THINKING_MODE');
 const model=resolve(process.env.EEF_TEST_MODEL_FILE),runtime=join(bundle,'tools','llama-server.exe');
 const catalog=JSON.parse(await readFile(join(root,'config/model-catalog.json'),'utf8'));
 const matches=catalog.filter(m=>m.id===(process.env.EEF_TEST_MODEL_ID||catalog[0]?.id));
@@ -70,7 +72,7 @@ async function sample(nodeProcess){
 const report={schema_version:1,rubric_version:rubricVersion,candidate:entry.id,bytes:entry.bytes,sha256:entry.sha256,
  rubric_sha256:createHash('sha256').update(JSON.stringify(cases)).digest('hex'),
  runtime_sha256:runtimeHash,node_binary_sha256:nodeHash,real_cpu_interpretation:true,model_downloads:false,model_copies:false,
- api_only:true,coordinator_started:false,physical_two_pc:false,context_tokens:4096,gpu_layers:0,output_token_limit:512,
+ api_only:true,coordinator_started:false,physical_two_pc:false,context_tokens:4096,gpu_layers:0,output_token_limit:512,thinking_mode:thinkingMode,
  cpu:cpus()[0]?.model,logical_cpus:cpus().length,system_memory_bytes:totalmem(),threads:null,
  startup_ms:null,model_process_sample:null,cases:[],harness_completed:false,default_approved:false,
  scope:'Production node local preview with fixed synthetic inputs. No model-quality approval, execution, bootstrap, memory limit or physical-network acceptance.'};
@@ -88,9 +90,16 @@ try{
  const assigned=await cli(['models','interpreter','--backend','llamacpp','--model',entry.id]);
  assert.equal(assigned.success,true);assert.equal(assigned.running,false);
  assert.equal(assigned.saved_selections[0].model_metadata.roles[0],'request_interpreter');
+ const beforePolicy=(await cli(['model-lifecycle-policy','show'])).result;
+ const savedPolicy=(await cli(['model-lifecycle-policy','set','--expected-digest',beforePolicy.saved_digest,'--thinking-mode',thinkingMode])).result;
+ assert.equal(savedPolicy.saved_policy.thinking_mode||'inherit',thinkingMode);
+ assert.equal(savedPolicy.applied_policy,null);assert.equal(savedPolicy.restart_requested,false);
  node=`http://127.0.0.1:${apiPort}`;const started=performance.now();owner=launch(['--no-ui']);
  await until(async()=>{const s=await json('/api/status');return s.connection.state==='paused'&&s.models.some(m=>m.model_id===entry.id&&m.model_metadata.lifecycle==='ready');},'isolated CPU model ready');
  report.startup_ms=Math.round(performance.now()-started);runtimeId=(await json('/api/diagnostics')).runtime_id;
+ const appliedPolicy=(await cli(['model-lifecycle-policy','show'])).result;
+ assert.equal(appliedPolicy.applied_policy.thinking_mode||'inherit',thinkingMode);
+ report.thinking_hint_saved_applied_checked=true;
  report.allowed_capabilities=(await json('/api/status')).capabilities;report.node_version=(await json('/api/status')).version;
  report.prompt_reference=await referencePrompt(report.allowed_capabilities);
  assert.equal((await fetch(node+'/')).status,404);const saved=await readFile(configPath,'utf8');

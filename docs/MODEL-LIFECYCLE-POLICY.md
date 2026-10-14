@@ -64,6 +64,7 @@ The optional `model_lifecycle` node configuration uses these validated fields:
 | `load_timeout_seconds` | 300 | 1-3600 seconds for configured group startup, explicit and demand load health readiness. Existing request deadlines can end demand loading earlier. |
 | `termination_wait_seconds` | 5 | 1-30 seconds for explicit/idle owned-root termination wait. |
 | `ollama_keep_alive_seconds` | null (inherit backend) | Ollama inference request preference: -1 indefinite, 0 request unload after its response, or 1-86400 seconds. Not ownership or observed residency. |
+| `thinking_mode` | inherit (omitted on the wire) | Node-wide inference hint: inherit, disabled or enabled. Not observed thinking state or per-model capability discovery. |
 
 Each numeric field has the corresponding hyphenated `set` option. Missing
 policy fields retain defaults; malformed/null policy objects, unknown fields,
@@ -93,6 +94,38 @@ completed bootstrap or measured startup-cost/resource optimization.
 Startup/idle/native-control settings govern owned GGUF processes, not the user's
 shared Ollama service. The separate Ollama request preference below does not
 implement exclusive/shared ownership, observed residency or autonomous unload.
+
+### Thinking request preference (unreleased)
+
+```text
+eefn --json model-lifecycle-policy show
+eefn --json model-lifecycle-policy --runtime RUNTIME_UUID set --expected-digest SAVED_DIGEST --thinking-mode disabled
+eef --json node model-lifecycle-policy --node NODE_ID --runtime RUNTIME_UUID set --expected-digest SAVED_DIGEST --thinking-mode inherit
+```
+
+`inherit` (default), `disabled`, and `enabled` are owner-selected request hints,
+not model capability discovery or proof of the backend's actual thinking state.
+The setting currently applies to the node's selected models, including local
+request interpretation. Per-model overrides and supported-value discovery remain
+future work. Unsupported backends/models may reject or ignore the hint; errors
+are retained without fallback, automatic retry, or token-budget increases.
+
+Use the inspected saved digest and, on a running node, its exact runtime ID.
+Saving uses existing local-owner/approved-remote management and revision fences;
+it never loads/downloads/selects a model, sends inference, or restarts the node.
+The running engine retains its old preference until an explicit restart. Runtime
+binding rejects a report claiming a preference not present in the engine without
+closing the existing runtime. Restoring `inherit` omits the hint; inherited policy
+serialization/digests and old command wire reports remain unchanged.
+
+The engine maps explicit choices to Ollama's [`think` Boolean](https://docs.ollama.com/api/chat)
+and llama.cpp's [`chat_template_kwargs.enable_thinking`](https://github.com/ggml-org/llama.cpp/blob/c1d0e7a00/tools/server/README.md#post-v1chatcompletions-openai-compatible-chat-completions-api).
+For llama.cpp, disabled also sends `reasoning_effort:"none"`. It does **not**
+send `reasoning_format:"none"`, which changes parsing rather than disabling
+thinking. Model names are not special-cased. Caller/model-supplied parameters
+cannot override this applied owner preference. Prompts, schema, result validation,
+token/byte/time limits, execution permission and partial-output metadata are
+unchanged; reasoning output is not promoted to final text.
 
 ### Shared Ollama request preference
 

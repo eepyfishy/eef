@@ -51,6 +51,16 @@ from owned process control. It does not imply exclusive/shared backend ownership
 observed residency or autonomous unload. Full Ollama lifecycle, broader per-model policy, measured resource admission
 and startup-cost scheduling remain open. The dashboard owns none of this behavior.
 
+The next unreleased increment adds owner thinking request hints (inherit/default,
+disabled, enabled) through the same command policy, exact runtime/CAS and remote
+approval checks. Saved changes apply only on explicit restart; no backend/model
+name is special-cased and inference callers cannot override the owner hint.
+Real CPU lifecycle acceptance passes with an optional pinned Qwen 3.5 0.8B text
+artifact and disabled hint, but the unchanged interpretation rubric scores only
+8/20 matches. It remains experimental, not the automatic default; stronger
+quality/bootstrap and physical acceptance are still required. See [measured
+results and remaining scope](INTERPRETER-QUALITY.md#qwen-35-candidate-and-thinking-request-hints-2026-10-14).
+
 The subsequent [lightweight telemetry increment](HEARTBEAT-TELEMETRY.md) removes
 unused process-table scans from node heartbeats and keeps OS queries off async
 workers. Fresh public finite recurrence passes, but ordinary scheduling still

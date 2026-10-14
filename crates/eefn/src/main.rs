@@ -2368,7 +2368,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
         .with_policy(permissions)?
         .with_pipeline_runtime()
         .with_update_manifest(manifest)
-        .with_ollama_residency(&file.model_lifecycle)?
+        .with_model_request_preferences(&file.model_lifecycle)?
         .with_ollama(ollama_url.clone(), active_ollama_models.iter().cloned())?;
     if let Some(server) = &model_server {
         engine = engine.with_model_server(server.clone())
@@ -2727,6 +2727,44 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+    #[test]
+    fn thinking_mode_cli_uses_explicit_enum_and_preserves_inherit_reset() {
+        for mode in ["inherit", "disabled", "enabled"] {
+            let args = Args::try_parse_from([
+                "eefn",
+                "model-lifecycle-policy",
+                "set",
+                "--expected-digest",
+                &"a".repeat(64),
+                "--thinking-mode",
+                mode,
+            ])
+            .unwrap();
+            let Some(Commands::ModelLifecyclePolicy { command }) = args.command else {
+                panic!("wrong adapter")
+            };
+            let request = eefn::model_lifecycle_policy::PolicyRequest {
+                schema_version: 1,
+                expected_node_id: "owner".into(),
+                expected_runtime_id: None,
+                command: command.command,
+            };
+            request.validate().unwrap();
+            assert_eq!(json!(request.command)["thinking_mode"], mode);
+        }
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "model-lifecycle-policy",
+                "set",
+                "--expected-digest",
+                &"a".repeat(64),
+                "--thinking-mode",
+                "true"
+            ])
+            .is_err()
+        );
+    }
     #[test]
     fn ollama_residency_cli_preserves_negative_choice_and_rejects_conflicting_reset() {
         for (extra, value) in [

@@ -34,6 +34,12 @@ New code defaults to inheritance rather than forcing indefinite retention.
 Saved changes require explicit restart. This does not stop/control the shared
 service, prove residency or enable owned lifecycle commands for Ollama.
 
+`set --thinking-mode inherit|disabled|enabled` saves a node-wide inference hint
+for Ollama/llama.cpp, also used by local interpretation after explicit restart.
+It uses the same owner approval, runtime and saved-digest checks. Inherit remains
+the default; this is not proof that a model supports or honored the request.
+Caller/model output cannot override it. See [thinking preferences](MODEL-LIFECYCLE-POLICY.md#thinking-request-preference-unreleased).
+
 `eefn model-lifecycle show|load|unload|cancel` and
 `eef node model-lifecycle --node NODE_ID show|load|unload|cancel` share the running
 node's owned-GGUF service. Load/unload require exact runtime, generation and
