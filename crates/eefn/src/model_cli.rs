@@ -29,6 +29,17 @@ pub enum ModelsAction {
         #[arg(long)]
         auto: bool,
     },
+    /// Save an owned GGUF Windows job-commit ceiling; restart separately to apply.
+    MemoryLimit {
+        #[arg(long)]
+        model: String,
+        #[arg(long,required_unless_present="default",conflicts_with="default",
+            value_parser=clap::value_parser!(u64).range(64..=1048576))]
+        mib: Option<u64>,
+        /// Restore no job-commit ceiling. Does not change a running model.
+        #[arg(long)]
+        default: bool,
+    },
     /// Select an Ollama model ID. Installation/availability is checked on connection.
     SelectOllama {
         #[arg(long)]
@@ -120,6 +131,10 @@ impl ModelsAction {
                 model_id: model.clone(),
             },
             ModelsAction::ClearInterpreter => ModelCommand::ClearInterpreter {},
+            ModelsAction::MemoryLimit { model, mib, .. } => ModelCommand::MemoryLimit {
+                model_id: model.clone(),
+                mib: *mib,
+            },
             ModelsAction::CpuThreads { model, threads, .. } => ModelCommand::CpuThreads {
                 model_id: model.clone(),
                 threads: *threads,
@@ -158,6 +173,7 @@ impl ModelsAction {
                     gpu_layers: *gpu_layers,
                     context: *context,
                     cpu_threads: *cpu_threads,
+                    job_memory_limit_mib: None,
                     gpu_vram_mb: 0,
                     hints: hints(capabilities, roles),
                 },
@@ -192,6 +208,51 @@ impl ModelsAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn memory_limit_cli_requires_an_explicit_value_or_default_reset() {
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(subcommand)]
+            action: ModelsAction,
+        }
+        use clap::Parser;
+        for (args, wanted) in [
+            (
+                vec!["eefn", "memory-limit", "--model", "m", "--mib", "128"],
+                Some(128),
+            ),
+            (
+                vec!["eefn", "memory-limit", "--model", "m", "--default"],
+                None,
+            ),
+        ] {
+            let ModelCommand::MemoryLimit { model_id, mib } = Cli::try_parse_from(args)
+                .unwrap()
+                .action
+                .to_command(false)
+                .unwrap()
+            else {
+                panic!("wrong command")
+            };
+            assert_eq!(model_id, "m");
+            assert_eq!(mib, wanted);
+        }
+        for args in [
+            vec!["eefn", "memory-limit", "--model", "m"],
+            vec!["eefn", "memory-limit", "--model", "m", "--mib", "63"],
+            vec![
+                "eefn",
+                "memory-limit",
+                "--model",
+                "m",
+                "--mib",
+                "128",
+                "--default",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+    }
     #[test]
     fn cpu_thread_cli_requires_exact_model_and_explicit_bounded_or_auto_choice() {
         #[derive(clap::Parser)]

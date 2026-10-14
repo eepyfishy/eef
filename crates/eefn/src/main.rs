@@ -158,10 +158,11 @@ async fn execute_model_command(
         eefn::model_selection::ModelCommand::Interpreter { .. }
             | eefn::model_selection::ModelCommand::ClearInterpreter {}
             | eefn::model_selection::ModelCommand::CpuThreads { .. }
+            | eefn::model_selection::ModelCommand::MemoryLimit { .. }
     );
     let uncertain_role = |code: &str, unknown: bool| {
         serde_json::json!({"schema_version":1,
-        "report_type":if matches!(request.command,eefn::model_selection::ModelCommand::CpuThreads {..}) {"model_cpu_threads_command"} else {"interpreter_role_command"},"node_id":request.expected_node_id,"command":request.command,
+        "report_type":match request.command {eefn::model_selection::ModelCommand::CpuThreads {..}=>"model_cpu_threads_command",eefn::model_selection::ModelCommand::MemoryLimit {..}=>"model_memory_limit_command",_=>"interpreter_role_command"},"node_id":request.expected_node_id,"command":request.command,
         "success":false,"error_code":code,"mutation_requested":true,"outcome_unknown":unknown,
         "automatically_retried":false,"execution_authorized":false,"dispatched":false,
         "note":"Inspect saved selections before deciding what to do. This command has no durable receipt ledger; no automatic retry, fallback, provider switch or restart was sent."})
@@ -194,7 +195,7 @@ async fn execute_model_command(
             &request.expected_node_id,
             &request.command,
         ) {
-            bail!("Interpreter role change not confirmed. Inspect saved selections before retrying; no automatic retry or fallback was sent.")
+            bail!("Model setting change not confirmed. Inspect saved selections before retrying; no automatic retry or fallback was sent.")
         }
         result["running"] = serde_json::json!(true);
         Ok(result)
@@ -207,6 +208,11 @@ async fn execute_model_command(
                     eefn::model_selection::ModelCommand::CpuThreads { .. }
                 ) {
                     "local_model_cpu_threads_reply_unconfirmed"
+                } else if matches!(
+                    request.command,
+                    eefn::model_selection::ModelCommand::MemoryLimit { .. }
+                ) {
+                    "local_model_memory_limit_reply_unconfirmed"
                 } else {
                     "local_model_role_reply_unconfirmed"
                 },

@@ -171,6 +171,7 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
         ModelCommand::Interpreter { .. }
             | ModelCommand::ClearInterpreter {}
             | ModelCommand::CpuThreads { .. }
+            | ModelCommand::MemoryLimit { .. }
     ) {
         result["command"] = serde_json::to_value(&request.command)?;
     }
@@ -239,6 +240,7 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
                     ModelCommand::Interpreter { .. }
                         | ModelCommand::ClearInterpreter {}
                         | ModelCommand::CpuThreads { .. }
+                        | ModelCommand::MemoryLimit { .. }
                 ) || eefn::model_selection::confirmed_interpreter(
                     &reply["data"],
                     &request.node_id,

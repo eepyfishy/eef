@@ -88,6 +88,17 @@ pub enum ModelCommand {
         #[serde(deserialize_with = "required_cpu_threads")]
         threads: Option<u16>,
     },
+    MemoryLimit {
+        model_id: String,
+        #[serde(deserialize_with = "required_memory_limit")]
+        mib: Option<u64>,
+    },
+}
+
+fn required_memory_limit<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<u64>, D::Error> {
+    Option::<u64>::deserialize(deserializer)
 }
 
 fn required_cpu_threads<'de, D: serde::Deserializer<'de>>(
@@ -143,6 +154,31 @@ pub fn apply(config: &mut Value, command: &ModelCommand) -> Result<bool> {
             assign_interpreter(config, Some((*backend, model_id)))?;
         }
         ModelCommand::ClearInterpreter {} => assign_interpreter(config, None)?,
+        ModelCommand::MemoryLimit { model_id, mib } => {
+            validate_id(model_id)?;
+            crate::model_memory::supported(*mib)?;
+            let mut staged = config.clone();
+            let slots = staged
+                .pointer_mut("/models/llamacpp/slots")
+                .and_then(Value::as_array_mut)
+                .context("Local GGUF model must already be selected")?;
+            if slots.iter().filter(|m| m["model_id"] == *model_id).count() != 1 {
+                bail!("Memory limit command requires one exact existing local GGUF selection")
+            }
+            let slot = slots
+                .iter_mut()
+                .find(|m| m["model_id"] == *model_id)
+                .unwrap();
+            if let Some(mib) = mib {
+                slot["job_memory_limit_mib"] = json!(mib);
+            } else {
+                slot.as_object_mut()
+                    .context("Model must be an object")?
+                    .remove("job_memory_limit_mib");
+            }
+            selection_view(&staged)?;
+            *config = staged;
+        }
         ModelCommand::CpuThreads { model_id, threads } => {
             validate_id(model_id)?;
             crate::model_server::validate_cpu_threads(*threads)?;
@@ -202,6 +238,16 @@ pub fn apply(config: &mut Value, command: &ModelCommand) -> Result<bool> {
                     .transpose()?
                     .and_then(|old| old.cpu_threads);
             }
+            if slot.job_memory_limit_mib.is_none() {
+                slot.job_memory_limit_mib = config
+                    .pointer("/models/llamacpp/slots")
+                    .and_then(Value::as_array)
+                    .and_then(|slots| slots.iter().find(|m| m["model_id"] == slot.model_id))
+                    .map(|old| serde_json::from_value::<ModelSlot>(old.clone()))
+                    .transpose()?
+                    .and_then(|old| old.job_memory_limit_mib);
+            }
+            slot.selection_metadata()?;
             if !slot.model_path.is_absolute() || !slot.model_path.is_file() {
                 bail!("select GGUF using an absolute existing model file")
             }
@@ -403,6 +449,9 @@ pub fn selection_view(config: &Value) -> Result<Vec<Value>> {
             if let Some(threads) = slot.cpu_threads {
                 value["cpu_threads"] = json!(threads);
             }
+            if let Some(limit) = slot.job_memory_limit_mib {
+                value["job_memory_limit_mib"] = json!(limit);
+            }
             selections.push(value);
         }
     }
@@ -429,6 +478,8 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
         model_metadata: ModelMetadata,
         #[serde(default)]
         cpu_threads: Option<u16>,
+        #[serde(default)]
+        job_memory_limit_mib: Option<u64>,
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -476,6 +527,8 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
                 || model.model_metadata.validate().is_err()
                 || crate::model_server::validate_cpu_threads(model.cpu_threads).is_err()
                 || (model.cpu_threads.is_some() && model.backend != Backend::Llamacpp)
+                || crate::model_memory::validate(model.job_memory_limit_mib).is_err()
+                || (model.job_memory_limit_mib.is_some() && model.backend != Backend::Llamacpp)
                 || !ids.insert((model.backend.name(), &model.model_id))
             {
                 return false;
@@ -511,6 +564,15 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
                     .any(|m| m == "text")
         }
         ModelCommand::ClearInterpreter {} => interpreters.is_empty(),
+        ModelCommand::MemoryLimit { model_id, mib } => {
+            validate_id(model_id).is_ok()
+                && crate::model_memory::validate(*mib).is_ok()
+                && report.saved_selections.iter().any(|m| {
+                    m.backend == Backend::Llamacpp
+                        && m.model_id == *model_id
+                        && m.job_memory_limit_mib == *mib
+                })
+        }
         ModelCommand::CpuThreads { model_id, threads } => {
             validate_id(model_id).is_ok()
                 && crate::model_server::validate_cpu_threads(*threads).is_ok()
@@ -527,6 +589,64 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn memory_limit_wire_reset_is_explicit_and_invalid_choices_preserve_config() {
+        let original = json!({"models":{"provider":"llamacpp","llamacpp":{"slots":[{"model_id":"m","model_path":"unchanged.gguf"}]}},"unrelated":true});
+        for raw in [
+            json!({"operation":"memory_limit","model_id":"m"}),
+            json!({"operation":"memory_limit","model_id":"m","mib":"128"}),
+            json!({"operation":"memory_limit","model_id":"m","mib":128,"backend":"ollama"}),
+        ] {
+            assert!(serde_json::from_value::<ModelCommand>(raw).is_err());
+        }
+        for limit in [0, 63, 1_048_577] {
+            let mut config = original.clone();
+            assert!(
+                apply(
+                    &mut config,
+                    &ModelCommand::MemoryLimit {
+                        model_id: "m".into(),
+                        mib: Some(limit)
+                    }
+                )
+                .is_err()
+            );
+            assert_eq!(config, original);
+        }
+        #[cfg(windows)]
+        {
+            let mut config = original.clone();
+            let set = ModelCommand::MemoryLimit {
+                model_id: "m".into(),
+                mib: Some(128),
+            };
+            assert!(apply(&mut config, &set).unwrap());
+            assert!(!apply(&mut config, &set).unwrap());
+            assert_eq!(
+                selection_view(&config).unwrap()[0]["job_memory_limit_mib"],
+                128
+            );
+            let mut duplicate = config.clone();
+            duplicate["models"]["llamacpp"]["slots"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"model_id":"m"}));
+            let before = duplicate.clone();
+            assert!(apply(&mut duplicate, &set).is_err());
+            assert_eq!(duplicate, before);
+            assert!(
+                apply(
+                    &mut config,
+                    &ModelCommand::MemoryLimit {
+                        model_id: "m".into(),
+                        mib: None
+                    }
+                )
+                .unwrap()
+            );
+            assert_eq!(config, original);
+        }
+    }
     #[test]
     fn cpu_threads_preserve_exact_selection_and_reject_ambiguous_or_invalid_updates() {
         let mut config = interpreter_config();
@@ -569,6 +689,62 @@ mod tests {
         ] {
             assert!(serde_json::from_value::<ModelCommand>(raw).is_err());
         }
+    }
+    #[tokio::test]
+    #[cfg(windows)]
+    async fn memory_limit_reports_reject_substitution_and_reselection_keeps_ceiling() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = service(dir.path());
+        let path = dir.path().join("PRIVATE.gguf");
+        std::fs::write(&path, b"not-a-model").unwrap();
+        let slot: ModelSlot =
+            serde_json::from_value(json!({"model_id":"local","model_path":path,"port":0})).unwrap();
+        core.model_command(request(ModelCommand::SelectGguf { slot: slot.clone() }))
+            .unwrap();
+        let command = ModelCommand::MemoryLimit {
+            model_id: "local".into(),
+            mib: Some(128),
+        };
+        let before = core.read_config().unwrap();
+        let denied = core
+            .remote(
+                "model_command",
+                serde_json::to_value(request(command.clone())).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(denied["error_code"], "approval_required");
+        assert_eq!(core.read_config().unwrap(), before);
+        let report = core.model_command(request(command.clone())).unwrap();
+        assert!(confirmed_interpreter(&report, "node", &command));
+        assert!(report["registered_models"].is_null());
+        assert!(!report.to_string().contains("PRIVATE"));
+        for (key, value) in [
+            ("job_memory_limit_mib", json!(null)),
+            ("job_memory_limit_mib", json!(256)),
+            ("job_memory_limit_mib", json!(0)),
+            ("backend", json!("ollama")),
+        ] {
+            let mut bad = report.clone();
+            bad["saved_selections"][0][key] = value;
+            assert!(!confirmed_interpreter(&bad, "node", &command));
+        }
+        core.model_command(request(ModelCommand::SelectGguf { slot }))
+            .unwrap();
+        assert_eq!(
+            core.read_config().unwrap()["models"]["llamacpp"]["slots"][0]["job_memory_limit_mib"],
+            128
+        );
+        let reset = ModelCommand::MemoryLimit {
+            model_id: "local".into(),
+            mib: None,
+        };
+        assert!(confirmed_interpreter(
+            &core.model_command(request(reset.clone())).unwrap(),
+            "node",
+            &reset
+        ));
+        assert!(path.is_file());
     }
     #[tokio::test]
     async fn cpu_thread_reports_and_owner_permission_do_not_claim_runtime_or_budget() {

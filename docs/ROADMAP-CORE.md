@@ -145,6 +145,13 @@ scores only 4/20 original and 5/20 additional matches and is not made default.
 See [measured scope and remaining gates](INTERPRETER-QUALITY.md#owner-interpreter-sampling-and-rejected-sampled-profile-2026-10-14).
 Per-model overrides and full bootstrap/physical acceptance remain open.
 
+A following [owned-GGUF memory ceiling](MODEL-MEMORY-LIMITS.md) adds optional
+Windows job-commit enforcement before model code resumes, bounded owner commands
+and honest saved/runtime registration fields. Native descendant allocation tests
+and real CPU error/reset/restart acceptance pass locally. This is not working-set
+RAM, VRAM, shared-Ollama control, aggregate resource admission or physical-network
+acceptance; the full resource/lifecycle/bootstrap/release gates remain open.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It

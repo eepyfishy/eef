@@ -15,6 +15,7 @@ const root=resolve(import.meta.dirname,'..'),bundle=resolve(process.argv[2]);
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||bundle),reused=process.env.EEF_TEST_MODEL_FILE&&resolve(process.env.EEF_TEST_MODEL_FILE);
 const thinkingMode=process.env.EEF_TEST_THINKING_MODE||'inherit';
 assert(['inherit','disabled','enabled'].includes(thinkingMode),'Invalid EEF_TEST_THINKING_MODE');
+const testMemoryLimit=process.env.EEF_TEST_MODEL_MEMORY_LIMIT==='1';
 assert(reused||process.env.EEF_TEST_ALLOW_MODEL_DOWNLOAD==='1','Choose an existing model or explicitly authorize this isolated download');
 const scratch=await mkdtemp(join(root,'.validation','real-model-')),children=[];
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -86,6 +87,31 @@ try{
  assert.equal(preference.saved_policy.thinking_mode||'inherit',thinkingMode);
  assert.equal(preference.applied_policy.thinking_mode||'inherit','inherit','saved hint cannot mutate the running engine');
  assert.equal(preference.restart_requested,false);assert.equal(preference.model_inference_requested,false);
+ if(testMemoryLimit){
+  assert.equal(process.platform,'win32','Explicit memory limit test requires Windows');
+  const saved=(await cli('eefn',configPath,['models','memory-limit','--model',entry.id,'--mib','64']));
+  assert.equal(saved.saved_selections.find(m=>m.model_id===entry.id).job_memory_limit_mib,64);
+  const beforeDenied=await readFile(configPath,'utf8');
+  const denied=await json(eef+`/api/node/${initial.node_id}/invoke`,{capability:'node.configure',action:'model_command',
+   params:{schema_version:1,expected_node_id:initial.node_id,command:{operation:'memory_limit',model_id:entry.id,mib:128}},timeout:10});
+  assert.equal(denied.data.error_code,'approval_required');assert.equal(await readFile(configPath,'utf8'),beforeDenied);
+  await cli('eefn',configPath,['restart','--wait-seconds','60']);
+  await until(async()=>{const model=(await cli('eefn',configPath,['model-lifecycle','show'])).result.models.find(m=>m.model_id===entry.id);
+   return model?.state==='error'&&model.owned_pid===null;},'limited real model fails without surviving owned process',60000);
+  const limited=await cli('eefn',configPath,['models','show']);
+  assert.equal(limited.registered_models.find(m=>m.model_id===entry.id).job_memory_limit_mib,64);
+  const limitedRuntime=(await json(node+'/api/diagnostics')).runtime_id;
+  const reset=await cli('eefn',configPath,['models','memory-limit','--model',entry.id,'--default']);
+  assert.equal(reset.saved_selections.find(m=>m.model_id===entry.id).job_memory_limit_mib,undefined);
+  assert.equal(reset.registered_models.find(m=>m.model_id===entry.id).job_memory_limit_mib,64,'Reset is saved, not applied');
+  assert.equal((await json(node+'/api/diagnostics')).runtime_id,limitedRuntime);
+  assert.equal((await json(node+'/api/status')).last_workload,null,'Failed model startup cannot execute a workload');
+  assert.equal((await stat(modelPath)).size,entry.bytes);
+  await writeFile(join(scratch,'memory-limit-results.json'),JSON.stringify({passed:true,windows_only:true,physical_two_pc:false,
+   limit_mib:64,remote_owner_refusal:true,limited_startup_error:true,failed_owned_process_retired:true,no_unlimited_fallback:true,
+   reset_saved_not_applied:true,explicit_restart_required:true,no_workload_started:true,artifact_not_deleted:true,
+   total_ram_quota:false,vram_quota:false},null,2));
+ }
  await cli('eefn',configPath,['restart','--wait-seconds','60']);
  const ready=async()=>{const status=await json(node+'/api/status');const models=(await json(eef+'/api/commands/models')).nodes.find(n=>n.node_id===initial.node_id)?.models;return status.connection.state==='connected'&&models?.some(m=>m.instance.model_id===entry.id&&m.lifecycle==='ready');};
  await until(ready,'real CPU model ready and registered',330000);

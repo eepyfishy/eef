@@ -15,6 +15,12 @@ See [explicit input/receipt semantics](EXPLICIT-REQUESTS.md).
 
 ## Selected model residency (unreleased after alpha.6)
 
+`eefn models memory-limit --model MODEL_ID --mib MIB` (or `--default`) and the
+equivalent `eef node models --node NODE_ID memory-limit ...` save a Windows-only
+owned-GGUF job-commit ceiling. Saved/applied separation, explicit restart and
+current owner approval remain mandatory. It is not a RAM/working-set/VRAM budget
+or control of shared Ollama. See [limits and failure semantics](MODEL-MEMORY-LIMITS.md).
+
 `eefn model-lifecycle-policy show|set` and
 `eef node model-lifecycle-policy --node NODE_ID show|set` configure eager/manual/on-demand
 startup, optional idle unload and operation bounds in the same backend service.

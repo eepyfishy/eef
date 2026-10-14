@@ -584,6 +584,7 @@ impl NodeService {
             Some(record.models.into_iter().map(|model| {
                 let mut value = json!({"backend":model.backend,"model_id":model.model_id,"model_metadata":model.normalized_metadata()});
                 if let Some(threads) = model.cpu_threads { value["cpu_threads"] = json!(threads); }
+                if let Some(limit)=model.job_memory_limit_mib {value["job_memory_limit_mib"]=json!(limit);}
                 value
             }).collect::<Vec<_>>())
         } else {

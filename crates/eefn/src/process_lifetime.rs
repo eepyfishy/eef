@@ -11,14 +11,23 @@ pub(crate) use windows::ProcessTree;
 pub(crate) struct ProcessTree;
 
 pub(crate) fn spawn(command: &mut Command) -> Result<(Child, ProcessTree)> {
+    spawn_with_job_memory_limit(command, None)
+}
+
+pub(crate) fn spawn_with_job_memory_limit(
+    command: &mut Command,
+    limit_mib: Option<u64>,
+) -> Result<(Child, ProcessTree)> {
+    let limit = crate::model_memory::bytes(limit_mib)?;
     command.kill_on_drop(true);
     #[cfg(windows)]
     {
-        windows::spawn(command)
+        windows::spawn(command, limit)
     }
     #[cfg(not(windows))]
     {
-        // Existing root-child cleanup only; no non-Windows tree guarantee.
+        let _ = limit;
+        // A requested limit was rejected before spawn. No non-Windows tree guarantee.
         Ok((command.spawn()?, ProcessTree))
     }
 }
@@ -36,10 +45,11 @@ mod windows {
                 Thread32Next,
             },
             JobObjects::{
-                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-                JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
-                QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_JOB_MEMORY,
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicAccountingInformation,
+                JobObjectExtendedLimitInformation, QueryInformationJobObject,
+                SetInformationJobObject, TerminateJobObject,
             },
             Threading::{
                 CREATE_NO_WINDOW, CREATE_SUSPENDED, GetProcessIdOfThread, OpenThread, ResumeThread,
@@ -107,7 +117,7 @@ mod windows {
                 .await;
             }
         }
-        fn new() -> Result<Self> {
+        fn new(memory_bytes: Option<usize>) -> Result<Self> {
             // SAFETY: null attributes/name create an unnamed, non-inheritable job.
             let job = owned(
                 unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) },
@@ -115,6 +125,10 @@ mod windows {
             )?;
             let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
             limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if let Some(bytes) = memory_bytes {
+                limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+                limits.JobMemoryLimit = bytes;
+            }
             // SAFETY: live owned handle and correctly sized initialized limits.
             if unsafe {
                 SetInformationJobObject(
@@ -127,7 +141,35 @@ mod windows {
             {
                 return Err(std::io::Error::last_os_error()).context("Set process tree lifetime");
             }
-            Ok(Self(job))
+            let tree = Self(job);
+            let actual = tree.memory_information()?;
+            if actual.BasicLimitInformation.LimitFlags != limits.BasicLimitInformation.LimitFlags
+                || actual.JobMemoryLimit != limits.JobMemoryLimit
+            {
+                bail!("Owned job limits not confirmed before spawn; no unlimited fallback")
+            }
+            Ok(tree)
+        }
+        pub(super) fn memory_information(&self) -> Result<JOBOBJECT_EXTENDED_LIMIT_INFORMATION> {
+            let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            let mut bytes = 0;
+            // SAFETY: owned live job; correctly sized initialized output buffer.
+            if unsafe {
+                QueryInformationJobObject(
+                    self.0.as_raw_handle(),
+                    JobObjectExtendedLimitInformation,
+                    (&mut information as *mut JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&information) as u32,
+                    &mut bytes,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error()).context("Read back owned job limits");
+            }
+            if bytes as usize != std::mem::size_of_val(&information) {
+                bail!("Owned job limits response length changed")
+            }
+            Ok(information)
         }
         fn attach_and_resume(&self, child: &Child) -> Result<()> {
             let pid = child.id().context("Suspended child identity unavailable")?;
@@ -183,14 +225,18 @@ mod windows {
             Ok(())
         }
     }
-    pub(super) fn spawn(command: &mut Command) -> Result<(Child, ProcessTree)> {
-        spawn_checked(command, ProcessTree::attach_and_resume)
+    pub(super) fn spawn(
+        command: &mut Command,
+        memory_bytes: Option<usize>,
+    ) -> Result<(Child, ProcessTree)> {
+        spawn_checked(command, memory_bytes, ProcessTree::attach_and_resume)
     }
     fn spawn_checked(
         command: &mut Command,
+        memory_bytes: Option<usize>,
         contain: impl FnOnce(&ProcessTree, &Child) -> Result<()>,
     ) -> Result<(Child, ProcessTree)> {
-        let tree = ProcessTree::new()?;
+        let tree = ProcessTree::new(memory_bytes)?;
         command.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW);
         let mut child = command
             .spawn()
@@ -205,7 +251,7 @@ mod windows {
     }
     #[cfg(test)]
     pub(super) fn refuse_before_resume(command: &mut Command) -> Result<(Child, ProcessTree)> {
-        spawn_checked(command, |_, _| {
+        spawn_checked(command, None, |_, _| {
             bail!("isolated pre-resume containment refusal")
         })
     }
@@ -222,7 +268,10 @@ mod tests {
         time::Duration,
     };
     use windows_sys::Win32::{
-        Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
+        Foundation::{GetLastError, WAIT_OBJECT_0, WAIT_TIMEOUT},
+        System::Memory::{
+            MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
+        },
         System::Threading::{
             OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
             WaitForSingleObject,
@@ -251,6 +300,47 @@ mod tests {
             return;
         };
         let (mode, root): (String, PathBuf) = serde_json::from_str(&raw).unwrap();
+        if mode == "memory-root" {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(args("memory-leaf", &root))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        if mode == "memory-leaf" {
+            // Controlled fixture allocation only; never touch all reserved pages.
+            let bytes = 256 * 1024 * 1024;
+            let allocation = unsafe {
+                VirtualAlloc(
+                    std::ptr::null(),
+                    bytes,
+                    MEM_COMMIT | MEM_RESERVE,
+                    PAGE_READWRITE,
+                )
+            };
+            let granted = !allocation.is_null();
+            let error = if granted {
+                0
+            } else {
+                unsafe { GetLastError() }
+            };
+            if granted {
+                assert_ne!(unsafe { VirtualFree(allocation, 0, MEM_RELEASE) }, 0);
+            }
+            std::fs::write(
+                root.join("memory.json"),
+                serde_json::to_vec(
+                    &json!({"granted":granted,"requested_bytes":bytes,"error":error}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            return;
+        }
         if mode != "child" {
             let child = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(args("child", &root))
@@ -360,6 +450,45 @@ mod tests {
     }
     fn params(mode: &str, root: &Path) -> Value {
         json!({"program":std::env::current_exe().unwrap(), "args":args(mode, root)})
+    }
+    #[tokio::test]
+    async fn job_commit_ceiling_is_read_back_and_enforced_on_descendants() {
+        for (limit, expected) in [(None, true), (Some(128), false)] {
+            let dir = tempfile::tempdir().unwrap();
+            let (mut child, tree) =
+                spawn_with_job_memory_limit(&mut command("memory-root", dir.path()), limit)
+                    .unwrap();
+            let information = tree.memory_information().unwrap();
+            assert_eq!(
+                information.JobMemoryLimit,
+                limit.map(|mib| mib as usize * 1024 * 1024).unwrap_or(0)
+            );
+            assert!(
+                tokio::time::timeout(Duration::from_secs(10), child.wait())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .success()
+            );
+            let result: Value =
+                serde_json::from_slice(&std::fs::read(dir.path().join("memory.json")).unwrap())
+                    .unwrap();
+            assert_eq!(result["granted"], expected);
+            if !expected {
+                assert_ne!(result["error"], 0);
+            }
+        }
+    }
+    #[tokio::test]
+    async fn invalid_job_commit_ceiling_never_starts_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        for limit in [0, 63, 1_048_577] {
+            assert!(
+                spawn_with_job_memory_limit(&mut command("memory-root", dir.path()), Some(limit))
+                    .is_err()
+            );
+            assert!(!dir.path().join("memory.json").exists());
+        }
     }
     #[tokio::test]
     async fn failed_containment_never_resumes_or_falls_back_to_uncontained_execution() {

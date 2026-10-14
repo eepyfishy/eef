@@ -29,6 +29,7 @@ pub mod model_lifecycle;
 pub mod model_lifecycle_policy;
 pub mod model_manager;
 pub mod model_manifest;
+pub mod model_memory;
 pub mod model_metadata;
 mod model_response;
 pub mod model_selection;

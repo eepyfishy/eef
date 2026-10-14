@@ -52,6 +52,9 @@ fn model(node_id: &str, entry: &PeerModel) -> Value {
     if let Some(threads) = entry.cpu_threads {
         value["cpu_threads"] = json!(threads);
     }
+    if let Some(limit) = entry.job_memory_limit_mib {
+        value["job_memory_limit_mib"] = json!(limit);
+    }
     value
 }
 
@@ -214,6 +217,7 @@ mod tests {
         );
         let unknown = PeerModel {
             cpu_threads: None,
+            job_memory_limit_mib: None,
             model_id: "unknown".into(),
             backend: None,
             modality: None,
@@ -243,6 +247,7 @@ mod tests {
             r.models = (0..64)
                 .map(|j| PeerModel {
                     cpu_threads: None,
+                    job_memory_limit_mib: None,
                     model_id: format!("{j:03}{}", "x".repeat(250)),
                     backend: Some("b".repeat(64)),
                     modality: Some("vlm".into()),

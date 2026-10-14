@@ -27,6 +27,9 @@ pub struct ModelSlot {
     /// Requested generation/prompt worker count, not a CPU-percent or RAM quota.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_threads: Option<u16>,
+    /// Windows owned-job committed-memory ceiling; not RAM/working set/VRAM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_memory_limit_mib: Option<u64>,
     #[serde(default)]
     pub gpu_vram_mb: u64,
     #[serde(
@@ -47,6 +50,7 @@ const fn default_context() -> u32 {
 impl ModelSlot {
     pub fn selection_metadata(&self) -> Result<crate::model_metadata::ModelMetadata> {
         validate_cpu_threads(self.cpu_threads)?;
+        crate::model_memory::validate(self.job_memory_limit_mib)?;
         self.hints
             .metadata(if self.is_vlm() { "vlm" } else { "text" })
     }
@@ -69,6 +73,9 @@ impl ModelSlot {
         });
         if let Some(threads) = self.cpu_threads {
             value["cpu_threads"] = json!(threads);
+        }
+        if let Some(limit) = self.job_memory_limit_mib {
+            value["job_memory_limit_mib"] = json!(limit);
         }
         Ok(value)
     }
@@ -752,7 +759,12 @@ impl ModelServer {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
-        let (child, tree) = crate::process_lifetime::spawn(&mut command)?;
+        let (child, tree) = crate::process_lifetime::spawn_with_job_memory_limit(
+            &mut command,
+            self.slot(Some(model))
+                .context("Test model selection missing")?
+                .job_memory_limit_mib,
+        )?;
         self.processes
             .lock()
             .unwrap()
@@ -1401,7 +1413,10 @@ impl ModelServer {
         if state.state != ModelLifecycle::Loading || state.control.as_deref() != control {
             bail!("model load ownership withdrawn before spawn")
         }
-        let (child, tree) = crate::process_lifetime::spawn(&mut command)?;
+        let (child, tree) = crate::process_lifetime::spawn_with_job_memory_limit(
+            &mut command,
+            slot.job_memory_limit_mib,
+        )?;
         let mut owned = self.processes.lock().unwrap();
         if owned.contains_key(&slot.model_id) {
             bail!("owned model already present")

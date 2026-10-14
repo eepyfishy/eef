@@ -558,6 +558,7 @@ mod tests {
             r.models = vec![
                 eefn::network::PeerModel {
                     cpu_threads: None,
+                    job_memory_limit_mib: None,
                     model_id: "m".repeat(256),
                     backend: Some("b".repeat(64)),
                     modality: Some("v".repeat(64)),

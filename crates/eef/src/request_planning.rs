@@ -1454,6 +1454,7 @@ pub(crate) mod tests {
     fn current_model_snapshot_must_agree_with_cached_role_and_readiness() {
         let mut peer = eefn::network::PeerModel {
             cpu_threads: None,
+            job_memory_limit_mib: None,
             model_id: "m".into(),
             backend: Some("ollama".into()),
             modality: Some("text".into()),

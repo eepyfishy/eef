@@ -361,6 +361,11 @@ try{
      substituted.saved_selections.find(m=>m.backend==='llamacpp').cpu_threads=7;
      res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(substituted));
     }
+    if(replyMode==='memory-corrupt'){
+     const substituted=structuredClone(accepted);
+     substituted.saved_selections.find(m=>m.backend==='llamacpp').job_memory_limit_mib=256;
+     res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(substituted));
+    }
     if(replyMode==='role-corrupt'){
      const substituted=structuredClone(accepted);
      substituted.saved_selections[0].model_metadata.roles=['request_interpreter'];
@@ -435,6 +440,31 @@ try{
    await writeFile(marker,originalMarker);
    const clearedCpu=await remoteModels(['cpu-threads','--model','cpu-fixture','--auto']);
    assert.equal(clearedCpu.data.saved_selections.find(m=>m.model_id==='cpu-fixture').cpu_threads,undefined);
+   if(process.platform==='win32'){
+    const permission=(await json(node+'/api/config')).config;permission.management.allow_remote=false;await json(node+'/api/config',{config:permission},'PUT');
+    const refused=await remoteModels(['memory-limit','--model','cpu-fixture','--mib','128'],false);
+    assert.equal(refused.error_code,'approval_required');assert.equal((await nodeCommand(['show'])).saved_selections.find(m=>m.model_id==='cpu-fixture').job_memory_limit_mib,undefined);
+    permission.management.allow_remote=true;await json(node+'/api/config',{config:permission},'PUT');
+    const limited=await remoteModels(['memory-limit','--model','cpu-fixture','--mib','128']);
+    assert.equal(limited.data.saved_selections.find(m=>m.model_id==='cpu-fixture').job_memory_limit_mib,128);
+    const memoryForward=forwarded;
+    for(const [mode,mib] of [['drop','192'],['memory-corrupt','128']]){
+     replyMode=mode;await writeFile(marker,JSON.stringify({schema_version:1,node_id:id,address:`127.0.0.1:${dropReply.address().port}`}));
+     const uncertain=await nodeCommand(['memory-limit','--model','cpu-fixture','--mib',mib],false);
+     assert.equal(uncertain.error_code,'local_model_memory_limit_reply_unconfirmed');assert.equal(uncertain.outcome_unknown,true);
+     assert.equal(uncertain.automatically_retried,false);assert.equal(uncertain.command.mib,Number(mib));
+     await writeFile(marker,originalMarker);assert.equal((await nodeCommand(['show'])).saved_selections.find(m=>m.model_id==='cpu-fixture').job_memory_limit_mib,Number(mib));
+    }
+    assert.equal(forwarded,memoryForward+2,'Memory settings must not replay after lost/substituted replies');
+    replyMode='old';await writeFile(marker,JSON.stringify({schema_version:1,node_id:id,address:`127.0.0.1:${dropReply.address().port}`}));
+    const old=await nodeCommand(['memory-limit','--model','cpu-fixture','--default'],false);
+    assert.equal(old.error_code,'unsupported_command');assert.equal(old.outcome_unknown,false);
+    await writeFile(marker,originalMarker);
+    assert.equal((await remoteModels(['memory-limit','--model','cpu-fixture','--default'])).data.saved_selections.find(m=>m.model_id==='cpu-fixture').job_memory_limit_mib,undefined);
+    await writeFile(join(scratch,'memory-command-results.json'),JSON.stringify({passed:true,physical_two_pc:false,real_model:false,
+     remote_owner_refusal:true,approved_remote_setting:true,exact_model_target:true,local_lost_reply_not_replayed:true,
+     substituted_limit_reply_refused:true,old_node_command_refused:true,explicit_default_reset:true,runtime_not_restarted:true},null,2));
+   }
    assert.equal((await json(node+'/api/diagnostics')).runtime_id,runtimeBefore);
    assert.equal(requests.length,roleCount,'CPU settings must not infer or execute workloads');
    await nodeCommand(['remove','--backend','llamacpp','--model','cpu-fixture']);

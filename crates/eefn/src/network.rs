@@ -251,6 +251,8 @@ pub struct PeerModel {
     pub model_metadata: Option<crate::model_metadata::ModelMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_threads: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_memory_limit_mib: Option<u64>,
 }
 
 impl PeerModel {
@@ -338,6 +340,18 @@ impl PeerRecord {
                     backend: field(model, "backend", 64)?,
                     modality: field(model, "modality", 64)?,
                     model_metadata,
+                    job_memory_limit_mib: {
+                        let limit: Option<u64> = model
+                            .get("job_memory_limit_mib")
+                            .map(|value| serde_json::from_value(value.clone()))
+                            .transpose()?
+                            .flatten();
+                        crate::model_memory::validate(limit)?;
+                        if limit.is_some() && model["backend"] != "llamacpp" {
+                            bail!("Job memory limits require an owned local GGUF backend")
+                        }
+                        limit
+                    },
                     cpu_threads: {
                         let threads: Option<u16> = model
                             .get("cpu_threads")
@@ -380,6 +394,26 @@ pub struct CommandRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    #[test]
+    fn job_memory_advertisements_are_bounded_gguf_hints_not_ram_estimates() {
+        for limit in [json!(null), json!(128)] {
+            let record=PeerRecord::from_registration(&json!({"node_id":"node","models":[{"model_id":"m","backend":"llamacpp","job_memory_limit_mib":limit}]})).unwrap();
+            assert_eq!(json!(record.models[0].job_memory_limit_mib), limit);
+            assert_eq!(
+                record.models[0].normalized_metadata().resource_estimates,
+                crate::model_metadata::ResourceEstimates::default()
+            );
+        }
+        for (backend, limit) in [
+            ("ollama", json!(128)),
+            ("llamacpp", json!(0)),
+            ("llamacpp", json!(128.5)),
+            ("llamacpp", json!("128")),
+        ] {
+            assert!(PeerRecord::from_registration(&json!({"node_id":"node","models":[{"model_id":"m","backend":backend,"job_memory_limit_mib":limit}]})).is_err());
+        }
+    }
     #[test]
     fn cpu_thread_advertisements_are_optional_bounded_and_not_model_estimates() {
         for threads in [serde_json::Value::Null, serde_json::json!(4)] {
