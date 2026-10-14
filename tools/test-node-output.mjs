@@ -93,7 +93,9 @@ try{
   await until(async()=>{const report=await cli(['network','diagnose']);return report.successful_connections>=2&&report.connection_state==='connected';},'node retires blocked output and reconnects',20000);
   const reconnectMs=Date.now()-blockedAt;
   assert(reconnectMs<20000);assert(sessions.length>=2);
-  assert.equal((await cli(['network','diagnose'])).runtime_id,runtime,'connection retirement must not restart the node runtime');
+  const reconnected=await cli(['network','diagnose']);
+  assert.equal(reconnected.runtime_id,runtime,'connection retirement must not restart the node runtime');
+  assert.equal(reconnected.input_channel,'ready','Reconnection owns a fresh usable local queue, not an old closed sender');
   const models=await cli(['models','show']);assert.equal(models.running,true);
   assert.equal(models.saved_selections.find(m=>m.model_id==='cpu-fixture').cpu_threads,2);
   assert.equal(await readFile(configPath,'utf8'),saved,'reconnection must preserve saved settings');
@@ -104,7 +106,7 @@ try{
   assert.equal((await fetch(`http://127.0.0.1:${apiPort}/`)).status,404);
   if(fault)throw fault;
   await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,actual_node_process:true,local_commands_after_reconnect:true,
-    saved_change_survives:true,reconnect_ms:reconnectMs,no_response_or_work_replay:true,legacy_encrypted_loopback:true,
+    saved_change_survives:true,reconnect_ms:reconnectMs,no_response_or_work_replay:true,fresh_input_channel_after_retirement:true,legacy_encrypted_loopback:true,
     pinned_tls:false,physical_two_pc:false,native_termination_proven:false},null,2));
   console.log('Node output validation passed: '+scratch);
 }finally{

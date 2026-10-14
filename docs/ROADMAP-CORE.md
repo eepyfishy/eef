@@ -31,6 +31,15 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The subsequent [input-channel readiness increment](INPUT-CHANNEL-READINESS.md)
+installs the local receiver before publishing Connected and separately exposes
+unavailable/ready/busy queue observations in status, diagnostics and setup. No
+probe, capacity reservation, extra queue or replay is introduced. This addresses
+the known publication ordering, not atomic coordinator/model/workload readiness
+or completion of physical/onboarding/release acceptance. Both suites pass 677
+tests; headless setup/permission checks and a blocked-output reconnect regression
+pass locally, with measured scope in the linked document.
+
 The following unreleased [feature-permission commands](FEATURE-PERMISSIONS.md)
 expose whole-feature allow/deny/inspection through the same node services and
 current owner-approved coordinator channel. Legacy scopes/limits survive,

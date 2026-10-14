@@ -147,7 +147,8 @@ it does not replay the failed request or relax any backend gate. This is a
 fixture startup wait correction, not a claim that all connection/input readiness
 races or physical timing are solved. The existing client also publishes its
 connected label before installing the local submission mailbox; that source-order
-window remains a separate reliability follow-up.
+window is addressed by the subsequent [input-channel readiness increment](INPUT-CHANNEL-READINESS.md),
+which still does not claim atomic cross-layer or coordinator acceptance readiness.
 
 All integration evidence is isolated localhost/Windows testing, not physical
 two-PC or stable release acceptance.

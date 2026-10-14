@@ -28,7 +28,25 @@ pub struct SubmissionMailbox {
     sender: Mutex<Option<mpsc::Sender<Submission>>>,
 }
 
+/// Point-in-time local queue observation, never coordinator acceptance or a lease.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputChannelState {
+    Unavailable,
+    Ready,
+    Busy,
+}
+
 impl SubmissionMailbox {
+    pub fn state(&self) -> InputChannelState {
+        let sender = self.sender.lock().expect("submission mailbox");
+        match sender.as_ref() {
+            None => InputChannelState::Unavailable,
+            Some(sender) if sender.is_closed() => InputChannelState::Unavailable,
+            Some(sender) if sender.capacity() == 0 => InputChannelState::Busy,
+            Some(_) => InputChannelState::Ready,
+        }
+    }
     pub(crate) fn connect(&self) -> mpsc::Receiver<Submission> {
         let (sender, receiver) = mpsc::channel(8);
         *self.sender.lock().expect("submission mailbox") = Some(sender);
@@ -123,6 +141,44 @@ impl SubmissionMailbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn input_state_observes_ready_busy_and_closed_without_draining_or_replaying() {
+        let mailbox = SubmissionMailbox::default();
+        assert_eq!(mailbox.state(), InputChannelState::Unavailable);
+        let mut receiver = mailbox.connect();
+        assert_eq!(mailbox.state(), InputChannelState::Ready);
+        for i in 0..8 {
+            let (reply, _response) = oneshot::channel();
+            assert!(
+                mailbox
+                    .sender
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .try_send(Submission {
+                        id: i.to_string(),
+                        operation_id: None,
+                        kind: "jobs.list".into(),
+                        payload: serde_json::json!({}),
+                        reply,
+                    })
+                    .is_ok()
+            );
+        }
+        assert_eq!(mailbox.state(), InputChannelState::Busy);
+        assert_eq!(mailbox.state(), InputChannelState::Busy);
+        assert_eq!(receiver.try_recv().unwrap().id, "0");
+        assert_eq!(mailbox.state(), InputChannelState::Ready);
+        drop(receiver);
+        assert_eq!(mailbox.state(), InputChannelState::Unavailable);
+        let mut replacement = mailbox.connect();
+        assert_eq!(mailbox.state(), InputChannelState::Ready);
+        assert!(
+            replacement.try_recv().is_err(),
+            "Old queued input is not replayed onto a new connection"
+        );
+    }
     #[tokio::test]
     async fn reused_correlation_cannot_replace_waiters_or_match_late_transport_replies() {
         let mailbox = Arc::new(SubmissionMailbox::default());

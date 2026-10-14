@@ -234,6 +234,17 @@ impl NodeClient {
         self
     }
 
+    /// Only after authentication/registration: install input before publishing
+    /// Connected. The returned receiver stays owned by this exact session.
+    fn install_submission_channel(
+        &self,
+        address: &str,
+    ) -> tokio::sync::mpsc::Receiver<crate::submission::Submission> {
+        let receiver = self.submissions.connect();
+        self.connection_status("connected", address, None, 0.0);
+        receiver
+    }
+
     fn connection_status(&self, state: &str, address: &str, error: Option<String>, retry: f64) {
         let mut status = self.status.lock().expect("connection status");
         let counter = match state {
@@ -446,7 +457,6 @@ impl NodeClient {
             .await?;
         }
         info!(host, port, node_id = %self.config.node_id, "node authenticated and registered");
-        self.connection_status("connected", &endpoint.address, None, 0.0);
         {
             let mut status = self.status.lock().expect("status");
             status["models"] = json!(models);
@@ -499,7 +509,7 @@ impl NodeClient {
 
         let mut tasks = tokio::task::JoinSet::new();
         let lease_requests = Arc::new(crate::grant_time::LeaseRequests::default());
-        let mut local = self.submissions.connect();
+        let mut local = self.install_submission_channel(&endpoint.address);
         let mut replies: std::collections::HashMap<
             String,
             tokio::sync::oneshot::Sender<Result<Value>>,
@@ -1556,6 +1566,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(client.config.endpoints[0].priority, 100);
+    }
+
+    #[test]
+    fn connected_publication_installs_input_before_the_label_and_preserves_closed_observation() {
+        let client = probe_client("127.0.0.1:1".into());
+        client.connection_status("checking", "127.0.0.1:1", None, 0.0);
+        assert_eq!(
+            client.submissions.state(),
+            crate::submission::InputChannelState::Unavailable
+        );
+        let receiver = client.install_submission_channel("127.0.0.1:1");
+        assert_eq!(
+            client.status.lock().unwrap()["connection"]["state"],
+            "connected"
+        );
+        assert_eq!(
+            client.submissions.state(),
+            crate::submission::InputChannelState::Ready
+        );
+        assert_eq!(client.status.lock().unwrap()["successful_connections"], 1);
+        drop(receiver);
+        assert_eq!(
+            client.status.lock().unwrap()["connection"]["state"],
+            "connected"
+        );
+        assert_eq!(
+            client.submissions.state(),
+            crate::submission::InputChannelState::Unavailable
+        );
     }
 
     #[test]

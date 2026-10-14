@@ -97,6 +97,8 @@ pub enum NextStep {
     RestartForSavedSettings,
     WaitForRuntime,
     InspectStartupIssues,
+    WaitForInputChannel,
+    WaitForInputCapacity,
 }
 
 fn required_option<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
@@ -115,6 +117,8 @@ struct Report {
     request_id: String,
     connection: ConnectionState,
     transport: Transport,
+    #[serde(default)]
+    input_channel: Option<crate::submission::InputChannelState>,
     saved_connection_enabled: bool,
     saved_auth_mode: crate::authentication::AuthMode,
     #[serde(deserialize_with = "required_option")]
@@ -141,6 +145,17 @@ impl Report {
             steps.push(NextStep::ResumeConnection);
         } else if self.connection != ConnectionState::Connected {
             steps.push(NextStep::CheckCoordinator);
+        }
+        if self.connection == ConnectionState::Connected {
+            match self.input_channel {
+                Some(crate::submission::InputChannelState::Unavailable) => {
+                    steps.push(NextStep::WaitForInputChannel)
+                }
+                Some(crate::submission::InputChannelState::Busy) => {
+                    steps.push(NextStep::WaitForInputCapacity)
+                }
+                _ => {}
+            }
         }
         if self.execution_receipts_available != Some(true) {
             if self.saved_auth_mode == crate::authentication::AuthMode::Legacy {
@@ -279,6 +294,7 @@ impl crate::NodeService {
                 .unwrap_or(ConnectionState::Unknown),
             transport: serde_json::from_value(live["connection"]["transport"].clone())
                 .unwrap_or(Transport::Unknown),
+            input_channel: Some(self.submissions.state()),
             saved_connection_enabled: config["connection_enabled"].as_bool().unwrap_or(true),
             saved_auth_mode: serde_json::from_value(
                 config.get("auth_mode").cloned().unwrap_or(json!("legacy")),
@@ -354,8 +370,20 @@ pub fn render(value: &Value) -> Result<String> {
             "Runtime unavailable; saved choices are not running readiness".into()
         }
     };
+    let input = match report.input_channel {
+        Some(crate::submission::InputChannelState::Ready) => {
+            "Local queue ready (not delivery, approval or execution readiness)"
+        }
+        Some(crate::submission::InputChannelState::Busy) => {
+            "Local queue busy; no extra queue or automatic retry is created"
+        }
+        Some(crate::submission::InputChannelState::Unavailable) => {
+            "Local input channel unavailable"
+        }
+        None => "Unknown on this node build; not assumed ready",
+    };
     let mut text = format!(
-        "Node setup: {}\nConnection: {connection}\nReviewed-work transport: {receipts}\nInterpreter: {interpreter}\n",
+        "Node setup: {}\nConnection: {connection}\nInput: {input}\nReviewed-work transport: {receipts}\nInterpreter: {interpreter}\n",
         report.node_id
     );
     for step in report.next_steps {
@@ -370,6 +398,8 @@ pub fn render(value: &Value) -> Result<String> {
             NextStep::RestartForSavedSettings => "Saved choices differ or settings are pending; explicitly apply them: eefn restart",
             NextStep::WaitForRuntime => "Wait for startup or inspect node diagnostics; do not assume a model is running",
             NextStep::InspectStartupIssues => "Inspect reported startup issues: eefn network diagnose",
+            NextStep::WaitForInputChannel => "Wait for the node's input channel or inspect connection show; no input was sent or replayed",
+            NextStep::WaitForInputCapacity => "Wait for capacity before a new explicit input decision; do not replay an uncertain request",
         });
         text.push('\n');
     }
@@ -623,6 +653,57 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .contains(&json!("pair_private"))
+        );
+    }
+
+    #[test]
+    fn setup_input_observation_does_not_infer_readiness_from_a_connected_label_or_legacy_snapshot()
+    {
+        let (_dir, core, request) = fixture();
+        core.live.lock().unwrap()["connection"]["state"] = json!("connected");
+        let unavailable = core.setup_check(request.clone()).unwrap();
+        assert_eq!(unavailable["input_channel"], "unavailable");
+        assert!(
+            unavailable["next_steps"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("wait_for_input_channel"))
+        );
+        assert_eq!(core.status()["input_channel"], "unavailable");
+        assert_eq!(core.diagnostics()["input_channel"], "unavailable");
+        let receiver = core.submissions.connect();
+        let ready = core.setup_check(request.clone()).unwrap();
+        assert_eq!(ready["input_channel"], "ready");
+        assert!(
+            render(&ready)
+                .unwrap()
+                .contains("not delivery, approval or execution readiness")
+        );
+        assert_eq!(core.status()["input_channel"], "ready");
+        assert_eq!(core.diagnostics()["input_channel"], "ready");
+        let mut busy = ready.clone();
+        busy["input_channel"] = json!("busy");
+        busy["next_steps"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, json!("wait_for_input_capacity"));
+        assert!(confirmed(&busy, &request));
+        assert!(render(&busy).unwrap().contains("Local queue busy"));
+        let mut legacy = ready.clone();
+        legacy.as_object_mut().unwrap().remove("input_channel");
+        assert!(confirmed(&legacy, &request));
+        assert!(
+            render(&legacy)
+                .unwrap()
+                .contains("Unknown on this node build")
+        );
+        let mut bad = ready;
+        bad["input_channel"] = json!("verified_delivery");
+        assert!(!confirmed(&bad, &request));
+        drop(receiver);
+        assert_eq!(
+            core.setup_check(request).unwrap()["input_channel"],
+            "unavailable"
         );
     }
 

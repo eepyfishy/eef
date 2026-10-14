@@ -35,6 +35,10 @@ not own readiness decisions, restart logic or model selection.
 
 The report separates:
 
+- [Local input channel](INPUT-CHANNEL-READINESS.md): unavailable, ready or busy.
+  This observes only the existing bounded queue, not delivery/approval/readiness
+  of models or a coordinator. Missing data from older builds stays unknown.
+
 - Connection state and observed transport (`pinned_tls13`, `legacy_shared_key`
   or unknown). Connected legacy transport is not reviewed-work readiness.
 - Whether the current node runtime reports configured private execution receipt
