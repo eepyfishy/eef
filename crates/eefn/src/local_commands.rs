@@ -87,9 +87,94 @@ pub struct RestartRequest {
     pub expected_runtime_id: Option<String>,
 }
 
+/// Same-user discovery metadata only. This never carries a pairing secret and
+/// never proves that the advertised process is still running or trusted.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerCoordinator {
+    pub schema_version: u32,
+    pub owner_address: SocketAddr,
+    pub node_address: SocketAddr,
+    pub runtime_id: String,
+}
+impl OwnerCoordinator {
+    pub fn validate(&self) -> Result<()> {
+        if self.schema_version != 1
+            || [self.owner_address, self.node_address]
+                .iter()
+                .any(|address| !address.ip().is_loopback() || address.port() == 0)
+            || uuid::Uuid::parse_str(&self.runtime_id)
+                .map_or(true, |id| id.is_nil() || id.to_string() != self.runtime_id)
+        {
+            bail!("invalid local coordinator advertisement")
+        }
+        Ok(())
+    }
+}
+pub fn owner_coordinator_path() -> Option<PathBuf> {
+    crate::setup::discovery_path().map(|path| path.with_file_name("owner-eef.json"))
+}
+pub fn publish_owner_coordinator(value: &OwnerCoordinator) -> Result<()> {
+    value.validate()?;
+    if let Some(path) = owner_coordinator_path() {
+        crate::setup::write_json(&path, &serde_json::to_value(value)?)?;
+    }
+    Ok(())
+}
+pub fn read_owner_coordinator(path: &Path) -> Result<Option<OwnerCoordinator>> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => bail!("local coordinator advertisement unavailable"),
+    };
+    let mut bytes = Vec::new();
+    file.take(4097)
+        .read_to_end(&mut bytes)
+        .map_err(|_| anyhow::anyhow!("local coordinator advertisement unavailable"))?;
+    if bytes.len() > 4096 {
+        bail!("local coordinator advertisement exceeds bounds")
+    }
+    let value: OwnerCoordinator = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow::anyhow!("invalid local coordinator advertisement"))?;
+    value.validate()?;
+    Ok(Some(value))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn owner_advertisement_is_bounded_local_metadata_not_a_legacy_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("owner-eef.json");
+        assert!(read_owner_coordinator(&path).unwrap().is_none());
+        let good = serde_json::json!({"schema_version":1,"owner_address":"127.0.0.1:12345",
+            "node_address":"[::1]:12346","runtime_id":uuid::Uuid::new_v4().to_string()});
+        std::fs::write(&path, serde_json::to_vec(&good).unwrap()).unwrap();
+        read_owner_coordinator(&path)
+            .unwrap()
+            .unwrap()
+            .validate()
+            .unwrap();
+        for (field, value) in [
+            ("schema_version", serde_json::json!(2)),
+            ("owner_address", serde_json::json!("192.0.2.1:12345")),
+            ("node_address", serde_json::json!("0.0.0.0:12345")),
+            ("node_address", serde_json::json!("127.0.0.1:0")),
+            (
+                "runtime_id",
+                serde_json::json!(uuid::Uuid::nil().to_string()),
+            ),
+            ("psk", serde_json::json!("PRIVATE")),
+        ] {
+            let mut bad = good.clone();
+            bad[field] = value;
+            std::fs::write(&path, serde_json::to_vec(&bad).unwrap()).unwrap();
+            assert!(read_owner_coordinator(&path).is_err());
+        }
+        std::fs::write(&path, vec![b'x'; 4097]).unwrap();
+        assert!(read_owner_coordinator(&path).is_err());
+    }
     #[test]
     fn actual_endpoint_wins_over_pending_port_and_disable_settings() {
         let dir = tempfile::tempdir().unwrap();

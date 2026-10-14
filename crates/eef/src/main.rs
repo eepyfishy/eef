@@ -1716,6 +1716,40 @@ async fn main() -> Result<()> {
             .await
             .with_context(|| format!("bind EEF API {host}:{port}"))?;
         info!(%host, %port, node_port = runtime.node_server.port(), "EEF API listening");
+        // Separate secret-free owner discovery from legacy shared-key pairing.
+        // A stale advertisement is harmless: clients must confirm its runtime
+        // through the owner API before using any observed credential state.
+        let local_address = |host: &str, port| -> Option<std::net::SocketAddr> {
+            let ip: std::net::IpAddr = host.parse().ok()?;
+            let ip = if ip.is_unspecified() {
+                if ip.is_ipv4() {
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+                } else {
+                    std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
+                }
+            } else {
+                ip
+            };
+            (ip.is_loopback() && port != 0).then_some(std::net::SocketAddr::new(ip, port))
+        };
+        if let (Some(owner_address), Some(node_address)) = (
+            local_address(&host, listener.local_addr()?.port()),
+            local_address(
+                &runtime.config.string("node.host", "0.0.0.0"),
+                runtime.node_server.port(),
+            ),
+        ) {
+            if let Err(error) = eefn::local_commands::publish_owner_coordinator(
+                &eefn::local_commands::OwnerCoordinator {
+                    schema_version: 1,
+                    owner_address,
+                    node_address,
+                    runtime_id: runtime.runtime_id().into(),
+                },
+            ) {
+                tracing::warn!(%error,"local coordinator discovery unavailable; owner API remains available");
+            }
+        }
         if open_dashboard && runtime.config.bool("web.ui_enabled", true) {
             eefn::setup::open_dashboard(&host, port);
             open_dashboard = false;

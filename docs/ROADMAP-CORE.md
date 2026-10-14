@@ -31,6 +31,13 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The next unreleased [same-PC setup plan](LOCAL-SETUP-PLAN.md) provides secret-free
+local coordinator discovery and port-free node-owner inspection, independently
+of legacy shared-key pairing and the browser. It is read-only; private first-run
+provision/apply/handoff and completed registration are not implemented by this
+checkpoint and remain required. Both suites pass 687 tests; final headless local
+credential/setup fixtures pass with the scoped evidence in the linked document.
+
 The next unreleased [private invitation recovery command](NODE-CREDENTIALS.md#recover-an-existing-private-invitation-unreleased-after-alpha6)
 exports existing saved exact-node trust without rotation or writes. It honors
 saved revocation even before restart and feeds the existing file-free node pairing

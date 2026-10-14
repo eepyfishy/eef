@@ -108,6 +108,43 @@ pub fn generate_credential() -> String {
     hex::encode(rand::random::<[u8; 32]>())
 }
 
+/// Validate a redacted observation only; a summary is never a credential or grant.
+pub fn valid_summary(value: &Value) -> bool {
+    const FIELDS: &[&str] = &[
+        "allow_legacy",
+        "tls_configured",
+        "coordinator_fingerprint",
+        "identities",
+    ];
+    if value.as_object().is_none_or(|v| {
+        v.len() != FIELDS.len() || v.keys().any(|key| !FIELDS.contains(&key.as_str()))
+    }) || !value["allow_legacy"].is_boolean()
+        || !value["tls_configured"].is_boolean()
+    {
+        return false;
+    }
+    let valid_fingerprint = if value["tls_configured"] == true {
+        value["coordinator_fingerprint"]
+            .as_str()
+            .is_some_and(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+    } else {
+        value["coordinator_fingerprint"].is_null()
+    };
+    let Some(identities) = value["identities"].as_array() else {
+        return false;
+    };
+    let mut seen = HashSet::new();
+    valid_fingerprint
+        && identities.len() <= 256
+        && identities.iter().all(|id| {
+            id.as_object().is_some_and(|v| {
+                v.len() == 2 && v.contains_key("node_id") && v.contains_key("state")
+            }) && id["node_id"].as_str().is_some_and(|node| {
+                crate::network::validate_remote_node_id(node).is_ok() && seen.insert(node)
+            }) && matches!(id["state"].as_str(), Some("provisioned" | "revoked"))
+        })
+}
+
 pub async fn write_selector<W: tokio::io::AsyncWrite + Unpin>(
     writer: &mut W,
     node_id: &str,

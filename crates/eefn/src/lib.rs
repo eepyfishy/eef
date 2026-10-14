@@ -24,6 +24,7 @@ pub mod interpreter_sampling;
 pub mod job_accounting;
 pub mod job_commands;
 pub mod local_commands;
+pub mod local_setup;
 pub mod model_cli;
 pub mod model_downloads;
 pub mod model_lifecycle;

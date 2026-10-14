@@ -73,7 +73,11 @@ enum Commands {
         command: eefn::permission_commands::PermissionAction,
     },
     /// Explain this running node's setup and next steps; never change settings or run work.
-    Setup {},
+    Setup {
+        /// Read-only same-PC private enrollment plan; never pair or restart.
+        #[arg(long, default_value_t = false)]
+        local: bool,
+    },
     /// Author source-bound disabled automations; does not start timers or work.
     Automations {
         #[command(subcommand)]
@@ -1495,7 +1499,7 @@ async fn execute_permission_command(
     )
 }
 
-async fn execute_setup_check(args: &Args) -> Result<serde_json::Value> {
+async fn execute_setup_check(args: &Args, local_plan: bool) -> Result<serde_json::Value> {
     if eefn::setup::instance_lock(&args.config)?.is_some() {
         bail!("Start this node first; setup inspection never launches a node")
     }
@@ -1513,33 +1517,20 @@ async fn execute_setup_check(args: &Args) -> Result<serde_json::Value> {
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(5))
         .build()?;
-    let state = eefn::model_manager::bounded_json(
-        client
-            .get(format!("http://{address}/api/diagnostics"))
-            .send()
-            .await?
-            .error_for_status()?,
-    )
-    .await?;
-    if state["success"] != true
-        || state["schema_version"] != 1
-        || state["report_type"] != "node_diagnostics"
-        || state["node_id"] != file.node_id
-    {
-        bail!("Node diagnostics were not confirmed; no setup check was sent")
-    }
+    let runtime =
+        eefn::credential_pairing::wait_for_runtime(&client, address, &file.node_id).await?;
     let request = eefn::setup_check::CheckRequest {
         schema_version: 1,
         expected_node_id: file.node_id,
-        expected_runtime_id: state["runtime_id"]
-            .as_str()
-            .context("Node runtime is not available yet")?
-            .into(),
+        expected_runtime_id: runtime,
         request_id: uuid::Uuid::new_v4().to_string(),
     };
     request.validate()?;
     let response = client
-        .post(format!("http://{address}/api/commands/setup/check"))
+        .post(format!(
+            "http://{address}/api/commands/setup/{}",
+            if local_plan { "local" } else { "check" }
+        ))
         .json(&request)
         .send()
         .await?;
@@ -1550,7 +1541,11 @@ async fn execute_setup_check(args: &Args) -> Result<serde_json::Value> {
         bail!("Setup check was refused; no retry was sent")
     }
     let value = eefn::model_manager::bounded_json(response).await?;
-    if !eefn::setup_check::confirmed(&value, &request) {
+    if !(if local_plan {
+        eefn::local_setup::confirmed(&value, &request)
+    } else {
+        eefn::setup_check::confirmed(&value, &request)
+    }) {
         bail!("Setup reply was not confirmed; no retry was sent")
     }
     Ok(value)
@@ -1560,8 +1555,8 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     if let Commands::Permissions { command } = command {
         return execute_permission_command(args, command).await;
     }
-    if matches!(command, Commands::Setup {}) {
-        return execute_setup_check(args).await;
+    if let Commands::Setup { local } = command {
+        return execute_setup_check(args, *local).await;
     }
     if let Commands::Automations { command } = command {
         use serde_json::json;
@@ -2198,7 +2193,9 @@ async fn main() -> Result<()> {
             Ok(value) => {
                 if args.json {
                     println!("{}", serde_json::to_string(&value)?);
-                } else if matches!(command, Commands::Setup {}) {
+                } else if matches!(command, Commands::Setup { local: true }) {
+                    print!("{}", eefn::local_setup::render(&value)?);
+                } else if matches!(command, Commands::Setup { .. }) {
                     print!("{}", eefn::setup_check::render(&value)?);
                 } else if matches!(command, Commands::Permissions { .. }) {
                     if value["success"] == true {
@@ -3223,6 +3220,22 @@ mod tests {
             vec!["pair"],
         ] {
             assert!(Args::try_parse_from([vec!["eefn", "connection"], argv].concat()).is_err());
+        }
+    }
+    #[test]
+    fn local_setup_plan_is_explicit_read_only_and_needs_no_ports_or_secrets() {
+        assert!(matches!(
+            Args::try_parse_from(["eefn", "setup"]).unwrap().command,
+            Some(Commands::Setup { local: false })
+        ));
+        assert!(matches!(
+            Args::try_parse_from(["eefn", "setup", "--local"])
+                .unwrap()
+                .command,
+            Some(Commands::Setup { local: true })
+        ));
+        for flag in ["--apply", "--rotate", "--restart", "--code", "--address"] {
+            assert!(Args::try_parse_from(["eefn", "setup", "--local", flag]).is_err());
         }
     }
     #[test]

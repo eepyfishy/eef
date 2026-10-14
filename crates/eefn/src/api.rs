@@ -95,6 +95,10 @@ impl NodeService {
                 post(setup_check).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
             .route(
+                "/api/commands/setup/local",
+                post(local_setup_plan).layer(axum::extract::DefaultBodyLimit::max(4096)),
+            )
+            .route(
                 "/api/commands/connection/pair",
                 post(credential_pair).layer(axum::extract::DefaultBodyLimit::max(8192)),
             )
@@ -197,6 +201,12 @@ async fn setup_check(
     Json(request): Json<crate::setup_check::CheckRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.setup_check(request)?))
+}
+async fn local_setup_plan(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::setup_check::CheckRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.local_setup_plan(request).await?))
 }
 
 async fn restart_command(

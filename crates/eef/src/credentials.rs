@@ -128,39 +128,7 @@ pub fn confirmed_export(
 }
 
 fn valid_summary(value: &Value) -> bool {
-    const FIELDS: &[&str] = &[
-        "allow_legacy",
-        "tls_configured",
-        "coordinator_fingerprint",
-        "identities",
-    ];
-    if value.as_object().is_none_or(|v| {
-        v.len() != FIELDS.len() || v.keys().any(|key| !FIELDS.contains(&key.as_str()))
-    }) || !value["allow_legacy"].is_boolean()
-        || !value["tls_configured"].is_boolean()
-    {
-        return false;
-    }
-    let valid_fingerprint = if value["tls_configured"] == true {
-        value["coordinator_fingerprint"]
-            .as_str()
-            .is_some_and(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))
-    } else {
-        value["coordinator_fingerprint"].is_null()
-    };
-    let Some(identities) = value["identities"].as_array() else {
-        return false;
-    };
-    let mut seen = std::collections::HashSet::new();
-    valid_fingerprint
-        && identities.len() <= 256
-        && identities.iter().all(|id| {
-            id.as_object().is_some_and(|v| {
-                v.len() == 2 && v.contains_key("node_id") && v.contains_key("state")
-            }) && id["node_id"].as_str().is_some_and(|node| {
-                eefn::network::validate_remote_node_id(node).is_ok() && seen.insert(node)
-            }) && matches!(id["state"].as_str(), Some("provisioned" | "revoked"))
-        })
+    eefn::authentication::valid_summary(value)
 }
 
 pub fn command(

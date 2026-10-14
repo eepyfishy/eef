@@ -58,6 +58,11 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    /// Public correlation metadata, not authentication or leadership authority.
+    pub fn runtime_id(&self) -> &str {
+        &self.instance_id
+    }
+
     pub async fn initialize(
         config: Config,
         db_path: impl AsRef<Path>,

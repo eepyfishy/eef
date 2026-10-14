@@ -46,6 +46,12 @@ try {
     launch('eefn',['--config',config,'--no-ui']);
     const api=`http://127.0.0.1:${apiPort}`;
     await until(async()=>(await json(api+'/api/status')).node_id===id,'standalone node startup');
+    const beforePlan=await readFile(config),beforeCoordinatorPlan=await readFile(eefConfig);
+    const localPlan=await cli('eefn',config,['setup','--local']);
+    assert.equal(localPlan.state,'unprovisioned');assert.equal(localPlan.pairing_submitted,false);
+    assert.equal(localPlan.changed,false);assert.equal(localPlan.restart_requested,false);
+    assert((await readFile(config)).equals(beforePlan),'setup plan must not change node settings');
+    assert((await readFile(eefConfig)).equals(beforeCoordinatorPlan),'setup plan must not provision trust');
     const invitation=await coordinator(['credentials','provision','--node',id,'--address',`127.0.0.1:${gatewayPort}`]);
     const beforeExport=await readFile(eefConfig);
     const recovered=await coordinator(['credentials','export','--node',id,'--address',`127.0.0.1:${gatewayPort}`]);
@@ -163,6 +169,31 @@ try {
   await until(async()=>{const d=await coordinator(['diagnostics']);return d.runtime_id!==old&&d.registered_node_count===2;},'independent reconnect with legacy disabled');
   const policy=await coordinator(['credentials','show']);assert.equal(policy.applied_policy.allow_legacy,false);
   assert.equal(JSON.parse(await readFile(join(scratch,'discovery/local-eef.json'),'utf8')).psk,'','disabled legacy must not advertise a shared fallback');
+  const ownerAdvertisement=JSON.parse(await readFile(join(scratch,'discovery/owner-eef.json'),'utf8'));
+  assert.deepEqual(Object.keys(ownerAdvertisement).sort(),['node_address','owner_address','runtime_id','schema_version']);
+  assert.equal(ownerAdvertisement.runtime_id,(await coordinator(['diagnostics'])).runtime_id);
+  assert.equal((await cli('eefn',nodes[0].config,['setup','--local'])).state,'provisioned','private discovery works with legacy disabled');
+  const ownerPath=join(scratch,'discovery/owner-eef.json'),ownerBytes=await readFile(ownerPath);
+  try {
+    await writeFile(ownerPath,JSON.stringify({...ownerAdvertisement,runtime_id:randomUUID()}));
+    const stalePlan=await cli('eefn',nodes[0].config,['setup','--local']);
+    assert.equal(stalePlan.state,'stale');assert.equal(stalePlan.coordinator_runtime_id,null);
+    assert.equal(stalePlan.coordinator_fingerprint,null);assert.equal(stalePlan.pairing_submitted,false);
+    await writeFile(ownerPath,JSON.stringify({...ownerAdvertisement,psk:'PRIVATE-UNEXPECTED-METADATA'}));
+    const refused=await cli('eefn',nodes[0].config,['setup','--local'],false);
+    assert(!JSON.stringify(refused).includes('PRIVATE-UNEXPECTED-METADATA'));
+  } finally {await writeFile(ownerPath,ownerBytes);} // Restore only this fixture's fault injection.
+  const planRuntime=(await json(nodes[0].api+'/api/diagnostics')).runtime_id;
+  const planRequest={schema_version:1,expected_node_id:nodes[0].id,expected_runtime_id:planRuntime,request_id:randomUUID()};
+  for(const [body,expectedStatus,origin] of [
+    [{...planRequest,expected_node_id:'other'},400,null],
+    [{...planRequest,rotate:true},422,null],
+    [planRequest,403,'https://untrusted.example'],
+  ]) {
+    const response=await fetch(nodes[0].api+'/api/commands/setup/local',{method:'POST',
+      headers:{'Content-Type':'application/json',...(origin?{Origin:origin}:{})},body:JSON.stringify(body)});
+    assert.equal(response.status,expectedStatus);
+  }
   // Independent credentials and persisted TLS must boot without an unused legacy PSK/env override.
   const credentialOnly=await json(base+'/api/config');credentialOnly.config.node.psk='';
   await json(base+'/api/config',{config:credentialOnly.config},'PUT');
@@ -176,6 +207,7 @@ try {
   assert.equal((await coordinator(['credentials','show'])).saved_policy.allow_legacy,false);
   await coordinator(['invite','--address',`127.0.0.1:${gatewayPort}`],false);
   await coordinator(['credentials','revoke','--node',nodes[0].id]);
+  assert.equal((await cli('eefn',nodes[0].config,['setup','--local'])).state,'revoked','setup honors saved revocation before restart');
   const savedRevocation=await readFile(eefConfig);
   await coordinator(['credentials','export','--node',nodes[0].id,'--address',`127.0.0.1:${gatewayPort}`],false);
   assert((await readFile(eefConfig)).equals(savedRevocation),'export cannot restore a saved revocation even before restart');
@@ -231,6 +263,8 @@ try {
   results.private_export_without_rotation=true;results.export_saved_revocation_and_runtime_guards=true;
   results.export_to_file_free_pairing=true;
   results.export_cli_substituted_reply_redaction=true;
+  results.port_free_read_only_local_setup_plan=true;results.secret_free_discovery_with_legacy_disabled=true;
+  results.local_setup_stale_corrupt_and_owner_boundary_guards=true;
   await writeFile(join(scratch,'results.json'),JSON.stringify(results,null,2));console.log('Node credential validation passed: '+scratch);
 } finally {
   for(const child of children)if(child.exitCode===null)child.kill();

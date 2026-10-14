@@ -1243,6 +1243,13 @@ on the same PC without a new secret file. Saved pending trust may still require
 an explicit EEF restart; pairing requests a node restart, not verified connection.
 See [private invitation recovery and remaining setup limits](NODE-CREDENTIALS.md#recover-an-existing-private-invitation-unreleased-after-alpha6).
 
+`eefn setup --local` inspects the running same-PC coordinator without node IDs,
+ports or secret arguments. It uses a separate secret-free runtime advertisement
+and one read-only owner-API query, never legacy pairing fallback. Reports
+distinguish stale/unavailable discovery from missing, revoked, incomplete and
+provisioned saved trust. No pairing, provisioning, rotation or restart is sent.
+See [local setup planning and its unfinished apply flow](LOCAL-SETUP-PLAN.md).
+
 Saved UI preferences are `dashboard.ui_enabled` on the node and `web.ui_enabled`
 on EEF, both defaulting to true. False hides the browser while keeping commands
 available. Apply saved preferences with the role's restart command. On the node,
