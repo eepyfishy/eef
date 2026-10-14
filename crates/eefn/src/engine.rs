@@ -226,6 +226,7 @@ pub struct NodeEngine {
     ollama_models: HashMap<String, crate::model_metadata::ModelMetadata>,
     ollama_keep_alive_seconds: Option<i64>,
     thinking_mode: crate::model_lifecycle_policy::ThinkingMode,
+    interpreter_sampling: crate::interpreter_sampling::InterpreterSampling,
     service: Option<Arc<crate::NodeService>>,
     resource_owner: String,
     resources: Vec<crate::context::Resource>,
@@ -268,6 +269,7 @@ impl NodeEngine {
             ollama_models: HashMap::new(),
             ollama_keep_alive_seconds: None,
             thinking_mode: Default::default(),
+            interpreter_sampling: Default::default(),
             service: None,
             granted_model_config: None,
             pipeline_enabled: false,
@@ -342,10 +344,16 @@ impl NodeEngine {
         policy.validate()?;
         self.ollama_keep_alive_seconds = policy.ollama_keep_alive_seconds;
         self.thinking_mode = policy.thinking_mode;
+        self.interpreter_sampling = policy.interpreter_sampling.clone();
         Ok(self)
     }
     pub(crate) fn applied_thinking_mode(&self) -> crate::model_lifecycle_policy::ThinkingMode {
         self.thinking_mode
+    }
+    pub(crate) fn applied_interpreter_sampling(
+        &self,
+    ) -> &crate::interpreter_sampling::InterpreterSampling {
+        &self.interpreter_sampling
     }
     pub(crate) fn applied_ollama_keep_alive_seconds(&self) -> Option<i64> {
         self.ollama_keep_alive_seconds
@@ -1118,7 +1126,7 @@ impl NodeEngine {
     }
 
     async fn infer(&self, capability: &str, params: Value) -> Result<Value> {
-        self.infer_with_schema(capability, params, None).await
+        self.infer_with_schema(capability, params, None, None).await
     }
 
     /// The schema is internally generated, not a public caller-supplied payload.
@@ -1127,6 +1135,7 @@ impl NodeEngine {
         capability: &str,
         params: Value,
         schema: Option<Value>,
+        interpreter_sampling: Option<&crate::interpreter_sampling::InterpreterSampling>,
     ) -> Result<Value> {
         let backend = params
             .get("backend")
@@ -1154,7 +1163,9 @@ impl NodeEngine {
             {
                 bail!("This capability is not enabled for the selected local model")
             }
-            return self.llamacpp(server, &params, schema).await;
+            return self
+                .llamacpp(server, &params, schema, interpreter_sampling)
+                .await;
         }
         if backend == Some("llamacpp") {
             bail!("model is not selected on the requested llama.cpp backend")
@@ -1166,7 +1177,7 @@ impl NodeEngine {
         if !metadata.supports(capability) {
             bail!("This capability is not enabled for the selected Ollama model")
         }
-        self.ollama(&params, schema).await
+        self.ollama(&params, schema, interpreter_sampling).await
     }
 
     pub(crate) async fn preview_interpretation(
@@ -1292,6 +1303,7 @@ impl NodeEngine {
                 json!({"backend":backend,"model":model,"messages":messages,
             "temperature":0,"max_tokens":max_tokens,"timeout":30}),
                 schema,
+                Some(&self.interpreter_sampling),
             )
             .await
             .map_err(|_| "interpreter_backend_failed")?;
@@ -1337,8 +1349,16 @@ impl NodeEngine {
         Ok(payload)
     }
 
-    async fn ollama(&self, params: &Value, schema: Option<Value>) -> Result<Value> {
-        let payload = self.ollama_payload(params, schema)?;
+    async fn ollama(
+        &self,
+        params: &Value,
+        schema: Option<Value>,
+        sampling: Option<&crate::interpreter_sampling::InterpreterSampling>,
+    ) -> Result<Value> {
+        let mut payload = self.ollama_payload(params, schema)?;
+        if let Some(sampling) = sampling {
+            Self::apply_interpreter_sampling(&mut payload, sampling, true);
+        }
         let response = self
             .http
             .post(format!("{}/api/chat", self.ollama_url))
@@ -1357,6 +1377,7 @@ impl NodeEngine {
         server: &ModelServer,
         params: &Value,
         schema: Option<Value>,
+        sampling: Option<&crate::interpreter_sampling::InterpreterSampling>,
     ) -> Result<Value> {
         let model = params.get("model").and_then(Value::as_str);
         let _use_pin = match server.pin(model) {
@@ -1372,7 +1393,10 @@ impl NodeEngine {
         let base = server
             .base_url(model)
             .context("no llama.cpp model configured")?;
-        let payload = self.llamacpp_payload(params, schema);
+        let mut payload = self.llamacpp_payload(params, schema);
+        if let Some(sampling) = sampling {
+            Self::apply_interpreter_sampling(&mut payload, sampling, false);
+        }
         let response = self
             .http
             .post(format!("{base}/v1/chat/completions"))
@@ -1422,6 +1446,19 @@ impl NodeEngine {
             }
         }
         payload
+    }
+
+    fn apply_interpreter_sampling(
+        payload: &mut Value,
+        sampling: &crate::interpreter_sampling::InterpreterSampling,
+        ollama: bool,
+    ) {
+        let destination = if ollama {
+            payload["options"].as_object_mut().unwrap()
+        } else {
+            payload.as_object_mut().unwrap()
+        };
+        destination.extend(sampling.options().as_object().unwrap().clone());
     }
 
     async fn node_update(&self, action: &str, params: Value) -> Result<Value> {
@@ -2117,6 +2154,118 @@ mod tests {
         }
     }
 
+    #[test]
+    fn interpreter_sampling_payloads_preserve_default_and_request_bounds() {
+        use crate::interpreter_sampling::InterpreterSampling;
+        let directory = tempfile::tempdir().unwrap();
+        let engine = NodeEngine::new(false, vec![], directory.path().into()).unwrap();
+        let params = json!({"model":"selected","prompt":"unchanged request","max_tokens":512,"temperature":0});
+        let schema = json!({"type":"object"});
+        for ollama in [false, true] {
+            let old = if ollama {
+                engine
+                    .ollama_payload(&params, Some(schema.clone()))
+                    .unwrap()
+            } else {
+                engine.llamacpp_payload(&params, Some(schema.clone()))
+            };
+            let mut default = old.clone();
+            NodeEngine::apply_interpreter_sampling(
+                &mut default,
+                &InterpreterSampling::default(),
+                ollama,
+            );
+            assert_eq!(default, old, "Legacy deterministic payload is unchanged");
+            let chosen = InterpreterSampling {
+                temperature_milli: 1000,
+                top_p_milli: Some(1000),
+                top_k: Some(20),
+                min_p_milli: Some(0),
+                presence_penalty_milli: Some(2000),
+                repeat_penalty_milli: Some(1000),
+                seed: Some(42),
+            };
+            chosen.validate().unwrap();
+            let mut payload = old.clone();
+            NodeEngine::apply_interpreter_sampling(&mut payload, &chosen, ollama);
+            let options = if ollama {
+                &payload["options"]
+            } else {
+                &payload
+            };
+            for (key, value) in chosen.options().as_object().unwrap() {
+                assert_eq!(&options[key], value);
+            }
+            assert_eq!(payload["messages"], old["messages"]);
+            if ollama {
+                assert_eq!(payload["options"]["num_predict"], 512);
+                assert_eq!(payload["format"], schema);
+            } else {
+                assert_eq!(payload["max_tokens"], 512);
+                assert_eq!(payload["response_format"], old["response_format"]);
+            }
+            assert_eq!(payload["stream"], false);
+        }
+    }
+    #[tokio::test]
+    async fn applied_sampling_reaches_interpreter_but_not_ordinary_inference() {
+        use crate::interpreter_sampling::InterpreterSampling;
+        let (send, mut receive) = tokio::sync::mpsc::channel(1);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app=axum::Router::new().route("/api/chat",axum::routing::post(move |axum::Json(body):axum::Json<Value>| {
+            let send=send.clone();async move {send.send(body).await.unwrap();
+                axum::Json(json!({"message":{"content":"synthetic completion"},"done":true,"done_reason":"stop"}))}
+        }));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let directory = tempfile::tempdir().unwrap();
+        let selected: crate::SelectedModel =
+            serde_json::from_value(json!({"model_id":"selected","modality":"text",
+            "selection":{"roles":["request_interpreter"]}}))
+            .unwrap();
+        let sampling = InterpreterSampling {
+            temperature_milli: 1000,
+            top_p_milli: Some(1000),
+            top_k: Some(20),
+            min_p_milli: Some(0),
+            presence_penalty_milli: Some(2000),
+            repeat_penalty_milli: Some(1000),
+            seed: Some(42),
+        };
+        let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+            interpreter_sampling: sampling.clone(),
+            ..Default::default()
+        };
+        let engine = NodeEngine::new(false, vec![], directory.path().into())
+            .unwrap()
+            .with_model_request_preferences(&policy)
+            .unwrap()
+            .with_ollama(format!("http://{address}"), [selected])
+            .unwrap();
+        let messages =
+            crate::interpretation::messages("Check this node.", &["system.info".into()]).unwrap();
+        let schema = json!({"type":"object"});
+        engine
+            .selected_interpreter_response(messages.clone(), 512, Some(schema.clone()))
+            .await
+            .unwrap();
+        let actual = receive.recv().await.unwrap();
+        assert_eq!(actual["messages"], messages);
+        assert_eq!(actual["format"], schema);
+        assert_eq!(actual["options"]["num_predict"], 512);
+        for (key, value) in sampling.options().as_object().unwrap() {
+            assert_eq!(&actual["options"][key], value);
+        }
+        engine.infer("llm.infer",json!({"model":"selected","backend":"ollama","prompt":"ordinary reviewed input",
+            "temperature":0.25,"max_tokens":16,"interpreter_sampling":{"temperature_milli":0},"top_k":999,"seed":999})).await.unwrap();
+        let ordinary = receive.recv().await.unwrap();
+        assert_eq!(
+            ordinary["options"],
+            json!({"temperature":0.25,"num_predict":16})
+        );
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
+    }
     #[test]
     fn thinking_hints_come_only_from_applied_owner_policy_for_both_backends() {
         use crate::model_lifecycle_policy::{ModelLifecyclePolicy, ThinkingMode};

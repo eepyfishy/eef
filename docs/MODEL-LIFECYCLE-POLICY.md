@@ -95,6 +95,50 @@ Startup/idle/native-control settings govern owned GGUF processes, not the user's
 shared Ollama service. The separate Ollama request preference below does not
 implement exclusive/shared ownership, observed residency or autonomous unload.
 
+### Interpreter sampling preferences (unreleased)
+
+```text
+eefn --json model-lifecycle-policy show
+eefn --json model-lifecycle-policy --runtime RUNTIME_UUID set --expected-digest SAVED_DIGEST --interpreter-temperature 0.7 --interpreter-seed 42
+eef --json node model-lifecycle-policy --node NODE_ID --runtime RUNTIME_UUID set --expected-digest SAVED_DIGEST --interpreter-sampling-default
+```
+
+Sampling is a node-wide preference for the one selected request interpreter,
+including clarification and method preparation, not a per-model override or
+generic reviewed workload parameter. The same owner approval, exact runtime,
+revision/CAS, saved/applied and explicit-restart rules apply. Saving, inspecting
+or resetting performs no inference/download/model selection or restart. Claimed
+applied settings must match the engine before runtime replacement is accepted.
+
+| CLI option | Bounds | Backend option |
+| --- | --- | --- |
+| `--interpreter-temperature` | 0-2, up to three fractional places | `temperature` |
+| `--interpreter-top-p` | 0.001-1 | `top_p` |
+| `--interpreter-top-k` | integer 0-1024 | `top_k` |
+| `--interpreter-min-p` | 0-1 | `min_p` |
+| `--interpreter-presence-penalty` | -2 to 2 | `presence_penalty` |
+| `--interpreter-repeat-penalty` | 0.1-2 | `repeat_penalty` |
+| `--interpreter-seed` | integer 0-4294967294 | `seed` |
+
+Default interpretation remains temperature zero; optional hints are omitted so
+backend defaults apply. Integer thousandths in `interpreter_sampling` preserve
+exact saved equality/digests; CLI users provide ordinary decimals. Fields omitted
+from a patch keep their saved values. `--interpreter-sampling-default` resets the
+whole group and conflicts with explicit sampling choices, including on the wire.
+The all-default group and empty command patch are omitted from serialized policy/
+commands, preserving previous canonical digests and legacy reports. Individual
+optional-field reset/per-model sampling remains future work.
+
+Both adapters map these hints to their existing backend request format (Ollama
+`options`, llama.cpp top-level fields). Caller/model text cannot change the applied
+interpreter setting. Ordinary reviewed `llm.infer`/`vlm.analyze` retains its
+existing parameter behavior; it does not acquire these private interpreter
+options. Prompts, schema, strict validator, token/byte/deadline bounds, permissions,
+role selection and no-fallback/no-retry rules are unchanged. A seed is a backend
+hint, not proof of reproducibility across implementations, models or hardware.
+No named-model profile is automatically selected, and no quality/default approval
+is implied by successful configuration or inference.
+
 ### Thinking request preference (unreleased)
 
 ```text

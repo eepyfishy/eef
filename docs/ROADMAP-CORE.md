@@ -136,6 +136,15 @@ capture, semantic quality or remote attestation. Both feature modes pass 639
 tests and the public preview regression passes. Controlled sampling/candidate
 evaluation is still needed; no default or installed-node change is implied.
 
+The next unreleased increment exposes bounded owner interpreter sampling through
+the same policy commands and runtime/revision fences. Integer-thousandth storage
+keeps old default digests exact; optional hints are applied only to interpretation,
+clarification and method preparation after explicit restart, not generic work.
+Headless approval/saved-applied/reset checks pass, but a real sampled profile
+scores only 4/20 original and 5/20 additional matches and is not made default.
+See [measured scope and remaining gates](INTERPRETER-QUALITY.md#owner-interpreter-sampling-and-rejected-sampled-profile-2026-10-14).
+Per-model overrides and full bootstrap/physical acceptance remain open.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It

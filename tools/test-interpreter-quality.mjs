@@ -12,6 +12,15 @@ import {cpus,totalmem} from 'node:os';
 import {grade,rubricVersion} from './interpreter-quality-cases.mjs';
 import {caseSet} from './interpreter-generalization-cases.mjs';
 const selectedCases=caseSet(process.env.EEF_TEST_QUALITY_SUITE),cases=selectedCases.cases;
+const samplingArgs=JSON.parse(process.env.EEF_TEST_INTERPRETER_SAMPLING_ARGS||'[]');
+assert(Array.isArray(samplingArgs)&&samplingArgs.length<=14,'Supply bounded interpreter sampling CLI arguments');
+const samplingFlags=new Set(['--interpreter-temperature','--interpreter-top-p','--interpreter-top-k',
+ '--interpreter-min-p','--interpreter-presence-penalty','--interpreter-repeat-penalty','--interpreter-seed']);
+const seenSampling=new Set();
+for(let i=0;i<samplingArgs.length;i+=2){
+ assert(samplingFlags.has(samplingArgs[i])&&!seenSampling.has(samplingArgs[i]),'Unknown/duplicate sampling flag');
+ seenSampling.add(samplingArgs[i]);assert(typeof samplingArgs[i+1]==='string'&&samplingArgs[i+1].length<=32&&/^-?\d+(\.\d{1,3})?$/.test(samplingArgs[i+1]),'Use explicit bounded numeric sampling values');
+}
 
 assert(process.argv[2]&&process.env.EEF_TEST_MODEL_FILE,
  'Pass the runtime bundle and set EEF_TEST_MODEL_FILE to an existing catalog artifact. No downloads supported.');
@@ -93,7 +102,7 @@ try{
  assert.equal(assigned.success,true);assert.equal(assigned.running,false);
  assert.equal(assigned.saved_selections[0].model_metadata.roles[0],'request_interpreter');
  const beforePolicy=(await cli(['model-lifecycle-policy','show'])).result;
- const savedPolicy=(await cli(['model-lifecycle-policy','set','--expected-digest',beforePolicy.saved_digest,'--thinking-mode',thinkingMode])).result;
+ const savedPolicy=(await cli(['model-lifecycle-policy','set','--expected-digest',beforePolicy.saved_digest,'--thinking-mode',thinkingMode,...samplingArgs])).result;
  assert.equal(savedPolicy.saved_policy.thinking_mode||'inherit',thinkingMode);
  assert.equal(savedPolicy.applied_policy,null);assert.equal(savedPolicy.restart_requested,false);
  node=`http://127.0.0.1:${apiPort}`;const started=performance.now();owner=launch(['--no-ui']);
@@ -101,6 +110,9 @@ try{
  report.startup_ms=Math.round(performance.now()-started);runtimeId=(await json('/api/diagnostics')).runtime_id;
  const appliedPolicy=(await cli(['model-lifecycle-policy','show'])).result;
  assert.equal(appliedPolicy.applied_policy.thinking_mode||'inherit',thinkingMode);
+ assert.deepEqual(appliedPolicy.applied_policy.interpreter_sampling,savedPolicy.saved_policy.interpreter_sampling);
+ report.interpreter_sampling=appliedPolicy.applied_policy.interpreter_sampling||{temperature_milli:0};
+ report.sampling_saved_applied_checked=true;
  report.thinking_hint_saved_applied_checked=true;
  report.allowed_capabilities=(await json('/api/status')).capabilities;report.node_version=(await json('/api/status')).version;
  report.prompt_reference=await referencePrompt(report.allowed_capabilities);

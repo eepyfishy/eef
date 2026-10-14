@@ -39,6 +39,16 @@ fixture supplies no feed, attachment or prior-task context. This is additional
 development evidence, **not independent human review or a default-approval gate**.
 Neither case set executes the requests. The same unchanged grader is used.
 
+Optional `EEF_TEST_INTERPRETER_SAMPLING_ARGS` is a JSON array of explicit sampling
+CLI flag/value strings. The harness accepts only the seven documented sampling
+flags, bounded numeric text and no duplicate flags; it cannot inject config paths,
+restart, execution or other commands. It passes those choices to the public owner
+policy command in the disposable config and checks saved/applied agreement after
+start. New reports record normalized `interpreter_sampling`. Omitting the variable
+retains temperature-zero interpretation and omitted optional hints. JSON here is
+test-harness input, not a requirement for configuring a real node: the normal
+commands accept human decimals, without editing JSON.
+
 New reports record `case_set` and the exact case-list SHA. Private reference
 capture selects only these known sets and verifies the case SHA before emitting
 the matching shared Rust prompt. Older reports without a set ID mean original-v1.
@@ -373,3 +383,64 @@ reference-not-wire metadata, and `request-preview-rU26p0` passes; chain exit is 
 Neither diagnostic changes prompts, schema, validation, inference parameters,
 permissions, selection/defaults or installed nodes. Stable release, physical
 acceptance and the remaining roadmap are not complete.
+
+## Owner interpreter sampling and rejected sampled profile, 2026-10-14
+
+Added command-configurable [interpreter sampling preferences](MODEL-LIFECYCLE-POLICY.md#interpreter-sampling-preferences-unreleased)
+to the existing node policy service, not a named-model preset or default change.
+The owner can choose temperature, top-p, top-k, min-p, presence/repetition penalty
+and a seed hint using ordinary decimal/integer CLI arguments. Bounds, exact
+integer-thousandth storage, old default serialization/digests, explicit reset,
+node/runtime/CAS fences and saved/applied separation are validated before use.
+Sampling applies only to the selected interpreter's interpretation/clarification/
+method calls; ordinary reviewed inference parameters are unchanged. No token,
+byte, deadline, schema, validator, permission, selection or execution rule changes.
+
+`model-policy-BbVuHi` passes headless public owner commands over pinned TLS:
+unapproved remote changes are refused, approved choices save without changing
+the running engine, explicit restart applies the exact sampling group, and
+reset is saved-only until another restart. Unit tests check scalar/decimal bounds,
+partial patches, reset conflicts, old digest preservation, forged saved reports
+even with recomputed hashes and rejection of unapplied runtime claims. A real
+synthetic Ollama HTTP exchange checks that the owner options reach interpretation
+but not ordinary inference; both adapter builders preserve request bounds/schema
+and exact default payloads. These checks are not real-model quality approval.
+
+The isolated Qwen 3.5 0.8B experiment explicitly chooses temperature 1, top-p 1,
+top-k 20, min-p 0, presence penalty 2 and repeat penalty 1, based on the publisher's
+non-thinking text guidance, plus seed 42 as an experimental backend hint.
+Thinking stays disabled. Both runs reuse the same verified artifact/runtime and
+the unchanged production prompt, schema/validator, context 4096, output limit
+512 and fixed case sets. No download/copy, coordinator or execution is involved.
+
+| Case set | Accepted | Matches | Startup ms | Model peak bytes | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| Original v1 | 16/20 | 4/20 | 4,034 | 1,229,099,008 | `interpreter-quality-M0MKx0` |
+| Generalization v1 | 13/20 | 5/20 | 4,028 | 1,404,895,232 | `interpreter-quality-TgPPbQ` |
+
+These are worse label scores than the preceding temperature-zero runs (8/20 and
+7/20 respectively). The profile is **not approved or made default**, and the
+candidate remains experimental. Seeded sampling is still stochastic/backend
+dependent; a single seed/run does not establish quality, reproducibility or a
+complete explanation for failure. Unspecified thread counts/working-set samples
+are not enforced resource limits or total application RAM. Both case-list SHAs
+and the system/full-message reference hashes remain unchanged; reports record
+the normalized owner options and matching saved/applied state. Failed proposals
+remain failures; no expectations or validation were relaxed to improve scores.
+
+Configurable preferences are retained as backend functionality needed for
+replaceable models. Defaults remain temperature zero with optional sampling
+hints omitted, and there is no model-name-specific logic. Further candidate/
+method evaluation, independent review and physical/bootstrap acceptance remain
+required before selecting an automatic default or declaring stable 0.4.0.
+
+Fresh default-feature and dashboard-free workspace/all-target suites each pass
+**648 tests** (EEF 237 plus one ignored profiler, owner CLI 16, installer 6,
+node library 376, node CLI 13). Fresh default binaries/examples, format/diff,
+JS syntax, frozen scorer and backend/browser source guard pass. Public
+`request-preview-PpY1bW` and `request-review-4YfzHv` pass; chain exit is 0.
+`reference-capture-KaSXp0` verifies the new run's matching reference and refusal
+of substituted/unknown sets, hashes and overwrite without changing evidence.
+`tools/test-interpreter-quality-options.mjs` rejects malformed, duplicate,
+non-sampling and oversized-value arguments before model/config/fixture work.
+No installed node, release, selected model, default or permission was updated.

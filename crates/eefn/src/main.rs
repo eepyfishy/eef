@@ -2728,6 +2728,67 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
     #[test]
+    fn interpreter_sampling_cli_parses_decimals_and_rejects_reset_conflicts() {
+        let argv = [
+            "eefn",
+            "model-lifecycle-policy",
+            "set",
+            "--expected-digest",
+            &"a".repeat(64),
+            "--interpreter-temperature",
+            "1.0",
+            "--interpreter-top-p",
+            "1",
+            "--interpreter-top-k",
+            "20",
+            "--interpreter-min-p",
+            "0",
+            "--interpreter-presence-penalty",
+            "-1.5",
+            "--interpreter-repeat-penalty",
+            "1",
+            "--interpreter-seed",
+            "42",
+        ];
+        let args = Args::try_parse_from(argv).unwrap();
+        let Some(Commands::ModelLifecyclePolicy { command }) = args.command else {
+            panic!("wrong adapter")
+        };
+        let req = eefn::model_lifecycle_policy::PolicyRequest {
+            schema_version: 1,
+            expected_node_id: "owner".into(),
+            expected_runtime_id: None,
+            command: command.command,
+        };
+        req.validate().unwrap();
+        assert_eq!(
+            json!(req.command)["interpreter_sampling"],
+            json!({"temperature_milli":1000,"top_p_milli":1000,
+            "top_k":20,"min_p_milli":0,"presence_penalty_milli":-1500,"repeat_penalty_milli":1000,"seed":42})
+        );
+        for extras in [
+            vec!["--interpreter-temperature", "NaN"],
+            vec!["--interpreter-temperature", "0.1234"],
+            vec!["--interpreter-seed", "4294967295"],
+            vec![
+                "--interpreter-sampling-default",
+                "--interpreter-temperature",
+                "0",
+            ],
+        ] {
+            let digest = "a".repeat(64);
+            let mut argv = vec![
+                "eefn",
+                "model-lifecycle-policy",
+                "set",
+                "--expected-digest",
+                &digest,
+            ];
+            argv.extend(extras);
+            assert!(Args::try_parse_from(argv).is_err());
+        }
+    }
+    #[test]
     fn thinking_mode_cli_uses_explicit_enum_and_preserves_inherit_reset() {
         for mode in ["inherit", "disabled", "enabled"] {
             let args = Args::try_parse_from([

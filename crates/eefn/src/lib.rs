@@ -20,6 +20,7 @@ pub mod firmware;
 pub mod grant_time;
 pub mod grants;
 pub mod interpretation;
+pub mod interpreter_sampling;
 pub mod job_commands;
 pub mod local_commands;
 pub mod model_cli;

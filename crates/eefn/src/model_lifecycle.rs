@@ -208,6 +208,9 @@ impl crate::NodeService {
         if engine.applied_thinking_mode() != policy.thinking_mode {
             bail!("Applied thinking preference does not match the engine; no runtime replacement")
         }
+        if engine.applied_interpreter_sampling() != &policy.interpreter_sampling {
+            bail!("Applied interpreter sampling does not match the engine; no runtime replacement")
+        }
         let (queue, receiver) = mpsc::channel(policy.queue_capacity);
         let runtime = Arc::new(ModelRuntime {
             id,
@@ -1287,6 +1290,46 @@ mod tests {
         assert_eq!(shown["saved_policy"], shown["applied_policy"]);
         assert_eq!(shown["restart_required"], true);
         guard.runtime.close();
+    }
+    #[test]
+    fn unapplied_interpreter_sampling_cannot_replace_the_running_owner() {
+        let (_directory, service, engine, guard) = fixture();
+        let original = guard.runtime.id.clone();
+        let mut policy = guard.policy().clone();
+        policy.interpreter_sampling.temperature_milli = 1000;
+        assert!(
+            service
+                .bind_model_runtime_with_policy(
+                    &engine,
+                    uuid::Uuid::new_v4().to_string(),
+                    policy.clone(),
+                    0
+                )
+                .is_err()
+        );
+        assert_eq!(
+            service.model_runtime.lock().unwrap().as_ref().unwrap().id,
+            original
+        );
+        assert!(!guard.runtime.is_closed());
+        let mut config = service.read_config().unwrap();
+        config["model_lifecycle"] = json!(policy);
+        service.save_config(config).unwrap();
+        let next = Arc::new(
+            crate::NodeEngine::new(false, vec![], std::env::temp_dir())
+                .unwrap()
+                .with_service(service.clone())
+                .with_model_request_preferences(&policy)
+                .unwrap(),
+        );
+        let applied = service
+            .bind_model_runtime(&next, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        assert_eq!(
+            applied.policy().interpreter_sampling.temperature_milli,
+            1000
+        );
+        assert!(guard.runtime.is_closed());
     }
     #[test]
     fn applied_thinking_report_cannot_replace_runtime_with_unapplied_preference() {

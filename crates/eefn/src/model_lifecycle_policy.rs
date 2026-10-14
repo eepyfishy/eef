@@ -51,6 +51,8 @@ pub struct ModelLifecyclePolicy {
     /// Omit inherit to preserve pre-extension policy digests and wire reports.
     #[serde(skip_serializing_if = "ThinkingMode::is_inherit")]
     pub thinking_mode: ThinkingMode,
+    #[serde(skip_serializing_if = "crate::interpreter_sampling::InterpreterSampling::is_default")]
+    pub interpreter_sampling: crate::interpreter_sampling::InterpreterSampling,
 }
 impl Default for ModelLifecyclePolicy {
     fn default() -> Self {
@@ -63,11 +65,13 @@ impl Default for ModelLifecyclePolicy {
             termination_wait_seconds: 5,
             ollama_keep_alive_seconds: None,
             thinking_mode: ThinkingMode::Inherit,
+            interpreter_sampling: Default::default(),
         }
     }
 }
 impl ModelLifecyclePolicy {
     pub fn validate(&self) -> Result<()> {
+        self.interpreter_sampling.validate()?;
         if !(1..=64).contains(&self.queue_capacity)
             || !(1..=4096).contains(&self.receipt_capacity)
             || self.receipt_capacity < self.queue_capacity
@@ -156,6 +160,12 @@ pub enum PolicyCommand {
         #[arg(long, value_enum)]
         #[serde(default, skip_serializing_if = "Option::is_none")]
         thinking_mode: Option<ThinkingMode>,
+        #[command(flatten)]
+        #[serde(
+            default,
+            skip_serializing_if = "crate::interpreter_sampling::SamplingPatch::is_empty"
+        )]
+        interpreter_sampling: crate::interpreter_sampling::SamplingPatch,
     },
 }
 #[derive(Debug, clap::Args)]
@@ -194,6 +204,7 @@ impl PolicyRequest {
             ollama_keep_alive_seconds,
             ollama_keep_alive_default,
             thinking_mode,
+            interpreter_sampling,
         } = &self.command
         {
             if expected_digest.len() != 64
@@ -212,10 +223,12 @@ impl PolicyRequest {
                 && ollama_keep_alive_seconds.is_none()
                 && !ollama_keep_alive_default
                 && thinking_mode.is_none()
+                && interpreter_sampling.is_empty()
             {
                 bail!("Choose at least one lifecycle policy field")
             }
             // Validate scalar choices before consulting/mutating configuration.
+            interpreter_sampling.validate()?;
             if idle_unload_seconds.is_some_and(|n| n > 86400)
                 || queue_capacity.is_some_and(|n| !(1..=64).contains(&n))
                 || receipt_capacity.is_some_and(|n| !(1..=4096).contains(&n))
@@ -244,6 +257,7 @@ impl PolicyCommand {
             ollama_keep_alive_seconds,
             ollama_keep_alive_default,
             thinking_mode,
+            interpreter_sampling,
         } = self
         {
             if *expected_digest != current.versioned_digest(revision)? {
@@ -275,6 +289,7 @@ impl PolicyCommand {
             if let Some(value) = thinking_mode {
                 next.thinking_mode = *value;
             }
+            next.interpreter_sampling = interpreter_sampling.apply(&next.interpreter_sampling)?;
         }
         next.validate()?;
         Ok(next)
@@ -417,6 +432,7 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
         ollama_keep_alive_seconds,
         ollama_keep_alive_default,
         thinking_mode,
+        interpreter_sampling,
         ..
     } = &request.command
     {
@@ -432,6 +448,7 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
                 .is_some_and(|v| Some(v) != r.saved_policy.ollama_keep_alive_seconds)
             || (*ollama_keep_alive_default && r.saved_policy.ollama_keep_alive_seconds.is_some())
             || thinking_mode.is_some_and(|v| v != r.saved_policy.thinking_mode)
+            || !interpreter_sampling.matches(&r.saved_policy.interpreter_sampling)
         {
             return false;
         }
@@ -455,6 +472,7 @@ mod tests {
             ollama_keep_alive_seconds: None,
             ollama_keep_alive_default: false,
             thinking_mode: None,
+            interpreter_sampling: Default::default(),
         }
     }
     fn request(command: PolicyCommand, runtime: Option<String>) -> PolicyRequest {
@@ -601,6 +619,91 @@ mod tests {
             assert!(!confirmed(&bad, &req));
         }
         assert_eq!(service.read_config().unwrap()["unrelated"], "retain");
+    }
+    #[test]
+    fn sampling_only_policy_set_reset_and_report_substitution_are_fenced() {
+        let (_directory, service) = fixture();
+        let before = service
+            .model_lifecycle_policy_command(request(PolicyCommand::Show {}, None), false, true)
+            .unwrap();
+        let command:PolicyCommand=serde_json::from_value(json!({"operation":"set","expected_digest":before["saved_digest"],
+            "interpreter_sampling":{"temperature_milli":1000,"top_p_milli":1000,"top_k":20,"min_p_milli":0,
+                "presence_penalty_milli":2000,"repeat_penalty_milli":1000,"seed":42}})).unwrap();
+        let req = request(command.clone(), None);
+        req.validate().unwrap();
+        let good = service
+            .model_lifecycle_policy_command(req.clone(), false, true)
+            .unwrap();
+        assert!(confirmed(&good, &req));
+        assert_eq!(good["saved_policy"]["interpreter_sampling"]["seed"], 42);
+        assert_eq!(good["applied_policy"], Value::Null);
+        assert_eq!(good["restart_requested"], false);
+        for (key, value) in [
+            ("temperature_milli", json!(0)),
+            ("top_p_milli", json!(500)),
+            ("top_k", json!(40)),
+            ("min_p_milli", json!(100)),
+            ("presence_penalty_milli", json!(0)),
+            ("repeat_penalty_milli", json!(1100)),
+            ("seed", json!(1)),
+        ] {
+            let mut bad = good.clone();
+            bad["saved_policy"]["interpreter_sampling"][key] = value;
+            let substituted: ModelLifecyclePolicy =
+                serde_json::from_value(bad["saved_policy"].clone()).unwrap();
+            bad["saved_digest"] = json!(
+                substituted
+                    .versioned_digest(bad["saved_revision"].as_u64().unwrap())
+                    .unwrap()
+            );
+            assert!(!confirmed(&bad, &req));
+        }
+        assert!(
+            service
+                .model_lifecycle_policy_command(request(command, None), false, true)
+                .is_err()
+        );
+        let reset: PolicyCommand = serde_json::from_value(
+            json!({"operation":"set","expected_digest":good["saved_digest"],
+            "interpreter_sampling":{"reset":true}}),
+        )
+        .unwrap();
+        let req = request(reset, None);
+        let reset = service
+            .model_lifecycle_policy_command(req.clone(), false, true)
+            .unwrap();
+        assert!(confirmed(&reset, &req));
+        assert!(reset["saved_policy"].get("interpreter_sampling").is_none());
+        assert_eq!(service.read_config().unwrap()["unrelated"], "retain");
+    }
+    #[test]
+    fn invalid_sampling_wire_choices_fail_before_config_changes() {
+        let (_directory, service) = fixture();
+        let before = service.read_config().unwrap();
+        let digest = ModelLifecyclePolicy::default().versioned_digest(0).unwrap();
+        for raw in [
+            json!({}),
+            json!({"top_p_milli":0}),
+            json!({"reset":true,"seed":42}),
+            json!({"seed":u32::MAX}),
+        ] {
+            let command = serde_json::from_value(
+                json!({"operation":"set","expected_digest":digest,"interpreter_sampling":raw}),
+            )
+            .unwrap();
+            assert!(
+                service
+                    .model_lifecycle_policy_command(request(command, None), false, true)
+                    .is_err()
+            );
+            assert_eq!(service.read_config().unwrap(), before);
+        }
+        assert!(
+            serde_json::from_value::<PolicyCommand>(
+                json!({"operation":"set","expected_digest":digest,"interpreter_sampling":null})
+            )
+            .is_err()
+        );
     }
     #[test]
     fn ollama_preferences_normalize_legacy_policy_and_enforce_bounds() {

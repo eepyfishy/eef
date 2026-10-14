@@ -40,6 +40,14 @@ It uses the same owner approval, runtime and saved-digest checks. Inherit remain
 the default; this is not proof that a model supports or honored the request.
 Caller/model output cannot override it. See [thinking preferences](MODEL-LIFECYCLE-POLICY.md#thinking-request-preference-unreleased).
 
+Interpreter sampling is also configurable through the policy command: decimal
+`--interpreter-temperature`, `--interpreter-top-p`, `--interpreter-min-p`,
+`--interpreter-presence-penalty`, `--interpreter-repeat-penalty`, integer
+`--interpreter-top-k` and `--interpreter-seed`, or `--interpreter-sampling-default`.
+Defaults remain unchanged. These saved owner choices require explicit restart,
+apply only to interpretation/preparation and never authorize execution. See
+[bounds and wire/default semantics](MODEL-LIFECYCLE-POLICY.md#interpreter-sampling-preferences-unreleased).
+
 `eefn model-lifecycle show|load|unload|cancel` and
 `eef node model-lifecycle --node NODE_ID show|load|unload|cancel` share the running
 node's owned-GGUF service. Load/unload require exact runtime, generation and
