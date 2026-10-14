@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The next unreleased [private invitation recovery command](NODE-CREDENTIALS.md#recover-an-existing-private-invitation-unreleased-after-alpha6)
+exports existing saved exact-node trust without rotation or writes. It honors
+saved revocation even before restart and feeds the existing file-free node pairing
+adapter. That adapter waits on bounded read-only local-runtime initialization
+before its one pairing submission, rather than failing an early startup race.
+This is a resumable setup prerequisite, not automatic first-run
+discovery/provisioning, completed pairing or release acceptance. Both final suites
+pass 682 tests; two logical-node headless recovery/registration/finite-execution
+checks pass locally. The linked credential document records both the retained
+startup failure and scoped final evidence; physical acceptance remains open.
+
 The subsequent [input-channel readiness increment](INPUT-CHANNEL-READINESS.md)
 installs the local receiver before publishing Connected and separately exposes
 unavailable/ready/busy queue observations in status, diagnostics and setup. No

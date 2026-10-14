@@ -756,6 +756,35 @@ mod credential_cli_tests {
             })
         ));
     }
+    #[test]
+    fn credential_export_requires_exact_node_and_endpoint_without_rotation_flags() {
+        let args = [
+            "eef",
+            "credentials",
+            "export",
+            "--node",
+            "stable",
+            "--address",
+            "127.0.0.1:51335",
+        ];
+        assert!(Args::try_parse_from(args).is_ok());
+        for flag in [
+            "--rotate",
+            "--allow",
+            "--permissions",
+            "--execute",
+            "--restart",
+        ] {
+            let mut invalid = args.to_vec();
+            invalid.push(flag);
+            assert!(Args::try_parse_from(invalid).is_err());
+        }
+        for index in [3, 5] {
+            let mut missing = args.to_vec();
+            missing.drain(index..index + 2);
+            assert!(Args::try_parse_from(missing).is_err());
+        }
+    }
 }
 
 async fn owner_automation_exchange(
@@ -1214,13 +1243,36 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             let runtime_id = state["runtime_id"]
                 .as_str()
                 .context("coordinator returned no runtime ID")?;
-            client
+            let response = client
                 .post(format!("{base}/api/commands/credentials"))
                 .json(
                     &json!({"schema_version":1,"expected_runtime_id":runtime_id,"command":command}),
                 )
                 .send()
-                .await?
+                .await?;
+            if let eef::credentials::CredentialCommand::Export { node, address } = command {
+                if !response.status().is_success() {
+                    bail!(
+                        "private invitation export rejected; inspect credentials show. No provisioning, rotation or retry was attempted"
+                    )
+                }
+                let result = eefn::model_manager::bounded_json(response).await
+                    .map_err(|_| anyhow::anyhow!("private invitation export reply unconfirmed; no code was printed or automatically retried"))?;
+                if !eef::credentials::confirmed_export(
+                    &result,
+                    runtime_id,
+                    node,
+                    address,
+                    &state["saved_policy"],
+                    &state["applied_policy"],
+                ) {
+                    bail!(
+                        "private invitation export reply unconfirmed; inspect credentials show. No code was printed or automatically retried"
+                    )
+                }
+                return Ok(result);
+            }
+            response
         }
         Command::Node {
             command: NodeCommand::UpdateStatus { node },

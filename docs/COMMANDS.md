@@ -1234,6 +1234,15 @@ approve work. Lost/substituted replies remain unknown, without fallback/retry;
 inspect `connection show` and diagnostics. The correlation is not a durable
 receipt. See [input, privacy, bounds and setup limits](NODE-CREDENTIALS.md#file-free-invitation-input-unreleased-after-alpha6).
 
+`eef credentials export --node EXISTING_NODE_ID --address REACHABLE_EEF_ENDPOINT
+--json` explicitly recovers a **private** invitation for an already provisioned
+saved identity without rotation, configuration writes or either app's restart.
+It refuses saved revocations, missing identities and missing TLS trust; it never
+auto-provisions. The output can be piped into `eefn connection pair-stdin --json`
+on the same PC without a new secret file. Saved pending trust may still require
+an explicit EEF restart; pairing requests a node restart, not verified connection.
+See [private invitation recovery and remaining setup limits](NODE-CREDENTIALS.md#recover-an-existing-private-invitation-unreleased-after-alpha6).
+
 Saved UI preferences are `dashboard.ui_enabled` on the node and `web.ui_enabled`
 on EEF, both defaulting to true. False hides the browser while keeping commands
 available. Apply saved preferences with the role's restart command. On the node,

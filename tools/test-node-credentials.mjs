@@ -4,6 +4,7 @@ import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
+import {createServer as createHttpServer} from 'node:http';
 import {randomBytes, randomUUID} from 'node:crypto';
 import {reviewedFixture} from './reviewed-fixture.mjs';
 const root = resolve(import.meta.dirname, '..');
@@ -14,14 +15,15 @@ let coordinatorProcess;
 const secret = randomBytes(24).toString('hex');
 const env = {...process.env, EEF_NODE_PSK:'', APPDATA:join(scratch,'appdata'),
   EEF_DISCOVERY_DIR:join(scratch,'discovery'), PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
-function launch(name,args,extra={}) {
-  const child = spawn(join(bin,name+'.exe'),args,{cwd:root,windowsHide:true,env:{...env,...extra},stdio:['ignore','pipe','pipe']});
+function launch(name,args,extra={},input=null) {
+  const child = spawn(join(bin,name+'.exe'),args,{cwd:root,windowsHide:true,env:{...env,...extra},stdio:[input===null?'ignore':'pipe','pipe','pipe']});
+  if(input!==null){child.stdin.on('error',()=>{});child.stdin.end(input);}
   let out='',err='';child.stdout.on('data',b=>out=(out+b).slice(-1048576));child.stderr.on('data',b=>err=(err+b).slice(-1048576));
   child.result=new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>resolve({code,out,err}));});
   children.push(child);return child;
 }
-async function cli(name,config,args,success=true) {
-  const child=launch(name,['--config',config,'--json',...args]);const timer=setTimeout(()=>child.kill(),30000);
+async function cli(name,config,args,success=true,input=null) {
+  const child=launch(name,['--config',config,'--json',...args],{},input);const timer=setTimeout(()=>child.kill(),30000);
   try {const r=await child.result;assert.equal(r.code,success?0:1,r.err);return JSON.parse(r.out);} finally {clearTimeout(timer);}
 }
 const coordinator=(args,success=true)=>cli('eef',eefConfig,args,success);
@@ -45,27 +47,62 @@ try {
     const api=`http://127.0.0.1:${apiPort}`;
     await until(async()=>(await json(api+'/api/status')).node_id===id,'standalone node startup');
     const invitation=await coordinator(['credentials','provision','--node',id,'--address',`127.0.0.1:${gatewayPort}`]);
+    const beforeExport=await readFile(eefConfig);
+    const recovered=await coordinator(['credentials','export','--node',id,'--address',`127.0.0.1:${gatewayPort}`]);
+    assert(recovered.code===invitation.code,'export must preserve the private invitation');assert.equal(recovered.private,true);
+    assert.equal(recovered.changed,false);assert.equal(recovered.restart_required,true);
+    assert.equal(recovered.execution_authorized,false);
+    assert((await readFile(eefConfig)).equals(beforeExport),'private export must not write or rotate credentials');
     const privateFile=join(scratch,name+'-PRIVATE.json');
-    await writeFile(privateFile,name==='b'?Buffer.concat([Buffer.from([0xff,0xfe]),Buffer.from(JSON.stringify(invitation),'utf16le')]):'\ufeff'+JSON.stringify(invitation));
+    if(name==='b') await writeFile(privateFile,Buffer.concat([Buffer.from([0xff,0xfe]),Buffer.from(JSON.stringify(invitation),'utf16le')]));
     assert.equal(invitation.private,true);assert.equal(invitation.restart_required,true);
-    const decoded=JSON.parse(Buffer.from(invitation.code,'base64'));assert.equal(decoded.node_id,id);assert.notEqual(decoded.psk,secret);
+    const decoded=JSON.parse(Buffer.from(invitation.code,'base64'));assert.equal(decoded.node_id,id);assert(decoded.psk!==secret,'node secret must differ from legacy key');
     assert.equal(decoded.schema_version,2);assert.equal(typeof decoded.coordinator_certificate,'string');assert(!('private_key' in decoded));
-    nodes.push({id,config,api,privateFile,credential:decoded.psk,certificate:decoded.coordinator_certificate});
+    nodes.push({id,config,api,privateFile,pipe:name==='a',credential:decoded.psk,certificate:decoded.coordinator_certificate});
   }
-  assert.notEqual(nodes[0].credential,nodes[1].credential);
+  assert(nodes[0].credential!==nodes[1].credential,'node credentials must be independent');
   assert.equal(nodes[0].certificate,nodes[1].certificate,'persistent coordinator identity must not change per node');
   const show=await coordinator(['credentials','show']);assert.equal(show.saved_policy.identities.length,2);assert.equal(show.applied_policy.identities.length,0);
   for(const node of nodes) assert(!JSON.stringify(show).includes(node.credential));
   const previous=(await coordinator(['diagnostics'])).runtime_id;
   await coordinator(['restart']);
   await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==previous,'apply provisioned credentials');
+  const credentialRuntime=(await coordinator(['diagnostics'])).runtime_id;
+  const exportBody={schema_version:1,expected_runtime_id:credentialRuntime,
+    command:{operation:'export',node:nodes[0].id,address:`127.0.0.1:${gatewayPort}`}};
+  const beforeRejectedExport=await readFile(eefConfig);
+  for (const [body,expectedStatus] of [
+    [{...exportBody,expected_runtime_id:previous},400],
+    [{...exportBody,command:{...exportBody.command,rotate:true}},422],
+    [{...exportBody,command:{...exportBody.command,node:'missing-node'}},400],
+  ]) {
+    const response=await fetch(base+'/api/commands/credentials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    assert.equal(response.status,expectedStatus);
+    const text=await response.text();
+    for (const node of nodes) assert(!text.includes(node.credential),'rejected exports must not return a credential');
+  }
+  const crossSite=await fetch(base+'/api/commands/credentials',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(exportBody)});
+  assert.equal(crossSite.status,403);
+  assert((await readFile(eefConfig)).equals(beforeRejectedExport),'rejected export must not write');
   for(const node of nodes) {
-    const report=await cli('eefn',node.config,['connection','pair','--code-file',node.privateFile]);
+    const reportExport=await coordinator(['credentials','export','--node',node.id,'--address',`127.0.0.1:${gatewayPort}`]);
+    assert.equal(reportExport.changed,false);assert.equal(reportExport.restart_required,false);
+    const exported=JSON.parse(Buffer.from(reportExport.code,'base64'));
+    assert(exported.psk===node.credential,'export must not rotate');assert.equal(exported.coordinator_certificate,node.certificate);
+    // Simulate a lost invitation: pair from the fresh export, not the provisioning reply.
+    let report;
+    if(node.pipe) {
+      report=await cli('eefn',node.config,['connection','pair-stdin'],true,JSON.stringify(reportExport));
+      await assert.rejects(readFile(node.privateFile),{code:'ENOENT'},'file-free recovery must not create an invitation file');
+    } else {
+      await writeFile(node.privateFile,Buffer.concat([Buffer.from([0xff,0xfe]),Buffer.from(JSON.stringify(reportExport),'utf16le')]));
+      report=await cli('eefn',node.config,['connection','pair','--code-file',node.privateFile]);
+    }
     assert.equal(report.saved_auth_mode,'node_credential');assert.equal(report.restart_requested,true);
     assert(!JSON.stringify(report).includes(node.credential));
     await until(async()=>(await json(node.api+'/api/status')).connection?.state==='connected','credential node connected');
     const config=JSON.parse(await readFile(node.config,'utf8'));
-    assert.equal(config.node_id,node.id);assert.equal(config.psk,node.credential);assert.equal(config.auth_mode,'node_credential');
+    assert.equal(config.node_id,node.id);assert(config.psk===node.credential,'pairing must save the exact private credential');assert.equal(config.auth_mode,'node_credential');
     assert.equal(config.coordinator_certificate,node.certificate);
     assert.equal((await json(node.api+'/api/status')).connection.transport,'pinned_tls13');
     assert.equal(config.custom.preserve,true);assert.equal(config.permissions.remote_updates,false);assert.equal(config.auto_local,false);
@@ -139,6 +176,9 @@ try {
   assert.equal((await coordinator(['credentials','show'])).saved_policy.allow_legacy,false);
   await coordinator(['invite','--address',`127.0.0.1:${gatewayPort}`],false);
   await coordinator(['credentials','revoke','--node',nodes[0].id]);
+  const savedRevocation=await readFile(eefConfig);
+  await coordinator(['credentials','export','--node',nodes[0].id,'--address',`127.0.0.1:${gatewayPort}`],false);
+  assert((await readFile(eefConfig)).equals(savedRevocation),'export cannot restore a saved revocation even before restart');
   assert.equal((await coordinator(['diagnostics','--node',nodes[0].id,'--samples','1'])).passed,1,'saved revocation is not immediate');
   old=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
   await until(async()=>{const d=await coordinator(['diagnostics']);return d.runtime_id!==old&&d.registered_node_count===1;},'revocation applied');
@@ -147,13 +187,40 @@ try {
   await coordinator(['credentials','provision','--node',nodes[0].id,'--address',`127.0.0.1:${gatewayPort}`],false);
   // Re-provision is explicit rotation, followed by independent restart/pairing.
   const rotated=await coordinator(['credentials','provision','--node',nodes[0].id,'--address',`127.0.0.1:${gatewayPort}`,'--rotate']);
-  const decoded=JSON.parse(Buffer.from(rotated.code,'base64'));assert.notEqual(decoded.psk,nodes[0].credential);
+  const decoded=JSON.parse(Buffer.from(rotated.code,'base64'));assert(decoded.psk!==nodes[0].credential,'explicit rotation must change the private credential');
   assert.equal(decoded.coordinator_certificate,nodes[0].certificate,'credential rotation must not replace coordinator trust');
   await writeFile(nodes[0].privateFile,JSON.stringify(rotated));
   old=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
   await until(async()=>(await coordinator(['diagnostics'])).runtime_id!==old,'rotation apply');
   await cli('eefn',nodes[0].config,['connection','pair','--code-file',nodes[0].privateFile]);
   await until(async()=>(await coordinator(['diagnostics'])).registered_node_count===2,'rotated node reconnect');
+
+  // A private-export adapter may print only the exact confirmed private report.
+  // This loopback mock tests reply substitution, not coordinator authentication.
+  const goodExport=await coordinator(['credentials','export','--node',nodes[0].id,'--address',`127.0.0.1:${gatewayPort}`]);
+  const state=await coordinator(['credentials','show']);
+  let mockReply=goodExport;
+  const mock=createHttpServer((req,res)=>{
+    res.setHeader('Content-Type','application/json');
+    if(req.url!=='/api/commands/credentials'){res.writeHead(404);res.end('{}');return;}
+    req.resume();res.end(JSON.stringify(req.method==='GET'?state:mockReply));
+  });
+  await new Promise(resolve=>mock.listen(0,'127.0.0.1',resolve));
+  try {
+    const mockConfig=join(scratch,'mock-export.yaml');
+    await writeFile(mockConfig,`web:\n  host: 127.0.0.1\n  port: ${mock.address().port}\n`);
+    assert((await cli('eef',mockConfig,['credentials','export','--node',nodes[0].id,'--address',`127.0.0.1:${gatewayPort}`])).code===goodExport.code,'confirmed private export must pass unchanged');
+    for(const [field,value] of [
+      ['runtime_id',randomUUID()],['changed',true],['execution_authorized',true],
+      ['unexpected_secret',decoded.psk],['note',goodExport.code],
+    ]) {
+      mockReply={...goodExport,[field]:value};
+      const rejected=await cli('eef',mockConfig,['credentials','export','--node',nodes[0].id,'--address',`127.0.0.1:${gatewayPort}`],false);
+      assert(!JSON.stringify(rejected).includes(goodExport.code));
+      assert(!JSON.stringify(rejected).includes(decoded.psk));
+      assert(!('code' in rejected));
+    }
+  } finally {await new Promise(resolve=>mock.close(resolve));}
   const results={passed:true,command_pairing:true,two_independent_credentials:true,legacy_disable:true,revocation_and_rotation:true,
     model_free_structured_review:true,
     redacted_inspection:true,generic_save_preserves_policy:true,node_id_and_permissions_preserved:true,physical_two_pc:false,
@@ -161,6 +228,9 @@ try {
   results.pinned_tls13=true;results.persistent_coordinator_identity=true;
   results.credential_only_boot_without_legacy_secret=true;results.invalid_legacy_reenable_rejected_atomically=true;
   results.non_model_dispatch_and_rejected_constraints=true;
+  results.private_export_without_rotation=true;results.export_saved_revocation_and_runtime_guards=true;
+  results.export_to_file_free_pairing=true;
+  results.export_cli_substituted_reply_redaction=true;
   await writeFile(join(scratch,'results.json'),JSON.stringify(results,null,2));console.log('Node credential validation passed: '+scratch);
 } finally {
   for(const child of children)if(child.exitCode===null)child.kill();

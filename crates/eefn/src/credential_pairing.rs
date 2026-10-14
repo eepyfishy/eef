@@ -8,6 +8,73 @@ pub const MAX_INPUT_BYTES: usize = 128 * 1024;
 pub const MAX_CODE_BYTES: usize = 4096;
 const PAIRING_NOTE: &str = "Private invitation saved; node app restart requested, not verified. Connection-enabled preference and feature permissions are unchanged. Inspect connection and coordinator registration; no model or workload readiness is claimed.";
 
+/// Startup may expose the local owner API before runtime initialization finishes.
+/// Poll only read-only diagnostics; never submit/replay pairing while waiting.
+pub async fn wait_for_runtime(
+    client: &reqwest::Client,
+    address: std::net::SocketAddr,
+    node: &str,
+) -> Result<String> {
+    wait_for_runtime_bounded(client, address, node, std::time::Duration::from_secs(15)).await
+}
+
+async fn wait_for_runtime_bounded(
+    client: &reqwest::Client,
+    address: std::net::SocketAddr,
+    node: &str,
+    budget: std::time::Duration,
+) -> Result<String> {
+    if !address.ip().is_loopback() || address.port() == 0 {
+        bail!("pairing readiness requires the node's local owner API")
+    }
+    crate::network::validate_remote_node_id(node)?;
+    let inspection = async {
+        loop {
+            let response = client
+                .get(format!("http://{address}/api/diagnostics"))
+                .send()
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "local pairing diagnostics unavailable; no pairing command was sent"
+                    )
+                })?;
+            if !response.status().is_success() {
+                bail!("local pairing diagnostics rejected; no pairing command was sent")
+            }
+            let value = crate::model_manager::bounded_json(response)
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!(
+                        "local pairing diagnostics unconfirmed; no pairing command was sent"
+                    )
+                })?;
+            if value["schema_version"] != 1
+                || value["success"] != true
+                || value["node_id"] != node
+                || value["report_type"] != "node_diagnostics"
+                || value.get("runtime_id").is_none()
+            {
+                bail!(
+                    "local pairing diagnostics do not match this node; no pairing command was sent"
+                )
+            }
+            if let Some(runtime) = value["runtime_id"].as_str() {
+                if uuid::Uuid::parse_str(runtime).map_or(true, |id| id.is_nil()) {
+                    bail!("local pairing runtime unconfirmed; no pairing command was sent")
+                }
+                return Ok(runtime.to_owned());
+            }
+            if !value["runtime_id"].is_null() {
+                bail!("local pairing runtime unconfirmed; no pairing command was sent")
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    };
+    tokio::time::timeout(budget, inspection).await
+        .map_err(|_| anyhow::anyhow!("node runtime is still starting; inspect eefn setup before pairing again. No pairing command was sent"))?
+}
+
 /// CLI/file adapter decoding only; it does not establish identity or authority.
 pub fn input_code(bytes: &[u8]) -> Result<String> {
     if bytes.len() > MAX_INPUT_BYTES {
@@ -216,6 +283,88 @@ impl crate::NodeService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn startup_wait_polls_only_diagnostics_and_fails_closed_before_pairing() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let runtime = uuid::Uuid::new_v4().to_string();
+        let base = json!({"schema_version":1,"success":true,"node_id":"stable",
+            "report_type":"node_diagnostics","runtime_id":runtime});
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        for case in [
+            "becomes_ready",
+            "never_ready",
+            "wrong_node",
+            "missing_runtime",
+            "invalid_runtime",
+            "nil_runtime",
+        ] {
+            let gets = Arc::new(AtomicUsize::new(0));
+            let posts = Arc::new(AtomicUsize::new(0));
+            let read_count = gets.clone();
+            let write_count = posts.clone();
+            let report = base.clone();
+            let router = axum::Router::new()
+                .route(
+                    "/api/diagnostics",
+                    axum::routing::get(move || {
+                        let count = read_count.fetch_add(1, Ordering::SeqCst);
+                        let mut value = report.clone();
+                        match case {
+                            "becomes_ready" if count == 0 => value["runtime_id"] = Value::Null,
+                            "never_ready" => value["runtime_id"] = Value::Null,
+                            "wrong_node" => value["node_id"] = json!("other"),
+                            "missing_runtime" => {
+                                value.as_object_mut().unwrap().remove("runtime_id");
+                            }
+                            "invalid_runtime" => value["runtime_id"] = json!("PRIVATE-invalid"),
+                            "nil_runtime" => {
+                                value["runtime_id"] = json!(uuid::Uuid::nil().to_string())
+                            }
+                            _ => {}
+                        }
+                        async move { axum::Json(value) }
+                    }),
+                )
+                .route(
+                    "/api/commands/connection/pair",
+                    axum::routing::post(move || {
+                        write_count.fetch_add(1, Ordering::SeqCst);
+                        async { axum::Json(json!({"unexpected":true})) }
+                    }),
+                );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, router).await.unwrap();
+            });
+            let result = wait_for_runtime_bounded(
+                &client,
+                address,
+                "stable",
+                std::time::Duration::from_millis(350),
+            )
+            .await;
+            server.abort();
+            if case == "becomes_ready" {
+                assert_eq!(result.unwrap(), runtime);
+                assert_eq!(gets.load(Ordering::SeqCst), 2);
+            } else {
+                let error = result.unwrap_err().to_string();
+                assert!(!error.contains("PRIVATE"));
+                if case != "never_ready" {
+                    assert_eq!(gets.load(Ordering::SeqCst), 1);
+                }
+            }
+            assert_eq!(posts.load(Ordering::SeqCst), 0);
+        }
+    }
     fn make_invitation(node: &str) -> (String, Value) {
         let identity = crate::tls::CoordinatorIdentity::generate().unwrap();
         let value = json!({"schema_version":2,"node_id":node,"address":"127.0.0.1:51335",

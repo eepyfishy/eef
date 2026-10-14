@@ -1157,25 +1157,12 @@ async fn execute_stdin_pairing(args: &Args) -> Result<serde_json::Value> {
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(15))
         .build()?;
-    let diagnostics = client
-        .get(format!("http://{address}/api/diagnostics"))
-        .send()
-        .await?
-        .error_for_status()?;
-    let before = eefn::model_manager::bounded_json(diagnostics).await?;
-    if before["success"] != true
-        || before["node_id"] != file.node_id
-        || before["report_type"] != "node_diagnostics"
-    {
-        bail!("local pairing diagnostics do not match this node")
-    }
+    let runtime =
+        eefn::credential_pairing::wait_for_runtime(&client, address, &file.node_id).await?;
     let request = PairRequest {
         schema_version: 1,
         expected_node_id: file.node_id,
-        expected_runtime_id: before["runtime_id"]
-            .as_str()
-            .context("local pairing runtime unavailable")?
-            .into(),
+        expected_runtime_id: runtime,
         request_id: uuid::Uuid::new_v4().to_string(),
         code,
     };

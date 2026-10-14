@@ -44,7 +44,53 @@ including PowerShell redirected JSON output or a raw base64 invitation.
 The file is a reusable **secret**, not encryption or a one-time/expiring token.
 Do not post it in issues, public repos or diagnostics, or put the code in shell
 arguments. Keep only protected copies. Lost provisioning replies are not retried:
-inspect `credentials show` and explicitly rotate if a new private code is needed.
+inspect `credentials show`. New development builds can recover an existing
+invitation with the explicit private export below, without credential rotation.
+
+## Recover an existing private invitation (unreleased after alpha.6)
+
+```powershell
+eef credentials export --node EXISTING_NODE_ID --address REACHABLE_EEF_ENDPOINT --json
+```
+
+This owner-only command exports the **saved** exact-node credential and saved
+public TLS certificate. It never provisions, rotates, generates trust, writes
+configuration, restarts either role, resumes a paused node, grants permissions,
+downloads models or submits work. Unknown/revoked identities and missing TLS
+identity fail closed. A saved revocation blocks export even while an older
+applied session is still accepted until coordinator restart.
+
+`changed: false` means no save. `restart_required` compares the whole saved and
+applied authentication policies; an exported invitation may need a previously
+pending explicit EEF restart before it can connect. Export does not confirm that
+the requested endpoint is reachable, the node possesses this invitation, or
+registration is complete. The address is validated without probing and can be
+changed in the exported invitation without editing the coordinator policy.
+
+The CLI confirms the exact bounded report, current runtime, chosen node/endpoint,
+strict invitation and saved certificate fingerprint before printing a code. Saved
+and applied summaries must match its preceding inspection; a concurrent owner
+change may require a fresh explicit inspection/export. Extra fields, substituted
+prose or stale replies are unconfirmed rather than printed. Export errors never
+echo arbitrary server bodies. No automatic retry or mutation fallback occurs.
+
+The response deliberately includes a private reusable `code`, just like
+provisioning. It is not an expiring enrollment ticket. Never paste output into
+public logs or use a shell secret argument. For both roles running on the same
+PC, an owner can pipe the private report directly into the running node:
+
+```powershell
+eef credentials export --node EXISTING_NODE_ID --address REACHABLE_EEF_ENDPOINT --json | eefn connection pair-stdin --json
+```
+
+Only the final node pairing report is public; the intermediate credential passes
+through the pipe without a new invitation file. Pairing still requests a node
+app restart and applies other pending node settings. Inspect diagnostics and
+connection afterward; a pipe is not a transaction across the two apps. If export
+fails, pairing receives no valid invitation and does not recover by provisioning,
+rotation or legacy fallback. Lost pairing replies remain unconfirmed and must be
+inspected before another explicit pairing/restart. The full automatic first-run
+discovery/provision/apply flow, no-port setup and physical acceptance remain open.
 
 ## File-free invitation input (unreleased after alpha.6)
 
@@ -57,6 +103,17 @@ Input is limited to 128 KiB; the extracted code is limited to 4,096 bytes.
 No intermediate invitation file is created. The credential still persists in
 the node's existing configuration/backup, as with file pairing; this is not a
 secret-erasure or protected-storage guarantee.
+
+Before submitting pairing, this adapter waits at most 15 seconds for the running
+node's local runtime ID when valid diagnostics explicitly report `runtime_id:
+null` during initialization. It polls read-only diagnostics at 100 ms intervals;
+it never submits or retries a pairing operation during this wait. A wrong node,
+missing/malformed runtime field, invalid UUID, HTTP/decoding error or timeout
+fails before submission. Readiness remains a snapshot: the pairing command still
+checks the exact expected runtime at save time. This does not wait for coordinator
+connection, model quality or workload readiness, and does not start another node.
+The 15-second stdin deadline, readiness deadline and final HTTP deadline are
+separate bounds, not a single 15-second end-to-end guarantee.
 
 Clients can submit a private body directly to the local owner API:
 
@@ -205,7 +262,7 @@ side effects stopped. No job or remote mutation is automatically replayed.
   stale leader or stop a remote side effect. Those grant/ownership gates remain.
 - Credential status/configuration responses redact node keys and the coordinator
   private key. The certificate and fingerprint are public. Only an explicit
-  provisioning operation returns a private code. Generic coordinator settings
+  provisioning or existing-credential export operation returns a private code. Generic coordinator settings
   saves preserve the latest credential policy under its existing config lock;
   dedicated owner commands manage it. Remote node settings cannot change its
   identity/key/authentication mode/certificate, and automatic local pairing never replaces
@@ -222,3 +279,38 @@ exercise exact-pin rejection, same/cross-session record replay, TLS 1.2/ALPN den
 large fragmented streams, coalesced selector/ClientHello read-ahead and shutdown
 during incomplete handshakes. This TLS certificate is **not Windows code signing**
 and does not resolve installer Defender detections.
+
+## Private recovery validation checkpoint
+
+Final source passes `cargo test --workspace --all-targets --locked --offline`
+both with default features and with `--no-default-features`: **682 passed and one
+ignored in each configuration** (EEF library 241, EEF CLI 17, installer 6, node
+library 405, node CLI 13). Fresh default executables/examples build, formatting,
+diff checks, fixture JavaScript syntax and the backend/browser dependency source
+check also pass. The source check is not a runtime/UI acceptance claim.
+
+`tools/test-node-credentials.mjs` passes against those fresh binaries, with local
+evidence in `.validation/node-credentials-T9gv3N/results.json`. It uses two logical
+nodes on one PC, no model or installed-node changes. It verifies existing saved
+invitation export before/after explicit coordinator restart, unchanged config
+bytes and credentials, file-free pairing from an export, the other node's UTF-16
+file adapter, stale-runtime/extra-authority/cross-site rejection, saved revocation
+before restart, explicit rotation, pinned TLS registration and reviewed finite
+non-model execution. A separate loopback mock verifies that the CLI prints only
+a confirmed export and does not echo substituted secret fields/prose. That mock
+is response-validation evidence, not a transport authentication test.
+
+The earlier local fixture `.validation/node-credentials-gBLFAa` failed because
+the node API responded before runtime initialization. Its node A config still
+had no credential or endpoint; no pairing save occurred. That failed evidence is
+retained, not repaired or replaced. The adapter now waits on bounded read-only
+diagnostics before its single pairing submission; the final fixture passed
+without adding a startup delay to hide the race. Unit cases cover readiness,
+timeout, wrong node, absent/malformed/nil runtime and zero pairing submissions
+during inspection. This wait does not retry a submitted pairing operation.
+
+This checkpoint does **not** close automatic first-run discovery/provision/apply,
+default interpreter quality/bootstrap, physical two-PC acceptance, direct peers,
+continuous media, strong stop, clustering, MSI/install/update acceptance or
+Defender/code-signing validation. It adds no durable pairing receipt or public
+release, and changes neither installed nor remote apps.
