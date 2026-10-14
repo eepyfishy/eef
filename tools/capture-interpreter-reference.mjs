@@ -5,7 +5,7 @@ import {createReadStream} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {resolve,join,sep} from 'node:path';
-import {cases} from './interpreter-quality-cases.mjs';
+import {caseSet} from './interpreter-generalization-cases.mjs';
 
 assert(process.argv.length===4,'Supply the binary directory and existing quality fixture directory.');
 const root=resolve(import.meta.dirname,'..'),bin=await realpath(resolve(process.argv[2]));
@@ -15,6 +15,8 @@ const report=JSON.parse(await readFile(join(fixture,'results.json'),'utf8'));
 assert(report.schema_version===1&&report.rubric_version===1&&report.harness_completed===true&&report.api_only===true
  &&report.coordinator_started===false&&report.real_cpu_interpretation===true&&report.model_downloads===false&&report.model_copies===false);
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
+const {cases}=caseSet(report.case_set);
+assert.equal(sha(JSON.stringify(cases)),report.rubric_sha256,'Case set differs from evaluation.');
 async function fileSha(path){const hash=createHash('sha256');for await(const bytes of createReadStream(path))hash.update(bytes);return hash.digest('hex');}
 assert.equal(await fileSha(join(bin,'eefn.exe')),report.node_binary_sha256,'Node binary differs from evaluation.');
 const helper=join(bin,'examples','interpretation_fixture.exe');

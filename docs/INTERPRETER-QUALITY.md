@@ -29,6 +29,24 @@ token-budget change. It is a request hint, not proof that the backend honored it
 Compare runs at the same prompt, rubric and bounds; never infer model quality from
 a useful short generation or from reasoning-mode support alone.
 
+`EEF_TEST_QUALITY_SUITE=original-v1|generalization-v1` selects a fixed case set;
+omission retains the original twenty inputs/expectations and their SHA. The
+additional twenty cases in `tools/interpreter-generalization-cases.mjs` were
+defined before their first model evaluation, after the latest candidate prompt
+was written. They vary wording/languages, finite observations, ongoing relay/
+monitoring, missing resources/attachments/history and authority overrides. The
+fixture supplies no feed, attachment or prior-task context. This is additional
+development evidence, **not independent human review or a default-approval gate**.
+Neither case set executes the requests. The same unchanged grader is used.
+
+New reports record `case_set` and the exact case-list SHA. Private reference
+capture selects only these known sets and verifies the case SHA before emitting
+the matching shared Rust prompt. Older reports without a set ID mean original-v1.
+`tools/test-interpreter-reference.mjs BINARY_DIR COMPLETED_QUALITY_FIXTURE` tests
+capture against a fresh metadata-only scratch copy: matching capture, unknown/
+substituted case sets, corrupted hashes and exclusive output refusal. It leaves
+the original evaluation unchanged and performs no inference or execution.
+
 The API-only fixture disables coordinator connections, uses CPU-only GGUF
 inference, and sends twenty fixed synthetic inputs. It verifies unchanged saved
 configuration, no downloads, no workload and zero successful connections. It
@@ -259,3 +277,45 @@ format/diff, JS syntax, fixed-rubric checks and backend/browser source guard pas
 Public `request-preview-Hh1NRT` and `request-review-dgaZ97` pass with chain exit 0.
 No installed app, physical node, shared model store, release artifact, automatic
 update selection or default interpreter was changed. Stable 0.4.0 remains open.
+
+## Rejected definition-only prompt and additional cases, 2026-10-14
+
+The next candidate replaced the filled example object with field/decision
+definitions, distinguished clarification from authorization, requested faithful
+user-language goals and explained that a reference to this node is not a missing
+node name. It did not change message roles/input, schema, limits or validator.
+`interpreter-quality-BsQoNO` evaluates it with the same Qwen 3.5 artifact, disabled
+thinking hint and original twenty cases: **12/20 accepted, 0/20 matching**.
+Startup is 4,441 ms; owned model peak working-set sample is 1,244,704,768 bytes.
+System prompt SHA is
+`4f6fe275b8bf980f198fb3051cde048de1c6af638333f3f854ec13364a6a2351`;
+the full private message reference and binary hashes remain in that fixture.
+The candidate and its candidate-specific unit test were **restored to f01a099**.
+No unsuccessful prompt change is retained in production.
+
+Before reading that run's output, twenty additional development inputs and their
+expected labels were defined in `generalization-v1`. With the restored production
+prompt, `interpreter-quality-O2LRKu` completes with **14/20 accepted, 7/20 matching**,
+startup 4,278 ms and owned model peak working-set sample 1,289,216,000 bytes.
+Its case-list SHA is
+`bba9b21940e00c46dd31db02f01ae2c3e5d44c8785d0142022ba3f78ab924174`;
+the system SHA returns to the retained
+`56ec36c9a3b47393458479c216924d4d0b156aae31b80a1f5c2a1380ccd8ca5c`.
+Thread count remains unspecified; these are not resource-limit or total-RAM proofs.
+The weak generalization result reinforces **not default-approved**, rather than
+providing independent held-out human/physical acceptance.
+
+Retained work is limited to fixed case-set selection/recording and reference
+verification. `reference-capture-gRBbvY` passes matching capture, unknown and
+known-but-substituted case-set refusal, corrupted case-hash refusal and exclusive
+output preservation in a fresh metadata-only scratch copy. The original evaluation
+is unchanged. Existing reports without a set ID retain original-v1 interpretation;
+the original case-list SHA, scorer and expected answers are unchanged.
+
+All production Rust/config files have no diff from f01a099. Restored interpreter
+unit tests pass **7/7**, and the production node/reference helper rebuild succeeds.
+JS syntax, both case-set scorer checks, diff and backend/browser source guard pass.
+The preceding 638-test workspace suites were not rerun for this tooling-only
+checkpoint. No installed node/model, release, bootstrap default or execution
+authorization changes. A stronger candidate/method and investigation of backend
+template/generation behavior remain next quality work; the full roadmap stays open.

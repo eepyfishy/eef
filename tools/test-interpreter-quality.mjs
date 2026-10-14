@@ -9,7 +9,9 @@ import {promisify} from 'node:util';
 import {createServer} from 'node:net';
 import {resolve,join} from 'node:path';
 import {cpus,totalmem} from 'node:os';
-import {cases,grade,rubricVersion} from './interpreter-quality-cases.mjs';
+import {grade,rubricVersion} from './interpreter-quality-cases.mjs';
+import {caseSet} from './interpreter-generalization-cases.mjs';
+const selectedCases=caseSet(process.env.EEF_TEST_QUALITY_SUITE),cases=selectedCases.cases;
 
 assert(process.argv[2]&&process.env.EEF_TEST_MODEL_FILE,
  'Pass the runtime bundle and set EEF_TEST_MODEL_FILE to an existing catalog artifact. No downloads supported.');
@@ -69,7 +71,7 @@ async function sample(nodeProcess){
   return stdout.trim()?JSON.parse(stdout):null;
  }catch{return null;}
 }
-const report={schema_version:1,rubric_version:rubricVersion,candidate:entry.id,bytes:entry.bytes,sha256:entry.sha256,
+const report={schema_version:1,rubric_version:rubricVersion,case_set:selectedCases.id,candidate:entry.id,bytes:entry.bytes,sha256:entry.sha256,
  rubric_sha256:createHash('sha256').update(JSON.stringify(cases)).digest('hex'),
  runtime_sha256:runtimeHash,node_binary_sha256:nodeHash,real_cpu_interpretation:true,model_downloads:false,model_copies:false,
  api_only:true,coordinator_started:false,physical_two_pc:false,context_tokens:4096,gpu_layers:0,output_token_limit:512,thinking_mode:thinkingMode,

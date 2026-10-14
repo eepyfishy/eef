@@ -121,6 +121,13 @@ public preview/review regressions pass. Stronger quality/held-out/physical evide
 and automatic verified bootstrap remain required; no model, node or release update
 is implied, and the complete roadmap scope remains unchanged.
 
+Another definition-only prompt trial on the optional 0.8B candidate regresses to
+zero matches and is restored completely. An additional case set frozen before
+its first evaluation scores only 7/20 with the restored production prompt.
+Known-case-set/hash checks and metadata-only reference capture tests are retained;
+no model/prompt default or production behavior changes. These [negative results](INTERPRETER-QUALITY.md#rejected-definition-only-prompt-and-additional-cases-2026-10-14)
+do not close interpreter/bootstrap or independent physical acceptance.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It

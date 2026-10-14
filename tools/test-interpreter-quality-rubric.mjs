@@ -2,9 +2,15 @@
 // meaningful only after the production node accepted the proposal contract.
 import assert from 'node:assert/strict';
 import {cases,grade,rubricVersion} from './interpreter-quality-cases.mjs';
+import {cases as generalizationCases,caseSet} from './interpreter-generalization-cases.mjs';
 assert.equal(rubricVersion,1);assert.equal(cases.length,20);
 assert.equal(new Set(cases.map(c=>c.id)).size,cases.length);
-for(const item of cases){
+assert.equal(generalizationCases.length,20);
+assert.equal(new Set(generalizationCases.map(c=>c.id)).size,20);
+assert.equal(caseSet().cases,cases);assert.equal(caseSet('original-v1').cases,cases);
+assert.equal(caseSet('generalization-v1').cases,generalizationCases);
+for(const bad of [null,'',false,'outside-path'])assert.throws(()=>caseSet(bad));
+for(const item of [...cases,...generalizationCases]){
  assert(item.input.trim()&&Buffer.byteLength(item.input)<=32768);
  const proposal={intent:item.intents[0],workload:item.workloads[0],needs_clarification:item.clarification,
   suggested_capabilities:item.capabilities||[]};
