@@ -31,6 +31,18 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The following unreleased [feature-permission commands](FEATURE-PERMISSIONS.md)
+expose whole-feature allow/deny/inspection through the same node services and
+current owner-approved coordinator channel. Legacy scopes/limits survive,
+stale runtime/digest and revoked remote approval reject writes, and saving is
+separate from applying or authorizing work. This improves command-based setup;
+it does not finish first-run automation, media availability, strong Stop or
+physical/versioned release acceptance. Both final suites pass 674 tests; the
+headless public acceptance observes real reviewed file work and 254 ms contained
+native cleanup on permission loss. A startup-wait fixture failure is retained,
+and the existing connected-before-mailbox publication window remains a separate
+reliability follow-up, as recorded in the linked document.
+
 The unreleased [plain-language setup check](SETUP-CHECK.md) explains the running
 node's connection, private receipt configuration, saved/applied interpreter and
 pending settings through one shared command service. It uses the actual

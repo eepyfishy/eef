@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Inspect or explicitly allow/deny whole features; never execute or restart.
+    Permissions {
+        #[command(subcommand)]
+        command: eefn::permission_commands::PermissionAction,
+    },
     /// Explain this running node's setup and next steps; never change settings or run work.
     Setup {},
     /// Author source-bound disabled automations; does not start timers or work.
@@ -1407,6 +1412,102 @@ enum NetworkAction {
     },
 }
 
+async fn execute_permission_command(
+    args: &Args,
+    action: &eefn::permission_commands::PermissionAction,
+) -> Result<serde_json::Value> {
+    use eefn::permission_commands::{PermissionAction, PermissionCommand, PermissionRequest};
+    use serde_json::json;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start this node first; permission commands do not launch a runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    let mut sending_mutation = false;
+    let mutation_requested = !matches!(action, PermissionAction::Show {});
+    let result = async {
+        let state = eefn::model_manager::bounded_json(
+            client
+                .get(format!("http://{address}/api/diagnostics"))
+                .send()
+                .await?
+                .error_for_status()?,
+        )
+        .await?;
+        if state["schema_version"] != 1
+            || state["report_type"] != "node_diagnostics"
+            || state["success"] != true
+            || state["node_id"] != file.node_id
+        {
+            bail!("Unconfirmed node diagnostics")
+        }
+        let mut request = PermissionRequest {
+            schema_version: 1,
+            expected_node_id: file.node_id.clone(),
+            expected_runtime_id: state["runtime_id"]
+                .as_str()
+                .context("Node runtime unavailable")?
+                .into(),
+            command: PermissionCommand::Show {},
+        };
+        request.validate()?;
+        let url = format!("http://{address}/api/commands/permissions");
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Permission inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::permission_commands::confirmed(&inspected, &request) {
+            bail!("Unconfirmed permission inspection")
+        }
+        let (feature, enabled) = match action {
+            PermissionAction::Show {} => return Ok(inspected),
+            PermissionAction::Allow { feature } => (*feature, true),
+            PermissionAction::Deny { feature } => (*feature, false),
+        };
+        request.command = PermissionCommand::Set {
+            feature,
+            enabled,
+            expected_digest: inspected["saved_digest"]
+                .as_str()
+                .context("Missing permission digest")?
+                .into(),
+        };
+        request.validate()?;
+        sending_mutation = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Permission save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::permission_commands::confirmed(&saved, &request) {
+            bail!("Unconfirmed permission save")
+        }
+        Ok::<_, anyhow::Error>(saved)
+    }
+    .await;
+    let success = result.is_ok();
+    Ok(
+        json!({"schema_version":1,"report_type":"local_permission_command","success":success,"node_id":file.node_id,
+        "mutation_requested":mutation_requested,"sending_attempted":sending_mutation,"outcome_unknown":!success && sending_mutation,
+        "result":result.ok(),"error_code":if success {None::<&str>} else {Some("permission_reply_unconfirmed")},
+        "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "note":"Inspect permissions show after uncertainty; no fallback, automatic retry, restart or workload was sent."}),
+    )
+}
+
 async fn execute_setup_check(args: &Args) -> Result<serde_json::Value> {
     if eefn::setup::instance_lock(&args.config)?.is_some() {
         bail!("Start this node first; setup inspection never launches a node")
@@ -1469,6 +1570,9 @@ async fn execute_setup_check(args: &Args) -> Result<serde_json::Value> {
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Permissions { command } = command {
+        return execute_permission_command(args, command).await;
+    }
     if matches!(command, Commands::Setup {}) {
         return execute_setup_check(args).await;
     }
@@ -2109,6 +2213,14 @@ async fn main() -> Result<()> {
                     println!("{}", serde_json::to_string(&value)?);
                 } else if matches!(command, Commands::Setup {}) {
                     print!("{}", eefn::setup_check::render(&value)?);
+                } else if matches!(command, Commands::Permissions { .. }) {
+                    if value["success"] == true {
+                        print!("{}", eefn::permission_commands::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Permission outcome was not confirmed. Inspect `eefn permissions show` before deciding what to do. No automatic retry, restart or workload was sent."
+                        );
+                    }
                 } else if value.get("nodes").is_some() || value.get("report_type").is_some() {
                     println!("{}", serde_json::to_string_pretty(&value)?);
                 } else {

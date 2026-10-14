@@ -181,6 +181,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
         .route("/api/commands/node/restart", post(node_restart))
         .route("/api/commands/node/models", post(node_models))
         .route(
+            "/api/commands/node/permissions",
+            post(node_permissions).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/commands/node/model-lifecycle",
             post(node_model_lifecycle),
         )
@@ -404,6 +408,15 @@ async fn node_model_lifecycle(
         crate::node_control::model_lifecycle(&runtime.node_server, request).await?,
     ))
 }
+async fn node_permissions(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::node_control::PermissionRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_control::permissions(&runtime.node_server, request).await?,
+    ))
+}
+
 async fn node_model_lifecycle_policy(
     State(runtime): State<Arc<Runtime>>,
     Json(request): Json<eefn::model_lifecycle_policy::PolicyRequest>,

@@ -99,6 +99,13 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum NodeCommand {
+    /// Inspect or allow/deny whole node features with current local node-owner approval.
+    Permissions {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eefn::permission_commands::PermissionAction,
+    },
     /// Read the installed update selector without downloading, applying or restarting.
     UpdateStatus {
         #[arg(long)]
@@ -817,6 +824,68 @@ async fn owner_automation_exchange(
         "note":"Private automation checkpoints only, never timers or execution. Inspect the exact receipt after uncertainty. No new receipt, fallback or automatic retry."})
 }
 
+async fn remote_permissions_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eefn::permission_commands::PermissionAction,
+) -> Result<serde_json::Value> {
+    use eef::node_control::{PermissionCommand, PermissionRequest};
+    use eefn::permission_commands::PermissionAction;
+    use serde_json::json;
+    eefn::network::validate_remote_node_id(node)?;
+    let mut sending_mutation = false;
+    let mutation_requested = !matches!(action, PermissionAction::Show {});
+    let exchange = async {
+        let url = format!("{base}/api/commands/node/permissions");
+        let mut request = PermissionRequest {
+            schema_version: 1,
+            node_id: node.into(),
+            command: PermissionCommand::Show {},
+        };
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Permission inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_control::confirmed_permissions(&inspected, &request) {
+            bail!("Unconfirmed permission inspection")
+        }
+        let (feature, enabled) = match action {
+            PermissionAction::Show {} => return Ok(inspected),
+            PermissionAction::Allow { feature } => (*feature, true),
+            PermissionAction::Deny { feature } => (*feature, false),
+        };
+        request.command = PermissionCommand::Set {
+            feature,
+            enabled,
+            expected_runtime_id: inspected["result"]["runtime_id"]
+                .as_str()
+                .context("Missing node runtime")?
+                .into(),
+            expected_digest: inspected["result"]["saved_digest"]
+                .as_str()
+                .context("Missing permission digest")?
+                .into(),
+        };
+        sending_mutation = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Permission save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_control::confirmed_permissions(&saved, &request) {
+            bail!("Unconfirmed permission save")
+        }
+        Ok::<_, anyhow::Error>(saved)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"remote_permission_command","success":false,"node_id":node,
+        "mutation_requested":mutation_requested,"sending_attempted":sending_mutation,"outcome_unknown":sending_mutation,
+        "error_code":"permission_reply_unconfirmed","result":null,"execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "note":"Inspect the exact node's permissions before deciding what to do. No generic save, retry, restart or workload was sent."})))
+}
+
 async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value> {
     use serde_json::json;
     let config = eef::config::Config::load(Some(&args.config))?;
@@ -1287,6 +1356,11 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 .send().await?
         }
         Command::Node {
+            command: NodeCommand::Permissions { node, command },
+        } => {
+            return remote_permissions_cli(&client, &base, node, command).await;
+        }
+        Command::Node {
             command: NodeCommand::ModelLifecycle { node, command },
         } => {
             let request = eefn::model_lifecycle::LifecycleRequest {
@@ -1499,14 +1573,31 @@ async fn main() -> Result<()> {
                         "Private request/plan report: may contain user text, task inputs and target bindings; do not publish it in reports or issues."
                     );
                 }
-                println!(
-                    "{}",
-                    if args.json {
-                        serde_json::to_string(&value)?
+                if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::Permissions { .. }
+                        }
+                    )
+                {
+                    if value["success"] == true {
+                        print!("{}", eefn::permission_commands::render(&value["result"])?);
                     } else {
-                        serde_json::to_string_pretty(&value)?
+                        println!(
+                            "Permission outcome was not confirmed. Inspect this node's permissions before deciding what to do. No retry, fallback, restart or workload was sent."
+                        );
                     }
-                );
+                } else {
+                    println!(
+                        "{}",
+                        if args.json {
+                            serde_json::to_string(&value)?
+                        } else {
+                            serde_json::to_string_pretty(&value)?
+                        }
+                    );
+                }
                 if value["success"].as_bool() == Some(false) {
                     bail!(
                         "command did not complete successfully; inspect the result before retrying"

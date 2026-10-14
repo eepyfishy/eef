@@ -6,6 +6,14 @@ Older v0.4.0a installers do not contain them.
 
 ## Plain-language setup inspection (unreleased after alpha.6)
 
+Whole-feature permission commands are also shared backend services:
+`eefn permissions show`, `eefn permissions allow FEATURE`, and
+`eefn permissions deny FEATURE`; approved coordinator adapters use
+`eef node permissions --node NODE_ID ...`. No per-object allowlists, generic
+JSON save, automatic restart or workload is sent. Existing scopes/limits survive;
+explicit `allow` widens only the chosen feature. See [authority, saved/applied
+state and remaining scope](FEATURE-PERMISSIONS.md).
+
 `eefn setup` explains the running node's connection, private receipt support,
 saved/applied interpreter choices and next steps without JSON or port numbers.
 `eefn --json setup` exposes the same shared backend report for clients. Inspection

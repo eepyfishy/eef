@@ -784,6 +784,18 @@ impl NodeService {
             .and_then(Value::as_bool)
             == Some(true);
         match action {
+            "permission_command" => self.permission_command(serde_json::from_value(params)?, true),
+            "permission_status" => {
+                let request: crate::permission_commands::PermissionRequest =
+                    serde_json::from_value(params)?;
+                if !matches!(
+                    request.command,
+                    crate::permission_commands::PermissionCommand::Show {}
+                ) {
+                    bail!("Reserved permission status action mismatch")
+                }
+                self.permission_command(request, true)
+            }
             "model_lifecycle_policy" => {
                 self.model_lifecycle_policy_command(serde_json::from_value(params)?, true, false)
             }

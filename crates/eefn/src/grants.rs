@@ -1393,6 +1393,76 @@ pub(crate) mod tests {
             .is_err()
         ); // A different session is denied too.
     }
+    #[tokio::test]
+    async fn typed_feature_denial_rejects_prepared_work_without_restart_or_effects() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("node.json");
+        let policy: crate::NodePolicy = serde_json::from_value(
+            json!({"filesystem":{"write":true},"full_access":["filesystem.write"]}),
+        )
+        .unwrap();
+        std::fs::write(
+            &config,
+            serde_json::to_vec(&json!({"node_id":"owner","permissions":policy})).unwrap(),
+        )
+        .unwrap();
+        let service = crate::NodeService::new(config, "owner".into());
+        let engine = Arc::new(
+            engine(dir.path())
+                .with_policy(policy)
+                .unwrap()
+                .with_service(service.clone()),
+        );
+        let runtime = uuid::Uuid::new_v4().to_string();
+        service.live.lock().unwrap()["runtime_id"] = json!(runtime);
+        let _binding = service.attach_preview_runtime(&engine, runtime.clone());
+        let ledger =
+            GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner")
+                .unwrap();
+        let mut g = grant();
+        let effect = dir.path().join("must-not-exist.txt");
+        g.capability = "filesystem".into();
+        g.action = "write".into();
+        g.params = json!({"path":effect,"content":"not allowed after denial"});
+        let prepared = AcceptedGrant::prepare(
+            g.clone(),
+            ledger.clone(),
+            &engine,
+            &g.issuer_id,
+            &g.session_id,
+            "owner",
+        )
+        .unwrap();
+        let request = crate::permission_commands::PermissionRequest {
+            schema_version: 1,
+            expected_node_id: "owner".into(),
+            expected_runtime_id: runtime,
+            command: crate::permission_commands::PermissionCommand::Show {},
+        };
+        let inspected = service.permission_command(request.clone(), false).unwrap();
+        let denied = service
+            .permission_command(
+                crate::permission_commands::PermissionRequest {
+                    command: crate::permission_commands::PermissionCommand::Set {
+                        feature: crate::permission_commands::Feature::FilesystemWrite,
+                        enabled: false,
+                        expected_digest: inspected["saved_digest"].as_str().unwrap().into(),
+                    },
+                    ..request
+                },
+                false,
+            )
+            .unwrap();
+        assert_eq!(denied["restart_requested"], false);
+        let report = prepared.run(&engine).await;
+        assert_eq!(report.state, ReceiptState::Unknown);
+        assert!(!effect.exists());
+        assert!(
+            !service.read_config().unwrap()["permissions"]["filesystem"]["write"]
+                .as_bool()
+                .unwrap()
+        );
+    }
     #[test]
     fn corrupt_journal_is_not_recreated_and_canonical_digest_is_stable() {
         let dir = tempfile::tempdir().unwrap();

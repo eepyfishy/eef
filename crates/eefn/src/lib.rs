@@ -36,6 +36,7 @@ mod model_response;
 pub mod model_selection;
 pub mod model_server;
 pub mod network;
+pub mod permission_commands;
 pub mod pipeline;
 mod pipeline_runtime;
 mod process_lifetime;

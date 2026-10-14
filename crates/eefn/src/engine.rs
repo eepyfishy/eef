@@ -283,6 +283,10 @@ impl NodeEngine {
         Ok(self)
     }
 
+    pub(crate) fn applied_permissions(&self) -> &NodePolicy {
+        &self.policy
+    }
+
     pub fn with_resources(
         mut self,
         owner: String,
@@ -1560,25 +1564,26 @@ fn grant_policy_scope(policy: &NodePolicy, capability: &str, action: &str, secti
     json!({"scope":scope,"full_access":policy.unrestricted(&full)})
 }
 fn normalize_policy(mut policy: NodePolicy) -> Result<NodePolicy> {
-    policy.filesystem.roots = policy
-        .filesystem
-        .roots
-        .into_iter()
-        .map(|root| {
-            let normalized = normalize_path(&root)?;
-            normalized.canonicalize().with_context(|| {
-                format!(
-                    "filesystem root '{}' must already exist",
-                    normalized.display()
-                )
+    let scoped_filesystem = (policy.filesystem.read && !policy.unrestricted("filesystem.read"))
+        || (policy.filesystem.write && !policy.unrestricted("filesystem.write"));
+    if scoped_filesystem {
+        policy.filesystem.roots = policy
+            .filesystem
+            .roots
+            .into_iter()
+            .map(|root| {
+                let normalized = normalize_path(&root)?;
+                normalized.canonicalize().with_context(|| {
+                    format!(
+                        "filesystem root '{}' must already exist",
+                        normalized.display()
+                    )
+                })
             })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    if ((policy.filesystem.read && !policy.unrestricted("filesystem.read"))
-        || (policy.filesystem.write && !policy.unrestricted("filesystem.write")))
-        && policy.filesystem.roots.is_empty()
-    {
-        bail!("filesystem permissions require at least one explicit root")
+            .collect::<Result<Vec<_>>>()?;
+        if policy.filesystem.roots.is_empty() {
+            bail!("filesystem permissions require at least one explicit root")
+        }
     }
     policy.filesystem.max_read_bytes = policy
         .filesystem
@@ -1595,13 +1600,15 @@ fn normalize_policy(mut policy: NodePolicy) -> Result<NodePolicy> {
     {
         bail!("process execution requires a non-empty executable allowlist")
     }
-    for executable in &policy.process.allowed_executables {
-        let path = Path::new(executable);
-        if !path.is_absolute() || !path.is_file() {
-            bail!(
-                "allowed process executable '{}' must be an existing absolute file",
-                path.display()
-            )
+    if policy.process.enabled && !policy.unrestricted("process.exec") {
+        for executable in &policy.process.allowed_executables {
+            let path = Path::new(executable);
+            if !path.is_absolute() || !path.is_file() {
+                bail!(
+                    "allowed process executable '{}' must be an existing absolute file",
+                    path.display()
+                )
+            }
         }
     }
     policy.process.max_seconds = policy.process.max_seconds.clamp(1, 3_600);
@@ -1615,13 +1622,15 @@ fn normalize_policy(mut policy: NodePolicy) -> Result<NodePolicy> {
     {
         bail!("application control requires a non-empty application allowlist")
     }
-    for executable in &policy.applications.allowed {
-        let path = Path::new(executable);
-        if !path.is_absolute() || !path.is_file() {
-            bail!(
-                "allowed application '{}' must be an existing absolute file",
-                path.display()
-            )
+    if policy.applications.enabled && !policy.unrestricted("application.control") {
+        for executable in &policy.applications.allowed {
+            let path = Path::new(executable);
+            if !path.is_absolute() || !path.is_file() {
+                bail!(
+                    "allowed application '{}' must be an existing absolute file",
+                    path.display()
+                )
+            }
         }
     }
     if policy.http.enabled

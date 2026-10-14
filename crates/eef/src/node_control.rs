@@ -85,6 +85,176 @@ pub struct ModelsRequest {
 pub async fn models(server: &eefn::NodeServer, request: ModelsRequest) -> Result<Value> {
     models_on(server, request).await
 }
+
+#[derive(Clone, Debug, serde::Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PermissionCommand {
+    Show {},
+    Set {
+        feature: eefn::permission_commands::Feature,
+        enabled: bool,
+        expected_runtime_id: String,
+        expected_digest: String,
+    },
+}
+#[derive(Clone, Debug, serde::Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionRequest {
+    pub schema_version: u32,
+    pub node_id: String,
+    pub command: PermissionCommand,
+}
+
+pub fn confirmed_permissions(value: &Value, request: &PermissionRequest) -> bool {
+    const FIELDS: &[&str] = &[
+        "schema_version",
+        "report_type",
+        "node_id",
+        "command",
+        "success",
+        "mutation_requested",
+        "outcome_unknown",
+        "sending_attempted",
+        "result",
+        "execution_authorized",
+        "restart_requested",
+        "automatically_retried",
+    ];
+    let mutation = matches!(request.command, PermissionCommand::Set { .. });
+    if request.schema_version != 1
+        || eefn::network::validate_remote_node_id(&request.node_id).is_err()
+        || value.as_object().is_none_or(|object| {
+            object.len() != FIELDS.len() || FIELDS.iter().any(|field| !object.contains_key(*field))
+        })
+        || value["schema_version"] != 1
+        || value["report_type"] != "remote_permission_command"
+        || value["node_id"] != request.node_id
+        || value["command"] != json!(request.command)
+        || value["success"] != true
+        || value["mutation_requested"] != mutation
+        || value["outcome_unknown"] != false
+        || value["sending_attempted"] != mutation
+        || value["execution_authorized"] != false
+        || value["restart_requested"] != false
+        || value["automatically_retried"] != false
+    {
+        return false;
+    }
+    let (runtime, command) = match &request.command {
+        PermissionCommand::Show {} => {
+            let Some(runtime) = value["result"]["runtime_id"].as_str() else {
+                return false;
+            };
+            (
+                runtime.to_owned(),
+                eefn::permission_commands::PermissionCommand::Show {},
+            )
+        }
+        PermissionCommand::Set {
+            feature,
+            enabled,
+            expected_runtime_id,
+            expected_digest,
+        } => (
+            expected_runtime_id.clone(),
+            eefn::permission_commands::PermissionCommand::Set {
+                feature: *feature,
+                enabled: *enabled,
+                expected_digest: expected_digest.clone(),
+            },
+        ),
+    };
+    eefn::permission_commands::confirmed(
+        &value["result"],
+        &eefn::permission_commands::PermissionRequest {
+            schema_version: 1,
+            expected_node_id: request.node_id.clone(),
+            expected_runtime_id: runtime,
+            command,
+        },
+    )
+}
+
+pub async fn permissions(server: &eefn::NodeServer, request: PermissionRequest) -> Result<Value> {
+    use eefn::permission_commands as p;
+    eefn::network::validate_remote_node_id(&request.node_id)?;
+    if request.schema_version != 1 {
+        bail!("Unsupported remote permission schema")
+    }
+    let mutation = matches!(request.command, PermissionCommand::Set { .. });
+    let mut result = json!({"schema_version":1,"report_type":"remote_permission_command","node_id":request.node_id,
+        "command":request.command,"success":false,"mutation_requested":mutation,"outcome_unknown":false,
+        "sending_attempted":false,"result":null,"execution_authorized":false,"restart_requested":false,"automatically_retried":false});
+    let (runtime, command) = match &request.command {
+        PermissionCommand::Show {} => {
+            let status = server
+                .invoke_remote(
+                    &request.node_id,
+                    "node.configure",
+                    "status",
+                    json!({}),
+                    Duration::from_secs(5),
+                )
+                .await;
+            let Ok(status) = status else {
+                return Ok(result);
+            };
+            if !control_status(&status, &request.node_id) {
+                return Ok(result);
+            }
+            (
+                status["data"]["runtime_id"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("Missing node runtime"))?
+                    .to_owned(),
+                p::PermissionCommand::Show {},
+            )
+        }
+        PermissionCommand::Set {
+            feature,
+            enabled,
+            expected_runtime_id,
+            expected_digest,
+        } => (
+            expected_runtime_id.clone(),
+            p::PermissionCommand::Set {
+                feature: *feature,
+                enabled: *enabled,
+                expected_digest: expected_digest.clone(),
+            },
+        ),
+    };
+    let node_request = p::PermissionRequest {
+        schema_version: 1,
+        expected_node_id: request.node_id,
+        expected_runtime_id: runtime,
+        command,
+    };
+    node_request.validate()?;
+    result["sending_attempted"] = json!(mutation);
+    result["outcome_unknown"] = json!(mutation);
+    let reply = server
+        .invoke_remote(
+            &node_request.expected_node_id,
+            "node.configure",
+            if mutation {
+                "permission_command"
+            } else {
+                "permission_status"
+            },
+            serde_json::to_value(&node_request)?,
+            Duration::from_secs(10),
+        )
+        .await;
+    if let Ok(reply) = reply {
+        if reply["success"] == true && p::confirmed(&reply["data"], &node_request) {
+            result["success"] = json!(true);
+            result["outcome_unknown"] = json!(false);
+            result["result"] = reply["data"].clone();
+        }
+    }
+    Ok(result)
+}
 pub async fn model_lifecycle(
     server: &eefn::NodeServer,
     request: eefn::model_lifecycle::LifecycleRequest,
@@ -411,6 +581,49 @@ fn not_started_busy(reply: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remote_permission_wrapper_checks_exact_targets_and_rejects_outer_or_inner_authority_claims()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        std::fs::write(&path, b"{\"node_id\":\"owner\",\"permissions\":{}}").unwrap();
+        let core = eefn::NodeService::new(path, "owner".into());
+        let engine =
+            std::sync::Arc::new(eefn::NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        let runtime = uuid::Uuid::new_v4().to_string();
+        core.live.lock().unwrap()["runtime_id"] = json!(runtime);
+        let _guard = core.attach_preview_runtime(&engine, runtime.clone());
+        let request = PermissionRequest {
+            schema_version: 1,
+            node_id: "owner".into(),
+            command: PermissionCommand::Show {},
+        };
+        let node_request = eefn::permission_commands::PermissionRequest {
+            schema_version: 1,
+            expected_node_id: "owner".into(),
+            expected_runtime_id: runtime,
+            command: eefn::permission_commands::PermissionCommand::Show {},
+        };
+        let actual = core.permission_command(node_request, false).unwrap();
+        let value = json!({"schema_version":1,"report_type":"remote_permission_command","node_id":"owner","command":request.command,
+            "success":true,"mutation_requested":false,"outcome_unknown":false,"sending_attempted":false,"result":actual,
+            "execution_authorized":false,"restart_requested":false,"automatically_retried":false});
+        assert!(confirmed_permissions(&value, &request));
+        for (field, invalid) in [
+            ("node_id", json!("other")),
+            ("execution_authorized", json!(true)),
+            ("sending_attempted", json!(true)),
+            ("outcome_unknown", json!(true)),
+            ("unknown", json!("PRIVATE")),
+        ] {
+            let mut bad = value.clone();
+            bad[field] = invalid;
+            assert!(!confirmed_permissions(&bad, &request));
+        }
+        let mut bad = value;
+        bad["result"]["restart_requested"] = json!(true);
+        assert!(!confirmed_permissions(&bad, &request));
+    }
     use std::{collections::VecDeque, sync::Mutex};
     struct Fake(Mutex<VecDeque<(&'static str, Option<Value>)>>);
     struct ModelFake(Mutex<VecDeque<(&'static str, Option<Value>)>>);

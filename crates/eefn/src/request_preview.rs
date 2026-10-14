@@ -805,6 +805,27 @@ impl NodeService {
         Some((value.runtime_id.clone(), engine.interpreter_candidates()))
     }
 
+    /// Hold the existing runtime binding through a synchronous owner edit.
+    /// Retirement/replacement cannot silently substitute a new engine.
+    pub(crate) fn with_permission_runtime<T>(
+        &self,
+        expected: &str,
+        inspect: impl FnOnce(&NodeEngine) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let binding = self.preview.binding.lock().unwrap();
+        let bound = binding
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Node runtime unavailable"))?;
+        if bound.runtime_id != expected {
+            anyhow::bail!("Node permission runtime changed")
+        }
+        let engine = bound
+            .engine
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("Node runtime unavailable"))?;
+        inspect(&engine)
+    }
+
     pub(crate) fn input_workflow_permit(
         &self,
     ) -> Result<tokio::sync::OwnedSemaphorePermit, &'static str> {

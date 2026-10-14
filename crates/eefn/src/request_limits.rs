@@ -54,6 +54,7 @@ impl RequestBudget {
                         | "model_lifecycle_status"
                         | "model_lifecycle_cancel"
                         | "model_lifecycle_policy_status"
+                        | "permission_status"
                 ));
         let pool = if control { &self.control } else { &self.work };
         pool.clone().try_acquire_owned().ok()
@@ -149,11 +150,19 @@ mod tests {
             ("http.request", "send"),
             ("node.configure", "install"),
             ("node.configure", "save"),
+            ("node.configure", "permission_command"),
             ("node.update", "install"),
             ("system.info", "run"),
         ] {
             assert!(budget.admit(capability, action).is_none());
         }
+        let status = budget.admit("node.configure", "permission_status").unwrap();
+        assert!(
+            budget
+                .admit("node.configure", "permission_command")
+                .is_none()
+        );
+        drop(status);
         let ping = budget.admit("system.ping", "run").unwrap();
         assert!(budget.admit_receipt().is_none());
         assert!(budget.admit("node.configure", "restart").is_none());
