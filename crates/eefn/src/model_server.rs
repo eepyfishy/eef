@@ -317,6 +317,41 @@ mod advertisement_tests {
         server
     }
     #[tokio::test]
+    async fn snapshots_distinguish_missing_job_from_observed_owned_resources() {
+        let server = resident_server();
+        let before = server.snapshot().unwrap();
+        let first = before[0].clone();
+        #[cfg(windows)]
+        {
+            assert_eq!(first["job_accounting"]["state"], "available");
+            assert!(
+                first["job_accounting"]["peak_job_commit_bytes"]
+                    .as_u64()
+                    .unwrap()
+                    > 0
+            );
+            assert_eq!(
+                first["job_accounting"]["job_commit_limit_bytes"],
+                Value::Null
+            );
+        }
+        #[cfg(not(windows))]
+        assert_eq!(first["job_accounting"]["state"], "unsupported");
+        assert_eq!(
+            server.snapshot().unwrap()[0]["generation"],
+            first["generation"]
+        );
+        assert_eq!(
+            server.snapshot().unwrap()[0]["owned_pid"],
+            first["owned_pid"]
+        );
+        server.stop().await;
+        assert_eq!(
+            server.snapshot().unwrap()[0]["job_accounting"],
+            json!({"state":"no_owned_job"})
+        );
+    }
+    #[tokio::test]
     async fn inference_pins_block_unload_and_close_fences_old_pins_and_late_loads() {
         let server = resident_server();
         let one = server.pin(Some("owned-model")).unwrap();
@@ -464,7 +499,26 @@ mod advertisement_tests {
         assert!(unload.await.is_err());
         assert!(checked.load(std::sync::atomic::Ordering::SeqCst));
         server.release_control("owned-model", &id);
-        assert_eq!(server.snapshot().unwrap(), before);
+        let mut after = server.snapshot().unwrap();
+        let mut before = before;
+        for rows in [&mut before, &mut after] {
+            // A denied mutation preserves residency, not the counters of a
+            // running process. Validate observations separately from state.
+            let accounting = rows[0]
+                .as_object_mut()
+                .unwrap()
+                .remove("job_accounting")
+                .unwrap();
+            let sample: crate::job_accounting::JobAccounting =
+                serde_json::from_value(accounting).unwrap();
+            assert!(sample.validate());
+            #[cfg(windows)]
+            assert!(matches!(
+                sample,
+                crate::job_accounting::JobAccounting::Available { .. }
+            ));
+        }
+        assert_eq!(after, before);
         assert!(server.pin(Some("owned-model")).is_ok());
         server.close();
     }
@@ -869,10 +923,26 @@ impl ModelServer {
         self.initialize_residency()?;
         let gate = self.residency.lock().unwrap();
         let processes = self.processes.lock().unwrap();
-        let mut records=self.slots.iter().map(|slot| {
-            let s=&gate.slots[&slot.model_id];json!({"model_id":slot.model_id,"state":s.state,"generation":s.generation,"active_requests":s.active,
-                "control_pending":s.control.is_some(),"owned_pid":processes.get(&slot.model_id).and_then(|p|p.child.id())})
-        }).collect::<Vec<_>>();
+        let mut records = self
+            .slots
+            .iter()
+            .map(|slot| {
+                let state = &gate.slots[&slot.model_id];
+                let owned = processes.get(&slot.model_id);
+                let accounting = owned
+                    .map(|process| process._tree.accounting())
+                    .unwrap_or(crate::job_accounting::JobAccounting::NoOwnedJob {});
+                json!({
+                    "model_id": slot.model_id,
+                    "state": state.state,
+                    "generation": state.generation,
+                    "active_requests": state.active,
+                    "control_pending": state.control.is_some(),
+                    "owned_pid": owned.and_then(|process| process.child.id()),
+                    "job_accounting": accounting,
+                })
+            })
+            .collect::<Vec<_>>();
         records.sort_by(|a, b| a["model_id"].as_str().cmp(&b["model_id"].as_str()));
         Ok(records)
     }

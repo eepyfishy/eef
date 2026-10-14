@@ -61,6 +61,12 @@ operation UUID; acceptance is queued, not completion. Active inference blocks
 unload, cancellation targets only one load, and exact receipt reuse never replays.
 Remote mutations require current node-owner management approval. No model files
 are deleted, no model is selected/downloaded and no inference is authorized.
+
+Lifecycle Show also returns scoped owned-job accounting when available: observed
+job-commit ceiling, peak commit, active process count and cumulative CPU ticks.
+Missing/unsupported/failed observations are explicit, never zero estimates.
+See [states, units and limits](OWNED-JOB-ACCOUNTING.md); these are not RAM/VRAM
+quotas, readiness evidence or permission to execute.
 Ollama is not controlled by this increment. See [commands, bounds and remaining
 lifecycle work](MODEL-LIFECYCLE.md).
 

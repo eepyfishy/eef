@@ -18,6 +18,15 @@ const proxy=createHttpServer(async(req,res)=>{
   let body='';for await(const chunk of req)body+=chunk;
   const response=await fetch(node+req.url,{method:'POST',headers:{'Content-Type':'application/json'},body,signal:AbortSignal.timeout(10000)});
   const value=await response.json();
+  if(proxyMode.startsWith('accounting-')){
+   if(proxyMode==='accounting-legacy')for(const slot of value.models)delete slot.job_accounting;
+   else if(proxyMode==='accounting-extra')value.models[0].job_accounting={state:'unavailable',peak_job_commit_bytes:0};
+   else if(proxyMode==='accounting-limit')value.models[0].job_accounting={state:'available',job_commit_limit_bytes:0,
+    peak_job_commit_bytes:1,active_processes:1,total_user_cpu_100ns:0,total_kernel_cpu_100ns:0};
+   else if(proxyMode==='accounting-missing')value.models[0].job_accounting={state:'available',
+    peak_job_commit_bytes:1,active_processes:1,total_user_cpu_100ns:0,total_kernel_cpu_100ns:0};
+   res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));
+  }
   if(proxyMode==='corrupt'){value.runtime_id=randomUUID();res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='negative'){res.writeHead(503);return res.end('{}');}
   res.destroy();
@@ -56,12 +65,33 @@ try {
  let old=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==old,'apply pin');await local(['connection','resume']);
  await until(async()=>{const rows=(await show()).models;return (await json(node+'/api/status')).execution_grants.available&&rows.length===2&&rows.every(m=>m.state==='ready');},'selected owned models ready');
  const initial=await show();runtime=initial.runtime_id;const a=model(initial,'a'),b=model(initial,'b');assert(a.owned_pid&&b.owned_pid);
+ // Read-only adapter validation cannot silently turn malformed metrics into
+ // valid zero usage. Older nodes may omit the additive field entirely.
+ for(const transport of ['accounting-extra','accounting-limit','accounting-missing','accounting-legacy']){
+  const marker=nodeConfig+'.api.json',original=await readFile(marker,'utf8'),endpoint=JSON.parse(original);
+  endpoint.address=`127.0.0.1:${proxyPort}`;proxyMode=transport;const calls=proxyCalls;
+  await writeFile(marker,JSON.stringify(endpoint));
+  try{
+   const reply=await local(['model-lifecycle','show'],transport==='accounting-legacy');
+   if(transport==='accounting-legacy')assert.equal(reply.result.models[0].job_accounting,undefined);
+   else assert.equal(reply.success,false);
+   assert.equal(proxyCalls,calls+1,'read-only adapter must not retry or fallback');
+  }finally{await writeFile(marker,original);}
+  const unchanged=model(await show(),'a');assert.equal(unchanged.owned_pid,a.owned_pid);assert.equal(unchanged.generation,a.generation);
+ }
+ if(process.platform==='win32'){
+  for(const slot of [a,b]){assert.equal(slot.job_accounting.state,'available');assert.equal(slot.job_accounting.job_commit_limit_bytes,null);
+   assert(slot.job_accounting.peak_job_commit_bytes>0);assert(slot.job_accounting.active_processes>=1);
+   assert(Number.isSafeInteger(slot.job_accounting.total_user_cpu_100ns));assert(Number.isSafeInteger(slot.job_accounting.total_kernel_cpu_100ns));}
+  const observed=await show(undefined,true);assert.equal(model(observed,'a').owned_pid,a.owned_pid);assert.equal(model(observed,'a').generation,a.generation);
+ }
  const denied=await control('unload','a',a.generation,randomUUID(),true,false);assert.equal(denied.success,false);assert.equal(model(await show(),'a').owned_pid,a.owned_pid);
  const saved=(await json(node+'/api/config')).config;saved.management.allow_remote=true;await json(node+'/api/config',{config:saved},'PUT');
  const unloadId=randomUUID();await control('unload','a',a.generation,unloadId,true);await until(async()=>(await show(unloadId)).receipt.phase==='completed','targeted unload');
  assert.equal(model(await show(),'a').state,'unloaded');assert.equal(model(await show(),'b').owned_pid,b.owned_pid);assert.equal((await show()).runtime_id,runtime);
  assert.equal((await control('unload','a',a.generation,unloadId,true)).result.reused,true);
- const unloaded=model(await show(),'a'),loadId=randomUUID();await control('load','a',unloaded.generation,loadId);await until(async()=>(await show(loadId)).receipt.phase==='completed','explicit targeted reload');
+ const unloaded=model(await show(),'a');assert.deepEqual(unloaded.job_accounting,{state:'no_owned_job'});
+ const loadId=randomUUID();await control('load','a',unloaded.generation,loadId);await until(async()=>(await show(loadId)).receipt.phase==='completed','explicit targeted reload');
  const reloaded=model(await show(),'a');assert.notEqual(reloaded.owned_pid,a.owned_pid);assert.equal(model(await show(),'b').owned_pid,b.owned_pid);
  assert.equal((await control('unload','a',a.generation,unloadId,true)).result.reused,true);assert.equal(model(await show(),'a').owned_pid,reloaded.owned_pid,'historical unload cannot kill replacement');
  // Fault injection changes only this fixture's private endpoint marker.
@@ -112,7 +142,8 @@ try {
  const oldRuntime=runtime;await local(['restart']);await until(async()=>(await json(node+'/api/diagnostics')).runtime_id!==oldRuntime,'runtime owner closes');
  await local(['model-lifecycle','--runtime',oldRuntime,'load','--model','a','--generation',String(cold.generation),'--operation-id',cancelledLoad],false);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,no_ui_controller:true,pinned_tls:true,physical_two_pc:false,real_model_inference:false,synthetic_backend:true,
-  exact_remote_owner_approval:true,targeted_unload_and_reload_no_sibling_or_node_restart:true,historical_receipt_no_replay:true,active_inference_pin_blocks_unload:true,control_status_during_work_saturation:true,warm_idle_on_pin_release:true,
+  exact_remote_owner_approval:true,owned_job_observation_without_restart:true,malformed_job_accounting_reply_rejected:true,legacy_missing_job_accounting_accepted:true,
+  targeted_unload_and_reload_no_sibling_or_node_restart:true,historical_receipt_no_replay:true,active_inference_pin_blocks_unload:true,control_status_during_work_saturation:true,warm_idle_on_pin_release:true,
   explicit_partial_load_cancellation:true,closed_old_runtime_refuses_replay:true,selected_model_files_not_deleted:true,lost_corrupt_negative_unsupported_reply_no_retry_or_fallback:true,queued_mutation_rechecks_revoked_owner_approval:true},null,2));
  console.log('Model lifecycle validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;

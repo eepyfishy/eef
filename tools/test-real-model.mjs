@@ -145,11 +145,20 @@ try{
  const lifecycle=async(operation)=>(await cli('eefn',configPath,['model-lifecycle','show',...(operation?['--operation-id',operation]:[])])).result;
  const owned=await lifecycle(),resident=owned.models.find(m=>m.model_id===entry.id);assert(resident?.owned_pid);
  assert.equal(resident.state,'warm_idle');assert.equal(resident.active_requests,0);
+ if(process.platform==='win32'){
+  assert.equal(resident.job_accounting.state,'available');assert.equal(resident.job_accounting.job_commit_limit_bytes,null);
+  assert(resident.job_accounting.peak_job_commit_bytes>0);assert(resident.job_accounting.active_processes>=1);
+  assert(resident.job_accounting.total_user_cpu_100ns+resident.job_accounting.total_kernel_cpu_100ns>0);
+  await writeFile(join(scratch,'job-accounting-results.json'),JSON.stringify({passed:true,physical_two_pc:false,
+   source:'windows_owned_job',model:entry.id,sample:resident.job_accounting,total_ram_measurement:false,
+   vram_measurement:false,current_commit_measurement:false,quota_admission:false},null,2));
+ }
  const unloadId=randomUUID();
  await cli('eefn',configPath,['model-lifecycle','--runtime',owned.runtime_id,'unload','--model',entry.id,'--generation',String(resident.generation),'--operation-id',unloadId]);
  await until(async()=>(await lifecycle(unloadId)).receipt.phase==='completed','real targeted unload');
  const cold=(await lifecycle()).models.find(m=>m.model_id===entry.id);
  assert.equal(cold.state,'unloaded');assert.equal(cold.owned_pid,null);assert.equal((await json(node+'/api/diagnostics')).runtime_id,owned.runtime_id);
+ assert.deepEqual(cold.job_accounting,{state:'no_owned_job'});
  assert.equal((await stat(modelPath)).size,entry.bytes,'unload cannot delete the verified artifact');
  const loadId=randomUUID();
  await cli('eefn',configPath,['model-lifecycle','--runtime',owned.runtime_id,'load','--model',entry.id,'--generation',String(cold.generation),'--operation-id',loadId]);

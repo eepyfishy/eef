@@ -576,6 +576,8 @@ struct Snapshot {
     active_requests: u32,
     control_pending: bool,
     owned_pid: Option<u32>,
+    #[serde(default)]
+    job_accounting: Option<crate::job_accounting::JobAccounting>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -632,6 +634,13 @@ pub fn confirmed(value: &Value, request: &LifecycleRequest) -> bool {
         if crate::model_selection::validate_id(&s.model_id).is_err()
             || last.is_some_and(|id: &str| id >= s.model_id.as_str())
             || s.owned_pid == Some(0)
+            || s.job_accounting.as_ref().is_some_and(|sample| {
+                !sample.validate()
+                    || (matches!(
+                        sample,
+                        crate::job_accounting::JobAccounting::NoOwnedJob { .. }
+                    ) && s.owned_pid.is_some())
+            })
             || (s.active_requests > 0 && s.state != crate::model_metadata::ModelLifecycle::Active)
         {
             return false;
@@ -922,6 +931,40 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+    #[tokio::test]
+    async fn lifecycle_accounting_rejects_invalid_claims_and_preserves_legacy_reports() {
+        let (_dir, service, _engine, guard) = fixture();
+        let request = request(&guard, LifecycleCommand::Show { operation_id: None });
+        let good = service
+            .model_lifecycle_command(request.clone(), false)
+            .await
+            .unwrap();
+        assert!(confirmed(&good, &request));
+        assert_eq!(
+            good["models"][0]["job_accounting"],
+            json!({"state":"no_owned_job"})
+        );
+        let mut legacy = good.clone();
+        legacy["models"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("job_accounting");
+        assert!(confirmed(&legacy, &request));
+        for sample in [
+            json!({"state":"unavailable","peak_job_commit_bytes":0}),
+            json!({"state":"available","job_commit_limit_bytes":0,
+            "peak_job_commit_bytes":0,"active_processes":1,"total_user_cpu_100ns":0,"total_kernel_cpu_100ns":0}),
+            json!({"state":"available","job_commit_limit_bytes":null,"peak_job_commit_bytes":-1,
+                "active_processes":1,"total_user_cpu_100ns":0,"total_kernel_cpu_100ns":0}),
+        ] {
+            let mut bad = good.clone();
+            bad["models"][0]["job_accounting"] = sample;
+            assert!(!confirmed(&bad, &request));
+        }
+        let mut bad = good;
+        bad["models"][0]["owned_pid"] = json!(1);
+        assert!(!confirmed(&bad, &request));
     }
     #[tokio::test]
     async fn future_extra_authority_or_false_inference_reply_is_never_confirmed() {

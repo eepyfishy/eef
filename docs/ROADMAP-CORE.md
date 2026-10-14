@@ -152,6 +152,15 @@ and real CPU error/reset/restart acceptance pass locally. This is not working-se
 RAM, VRAM, shared-Ollama control, aggregate resource admission or physical-network
 acceptance; the full resource/lifecycle/bootstrap/release gates remain open.
 
+The next [owned-job accounting increment](OWNED-JOB-ACCOUNTING.md) reports native
+Windows job ceiling/peak commit, process count and cumulative CPU ticks through
+existing lifecycle status. Missing, unsupported and failed observations stay
+explicit, and samples are not routing/admission authority or current RAM/VRAM
+measurements. Old snapshots remain compatible; complete measured admission,
+cross-platform and physical/bootstrap/release requirements remain open. Both
+feature-mode suites pass 660 tests; public lifecycle and cached real CPU-model
+checks pass locally, with detailed scoped evidence in the linked document.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It

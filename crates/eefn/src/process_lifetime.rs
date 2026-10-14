@@ -10,6 +10,13 @@ pub(crate) use windows::ProcessTree;
 #[cfg(not(windows))]
 pub(crate) struct ProcessTree;
 
+#[cfg(not(windows))]
+impl ProcessTree {
+    pub(crate) fn accounting(&self) -> crate::job_accounting::JobAccounting {
+        crate::job_accounting::JobAccounting::Unsupported {}
+    }
+}
+
 pub(crate) fn spawn(command: &mut Command) -> Result<(Child, ProcessTree)> {
     spawn_with_job_memory_limit(command, None)
 }
@@ -67,6 +74,50 @@ mod windows {
         Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
     }
     impl ProcessTree {
+        /// Query only this owned handle. These two observations are not atomic,
+        /// a process-liveness guarantee, working-set usage or a permission.
+        pub(crate) fn accounting(&self) -> crate::job_accounting::JobAccounting {
+            self.accounting_checked()
+                .unwrap_or(crate::job_accounting::JobAccounting::Unavailable {})
+        }
+        fn accounting_checked(&self) -> Result<crate::job_accounting::JobAccounting> {
+            let memory = self.memory_information()?;
+            let mut cpu = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            let mut bytes = 0;
+            // SAFETY: owned live job and correctly sized initialized output buffer.
+            if unsafe {
+                QueryInformationJobObject(
+                    self.0.as_raw_handle(),
+                    JobObjectBasicAccountingInformation,
+                    (&mut cpu as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    std::mem::size_of_val(&cpu) as u32,
+                    &mut bytes,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error())
+                    .context("Observe owned job CPU/process accounting");
+            }
+            if bytes as usize != std::mem::size_of_val(&cpu) {
+                bail!("Owned job accounting response length changed")
+            }
+            let sample = crate::job_accounting::JobAccounting::Available {
+                job_commit_limit_bytes: (memory.BasicLimitInformation.LimitFlags
+                    & JOB_OBJECT_LIMIT_JOB_MEMORY
+                    != 0)
+                    .then_some(memory.JobMemoryLimit as u64),
+                peak_job_commit_bytes: memory.PeakJobMemoryUsed as u64,
+                active_processes: cpu.ActiveProcesses,
+                total_user_cpu_100ns: u64::try_from(cpu.TotalUserTime)
+                    .context("Invalid owned-job user CPU time")?,
+                total_kernel_cpu_100ns: u64::try_from(cpu.TotalKernelTime)
+                    .context("Invalid owned-job kernel CPU time")?,
+            };
+            if !sample.validate() {
+                bail!("Invalid owned job accounting limit")
+            }
+            Ok(sample)
+        }
         /// Only the owned unnamed job; no PID-based termination or shared service.
         /// Caller supplies its existing deadline, never a new cleanup allowance.
         pub(crate) async fn terminate_and_observe_until(
@@ -450,6 +501,35 @@ mod tests {
     }
     fn params(mode: &str, root: &Path) -> Value {
         json!({"program":std::env::current_exe().unwrap(), "args":args(mode, root)})
+    }
+    #[tokio::test]
+    async fn accounting_observes_only_the_owned_job_without_retiring_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut child, tree) =
+            spawn_with_job_memory_limit(&mut command("loop", dir.path()), Some(128)).unwrap();
+        let processes = Processes::observe(dir.path()).await;
+        processes.alive();
+        for _ in 0..2 {
+            let crate::job_accounting::JobAccounting::Available {
+                job_commit_limit_bytes,
+                peak_job_commit_bytes,
+                active_processes,
+                ..
+            } = tree.accounting()
+            else {
+                panic!("Owned job accounting unavailable")
+            };
+            assert_eq!(job_commit_limit_bytes, Some(128 * 1024 * 1024));
+            assert!(peak_job_commit_bytes > 0);
+            assert!(
+                active_processes >= 2,
+                "Job accounting includes at least the two held live fixture processes"
+            );
+            processes.alive();
+        }
+        drop(tree);
+        let _ = child.wait().await;
+        processes.exited().await;
     }
     #[tokio::test]
     async fn job_commit_ceiling_is_read_back_and_enforced_on_descendants() {
