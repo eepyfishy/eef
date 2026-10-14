@@ -4,6 +4,15 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Plain-language setup inspection (unreleased after alpha.6)
+
+`eefn setup` explains the running node's connection, private receipt support,
+saved/applied interpreter choices and next steps without JSON or port numbers.
+`eefn --json setup` exposes the same shared backend report for clients. Inspection
+does not change permissions/settings, download/load a model, probe inference,
+restart an app or authorize work. Configured is not healthy; connected is not
+approved. See [observations, compatibility and remaining setup](SETUP-CHECK.md).
+
 ## Explicit native command authoring (unreleased after alpha.6)
 
 `eefn requests submit-process --text PURPOSE --program PROGRAM --arg=VALUE`

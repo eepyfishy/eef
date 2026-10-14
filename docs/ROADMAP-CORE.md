@@ -31,6 +31,16 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The unreleased [plain-language setup check](SETUP-CHECK.md) explains the running
+node's connection, private receipt configuration, saved/applied interpreter and
+pending settings through one shared command service. It uses the actual
+interpretation selector, keeps unavailable observations explicit and never
+infers, mutates or grants execution. It improves understanding of incomplete
+setup, not automatic private pairing, verified/default bootstrap, model quality,
+the setup wizard or physical/versioned release acceptance. The final suites pass
+665 tests per feature mode; headless setup and existing preview regressions pass
+locally, as recorded in the linked document.
+
 The subsequent unreleased [selected-GGUF lifecycle](MODEL-LIFECYCLE.md) provides
 runtime-owned per-selection load/unload/status/cancel commands through the node
 and approved EEF owner adapters. Exact runtime/generation receipts prevent

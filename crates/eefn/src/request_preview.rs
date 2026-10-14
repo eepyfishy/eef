@@ -796,6 +796,15 @@ impl NodeService {
         ))
     }
 
+    pub(crate) fn setup_interpreter_runtime(
+        &self,
+    ) -> Option<(String, Vec<(&'static str, String)>)> {
+        let binding = self.preview.binding.lock().unwrap();
+        let value = binding.as_ref()?;
+        let engine = value.engine.upgrade()?;
+        Some((value.runtime_id.clone(), engine.interpreter_candidates()))
+    }
+
     pub(crate) fn input_workflow_permit(
         &self,
     ) -> Result<tokio::sync::OwnedSemaphorePermit, &'static str> {

@@ -91,6 +91,10 @@ impl NodeService {
             .route("/api/commands/network", post(network_command))
             .route("/api/commands/connection", post(connection_command))
             .route(
+                "/api/commands/setup/check",
+                post(setup_check).layer(axum::extract::DefaultBodyLimit::max(4096)),
+            )
+            .route(
                 "/api/commands/connection/pair",
                 post(credential_pair).layer(axum::extract::DefaultBodyLimit::max(8192)),
             )
@@ -182,6 +186,13 @@ impl NodeService {
 
 async fn status(State(state): State<Arc<NodeService>>) -> Json<Value> {
     Json(state.status())
+}
+
+async fn setup_check(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::setup_check::CheckRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.setup_check(request)?))
 }
 
 async fn restart_command(

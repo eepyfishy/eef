@@ -1261,12 +1261,8 @@ impl NodeEngine {
         .map_err(|_| "method_proposal_invalid")
     }
 
-    async fn selected_interpreter_response(
-        &self,
-        messages: Value,
-        max_tokens: u64,
-        schema: Option<Value>,
-    ) -> std::result::Result<Value, &'static str> {
+    /// The same applied candidates used by interpretation; no inference/probe/load.
+    pub(crate) fn interpreter_candidates(&self) -> Vec<(&'static str, String)> {
         let has_role = |metadata: &crate::model_metadata::ModelMetadata| {
             metadata.supports("llm.infer")
                 && metadata
@@ -1290,6 +1286,17 @@ impl NodeEngine {
                 }
             }
         }
+        candidates.sort();
+        candidates
+    }
+
+    async fn selected_interpreter_response(
+        &self,
+        messages: Value,
+        max_tokens: u64,
+        schema: Option<Value>,
+    ) -> std::result::Result<Value, &'static str> {
+        let candidates = self.interpreter_candidates();
         if candidates.is_empty() {
             return Err("interpreter_unavailable");
         }

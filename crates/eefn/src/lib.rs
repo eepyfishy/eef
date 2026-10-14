@@ -59,6 +59,7 @@ pub mod server;
 pub mod service;
 mod session_output;
 pub mod setup;
+pub mod setup_check;
 pub mod startup;
 pub mod submission;
 pub mod tls;

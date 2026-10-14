@@ -67,6 +67,8 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Explain this running node's setup and next steps; never change settings or run work.
+    Setup {},
     /// Author source-bound disabled automations; does not start timers or work.
     Automations {
         #[command(subcommand)]
@@ -1405,7 +1407,71 @@ enum NetworkAction {
     },
 }
 
+async fn execute_setup_check(args: &Args) -> Result<serde_json::Value> {
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start this node first; setup inspection never launches a node")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let state = eefn::model_manager::bounded_json(
+        client
+            .get(format!("http://{address}/api/diagnostics"))
+            .send()
+            .await?
+            .error_for_status()?,
+    )
+    .await?;
+    if state["success"] != true
+        || state["schema_version"] != 1
+        || state["report_type"] != "node_diagnostics"
+        || state["node_id"] != file.node_id
+    {
+        bail!("Node diagnostics were not confirmed; no setup check was sent")
+    }
+    let request = eefn::setup_check::CheckRequest {
+        schema_version: 1,
+        expected_node_id: file.node_id,
+        expected_runtime_id: state["runtime_id"]
+            .as_str()
+            .context("Node runtime is not available yet")?
+            .into(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    request.validate()?;
+    let response = client
+        .post(format!("http://{address}/api/commands/setup/check"))
+        .json(&request)
+        .send()
+        .await?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        bail!("This node build does not support setup inspection; no fallback or retry was sent")
+    }
+    if !response.status().is_success() {
+        bail!("Setup check was refused; no retry was sent")
+    }
+    let value = eefn::model_manager::bounded_json(response).await?;
+    if !eefn::setup_check::confirmed(&value, &request) {
+        bail!("Setup reply was not confirmed; no retry was sent")
+    }
+    Ok(value)
+}
+
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if matches!(command, Commands::Setup {}) {
+        return execute_setup_check(args).await;
+    }
     if let Commands::Automations { command } = command {
         use serde_json::json;
         command.validate()?;
@@ -2041,6 +2107,8 @@ async fn main() -> Result<()> {
             Ok(value) => {
                 if args.json {
                     println!("{}", serde_json::to_string(&value)?);
+                } else if matches!(command, Commands::Setup {}) {
+                    print!("{}", eefn::setup_check::render(&value)?);
                 } else if value.get("nodes").is_some() || value.get("report_type").is_some() {
                     println!("{}", serde_json::to_string_pretty(&value)?);
                 } else {
