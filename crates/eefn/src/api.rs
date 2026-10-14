@@ -99,6 +99,10 @@ impl NodeService {
                 post(local_setup_plan).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
             .route(
+                "/api/commands/setup/enroll",
+                post(local_enroll).layer(axum::extract::DefaultBodyLimit::max(4096)),
+            )
+            .route(
                 "/api/commands/connection/pair",
                 post(credential_pair).layer(axum::extract::DefaultBodyLimit::max(8192)),
             )
@@ -207,6 +211,12 @@ async fn local_setup_plan(
     Json(request): Json<crate::setup_check::CheckRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.local_setup_plan(request).await?))
+}
+async fn local_enroll(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::local_enrollment::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.enroll_local(request).await?))
 }
 
 async fn restart_command(

@@ -200,9 +200,284 @@ fn invitation_code(node: &str, address: &str, secret: &str, certificate: &str) -
     Ok(base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&invitation)?))
 }
 
+/// Owner-approved same-PC enrollment. Never rotate, revive revoked trust or
+/// restart implicitly; return a private invitation only after saved-state checks.
+pub fn prepare_enrollment(
+    config: &crate::config::Config,
+    applied: &AuthenticationPolicy,
+    request: &eefn::enrollment::PrepareRequest,
+) -> Result<eefn::enrollment::Prepared> {
+    request.validate()?;
+    config.edit_for_restart(|value| {
+        let before = AuthenticationPolicy::parse(value.pointer("/node/authentication"))?;
+        let fingerprint = before
+            .tls
+            .as_ref()
+            .map(|tls| tls.fingerprint())
+            .transpose()?;
+        if fingerprint != request.expected_fingerprint {
+            bail!("saved coordinator trust changed; inspect setup again")
+        }
+        if before.credentials.get(&request.node_id) == Some(&None) {
+            bail!("node identity revoked; enrollment never restores revocation")
+        }
+        let missing = !before.credentials.contains_key(&request.node_id);
+        if (missing && applied.credentials.contains_key(&request.node_id))
+            || (before.tls.is_none() && applied.tls.is_some())
+        {
+            bail!("saved trust lost applied identity state; explicit owner repair is required")
+        }
+        if (missing || before != *applied) && !request.allow_coordinator_restart {
+            bail!("explicit coordinator restart consent is required before preparing pending trust")
+        }
+        if !missing && before.tls.is_none() {
+            bail!("existing credential lacks TLS trust; explicit migration is required")
+        }
+        let mut saved = before.clone();
+        if missing {
+            if saved.tls.is_none() {
+                saved.tls = Some(eefn::tls::CoordinatorIdentity::generate()?);
+            }
+            saved.credentials.insert(
+                request.node_id.clone(),
+                Some(eefn::authentication::generate_credential()),
+            );
+        }
+        saved.validate()?;
+        saved.validate_legacy_key(&config.string("node.psk", ""))?;
+        let identity = saved.tls.as_ref().expect("validated enrollment identity");
+        let secret = saved
+            .credentials
+            .get(&request.node_id)
+            .and_then(Option::as_ref)
+            .expect("validated credential");
+        let code = invitation_code(
+            &request.node_id,
+            &request.address.to_string(),
+            secret,
+            &identity.certificate,
+        )?;
+        let changed = saved != before;
+        let report = eefn::enrollment::Prepared {
+            schema_version: 1,
+            report_type: "coordinator_enrollment_prepared".into(),
+            success: true,
+            runtime_id: request.expected_runtime_id.clone(),
+            node_id: request.node_id.clone(),
+            fingerprint: identity.fingerprint()?,
+            authentication_digest: eefn::enrollment::digest(&saved)?,
+            changed,
+            restart_required: saved != *applied,
+            execution_authorized: false,
+            code,
+            note: eefn::enrollment::PREPARE_NOTE.into(),
+        };
+        report.validate(request)?;
+        if changed {
+            value["node"]["authentication"] = serde_json::to_value(saved)?;
+        }
+        Ok((report, changed))
+    })
+}
+
+impl crate::Runtime {
+    pub fn prepare_local_enrollment(
+        &self,
+        request: eefn::enrollment::PrepareRequest,
+    ) -> Result<Value> {
+        request.validate()?;
+        if request.expected_runtime_id != self.instance_id {
+            bail!("enrollment runtime changed")
+        }
+        let report = prepare_enrollment(
+            &self.config,
+            self.node_server.authentication_policy(),
+            &request,
+        )?;
+        if report.changed {
+            self.pending_restart
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(serde_json::to_value(report)?)
+    }
+    pub fn local_enrollment_status(&self) -> Result<Value> {
+        self.config.edit_for_restart(|value| {
+            let saved = AuthenticationPolicy::parse(value.pointer("/node/authentication"))?;
+            Ok((
+                serde_json::to_value(eefn::enrollment::Status {
+                    schema_version: 1,
+                    report_type: "coordinator_enrollment_status".into(),
+                    success: true,
+                    runtime_id: self.instance_id.clone(),
+                    saved_digest: eefn::enrollment::digest(&saved)?,
+                    applied_digest: eefn::enrollment::digest(
+                        self.node_server.authentication_policy(),
+                    )?,
+                    fingerprint: saved
+                        .tls
+                        .as_ref()
+                        .map(|identity| identity.fingerprint())
+                        .transpose()?,
+                })?,
+                false,
+            ))
+        })
+    }
+    pub fn restart_local_enrollment(
+        &self,
+        request: eefn::enrollment::RestartRequest,
+    ) -> Result<Value> {
+        request.validate()?;
+        if request.expected_runtime_id != self.instance_id {
+            bail!("enrollment restart runtime changed")
+        }
+        self.config.edit_for_restart(|value| {
+            let saved = AuthenticationPolicy::parse(value.pointer("/node/authentication"))?;
+            if eefn::enrollment::digest(&saved)? != request.expected_authentication_digest {
+                bail!("saved authentication changed; enrollment restart refused")
+            }
+            self.request_restart();
+            Ok((
+                serde_json::to_value(eefn::enrollment::RestartReport {
+                    schema_version: 1,
+                    report_type: "coordinator_enrollment_restart".into(),
+                    success: true,
+                    runtime_id: self.instance_id.clone(),
+                    authentication_digest: request.expected_authentication_digest.clone(),
+                    restart_requested: true,
+                    completed: false,
+                    note: eefn::enrollment::RESTART_NOTE.into(),
+                })?,
+                false,
+            ))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn enrollment_requires_consent_preserves_keys_and_never_restores_revocation() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::load(Some(&dir.path().join("eef.yaml"))).unwrap();
+        config.save_for_restart(&config.as_value()).unwrap();
+        let applied = AuthenticationPolicy::default();
+        let mut request = eefn::enrollment::PrepareRequest {
+            schema_version: 1,
+            expected_runtime_id: uuid::Uuid::new_v4().to_string(),
+            node_id: "stable".into(),
+            address: "127.0.0.1:12345".parse().unwrap(),
+            expected_fingerprint: None,
+            allow_coordinator_restart: false,
+        };
+        let before = std::fs::read(config.source().unwrap()).unwrap();
+        assert!(prepare_enrollment(&config, &applied, &request).is_err());
+        assert!(std::fs::read(config.source().unwrap()).unwrap() == before);
+        request.allow_coordinator_restart = true;
+        let prepared = prepare_enrollment(&config, &applied, &request).unwrap();
+        prepared.validate(&request).unwrap();
+        assert!(prepared.changed && prepared.restart_required);
+        assert!(!format!("{prepared:?}").contains(&prepared.code));
+        let saved = crate::config::Config::load(config.source()).unwrap();
+        let policy = AuthenticationPolicy::parse(saved.get("node.authentication")).unwrap();
+        let bytes = std::fs::read(config.source().unwrap()).unwrap();
+        // A stale initial no-fingerprint decision cannot reuse newly installed trust.
+        assert!(prepare_enrollment(&config, &policy, &request).is_err());
+        request.expected_fingerprint = Some(prepared.fingerprint.clone());
+        request.allow_coordinator_restart = false;
+        let recovered = prepare_enrollment(&config, &policy, &request).unwrap();
+        assert!(!recovered.changed && !recovered.restart_required);
+        assert!(recovered.code == prepared.code);
+        assert!(std::fs::read(config.source().unwrap()).unwrap() == bytes);
+        // A saved-file rollback must not silently rotate applied keys or undo
+        // an applied revocation by treating a known identity as brand new.
+        let restore = saved.as_value();
+        let mut lost = restore.clone();
+        lost["node"]["authentication"]["credentials"]
+            .as_object_mut()
+            .unwrap()
+            .remove("stable");
+        config.save_for_restart(&lost).unwrap();
+        request.allow_coordinator_restart = true;
+        assert!(prepare_enrollment(&config, &policy, &request).is_err());
+        let mut revoked_applied = policy.clone();
+        revoked_applied.credentials.insert("stable".into(), None);
+        assert!(prepare_enrollment(&config, &revoked_applied, &request).is_err());
+        let mut lost_tls = restore.clone();
+        lost_tls["node"]["authentication"]["tls"] = Value::Null;
+        config.save_for_restart(&lost_tls).unwrap();
+        let other = eefn::enrollment::PrepareRequest {
+            node_id: "other".into(),
+            expected_fingerprint: None,
+            ..request.clone()
+        };
+        assert!(prepare_enrollment(&config, &policy, &other).is_err());
+        config.save_for_restart(&restore).unwrap(); // Restore only this test's fault injection.
+        command(
+            &config,
+            &policy,
+            &CredentialCommand::Revoke {
+                node: "stable".into(),
+            },
+        )
+        .unwrap();
+        let revoked = std::fs::read(config.source().unwrap()).unwrap();
+        request.allow_coordinator_restart = true;
+        assert!(prepare_enrollment(&config, &policy, &request).is_err());
+        assert!(std::fs::read(config.source().unwrap()).unwrap() == revoked);
+    }
+    #[tokio::test]
+    async fn enrollment_restart_checks_runtime_and_saved_digest_before_notifying() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eef.yaml");
+        let config = crate::config::Config::load(Some(&path)).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let mut value = config.as_value();
+        value["node"] = json!({"host":"127.0.0.1","port":port,"psk":"","authentication":{"allow_legacy":false}});
+        config.save_for_restart(&value).unwrap();
+        let runtime = crate::Runtime::initialize(
+            crate::config::Config::load(Some(&path)).unwrap(),
+            dir.path().join("eef.db"),
+            false,
+        )
+        .await
+        .unwrap();
+        let status: eefn::enrollment::Status =
+            serde_json::from_value(runtime.local_enrollment_status().unwrap()).unwrap();
+        assert!(status.valid());
+        let mut request = eefn::enrollment::RestartRequest {
+            schema_version: 1,
+            expected_runtime_id: runtime.runtime_id().into(),
+            expected_authentication_digest: "0".repeat(64),
+        };
+        assert!(runtime.restart_local_enrollment(request.clone()).is_err());
+        request.expected_authentication_digest = status.saved_digest;
+        request.expected_runtime_id = uuid::Uuid::new_v4().to_string();
+        assert!(runtime.restart_local_enrollment(request.clone()).is_err());
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(300),
+                runtime.restart.notified()
+            )
+            .await
+            .is_err()
+        );
+        request.expected_runtime_id = runtime.runtime_id().into();
+        let ack: eefn::enrollment::RestartReport =
+            serde_json::from_value(runtime.restart_local_enrollment(request.clone()).unwrap())
+                .unwrap();
+        assert!(ack.valid(&request));
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            runtime.restart.notified(),
+        )
+        .await
+        .unwrap();
+        runtime.shutdown().await;
+    }
     #[test]
     fn export_recovers_saved_invitation_without_rotation_or_writes() {
         let dir = tempfile::tempdir().unwrap();

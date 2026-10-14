@@ -139,7 +139,7 @@ pub fn render(value: &Value) -> Result<String> {
     ))
 }
 
-async fn inspect(
+pub(crate) async fn inspect(
     request: &CheckRequest,
     advertisement: Option<OwnerCoordinator>,
 ) -> Result<Report> {

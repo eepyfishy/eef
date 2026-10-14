@@ -75,8 +75,14 @@ enum Commands {
     /// Explain this running node's setup and next steps; never change settings or run work.
     Setup {
         /// Read-only same-PC private enrollment plan; never pair or restart.
-        #[arg(long, default_value_t = false)]
+        #[arg(long, default_value_t = false, conflicts_with = "enroll_local")]
         local: bool,
+        /// Explicit private same-PC enrollment; may restart this node app.
+        #[arg(long, default_value_t = false, conflicts_with = "local")]
+        enroll_local: bool,
+        /// Allow coordinator restart (all pending settings; interrupts work).
+        #[arg(long, default_value_t = false, requires = "enroll_local")]
+        restart_coordinator: bool,
     },
     /// Author source-bound disabled automations; does not start timers or work.
     Automations {
@@ -1499,6 +1505,57 @@ async fn execute_permission_command(
     )
 }
 
+async fn execute_local_enrollment(
+    args: &Args,
+    allow_coordinator_restart: bool,
+) -> Result<serde_json::Value> {
+    let plan = execute_setup_check(args, true).await?;
+    let plan: eefn::local_setup::Report = serde_json::from_value(plan)?;
+    let request = eefn::local_enrollment::Request {
+        schema_version: 1,
+        expected_node_id: plan.node_id,
+        expected_runtime_id: plan.runtime_id,
+        request_id: uuid::Uuid::new_v4().to_string(),
+        expected_coordinator_runtime_id: plan
+            .coordinator_runtime_id
+            .context("Local coordinator not available; no enrollment command was sent")?,
+        expected_fingerprint: plan.coordinator_fingerprint,
+        allow_coordinator_restart,
+    };
+    request.validate()?;
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &request.expected_node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(75))
+        .build()?;
+    let response = client
+        .post(format!("http://{address}/api/commands/setup/enroll"))
+        .json(&request)
+        .send()
+        .await;
+    if let Ok(response) = response {
+        if response.status().is_success() {
+            if let Ok(value) = eefn::model_manager::bounded_json(response).await {
+                if eefn::local_enrollment::confirmed(&value, &request) {
+                    return Ok(value);
+                }
+            }
+        }
+    }
+    Ok(serde_json::to_value(eefn::local_enrollment::Report::lost(
+        &request,
+    ))?)
+}
+
 async fn execute_setup_check(args: &Args, local_plan: bool) -> Result<serde_json::Value> {
     if eefn::setup::instance_lock(&args.config)?.is_some() {
         bail!("Start this node first; setup inspection never launches a node")
@@ -1555,7 +1612,15 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     if let Commands::Permissions { command } = command {
         return execute_permission_command(args, command).await;
     }
-    if let Commands::Setup { local } = command {
+    if let Commands::Setup {
+        enroll_local: true,
+        restart_coordinator,
+        ..
+    } = command
+    {
+        return execute_local_enrollment(args, *restart_coordinator).await;
+    }
+    if let Commands::Setup { local, .. } = command {
         return execute_setup_check(args, *local).await;
     }
     if let Commands::Automations { command } = command {
@@ -2193,7 +2258,15 @@ async fn main() -> Result<()> {
             Ok(value) => {
                 if args.json {
                     println!("{}", serde_json::to_string(&value)?);
-                } else if matches!(command, Commands::Setup { local: true }) {
+                } else if matches!(
+                    command,
+                    Commands::Setup {
+                        enroll_local: true,
+                        ..
+                    }
+                ) {
+                    print!("{}", eefn::local_enrollment::render(&value)?);
+                } else if matches!(command, Commands::Setup { local: true, .. }) {
                     print!("{}", eefn::local_setup::render(&value)?);
                 } else if matches!(command, Commands::Setup { .. }) {
                     print!("{}", eefn::setup_check::render(&value)?);
@@ -3226,16 +3299,29 @@ mod tests {
     fn local_setup_plan_is_explicit_read_only_and_needs_no_ports_or_secrets() {
         assert!(matches!(
             Args::try_parse_from(["eefn", "setup"]).unwrap().command,
-            Some(Commands::Setup { local: false })
+            Some(Commands::Setup { local: false, .. })
         ));
         assert!(matches!(
             Args::try_parse_from(["eefn", "setup", "--local"])
                 .unwrap()
                 .command,
-            Some(Commands::Setup { local: true })
+            Some(Commands::Setup { local: true, .. })
         ));
         for flag in ["--apply", "--rotate", "--restart", "--code", "--address"] {
             assert!(Args::try_parse_from(["eefn", "setup", "--local", flag]).is_err());
+        }
+    }
+    #[test]
+    fn enrollment_is_explicit_and_coordinator_restart_consent_is_separate() {
+        assert!(Args::try_parse_from(["eefn", "setup", "--enroll-local"]).is_ok());
+        assert!(
+            Args::try_parse_from(["eefn", "setup", "--enroll-local", "--restart-coordinator"])
+                .is_ok()
+        );
+        assert!(Args::try_parse_from(["eefn", "setup", "--restart-coordinator"]).is_err());
+        assert!(Args::try_parse_from(["eefn", "setup", "--local", "--enroll-local"]).is_err());
+        for flag in ["--rotate", "--address", "--code", "--permissions"] {
+            assert!(Args::try_parse_from(["eefn", "setup", "--enroll-local", flag]).is_err());
         }
     }
     #[test]

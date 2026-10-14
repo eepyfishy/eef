@@ -31,6 +31,18 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The next unreleased [explicit local enrollment workflow](LOCAL-ENROLLMENT.md)
+extends same-PC discovery into owner-approved private preparation, separately
+consented/authentication-state-bound coordinator restart, exact applied-state
+readback and file-free node pairing. It preserves paused preferences and feature
+permissions, refuses different/revoked trust and does not retry writes. It does
+not close default model/bootstrap, final registration observation, graphical
+installer/onboarding or physical/versioned release acceptance.
+Both final suites pass 693 tests; local two-node enrollment, lost-reply/no-replay
+and existing credential/setup regressions pass with evidence in the linked doc.
+Loopback owner controls remain distinct from the authenticated public node
+gateway; network-exposed/multi-user owner-API boundary acceptance is still open.
+
 The next unreleased [same-PC setup plan](LOCAL-SETUP-PLAN.md) provides secret-free
 local coordinator discovery and port-free node-owner inspection, independently
 of legacy shared-key pairing and the browser. It is read-only; private first-run

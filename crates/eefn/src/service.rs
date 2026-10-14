@@ -27,6 +27,7 @@ pub struct NodeService {
     pub(crate) model_runtime:
         Arc<std::sync::Mutex<Option<Arc<crate::model_lifecycle::ModelRuntime>>>>,
     config_lock: Arc<std::sync::Mutex<()>>,
+    pub(crate) local_enrollment: Arc<tokio::sync::Mutex<()>>,
     started: std::time::Instant,
 }
 
@@ -102,6 +103,7 @@ impl NodeService {
             submissions: Arc::new(crate::submission::SubmissionMailbox::default()),
             preview: Arc::new(crate::request_preview::PreviewRuntime::default()),
             config_lock: Arc::new(std::sync::Mutex::new(())),
+            local_enrollment: Arc::new(tokio::sync::Mutex::new(())),
             started: std::time::Instant::now(),
         })
     }
@@ -383,6 +385,16 @@ impl NodeService {
         certificate: &str,
         expected_runtime: Option<&str>,
     ) -> Result<bool> {
+        self.save_credential_pair_checked(address, secret, certificate, expected_runtime, None)
+    }
+    pub(crate) fn save_credential_pair_checked(
+        &self,
+        address: &str,
+        secret: &str,
+        certificate: &str,
+        expected_runtime: Option<&str>,
+        expected_connection: Option<&Value>,
+    ) -> Result<bool> {
         let _guard = self.config_lock.lock().expect("config lock");
         if expected_runtime
             .is_some_and(|runtime| self.live.lock().unwrap()["runtime_id"] != runtime)
@@ -390,6 +402,11 @@ impl NodeService {
             bail!("pairing command runtime changed")
         }
         let mut config = self.read_config()?;
+        if expected_connection
+            .is_some_and(|snapshot| crate::enrollment::connection_snapshot(&config) != *snapshot)
+        {
+            bail!("node connection settings changed; enrollment was not applied")
+        }
         let connection_enabled = config["connection_enabled"].as_bool().unwrap_or(true);
         if expected_runtime.is_some() && config["node_id"] != self.node_id {
             bail!("saved node identity changed; pairing was not applied")

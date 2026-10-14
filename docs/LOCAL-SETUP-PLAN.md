@@ -56,9 +56,10 @@ checked again after the coordinator inspection; retirement during that read
 rejects the plan. Observations can become stale immediately afterward and cannot
 be used as authority to mutate trust or run work.
 
-This is the port-free discovery/inspection stage of first-run setup. Automatic
-private provisioning, explicit restart consent/apply, invitation handoff and
-completed registration verification remain to be implemented. Plans do not
+This is the port-free discovery/inspection stage of first-run setup. The subsequent
+[explicit local enrollment command](LOCAL-ENROLLMENT.md) adds private provisioning,
+restart consent/apply and file-free invitation handoff. Completed registration
+verification and full first-run/model setup remain separate requirements. Plans do not
 provision/rotate credentials, undo revocations, replace node trust, change paused
 preferences, enable features, download models, restart apps or submit workloads.
 Default interpreter/bootstrap, physical two-PC and installer/release acceptance

@@ -1250,6 +1250,15 @@ distinguish stale/unavailable discovery from missing, revoked, incomplete and
 provisioned saved trust. No pairing, provisioning, rotation or restart is sent.
 See [local setup planning and its unfinished apply flow](LOCAL-SETUP-PLAN.md).
 
+`eefn setup --enroll-local --restart-coordinator` explicitly enrolls this running
+node with the same-user same-PC coordinator without user-supplied IDs, ports or
+invitation files. Coordinator restart consent is separate and applies all its
+pending settings; node pairing requests a node app restart. Existing applied
+trust can be reused with `--enroll-local` alone. Paused preferences and feature
+permissions remain unchanged; revoked/different private trust is never silently
+replaced. Partial/lost outcomes require inspection, never automatic write retry.
+See [enrollment contracts, bounds and remaining acceptance](LOCAL-ENROLLMENT.md).
+
 Saved UI preferences are `dashboard.ui_enabled` on the node and `web.ui_enabled`
 on EEF, both defaulting to true. False hides the browser while keeping commands
 available. Apply saved preferences with the role's restart command. On the node,

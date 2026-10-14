@@ -150,6 +150,16 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             "/api/commands/credentials",
             get(credential_status).post(credential_command),
         )
+        .route(
+            "/api/commands/setup/enrollment",
+            get(enrollment_status)
+                .post(enrollment_prepare)
+                .layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
+            "/api/commands/setup/restart",
+            post(enrollment_restart).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
         .route("/api/devices/{node_id}/manage", post(device_manage))
         .route("/api/status", get(status))
         .route("/api/diagnostics", get(diagnostics))
@@ -447,6 +457,21 @@ async fn credential_command(
     Json(request): Json<crate::credentials::CredentialRequest>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.credential_command(request)?))
+}
+async fn enrollment_prepare(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<eefn::enrollment::PrepareRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.prepare_local_enrollment(request)?))
+}
+async fn enrollment_status(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
+    Ok(Json(runtime.local_enrollment_status()?))
+}
+async fn enrollment_restart(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<eefn::enrollment::RestartRequest>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.restart_local_enrollment(request)?))
 }
 
 async fn discovery_command(
