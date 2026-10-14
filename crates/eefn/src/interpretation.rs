@@ -286,6 +286,15 @@ pub fn messages(original_text: &str, allowed_capabilities: &[String]) -> Result<
     Ok(json!([{"role":"system","content":system},{"role":"user","content":original_text}]))
 }
 
+/// Read-only reference for provider diagnostics. These are the same prompt and
+/// generation schema used internally, not a validator, permission or inference.
+pub fn generation_reference(original_text: &str, allowed_capabilities: &[String]) -> Result<Value> {
+    Ok(
+        json!({"messages":messages(original_text, allowed_capabilities)?,
+        "schema":output_schema(allowed_capabilities)?}),
+    )
+}
+
 /// Original input is unchanged; retained questions/answers are separate untrusted
 /// data, not system instructions. No history truncation or invented answers.
 pub fn clarification_messages(
@@ -370,6 +379,20 @@ mod tests {
         let mut unicode = candidate();
         unicode["goal"] = json!("é".repeat(1025));
         assert!(parse(&unicode).is_err());
+    }
+    #[test]
+    fn generation_reference_is_the_same_bounded_contract_without_authority() {
+        let input = "Check this node without changing settings.";
+        let capabilities = vec!["system.info".into()];
+        let reference = generation_reference(input, &capabilities).unwrap();
+        assert_eq!(
+            reference["messages"],
+            messages(input, &capabilities).unwrap()
+        );
+        assert_eq!(reference["schema"], output_schema(&capabilities).unwrap());
+        assert_eq!(reference.as_object().unwrap().len(), 2);
+        assert!(generation_reference("", &capabilities).is_err());
+        assert!(generation_reference(input, &["invented capability".into()]).is_err());
     }
     #[test]
     fn original_input_is_preserved_and_valid_output_never_grants_execution() {

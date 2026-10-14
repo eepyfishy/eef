@@ -319,3 +319,57 @@ The preceding 638-test workspace suites were not rerun for this tooling-only
 checkpoint. No installed node/model, release, bootstrap default or execution
 authorization changes. A stronger candidate/method and investigation of backend
 template/generation behavior remain next quality work; the full roadmap stays open.
+
+## Formatting-only backend diagnostic, 2026-10-14
+
+`tools/test-interpreter-template.mjs RUNTIME_BUNDLE COMPLETED_QUALITY_FIXTURE`
+requires `EEF_TEST_MODEL_FILE` and optionally `EEF_TEST_BINARY_DIR`. It verifies
+the existing artifact/runtime hashes and known case-set hash, then asks the gated
+Rust reference helper for the exact shared messages and generation schema.
+The new read-only `generation_reference` function returns those two artifacts;
+it neither infers nor authorizes anything, and adds no public HTTP route.
+
+The tool starts a disposable connection-paused, API-only node with one selected
+CPU-only model (context 4096, two worker/batch threads). It reuses the node's native
+model-process ownership. Its backend route allowlist permits only GET health,
+properties and slots, and POST formatting; no generation endpoint is called.
+Responses are bounded, readiness/cleanup waits have deadlines, model weights are
+not copied/downloaded, saved node config and source evaluation remain unchanged,
+and the owned node is stopped afterward with backend unreachability checked.
+It never starts a coordinator or touches installed nodes.
+
+The pinned runtime's [formatting handler](https://github.com/ggml-org/llama.cpp/blob/c1d0e7a00/tools/server/server-context.cpp#L4932)
+uses the same [chat parameter parser](https://github.com/ggml-org/llama.cpp/blob/c1d0e7a00/tools/server/server-common.cpp#L1128)
+without inference. That parser passes the JSON schema to template processing and
+handles thinking kwargs/reasoning effort, so the diagnostic includes the actual
+shared schema rather than reconstructing a partial contract. The request body
+is a constructed formatting reference, **not an intercepted production wire
+capture or remote attestation**. Preserved formatting is not semantic quality.
+
+`interpreter-template-cQAt6V` passes against the already-verified Qwen 3.5 0.8B
+artifact and `b10621-c1d0e7a00` runtime. The restored system/full-message hashes
+match `interpreter-quality-O2LRKu`. System instructions and original user text
+are preserved in order in all three renders. Inherit and enabled render 1,315
+bytes with the same SHA; disabled renders 1,326 bytes with a different SHA and
+prefills the end of thinking. Runtime metadata reports system-role support and
+no vision/video/audio modality for this text-only selection. No inference/workload
+is issued, coordinator connections stay at zero, node stop is confirmed and
+the backend becomes unreachable. Full private templates/properties stay ignored.
+
+This narrows the missing-text/template hypothesis for the reference, not the
+complete actual-wire or model-quality investigation. A separate controlled
+sampling investigation is justified next: the [pinned publisher card](https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/2fc06364715b967f1860aea9cf38778875588b17/README.md)
+describes non-greedy text sampling settings and cautions about this small model's
+thinking loops. EEF's present interpreter explicitly uses temperature zero.
+Those differences are hypotheses, not proof of the observed failures or a reason
+to change defaults, enlarge bounds, bypass validation or hardcode model names.
+
+Fresh workspace/all-target suites pass **639 tests** in each feature mode (EEF
+237 plus one ignored profiler, owner CLI 16, installer 6, node library 368,
+node CLI 12). Default production binaries/examples, formatting/diff, JS syntax,
+frozen case-set scorer checks and backend/browser source guard pass. With those
+fresh binaries, `interpreter-template-9s6E9D` passes again with explicit
+reference-not-wire metadata, and `request-preview-rU26p0` passes; chain exit is 0.
+Neither diagnostic changes prompts, schema, validation, inference parameters,
+permissions, selection/defaults or installed nodes. Stable release, physical
+acceptance and the remaining roadmap are not complete.

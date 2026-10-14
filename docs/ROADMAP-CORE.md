@@ -128,6 +128,14 @@ Known-case-set/hash checks and metadata-only reference capture tests are retaine
 no model/prompt default or production behavior changes. These [negative results](INTERPRETER-QUALITY.md#rejected-definition-only-prompt-and-additional-cases-2026-10-14)
 do not close interpreter/bootstrap or independent physical acceptance.
 
+A subsequent [formatting-only diagnostic](INTERPRETER-QUALITY.md#formatting-only-backend-diagnostic-2026-10-14)
+uses the shared bounded prompt/schema reference and an isolated node-owned CPU
+runtime, without generation or a coordinator. It confirms preserved reference
+text and thinking-prefix changes in the pinned backend, but is not actual-wire
+capture, semantic quality or remote attestation. Both feature modes pass 639
+tests and the public preview regression passes. Controlled sampling/candidate
+evaluation is still needed; no default or installed-node change is implied.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It

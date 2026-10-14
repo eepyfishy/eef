@@ -26,6 +26,8 @@ fn run() -> Result<serde_json::Value> {
     }
     let request: Request = serde_json::from_slice(&bytes)?;
     match request.mode.as_str() {
+        "generation_reference" => Ok(json!({"success":true,
+            "reference":eefn::interpretation::generation_reference(&request.input, &request.allowed_capabilities)?})),
         "prompt" => Ok(
             json!({"success":true,"messages":eefn::interpretation::messages(
             &request.input, &request.allowed_capabilities)?}),
