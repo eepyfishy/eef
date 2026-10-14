@@ -200,9 +200,10 @@ mod tests {
         let messages =
             crate::interpretation::clarification_messages(&source, &["system.info".into()])
                 .unwrap();
-        assert_eq!(messages[1]["content"], source.original_text);
+        let turns = messages.as_array().unwrap();
+        assert_eq!(turns[turns.len() - 2]["content"], source.original_text);
         assert!(
-            messages[2]["content"]
+            turns.last().unwrap()["content"]
                 .as_str()
                 .unwrap()
                 .contains("Bedroom node")

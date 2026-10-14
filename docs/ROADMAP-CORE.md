@@ -100,6 +100,17 @@ in the linked document. Other synchronous paths,
 physical/load acceptance and the complete bootstrap/media/resource/peer/cluster/
 installer/security requirements remain open before stable 0.4.0.
 
+The next [interpreter-quality investigation](INTERPRETER-QUALITY.md#further-rejected-variants-2026-10-14)
+evaluates four prompt/generation-order variants through the real isolated CPU
+node using the existing 1.5B artifact. None meets bootstrap quality; every
+experimental production change is restored rather than approved from accepted
+JSON or a partial label score. Full prompt-sequence references, matching binary
+hashes and exclusive private capture improve reproducibility without inference
+or execution. Restored full suites still pass **631 tests** per feature mode and
+public preview/review regressions pass. Stronger quality/held-out/physical evidence
+and automatic verified bootstrap remain required; no model, node or release update
+is implied, and the complete roadmap scope remains unchanged.
+
 The unreleased [explicit result recovery](RESULT-RECOVERY.md) increment reconciles
 an idle interrupted reviewed attempt from exact retained completed evidence,
 preserving original uncertainty/ACKs and preventing implicit continuation. It

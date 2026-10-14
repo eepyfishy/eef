@@ -50,8 +50,11 @@ async function referencePrompt(capabilities){
  const timer=setTimeout(()=>child.kill(),10000);
  try{
   assert.equal(await child.result,0,'shared prompt fixture failed');const value=JSON.parse(out);assert.equal(value.success,true);
-  assert.equal(value.messages[1].content,cases[0].input);assert.equal(value.messages[0].role,'system');
-  return {sha256:createHash('sha256').update(value.messages[0].content).digest('hex'),fixture_sha256:await digest(path)};
+  assert.equal(value.messages.at(-1).content,cases[0].input);assert.equal(value.messages[0].role,'system');
+  await writeFile(join(scratch,'PRIVATE-prompt-reference.json'),JSON.stringify(value.messages,null,2),{flag:'wx'});
+  return {sha256:createHash('sha256').update(value.messages[0].content).digest('hex'),
+   messages_sha256:createHash('sha256').update(JSON.stringify(value.messages)).digest('hex'),message_count:value.messages.length,
+   fixture_sha256:await digest(path)};
  }finally{clearTimeout(timer);}
 }
 async function sample(nodeProcess){

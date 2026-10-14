@@ -326,7 +326,7 @@ try {
   assert.equal(resolved.result.draft.proposals[1].resolution.backend,'ollama');
   assert.equal(resolved.result.draft.proposals[1].resolution.model_id,'fixture');
   assert.equal(calls.length,beforeResolution+2,'one invalid attempt and one explicit successful reinterpretation');
-  assert.equal(calls.at(-1).messages[1].content,resolutionOriginal);
+  assert.equal(calls.at(-1).messages.at(-2).content,resolutionOriginal);
   assert(calls.at(-1).messages[2].content.includes('The bedroom node, keep the original request'));
   assert(calls.at(-1).messages[2].content.includes('Which node do you mean?'));
   assert.deepEqual((await cli(['jobs','get',resolutionId])).data.tasks,[]);

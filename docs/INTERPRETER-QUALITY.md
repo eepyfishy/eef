@@ -30,6 +30,14 @@ New reports also record a `prompt_reference` hash emitted by the test-only Rust
 fixture using the shared prompt function and the same capability vocabulary.
 This is a reproducibility reference, not intercepted inference or remote
 attestation. Build examples alongside the fresh production binaries.
+The next evaluation-tool increment also records the whole message-sequence hash,
+message count and an exclusive private full-prompt reference, so system-only
+hashes cannot conflate examples added in separate chat turns. Existing reports
+remain unchanged. A matching existing run can be captured before its binaries
+are replaced using `tools/capture-interpreter-reference.mjs BINARY_DIR FIXTURE_DIR`.
+The tool requires an existing isolated quality fixture, matching node/helper
+hashes and matching system/full-message hashes, and refuses to overwrite evidence
+or write outside the validation directory. It performs no inference or workload.
 
 Rubric version 1 is defined in `tools/interpreter-quality-cases.mjs`; expectations
 were fixed before candidate runs. It covers status, conversation, Thai/Spanish,
@@ -120,3 +128,63 @@ workloads, downloads/copies or saved configuration changes.
 work must improve faithful interpretation and specific clarification, then use
 independently reviewed held-out multilingual cases and physical CPU/memory
 acceptance. Successful reviewed text generation is not this quality gate.
+
+## Further rejected variants, 2026-10-14
+
+Four new production-node runs reused the exact 1.5B artifact and runtime above,
+CPU-only context/output bounds and the unchanged version-1 twenty-case rubric
+(`20c3665b0599ae0935128a16285d4d0f28bb0561c1924c22670e4746fec7b189`).
+The private configurations had no coordinator connection, workload, download,
+model copy or saved-configuration mutation. No installed node/service changed.
+These are development cases already used for tuning, not independent held-out
+approval evidence or a statistically controlled quality comparison.
+
+| Experimental variant | Accepted | Matches | Startup ms | Model peak bytes | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| Value-free definitions with four inline examples | 19/20 | 7/20 | 5,185 | 1,906,327,552 | `interpreter-quality-M8naN6` |
+| Same definitions/examples in separate chat turns | 11/20 | 7/20 | 4,769 | 1,906,122,752 | `interpreter-quality-fgy9bc` |
+| Original prompt, decision-first generation-property order | 16/20 | 3/20 | 4,276 | 1,906,544,640 | `interpreter-quality-1RTlcV` |
+| Compact value-free definitions, decision-first order | 20/20 | 11/20 | 4,254 | 1,919,172,608 | `interpreter-quality-R1ZA1g` |
+
+The inline version generated more request-specific goals, but missed action,
+clarification, capability and language expectations. The chat-turn version
+improved some ambiguous-action labels but rejected many ordinary information and
+conversation replies. Ordering alone still copied the old placeholder goal.
+The compact ordered version accepted every JSON proposal, but misclassified or
+asked unnecessary questions for basic status/conversation and missed ongoing
+camera expectations. Thai language/faithfulness still requires review. None is
+approved for default use; all experimental prompt and generation-serialization
+changes were restored to the retained production implementation. Validator,
+byte/token bounds, expected answers, permission and execution rules are unchanged.
+
+Source inspection of the exact runtime's [schema-to-grammar converter](https://raw.githubusercontent.com/ggml-org/llama.cpp/c1d0e7a00/common/json-schema-to-grammar.cpp)
+and [JSON wrapper](https://github.com/ggml-org/llama.cpp/blob/c1d0e7a00/common/json.h)
+motivated the ordering experiment: object properties determine required-field
+generation order, whereas the current Rust schema map serializes alphabetically.
+The tested adapter altered only generation-hint property order, with tests proving
+equivalent parsed values and unchanged ordinary payload bytes. It did not alter
+canonical stored/wire authority JSON. Its poor observed quality is why it is not
+retained; field ordering is not a semantic validator or an approval mechanism.
+
+The last variant's matching full reference was captured privately before restoring
+the source. Capture checks passed for matching binaries/hashes and refused an
+existing output and an outside-validation directory without changing evidence.
+New evaluations automatically capture the full reference. Model/node binary and
+message-sequence hashes remain in the ignored fixture reports; no rejected binary,
+model weights, user data or private report is published as a release artifact.
+
+Restored-source default and dashboard-free workspace/all-target suites each
+pass **631 tests**: EEF library 237 plus one ignored opt-in profiler, owner CLI
+16, installer 6, node library 361 and node CLI 11. Fresh default binaries/examples,
+formatting/diff, JS syntax, the unchanged semantic rubric and backend/browser
+source boundary pass. Public `request-preview-vxTurt` and
+`request-review-yZirQ8` pass with verification-chain exit 0, preserving original
+input, clarification/answer lineage, no automatic execution and authority checks.
+The production prompt, schema ordering, inference adapters and library exports
+have no diff from the preceding source checkpoint. Only evaluation tooling,
+position-independent input/answer assertions and evidence documentation remain.
+
+The next quality work needs a stronger candidate or separately evaluated method,
+then independent held-out multilingual review and physical CPU/memory acceptance.
+Automatic verified bootstrap, friendly setup and the full stable 0.4.0 roadmap
+remain incomplete. No production model was selected or approved by these runs.
