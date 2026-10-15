@@ -559,3 +559,52 @@ unchanged input/message separation and retained clarification/authority rules;
 it does not establish semantic quality or resistance to prompt injection.
 No model is automatically selected, no bootstrap default is approved, and no
 installed app, permission, release or update feed changed.
+
+## Rejected two-example prompt experiment
+
+A subsequent isolated experiment kept the committed application-context prompt
+and appended two synthetic input/proposal examples: a general-knowledge question
+and an action missing both its setting and value. Both example proposals passed
+the existing validator with an empty capability vocabulary and no execution
+authority. The prompt explicitly marked examples as neither the actual request,
+conversation history nor supplied facts; the actual input remained separate.
+Ten focused interpretation tests passed and fresh binaries/examples built. No
+schema, validator, sampling, output-limit, permission or frozen-case change.
+
+The same verified 2B artifact/runtime, disabled thinking and temperature zero gave:
+
+| Case set | Accepted | Label matches | Copied sample goals (committed context → examples) | Evidence |
+| --- | --- | --- | --- | --- |
+| Original v1 | 19/20 | 14/20 | 12 → 5 | `interpreter-quality-VprtK3` |
+| Generalization v1 | 19/20 | 12/20 | 13 → 5 | `interpreter-quality-ifDdq2` |
+
+Fewer literal placeholder goals did not improve label totals. A Thai greeting
+and an English acknowledgement respectively failed validation. Continuous camera
+watching/microphone-relay requests also became `one_shot` in the two suites,
+where the committed prompt had retained a compatible workload/unknown value.
+The examples both used one-shot proposals; this pattern does not establish why
+the model made those errors. No benchmark expectation was relaxed or rewritten.
+
+**Rejected:** the examples and experiment-only unit test were removed. The
+committed application-context prompt remains the baseline. No failed output was
+accepted, repaired, retried automatically or executed. Default bootstrap remains
+unapproved. The public `interpretation_invalid` label alone does not distinguish
+schema/bounds/clarification-consistency failures; better bounded, non-sensitive
+failure diagnostics are a useful reliability follow-up, not grounds to relax
+validation.
+
+System-prompt reference SHA-256:
+`80be8e0d3b171dabe9582e6e6b0f354acb7cd4bfbee85e55f3519a8cdcb68b51`.
+Node/reference executable hashes:
+`b3a85e85c6566a797f71c1f166176e6ad19383805dd9015f860584db46794446` /
+`edac1f891995e33f4f218c27257f28df1761515534644436927793e22f7b2069`.
+The case-list hashes remain unchanged; these are development experiments, not
+independent human or physical acceptance. No model download/copy, coordinator,
+installed-app change, release or update-feed change occurred.
+
+After removal, fresh binaries/examples built, all nine focused interpretation
+tests passed, and public preview regression `request-preview-dBFxoZ` passed.
+The rebuilt reference emits the committed application-context system-prompt hash
+`f9ec6ea9d7341bb7a5594959667b184485d5c9749f6a107c0228ce6866373216`;
+the interpretation source has no diff against the committed baseline. The
+example-based prompt is not retained or shipped.
