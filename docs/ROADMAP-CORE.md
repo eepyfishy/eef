@@ -37,7 +37,9 @@ checks without model copies or personal selection changes. Both unchanged-prompt
 quality suites accept 20/20 schema outputs, but label matches are only 14/20 and
 12/20; copied instructional goals occur in 16 and 14 cases. This is failed default
 quality evidence, not automatic bootstrap approval, physical acceptance or a new
-release. A separately prepared prompt change still requires comparative evidence.
+release. A separately tested field-description prompt regressed clarification and
+both label scores; it was rejected and the previous prompt restored, with
+[comparison evidence](INTERPRETER-QUALITY.md#rejected-prompt-experiment-field-descriptions-instead-of-sample-answers).
 
 The next unreleased [model-transfer recovery increment](MODEL-TRANSFER-RECOVERY.md)
 recovers interrupted pinned GGUF responses within one explicit install job,

@@ -444,3 +444,70 @@ of substituted/unknown sets, hashes and overwrite without changing evidence.
 `tools/test-interpreter-quality-options.mjs` rejects malformed, duplicate,
 non-sampling and oversized-value arguments before model/config/fixture work.
 No installed node, release, selected model, default or permission was updated.
+
+## Rejected prompt experiment: field descriptions instead of sample answers
+
+An isolated source experiment removed the example proposal object from the shared
+interpretation prompt. In the retained temperature-zero 0.8B baseline
+`.validation/interpreter-quality-aU4FgT/results.json`, multiple accepted proposals
+copy the literal instructional goal or generic sample question. Some of these
+also match the frozen label rubric, which intentionally does not grade goal
+paraphrase or question specificity. This is not evidence of useful interpretation.
+
+The experimental prompt derived its exact field list from the unchanged generation
+schema, described their meaning without sample answers, preserved original input
+as a separate message, and distinguished missing context from not knowing an
+answer or current system state. It asked for a concrete goal and a specific
+missing-detail question, not a response to the user or a claim of execution.
+No schema, validator, capability, authority, inference limit or rubric changes.
+
+The changed node library passed **420 library tests** in each feature mode.
+Both full workspace/all-target suites then passed **701 tests plus one ignored**
+each, fresh binaries/examples built, and public API preview regression
+`request-preview-B3xqnN` passed. These checks did not establish model quality.
+The frozen scorer, option rejection and backend/browser source checks also passed.
+
+Using the same verified 2B cache, runtime, temperature-zero policy, disabled
+thinking hint, context/output bounds and unchanged case lists produced:
+
+| Case set | Baseline accepted / matches | Experiment accepted / matches | Copied sample goals | Experiment evidence |
+| --- | --- | --- | --- | --- |
+| Original v1 | 20/20 / 14/20 | 19/20 / 9/20 | 0/20 | `interpreter-quality-86iK16` |
+| Generalization v1 | 20/20 / 12/20 | 18/20 / 6/20 | 0/20 | `interpreter-quality-vAtAC3` |
+
+Clear greetings/status queries improved, but underspecified actions lost needed
+clarification. For example, an unspecified application close was marked clear
+and suggested `system.info`; an unspecified microphone relay was marked clear
+and suggested configuration/update/pipeline capabilities. A fabricated authority
+request also lost clarification. These are untrusted proposals, not grants or
+executed actions, but they are unacceptable interpretation regressions.
+
+**The experiment was rejected and its source changes and experiment-only unit
+test removed; the previous prompt is restored.** No weakened validator, rubric,
+permissions or automatic default was retained. Both baseline and experiment still
+fail default acceptance; do not trade away missing-target/authority handling to
+remove placeholder strings or improve only the easy cases.
+
+Reports preserve the complete synthetic replies and shared prompt references.
+Baseline prompt SHA-256 is
+`56ec36c9a3b47393458479c216924d4d0b156aae31b80a1f5c2a1380ccd8ca5c`;
+experimental prompt SHA-256 is
+`582bac72e1627c8613d9d4097658f61970de1b0f7ad43389ccc6551cd57dab24`.
+Baseline node/reference hashes are
+`c52a0f9a9c6db8c638c48258eb8661e967252bc04a51b385707f1a7cd7167511` /
+`bec5f74904dba3306f7571e8b40a7843b5c8b76a469b4d0852bbd67fea4faeae`;
+experimental hashes are
+`e8b10de7d77538133a8fe8d4ce49e052c54b0b3ad20376a63cf56b5900e470b4` /
+`9bd615da1257a11315c9a056eabc3906bdb0f84b12fd8f7346bce73cba97b5c3`.
+No model download/copy, coordinator, execution, installed-app update or release
+was involved in the prompt comparison. Further interpreter work and independent
+human/physical/bootstrap acceptance remain required.
+
+After restoration, fresh workspace binaries/examples built, all eight focused
+interpretation tests passed, and public preview regression `request-preview-xL8Ou4`
+passed. The rebuilt reference executable emits system-prompt SHA-256
+`56ec36c9a3b47393458479c216924d4d0b156aae31b80a1f5c2a1380ccd8ca5c`,
+exactly matching the retained baseline; the interpretation source has no diff
+against the pre-experiment commit. Rebuilt executable hashes differ from the
+earlier builds, so prompt restoration is established by source/content checks,
+not an assertion of binary reproducibility. The rejected prompt is not shipped.

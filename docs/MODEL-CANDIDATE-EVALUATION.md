@@ -77,8 +77,10 @@ node binary SHA-256
 `c52a0f9a9c6db8c638c48258eb8661e967252bc04a51b385707f1a7cd7167511`,
 and the unchanged case-list hashes documented in the quality guide. These are
 development cases, not independent held-out/human acceptance. The candidate
-remains optional and **unapproved**; the separately prepared prompt experiment
-must be compared before any quality-improvement claim.
+remains optional and **unapproved**. The subsequently compared field-description
+prompt removed copied sample goals but regressed both scores and clarification
+handling; it was rejected and the prior prompt restored. See the
+[retained rejected experiment](INTERPRETER-QUALITY.md#rejected-prompt-experiment-field-descriptions-instead-of-sample-answers).
 
 Development evidence, 2026-09-19. This does not select a default model, enable
 automatic downloads, or authorize execution of model-generated instructions.
