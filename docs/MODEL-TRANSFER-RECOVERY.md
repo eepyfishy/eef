@@ -61,7 +61,14 @@ or accepting an unverifiable prefix.
   request-count assertion; moving the process-replacement scenario after the
   existing completion scenario corrected the harness ordering, not production.
 
-These checks do not establish successful external large-artifact recovery,
-physical two-PC acceptance, default interpreter quality or release readiness.
-The optional candidate and subsequent external results are tracked separately in
-[candidate evaluation](MODEL-CANDIDATE-EVALUATION.md).
+The subsequent `.validation/real-model-wfJ5WW/results.json` passes an explicit
+1,280,835,840-byte external model download, complete size/SHA verification and
+real CPU lifecycle checks using that one retained cache file. Progress samples
+showed only the first attempt, so this proves external full-transfer integration,
+not external byte-range recovery. The two unchanged-prompt quality suites complete
+but show semantic failures; the candidate remains unapproved.
+
+These checks do not establish external recovery after interruption, physical
+two-PC acceptance, default interpreter quality or release readiness. See
+[candidate evaluation](MODEL-CANDIDATE-EVALUATION.md) for separate artifacts,
+quality failures and measured scope.

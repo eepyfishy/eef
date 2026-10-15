@@ -31,6 +31,14 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The optional [2B interpreter baseline](MODEL-CANDIDATE-EVALUATION.md#completed-2b-baseline-evidence-not-default-approval)
+now passes an explicit external verified download and same-PC real CPU lifecycle
+checks without model copies or personal selection changes. Both unchanged-prompt
+quality suites accept 20/20 schema outputs, but label matches are only 14/20 and
+12/20; copied instructional goals occur in 16 and 14 cases. This is failed default
+quality evidence, not automatic bootstrap approval, physical acceptance or a new
+release. A separately prepared prompt change still requires comparative evidence.
+
 The next unreleased [model-transfer recovery increment](MODEL-TRANSFER-RECOVERY.md)
 recovers interrupted pinned GGUF responses within one explicit install job,
 with exact remaining-byte ranges, eight attempts, a one-hour transfer budget and

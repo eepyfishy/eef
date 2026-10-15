@@ -34,11 +34,51 @@ The initial isolated download in `.validation/real-model-J6G6W3` failed with a
 premature response-body EOF. The incomplete file was removed by the existing
 partial-file guard; no completed evaluation report, installation or model
 selection resulted. This is retained failure evidence, not candidate acceptance.
-An unreleased bounded byte-range recovery path is now under verification before
+That failure motivated the unreleased bounded byte-range recovery path before
 another real download. Its local TLS fixture checks exact-offset recovery and
 rejection of an ignored range; it does not prove the external transfer or model
 quality. `EEF_TEST_MODEL_DOWNLOAD_TIMEOUT_MS` permits an explicit 1–60 minute
 test wait (15 minutes by default), without retrying the install command.
+
+### Completed 2B baseline evidence (not default approval)
+
+The subsequent `.validation/real-model-wfJ5WW/results.json` passes using fresh
+development binaries and the existing alpha.6 CPU runtime. The explicit owner
+download command produced one exact-size/SHA-verified cache artifact, without
+selecting a model as a side effect of installation. Progress samples remained on
+the first transfer attempt; this successful external download is not evidence
+that external byte-range recovery was exercised.
+
+The fixture then explicitly selected/tuned the model, applied disabled thinking,
+and passed private pinned-TLS reviewed inference, exact CPU thread arguments,
+remote tuning refusal, unload/reload without node restart, retained results and
+no completed-work replay after restart, automatic idle unload and on-demand
+loading. The artifact remained on disk; personal installations/selections were
+untouched. This is same-PC integration, not physical two-PC, measured RAM/VRAM
+release, total resource enforcement or model-quality acceptance.
+
+The unchanged production prompt and temperature-zero policy were evaluated on
+both existing frozen case sets, reusing that one artifact without copies:
+
+| Case set | Accepted | Label matches | Copied sample goal | Startup ms | Model peak working set bytes | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| Original v1 | 20/20 | 14/20 | 16/20 | 4,695 | 2,129,494,016 | `interpreter-quality-f5bK0p` |
+| Generalization v1 | 20/20 | 12/20 | 14/20 | 4,429 | 2,130,448,384 | `interpreter-quality-bxghok` |
+
+"Copied sample goal" counts the exact former instructional value, not all
+semantic goal defects. Many clear status queries and greetings also request
+unnecessary clarification. Neither valid schema output nor these label scores
+establish a useful default. Working-set samples are not total system memory or
+enforced quotas; quality-run thread counts were not explicitly selected.
+
+Both reports retain system-prompt reference SHA-256
+`56ec36c9a3b47393458479c216924d4d0b156aae31b80a1f5c2a1380ccd8ca5c`,
+node binary SHA-256
+`c52a0f9a9c6db8c638c48258eb8661e967252bc04a51b385707f1a7cd7167511`,
+and the unchanged case-list hashes documented in the quality guide. These are
+development cases, not independent held-out/human acceptance. The candidate
+remains optional and **unapproved**; the separately prepared prompt experiment
+must be compared before any quality-improvement claim.
 
 Development evidence, 2026-09-19. This does not select a default model, enable
 automatic downloads, or authorize execution of model-generated instructions.
