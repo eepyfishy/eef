@@ -99,6 +99,7 @@ pub enum NextStep {
     InspectStartupIssues,
     WaitForInputChannel,
     WaitForInputCapacity,
+    WaitForRegistrationReceipt,
 }
 
 fn required_option<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
@@ -119,6 +120,8 @@ struct Report {
     transport: Transport,
     #[serde(default)]
     input_channel: Option<crate::submission::InputChannelState>,
+    #[serde(default)]
+    registration: Option<crate::registration::State>,
     saved_connection_enabled: bool,
     saved_auth_mode: crate::authentication::AuthMode,
     #[serde(deserialize_with = "required_option")]
@@ -155,6 +158,15 @@ impl Report {
                     steps.push(NextStep::WaitForInputCapacity)
                 }
                 _ => {}
+            }
+            if matches!(
+                self.registration,
+                Some(
+                    crate::registration::State::AwaitingReceipt
+                        | crate::registration::State::Unknown
+                )
+            ) {
+                steps.push(NextStep::WaitForRegistrationReceipt);
             }
         }
         if self.execution_receipts_available != Some(true) {
@@ -203,6 +215,10 @@ impl Report {
             && self.node_id == request.expected_node_id
             && self.runtime_id == request.expected_runtime_id
             && self.request_id == request.request_id
+            && (self.registration != Some(crate::registration::State::Accepted)
+                || (self.connection == ConnectionState::Connected
+                    && self.input_channel
+                        != Some(crate::submission::InputChannelState::Unavailable)))
             && self.saved_interpreter.valid()
             && self.applied_interpreter.valid()
             && !matches!(
@@ -295,6 +311,11 @@ impl crate::NodeService {
             transport: serde_json::from_value(live["connection"]["transport"].clone())
                 .unwrap_or(Transport::Unknown),
             input_channel: Some(self.submissions.state()),
+            registration: Some(crate::registration::State::observe(
+                &live,
+                &self.node_id,
+                self.submissions.state(),
+            )),
             saved_connection_enabled: config["connection_enabled"].as_bool().unwrap_or(true),
             saved_auth_mode: serde_json::from_value(
                 config.get("auth_mode").cloned().unwrap_or(json!("legacy")),
@@ -386,6 +407,12 @@ pub fn render(value: &Value) -> Result<String> {
         "Node setup: {}\nConnection: {connection}\nInput: {input}\nReviewed-work transport: {receipts}\nInterpreter: {interpreter}\n",
         report.node_id
     );
+    text.push_str(match report.registration {
+        Some(crate::registration::State::Accepted)=>"Registration: EEF accepted this runtime on the current authenticated connection; model, permission and workload readiness are separate.\n",
+        Some(crate::registration::State::AwaitingReceipt)=>"Registration: receipt not received; connected alone is not confirmation. Older coordinators may not support receipts.\n",
+        Some(crate::registration::State::NotConnected)=>"Registration: no current connected session.\n",
+        _=>"Registration: unknown on this runtime/build; not assumed accepted.\n",
+    });
     for step in report.next_steps {
         text.push_str("Next: ");
         text.push_str(match step {
@@ -400,6 +427,7 @@ pub fn render(value: &Value) -> Result<String> {
             NextStep::InspectStartupIssues => "Inspect reported startup issues: eefn network diagnose",
             NextStep::WaitForInputChannel => "Wait for the node's input channel or inspect connection show; no input was sent or replayed",
             NextStep::WaitForInputCapacity => "Wait for capacity before a new explicit input decision; do not replay an uncertain request",
+            NextStep::WaitForRegistrationReceipt=>"Wait for a current EEF registration receipt or inspect coordinator compatibility; no registration/work was replayed by this check",
         });
         text.push('\n');
     }
@@ -450,6 +478,46 @@ mod tests {
                 .unwrap();
         }
         Arc::new(engine)
+    }
+    #[test]
+    fn registration_is_separate_from_models_and_lost_receiver_is_not_accepted() {
+        let (_dir, core, request) = fixture();
+        let receiver = core.submissions.connect();
+        let offer = crate::registration::Offer::new(&request.expected_runtime_id).unwrap();
+        let session = uuid::Uuid::new_v4().to_string();
+        let receipt = crate::registration::Receipt::new("node", &offer, &session).unwrap();
+        {
+            let mut live = core.live.lock().unwrap();
+            live["connection"] = json!({"state":"connected","transport":"pinned_tls13"});
+            live["registration_observation"] = crate::registration::pending(&offer, Some(&session));
+            live["registration_observation"]["receipt"] = json!(receipt);
+        }
+        let accepted = core.setup_check(request.clone()).unwrap();
+        assert!(confirmed(&accepted, &request));
+        assert_eq!(accepted["registration"], "accepted");
+        assert_eq!(accepted["execution_authorized"], false);
+        assert!(render(&accepted).unwrap().contains("EEF accepted"));
+        let mut older = accepted.clone();
+        older.as_object_mut().unwrap().remove("registration");
+        assert!(confirmed(&older, &request));
+        assert!(
+            render(&older)
+                .unwrap()
+                .contains("unknown on this runtime/build")
+        );
+        let mut corrupted = accepted;
+        corrupted["connection"] = json!("paused");
+        assert!(!confirmed(&corrupted, &request));
+        drop(receiver);
+        let closed = core.setup_check(request.clone()).unwrap();
+        assert_eq!(closed["registration"], "unknown");
+        assert!(
+            closed["next_steps"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("wait_for_registration_receipt"))
+        );
+        assert_eq!(core.diagnostics()["registration"], "unknown");
     }
     #[test]
     fn setup_observes_missing_runtime_and_legacy_without_mutating_or_disclosing_secrets() {

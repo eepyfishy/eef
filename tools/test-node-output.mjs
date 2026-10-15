@@ -59,6 +59,7 @@ const peer=createServer(socket=>{
           assert.equal(value.signature,createHmac('sha256',key).update(`${value.nonce}|${value.node_id}|${value.version}|${value.timestamp}`).digest('base64'));
           socket.write(encode({type:'ok'}));
         }else if(value.type==='register'){
+          assert(!('registration_receipt' in value),'Legacy coordinator without negotiation must receive the original registration shape');
           assert.equal(value.node_id,id);session.registered=true;
           if(first){
             blocked=socket;socket.pause();blockedAt=Date.now();
@@ -96,6 +97,7 @@ try{
   const reconnected=await cli(['network','diagnose']);
   assert.equal(reconnected.runtime_id,runtime,'connection retirement must not restart the node runtime');
   assert.equal(reconnected.input_channel,'ready','Reconnection owns a fresh usable local queue, not an old closed sender');
+  assert.equal(reconnected.registration,'unknown','A legacy peer without receipt negotiation must not be assumed acknowledged');
   const models=await cli(['models','show']);assert.equal(models.running,true);
   assert.equal(models.saved_selections.find(m=>m.model_id==='cpu-fixture').cpu_threads,2);
   assert.equal(await readFile(configPath,'utf8'),saved,'reconnection must preserve saved settings');
@@ -107,6 +109,7 @@ try{
   if(fault)throw fault;
   await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,actual_node_process:true,local_commands_after_reconnect:true,
     saved_change_survives:true,reconnect_ms:reconnectMs,no_response_or_work_replay:true,fresh_input_channel_after_retirement:true,legacy_encrypted_loopback:true,
+    registration_receipt_unknown_without_negotiation:true,
     pinned_tls:false,physical_two_pc:false,native_termination_proven:false},null,2));
   console.log('Node output validation passed: '+scratch);
 }finally{

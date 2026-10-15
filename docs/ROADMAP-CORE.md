@@ -31,6 +31,16 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The next unreleased [registration receipt increment](REGISTRATION-RECEIPTS.md)
+negotiates a nonce/runtime/session-bound acknowledgement over existing encrypted
+framing. Setup/status distinguish accepted registration from a local write,
+queue readiness and interpreter configuration. Older peers/reports stay unknown,
+and receiver retirement suppresses historical accepted labels. It is neither
+execution authority nor a liveness lease or complete onboarding/release gate.
+Both final suites pass 698 tests; private local enrollment receipt observation,
+older report/peer compatibility, blocked-output/no-replay and owner-HTTP boundary
+regressions pass locally, with measured scope in the linked document.
+
 The next unreleased [owner HTTP socket-boundary fix](OWNER-API-BOUNDARY.md)
 requires real loopback TCP peer metadata before the existing Host/origin checks.
 Forged headers no longer suffice on wildcard owner listeners; missing peer

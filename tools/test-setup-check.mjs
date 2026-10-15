@@ -28,6 +28,8 @@ const proxy=createServer(async(req,res)=>{
    if(proxyMode==='corrupt')value.execution_authorized=true;
    if(proxyMode==='prose')value.note='PRIVATE-MUST-NOT-ECHO';
    if(proxyMode==='legacy-input')delete value.input_channel;
+   if(proxyMode==='legacy-registration')delete value.registration;
+   if(proxyMode==='bad-registration')value.registration='PRIVATE-INVALID-REGISTRATION';
   }
   res.writeHead(response.status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));
  }catch{res.destroy();}
@@ -63,24 +65,28 @@ try{
  assert((await cli(['setup'],false)).out.includes('inference and quality not tested'));
  const invitation=await owner(['credentials','provision','--node','setup-fixture','--address',`127.0.0.1:${gateway}`]);const privateFile=join(scratch,'PRIVATE-pair.json');await writeFile(privateFile,JSON.stringify(invitation));
  const old=(await json(`http://127.0.0.1:${web}/api/diagnostics`)).runtime_id;await owner(['restart']);await until(async()=>(await json(`http://127.0.0.1:${web}/api/diagnostics`)).runtime_id!==old,'coordinator restart');
- await cli(['connection','pair','--code-file',privateFile]);await until(async()=>{const s=await json(node+'/api/status');return s.connection.state==='connected'&&s.connection.transport==='pinned_tls13'&&s.execution_grants.available===true&&s.input_channel==='ready';},'connected private input channel');
+ await cli(['connection','pair','--code-file',privateFile]);await until(async()=>{const s=await json(node+'/api/status');return s.connection.state==='connected'&&s.connection.transport==='pinned_tls13'&&s.execution_grants.available===true&&s.input_channel==='ready'&&s.registration==='accepted';},'connected private input channel and acknowledged registration');
  report=await check();assert.equal(report.transport,'pinned_tls13');assert.equal(report.saved_auth_mode,'node_credential');assert.equal(report.execution_receipts_available,true);assert(!report.next_steps.includes('pair_private'));assert.equal(report.applied_interpreter.model.model_id,'fixture-interpreter');
  await cli(['connection','pause']);await until(async()=>(await json(node+'/api/status')).connection.state==='paused','paused');report=await check();assert.equal(report.input_channel,'unavailable');assert.equal(report.saved_connection_enabled,false);assert(report.next_steps.includes('resume_connection'));assert.equal(report.applied_interpreter.state,'selected');
- await cli(['connection','resume']);await until(async()=>(await json(node+'/api/status')).connection.state==='connected','resumed');
+ await cli(['connection','resume']);await until(async()=>{const s=await json(node+'/api/status');return s.connection.state==='connected'&&s.registration==='accepted';},'resumed and registration acknowledged');
  assert.equal((await check()).input_channel,'ready');
  const diag=await json(node+'/api/diagnostics');const request={schema_version:1,expected_node_id:'setup-fixture',expected_runtime_id:diag.runtime_id,request_id:randomUUID()};
  for(const patch of [{expected_node_id:'other'},{expected_runtime_id:randomUUID()},{unexpected:true}]){const r=await fetch(node+'/api/commands/setup/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...request,...patch})});assert.equal(r.status,patch.unexpected?422:400);}
  const cross=await fetch(node+'/api/commands/setup/check',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(request)});assert.equal(cross.status,403);
  const oversize=await fetch(node+'/api/commands/setup/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...request,padding:'x'.repeat(4096)})});assert.equal(oversize.status,413);
- for(const mode of ['corrupt','prose','drop','old']){
+ for(const mode of ['corrupt','prose','drop','old','bad-registration']){
   const marker=nodeConfig+'.api.json',original=await readFile(marker,'utf8'),endpoint=JSON.parse(original);endpoint.address=`127.0.0.1:${proxy.address().port}`;proxyMode=mode;const before=proxyCalls;
-  await writeFile(marker,JSON.stringify(endpoint));try{const failure=await cli(['setup'],true,false);assert.equal(failure.success,false);assert(!JSON.stringify(failure).includes('PRIVATE-MUST-NOT-ECHO'));assert.equal(proxyCalls,before+1);}finally{await writeFile(marker,original);}
+  await writeFile(marker,JSON.stringify(endpoint));try{const failure=await cli(['setup'],true,false);assert.equal(failure.success,false);assert(!JSON.stringify(failure).includes('PRIVATE-MUST-NOT-ECHO'));assert(!JSON.stringify(failure).includes('PRIVATE-INVALID-REGISTRATION'));assert.equal(proxyCalls,before+1);}finally{await writeFile(marker,original);}
  }
  {
   const marker=nodeConfig+'.api.json',original=await readFile(marker,'utf8'),endpoint=JSON.parse(original);endpoint.address=`127.0.0.1:${proxy.address().port}`;proxyMode='legacy-input';
   await writeFile(marker,JSON.stringify(endpoint));try{const legacy=await cli(['setup']);assert.equal(legacy.input_channel,undefined);assert((await cli(['setup'],false)).out.includes('Unknown on this node build; not assumed ready'));}finally{await writeFile(marker,original);}
  }
  assert.equal(modelCalls,0,'Inspection/setup controls never infer, load or download a model');
+ {
+  const marker=nodeConfig+'.api.json',original=await readFile(marker,'utf8'),endpoint=JSON.parse(original);endpoint.address=`127.0.0.1:${proxy.address().port}`;proxyMode='legacy-registration';
+  await writeFile(marker,JSON.stringify(endpoint));try{const legacy=await cli(['setup']);assert.equal(legacy.registration,undefined);assert((await cli(['setup'],false)).out.includes('Registration: unknown'));}finally{await writeFile(marker,original);}
+ }
  nodeProcess.kill();await nodeProcess.result;const stoppedBefore=await readFile(nodeConfig,'utf8');
  const stopped=await cli(['setup'],true,false);assert.equal(stopped.success,false);assert.equal(await readFile(nodeConfig,'utf8'),stoppedBefore);
  await assert.rejects(fetch(node+'/api/status',{signal:AbortSignal.timeout(1000)}),'Stopped inspection cannot start a new node API');
@@ -88,6 +94,7 @@ try{
   read_only_config_preserved:true,legacy_connection_not_reviewed_work:true,saved_applied_interpreter_distinct:true,pinned_transport_configuration_observed:true,
   paused_core_remains_inspectable:true,exact_node_runtime_and_cross_origin_checks:true,lost_corrupt_unsupported_no_retry_or_fallback:true,
   bounded_request_body:true,stopped_node_not_launched:true,input_queue_observed_without_inference:true,legacy_missing_input_channel_stays_unknown:true,
+  registration_ack_observed:true,legacy_missing_registration_stays_unknown:true,invalid_registration_not_echoed:true,
   model_downloads:false,automatic_permissions:false,automatic_pairing:false,automatic_bootstrap:false},null,2));
  console.log('Setup check validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;

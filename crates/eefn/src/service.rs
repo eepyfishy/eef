@@ -288,6 +288,7 @@ impl NodeService {
         let config = self.read_config().unwrap_or_else(|_| json!({}));
         let live = self.live.lock().unwrap().clone();
         json!({"node_id":self.node_id,"network":live["network"],"runtime":"rust","version":crate::VERSION,
+            "registration":crate::registration::State::observe(&live,&self.node_id,self.submissions.state()),
             "node_alive":true,"coordinator_required_for_node":false,"coordinator_required_for_orchestration":true,
             "startup_issues":startup_issues(&live),
             "name":config["name"],"hostname":crate::setup::hostname(),"coordinator_name":config["coordinator_name"],"metadata":live["metadata"],
@@ -652,6 +653,7 @@ impl NodeService {
             "unknown"
         };
         json!({"schema_version":1,"success":true,"report_type":"node_diagnostics",
+            "registration":crate::registration::State::observe(&live,&self.node_id,self.submissions.state()),
             "version":crate::VERSION,"node_id":self.node_id,"metrics_available":true,"os":std::env::consts::OS,"architecture":std::env::consts::ARCH,
             "service_uptime_ms":self.started.elapsed().as_millis().min(u64::MAX as u128) as u64,
             "runtime_id":live["runtime_id"].as_str().filter(|s|s.len()<=64),

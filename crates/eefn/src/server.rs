@@ -847,7 +847,8 @@ impl NodeServer {
         write_message(
             &crypto,
             &mut writer,
-            &json!({"type": "ok", "protocol": PROTOCOL_VERSION,"grant_session_id":session_id.to_string()}),
+            &json!({"type": "ok", "protocol": PROTOCOL_VERSION,"grant_session_id":session_id.to_string(),
+                "registration_receipts":{"schema_version":1}}),
         )
         .await?;
 
@@ -993,10 +994,24 @@ impl NodeServer {
         let mut metadata = crate::context::NodeMetadata::default();
         let mut interpretation_capabilities = Vec::<String>::new();
         let mut registered = false;
+        let mut receipt_offer: Option<crate::registration::Offer> = None;
         while let Some(mut message) = read_message(crypto, reader).await? {
             match message.get("type").and_then(Value::as_str) {
                 Some("register") => {
                     require_node_id(&message, authenticated_id)?;
+                    let offered = message
+                        .get("registration_receipt")
+                        .map(|value| {
+                            serde_json::from_value::<crate::registration::Offer>(value.clone())
+                        })
+                        .transpose()
+                        .context("invalid registration receipt offer")?;
+                    if let Some(offer) = &offered {
+                        offer.validate()?;
+                    }
+                    if registered && offered != receipt_offer {
+                        bail!("registration receipt context changed within a session")
+                    }
                     metadata = serde_json::from_value(
                         message
                             .get("metadata")
@@ -1023,6 +1038,27 @@ impl NodeServer {
                         a.validate()?;
                     }
                     let advertisement = crate::network::PeerRecord::from_registration(&message)?;
+                    let acknowledgement = offered
+                        .as_ref()
+                        .map(|offer| {
+                            crate::registration::Receipt::new(
+                                authenticated_id,
+                                offer,
+                                &session_id.to_string(),
+                            )
+                        })
+                        .transpose()?;
+                    if acknowledgement.is_some()
+                        && !self
+                            .inner
+                            .connections
+                            .read()
+                            .await
+                            .get(authenticated_id)
+                            .is_some_and(|connection| connection.session_id == session_id)
+                    {
+                        bail!("registration session retired before acknowledgement")
+                    }
                     interpretation_capabilities = capabilities;
                     let received_at_ms = now_ms();
                     message["gateway_received_ms"] = json!(received_at_ms);
@@ -1032,6 +1068,7 @@ impl NodeServer {
                         .write()
                         .await
                         .get_mut(authenticated_id)
+                        .filter(|connection| connection.session_id == session_id)
                     {
                         connection.advertisement = Some(advertisement);
                         connection.state = Some(NodeStateSnapshot {
@@ -1047,6 +1084,7 @@ impl NodeServer {
                                     "metadata",
                                     "network",
                                     "execution_grants",
+                                    "registration_receipt",
                                 ],
                                 received_at_ms,
                             ),
@@ -1057,8 +1095,20 @@ impl NodeServer {
                         connection.last_seen = Instant::now();
                     }
                     registered = true;
+                    receipt_offer = offered;
                     message["node_id"] = Value::String(authenticated_id.into());
                     let _ = self.inner.events.send(NodeEvent::Registered(message));
+                    if let Some(acknowledgement) = acknowledgement {
+                        let connections = self.inner.connections.read().await;
+                        let connection = connections
+                            .get(authenticated_id)
+                            .filter(|connection| connection.session_id == session_id)
+                            .context("registration session retired before acknowledgement")?;
+                        connection
+                            .sender
+                            .try_send(json!(acknowledgement))
+                            .context("registration acknowledgement queue unavailable")?;
+                    }
                 }
                 Some("heartbeat") => {
                     require_node_id(&message, authenticated_id)?;
@@ -1870,6 +1920,94 @@ mod tests {
                 }),
                 "no addresses or node identities in diagnostic counts"
             );
+        }
+    }
+    #[tokio::test]
+    async fn optional_registration_receipts_are_session_bound_and_refresh_context_is_immutable() {
+        for change_context in [false, true] {
+            let server = NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let stream = TcpStream::connect(listener.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (accepted, peer) = listener.accept().await.unwrap();
+            let handler = server.clone();
+            let task = tokio::spawn(async move { handler.handle_connection(accepted, peer).await });
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let crypto = server.inner.crypto.as_ref().unwrap();
+            write_message(
+                crypto,
+                &mut writer,
+                &crate::protocol::build_auth(crypto, "stable", crate::VERSION),
+            )
+            .await
+            .unwrap();
+            let authenticated = timeout(Duration::from_secs(5), read_message(crypto, &mut reader))
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let runtime = Uuid::new_v4().to_string();
+            let offer = crate::registration::Offer::new(&runtime).unwrap();
+            let registration =
+                json!({"type":"register","node_id":"stable","registration_receipt":offer});
+            write_message(crypto, &mut writer, &registration)
+                .await
+                .unwrap();
+            let ack = timeout(Duration::from_secs(5), read_message(crypto, &mut reader))
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            let ack: crate::registration::Receipt = serde_json::from_value(ack).unwrap();
+            ack.validate(
+                "stable",
+                &offer,
+                authenticated["grant_session_id"].as_str().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(server.connection_counts().await.registered_node_count, 1);
+            let mut refreshed = registration;
+            if change_context {
+                refreshed["registration_receipt"] =
+                    json!(crate::registration::Offer::new(&runtime).unwrap());
+            }
+            write_message(crypto, &mut writer, &refreshed)
+                .await
+                .unwrap();
+            if change_context {
+                assert!(
+                    timeout(Duration::from_secs(5), task)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .is_err()
+                );
+                assert_eq!(server.connection_counts().await.connected_node_count, 0);
+            } else {
+                let refreshed = timeout(Duration::from_secs(5), read_message(crypto, &mut reader))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                let refreshed: crate::registration::Receipt =
+                    serde_json::from_value(refreshed).unwrap();
+                refreshed
+                    .validate(
+                        "stable",
+                        &offer,
+                        authenticated["grant_session_id"].as_str().unwrap(),
+                    )
+                    .unwrap();
+                drop(writer);
+                drop(reader);
+                timeout(Duration::from_secs(5), task)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+            }
         }
     }
 

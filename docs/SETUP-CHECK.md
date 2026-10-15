@@ -1,5 +1,10 @@
 # Read-only node setup check (unreleased)
 
+Subsequent [registration receipts](REGISTRATION-RECEIPTS.md) distinguish EEF's
+nonce/runtime/session-bound acceptance from a local registration write. Setup,
+status and diagnostics expose that observation without inference or mutation;
+older peers/reports remain unknown, never assumed accepted or work-ready.
+
 ```text
 eefn setup
 eefn --json setup

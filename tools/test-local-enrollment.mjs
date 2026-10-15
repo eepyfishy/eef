@@ -60,10 +60,14 @@ try{
   node.key=saved.psk;node.certificate=saved.coordinator_certificate;
   if(paused){
    assert.equal((await owner(['diagnostics'])).registered_node_count,0);
+   assert.equal((await json(url+'/api/diagnostics')).registration,'not_connected');
    const plain=await cli('eefn',config,['setup'],true,false);assert(plain.includes('paused'));
    await cli('eefn',config,['connection','resume']);
   }
   await until(async()=>(await owner(['diagnostics'])).registered_node_count===nodes.length,'private registration');
+  await until(async()=>(await json(url+'/api/diagnostics')).registration==='accepted','node received current registration acknowledgement');
+  const setup=await cli('eefn',config,['setup']);assert.equal(setup.registration,'accepted');
+  assert.equal(setup.model_inference_requested,false);assert.equal(setup.execution_authorized,false);
  }
  assert(nodes[0].key!==nodes[1].key,'each node needs independent credentials');assert.equal(nodes[0].certificate,nodes[1].certificate);
  phase='existing_trust_reuse';
@@ -119,7 +123,8 @@ try{
   port_free_private_enrollment:true,no_secret_file_handoff:true,explicit_coordinator_restart_consent:true,paused_preference_preserved:true,
   private_registration_observed:true,independent_credentials:true,existing_trust_reused_without_rotation:true,
   revocation_not_restored:true,permissions_models_identity_preserved:true,owner_and_authentication_digest_boundaries:true,
-  lost_owner_reply_unknown_without_replay:true,model_downloads:false,real_model_inference:false,installed_apps_changed:false},null,2));
+  lost_owner_reply_unknown_without_replay:true,registration_ack_observed_without_inference:true,
+  model_downloads:false,real_model_inference:false,installed_apps_changed:false},null,2));
  console.log('Local enrollment validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'failure.json'),JSON.stringify({passed:false,phase},null,2));throw error;}
 finally{for(const child of children)if(child.exitCode===null)child.kill();await Promise.allSettled(children.map(c=>c.result));}

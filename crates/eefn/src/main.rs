@@ -2691,7 +2691,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
     );
     let model_runtime = dashboard.bind_model_runtime_with_policy(
         &engine,
-        runtime_id,
+        runtime_id.clone(),
         file.model_lifecycle.clone(),
         file.model_lifecycle_revision,
     )?;
@@ -2726,6 +2726,7 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
             )?
             .with_grants(&eefn::grants::journal_path(&args.config), file.grants)
             .with_status(dashboard.live.clone())
+            .with_registration_runtime(&runtime_id)?
             .with_submissions(dashboard.submissions.clone()),
         )
     };

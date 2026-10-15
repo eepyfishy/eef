@@ -135,6 +135,7 @@ fn default_ollama_url() -> String {
 }
 
 pub struct NodeClient {
+    registration_runtime: Option<String>,
     grant_ledger: Option<Arc<crate::grants::GrantLedger>>,
     tls_config: Option<Arc<tokio_rustls::rustls::ClientConfig>>,
     request_budget: crate::request_limits::RequestBudget,
@@ -196,6 +197,7 @@ impl NodeClient {
             }
         }
         Ok(Self {
+            registration_runtime: None,
             grant_ledger: None,
             tls_config,
             request_budget: crate::request_limits::RequestBudget::new(&config.request_limits)?,
@@ -214,6 +216,14 @@ impl NodeClient {
             "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE,
             "retained_results":self.grant_ledger.is_some() && self.tls_config.is_some()});
         self
+    }
+    /// Bind optional receipts to this exact node runtime, never mutable status.
+    pub fn with_registration_runtime(mut self, runtime: &str) -> Result<Self> {
+        if !crate::enrollment::runtime_valid(runtime) {
+            bail!("invalid registration runtime binding")
+        }
+        self.registration_runtime = Some(runtime.into());
+        Ok(self)
     }
     pub fn with_grants(
         mut self,
@@ -258,6 +268,7 @@ impl NodeClient {
         }
         status["connection"] = json!({"state":state,"address":address,"last_error":error,"retry_seconds":retry,
                 "auth_mode":self.config.auth_mode,"transport":if self.tls_config.is_some(){"pinned_tls13"}else{"legacy_shared_key"}});
+        status["registration_observation"] = Value::Null;
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -308,10 +319,14 @@ impl NodeClient {
         capabilities: &[String],
         specs: &Value,
         models: &[Value],
+        receipt: Option<&crate::registration::Offer>,
     ) -> Value {
         let mut message = build_register(node_id, name, version, capabilities, specs, models);
         message["metadata"] = json!(self.config.metadata.advertised(capabilities));
         message["network"] = json!(self.config.network);
+        if let Some(receipt) = receipt {
+            message["registration_receipt"] = json!(receipt);
+        }
         message["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
             "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE,
             "retained_results":self.grant_ledger.is_some() && self.tls_config.is_some()});
@@ -436,6 +451,21 @@ impl NodeClient {
             models.extend(server.models()?)
         }
         let capabilities = advertised_capabilities(&self.engine.capabilities(), &models);
+        let receipt_offer = if reply["registration_receipts"]["schema_version"] == 1 {
+            if self.registration_runtime.is_some()
+                && !reply["grant_session_id"]
+                    .as_str()
+                    .is_some_and(crate::enrollment::runtime_valid)
+            {
+                bail!("registration receipt capability has no valid authenticated session")
+            }
+            self.registration_runtime
+                .as_deref()
+                .map(crate::registration::Offer::new)
+                .transpose()?
+        } else {
+            None
+        };
         {
             write_session_frame(
                 &self.crypto,
@@ -452,11 +482,12 @@ impl NodeClient {
                     &capabilities,
                     &specs,
                     &models,
+                    receipt_offer.as_ref(),
                 ),
             )
             .await?;
         }
-        info!(host, port, node_id = %self.config.node_id, "node authenticated and registered");
+        info!(host, port, node_id = %self.config.node_id, "node authenticated; registration sent");
         {
             let mut status = self.status.lock().expect("status");
             status["models"] = json!(models);
@@ -510,6 +541,10 @@ impl NodeClient {
         let mut tasks = tokio::task::JoinSet::new();
         let lease_requests = Arc::new(crate::grant_time::LeaseRequests::default());
         let mut local = self.install_submission_channel(&endpoint.address);
+        if let Some(offer) = &receipt_offer {
+            self.status.lock().expect("registration status")["registration_observation"] =
+                crate::registration::pending(offer, reply["grant_session_id"].as_str());
+        }
         let mut replies: std::collections::HashMap<
             String,
             tokio::sync::oneshot::Sender<Result<Value>>,
@@ -542,7 +577,7 @@ impl NodeClient {
                         if updated == models { continue; }
                         let capabilities = advertised_capabilities(&self.engine.capabilities(), &updated);
                         let registration = self.registration(&self.config.node_id, &self.config.name,
-                            crate::VERSION, &capabilities, &specs, &updated);
+                            crate::VERSION, &capabilities, &specs, &updated, receipt_offer.as_ref());
                         write_session_frame(&self.crypto,&writer,&output_write_failed,&registration)
                             .await.context("model registration refresh failed")?;
                         models = updated;
@@ -571,6 +606,23 @@ impl NodeClient {
                 break;
             };
             while tasks.try_join_next().is_some() {}
+            if message["type"] == "registration_accepted" {
+                let offer = receipt_offer
+                    .as_ref()
+                    .context("unsolicited registration receipt")?;
+                let session = reply["grant_session_id"]
+                    .as_str()
+                    .context("registration receipt has no authenticated session")?;
+                let receipt: crate::registration::Receipt =
+                    serde_json::from_value(message).context("invalid registration receipt")?;
+                receipt.validate(&self.config.node_id, offer, session)?;
+                let mut status = self.status.lock().expect("registration status");
+                if status["runtime_id"] != offer.runtime_id {
+                    bail!("registration receipt belongs to retired node runtime")
+                }
+                status["registration_observation"]["receipt"] = json!(receipt);
+                continue;
+            }
             if message["type"] == "grant_lease" {
                 lease_requests.complete(message);
                 continue;
@@ -1198,6 +1250,53 @@ mod tests {
         )
         .unwrap()
     }
+    #[tokio::test]
+    async fn registration_receipt_observation_clears_on_clean_socket_close() {
+        let server = crate::NodeServer::new("test-secret", "127.0.0.1", 0).unwrap();
+        server.start().await.unwrap();
+        let runtime = uuid::Uuid::new_v4().to_string();
+        let live = Arc::new(std::sync::Mutex::new(json!({"runtime_id":runtime})));
+        let client = Arc::new(
+            probe_client(format!("127.0.0.1:{}", server.port()))
+                .with_status(live.clone())
+                .with_registration_runtime(&runtime)
+                .unwrap(),
+        );
+        let runner = client.clone();
+        let task = tokio::spawn(async move { runner.connect_once().await });
+        timeout(Duration::from_secs(5), async {
+            loop {
+                let state = crate::registration::State::observe(
+                    &live.lock().unwrap(),
+                    "probe-test",
+                    client.submissions.state(),
+                );
+                if state == crate::registration::State::Accepted {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        server.stop().await;
+        assert!(
+            timeout(Duration::from_secs(5), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(live.lock().unwrap()["connection"]["state"], "disconnected");
+        assert_eq!(
+            crate::registration::State::observe(
+                &live.lock().unwrap(),
+                "probe-test",
+                client.submissions.state()
+            ),
+            crate::registration::State::NotConnected
+        );
+    }
 
     #[tokio::test]
     async fn pinned_grants_acknowledge_and_fence_effects_across_node_restart() {
@@ -1601,7 +1700,7 @@ mod tests {
     fn local_connection_does_not_replace_advertised_address() {
         let mut client = probe_client("127.0.0.1:51335".parse().unwrap());
         client.config.network.advertised_address = Some("26.1.2.3".into());
-        let message = client.registration("stable", "Laptop", "test", &[], &json!({}), &[]);
+        let message = client.registration("stable", "Laptop", "test", &[], &json!({}), &[], None);
         assert_eq!(message["network"]["advertised_address"], "26.1.2.3");
         assert_eq!(client.config.endpoints[0].address, "127.0.0.1:51335");
         assert_eq!(message["node_id"], "stable");
