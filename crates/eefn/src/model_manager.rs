@@ -3,6 +3,7 @@ use crate::service::NodeService;
 use anyhow::{Context, Result, bail};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -533,33 +534,28 @@ async fn download(state: &NodeService, entry: &Value) -> Result<()> {
                 }
             }))
             .build()?;
-        let mut stream = client
-            .get(&artifact.url)
-            .timeout(Duration::from_secs(3600))
-            .send()
-            .await?
-            .error_for_status()?
-            .bytes_stream();
-        let mut count = 0u64;
-        let mut hash = Sha256::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            let next = count
-                .checked_add(chunk.len() as u64)
-                .context("Model size overflow")?;
-            if next > bytes {
-                bail!("Model download is larger than its catalog entry")
-            }
-            ensure_space(fs2::available_space(&directory)?, bytes - count)?;
-            hash.update(&chunk);
-            file.write_all(&chunk).await?;
-            count = next;
-            progress(state, count, bytes)?;
-        }
+        let digest = crate::artifact_transfer::receive(
+            &client,
+            &artifact,
+            &mut file,
+            |remaining| ensure_space(fs2::available_space(&directory)?, remaining),
+            |completed, total, attempt| {
+                progress(state, completed, total)?;
+                let mut live = state.live.lock().unwrap();
+                live["download"]["transfer_attempt"] = json!(attempt + 1);
+                live["download"]["phase"] = json!(if attempt == 0 {
+                    "downloading"
+                } else {
+                    "recovering_range"
+                });
+                Ok(())
+            },
+        )
+        .await?;
         file.flush().await?;
         file.sync_all().await?;
         drop(file);
-        if count != bytes || hex::encode(hash.finalize()) != expected.to_ascii_lowercase() {
+        if digest != expected.to_ascii_lowercase() {
             bail!("Model verification failed. The incomplete download was removed; try again.")
         }
         tokio::fs::rename(&temp.0, &destination).await?;

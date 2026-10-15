@@ -91,6 +91,15 @@ asserts the caller knows that repeating the action is safe.
 - Ollama progress is accumulated by digest. Counts represent layers reported so
   far, not a guaranteed full-model size known at the start. Unterminated progress
   lines are bounded before accumulation, and final success is required.
+- Local GGUF transfers recover interrupted HTTPS bodies within the same explicit
+  install operation: at most eight GET attempts and a one-hour total transfer
+  budget. Recovery requests only the remaining bytes, requires an exact single
+  unencoded `206 Content-Range`, and rejects servers that ignore the range.
+  Status adds one-based `transfer_attempt`; `phase` is `downloading` or
+  `recovering_range`. Disk and cancellation checks remain active. Exact complete
+  size and SHA-256 are required before publishing an installed artifact.
+  Cancellation, failure or node restart does not retain a trusted resumable
+  partial or retry the install command. This does not change Ollama pulls.
 - Update feeds may add `size_bytes` for exact size verification. Older three-field
   feeds remain compatible. Both products enforce a 1 MiB manifest and 512 MiB
   artifact ceiling; declared size, when present, also limits the streamed body.

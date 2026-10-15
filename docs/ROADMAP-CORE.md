@@ -31,6 +31,14 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The next unreleased [model-transfer recovery increment](MODEL-TRANSFER-RECOVERY.md)
+recovers interrupted pinned GGUF responses within one explicit install job,
+with exact remaining-byte ranges, eight attempts, a one-hour transfer budget and
+complete SHA-256 verification before publication. Both suites pass 700 tests;
+local TLS recovery and existing model-command regressions pass. The optional 2B
+interpreter remains experimental: external transfer, quality and default
+bootstrap acceptance are not implied, and no installed app or release changes.
+
 The next unreleased [registration receipt increment](REGISTRATION-RECEIPTS.md)
 negotiates a nonce/runtime/session-bound acknowledgement over existing encrypted
 framing. Setup/status distinguish accepted registration from a local write,

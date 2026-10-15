@@ -1,5 +1,45 @@
 # Lightweight interpreter candidate evaluation
 
+## Optional 2B text candidate (unreleased)
+
+An optional `qwen3.5-2b` catalog entry pins Unsloth's text-language Q4_K_M GGUF
+for Qwen3.5-2B at revision `f6d5376be1edb4d416d56da11e5397a961aca8ae`:
+1,280,835,840 bytes, SHA-256
+`aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223`.
+The [quantizer's pinned repository metadata](https://huggingface.co/api/models/unsloth/Qwen3.5-2B-GGUF/revision/f6d5376be1edb4d416d56da11e5397a961aca8ae?blobs=true)
+declares `Qwen/Qwen3.5-2B` as its base and Apache-2.0. The upstream
+[pinned license](https://huggingface.co/Qwen/Qwen3.5-2B/blob/15852e8c16360a2fea060d615a32b45270f8a8fc/LICENSE)
+was checked; the [model card](https://huggingface.co/Qwen/Qwen3.5-2B/blob/15852e8c16360a2fea060d615a32b45270f8a8fc/README.md)
+positions the small model for research/development and prototyping. This records
+publisher declarations, not legal advice or independent reproduction of the
+quantization. Future redistribution still requires applicable license/notices.
+
+This is **not an automatic default**, bootstrap approval, bundled weight or role
+assignment. It is text-only in EEF's catalog: no vision projector is included and
+no VLM/media capability is claimed. The pre-existing catalog order/default
+behavior remains unchanged. Configured/custom catalogs remain supported.
+
+The [Ollama alias](https://ollama.com/library/qwen3.5:2b) exists, but its manifest,
+quantization, size and image components are distinct from the pinned GGUF. The
+GGUF digest/bytes must never be presented as verification or a disk estimate of
+that Ollama artifact. This checkpoint does not install or evaluate the Ollama
+distribution or modify personal model selections.
+
+The planned isolated evaluation uses one verified content-addressed cache file,
+the existing CPU runtime and frozen production quality cases. It must record
+runtime/model identity and results separately from strict schema acceptance;
+successful loading or valid JSON cannot approve an interpreter default.
+
+The initial isolated download in `.validation/real-model-J6G6W3` failed with a
+premature response-body EOF. The incomplete file was removed by the existing
+partial-file guard; no completed evaluation report, installation or model
+selection resulted. This is retained failure evidence, not candidate acceptance.
+An unreleased bounded byte-range recovery path is now under verification before
+another real download. Its local TLS fixture checks exact-offset recovery and
+rejection of an ignored range; it does not prove the external transfer or model
+quality. `EEF_TEST_MODEL_DOWNLOAD_TIMEOUT_MS` permits an explicit 1–60 minute
+test wait (15 minutes by default), without retrying the install command.
+
 Development evidence, 2026-09-19. This does not select a default model, enable
 automatic downloads, or authorize execution of model-generated instructions.
 

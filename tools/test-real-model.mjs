@@ -16,6 +16,8 @@ const bin=resolve(process.env.EEF_TEST_BINARY_DIR||bundle),reused=process.env.EE
 const thinkingMode=process.env.EEF_TEST_THINKING_MODE||'inherit';
 assert(['inherit','disabled','enabled'].includes(thinkingMode),'Invalid EEF_TEST_THINKING_MODE');
 const testMemoryLimit=process.env.EEF_TEST_MODEL_MEMORY_LIMIT==='1';
+const downloadTimeoutMs=Number(process.env.EEF_TEST_MODEL_DOWNLOAD_TIMEOUT_MS||900000);
+assert(Number.isInteger(downloadTimeoutMs)&&downloadTimeoutMs>=60000&&downloadTimeoutMs<=3600000,'Use a bounded 1-60 minute test download timeout');
 assert(reused||process.env.EEF_TEST_ALLOW_MODEL_DOWNLOAD==='1','Choose an existing model or explicitly authorize this isolated download');
 const scratch=await mkdtemp(join(root,'.validation','real-model-')),children=[];
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -54,7 +56,7 @@ try{
  const admitted=await cli('eefn',configPath,['models','install','--model',entry.id]);
  assert.equal(admitted.accepted,true);assert.equal(admitted.completed,false);assert.equal(admitted.selection_changed,false);
  const downloadId=admitted.operation_id;
- const deadline=Date.now()+900000;
+ const deadline=Date.now()+downloadTimeoutMs;
  while(true){
  const inspected=await cli('eefn',configPath,['models','download-status','--id',downloadId]);
  assert.equal(inspected.known,true);const job=inspected.download;assert.equal(job.id,downloadId);
