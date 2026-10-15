@@ -507,7 +507,55 @@ After restoration, fresh workspace binaries/examples built, all eight focused
 interpretation tests passed, and public preview regression `request-preview-xL8Ou4`
 passed. The rebuilt reference executable emits system-prompt SHA-256
 `56ec36c9a3b47393458479c216924d4d0b156aae31b80a1f5c2a1380ccd8ca5c`,
-exactly matching the retained baseline; the interpretation source has no diff
-against the pre-experiment commit. Rebuilt executable hashes differ from the
+exactly matching the retained baseline; at that restoration checkpoint the
+interpretation source had no diff against the pre-experiment commit. Rebuilt
+executable hashes differ from the
 earlier builds, so prompt restoration is established by source/content checks,
 not an assertion of binary reproducibility. The rejected prompt is not shipped.
+
+## Application-context increment (unreleased; no default approval)
+
+A smaller follow-up retains the original example, field definitions and
+ambiguity/authority instructions. It appends factual application context: an EEF
+node is a user-owned endpoint device, "this node" means the request's origin,
+interpretation does not require knowing the requested answer/current state, and
+unresolved references or unavailable inputs must not be invented. Original text
+stays in a separate message. These are model instructions, not authenticated
+origin proof, target assignment, a prompt-injection boundary or execution authority.
+No schema, validator, policy, output bounds, sampling default or role changes.
+
+Both frozen suites reuse the same verified 2B cache/runtime with disabled thinking
+and temperature zero. They complete with no model downloads/copies, coordinator,
+workload execution or personal configuration changes:
+
+| Case set | Accepted | Label matches | Copied sample goals (baseline → context) | Startup ms | Model peak working set bytes | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| Original v1 | 20/20 | 14/20 | 16 → 12 | 4,455 | 2,138,529,792 | `interpreter-quality-fJDbY6` |
+| Generalization v1 | 20/20 | 12/20 | 14 → 13 | 4,427 | 2,247,856,128 | `interpreter-quality-i3o6Ci` |
+
+Aggregate label scores are unchanged, not an accuracy improvement. In the second
+suite, the Thai transfer intent improves, while a continuous feed-monitor intent
+regresses to information; both still request clarification. No expected-ambiguous
+case loses clarification in these two runs, unlike the rejected field-description
+rewrite. Clear requests still ask unnecessary questions and many goals still copy
+the sample. This change supplies correct application context and modestly reduces
+one observed failure mode, but does not solve interpretation or approve a default.
+The small single-run differences are not statistical or held-out acceptance.
+
+System-prompt reference SHA-256 is
+`f9ec6ea9d7341bb7a5594959667b184485d5c9749f6a107c0228ce6866373216`;
+node/reference executable hashes are
+`3b421e26c109784b294b4a295b63351babb0b3b1e36c966ac11094f371248ecb` /
+`baa611b6c9985fb1251b053e9d519eefa03670aed3f676dd683d1d05f9a0c699`.
+The existing case-list hashes are unchanged. Process peak working set is not total
+application RAM, physical memory release or an enforced resource quota.
+
+Both locked/offline workspace/all-target suites pass **701 tests plus one ignored
+each**, with default features and without dashboard features (EEF 243, owner CLI
+17, installer 6, node library 420, node CLI 15). Fresh binaries/examples build.
+Public preview regression `request-preview-W0Iv0h`, frozen scorer, source dependency
+boundary, format and diff checks pass. The new unit checks shared context wording,
+unchanged input/message separation and retained clarification/authority rules;
+it does not establish semantic quality or resistance to prompt injection.
+No model is automatically selected, no bootstrap default is approved, and no
+installed app, permission, release or update feed changed.

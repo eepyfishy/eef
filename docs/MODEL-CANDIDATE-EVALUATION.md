@@ -81,6 +81,11 @@ remains optional and **unapproved**. The subsequently compared field-description
 prompt removed copied sample goals but regressed both scores and clarification
 handling; it was rejected and the prior prompt restored. See the
 [retained rejected experiment](INTERPRETER-QUALITY.md#rejected-prompt-experiment-field-descriptions-instead-of-sample-answers).
+The smaller subsequent [application-context increment](INTERPRETER-QUALITY.md#application-context-increment-unreleased-no-default-approval)
+keeps the original clarification/authority instructions and adds EEF/origin
+semantics. Label totals remain 14/20 and 12/20; copied sample goals decrease to
+12 and 13 cases, with mixed individual intent changes. It remains insufficient
+for automatic default approval.
 
 Development evidence, 2026-09-19. This does not select a default model, enable
 automatic downloads, or authorize execution of model-generated instructions.

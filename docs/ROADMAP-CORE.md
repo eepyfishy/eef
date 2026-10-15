@@ -31,6 +31,15 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The unreleased [application-context prompt increment](INTERPRETER-QUALITY.md#application-context-increment-unreleased-no-default-approval)
+explains EEF nodes and origin-relative references while preserving the original
+ambiguity, schema and authority rules. Both suites pass 701 tests plus one ignored
+each; public preview and production 2B comparisons pass their harnesses. Quality
+label totals remain 14/20 and 12/20, with fewer copied sample goals and mixed
+per-case changes. No expected-ambiguous case loses clarification in those runs,
+but unnecessary questions and placeholder goals remain. This is factual context,
+not solved interpretation, default approval, automatic bootstrap or a release.
+
 The optional [2B interpreter baseline](MODEL-CANDIDATE-EVALUATION.md#completed-2b-baseline-evidence-not-default-approval)
 now passes an explicit external verified download and same-PC real CPU lifecycle
 checks without model copies or personal selection changes. Both unchanged-prompt
