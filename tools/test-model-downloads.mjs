@@ -47,7 +47,7 @@ try {
  Object.assign(config,{node_id:'download-fixture-node',name:'Download fixture',auto_local:false,local_pairing:false,endpoints:[],dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:0},update:{policy:'off'},models:{provider:'ollama',ollama:{base_url:`http://127.0.0.1:${fakePort}`,selected:[]},llamacpp:{slots:[]}}});
  await writeFile(configPath,JSON.stringify(config));
  const offline=await cli(['install','--model','fixture'],false);assert.equal(offline.error_code,'node_not_running');assert.equal(offline.request_sent,false);assert.equal(pulls.length,0);
- launch(['--no-ui']);
+ const owner=launch(['--no-ui']);
  await until(async()=>{const m=JSON.parse(await readFile(marker,'utf8'));node='http://'+m.address;return !!(await json(node+'/api/diagnostics')).runtime_id;},'command API discovery');
  assert.equal((await fetch(node+'/')).status,404);
  const before=(await json(node+'/api/config')).config;
@@ -65,6 +65,16 @@ try {
  assert.equal(accepted.accepted,true);assert.equal(accepted.completed,false);assert.equal(accepted.selection_changed,false);
  const id=accepted.operation_id;assert.match(id,/^[0-9a-f-]{36}$/);
  await until(async()=>(await cli(['download-status','--id',id])).download.completed===1,'progress through independent command');
+ const initialRuntime=(await json(node+'/api/diagnostics')).runtime_id;
+ const restarted=launch(['restart','--wait-seconds','30','--json']);
+ const restartedResult=await restarted.result;
+ assert.equal(restartedResult.code,0,restartedResult.out+restartedResult.err);
+ assert.equal(JSON.parse(restartedResult.out).completed,true);
+ assert.notEqual((await json(node+'/api/diagnostics')).runtime_id,initialRuntime);
+ assert.equal(owner.exitCode,null,'runtime restart must not replace the owner process');
+ const continued=(await cli(['download-status','--id',id])).download;
+ assert.equal(continued.state,'downloading');assert.equal(continued.completed,1);
+ assert.equal(continued.cancel_requested,false);assert.equal(pulls.length,1,'runtime restart must not repeat provider pull');
  const busy=await cli(['install-plan','--model','gated-fixture']);
  assert.equal(busy.plan.can_request,false);assert.equal(busy.plan.blocker,'download_in_progress');
  const typed=command=>json(node+'/api/commands/model-downloads',{schema_version:1,expected_node_id:config.node_id,command});
@@ -97,6 +107,19 @@ try {
   assert.equal((await cli(['install','--model','unsupported-fixture'],false)).error_code,'unsupported_command');
   assert.equal(legacyRequests,1);assert.equal(pulls.length,3,'no legacy fallback installation');
  } finally {await writeFile(marker,originalMarker);}
+ // A full process replacement has no durable transfer ledger. It must not
+ // replay the active install or pretend its old operation receipt is current.
+ const processTransfer=await cli(['install','--model','process-restart-fixture']);
+ await until(async()=>(await cli(['download-status','--id',processTransfer.operation_id])).download.completed===1,'active transfer before process replacement');
+ assert.equal(pulls.length,4);
+ const replacedRuntime=(await json(node+'/api/diagnostics')).runtime_id;
+ owner.kill();await owner.result;
+ launch(['--no-ui']);
+ await until(async()=>{const m=JSON.parse(await readFile(marker,'utf8'));node='http://'+m.address;const d=await json(node+'/api/diagnostics');return !!d.runtime_id&&d.runtime_id!==replacedRuntime;},'replacement process discovers its own runtime');
+ assert.equal((await json(node+'/api/status')).download.state,'idle');
+ assert.equal((await cli(['download-status','--id',processTransfer.operation_id],false)).error_code,'operation_not_found');
+ assert.equal((await cli(['show'])).saved_selections.length,0);
+ assert.equal(pulls.length,4,'process restart must not reissue an install');
  // GGUF inspection uses saved configuration, without contacting the artifact or
  // the unselected provider. An earlier plan does not skip admission validation.
  const ggufConfig=structuredClone(before);ggufConfig.dashboard.port=Number(new URL(node).port);
@@ -113,9 +136,9 @@ try {
  ggufConfig.model_catalog[0].sha256='invalid';
  await json(node+'/api/config',{config:ggufConfig},'PUT');
  assert.equal((await cli(['install','--model','gguf-fixture'],false)).error_code,'download_command_rejected');
- assert.equal((await cli(['download-status','--id',complete.operation_id])).download.state,'installed','invalid admission preserves retained receipt');
- assert.equal(pulls.length,3);assert.equal(tagRequests,tagsBefore);
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,api_only:true,offline_no_launch:true,installed_and_inspect:true,read_only_install_preflight:true,gguf_preflight_no_provider_query:true,invalid_admission_preserves_receipt:true,provider_storage_unknown:true,busy_preflight:true,progress_and_exact_cancel:true,lost_reply_receipt:true,no_automatic_retry:true,no_legacy_fallback:true,no_selection_changes:true,physical_two_pc:false,real_model_downloads:false},null,2));
+ assert.equal((await json(node+'/api/status')).download.state,'idle','invalid admission preserves replacement process state');
+ assert.equal(pulls.length,4);assert.equal(tagRequests,tagsBefore);
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,api_only:true,offline_no_launch:true,installed_and_inspect:true,read_only_install_preflight:true,gguf_preflight_no_provider_query:true,invalid_admission_preserves_receipt:true,provider_storage_unknown:true,busy_preflight:true,progress_and_exact_cancel:true,lost_reply_receipt:true,no_automatic_retry:true,no_legacy_fallback:true,no_selection_changes:true,runtime_restart_continues_same_transfer:true,process_restart_does_not_replay_transfer:true,process_restart_old_receipt_unknown:true,physical_two_pc:false,real_model_downloads:false},null,2));
  console.log('Model download command checks passed: '+scratch);
 } finally {
  for(const stream of streams)stream.destroy();

@@ -98,8 +98,12 @@ asserts the caller knows that repeating the action is safe.
   Status adds one-based `transfer_attempt`; `phase` is `downloading` or
   `recovering_range`. Disk and cancellation checks remain active. Exact complete
   size and SHA-256 are required before publishing an installed artifact.
-  Cancellation, failure or node restart does not retain a trusted resumable
-  partial or retry the install command. This does not change Ollama pulls.
+  An in-process node-runtime restart leaves the same service-owned operation
+  running; it does not issue another install. Full app replacement loses the
+  in-memory receipt and never automatically resumes or retries the transfer.
+  Ordinary failure/cancellation removes the owned partial; a crash or forced
+  process termination may leave an abandoned partial, which is never trusted or
+  resumed. This does not change Ollama pulls.
 - Update feeds may add `size_bytes` for exact size verification. Older three-field
   feeds remain compatible. Both products enforce a 1 MiB manifest and 512 MiB
   artifact ceiling; declared size, when present, also limits the streamed body.

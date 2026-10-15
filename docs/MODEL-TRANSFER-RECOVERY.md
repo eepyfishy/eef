@@ -21,9 +21,13 @@ the partial was cleaned up and no model was installed or selected.
   checks. The final complete SHA-256 must match the catalog before the existing
   flush/sync/rename/index publication path can mark the model installed.
 - Progress adds `transfer_attempt` (one-based) and `recovering_range` phase.
-  Cancellation/failure still removes the owned partial. There is no trusted
-  cross-restart partial cache, install retry, model selection or backend change.
-  Ollama pulls retain their existing semantics.
+  Ordinary cancellation/failure still removes the owned partial. An in-process
+  node-runtime restart leaves the same service-owned transfer alive, with its
+  existing receipt; there is no repeated install or new transfer budget. Full
+  app replacement loses that in-memory receipt and never automatically resumes
+  or replays the transfer. A crash/forced termination can leave an abandoned
+  partial on disk; it is never trusted or resumed. Automatic orphan reclamation
+  is not implemented. Ollama pulls retain their existing semantics.
 
 Pinned HTTPS metadata and final full-file verification are integrity checks,
 not independent reproduction of model weights or approval of interpreter
@@ -46,6 +50,16 @@ or accepting an unverifiable prefix.
   replies, no automatic install retry, no selection change and backend preflight.
   That fixture uses mock Ollama streams, not real Ollama weights or a physical
   second PC.
+- The expanded `.validation/model-downloads-waH4bW/results.json` also passes
+  an actual public restart command during a mock pull: runtime changes, owner
+  process remains, transfer ID/progress survive and exactly one provider request
+  was issued. Exact cancellation still works afterwards. Forced replacement of
+  the isolated owner during another mock pull starts idle, loses the old receipt
+  and does not repeat the provider request. These are service-lifetime checks,
+  not proof of GGUF cleanup on a crash or durable transfer recovery. The first
+  expanded fixture (`model-downloads-y1Ujvv`) failed a wrongly placed expected
+  request-count assertion; moving the process-replacement scenario after the
+  existing completion scenario corrected the harness ordering, not production.
 
 These checks do not establish successful external large-artifact recovery,
 physical two-PC acceptance, default interpreter quality or release readiness.
