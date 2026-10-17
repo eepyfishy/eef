@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+A later default-interpreter experiment appended a decision checklist without
+changing the schema/validator or frozen expectations. It was rejected: the two
+real CPU development suites accepted 19/20 each and matched 14/20 and 11/20,
+versus baseline 20/20 each and 14/20 and 12/20. Fewer literal copied goals did not
+justify lost acceptance or incorrect continuous labels. The original prompt is
+restored and both suites pass 714 tests plus one ignored each, with a matching
+fresh prompt hash and public preview regression. See
+[negative evidence and exact static appendix](INTERPRETER-QUALITY.md#rejected-decision-checklist-experiment-2026-10-17).
+No prompt change or default approval is retained; model-quality/bootstrap and
+release acceptance remain open.
+
 The next first-run command increment adds explicit `--activate-backend` to
 interpreter assignment and installed-GGUF selection with interpreter assignment.
 It saves role and provider atomically, preserving the old provider unless asked;

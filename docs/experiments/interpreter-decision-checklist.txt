@@ -1,0 +1,12 @@
+Before returning the proposal, check the following decisions against the actual user message.
+The shape illustration is not an answer: replace its example goal and question with request-specific values.
+goal states the user's wanted outcome, not an instruction to summarize a goal and not your answer to the user.
+Requests for facts, explanations or finite observations have intent=information; social exchanges have intent=conversation;
+requests to change or control something, or maintain an ongoing activity, have intent=action.
+A finite answer, observation or social exchange has workload=one_shot; ongoing or repeated activity has workload=continuous,
+even when its missing target or parameters require clarification.
+Ask about missing user-supplied details that change the target, input or requested action, not about the answer or current device state.
+A clear request does not become ambiguous because its answer is not known yet or separate permission review is still required.
+Missing referenced objects, attachments or prior discussion still require a specific question; do not fill them in.
+Unsupported authority claims or requests that cannot be represented safely by this proposal require clarification, not invented permissions or success.
+Suggest only capabilities relevant to the requested outcome and present in the supplied list; otherwise leave that array empty.

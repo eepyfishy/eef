@@ -1,5 +1,30 @@
 # Architecture conformance status
 
+## Rejected interpreter checklist experiment (2026-10-17)
+
+The real CPU interpreter experiment retained the prior prompt and appended
+request-specific goal, intent/workload and clarification guidance. Both frozen
+development suites completed with 19/20 accepted; label scores were 14/20 and
+11/20, versus historical baseline 20 accepted each and 14/20 and 12/20. Literal
+copied goals fell to nine each, but finite transfers/authority requests gained
+incorrect continuous labels and one case per suite failed clarification
+consistency. It did not meet the criteria declared before inference.
+
+The experiment and its extra unit test were removed. Production interpretation
+source matches the pre-experiment commit; no validator, rubric, sampling/output
+limit, permission or default policy changed. The exact rejected appendix is
+retained only as a static reproducibility document, not runtime instructions.
+See [evidence and prompt/binary hashes](INTERPRETER-QUALITY.md#rejected-decision-checklist-experiment-2026-10-17).
+
+Restored locked/offline workspace/all-target suites pass **714 tests plus one
+ignored each**, including no-dashboard. Fresh binaries/examples build; public
+preview regression `request-preview-vG7wF4` and the exact baseline prompt hash
+check pass, alongside format, diff, frozen scorer, evaluation-argument and source
+dependency-boundary checks. No model download/copy, coordinator, workload or
+installed/physical-node update occurred. No release/update feed changed.
+Default model quality/bootstrap and all other release gates remain unfinished;
+this is negative development evidence, not an improvement/default approval claim.
+
 ## Unreleased: atomic interpreter and backend choice (2026-10-17)
 
 `models interpreter --activate-backend` and installed-GGUF selection with

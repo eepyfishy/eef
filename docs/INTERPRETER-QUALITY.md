@@ -613,3 +613,82 @@ The subsequent [typed rejection diagnostics](INTERPRETER-REJECTIONS.md) now make
 future structurally rejected proposals more understandable without raw model text
 or relaxed validation. Historical failures recorded only as `interpretation_invalid`
 remain unclassified; no new quality result or default approval is inferred.
+
+## Rejected decision-checklist experiment (2026-10-17)
+
+Before evaluation, the candidate kept the committed application-context prompt,
+shape illustration, ambiguity and authority instructions, then appends a decision
+checklist. It asked for a request-specific goal/question rather than copied
+illustration text; distinguishes facts/finite observations, social exchanges and
+actions; separates one-shot from ongoing work; and distinguishes missing request
+details from not yet knowing an answer or having execution approval. Missing
+references, attachments/history and unsupported authority still require questions.
+This is model guidance, not an authority boundary or changed validator.
+
+The comparison used the existing pinned 2B cache and runtime, 4,096-token context,
+512-token output bound, disabled thinking hint and temperature zero. No weights
+are copied/downloaded, no coordinator is started, and no workload is executed.
+Original-v1 and generalization-v1 cases, frozen grader and expectations stay
+unchanged. Historical committed-context runs `fJDbY6` / `i3o6Ci` are the reference
+(20 accepted each; 14/20 and 12/20 label matches; 12 and 13 literal copied goals).
+This is development comparison, not independent held-out or default approval.
+
+Retention criteria are declared before the first candidate inference: do not
+reduce acceptance or either label total; do not lose a required question or turn
+ongoing work into one-shot; materially reduce copied goals and inspect all
+synthetic goals/questions for invented targets/state or missing purpose. Label
+totals alone cannot justify retaining a regression. A failed candidate is removed
+without changing expectations, bounds, permissions or the independent validator.
+Even a retained improvement leaves multilingual human/physical/default-bootstrap
+acceptance open.
+
+| Case set | Baseline accepted / matches | Candidate accepted / matches | Literal copied goals (baseline → candidate) | Evidence |
+| --- | --- | --- | --- | --- |
+| Original v1 | 20/20 / 14/20 | 19/20 / 14/20 | 12 → 9 | `interpreter-quality-I9mW1I` |
+| Generalization v1 | 20/20 / 12/20 | 19/20 / 11/20 | 13 → 9 | `interpreter-quality-McFMrY` |
+
+The English greeting improved, and ongoing observation/relay proposals became
+explicitly continuous. These gains did not meet the declared retention bar.
+One Thai status query and the English acknowledgement respectively failed
+clarification-consistency validation (`rejection_reason: clarification_required`).
+The public reports do not expose rejected raw output, so the precise inconsistent
+field combination is not inferred. Finite English/Thai transfer requests and a
+fabricated grant request were incorrectly labeled continuous. Clear status and
+resource requests still asked unnecessary questions and omitted `system.info`;
+many goals still copied the illustration. One additional goal merely rephrased
+the instruction as "Summarize the user's wanted outcome," illustrating why the
+literal-copy count alone is not a goal-faithfulness score. Reviewing the full
+synthetic replies did not establish independent multilingual/default quality.
+
+**Rejected:** the appended checklist and experiment-only unit test were removed;
+the committed application-context prompt is restored. No case, expectation,
+generation schema, validator, capability, output/sampling limit, permission or
+automatic-default policy was changed to make these runs pass. No accepted
+proposal was authorized or executed. Further model/candidate work is needed;
+additional prompt instructions are not evidence that the default-model gate is
+solved.
+
+For reproducibility only, [the exact rejected appendix](experiments/interpreter-decision-checklist.txt)
+is retained as a static document, never imported by production or a runtime
+selector. Join its lines with single spaces, trim, and append it to the committed
+context system prompt with one separating space. With the evaluation capability
+vocabulary, the resulting system-prompt SHA-256 is
+`c7252bef546cf0d7a32be15420e0af2f56e52b5807883019f3fdf583bdb01171`.
+Both runs used node/helper hashes
+`b857c8b1b5db8808cadec0fdd50ebf316d3bf12e8f119ee716e009f36fdcd2d1` /
+`7455bc22e3c3cb49514ec0e591b7064b33bf2e3d6d27b6dc3331adb07c2cbd39`.
+Full synthetic prompt/reply evidence remains in the ignored fixture directories.
+The historical baseline is not a new controlled replicate or held-out comparison.
+No model download/copy, installed-app/physical-node update, coordinator, workload,
+release or update-feed change occurred.
+
+After removal, both locked/offline workspace/all-target suites pass **714 tests
+plus one ignored each**, and fresh default binaries/examples build. Public preview
+regression `request-preview-vG7wF4` passes. The rebuilt reference emits the exact
+committed-context system-prompt hash
+`f9ec6ea9d7341bb7a5594959667b184485d5c9749f6a107c0228ce6866373216`;
+`interpretation.rs` has no diff against the pre-experiment commit. The static
+appendix also exactly matches the recorded evaluated suffix, whose preceding
+baseline hashes to that same reference. Formatter, diff, frozen scorer,
+evaluation-argument and backend/browser boundary checks pass. These prove
+restoration and regression checks, not model-quality or default approval.
