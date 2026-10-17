@@ -765,3 +765,64 @@ The 48 cross-field combinations agree with the unchanged validator in the unit
 test; maximum 64-by-64-byte capability vocabulary stays within the schema budget.
 Format, JS syntax, frozen scorer, argument-rejection, source boundary and diff
 checks pass. Full model quality/bootstrap and release acceptance remain open.
+
+## Qwen3 1.7B candidate (2026-10-17; no default approval)
+
+The optional [pinned candidate](MODEL-CANDIDATE-EVALUATION.md#optional-qwen3-17b-candidate-2026-10-17-not-default-approved)
+is an existing-in-test-cache 1,107,409,472-byte Q4_K_M artifact after one explicit
+download in `real-model-GJWNnk`. Four production quality runs reuse it without
+copies or further downloads. The committed prompt, clarification-consistent
+schema, CPU-only 4,096-token context, 512-token output limit, disabled thinking
+hint, frozen cases and grader stay unchanged. Separate disposable owner policies
+were declared before quality evaluation:
+
+- Production-default profile: temperature zero, optional sampling hints omitted.
+- Alternate non-thinking profile: temperature 0.7, top-p 0.8, top-k 20, min-p 0,
+  presence penalty 1.5 and fixed seed 1. Saved/applied hints are checked; this
+  does not attest the backend's internal reasoning. Global defaults are unchanged.
+
+| Profile | Case set | Accepted | Label matches | Literal copied goals | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| Production default | Original v1 | 20/20 | 9/20 | 18/20 | `interpreter-quality-NLIMRP` |
+| Production default | Generalization v1 | 20/20 | 7/20 | 17/20 | `interpreter-quality-jmp4ZK` |
+| Alternate | Original v1 | 20/20 | 8/20 | 17/20 | `interpreter-quality-MxrvEu` |
+| Alternate | Generalization v1 | 20/20 | 6/20 | 17/20 | `interpreter-quality-blwdBT` |
+
+These results do not pass the application/default gate. All required ambiguous
+cases still ask a question, but many goals/questions copy the illustration.
+For example, a clear OS/memory request receives "What should be done?" and the
+template goal. An ongoing camera-watch request becomes information/one-shot in
+the production-default run. File-move/transfer requests are also repeatedly
+misclassified as information. Valid structure and conservative review do not
+make these faithful interpretations. The fixed 2B reference still matches 14/20
+and 12/20, with fewer copied goals; neither model is default-approved. These are
+individual development runs, not controlled statistical model/profile rankings,
+independent human review, physical second-PC or general coding/chat acceptance.
+
+Startup is 4,281–4,560 ms in these runs. Sampled owned-process peak working sets
+are 2,367,696,896–2,397,163,520 bytes, not total/current RAM, VRAM, a resource quota
+or a measured second-device budget. Thread count is not recorded in the quality
+harness; the separate lifecycle test explicitly uses two threads. No quality run
+starts a coordinator or executes the synthetic user requests.
+
+Prompt/schema SHA-256 remain
+`f9ec6ea9d7341bb7a5594959667b184485d5c9749f6a107c0228ce6866373216` /
+`2660caf1caed38b74c11e266d1c79de1060ed80284d8ba270977c5b4aa84aa8b`.
+All runs use node/helper hashes
+`6ac2167023994530bbd04a503d6444669c8d7e19fd2b67a5fa421bd0f9befd2a` /
+`50ad0854fe61967957fdcd44084dcd77f6bb8f10fc4fadf8b841b4e2a60b4137`.
+Reference/case-set/schema capture checks pass in `reference-capture-qHQGJ5`,
+`reference-capture-mymFkn`, `reference-capture-kS0qUO` and
+`reference-capture-RPSU6Q`, without altering the source evaluations or inferring.
+
+**No automatic default, role assignment or sampler change is approved.**
+The new catalog entry is manual-only. No installed/physical node, release, UI or
+update feed changed; full interpreter/bootstrap and release acceptance remain.
+
+Both full workspace/all-target suites pass 715 tests plus one ignored each,
+with default and no-dashboard features, and fresh binaries/examples build with
+the same evaluated node/helper hashes. `model-metadata-KU5Yaj` passes public
+inventory/selection and approved remote protocol regressions with mock Ollama,
+not physical or real-Ollama model acceptance. Formatting, diff, frozen grader,
+evaluation-argument and source dependency-boundary checks pass. None changes the
+failed default-interpreter quality decision.

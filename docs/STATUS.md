@@ -1,5 +1,41 @@
 # Architecture conformance status
 
+## Optional Qwen3 1.7B evaluation (2026-10-17; no default approval)
+
+Added one pinned, manual-only Q4_K_M catalog option with publisher-declared
+Apache-2.0 provenance and exact artifact size/digest. The first catalog entry,
+owner replacement/customization, provider/role choices and sampler defaults stay
+unchanged. The mutable Ollama alias is not the tested GGUF's artifact identity.
+
+`real-model-GJWNnk` passes explicit install-plan/install/status, full size/SHA
+verification, pinned-TLS reviewed CPU inference, stable restart identity,
+retained results without replay, targeted unload/reload, idle and on-demand
+residency, and model withdrawal. This downloads one 1,107,409,472-byte artifact;
+the four subsequent quality runs reuse it without copying or downloading again.
+It is retained only in ignored validation storage; about 3.1 GB remains free.
+
+All eighty quality proposals are structurally accepted, but the temperature-zero
+original/generalization runs match 9/20 and 7/20, and the declared alternate
+sampling profile matches 8/20 and 6/20. Literal copied goals occur in 18, 17, 17
+and 17 cases. No required question is lost, but consequential/ongoing requests
+are repeatedly misclassified and clear questions remain unnecessarily unresolved.
+Neither profile is default-approved; the fixed 2B reference still performs better
+on this development task, without itself being approved. There is no prompt,
+schema, rubric or validation relaxation. See
+[source and lifecycle](MODEL-CANDIDATE-EVALUATION.md#optional-qwen3-17b-candidate-2026-10-17-not-default-approved)
+and [all four quality runs](INTERPRETER-QUALITY.md#qwen3-17b-candidate-2026-10-17-no-default-approval).
+
+Both locked/offline workspace/all-target suites pass **715 tests plus one ignored
+each**, including no-dashboard. Fresh binaries/examples build; node/helper hashes
+match the measured quality artifacts. All four metadata-only schema/reference
+captures pass, as do formatter, diff, scorer, argument and backend/browser source
+checks. Fresh `model-metadata-KU5Yaj` passes the mock-provider public inventory,
+selection and approved remote protocol regressions. These are isolated one-PC
+tests, not physical two-PC, resource-quota or
+general coding/chat acceptance. No installed/physical node, UI, release artifact
+or stable-only update feed changed. Default interpreter/bootstrap and remaining
+release/roadmap gates remain unfinished.
+
 ## Unreleased: generation clarification consistency (2026-10-17)
 
 The generation schema mirrors the existing independent validator's cross-field

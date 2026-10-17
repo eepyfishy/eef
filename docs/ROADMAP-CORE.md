@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+An optional pinned `qwen3-1.7b` manual catalog entry now has explicit public-
+command download/hash and real CPU lifecycle evidence. It remains unapproved
+for default use: four fixed production evaluations accept all twenty proposals
+each, but match only 9/20, 7/20, 8/20 and 6/20, with widespread copied goals.
+The declared alternate sampling profile is not adopted globally. One 1.11 GB
+artifact is retained in isolated validation storage without copies; installed
+apps/physical nodes, existing selections and default bootstrap remain unchanged.
+See [provenance, scope and failed quality evidence](MODEL-CANDIDATE-EVALUATION.md#optional-qwen3-17b-candidate-2026-10-17-not-default-approved).
+Better interpretation/model selection and full default/bootstrap acceptance
+remain required; a structurally valid proposal is not useful intent or authority.
+
 The next interpreter reliability increment expresses the validator's existing
 clarification decisions as two complete generation alternatives: clear proposals
 have no question and require known labels; questioning proposals retain uncertainty.

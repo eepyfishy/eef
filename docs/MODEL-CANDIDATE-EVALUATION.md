@@ -215,3 +215,78 @@ physical two-PC acceptance or interpretation quality. The
 reject both tested value-free prompts and leave this candidate unapproved as an
 automatic default. The existing first catalog entry/default behavior is unchanged;
 no bootstrap, automatic role assignment or update-feed change is introduced.
+
+## Optional Qwen3 1.7B candidate (2026-10-17; not default-approved)
+
+The new manual catalog option `qwen3-1.7b` pins the quantizer-published Q4_K_M
+text artifact, not a runtime default:
+
+- Repository/revision: `unsloth/Qwen3-1.7B-GGUF` at `d7f544eead698dbd1f15126ef60b45a1e1933222`.
+- File: `Qwen3-1.7B-Q4_K_M.gguf`.
+- Bytes: `1107409472`.
+- SHA-256: `b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897`.
+
+The [pinned publisher metadata](https://huggingface.co/api/models/unsloth/Qwen3-1.7B-GGUF/revision/d7f544eead698dbd1f15126ef60b45a1e1933222?blobs=true)
+declares Apache-2.0, names `Qwen/Qwen3-1.7B` as its base and supplies the file's
+LFS digest/size. The upstream [pinned license](https://huggingface.co/Qwen/Qwen3-1.7B/resolve/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/LICENSE)
+is Apache-2.0. This records declarations/provenance, not legal or quality approval.
+No model weights are bundled or redistributed by this catalog addition.
+At lookup, the upstream publisher's [pinned official GGUF metadata](https://huggingface.co/api/models/Qwen/Qwen3-1.7B-GGUF/revision/90862c4b9d2787eaed51d12237eafdfe7c5f6077?blobs=true)
+offers a larger Q8_0 artifact, not these Q4_K_M bytes. The smaller quantizer artifact is selected
+explicitly to bound the test download and disk use; these are not identical
+quantizations or independently authenticated weight lineage.
+
+The [Ollama alias](https://ollama.com/library/qwen3:1.7b) is a separate mutable
+provider artifact. Its presence does not make this GGUF's digest, byte count,
+sampling profile or evaluation applicable to an Ollama install. Catalog/provider
+configuration stays owner-replaceable, and the existing first entry is unchanged.
+
+Before candidate inference, the plan is to install once using existing public
+install-plan/install/status commands and exact hash checks in an isolated
+fixture, then reuse that cache for both fixed production quality suites. No model
+copy, installed/physical node update or new runtime/toolchain download is planned.
+At admission, about 4.2 GB is free; the one 1.11 GB artifact should leave about
+3.1 GB before minor fixture/build files. Existing application disk checks remain.
+
+Keep the committed prompt, generation schema, frozen rubric, 4,096-token context
+and 512-token quality output bound unchanged. First use disabled thinking and
+temperature-zero production defaults. A separate declared comparison will use
+the [upstream non-thinking sampling suggestion](https://huggingface.co/Qwen/Qwen3-1.7B/blob/70d244cc86ccca08cf5af4e1e306ecf908b1ad5e/README.md)
+(temperature 0.7, top-p 0.8, top-k 20, min-p 0), plus the documented repetition-
+suppression presence penalty 1.5 and fixed seed 1, through the existing owner
+policy command in disposable configurations only. It is not a global default.
+Record all attempted profiles rather than choose a score and hide failures.
+Schema acceptance, label matches and goal/question faithfulness stay distinct;
+no lost required question or unsafe purpose/target invention can be called default
+approval. Neither unchanged historical scores nor a single higher score proves
+held-out multilingual/physical/bootstrap acceptance.
+
+The explicit download and CPU lifecycle test passes in `real-model-GJWNnk`.
+The public preflight/install/status path verifies exact size and SHA before
+publishing the cache; installation alone does not select a model. Reviewed
+generation over pinned TLS, two-CPU-thread launch, stable node identity/restart,
+retained completion without replay, targeted unload/reload, idle unload,
+on-demand loading and explicit withdrawal pass. This is isolated one-PC evidence,
+not physical-network acceptance, a resource quota or interpretation quality.
+The single artifact is retained under that ignored fixture's `models` directory;
+no weight copy or installed-node selection was made. About 3.1 GB remains free.
+
+All four predeclared quality runs complete using that cache with unchanged
+prompt/schema/cases. Temperature-zero original/generalization suites accept
+20/20 each but match only **9/20 and 7/20**. The alternate profile accepts 20/20
+each but matches only **8/20 and 6/20**. Literal template goals occur in
+18/20, 17/20, 17/20 and 17/20. This is worse development evidence than the tested
+2B baseline, not an approved default or an assertion about general model ability.
+See [full quality evidence](INTERPRETER-QUALITY.md#qwen3-17b-candidate-2026-10-17-no-default-approval).
+The optional manual catalog entry is retained for explicit owner choice; no
+bootstrap/default role, sampling default, provider, installed app or update feed
+is changed. More reliable model/interpretation design and independent physical/
+multilingual/default-bootstrap acceptance remain needed.
+
+Both locked/offline workspace/all-target suites pass **715 tests plus one ignored
+each**, including no-dashboard; fresh binaries/examples build. The evaluated
+node/helper hashes still match the final binaries. `model-metadata-KU5Yaj` also
+passes fresh public inventory/selection and approved remote-control regressions
+using a mock provider and synthetic cache. The four exact generation-reference
+captures, formatter, diff, frozen scorer, evaluation-argument and source
+dependency-boundary checks pass. These do not expand the quality/physical scope.

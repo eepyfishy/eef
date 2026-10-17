@@ -51,5 +51,18 @@
     "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf",
     "sha256": "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
     "bytes": 1280835840
+  },
+  {
+    "id": "qwen3-1.7b",
+    "name": "Qwen 3 — 1.7B text candidate",
+    "description": "Optional experimental Q4_K_M text candidate. Not approved as an automatic interpreter default.",
+    "modality": "text",
+    "ollama": "qwen3:1.7b",
+    "source": "Qwen / Unsloth / Hugging Face",
+    "license": "Apache-2.0",
+    "source_page": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/blob/d7f544eead698dbd1f15126ef60b45a1e1933222/README.md",
+    "url": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/d7f544eead698dbd1f15126ef60b45a1e1933222/Qwen3-1.7B-Q4_K_M.gguf",
+    "sha256": "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897",
+    "bytes": 1107409472
   }
 ]
