@@ -341,8 +341,11 @@ async fn execute_request_command(
     review: bool,
     proposal: Option<&eefn::interpretation::Proposal>,
     persist: bool,
+    inference_timeout_seconds: Option<u64>,
 ) -> Result<serde_json::Value> {
     use serde_json::json;
+    let budget = eefn::inference_budget::InferenceBudget::new(inference_timeout_seconds)
+        .map_err(anyhow::Error::msg)?;
     let action = if persist && proposal.is_some() {
         "open-proposal"
     } else if persist {
@@ -383,6 +386,7 @@ async fn execute_request_command(
         expected_node_id: file.node_id.clone(),
         request_id: uuid::Uuid::new_v4().to_string(),
         text: text.into(),
+        inference_timeout_seconds,
     };
     let mut body = serde_json::to_value(&request)?;
     if let Some(proposal) = proposal {
@@ -391,7 +395,7 @@ async fn execute_request_command(
     let exchange = async {
         let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
             .post(format!("http://{address}/api/commands/requests/{action}"))
-            .timeout(Duration::from_secs(if review {150} else {25})).json(&body).send().await?;
+            .timeout(Duration::from_secs(budget.extend_seconds(if review {150} else {25},1))).json(&body).send().await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(json!({"schema_version":1,"report_type":report_type,"success":false,
                 "error_code":"unsupported_command","execution_authorized":false,"dispatched":false,
@@ -437,8 +441,11 @@ async fn execute_input_command(
     args: &Args,
     text: &str,
     operation_id: Option<&str>,
+    inference_timeout_seconds: Option<u64>,
 ) -> Result<serde_json::Value> {
     use serde_json::json;
+    let budget = eefn::inference_budget::InferenceBudget::new(inference_timeout_seconds)
+        .map_err(anyhow::Error::msg)?;
     eefn::interpretation::messages(text, &[])?;
     let receipt = operation_id
         .map(str::to_owned)
@@ -463,15 +470,21 @@ async fn execute_input_command(
         local.port,
         local.enabled,
     )?;
+    let body = eefn::request_preview::PreviewRequest {
+        schema_version: 1,
+        expected_node_id: file.node_id.clone(),
+        request_id: receipt.clone(),
+        text: text.into(),
+        inference_timeout_seconds,
+    };
     let exchange = async {
         let response = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .build()?
             .post(format!("http://{address}/api/commands/requests/input"))
-            .timeout(Duration::from_secs(150))
-            .json(&json!({"schema_version":1,
-                "expected_node_id":file.node_id,"request_id":receipt,"text":text}))
+            .timeout(Duration::from_secs(budget.extend_seconds(150, 2)))
+            .json(&body)
             .send()
             .await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -557,8 +570,11 @@ async fn execute_input_policy_command(
 async fn execute_response_command(
     args: &Args,
     command: eefn::request_response::RespondCommand,
+    inference_timeout_seconds: Option<u64>,
 ) -> Result<serde_json::Value> {
     use serde_json::json;
+    let budget = eefn::inference_budget::InferenceBudget::new(inference_timeout_seconds)
+        .map_err(anyhow::Error::msg)?;
     command.validate()?;
     let failure = |code: &str, unknown: bool| {
         json!({"schema_version":1,"report_type":"node_answer_workflow","command":command,
@@ -584,11 +600,12 @@ async fn execute_response_command(
             .redirect(reqwest::redirect::Policy::none())
             .build()?
             .post(format!("http://{address}/api/commands/requests/respond"))
-            .timeout(Duration::from_secs(195))
+            .timeout(Duration::from_secs(budget.extend_seconds(195, 2)))
             .json(&eefn::request_response::RespondRequest {
                 schema_version: 1,
                 expected_node_id: file.node_id.clone(),
                 command: command.clone(),
+                inference_timeout_seconds,
             })
             .send()
             .await?;
@@ -690,8 +707,11 @@ async fn execute_node_planning_command(
 async fn execute_resolution_command(
     args: &Args,
     command: eefn::request_resolution::ResolveCommand,
+    inference_timeout_seconds: Option<u64>,
 ) -> Result<serde_json::Value> {
     use serde_json::json;
+    let budget = eefn::inference_budget::InferenceBudget::new(inference_timeout_seconds)
+        .map_err(anyhow::Error::msg)?;
     command.validate()?;
     if eefn::setup::instance_lock(&args.config)?.is_some() {
         bail!("Start the node first; resolution never launches another runtime")
@@ -705,11 +725,15 @@ async fn execute_resolution_command(
         local.port,
         local.enabled,
     )?;
+    let mut body = json!({"schema_version":1,"expected_node_id":file.node_id,"command":command});
+    if let Some(seconds) = inference_timeout_seconds {
+        body["inference_timeout_seconds"] = json!(seconds);
+    }
     let exchange = async {
         let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
             .post(format!("http://{address}/api/commands/requests/resolve"))
-            .timeout(Duration::from_secs(65))
-            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"command":command})).send().await?;
+            .timeout(Duration::from_secs(budget.extend_seconds(65,1)))
+            .json(&body).send().await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(json!({"schema_version":1,"report_type":"request_resolution","success":false,
                 "command":command,"error_code":"unsupported_command","execution_authorized":false,"dispatched":false,
@@ -733,8 +757,11 @@ async fn execute_resolution_command(
 async fn execute_preparation_command(
     args: &Args,
     command: eefn::request_preparation::PrepareCommand,
+    inference_timeout_seconds: Option<u64>,
 ) -> Result<serde_json::Value> {
     use serde_json::json;
+    let budget = eefn::inference_budget::InferenceBudget::new(inference_timeout_seconds)
+        .map_err(anyhow::Error::msg)?;
     command.validate()?;
     if eefn::setup::instance_lock(&args.config)?.is_some() {
         bail!("Start the node first; preparation never launches another runtime")
@@ -748,10 +775,14 @@ async fn execute_preparation_command(
         local.port,
         local.enabled,
     )?;
+    let mut body = json!({"schema_version":1,"expected_node_id":file.node_id,"command":command});
+    if let Some(seconds) = inference_timeout_seconds {
+        body["inference_timeout_seconds"] = json!(seconds);
+    }
     let exchange = async {
         let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
-            .post(format!("http://{address}/api/commands/requests/prepare")).timeout(Duration::from_secs(70))
-            .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"command":command})).send().await?;
+            .post(format!("http://{address}/api/commands/requests/prepare")).timeout(Duration::from_secs(budget.extend_seconds(70,1)))
+            .json(&body).send().await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(json!({"schema_version":1,"report_type":"request_preparation","node_id":file.node_id,
                 "command":command,"success":false,"outcome_unknown":false,"error_code":"unsupported_command",
@@ -1721,6 +1752,7 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     if let Commands::Requests { command } = command {
         return match command {
             eefn::request_preview::RequestAction::Respond {
+                inference,
                 id,
                 revision,
                 text,
@@ -1736,11 +1768,22 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                             .clone()
                             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                     },
+                    inference.inference_timeout_seconds,
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Input { text, operation_id } => {
-                execute_input_command(args, text, operation_id.as_deref()).await
+            eefn::request_preview::RequestAction::Input {
+                text,
+                operation_id,
+                inference,
+            } => {
+                execute_input_command(
+                    args,
+                    text,
+                    operation_id.as_deref(),
+                    inference.inference_timeout_seconds,
+                )
+                .await
             }
             eefn::request_preview::RequestAction::Workflow { command } => {
                 execute_input_policy_command(args, command).await
@@ -1785,11 +1828,27 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Preview { text } => {
-                execute_request_command(args, text, false, None, false).await
+            eefn::request_preview::RequestAction::Preview { text, inference } => {
+                execute_request_command(
+                    args,
+                    text,
+                    false,
+                    None,
+                    false,
+                    inference.inference_timeout_seconds,
+                )
+                .await
             }
-            eefn::request_preview::RequestAction::Review { text } => {
-                execute_request_command(args, text, true, None, false).await
+            eefn::request_preview::RequestAction::Review { text, inference } => {
+                execute_request_command(
+                    args,
+                    text,
+                    true,
+                    None,
+                    false,
+                    inference.inference_timeout_seconds,
+                )
+                .await
             }
             eefn::request_preview::RequestAction::ReviewProposal { file } => {
                 let supplied = eefn::request_preview::read_proposal(file)?;
@@ -1799,11 +1858,20 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                     true,
                     Some(&supplied.proposal),
                     false,
+                    None,
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Open { text } => {
-                execute_request_command(args, text, true, None, true).await
+            eefn::request_preview::RequestAction::Open { text, inference } => {
+                execute_request_command(
+                    args,
+                    text,
+                    true,
+                    None,
+                    true,
+                    inference.inference_timeout_seconds,
+                )
+                .await
             }
             eefn::request_preview::RequestAction::OpenProposal { file } => {
                 let input = eefn::request_preview::read_proposal(file)?;
@@ -1813,6 +1881,7 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                     true,
                     Some(&input.proposal),
                     true,
+                    None,
                 )
                 .await
             }
@@ -1906,6 +1975,7 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 .await
             }
             eefn::request_preview::RequestAction::Resolve {
+                inference,
                 id,
                 revision,
                 operation_id,
@@ -1919,10 +1989,12 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                             .clone()
                             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                     },
+                    inference.inference_timeout_seconds,
                 )
                 .await
             }
             eefn::request_preview::RequestAction::Prepare {
+                inference,
                 id,
                 revision,
                 operation_id,
@@ -1936,6 +2008,7 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                             .clone()
                             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                     },
+                    inference.inference_timeout_seconds,
                 )
                 .await
             }
@@ -2326,7 +2399,7 @@ async fn main() -> Result<()> {
     // Input is a client command: no ephemeral runtime, registration, pairing,
     // models or configuration writes if the node is not already running.
     if let Some(message) = &args.ask {
-        let value = match execute_input_command(&args, message, None).await {
+        let value = match execute_input_command(&args, message, None, None).await {
             Ok(value) => value,
             Err(error) => {
                 if args.json {
@@ -2983,6 +3056,63 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+    #[test]
+    fn inference_timeout_cli_is_explicit_for_all_model_workflows_only() {
+        let id = "00112233445566778899aabbccddeeff";
+        for tail in [
+            vec!["preview", "--text", "Inspect"],
+            vec!["review", "--text", "Inspect"],
+            vec!["open", "--text", "Inspect"],
+            vec!["input", "--text", "Inspect"],
+            vec!["resolve", id, "--revision", "1"],
+            vec!["prepare", id, "--revision", "1"],
+            vec!["respond", id, "--revision", "1", "--text", "Answer"],
+        ] {
+            for seconds in [None, Some("1"), Some("120")] {
+                let mut argv = vec!["eefn", "requests"];
+                argv.extend(tail.clone());
+                if let Some(seconds) = seconds {
+                    argv.extend(["--inference-timeout-seconds", seconds]);
+                }
+                let Some(Commands::Requests { command }) =
+                    Args::try_parse_from(argv).unwrap().command
+                else {
+                    panic!()
+                };
+                let inference = match command {
+                    eefn::request_preview::RequestAction::Preview { inference, .. }
+                    | eefn::request_preview::RequestAction::Review { inference, .. }
+                    | eefn::request_preview::RequestAction::Open { inference, .. }
+                    | eefn::request_preview::RequestAction::Input { inference, .. }
+                    | eefn::request_preview::RequestAction::Resolve { inference, .. }
+                    | eefn::request_preview::RequestAction::Prepare { inference, .. }
+                    | eefn::request_preview::RequestAction::Respond { inference, .. } => inference,
+                    _ => panic!(),
+                };
+                assert_eq!(
+                    inference.inference_timeout_seconds,
+                    seconds.map(|s| s.parse::<u64>().unwrap())
+                );
+            }
+            for seconds in ["0", "121"] {
+                let mut argv = vec!["eefn", "requests"];
+                argv.extend(tail.clone());
+                argv.extend(["--inference-timeout-seconds", seconds]);
+                assert!(Args::try_parse_from(argv).is_err());
+            }
+        }
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "requests",
+                "plan",
+                id,
+                "--inference-timeout-seconds",
+                "120"
+            ])
+            .is_err()
+        );
+    }
     #[test]
     fn interpreter_sampling_cli_parses_decimals_and_rejects_reset_conflicts() {
         let argv = [

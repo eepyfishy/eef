@@ -1,5 +1,30 @@
 # Architecture conformance status
 
+## Unreleased: explicit owner inference wait (2026-10-17)
+
+Seven model-backed request commands accept an explicit 1–120-second per-call
+allowance. Default inference remains 20 seconds; legacy request shapes, backend
+headroom, token caps and default workflow/client waits are unchanged on omission.
+Input/answer workflows propagate explicit choices to both model stages and
+extend their overall waits accordingly. Timing is outside model output, origin
+context and execution authority, not a saved preference or automatic retry.
+
+Both locked/offline workspace/all-target suites pass **732 tests plus one ignored
+each**, including no-dashboard; fresh binaries/examples build. Public preview
+accepts a 31-second mock reply with an explicit allowance and checks short/default
+timeouts. Public input/answer tests cover all stages, retained partial history,
+and no inference replay when an existing receipt gets a different allowance.
+Bounds, pre-write rejection, compatibility and source checks pass. See
+[contract, exact fixtures and remaining scope](INFERENCE-TIMING.md#verification-2026-10-17).
+
+One separate real existing-Ollama preview with explicit 120 seconds returns after
+**39,689 ms**, but fails `interpretation_incomplete`. Preparation succeeded;
+provider logs record 512 generated tokens, matching the unchanged cap. No proposal
+or semantic quality is approved, no token/schema/validator bound is loosened, and
+the previous 20-second failures remain intact. No downloads, installed/physical
+node, UI, release or stable-feed changes. Reliable interpretation/default model,
+automatic bootstrap and physical/release acceptance remain unfinished.
+
 ## Unreleased: explicit Ollama model preparation (2026-10-17)
 
 The existing model lifecycle worker/queue now accepts owner-directed

@@ -504,6 +504,7 @@ async fn chat(
             .respond_request(crate::request_response::RespondRequest {
                 schema_version: 1,
                 expected_node_id: state.node_id.clone(),
+                inference_timeout_seconds: None,
                 command: crate::request_response::RespondCommand {
                     id: target.id,
                     expected_revision: target.expected_revision,
@@ -519,6 +520,7 @@ async fn chat(
                 expected_node_id: state.node_id.clone(),
                 request_id: receipt,
                 text: value.message,
+                inference_timeout_seconds: None,
             })
             .await
     };

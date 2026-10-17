@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+Owner request commands now optionally choose a 1–120-second inference allowance;
+omission preserves the 20-second default and old request shapes. The option
+propagates through input/answer model stages with bounded client/workflow waits,
+without changing token caps, authority, persisted identity or replay behavior.
+Both suites pass 732 tests plus one ignored each, and public synthetic timing/
+history regressions pass. A separate existing-Ollama preview with explicit 120
+seconds returns in 39,689 ms but fails as incomplete after the provider reports
+512 generated tokens. This enables slower-call inspection, not accepted model
+quality or bootstrap. See [evidence and limits](INFERENCE-TIMING.md).
+Reliable completion/interpretation and physical/release gates remain unfinished.
+
 The same lifecycle worker now supports explicit shared-Ollama preparation with
 owner-approved commands, applied selection/policy/runtime checks, exact installed
 digest, bounded receipts and empty-message loading. `auto` follows the actual

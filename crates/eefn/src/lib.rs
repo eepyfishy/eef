@@ -21,6 +21,7 @@ pub mod execution_boundary;
 pub mod firmware;
 pub mod grant_time;
 pub mod grants;
+pub mod inference_budget;
 mod installed_selection;
 pub mod interpretation;
 pub mod interpreter_sampling;

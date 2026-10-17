@@ -1,5 +1,12 @@
 # HTTP API
 
+Owner request-command endpoints for preview/review/open/input/resolve/prepare/
+respond accept optional top-level `inference_timeout_seconds` (integer 1–120).
+Omission/null preserves the 20-second default. The option is not model output,
+origin context, a saved preference, execution grant or retry instruction; invalid
+values fail before model/workflow mutation. See [propagation and overall wait
+bounds](INFERENCE-TIMING.md).
+
 Unreleased model policy accepts optional `ollama_context_tokens` and the explicit
 `ollama_context_default` reset command flag. Applied owner policy supplies
 `options.num_ctx` for EEF-owned Ollama inference, without modifying server/model

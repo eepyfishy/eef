@@ -112,7 +112,8 @@ try {
  for(const base of [node,eef])assert.equal((await fetch(base+'/')).status,404);
  const inputUrl=node+'/api/commands/requests/input';
  const body=(text,receipt=randomUUID())=>({schema_version:1,expected_node_id:id,request_id:receipt,text});
- const input=(text,receipt=randomUUID(),success=true)=>nodeCli(['requests','input','--text',text,'--operation-id',receipt],success);
+ const input=(text,receipt=randomUUID(),success=true,budget)=>nodeCli(['requests','input','--text',text,'--operation-id',receipt,
+  ...(budget===undefined?[]:['--inference-timeout-seconds',String(budget)])],success);
  let rejectionCount=calls.length;mode='reject-schema';
  const rejectedReceipt=randomUUID(),rejectedFormat=await input('Backend refuses schema',rejectedReceipt,false);
  assert.equal(rejectedFormat.error_code,'interpreter_backend_failed');assert.equal(rejectedFormat.creation_attempted,true);
@@ -150,8 +151,31 @@ try {
  assert(question.reply.includes('Which concrete node should be inspected?'));assert.equal(question.result.input,null);
  // Answers are explicit typed inputs with source revision/digest evidence. The
  // selected policy resolves/prepares them, never approves or starts a workload.
- const respond=(job,revision,text,operation=randomUUID(),success=true)=>nodeCli(['requests','respond',job,'--revision',String(revision),'--text',text,'--operation-id',operation],success);
+ const respond=(job,revision,text,operation=randomUUID(),success=true,budget)=>nodeCli(['requests','respond',job,'--revision',String(revision),'--text',text,'--operation-id',operation,
+  ...(budget===undefined?[]:['--inference-timeout-seconds',String(budget)])],success);
  const newQuestion=async text=>{mode='clarify';return(await input(text)).result;};
+ mode='gate-resolution';count=calls.length;const timedOpeningId=randomUUID();let timingStarted=Date.now();
+ const timedOpening=await input('Explicit timing for initial interpretation',timedOpeningId,false,1);
+ assert.equal(timedOpening.error_code,'interpretation_timeout');assert.equal(calls.length,count+1);assert(Date.now()-timingStarted<8000);
+ assert.equal((await nodeCli(['jobs','find','--operation-id',timedOpeningId])).data.total,0);await until(()=>gates.size===0,'opening timeout drops provider wait');
+ mode='gate-method';count=calls.length;const timedMethodId=randomUUID();
+ const timedMethod=await input('Explicit timing for input preparation',timedMethodId,false,1);
+ assert.equal(timedMethod.preparation.error_code,'preparation_timeout');assert.equal(calls.length,count+2);assert.equal(timedMethod.result.revision,1);
+ await until(()=>gates.size===0,'input method timeout drops provider wait');
+ assert.equal((await input('Explicit timing for input preparation',timedMethodId,true,120)).status,'historical_snapshot');assert.equal(calls.length,count+2);
+ const standaloneMethod=await nodeCli(['requests','prepare',timedMethod.result.id,'--revision','1','--operation-id',randomUUID(),'--inference-timeout-seconds','1'],false);
+ assert.equal(standaloneMethod.error_code,'preparation_timeout');assert.equal(calls.length,count+3);await until(()=>gates.size===0,'standalone method timeout');
+ const timedResolveSource=await newQuestion('Explicit answer-resolution timing');mode='gate-resolution';count=calls.length;
+ const timedResolveId=randomUUID(),timedResolve=await respond(timedResolveSource.id,1,'This node',timedResolveId,false,1);
+ assert.equal(timedResolve.resolution.error_code,'interpretation_timeout');assert.equal(timedResolve.answer_confirmed,true);assert.equal(calls.length,count+1);
+ assert.equal(timedResolve.result.revision,2);await until(()=>gates.size===0,'answer resolution timeout');
+ assert.equal((await respond(timedResolveSource.id,1,'This node',timedResolveId,true,120)).status,'historical_snapshot');assert.equal(calls.length,count+1);
+ const standaloneResolve=await nodeCli(['requests','resolve',timedResolveSource.id,'--revision','2','--operation-id',randomUUID(),'--inference-timeout-seconds','1'],false);
+ assert.equal(standaloneResolve.error_code,'interpretation_timeout');assert.equal(calls.length,count+2);await until(()=>gates.size===0,'standalone resolution timeout');
+ const timedAnswerMethodSource=await newQuestion('Explicit answer-method timing');mode='gate-method';count=calls.length;
+ const timedAnswerMethod=await respond(timedAnswerMethodSource.id,1,'This node',randomUUID(),false,1);
+ assert.equal(timedAnswerMethod.preparation.error_code,'preparation_timeout');assert.equal(timedAnswerMethod.answer_confirmed,true);assert.equal(calls.length,count+2);
+ assert.equal(timedAnswerMethod.result.revision,3);await until(()=>gates.size===0,'answer method timeout');
  const original=await newQuestion('  Inspect a node after my answer\n');mode='valid';count=calls.length;
  const responseId=randomUUID(),answerText='  This bedroom node\n',response=await respond(original.id,1,answerText,responseId);
  assert.equal(response.report_type,'node_answer_workflow');assert.equal(response.status,'awaiting_approval');assert.equal(response.result.revision,4);assert.equal(calls.length,count+2);
@@ -323,7 +347,8 @@ try {
  assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal(calls.length,count);
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count);
  evidence={passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
-  clarification_consistent_generation_schema:true,method_generation_unchanged:true,
+  clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
+  changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
   checkpoint_rejection_diagnosed_without_replay:true,
   immutable_input_context:true,read_only_receipt_reuse:true,partial_preparation_no_implicit_retry:true,current_question_returned:true,
   clarification_and_continuous_not_auto_prepared:true,saved_applied_policy_separate:true,runtime_change_cancels_workflow:true,

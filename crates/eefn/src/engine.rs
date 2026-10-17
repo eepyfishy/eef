@@ -1194,10 +1194,11 @@ impl NodeEngine {
         &self,
         text: &str,
         capabilities: &[String],
+        budget: crate::inference_budget::InferenceBudget,
     ) -> std::result::Result<Value, &'static str> {
         let messages = crate::interpretation::messages(text, capabilities)
             .map_err(|_| "invalid_interpreter_context")?;
-        self.interpretation_response(text, capabilities, messages)
+        self.interpretation_response(text, capabilities, messages, budget)
             .await
     }
 
@@ -1205,10 +1206,11 @@ impl NodeEngine {
         &self,
         draft: &crate::request_drafts::DraftRecord,
         capabilities: &[String],
+        budget: crate::inference_budget::InferenceBudget,
     ) -> std::result::Result<Value, &'static str> {
         let messages = crate::interpretation::clarification_messages(draft, capabilities)
             .map_err(|_| "invalid_clarification_context")?;
-        self.interpretation_response(&draft.original_text, capabilities, messages)
+        self.interpretation_response(&draft.original_text, capabilities, messages, budget)
             .await
     }
 
@@ -1217,11 +1219,12 @@ impl NodeEngine {
         text: &str,
         capabilities: &[String],
         messages: Value,
+        budget: crate::inference_budget::InferenceBudget,
     ) -> std::result::Result<Value, &'static str> {
         let schema = crate::interpretation::output_schema(capabilities)
             .map_err(|_| "invalid_interpreter_context")?;
         let response = self
-            .selected_interpreter_response(messages, 512, Some(schema))
+            .selected_interpreter_response(messages, 512, Some(schema), budget)
             .await?;
         let output = response["output"]
             .as_str()
@@ -1240,6 +1243,24 @@ impl NodeEngine {
         draft: &crate::request_drafts::DraftRecord,
         capabilities: &[String],
     ) -> std::result::Result<crate::request_preparation::PreparedMethod, &'static str> {
+        self.prepare_method_candidate_with_budget(
+            job,
+            revision,
+            draft,
+            capabilities,
+            crate::inference_budget::InferenceBudget::new(None).expect("default inference budget"),
+        )
+        .await
+    }
+
+    pub(crate) async fn prepare_method_candidate_with_budget(
+        &self,
+        job: &str,
+        revision: u64,
+        draft: &crate::request_drafts::DraftRecord,
+        capabilities: &[String],
+        budget: crate::inference_budget::InferenceBudget,
+    ) -> std::result::Result<crate::request_preparation::PreparedMethod, &'static str> {
         crate::request_drafts::validate_id(job).map_err(|_| "invalid_preparation_source")?;
         if revision == 0
             || revision == u64::MAX
@@ -1250,7 +1271,7 @@ impl NodeEngine {
         let messages = crate::request_preparation::messages(draft, capabilities)
             .map_err(|_| "invalid_preparation_context")?;
         let response = self
-            .selected_interpreter_response(messages, 1024, None)
+            .selected_interpreter_response(messages, 1024, None, budget)
             .await?;
         crate::request_preparation::PreparedMethod::from_selected(
             job,
@@ -1305,6 +1326,7 @@ impl NodeEngine {
         messages: Value,
         max_tokens: u64,
         schema: Option<Value>,
+        budget: crate::inference_budget::InferenceBudget,
     ) -> std::result::Result<Value, &'static str> {
         let candidates = self.interpreter_candidates();
         if candidates.is_empty() {
@@ -1318,7 +1340,7 @@ impl NodeEngine {
             .infer_with_schema(
                 "llm.infer",
                 json!({"backend":backend,"model":model,"messages":messages,
-            "temperature":0,"max_tokens":max_tokens,"timeout":30}),
+            "temperature":0,"max_tokens":max_tokens,"timeout":budget.backend_seconds()}),
                 schema,
                 Some(&self.interpreter_sampling),
             )
@@ -2432,7 +2454,12 @@ mod tests {
             crate::interpretation::messages("Check this node.", &["system.info".into()]).unwrap();
         let schema = json!({"type":"object"});
         engine
-            .selected_interpreter_response(messages.clone(), 512, Some(schema.clone()))
+            .selected_interpreter_response(
+                messages.clone(),
+                512,
+                Some(schema.clone()),
+                crate::inference_budget::InferenceBudget::new(None).unwrap(),
+            )
             .await
             .unwrap();
         let actual = receive.recv().await.unwrap();

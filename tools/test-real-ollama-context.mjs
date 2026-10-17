@@ -15,6 +15,9 @@ assert(provider.protocol==='http:'&&['127.0.0.1','[::1]'].includes(provider.host
  &&provider.pathname==='/'&&!provider.search&&!provider.hash,'Use a plain IP-literal loopback Ollama origin');
 const prepareFirst=process.argv[4]==='--prepare';
 assert(process.argv.length<=4||(process.argv.length===5&&prepareFirst),'Only optional --prepare after the explicit origin is supported');
+const timing=process.env.EEF_TEST_INFERENCE_TIMEOUT_SECONDS;
+assert(timing===undefined||(/^[1-9]\d{0,2}$/.test(timing)&&Number(timing)<=120),'Use an explicit inference test budget from 1 to 120 seconds');
+const inferenceSeconds=timing===undefined?undefined:Number(timing);
 const root=resolve(import.meta.dirname,'..'),bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 function json(url,body){return new Promise((done,fail)=>{
  const payload=body===undefined?undefined:JSON.stringify(body);
@@ -40,7 +43,8 @@ const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DI
 function launch(args){const c=spawn(join(bin,'eefn.exe'),['--config',configPath,...args],{cwd:root,windowsHide:true,env,stdio:['ignore','pipe','pipe']});
  let out='',err='';c.stdout.on('data',b=>out=(out+b).slice(-1048576));c.stderr.on('data',b=>err=(err+b).slice(-1048576));
  c.logs=()=>({out,err});c.result=new Promise((r,j)=>{c.on('error',j);c.on('close',code=>r({code,out,err}));});children.push(c);return c;}
-async function cli(args,allowRejection=false){const c=launch(['--json',...args]),timer=setTimeout(()=>c.kill(),35000);
+async function cli(args,allowRejection=false){const c=launch(['--json',...args]),timer=setTimeout(()=>c.kill(),
+ Math.max(35000,args.includes('preview')?((inferenceSeconds??20)+15)*1000:35000));
  try{const result=await c.result;assert([0,1].includes(result.code),'Owner command failed; inspect private fixture logs');
   const value=JSON.parse(result.out);assert.equal(result.code,value.success===true?0:1);
   if(!allowRejection)assert.equal(result.code,0,'Owner command rejected; inspect private fixture logs');return value;
@@ -50,7 +54,7 @@ async function port(){const s=createServer();await new Promise(r=>s.listen(0,'12
 const evidence={passed:false,shared_existing_ollama:true,provider_version:version,model,provider_reported_model_digest:entry.digest,
  provider_reported_model_size_bytes:entry.size,free_system_ram_at_inspection_bytes:availableRam,
  model_file_hash_verified:false,model_downloads:false,model_copies:false,physical_two_pc:false,model_quality_approved:false,
- context_tokens_requested:4096,retention_seconds_requested:60,thinking_hint:thinking,
+ context_tokens_requested:4096,retention_seconds_requested:60,thinking_hint:thinking,inference_timeout_seconds_requested:inferenceSeconds??20,
  owner_preview_commands:0,preparation_requested:prepareFirst,preparation_commands:0,force_unload_requested:false,service_stopped:false};
 try{
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
@@ -88,7 +92,7 @@ try{
  }
  const configBefore=await readFile(configPath,'utf8'),input='Show the operating system and memory usage of this node.';
  const started=performance.now();evidence.owner_preview_commands++;
- const preview=await cli(['requests','preview','--text',input],true);
+ const preview=await cli(['requests','preview','--text',input,...(inferenceSeconds===undefined?[]:['--inference-timeout-seconds',String(inferenceSeconds)])],true);
  evidence.preview_elapsed_ms=Math.round(performance.now()-started);
  evidence.preview=preview;
  assert.equal(preview.execution_authorized,false);assert.equal(preview.dispatched,false);assert.equal(preview.automatically_retried,false);

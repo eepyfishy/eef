@@ -36,6 +36,8 @@ pub struct RespondRequest {
     pub schema_version: u32,
     pub expected_node_id: String,
     pub command: RespondCommand,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inference_timeout_seconds: Option<u64>,
 }
 
 /// Separate logical receipts; not credentials or execution authority.
@@ -182,6 +184,8 @@ impl NodeService {
             "result":null,"error_code":null,"outcome_unknown":false,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
             "note":"Answer/resolution/preparation only. Preserve this command and derived receipts after uncertainty; reuse only inspects history. No approval, execution, automatic retry or continuation."});
         if request.schema_version != 1
+            || crate::inference_budget::InferenceBudget::new(request.inference_timeout_seconds)
+                .is_err()
             || request.expected_node_id != self.node_id
             || request.command.validate().is_err()
         {
@@ -205,10 +209,13 @@ impl NodeService {
                 return report;
             }
         };
+        let budget =
+            crate::inference_budget::InferenceBudget::new(request.inference_timeout_seconds)
+                .expect("validated inference budget");
         let result = tokio::select! {
             biased;
             _=generation.changed()=>Err("runtime_changed"),
-            result=tokio::time::timeout(Duration::from_secs(180),self.respond_inner(&request.command,policy,&mut report))=>result.unwrap_or(Err("answer_workflow_timeout")),
+            result=tokio::time::timeout(Duration::from_secs(budget.extend_seconds(180,2)),self.respond_inner(&request.command,policy,request.inference_timeout_seconds,&mut report))=>result.unwrap_or(Err("answer_workflow_timeout")),
         };
         if let Err(code) = result {
             report["success"] = json!(false);
@@ -239,6 +246,7 @@ impl NodeService {
         &self,
         command: &RespondCommand,
         policy: InputPolicy,
+        inference_timeout_seconds: Option<u64>,
         report: &mut Value,
     ) -> std::result::Result<(), &'static str> {
         let source = self
@@ -355,6 +363,7 @@ impl NodeService {
                     schema_version: 1,
                     expected_node_id: self.node_id.clone(),
                     command: resolution_command.clone(),
+                    inference_timeout_seconds,
                 })
                 .await;
             report["resolution"] = resolved.clone();
@@ -396,6 +405,7 @@ impl NodeService {
                         schema_version: 1,
                         expected_node_id: self.node_id.clone(),
                         command: preparation_command.clone(),
+                        inference_timeout_seconds,
                     })
                     .await;
                 report["preparation"] = prepared.clone();
@@ -730,6 +740,7 @@ mod tests {
             schema_version: 1,
             expected_node_id: "node".into(),
             command,
+            inference_timeout_seconds: None,
         }
     }
     fn source(command: &RespondCommand) -> Value {

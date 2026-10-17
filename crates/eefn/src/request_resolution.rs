@@ -27,6 +27,8 @@ pub struct ResolveRequest {
     pub schema_version: u32,
     pub expected_node_id: String,
     pub command: ResolveCommand,
+    #[serde(default)]
+    pub inference_timeout_seconds: Option<u64>,
 }
 
 /// The origin reports its interpreter selection. EEF verifies source identity,

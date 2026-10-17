@@ -174,6 +174,8 @@ impl NodeService {
             "automatically_retried":false,
             "note":"Input/review/preparation only. Separate owner approval/execution are required. After uncertainty inspect this input receipt and any exact preparation receipt; no automatic retry or continuation."});
         if request.schema_version != 1
+            || crate::inference_budget::InferenceBudget::new(request.inference_timeout_seconds)
+                .is_err()
             || request.expected_node_id != self.node_id
             || crate::job_commands::validate_operation_id(&request.request_id).is_err()
             || crate::interpretation::messages(&request.text, &[]).is_err()
@@ -198,10 +200,13 @@ impl NodeService {
                 return report;
             }
         };
+        let budget =
+            crate::inference_budget::InferenceBudget::new(request.inference_timeout_seconds)
+                .expect("validated inference budget");
         let result = tokio::select! {
             biased;
             _=generation.changed()=>Err("runtime_changed"),
-            result=tokio::time::timeout(Duration::from_secs(135),self.input_request_inner(&request,policy,&mut report))=>result.unwrap_or(Err("input_workflow_timeout")),
+            result=tokio::time::timeout(Duration::from_secs(budget.extend_seconds(135,2)),self.input_request_inner(&request,policy,&mut report))=>result.unwrap_or(Err("input_workflow_timeout")),
         };
         if let Err(code) = result {
             if report["error_code"].is_null() {
@@ -302,6 +307,7 @@ impl NodeService {
                 expected_node_id: self.node_id.clone(),
                 request_id: request.request_id.clone(),
                 text: request.text.clone(),
+                inference_timeout_seconds: request.inference_timeout_seconds,
             })
             .await;
         report["opening"] = opened.clone();
@@ -358,6 +364,7 @@ impl NodeService {
                     schema_version: 1,
                     expected_node_id: self.node_id.clone(),
                     command: command.clone(),
+                    inference_timeout_seconds: request.inference_timeout_seconds,
                 })
                 .await;
             report["preparation"] = prepared.clone();
@@ -502,6 +509,7 @@ pub fn confirmed(value: &Value, node: &str, input: &str, text: &str) -> bool {
                                 expected_node_id: node.into(),
                                 request_id: input.into(),
                                 text: text.into(),
+                                inference_timeout_seconds: None,
                             },
                         )
                         .is_ok()
@@ -622,6 +630,7 @@ mod tests {
             expected_node_id: "node".into(),
             request_id: uuid::Uuid::new_v4().to_string(),
             text: "  Inspect status\n".into(),
+            inference_timeout_seconds: None,
         }
     }
     fn draft(req: &PreviewRequest) -> Value {
@@ -852,6 +861,7 @@ mod tests {
             expected_node_id: "node".into(),
             request_id: req.request_id.clone(),
             text: req.text.clone(),
+            inference_timeout_seconds: req.inference_timeout_seconds,
         };
         let pending = tokio::spawn(async move { local.input_request(cloned).await });
         let lookup = receiver.recv().await.unwrap();

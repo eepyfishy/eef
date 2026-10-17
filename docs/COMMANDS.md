@@ -21,6 +21,17 @@ does not change permissions/settings, download/load a model, probe inference,
 restart an app or authorize work. Configured is not healthy; connected is not
 approved. See [observations, compatibility and remaining setup](SETUP-CHECK.md).
 
+## Explicit inference wait (unreleased after alpha.6)
+
+`requests preview|review|open|input|resolve|prepare|respond` accept optional
+`--inference-timeout-seconds SECONDS` (integer 1–120). Omission preserves the
+20-second model-call limit and existing client/workflow waits. Explicit larger
+allowances extend the relevant transport and two-stage workflow bounds; they do
+not increase token limits, retry inference, select models or authorize execution.
+Changing this option on retained input/answer receipts still reads history only.
+This is per-command, not a saved node preference. See [contract, wait bounds and
+limits](INFERENCE-TIMING.md).
+
 ## Explicit native command authoring (unreleased after alpha.6)
 
 `eefn requests submit-process --text PURPOSE --program PROGRAM --arg=VALUE`

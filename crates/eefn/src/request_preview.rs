@@ -10,6 +10,8 @@ use tokio::sync::{Semaphore, watch};
 pub enum RequestAction {
     /// Answer an exact saved question; resolve/prepare according to applied policy, never execute.
     Respond {
+        #[command(flatten)]
+        inference: crate::inference_budget::InferenceOptions,
         id: String,
         #[arg(long)]
         revision: u64,
@@ -21,6 +23,8 @@ pub enum RequestAction {
     },
     /// Interpret/save input and prepare an eligible method according to node policy; never execute.
     Input {
+        #[command(flatten)]
+        inference: crate::inference_budget::InferenceOptions,
         #[arg(long)]
         text: String,
         /// Preserve this receipt after an uncertain reply; reuse only inspects retained history.
@@ -62,6 +66,8 @@ pub enum RequestAction {
     SubmitProcess(crate::request_submission::ProcessSubmission),
     /// Propose and save a source-bound method or clarification; never approve/execute.
     Prepare {
+        #[command(flatten)]
+        inference: crate::inference_budget::InferenceOptions,
         id: String,
         #[arg(long)]
         revision: u64,
@@ -121,6 +127,8 @@ pub enum RequestAction {
     },
     /// Interpret and save an origin-owned durable review; never execute it.
     Open {
+        #[command(flatten)]
+        inference: crate::inference_budget::InferenceOptions,
         #[arg(long)]
         text: String,
     },
@@ -141,6 +149,8 @@ pub enum RequestAction {
     },
     /// Reinterpret recorded clarification answers once and save a review-only proposal.
     Resolve {
+        #[command(flatten)]
+        inference: crate::inference_budget::InferenceOptions,
         id: String,
         #[arg(long)]
         revision: u64,
@@ -157,11 +167,15 @@ pub enum RequestAction {
     },
     /// Inspect an untrusted proposal from the selected interpreter; never execute it.
     Preview {
+        #[command(flatten)]
+        inference: crate::inference_budget::InferenceOptions,
         #[arg(long)]
         text: String,
     },
     /// Interpret locally and send a proposal to EEF for review; never execute it.
     Review {
+        #[command(flatten)]
+        inference: crate::inference_budget::InferenceOptions,
         #[arg(long)]
         text: String,
     },
@@ -179,6 +193,8 @@ pub struct PreviewRequest {
     pub expected_node_id: String,
     pub request_id: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inference_timeout_seconds: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -339,6 +355,7 @@ impl NodeService {
             "coordinator_operation_id":null,"result":null,"error_code":null,
             "note":"Explicit source-bound preparation only. Inspect the retained plan or reuse this exact operation ID after a lost reply. A saved method awaits separate owner approval; a saved question is answerable. No execution or automatic replay."});
         let result: Result<(), &'static str> = async {
+            let budget = crate::inference_budget::InferenceBudget::new(request.inference_timeout_seconds)?;
             if request.schema_version != 1 || request.expected_node_id != self.node_id || command.validate().is_err() {
                 return Err("invalid_preparation_request");
             }
@@ -380,8 +397,8 @@ impl NodeService {
                 let prepared = tokio::select! {
                     biased;
                     _ = generation.changed() => return Err("runtime_changed"),
-                    result = tokio::time::timeout(Duration::from_secs(20), engine.prepare_method_candidate(
-                        &command.id, command.expected_revision, &view.draft, &capabilities,
+                    result = tokio::time::timeout(budget.duration(), engine.prepare_method_candidate_with_budget(
+                        &command.id, command.expected_revision, &view.draft, &capabilities, budget,
                     )) => result.map_err(|_| "preparation_timeout")??,
                 };
                 let checkpoint = PreparationCheckpoint {schema_version:1, operation_id: command.operation_id.clone(),
@@ -443,6 +460,7 @@ impl NodeService {
             "coordinator_operation_id":null,"result":null,"error_code":null,
             "note":"Explicit clarification reinterpretation only. Preserve the operation ID after a lost reply and inspect the draft before retrying. No plan, approval, grant, execution or automatic replay."});
         let result: Result<(), &'static str> = async {
+            let budget = crate::inference_budget::InferenceBudget::new(request.inference_timeout_seconds)?;
             if request.schema_version != 1 || request.expected_node_id != self.node_id || command.validate().is_err() {
                 return Err("invalid_resolution_request");
             }
@@ -499,7 +517,7 @@ impl NodeService {
                 let interpreted = tokio::select! {
                     biased;
                     _ = generation.changed() => return Err("runtime_changed"),
-                    result = tokio::time::timeout(Duration::from_secs(20), engine.resolve_interpretation(&draft, &capabilities)) =>
+                    result = tokio::time::timeout(budget.duration(), engine.resolve_interpretation(&draft, &capabilities, budget)) =>
                         result.map_err(|_| "interpretation_timeout")??,
                 };
                 let proposal: crate::interpretation::Proposal = serde_json::from_value(interpreted["interpretation"]["proposal"].clone())
@@ -866,6 +884,7 @@ impl NodeService {
     async fn prepare_interpretation(&self, request: PreviewRequest, network: bool) -> Value {
         let mut runtime_id = None;
         let result: Result<Value, &'static str> = async {
+            let budget = crate::inference_budget::InferenceBudget::new(request.inference_timeout_seconds)?;
             if request.schema_version != 1 || request.expected_node_id != self.node_id
                 || uuid::Uuid::parse_str(&request.request_id).ok().map(|id| id.to_string()).as_deref() != Some(&request.request_id) {
                 return Err("invalid_preview_request");
@@ -895,7 +914,7 @@ impl NodeService {
             let proposal = tokio::select! {
                 biased;
                 _ = generation.changed() => return Err("runtime_changed"),
-                result = tokio::time::timeout(Duration::from_secs(20), engine.preview_interpretation(&request.text, &capabilities)) => {
+                result = tokio::time::timeout(budget.duration(), engine.preview_interpretation(&request.text, &capabilities, budget)) => {
                     result.map_err(|_| "interpretation_timeout")??
                 },
             };
@@ -1217,6 +1236,7 @@ mod tests {
             expected_node_id: "node".into(),
             request_id: uuid::Uuid::new_v4().to_string(),
             text: "Check this node".into(),
+            inference_timeout_seconds: None,
         }
     }
     #[tokio::test]

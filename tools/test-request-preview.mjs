@@ -21,7 +21,8 @@ function launch(args) {
   children.push(child); return child;
 }
 async function cli(args, success = true) {
-  const child = launch([...args, '--json']), timer = setTimeout(() => child.kill(), 30000);
+  const timing=args.indexOf('--inference-timeout-seconds'),seconds=timing<0?20:Number(args[timing+1]);
+  const child = launch([...args, '--json']), timer = setTimeout(() => child.kill(), Math.max(30000,(seconds+10)*1000));
   try { const result = await child.result; assert.equal(result.code, success ? 0 : 1, result.out + result.err); return JSON.parse(result.out); }
   finally { clearTimeout(timer); }
 }
@@ -39,6 +40,7 @@ const fake = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     calls.push(JSON.parse(body));
     if (mode === 'gate') {res.write(' '); gates.add(res); res.on('close', () => gates.delete(res)); return;}
+    if (mode === 'slow') await new Promise(r=>setTimeout(r,31000));
     const value = proposal();
     if (mode === 'invalid') {value.permissions = ['PRIVATE_MODEL_TEXT']; value.PRIVATE_MODEL_TEXT = 'PRIVATE_MODEL_TEXT';}
     if (mode === 'version') value.schema_version = 2;
@@ -119,9 +121,19 @@ try {
     assert(!JSON.stringify(result).includes('PRIVATE_MODEL_TEXT'), 'rejected output must not leak into diagnostics');
     assert(result.setup_hint.includes('changed no settings'));
   }
+  mode='slow';let timedCount=calls.length,timedStart=Date.now();
+  const slow=await cli(['requests','preview','--text','Explicit slow preview','--inference-timeout-seconds','45']);
+  assert.equal(slow.success,true);assert.equal(slow.dispatched,false);assert.equal(slow.automatically_retried,false);
+  assert.equal(slow.result.interpretation.original_text,'Explicit slow preview');assert.equal(calls.length,timedCount+1);
+  assert(Date.now()-timedStart>=31000&&Date.now()-timedStart<51000,'explicit budget must cover both old outer and backend/client deadlines');
+  mode='gate';timedCount=calls.length;timedStart=Date.now();
+  const short=await cli(['requests','preview','--text','Explicit short preview','--inference-timeout-seconds','1'],false);
+  assert.equal(short.error_code,'interpretation_timeout');assert(Date.now()-timedStart<5000);assert.equal(calls.length,timedCount+1);
+  await until(()=>gates.size===0,'explicit short wait drops backend request');
   const endpoint = node + '/api/commands/requests/preview';
   const request = {schema_version: 1, expected_node_id: config.node_id, request_id: randomUUID(), text: 'check'};
   const count = calls.length;
+  for(const inference_timeout_seconds of [0,121])assert.equal((await json(endpoint,{...request,inference_timeout_seconds})).error_code,'invalid_inference_timeout');
   assert.equal((await json(endpoint, {...request, expected_node_id: 'other'})).error_code, 'invalid_preview_request');
   assert.equal((await json(endpoint, {...request, text: 'x'.repeat(32769)})).error_code, 'invalid_preview_input');
   assert.equal((await fetch(endpoint, {method: 'POST', headers: {'Content-Type': 'application/json', Origin: 'https://untrusted.example'}, body: JSON.stringify(request)})).status, 403);
@@ -164,7 +176,8 @@ try {
     invalid_and_incomplete_rejected: true, rejection_reasons_checked: true, rejected_output_redacted: true,
     provider_schema_forwarded:true,ignored_grammar_inconsistencies_rejected:true,
     no_configuration_changes: true, concurrency_bounded: true,
-    restart_invalidates_inflight: true, inference_timeout_bounded: true, no_automatic_retry: true, no_legacy_fallback: true,
+    restart_invalidates_inflight: true, inference_timeout_bounded: true, explicit_long_wait_crosses_prior_client_backend_deadlines:true,
+    explicit_short_timeout:true, default_timeout_unchanged:true, invalid_timeout_no_inference:true, no_automatic_retry: true, no_legacy_fallback: true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request preview checks passed: ' + scratch);
 } finally {

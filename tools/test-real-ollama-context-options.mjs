@@ -20,4 +20,9 @@ for(const [allow,args,pattern] of [
   env:{...process.env,EEF_TEST_ALLOW_SHARED_OLLAMA:allow}});
  assert.equal(child.error,undefined);assert.notEqual(child.status,0);assert.match(child.stderr.toString(),pattern);
 }
+for(const value of ['0','121','1.5','unlimited',' 20']){
+ const child=spawnSync(process.execPath,[script,'fixture'],{cwd:root,windowsHide:true,timeout:10000,maxBuffer:65536,
+  env:{...process.env,EEF_TEST_ALLOW_SHARED_OLLAMA:'1',EEF_TEST_INFERENCE_TIMEOUT_SECONDS:value}});
+ assert.equal(child.error,undefined);assert.notEqual(child.status,0);assert.match(child.stderr.toString(),/explicit inference test budget/);
+}
 console.log('Shared-Ollama test admission guards passed; no provider request, configuration or node process started.');

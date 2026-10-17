@@ -389,6 +389,8 @@ pub struct PrepareRequest {
     pub schema_version: u32,
     pub expected_node_id: String,
     pub command: PrepareCommand,
+    #[serde(default)]
+    pub inference_timeout_seconds: Option<u64>,
 }
 
 pub fn saved_checkpoint(
