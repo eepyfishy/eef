@@ -44,9 +44,18 @@ const fake=createServer(async(req,res)=>{
  const body=JSON.parse(bytes);calls.push(body);
  const preparing=body.messages[0].content.startsWith('Propose one method');
  if(!preparing){
-  assert.equal(body.format.type,'object');assert.equal(body.format.additionalProperties,false);
-  assert.equal(body.format.required.length,10);assert.deepEqual(body.format.properties.schema_version.enum,[1]);
-  assert(!Object.keys(body.format.properties).includes('permissions'));
+  assert.deepEqual(Object.keys(body.format),['anyOf']);assert.equal(body.format.anyOf.length,2);
+  for(const branch of body.format.anyOf){
+   assert.equal(branch.type,'object');assert.equal(branch.additionalProperties,false);
+   assert.equal(branch.required.length,10);assert.deepEqual(branch.properties.schema_version.enum,[1]);
+   assert(!Object.keys(branch.properties).includes('permissions'));
+  }
+  assert.deepEqual(body.format.anyOf[0].properties.needs_clarification.enum,[false]);
+  assert.equal(body.format.anyOf[0].properties.clarification.type,'null');
+  assert(!body.format.anyOf[0].properties.intent.enum.includes('unknown'));
+  assert(!body.format.anyOf[0].properties.workload.enum.includes('unknown'));
+  assert.deepEqual(body.format.anyOf[1].properties.needs_clarification.enum,[true]);
+  assert.equal(body.format.anyOf[1].properties.clarification.type,'string');
   if(mode==='reject-schema'){res.writeHead(400);return res.end(JSON.stringify({error:'fixture refuses structured output'}));}
  }else assert.equal(body.format,undefined,'method proposal remains independently validated, not given the interpretation schema');
  if(preparing&&mode==='gate-method'){res.write(' ');gates.add(res);res.on('close',()=>gates.delete(res));return;}
@@ -314,6 +323,7 @@ try {
  assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal(calls.length,count);
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count);
  evidence={passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
+  clarification_consistent_generation_schema:true,method_generation_unchanged:true,
   checkpoint_rejection_diagnosed_without_replay:true,
   immutable_input_context:true,read_only_receipt_reuse:true,partial_preparation_no_implicit_retry:true,current_question_returned:true,
   clarification_and_continuous_not_auto_prepared:true,saved_applied_policy_separate:true,runtime_change_cancels_workflow:true,

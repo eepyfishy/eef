@@ -47,6 +47,9 @@ const fake = createServer(async (req, res) => {
     if (mode === 'capabilities') value.suggested_capabilities = ['PRIVATE_MODEL_TEXT'];
     if (mode === 'question') {value.needs_clarification = true; value.clarification = 'PRIVATE_MODEL_TEXT' + 'x'.repeat(1024);}
     if (mode === 'uncertainty') value.intent = 'unknown';
+    if (mode === 'workload-uncertainty') value.workload = 'unknown';
+    if (mode === 'question-missing') value.needs_clarification = true;
+    if (mode === 'question-unneeded') value.clarification = 'PRIVATE_MODEL_TEXT';
     if (mode === 'output-size') value.goal = 'PRIVATE_MODEL_TEXT' + 'x'.repeat(16384);
     return res.end(JSON.stringify({message: {content: JSON.stringify(value)}, done: true,
       ...(mode === 'unknown' ? {} : {done_reason: mode === 'partial' ? 'length' : 'stop'})}));
@@ -85,6 +88,15 @@ try {
   assert.equal(good.result.interpretation.execution_authorized, false);
   assert.equal(calls.length, 1); assert.equal(calls[0].messages.at(-1).content, text);
   assert.equal(calls[0].options.num_predict, 512);
+  const alternatives=calls[0].format.anyOf;
+  assert.equal(alternatives.length,2);assert.deepEqual(Object.keys(calls[0].format),['anyOf']);
+  assert(alternatives.every(branch=>branch.additionalProperties===false&&branch.required.length===Object.keys(proposal()).length));
+  assert.deepEqual(alternatives[0].properties.needs_clarification.enum,[false]);
+  assert.equal(alternatives[0].properties.clarification.type,'null');
+  assert(!alternatives[0].properties.intent.enum.includes('unknown'));
+  assert(!alternatives[0].properties.workload.enum.includes('unknown'));
+  assert.deepEqual(alternatives[1].properties.needs_clarification.enum,[true]);
+  assert.equal(alternatives[1].properties.clarification.type,'string');
   for (const [next, expected] of [['invalid', 'interpretation_invalid'], ['partial', 'interpretation_incomplete'], ['unknown', 'interpretation_incomplete']]) {
     mode = next; const result = await preview('Check status', false);
     assert.equal(result.error_code, expected); assert.equal(result.dispatched, false); assert.equal(result.result, undefined);
@@ -92,7 +104,9 @@ try {
     assert(!JSON.stringify(result).includes('PRIVATE_MODEL_TEXT'));
   }
   for (const [next, reason] of [['version','version_unsupported'],['goal','goal_invalid'],['hints','hints_invalid'],
-      ['capabilities','capabilities_invalid'],['question','clarification_invalid'],['uncertainty','clarification_required'],['output-size','output_too_large']]) {
+      ['capabilities','capabilities_invalid'],['question','clarification_invalid'],['uncertainty','clarification_required'],
+      ['workload-uncertainty','clarification_required'],['question-missing','clarification_required'],
+      ['question-unneeded','clarification_required'],['output-size','output_too_large']]) {
     mode = next; const beforeInvalid = calls.length, result = await preview('Check status', false);
     assert.equal(result.error_code, 'interpretation_invalid'); assert.equal(result.rejection_reason, reason);
     assert.equal(result.execution_authorized, false); assert.equal(result.dispatched, false);
@@ -144,6 +158,7 @@ try {
   await writeFile(join(scratch, 'results.json'), JSON.stringify({passed: true, api_only: true, coordinator_required: false,
     preview_only: true, original_input_preserved: true, role_required: true, ambiguous_role_rejected: true,
     invalid_and_incomplete_rejected: true, rejection_reasons_checked: true, rejected_output_redacted: true,
+    provider_schema_forwarded:true,ignored_grammar_inconsistencies_rejected:true,
     no_configuration_changes: true, concurrency_bounded: true,
     restart_invalidates_inflight: true, inference_timeout_bounded: true, no_automatic_retry: true, no_legacy_fallback: true,
     real_inference: false, physical_two_pc: false}, null, 2));

@@ -75,6 +75,16 @@ The tool requires an existing isolated quality fixture, matching node/helper
 hashes and matching system/full-message hashes, and refuses to overwrite evidence
 or write outside the validation directory. It performs no inference or workload.
 
+Schema-bearing evaluations additionally record `prompt_reference.schema_sha256`
+and save `PRIVATE-generation-reference.json` containing both `messages` and
+`schema`. Capture checks the schema against the same matching helper, rejecting
+changed or malformed hashes before writing. Matching case-set, exclusive-output
+and node/helper/system/message checks still apply. Older prompt-only report
+shapes continue to capture `PRIVATE-prompt-reference.json`, without claiming a
+schema reference. Metadata-only tests cover both shapes, preserve the source
+evaluation and perform no inference. These references identify shared code
+output, not intercepted requests or provider attestation.
+
 Rubric version 1 is defined in `tools/interpreter-quality-cases.mjs`; expectations
 were fixed before candidate runs. It covers status, conversation, Thai/Spanish,
 missing targets/inputs, continuing camera requests and instruction overrides.
@@ -692,3 +702,66 @@ appendix also exactly matches the recorded evaluated suffix, whose preceding
 baseline hashes to that same reference. Formatter, diff, frozen scorer,
 evaluation-argument and backend/browser boundary checks pass. These prove
 restoration and regression checks, not model-quality or default approval.
+
+## Generation clarification consistency (2026-10-17; unreleased)
+
+The system prompt remains byte-identical. The generation schema now expresses
+the **existing validator's** clarification decisions as two complete alternatives.
+A clear proposal has false `needs_clarification`, a null question and known
+intent/workload. A questioning proposal has true `needs_clarification`, a nonempty
+question and may retain unknown labels. Every alternative requires the same ten
+fields and refuses extra fields. Text/array/capability limits are unchanged.
+
+Complete objects avoid mixing root properties with `anyOf`, a documented
+limitation of the [pinned llama.cpp converter](https://github.com/ggml-org/llama.cpp/blob/c1d0e7a00/grammars/README.md).
+No unsupported conditional/reference extensions or global JSON-key-order change
+are introduced. Providers may ignore or reject grammar: the independent byte,
+cross-field and authority validator remains mandatory, with no repair, fallback
+or automatic retry. Correct grammar cannot decide whether a request is clear.
+
+Before evaluation, retention required no lost acceptance/label total, no lost
+required questions and no ongoing-to-one-shot regression against the existing
+committed-context references. The same verified 2B artifact/runtime, disabled
+thinking hint, temperature zero, 4,096-token context, 512-token output bound and
+unchanged frozen cases were used. These are development runs, not held-out or
+physical acceptance.
+
+| Case set | Accepted | Label matches | Literal copied goals | Evidence |
+| --- | --- | --- | --- | --- |
+| Original v1 | 20/20 | 14/20 | 12/20 | `interpreter-quality-Bvx75l` |
+| Generalization v1 | 20/20 | 12/20 | 13/20 | `interpreter-quality-iDUGub` |
+
+All forty parsed proposals equal their historical committed-context counterparts.
+No required question is lost and no ongoing request becomes one-shot. This meets
+the limited retention bar for expressing existing format rules; **semantic
+quality does not improve** and the same default-model gate remains failed.
+The real llama.cpp requests complete successfully, but these runs are not an
+exhaustive grammar-conformance test or real-Ollama acceptance.
+
+System-prompt SHA remains
+`f9ec6ea9d7341bb7a5594959667b184485d5c9749f6a107c0228ce6866373216`.
+The schema reference for the evaluation vocabulary is
+`2660caf1caed38b74c11e266d1c79de1060ed80284d8ba270977c5b4aa84aa8b`;
+node/helper hashes at evaluation are
+`2c408cd206e390e724a5ed207d9b445c2d867469ad09756bc2bd26c0647191e3` /
+`f1bdd8e69d1c3d7d3193580b58a026687ae5c1e013a8281319595c74fae35011`.
+Metadata-only reference regressions `reference-capture-wt1Luc` and
+`reference-capture-MNqmfD` pass exact schema capture, changed/malformed schema
+refusal, case-set/hash checks, legacy shape compatibility and exclusive output.
+No model copies/downloads, coordinator, workload, installed app or physical node
+was involved; no release or update feed changed.
+
+Final locked/offline workspace/all-target suites pass **715 tests plus one ignored
+each**, with default features and without dashboard features (EEF 244, owner CLI
+17, installer 6, node library 433, node CLI 15). Fresh binaries/examples build;
+their node/helper hashes still match the evaluated artifacts above. Public
+`request-preview-Ece8DH` passes forwarding both alternatives and rejecting
+inconsistent output from a grammar-ignoring mock provider, with no retry or
+rejected-text exposure. Pinned-TLS `request-input-wIkILV` passes durable input,
+clarification/answer workflows, source lineage, unchanged method generation and
+backend-schema rejection without unconstrained fallback. Both are isolated
+same-PC fake-inference fixtures, not real-Ollama or physical two-PC acceptance.
+The 48 cross-field combinations agree with the unchanged validator in the unit
+test; maximum 64-by-64-byte capability vocabulary stays within the schema budget.
+Format, JS syntax, frozen scorer, argument-rejection, source boundary and diff
+checks pass. Full model quality/bootstrap and release acceptance remain open.

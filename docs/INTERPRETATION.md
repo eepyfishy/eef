@@ -182,8 +182,14 @@ cannot supply a custom schema. Ordinary inference and method preparation retain
 their existing payloads; a method proposal has a different contract.
 
 The schema is only a generation hint. A provider may ignore some constraints;
-character-length constraints do not establish UTF-8 byte bounds or cross-field
-clarification consistency. The independent Rust validator remains mandatory.
+character-length constraints do not establish UTF-8 byte bounds. Two complete
+`anyOf` alternatives now express existing clarification consistency: either a
+null question/false flag/known intent and workload, or a nonempty question/true
+flag with unknown labels permitted. Each alternative retains all ten required
+fields and the same limits. Unknown labels cannot form a clear proposal in a
+conforming provider. This is not evidence that the request is actually clear.
+The independent Rust validator remains mandatory for ignored grammar, byte
+bounds, cross-field consistency and authority; its rules are unchanged.
 There is no JSON repair, alternate provider, unconstrained retry or automatic
 download if a backend rejects the schema. Backend rejection returns
 `interpreter_backend_failed`; the input fixture verifies one call and no saved

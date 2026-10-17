@@ -344,8 +344,8 @@ pub(crate) fn output_schema(capabilities: &[String]) -> Result<Value> {
         "suggested_capabilities":suggested,
         "complexity":{"type":"string","enum":["simple","moderate","complex","unknown"]},
         "workload":{"type":"string","enum":["one_shot","continuous","unknown"]},
-        "needs_clarification":{"type":"boolean"},
-        "clarification":{"anyOf":[{"type":"null"},text(1024)]}
+        "needs_clarification":{"type":"boolean","enum":[true]},
+        "clarification":text(1024)
     });
     let required = properties
         .as_object()
@@ -353,9 +353,16 @@ pub(crate) fn output_schema(capabilities: &[String]) -> Result<Value> {
         .keys()
         .cloned()
         .collect::<Vec<_>>();
-    Ok(
-        json!({"type":"object","additionalProperties":false,"properties":properties,"required":required}),
-    )
+    let mut clear = properties.clone();
+    clear["needs_clarification"] = json!({"type":"boolean","enum":[false]});
+    clear["clarification"] = json!({"type":"null"});
+    clear["intent"]["enum"] = json!(["information", "action", "conversation"]);
+    clear["workload"]["enum"] = json!(["one_shot", "continuous"]);
+    // Keep each alternative complete: some provider converters ignore siblings
+    // of anyOf, and do not implement if/then or dependentSchemas. The independent
+    // byte/cross-field validator remains authoritative even if grammar is ignored.
+    let object = |fields| json!({"type":"object","additionalProperties":false,"properties":fields,"required":required});
+    Ok(json!({"anyOf":[object(clear),object(properties)]}))
 }
 
 /// Shared prompt for later adapters/evaluation. Keeping user text in a separate
@@ -519,29 +526,38 @@ mod tests {
             vec![],
             vec!["system.info".into()],
             vec!["llm.infer".into(), "system.info".into()],
+            (0..64).map(|index| format!("cap_{index:060}")).collect(),
         ] {
             let schema = output_schema(&capabilities).unwrap();
-            assert_eq!(schema["additionalProperties"], false);
-            let fields = schema["properties"].as_object().unwrap();
-            assert_eq!(
-                fields.keys().collect::<Vec<_>>(),
-                candidate().as_object().unwrap().keys().collect::<Vec<_>>()
-            );
-            assert_eq!(schema["required"].as_array().unwrap().len(), fields.len());
-            assert_eq!(fields["schema_version"]["enum"], json!([1]));
-            assert_eq!(fields["context_hints"]["maxItems"], MAX_HINTS);
-            if capabilities.is_empty() {
-                assert_eq!(fields["suggested_capabilities"]["maxItems"], 0);
-                assert!(
-                    fields["suggested_capabilities"]["items"]
-                        .get("enum")
-                        .is_none()
-                );
-            } else {
+            assert_eq!(schema.as_object().unwrap().len(), 1);
+            let alternatives = schema["anyOf"].as_array().unwrap();
+            assert_eq!(alternatives.len(), 2);
+            for alternative in alternatives {
+                assert_eq!(alternative["additionalProperties"], false);
+                let fields = alternative["properties"].as_object().unwrap();
                 assert_eq!(
-                    fields["suggested_capabilities"]["items"]["enum"],
-                    json!(capabilities)
+                    fields.keys().collect::<Vec<_>>(),
+                    candidate().as_object().unwrap().keys().collect::<Vec<_>>()
                 );
+                assert_eq!(
+                    alternative["required"].as_array().unwrap().len(),
+                    fields.len()
+                );
+                assert_eq!(fields["schema_version"]["enum"], json!([1]));
+                assert_eq!(fields["context_hints"]["maxItems"], MAX_HINTS);
+                if capabilities.is_empty() {
+                    assert_eq!(fields["suggested_capabilities"]["maxItems"], 0);
+                    assert!(
+                        fields["suggested_capabilities"]["items"]
+                            .get("enum")
+                            .is_none()
+                    );
+                } else {
+                    assert_eq!(
+                        fields["suggested_capabilities"]["items"]["enum"],
+                        json!(capabilities)
+                    );
+                }
             }
             assert!(serde_json::to_vec(&schema).unwrap().len() < 16384);
         }
@@ -560,6 +576,46 @@ mod tests {
         let mut unicode = candidate();
         unicode["goal"] = json!("é".repeat(1025));
         assert!(parse(&unicode).is_err());
+    }
+    #[test]
+    fn generation_alternatives_match_all_existing_clarification_consistency_decisions() {
+        let schema = output_schema(&["system.info".into()]).unwrap();
+        for intent in ["information", "action", "conversation", "unknown"] {
+            for workload in ["one_shot", "continuous", "unknown"] {
+                for needs in [false, true] {
+                    for has_question in [false, true] {
+                        let mut value = candidate();
+                        value["intent"] = json!(intent);
+                        value["workload"] = json!(workload);
+                        value["needs_clarification"] = json!(needs);
+                        value["clarification"] = if has_question {
+                            json!("Which input?")
+                        } else {
+                            Value::Null
+                        };
+                        let allowed = schema["anyOf"].as_array().unwrap().iter().any(|branch| {
+                            let fields = &branch["properties"];
+                            fields["intent"]["enum"]
+                                .as_array()
+                                .unwrap()
+                                .contains(&json!(intent))
+                                && fields["workload"]["enum"]
+                                    .as_array()
+                                    .unwrap()
+                                    .contains(&json!(workload))
+                                && fields["needs_clarification"]["enum"] == json!([needs])
+                                && fields["clarification"]["type"]
+                                    == if has_question { "string" } else { "null" }
+                        });
+                        assert_eq!(
+                            allowed,
+                            parse(&value).is_ok(),
+                            "{intent}/{workload}/{needs}/{has_question}"
+                        );
+                    }
+                }
+            }
+        }
     }
     #[test]
     fn generation_reference_is_the_same_bounded_contract_without_authority() {

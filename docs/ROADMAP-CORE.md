@@ -31,6 +31,19 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The next interpreter reliability increment expresses the validator's existing
+clarification decisions as two complete generation alternatives: clear proposals
+have no question and require known labels; questioning proposals retain uncertainty.
+Both keep the same fields/limits and cannot add authority. The independent
+validator and prompt are unchanged, with no repair/fallback. Both suites pass
+715 tests plus one ignored each; real CPU evaluations reproduce all forty prior
+parsed proposals (20 accepted per suite, 14/20 and 12/20 matches), so semantic
+quality is not improved or approved. Public preview and pinned-TLS input/answer
+regressions pass. New evaluation/capture records fingerprint schemas separately
+from prompts, retain old report shapes and reject changed hashes/overwrites.
+See [evidence and limits](INTERPRETER-QUALITY.md#generation-clarification-consistency-2026-10-17-unreleased).
+Default model/bootstrap, physical and release gates remain unfinished.
+
 A later default-interpreter experiment appended a decision checklist without
 changing the schema/validator or frozen expectations. It was rejected: the two
 real CPU development suites accepted 19/20 each and matched 14/20 and 11/20,

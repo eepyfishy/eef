@@ -59,14 +59,16 @@ async function referencePrompt(capabilities){
  const child=spawn(path,[],{cwd:bundle,windowsHide:true,env:{...env,EEF_INTERPRETATION_FIXTURE:'1'},stdio:['pipe','pipe','pipe']});
  let out='';child.stdout.on('data',b=>out=(out+b).slice(-65536));child.stderr.resume();
  child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r(code));});children.push(child);
- child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify({mode:'prompt',input:cases[0].input,allowed_capabilities:capabilities}));
+ child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify({mode:'generation_reference',input:cases[0].input,allowed_capabilities:capabilities}));
  const timer=setTimeout(()=>child.kill(),10000);
  try{
-  assert.equal(await child.result,0,'shared prompt fixture failed');const value=JSON.parse(out);assert.equal(value.success,true);
+  assert.equal(await child.result,0,'shared prompt fixture failed');const response=JSON.parse(out);assert.equal(response.success,true);
+  const value=response.reference;
   assert.equal(value.messages.at(-1).content,cases[0].input);assert.equal(value.messages[0].role,'system');
-  await writeFile(join(scratch,'PRIVATE-prompt-reference.json'),JSON.stringify(value.messages,null,2),{flag:'wx'});
+  await writeFile(join(scratch,'PRIVATE-generation-reference.json'),JSON.stringify(value,null,2),{flag:'wx'});
   return {sha256:createHash('sha256').update(value.messages[0].content).digest('hex'),
    messages_sha256:createHash('sha256').update(JSON.stringify(value.messages)).digest('hex'),message_count:value.messages.length,
+   schema_sha256:createHash('sha256').update(JSON.stringify(value.schema)).digest('hex'),
    fixture_sha256:await digest(path)};
  }finally{clearTimeout(timer);}
 }

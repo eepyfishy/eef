@@ -1,5 +1,37 @@
 # Architecture conformance status
 
+## Unreleased: generation clarification consistency (2026-10-17)
+
+The generation schema mirrors the existing independent validator's cross-field
+rules with two complete alternatives. Clear proposals require null question,
+false flag and known intent/workload; questioning proposals require nonempty
+question/true flag and permit uncertainty. All ten fields, capability/text/array
+limits, prompt, byte/authority checks and immutable review state remain unchanged.
+Providers may ignore/reject constraints; no repair, unconstrained retry or
+fallback is introduced. Method generation retains its separate contract.
+
+Both locked/offline workspace/all-target suites pass **715 tests plus one ignored
+each**, including no-dashboard. Tests cover all 48 clarification combinations,
+the maximum capability vocabulary and unchanged independent rejection.
+Fresh binaries/examples build. `request-preview-Ece8DH` checks both-schema
+forwarding and a mock provider's inconsistent output; `request-input-wIkILV`
+passes pinned-TLS input/answer/source-lineage and schema-rejection regressions.
+These are isolated same-PC fake-inference fixtures, not real-Ollama acceptance.
+
+Real CPU suites `interpreter-quality-Bvx75l` / `interpreter-quality-iDUGub`
+accept 20/20 each and match 14/20 and 12/20. All forty parsed proposals equal the
+historical context baseline; copied goals/semantic failures remain. Default
+quality is not improved or approved. New private generation references include
+schema/message fingerprints; exact capture, changed/malformed hash refusal,
+legacy report shapes and exclusive output pass metadata-only tests. Fresh
+node/helper hashes match the evaluated binaries. See
+[scope, hashes and evidence](INTERPRETER-QUALITY.md#generation-clarification-consistency-2026-10-17-unreleased).
+
+Format, JS syntax, source dependency boundary, frozen scorer, evaluation-argument
+and diff checks pass. No model download/copy, installed/physical-node update,
+release, UI or stable-only update feed changed. Default model/bootstrap,
+complete first-run, physical and other release gates remain unfinished.
+
 ## Rejected interpreter checklist experiment (2026-10-17)
 
 The real CPU interpreter experiment retained the prior prompt and appended
