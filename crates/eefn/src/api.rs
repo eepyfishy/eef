@@ -235,7 +235,7 @@ async fn model_command(
     State(state): State<Arc<NodeService>>,
     Json(request): Json<crate::model_selection::ModelCommandRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(state.model_command(request)?))
+    Ok(Json(state.dispatch_model_command(request, false).await?))
 }
 
 async fn permission_command(

@@ -1404,6 +1404,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         } => {
             eefn::network::validate_node_id(node)?;
             client.post(format!("{base}/api/commands/node/models"))
+                .timeout(std::time::Duration::from_secs(if matches!(command, eefn::model_cli::ModelsAction::SelectInstalledGguf {..}) {80} else {25}))
                 .json(&json!({"schema_version":1,"node_id":node,"command":command.to_command(false)?}))
                 .send().await?
         }

@@ -31,6 +31,18 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The unreleased [installed GGUF selection command](INSTALLED-MODEL-SELECTION.md)
+selects a verified node-cache text artifact by ID without caller paths or ports.
+Optional explicit interpreter assignment shares the existing atomic role service;
+provider, unrelated settings and matching owner tuning/extensions survive. Local,
+offline and approved EEF-mediated commands share asynchronous verification and
+snapshot/approval rechecks. Both suites pass 708 tests plus one ignored each;
+synthetic-cache CLI and remote protocol fixtures pass without loading/downloading
+weights or restarting. An existing 1.28 GB cache is also fully verified and
+selected offline in a new test config without copying or loading weights.
+This removes a setup step, not default bootstrap, model
+quality, full first-run, real-model/physical or release acceptance gates.
+
 The unreleased [interpreter rejection diagnostics](INTERPRETER-REJECTIONS.md)
 preserve the owner-command error code while exposing a typed, static cause and
 readable guidance for invalid proposals. Rejected text/parser excerpts are not

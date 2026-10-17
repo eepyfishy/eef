@@ -28,6 +28,7 @@ pub struct NodeService {
         Arc<std::sync::Mutex<Option<Arc<crate::model_lifecycle::ModelRuntime>>>>,
     config_lock: Arc<std::sync::Mutex<()>>,
     pub(crate) local_enrollment: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) installed_selection: Arc<tokio::sync::Mutex<()>>,
     started: std::time::Instant,
 }
 
@@ -104,6 +105,7 @@ impl NodeService {
             preview: Arc::new(crate::request_preview::PreviewRuntime::default()),
             config_lock: Arc::new(std::sync::Mutex::new(())),
             local_enrollment: Arc::new(tokio::sync::Mutex::new(())),
+            installed_selection: Arc::new(tokio::sync::Mutex::new(())),
             started: std::time::Instant::now(),
         })
     }
@@ -562,6 +564,73 @@ impl NodeService {
         request: crate::model_selection::ModelCommandRequest,
         remote: bool,
     ) -> Result<Value> {
+        self.model_command_checked(request, remote, None)
+    }
+
+    /// Hashing is asynchronous and precedes the short, snapshot-checked save.
+    pub async fn dispatch_model_command(
+        &self,
+        request: crate::model_selection::ModelCommandRequest,
+        remote: bool,
+    ) -> Result<Value> {
+        let crate::model_selection::ModelCommand::SelectInstalledGguf {
+            model_id,
+            interpreter,
+        } = &request.command
+        else {
+            return self.model_command_authorized(request, remote);
+        };
+        if request.schema_version != 1 || request.expected_node_id != self.node_id {
+            bail!("command schema or target node does not match this instance")
+        }
+        if !self.config_path.is_file() {
+            bail!("saved node configuration is missing")
+        }
+        let snapshot = self.inspect_grant_configuration(|config| Ok(config.clone()))?;
+        if snapshot["node_id"] != self.node_id {
+            bail!("saved node identity does not match this instance")
+        }
+        if remote && snapshot.pointer("/management/allow_remote") != Some(&json!(true)) {
+            return Ok(self.model_approval_required());
+        }
+        let _verification = self.installed_selection.try_lock().map_err(|_| {
+            anyhow::anyhow!(
+                "An installed model is already being verified; no selection was started"
+            )
+        })?;
+        let prepared = crate::installed_selection::prepare(
+            self.model_directory(),
+            snapshot,
+            model_id.clone(),
+            *interpreter,
+        )
+        .await?;
+        let resolved = crate::model_selection::ModelCommandRequest {
+            schema_version: request.schema_version,
+            expected_node_id: request.expected_node_id,
+            command: crate::model_selection::ModelCommand::SelectGguf {
+                slot: prepared.slot.clone(),
+            },
+        };
+        let mut result = self.model_command_checked(resolved, remote, Some(&prepared))?;
+        if result["success"] == true {
+            result["installed_artifact"] = prepared.proof();
+        }
+        Ok(result)
+    }
+
+    fn model_approval_required(&self) -> Value {
+        json!({"schema_version":1,"success":false,"node_id":self.node_id,
+            "error_code":"approval_required","changed":false,
+            "note":"Enable management from EEF locally on this node before changing model selections."})
+    }
+
+    fn model_command_checked(
+        &self,
+        request: crate::model_selection::ModelCommandRequest,
+        remote: bool,
+        prepared: Option<&crate::installed_selection::Prepared>,
+    ) -> Result<Value> {
         if request.schema_version != 1 || request.expected_node_id != self.node_id {
             bail!("command schema or target node does not match this instance")
         }
@@ -586,13 +655,35 @@ impl NodeService {
                 crate::model_selection::ModelCommand::Show {}
             )
         {
-            return Ok(
-                json!({"schema_version":1,"success":false,"node_id":self.node_id,
-                "error_code":"approval_required","changed":false,
-                "note":"Enable management from EEF locally on this node before changing model selections."}),
-            );
+            return Ok(self.model_approval_required());
         }
-        let changed = crate::model_selection::apply(&mut config, &request.command)?;
+        if let Some(prepared) = prepared {
+            if config.get("models") != prepared.snapshot.get("models")
+                || config.get("model_catalog") != prepared.snapshot.get("model_catalog")
+            {
+                bail!("Model settings changed during verification; inspect before retrying")
+            }
+            crate::installed_selection::check_index(
+                &self.model_directory(),
+                &prepared.index_entry,
+            )?;
+        }
+        // A matching existing selection is already configured; retain even
+        // extension fields rather than serializing/replacing its owner settings.
+        let mut changed = if prepared.is_some_and(|p| p.existing) {
+            false
+        } else {
+            crate::model_selection::apply(&mut config, &request.command)?
+        };
+        if let Some(prepared) = prepared.filter(|p| p.interpreter) {
+            changed |= crate::model_selection::apply(
+                &mut config,
+                &crate::model_selection::ModelCommand::Interpreter {
+                    backend: crate::model_selection::Backend::Llamacpp,
+                    model_id: prepared.slot.model_id.clone(),
+                },
+            )?;
+        }
         let selections = crate::model_selection::selection_view(&config)?;
         let live = self.live.lock().unwrap();
         let registered = if let Some(models) = live.get("models") {
@@ -829,7 +920,10 @@ impl NodeService {
                 }
                 self.model_lifecycle_policy_command(request, true, false)
             }
-            "model_command" => self.model_command_authorized(serde_json::from_value(params)?, true),
+            "model_command" => {
+                self.dispatch_model_command(serde_json::from_value(params)?, true)
+                    .await
+            }
             "model_lifecycle" => {
                 self.model_lifecycle_command(serde_json::from_value(params)?, true)
                     .await
@@ -1027,6 +1121,81 @@ fn startup_issues(live: &Value) -> Vec<StartupIssue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn installed_selection_commit_rechecks_snapshots_index_and_current_remote_approval() {
+        use crate::model_selection::{ModelCommand, ModelCommandRequest};
+        for case in ["models", "catalog", "index", "revoked", "unrelated"] {
+            let root = tempfile::tempdir().unwrap();
+            let service = crate::installed_selection::tests::fixture(root.path());
+            let mut config = service.read_config().unwrap();
+            config["management"]["allow_remote"] = json!(true);
+            service.save_config(config.clone()).unwrap();
+            let prepared = crate::installed_selection::prepare(
+                service.model_directory(),
+                config,
+                "fixture".into(),
+                true,
+            )
+            .await
+            .unwrap();
+            #[cfg(windows)]
+            {
+                assert!(
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&prepared.slot.model_path)
+                        .is_err(),
+                    "verified read lease must exclude writers"
+                );
+            }
+            let mut latest = service.read_config().unwrap();
+            match case {
+                "models" => latest["models"]["provider"] = json!("llamacpp"),
+                "catalog" => latest["model_catalog"][0]["name"] = json!("Changed"),
+                "index" => {
+                    let path = service.model_directory().join("installed.json");
+                    let mut index: Value =
+                        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                    index[0]["name"] = json!("Changed");
+                    crate::setup::write_json(&path, &index).unwrap();
+                }
+                "revoked" => latest["management"]["allow_remote"] = json!(false),
+                "unrelated" => latest["name"] = json!("Owner's latest name"),
+                _ => unreachable!(),
+            }
+            service.save_config(latest).unwrap();
+            let before = std::fs::read(root.path().join("node.json")).unwrap();
+            let result = service.model_command_checked(
+                ModelCommandRequest {
+                    schema_version: 1,
+                    expected_node_id: "cache-node".into(),
+                    command: ModelCommand::SelectGguf {
+                        slot: prepared.slot.clone(),
+                    },
+                },
+                true,
+                Some(&prepared),
+            );
+            if case == "unrelated" {
+                assert_eq!(result.unwrap()["success"], true);
+                assert_eq!(
+                    service.read_config().unwrap()["name"],
+                    "Owner's latest name"
+                );
+            } else {
+                if case == "revoked" {
+                    assert_eq!(result.unwrap()["error_code"], "approval_required");
+                } else {
+                    assert!(result.is_err(), "{case}");
+                }
+                assert_eq!(
+                    std::fs::read(root.path().join("node.json")).unwrap(),
+                    before,
+                    "{case}"
+                );
+            }
+        }
+    }
     #[tokio::test]
     async fn remote_status_exposes_restart_preflight_without_raw_configuration() {
         let dir = tempfile::tempdir().unwrap();

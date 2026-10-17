@@ -1548,6 +1548,7 @@ The development coordinator also exposes these operations for a connected node:
 
 ```powershell
 .\eef.exe node models --node NODE_ID show --json
+.\eef.exe node models --node NODE_ID select-installed-gguf --model MODEL_ID --interpreter --json
 .\eef.exe node models --node NODE_ID select-ollama --model OWNER_MODEL_ID --modality text --role request_interpreter --json
 .\eef.exe node models --node NODE_ID hints --backend ollama --model OWNER_MODEL_ID --clear-roles --json
 .\eef.exe node models --node NODE_ID provider auto --json
@@ -1579,6 +1580,7 @@ core service, without JSON editing or a browser:
 
 ```powershell
 .\eefn.exe models show --json
+.\eefn.exe models select-installed-gguf --model MODEL_ID --interpreter --json
 .\eefn.exe models select-ollama --model OWNER_MODEL_ID --modality text --role request_interpreter --json
 .\eefn.exe models select-gguf --model OWNER_MODEL_ID --file C:\Models\owner-model.gguf --json
 .\eefn.exe models hints --backend ollama --model OWNER_MODEL_ID --capability llm.infer --role request_interpreter --json
@@ -1611,7 +1613,10 @@ existing model without selection hints preserves its current hints.
 
 The local owner API is POST `/api/commands/models`, taking
 `{schema_version:1,expected_node_id,command}`. Operations are `show`,
-`select_ollama`, `select_gguf`, `hints`, `remove`, and `provider`; see the shared
+`select_ollama`, `select_gguf`, `hints`, `remove`, and `provider`. The unreleased
+`select_installed_gguf` operation additionally verifies a node-installed text GGUF
+by ID, without caller paths or ports; see [installed selection](INSTALLED-MODEL-SELECTION.md).
+See the shared
 typed commands in `eefn/src/model_selection.rs`. Edits use the same config lock as
 other node settings, preserve unrelated values, reject corrupt/missing files,
 and avoid writing on no-ops. Removing a selection never deletes model files.

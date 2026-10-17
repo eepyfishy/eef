@@ -64,7 +64,16 @@ impl NodeControl for eefn::NodeServer {
             "node.configure",
             "model_command",
             serde_json::to_value(request)?,
-            Duration::from_secs(5),
+            Duration::from_secs(
+                if matches!(
+                    request.command,
+                    eefn::model_selection::ModelCommand::SelectInstalledGguf { .. }
+                ) {
+                    75
+                } else {
+                    5
+                },
+            ),
         )
         .await
     }
@@ -342,6 +351,7 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
             | ModelCommand::ClearInterpreter {}
             | ModelCommand::CpuThreads { .. }
             | ModelCommand::MemoryLimit { .. }
+            | ModelCommand::SelectInstalledGguf { .. }
     ) {
         result["command"] = serde_json::to_value(&request.command)?;
     }
@@ -411,6 +421,7 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
                         | ModelCommand::ClearInterpreter {}
                         | ModelCommand::CpuThreads { .. }
                         | ModelCommand::MemoryLimit { .. }
+                        | ModelCommand::SelectInstalledGguf { .. }
                 ) || eefn::model_selection::confirmed_interpreter(
                     &reply["data"],
                     &request.node_id,

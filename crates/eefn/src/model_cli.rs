@@ -72,6 +72,14 @@ pub enum ModelsAction {
         #[arg(long = "role")]
         roles: Vec<String>,
     },
+    /// Select an already-installed text GGUF by catalog ID; no path/port or download.
+    SelectInstalledGguf {
+        #[arg(long)]
+        model: String,
+        /// Explicitly move the interpreter role to this model; restart separately.
+        #[arg(long)]
+        interpreter: bool,
+    },
     /// Remove selection only, never model files.
     Remove {
         #[arg(long,value_parser=["ollama","llamacpp"])]
@@ -123,6 +131,12 @@ impl ModelsAction {
         };
         let command = match self {
             ModelsAction::Show => ModelCommand::Show {},
+            ModelsAction::SelectInstalledGguf { model, interpreter } => {
+                ModelCommand::SelectInstalledGguf {
+                    model_id: model.clone(),
+                    interpreter: *interpreter,
+                }
+            }
             ModelsAction::Interpreter {
                 backend: name,
                 model,
@@ -208,6 +222,50 @@ impl ModelsAction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn installed_selection_cli_requires_only_model_id_and_explicit_optional_role() {
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(subcommand)]
+            action: ModelsAction,
+        }
+        use clap::Parser;
+        for args in [
+            vec!["models", "select-installed-gguf", "--model", "chosen"],
+            vec![
+                "models",
+                "select-installed-gguf",
+                "--model",
+                "chosen",
+                "--interpreter",
+            ],
+        ] {
+            let wants_role = args.contains(&"--interpreter");
+            let command = Cli::try_parse_from(args)
+                .unwrap()
+                .action
+                .to_command(true)
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(command).unwrap(),
+                serde_json::json!({
+                "operation":"select_installed_gguf","model_id":"chosen","interpreter":wants_role})
+            );
+        }
+        for args in [
+            vec!["models", "select-installed-gguf"],
+            vec![
+                "models",
+                "select-installed-gguf",
+                "--model",
+                "chosen",
+                "--file",
+                "caller-path",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+    }
     #[test]
     fn memory_limit_cli_requires_an_explicit_value_or_default_reset() {
         #[derive(clap::Parser)]

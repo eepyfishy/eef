@@ -30,7 +30,7 @@ pub async fn bounded_json(mut response: reqwest::Response) -> Result<Value> {
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-fn installed_index(directory: &std::path::Path) -> Result<Vec<Value>> {
+pub(crate) fn installed_index(directory: &std::path::Path) -> Result<Vec<Value>> {
     use std::io::Read;
     let file = match std::fs::File::open(directory.join("installed.json")) {
         Ok(file) => file,
@@ -63,7 +63,7 @@ fn storage(directory: &std::path::Path, backend: &str) -> Value {
     json!({"scope":"node","directory":directory,"free_bytes":free,"message":"Free space on this node's model drive. Download size is checked before and during transfer."})
 }
 
-fn catalog(config: &Value) -> Value {
+pub(crate) fn catalog(config: &Value) -> Value {
     config.get("model_catalog").cloned().unwrap_or_else(|| {
         serde_json::from_str(include_str!("../../../config/model-catalog.json"))
             .expect("model catalog")

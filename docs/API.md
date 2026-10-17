@@ -1,5 +1,12 @@
 # HTTP API
 
+Unreleased [installed GGUF selection](INSTALLED-MODEL-SELECTION.md) adds
+`operation: "select_installed_gguf"` with `model_id` and explicit `interpreter`
+boolean to existing local/approved remote model commands. Resolution and checksum
+verification happen on the target node; no caller path, download, load, provider
+switch or restart is implicit. `installed_artifact` is selection-time integrity
+metadata, not model-quality or running-readiness approval.
+
 Unreleased [interpreter rejection diagnostics](INTERPRETER-REJECTIONS.md) preserve
 `interpretation_invalid` while adding an optional static `rejection_reason` and
 readable guidance for typed validation failures. Model/parser excerpts are not

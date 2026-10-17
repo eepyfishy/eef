@@ -154,7 +154,7 @@ async fn execute_model_command(
     };
     if lock.is_some() {
         let service = NodeService::new(args.config.clone(), file.node_id);
-        let mut result = service.model_command(request)?;
+        let mut result = service.dispatch_model_command(request, false).await?;
         result["running"] = serde_json::json!(false);
         result["restart_required"] = serde_json::json!(false);
         result["note"] = serde_json::json!(
@@ -176,10 +176,11 @@ async fn execute_model_command(
             | eefn::model_selection::ModelCommand::ClearInterpreter {}
             | eefn::model_selection::ModelCommand::CpuThreads { .. }
             | eefn::model_selection::ModelCommand::MemoryLimit { .. }
+            | eefn::model_selection::ModelCommand::SelectInstalledGguf { .. }
     );
     let uncertain_role = |code: &str, unknown: bool| {
         serde_json::json!({"schema_version":1,
-        "report_type":match request.command {eefn::model_selection::ModelCommand::CpuThreads {..}=>"model_cpu_threads_command",eefn::model_selection::ModelCommand::MemoryLimit {..}=>"model_memory_limit_command",_=>"interpreter_role_command"},"node_id":request.expected_node_id,"command":request.command,
+        "report_type":match request.command {eefn::model_selection::ModelCommand::CpuThreads {..}=>"model_cpu_threads_command",eefn::model_selection::ModelCommand::MemoryLimit {..}=>"model_memory_limit_command",eefn::model_selection::ModelCommand::SelectInstalledGguf {..}=>"model_installed_selection_command",_=>"interpreter_role_command"},"node_id":request.expected_node_id,"command":request.command,
         "success":false,"error_code":code,"mutation_requested":true,"outcome_unknown":unknown,
         "automatically_retried":false,"execution_authorized":false,"dispatched":false,
         "note":"Inspect saved selections before deciding what to do. This command has no durable receipt ledger; no automatic retry, fallback, provider switch or restart was sent."})
@@ -190,7 +191,7 @@ async fn execute_model_command(
             .redirect(reqwest::redirect::Policy::none())
             .build()?
             .post(format!("http://{}/api/commands/models", address))
-            .timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(if matches!(request.command, eefn::model_selection::ModelCommand::SelectInstalledGguf {..}) {75} else {15}))
             .json(&request)
             .send()
             .await?;
@@ -230,6 +231,11 @@ async fn execute_model_command(
                     eefn::model_selection::ModelCommand::MemoryLimit { .. }
                 ) {
                     "local_model_memory_limit_reply_unconfirmed"
+                } else if matches!(
+                    request.command,
+                    eefn::model_selection::ModelCommand::SelectInstalledGguf { .. }
+                ) {
+                    "local_model_installed_selection_reply_unconfirmed"
                 } else {
                     "local_model_role_reply_unconfirmed"
                 },

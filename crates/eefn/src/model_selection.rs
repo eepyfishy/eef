@@ -63,6 +63,11 @@ pub enum ModelCommand {
     SelectGguf {
         slot: ModelSlot,
     },
+    /// Resolve and checksum-check this node's installed text GGUF, not caller paths.
+    SelectInstalledGguf {
+        model_id: String,
+        interpreter: bool,
+    },
     Remove {
         backend: Backend,
         model_id: String,
@@ -150,6 +155,9 @@ pub fn apply(config: &mut Value, command: &ModelCommand) -> Result<bool> {
     let before = config.clone();
     match command {
         ModelCommand::Show {} => {}
+        ModelCommand::SelectInstalledGguf { .. } => {
+            bail!("Installed selection requires the node's asynchronous cache verifier")
+        }
         ModelCommand::Interpreter { backend, model_id } => {
             assign_interpreter(config, Some((*backend, model_id)))?;
         }
@@ -495,6 +503,16 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
         provider: String,
         restart_required: bool,
         note: String,
+        #[serde(default)]
+        installed_artifact: Option<InstalledProof>,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct InstalledProof {
+        model_id: String,
+        sha256: String,
+        bytes: u64,
+        verified_at_selection: bool,
     }
     let Ok(report) = serde_json::from_value::<Report>(value.clone()) else {
         return false;
@@ -515,6 +533,11 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
             .registered_models
             .as_ref()
             .is_some_and(|m| m.len() > 64)
+    {
+        return false;
+    }
+    if report.installed_artifact.is_some()
+        && !matches!(command, ModelCommand::SelectInstalledGguf { .. })
     {
         return false;
     }
@@ -546,6 +569,30 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
         })
         .collect::<Vec<_>>();
     match command {
+        ModelCommand::SelectInstalledGguf {
+            model_id,
+            interpreter,
+        } => {
+            let Some(proof) = report.installed_artifact else {
+                return false;
+            };
+            validate_id(model_id).is_ok()
+                && proof.model_id == *model_id
+                && proof.verified_at_selection
+                && proof.bytes > 0
+                && proof.bytes <= i64::MAX as u64
+                && proof.sha256.len() == 64
+                && proof.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && report
+                    .saved_selections
+                    .iter()
+                    .any(|m| m.backend == Backend::Llamacpp && m.model_id == *model_id)
+                && (!interpreter
+                    || (interpreters.len() == 1
+                        && interpreters[0].backend == Backend::Llamacpp
+                        && interpreters[0].model_id == *model_id
+                        && interpreters[0].model_metadata.supports("llm.infer")))
+        }
         ModelCommand::Interpreter { backend, model_id } => {
             validate_id(model_id).is_ok()
                 && interpreters.len() == 1

@@ -212,7 +212,7 @@ pub async fn local_ui_guard(
 
 pub fn validate_name(name: &str) -> Result<()> {
     if name.trim().is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
-        bail!("Choose a device name between 1 and 100 characters")
+        bail!("Choose a node name between 1 and 100 characters")
     }
     Ok(())
 }

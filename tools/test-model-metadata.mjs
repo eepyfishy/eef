@@ -1,12 +1,12 @@
 // Isolated one-PC protocol test with a fake Ollama HTTP backend. No real inference,
 // model downloads, personal configuration, or physical cross-node proof.
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
-import {resolve,join} from 'node:path';
+import {mkdtemp,readFile,writeFile,mkdir,realpath} from 'node:fs/promises';
+import {resolve,join,toNamespacedPath} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer as tcpServer} from 'node:net';
 import {createServer} from 'node:http';
-import {randomBytes,randomUUID} from 'node:crypto';
+import {randomBytes,randomUUID,createHash} from 'node:crypto';
 import {reviewedFixture} from './reviewed-fixture.mjs';
 const root=resolve(import.meta.dirname,'..');
 const scratch=await mkdtemp(join(root,'.validation','model-metadata-'));
@@ -147,6 +147,9 @@ try{
   assert.equal(deniedInterpreter.error_code,'approval_required');assert.equal(await readFile(nodeConfig,'utf8'),deniedBefore);
   const deniedClear=await remoteModels(['clear-interpreter'],false);
   assert.equal(deniedClear.error_code,'approval_required');assert.equal(await readFile(nodeConfig,'utf8'),deniedBefore);
+  const deniedCache=await remoteModels(['select-installed-gguf','--model','not-installed'],false);
+  assert.equal(deniedCache.error_code,'approval_required');assert.equal(deniedCache.mutation_requested,false);
+  assert.equal(await readFile(nodeConfig,'utf8'),deniedBefore);
   const approved=(await json(node+'/api/config')).config;approved.management.allow_remote=true;
   await json(node+'/api/config',{config:approved},'PUT');
   const remoteSaved=await remoteModels(['hints','--backend','ollama','--model','fixture-text','--role','node_tool']);
@@ -165,6 +168,26 @@ try{
   assert.equal(cleared.data.changed,true);assert.equal(cleared.data.saved_selections.length,2);
   assert.deepEqual(cleared.data.saved_selections.find(m=>m.model_id==='fixture-text').model_metadata.roles,['node_tool']);
   assert.equal((await remoteModels(['clear-interpreter'])).data.changed,false);
+  // Resolve the target node's cache, not a path on the coordinator device.
+  const cacheBytes=Buffer.from('GGUF synthetic remote-selection fixture, never loaded');
+  const cacheHash=createHash('sha256').update(cacheBytes).digest('hex'),cacheId='cache-selection-fixture';
+  await mkdir(join(scratch,'models'),{recursive:true});const cachePath=join(scratch,'models',cacheHash+'.gguf');
+  await writeFile(cachePath,cacheBytes);
+  const cacheEntry={id:cacheId,name:'Cache selection fixture',modality:'text',url:'https://example.invalid/never-fetched',sha256:cacheHash,bytes:cacheBytes.length};
+  await writeFile(join(scratch,'models','installed.json'),JSON.stringify([{...cacheEntry,path:toNamespacedPath(await realpath(cachePath))}]));
+  const cacheConfig=(await json(node+'/api/config')).config,priorCatalog=cacheConfig.model_catalog;
+  cacheConfig.model_catalog=[cacheEntry];await json(node+'/api/config',{config:cacheConfig},'PUT');
+  const runtimeBeforeCache=(await json(node+'/api/diagnostics')).runtime_id,requestsBeforeCache=requests.length;
+  const cacheSelected=await remoteModels(['select-installed-gguf','--model',cacheId,'--interpreter']);
+  assert.equal(cacheSelected.acknowledged,true);assert.equal(cacheSelected.data.provider,'ollama');
+  assert.deepEqual(cacheSelected.data.installed_artifact,{model_id:cacheId,sha256:cacheHash,bytes:cacheBytes.length,verified_at_selection:true});
+  assert(cacheSelected.data.saved_selections.some(m=>m.backend==='llamacpp'&&m.model_id===cacheId&&m.model_metadata.roles.includes('request_interpreter')));
+  assert.equal(cacheSelected.data.registered_models.length,2);assert.equal(requests.length,requestsBeforeCache);
+  assert.equal((await json(node+'/api/diagnostics')).runtime_id,runtimeBeforeCache);
+  await remoteModels(['remove','--backend','llamacpp','--model',cacheId]);
+  const cacheRestored=(await json(node+'/api/config')).config;
+  if(priorCatalog===undefined)delete cacheRestored.model_catalog;else cacheRestored.model_catalog=priorCatalog;
+  await json(node+'/api/config',{config:cacheRestored},'PUT');
   const remoteBody={schema_version:1,node_id:id,command:{operation:'show'}};
   assert.equal((await fetch(eef+'/api/commands/node/models',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(remoteBody)})).status,403);
   assert.equal(requests.length,1,'selection commands must not execute inference');
@@ -524,6 +547,9 @@ try{
   assert.deepEqual((await json(node+'/api/diagnostics')).startup_issues,[]);
  }
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,pinned_tls:!legacyNode,reviewed_grants:!legacyNode,ordinary_workloads_refused:true,versioned_inventory:!legacyNode,owner_cli:true,api_only_both_roles:true,saved_ui_preferences:uiConfig,connection_commands:!legacyNode,origin_guard:true,selection_commands:!legacyNode,remote_selection_commands:!legacyNode,old_node_remote_command_refusal:!!legacyNode,node_job_commands:!legacyNode,node_origin_receipts:!legacyNode,explicit_text_output:!legacyNode,unsupported_pause_resume_refused:!legacyNode,stop_waits_for_returned_backend_evidence:!legacyNode,native_termination_proven:false,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_reviewed_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:!legacyNode,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
+ if(!legacyNode)await writeFile(join(scratch,'installed-selection-results.json'),JSON.stringify({passed:true,
+  target_cache_verified:true,remote_approval_required:true,explicit_interpreter_role:true,provider_preserved:true,
+  saved_not_applied:true,model_downloads:false,synthetic_cache_only:true,physical_two_pc:false},null,2));
  console.log('Model metadata and remote selection protocol checks passed: '+scratch);
 }finally{
  tagGate?.release?.();tagGate=null;
