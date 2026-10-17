@@ -6,6 +6,151 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncReadExt;
 
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error,
+)]
+#[serde(rename_all = "snake_case")]
+#[error("{}", self.message())]
+pub(crate) enum CacheIssue {
+    InvalidModelId,
+    MetadataMissing,
+    MetadataAmbiguous,
+    MetadataInvalid,
+    MetadataMismatch,
+    TypeUnsupported,
+    CachePathMismatch,
+    CacheUnavailable,
+    SizeMismatch,
+    ChecksumMismatch,
+    CustomSelectionConflict,
+    VerificationTimeout,
+    VerificationBusy,
+    Unclassified,
+}
+impl CacheIssue {
+    fn message(self) -> &'static str {
+        match self {
+            Self::InvalidModelId => "The requested model ID is invalid.",
+            Self::MetadataMissing => {
+                "The model is missing from the current catalog or installed index."
+            }
+            Self::MetadataAmbiguous => {
+                "More than one catalog, cache or selection record uses this model ID."
+            }
+            Self::MetadataInvalid => {
+                "The model catalog or installed index is invalid or unavailable."
+            }
+            Self::MetadataMismatch => {
+                "Installed-model metadata does not match the current catalog."
+            }
+            Self::TypeUnsupported => {
+                "This operation supports text GGUFs only; configure other types/projectors explicitly."
+            }
+            Self::CachePathMismatch => {
+                "The installed record does not identify a regular file in this node's content-addressed cache."
+            }
+            Self::CacheUnavailable => {
+                "The installed cache file could not be read. It may be missing, locked or inaccessible."
+            }
+            Self::SizeMismatch => "The installed cache file's size does not match the catalog.",
+            Self::ChecksumMismatch => "The installed cache file failed its complete SHA-256 check.",
+            Self::CustomSelectionConflict => {
+                "This model ID already has a different custom file/projector or invalid selection settings."
+            }
+            Self::VerificationTimeout => {
+                "Installed cache verification exceeded its hash time budget."
+            }
+            Self::VerificationBusy => "Another installed cache verification is already running.",
+            Self::Unclassified => "The node could not prepare this installed cache selection.",
+        }
+    }
+}
+
+const REJECTION_NOTE: &str = "No configuration write was attempted. No model was selected, downloaded, loaded, repaired or deleted by this request. Inspect installed models and saved selections before another explicit attempt; no automatic retry was requested.";
+
+pub(crate) fn correlated(command: &crate::model_selection::ModelCommand) -> bool {
+    let crate::model_selection::ModelCommand::SelectInstalledGguf {
+        request_id: Some(id),
+        ..
+    } = command
+    else {
+        return false;
+    };
+    uuid::Uuid::parse_str(id).is_ok_and(|parsed| !parsed.is_nil() && parsed.to_string() == *id)
+}
+pub(crate) fn rejection(
+    node: &str,
+    command: &crate::model_selection::ModelCommand,
+    error: anyhow::Error,
+) -> Result<Value> {
+    if !correlated(command) {
+        return Err(error);
+    }
+    Ok(rejection_for(
+        node,
+        command,
+        error
+            .downcast_ref::<CacheIssue>()
+            .copied()
+            .unwrap_or(CacheIssue::Unclassified),
+    ))
+}
+pub(crate) fn busy_rejection(
+    node: &str,
+    command: &crate::model_selection::ModelCommand,
+) -> Result<Value> {
+    rejection(node, command, CacheIssue::VerificationBusy.into())
+}
+fn rejection_for(
+    node: &str,
+    command: &crate::model_selection::ModelCommand,
+    issue: CacheIssue,
+) -> Value {
+    json!({"schema_version":1,"report_type":"installed_model_selection_rejection","node_id":node,"command":command,
+        "success":false,"error_code":"installed_selection_preflight_rejected","cache_issue":issue,
+        "configuration_write_attempted":false,"changed":false,"outcome_unknown":false,"automatically_retried":false,
+        "error":issue.message(),"note":REJECTION_NOTE})
+}
+pub(crate) fn confirmed_rejection(
+    value: &Value,
+    node: &str,
+    command: &crate::model_selection::ModelCommand,
+) -> bool {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Report {
+        schema_version: u32,
+        report_type: String,
+        node_id: String,
+        command: Value,
+        success: bool,
+        error_code: String,
+        cache_issue: CacheIssue,
+        configuration_write_attempted: bool,
+        changed: bool,
+        outcome_unknown: bool,
+        automatically_retried: bool,
+        error: String,
+        note: String,
+    }
+    let Ok(report) = serde_json::from_value::<Report>(value.clone()) else {
+        return false;
+    };
+    correlated(command)
+        && report.schema_version == 1
+        && report.report_type == "installed_model_selection_rejection"
+        && report.node_id == node
+        && report.command == serde_json::to_value(command).unwrap_or(Value::Null)
+        && !report.success
+        && report.error_code == "installed_selection_preflight_rejected"
+        && !report.configuration_write_attempted
+        && !report.changed
+        && !report.outcome_unknown
+        && !report.automatically_retried
+        && report.error == report.cache_issue.message()
+        && report.note == REJECTION_NOTE
+}
+
 pub(crate) struct Prepared {
     pub snapshot: Value,
     pub index_entry: Value,
@@ -20,11 +165,9 @@ pub(crate) struct Prepared {
 
 fn exact_entry(entries: &[Value], id: &str) -> Result<Value> {
     let mut matches = entries.iter().filter(|entry| entry["id"] == id);
-    let entry = matches
-        .next()
-        .context("Model is not in the node's installed catalog cache")?;
+    let entry = matches.next().ok_or(CacheIssue::MetadataMissing)?;
     if matches.next().is_some() {
-        bail!("Duplicate model IDs in catalog/cache")
+        return Err(CacheIssue::MetadataAmbiguous.into());
     }
     Ok(entry.clone())
 }
@@ -48,83 +191,139 @@ pub(crate) async fn prepare(
     id: String,
     interpreter: bool,
 ) -> Result<Prepared> {
-    crate::model_selection::validate_id(&id)?;
+    crate::model_selection::validate_id(&id).map_err(|_| CacheIssue::InvalidModelId)?;
     let mut prepared = tokio::task::spawn_blocking(move || -> Result<Prepared> {
         let catalog = crate::model_manager::catalog(&snapshot);
-        let entry = exact_entry(catalog.as_array().context("Model catalog must be a list")?, &id)?;
+        let entry = exact_entry(catalog.as_array().ok_or(CacheIssue::MetadataInvalid)?, &id)?;
         if entry["modality"] != "text" {
-            bail!("Automatic cache selection supports text GGUFs only; select projectors/types explicitly")
+            return Err(CacheIssue::TypeUnsupported.into());
         }
-        let artifact = GgufArtifact::from_catalog(&entry)?;
-        let index_entry = exact_entry(&crate::model_manager::installed_index(&directory)?, &id)?;
-        if index_entry["sha256"].as_str().map(str::to_ascii_lowercase) != Some(artifact.sha256.to_ascii_lowercase())
-            || index_entry["bytes"].as_u64() != Some(artifact.bytes) {
-            bail!("Installed-model metadata does not match the current catalog")
+        let artifact =
+            GgufArtifact::from_catalog(&entry).map_err(|_| CacheIssue::MetadataInvalid)?;
+        let index_entry = exact_entry(
+            &crate::model_manager::installed_index(&directory)
+                .map_err(|_| CacheIssue::MetadataInvalid)?,
+            &id,
+        )?;
+        if index_entry["sha256"].as_str().map(str::to_ascii_lowercase)
+            != Some(artifact.sha256.to_ascii_lowercase())
+            || index_entry["bytes"].as_u64() != Some(artifact.bytes)
+        {
+            return Err(CacheIssue::MetadataMismatch.into());
         }
-        let root = directory.canonicalize()?;
+        let root = directory
+            .canonicalize()
+            .map_err(|_| CacheIssue::CacheUnavailable)?;
         let expected = directory.join(format!("{}.gguf", artifact.sha256.to_ascii_lowercase()));
-        if std::fs::symlink_metadata(&expected)?.file_type().is_symlink() {
-            bail!("Installed model must be a regular cache file, not a symbolic link")
+        if !std::fs::symlink_metadata(&expected)
+            .map_err(|_| CacheIssue::CacheUnavailable)?
+            .file_type()
+            .is_file()
+        {
+            return Err(CacheIssue::CachePathMismatch.into());
         }
-        let path = expected.canonicalize()?;
-        if !path.starts_with(&root) || index_entry["path"].as_str().map(Path::new) != Some(path.as_path()) {
-            bail!("Installed model path does not identify this node's content-addressed cache")
+        let path = expected
+            .canonicalize()
+            .map_err(|_| CacheIssue::CacheUnavailable)?;
+        if !path.starts_with(&root)
+            || index_entry["path"].as_str().map(Path::new) != Some(path.as_path())
+        {
+            return Err(CacheIssue::CachePathMismatch.into());
         }
-        let mut options = std::fs::OpenOptions::new(); options.read(true);
-        #[cfg(windows)] {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
             use std::os::windows::fs::OpenOptionsExt;
             options.share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ);
         }
-        let file = options.open(&path)?;
-        let metadata = file.metadata()?;
-        if !metadata.is_file() || metadata.len() != artifact.bytes {
-            bail!("Installed model size does not match the current catalog")
+        let file = options
+            .open(&path)
+            .map_err(|_| CacheIssue::CacheUnavailable)?;
+        let metadata = file.metadata().map_err(|_| CacheIssue::CacheUnavailable)?;
+        if !metadata.is_file() {
+            return Err(CacheIssue::CachePathMismatch.into());
         }
-        let slots = snapshot.pointer("/models/llamacpp/slots").and_then(Value::as_array);
-        let existing: Vec<_> = slots.into_iter().flatten().filter(|slot| slot["model_id"] == id).collect();
-        if existing.len() > 1 { bail!("Duplicate selected model IDs") }
+        if metadata.len() != artifact.bytes {
+            return Err(CacheIssue::SizeMismatch.into());
+        }
+        let slots = snapshot
+            .pointer("/models/llamacpp/slots")
+            .and_then(Value::as_array);
+        let existing: Vec<_> = slots
+            .into_iter()
+            .flatten()
+            .filter(|slot| slot["model_id"] == id)
+            .collect();
+        if existing.len() > 1 {
+            return Err(CacheIssue::MetadataAmbiguous.into());
+        }
         let already_selected = !existing.is_empty();
         let slot = if let Some(existing) = existing.first() {
-            let slot: ModelSlot = serde_json::from_value((*existing).clone())?;
+            let slot: ModelSlot = serde_json::from_value((*existing).clone())
+                .map_err(|_| CacheIssue::CustomSelectionConflict)?;
             if slot.model_path != path || slot.mmproj_path.is_some() {
-                bail!("An existing custom selection uses this ID; inspect it instead of replacing its file/projector")
+                return Err(CacheIssue::CustomSelectionConflict.into());
             }
             slot
-        } else { ModelSlot {
-            model_id: id, model_path: path, mmproj_path: None, port: 0,
-            gpu_layers: 0, context: 4096, cpu_threads: None, job_memory_limit_mib: None,
-            gpu_vram_mb: 0, hints: ModelHints::default(),
-        }};
-        slot.selection_metadata()?;
-        Ok(Prepared {snapshot, index_entry, slot, artifact, interpreter, existing:already_selected, file: tokio::fs::File::from_std(file)})
-    }).await??;
+        } else {
+            ModelSlot {
+                model_id: id,
+                model_path: path,
+                mmproj_path: None,
+                port: 0,
+                gpu_layers: 0,
+                context: 4096,
+                cpu_threads: None,
+                job_memory_limit_mib: None,
+                gpu_vram_mb: 0,
+                hints: ModelHints::default(),
+            }
+        };
+        slot.selection_metadata()
+            .map_err(|_| CacheIssue::CustomSelectionConflict)?;
+        Ok(Prepared {
+            snapshot,
+            index_entry,
+            slot,
+            artifact,
+            interpreter,
+            existing: already_selected,
+            file: tokio::fs::File::from_std(file),
+        })
+    })
+    .await??;
     let verify = async {
         let mut hash = Sha256::new();
         let mut bytes = 0u64;
         let mut buffer = vec![0u8; 1024 * 1024];
         loop {
-            let read = prepared.file.read(&mut buffer).await?;
+            let read = prepared
+                .file
+                .read(&mut buffer)
+                .await
+                .map_err(|_| CacheIssue::CacheUnavailable)?;
             if read == 0 {
                 break;
             }
             bytes = bytes
                 .checked_add(read as u64)
-                .context("Model verification size overflow")?;
+                .ok_or(CacheIssue::SizeMismatch)?;
             if bytes > prepared.artifact.bytes {
-                bail!("Installed model grew during verification")
+                return Err(CacheIssue::SizeMismatch.into());
             }
             hash.update(&buffer[..read]);
         }
         if bytes != prepared.artifact.bytes
             || hex::encode(hash.finalize()) != prepared.artifact.sha256.to_ascii_lowercase()
         {
-            bail!("Installed model checksum verification failed; no selection changed")
+            return Err(CacheIssue::ChecksumMismatch.into());
         }
         Ok::<_, anyhow::Error>(())
     };
     tokio::time::timeout(std::time::Duration::from_secs(60), verify)
         .await
-        .context("Installed model verification timed out; no selection changed")??;
+        .map_err(|_| CacheIssue::VerificationTimeout)??;
     Ok(prepared)
 }
 
@@ -173,6 +372,7 @@ pub(crate) mod tests {
             command: ModelCommand::SelectInstalledGguf {
                 model_id: "fixture".into(),
                 interpreter,
+                request_id: Some("00000000-0000-4000-8000-000000000001".into()),
             },
         }
     }
@@ -278,20 +478,28 @@ pub(crate) mod tests {
             crate::setup::write_json(&dir.join("installed.json"), &index).unwrap();
             crate::setup::write_json(&root.path().join("node.json"), &config).unwrap();
             let before = std::fs::read(root.path().join("node.json")).unwrap();
-            let error = service
+            let result = service
                 .dispatch_model_command(request(true), false)
                 .await
-                .unwrap_err();
+                .unwrap();
             let expected = match case {
-                "path" => "Installed model path",
-                "digest" => "metadata does not match",
-                "duplicate-index" | "duplicate-catalog" => "Duplicate model IDs",
-                "vision" => "text GGUFs only",
-                "corrupt" => "checksum verification failed",
-                "custom-selection" => "custom selection",
+                "path" => "cache_path_mismatch",
+                "digest" => "metadata_mismatch",
+                "duplicate-index" | "duplicate-catalog" => "metadata_ambiguous",
+                "vision" => "type_unsupported",
+                "corrupt" => "checksum_mismatch",
+                "custom-selection" => "custom_selection_conflict",
                 _ => unreachable!(),
             };
-            assert!(error.to_string().contains(expected), "{case}: {error:#}");
+            assert_eq!(result["cache_issue"], expected, "{case}: {result}");
+            assert!(confirmed_rejection(
+                &result,
+                "cache-node",
+                &request(true).command
+            ));
+            assert_eq!(result["configuration_write_attempted"], false);
+            assert_eq!(result["outcome_unknown"], false);
+            assert!(!result.to_string().contains("untrusted.invalid"));
             assert_eq!(
                 std::fs::read(root.path().join("node.json")).unwrap(),
                 before,
@@ -313,11 +521,99 @@ pub(crate) mod tests {
             "approval_required"
         );
         let _busy = service.installed_selection.lock().await;
+        let result = service
+            .dispatch_model_command(request(true), false)
+            .await
+            .unwrap();
+        assert_eq!(result["cache_issue"], "verification_busy");
+        assert!(confirmed_rejection(
+            &result,
+            "cache-node",
+            &request(true).command
+        ));
+        assert_eq!(
+            std::fs::read(root.path().join("node.json")).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn rejection_confirmation_requires_exact_fresh_correlation_and_static_fields() {
+        let command = request(true).command;
+        let report = rejection(
+            "cache-node",
+            &command,
+            anyhow::anyhow!("private path C:/private/model.gguf token=secret"),
+        )
+        .unwrap();
+        assert!(confirmed_rejection(&report, "cache-node", &command));
+        assert_eq!(report["cache_issue"], "unclassified");
+        assert!(!report.to_string().contains("private"));
+        assert!(!confirmed_rejection(&report, "other-node", &command));
+        for id in [
+            None,
+            Some("bad"),
+            Some("00000000-0000-0000-0000-000000000000"),
+            Some("00000000-0000-4000-8000-000000000002"),
+        ] {
+            let mut other = request(true).command;
+            if let ModelCommand::SelectInstalledGguf { request_id, .. } = &mut other {
+                *request_id = id.map(str::to_owned);
+            }
+            assert!(!confirmed_rejection(&report, "cache-node", &other));
+            if !correlated(&other) {
+                assert!(
+                    rejection("cache-node", &other, CacheIssue::CacheUnavailable.into()).is_err()
+                );
+            }
+        }
+        for (field, value) in [
+            ("changed", json!(true)),
+            ("configuration_write_attempted", json!(true)),
+            ("outcome_unknown", json!(true)),
+            ("automatically_retried", json!(true)),
+            ("success", json!(true)),
+            ("error", json!("private text")),
+            ("unexpected", json!(1)),
+        ] {
+            let mut forged = report.clone();
+            forged[field] = value;
+            assert!(
+                !confirmed_rejection(&forged, "cache-node", &command),
+                "{field}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_selection_still_succeeds_but_cannot_confirm_preflight_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let service = fixture(root.path());
+        let mut legacy = request(false);
+        if let ModelCommand::SelectInstalledGguf { request_id, .. } = &mut legacy.command {
+            *request_id = None;
+        }
+        assert_eq!(
+            service
+                .dispatch_model_command(legacy.clone(), false)
+                .await
+                .unwrap()["success"],
+            true
+        );
+        let before = std::fs::read(root.path().join("node.json")).unwrap();
+        let _busy = service.installed_selection.lock().await;
+        assert!(service.dispatch_model_command(legacy, false).await.is_err());
+        let mut invalid = request(false);
+        if let ModelCommand::SelectInstalledGguf { request_id, .. } = &mut invalid.command {
+            *request_id = Some("bad".into());
+        }
         assert!(
             service
-                .dispatch_model_command(request(true), false)
+                .dispatch_model_command(invalid, false)
                 .await
-                .is_err()
+                .unwrap_err()
+                .to_string()
+                .contains("canonical non-nil UUID")
         );
         assert_eq!(
             std::fs::read(root.path().join("node.json")).unwrap(),

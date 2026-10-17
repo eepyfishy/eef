@@ -33,10 +33,18 @@ The existing owner endpoint `POST /api/commands/models` takes:
   "command": {
     "operation": "select_installed_gguf",
     "model_id": "MODEL_ID",
-    "interpreter": true
+    "interpreter": true,
+    "request_id": "6e711dda-9c9c-4c30-8639-98ab28c513f6"
   }
 }
 ```
+
+Both CLIs generate a fresh canonical non-nil UUID `request_id` for each explicit
+invocation. API clients should do the same. This correlates a rejection with the
+current command; it is not a durable idempotency key, grant or automatic retry
+instruction. Omitting it remains compatible with successful selection. A malformed
+supplied ID is refused before preparation; missing correlation cannot establish
+the confirmed preflight-failure contract below.
 
 ## Verification and save boundary
 
@@ -78,12 +86,38 @@ does not prove interpreter readiness. `eefn setup` distinguishes saved/applied
 interpreter choices. Restart applies **all** pending settings, not models alone.
 
 A checksum failure leaves the file and settings intact. Fix/inspect the cache
-before another explicit attempt. A lost or malformed reply can hide a completed
-save: inspect `models show` before deciding what to do. There is no automatic
-retry, persistent selection receipt ledger or exactly-once write claim. CLI
-uncertainty is conservative even when the node may have rejected preflight.
+before another explicit attempt. With current request correlation, a preparation
+failure returns `installed_selection_preflight_rejected`, a static `cache_issue`
+and `configuration_write_attempted: false`, `outcome_unknown: false`. Reasons
+distinguish missing/ambiguous/invalid metadata, metadata/path/type/size/checksum
+mismatches, unreadable cache, custom-selection conflicts, hash timeout and busy
+verification. Raw filesystem/parser errors and private paths are not returned.
+Unclassified preparation errors use static guidance, never text matching.
+
+Only failures before entering the configuration-save path get that report. Both
+adapters validate its exact node, echoed command/request ID, flags and static
+fields. Stale, malformed or lost replies and later snapshot/save failures remain
+uncertain: inspect `models show` before deciding what to do. A missing request ID
+retains legacy conservative failure handling. There is no automatic retry,
+persistent selection receipt ledger or exactly-once write claim. This is a
+correlated report from the node, not independent attestation of its behavior.
 
 ## Verified scope
+
+The preflight-rejection follow-up passes **710 workspace/all-target tests plus
+one ignored in each feature mode**. `installed-selection-GJEMo2/results.json`
+passes fresh executable local/offline selection, confirmed corruption/path
+rejections, an old rejection substituted after a real successful save, lost-reply
+inspection without replay and unsupported-command refusal. The stale rejection
+is not accepted as proof of no write. `model-metadata-RC5rma/results.json` and its
+`installed-selection-results.json` pass approved coordinator-mediated selection
+and confirmed corrupt-cache rejection with unchanged configuration, alongside
+the existing protocol regressions. These use synthetic cache bytes and mock
+Ollama on this PC, not real inference or physical two-PC acceptance. Fresh
+binaries/examples build; formatting, JavaScript syntax, source boundary and diff
+checks pass. No release, installed application, physical node or update feed
+was changed. The full-size real-artifact evidence below predates this follow-up;
+it is not a new real-model or bootstrap quality result.
 
 Focused tests cover corruption, duplicate/stale metadata, catalog/type/path
 mismatch, preservation, explicit role assignment, one verification at a time,

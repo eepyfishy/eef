@@ -1616,6 +1616,10 @@ The local owner API is POST `/api/commands/models`, taking
 `select_ollama`, `select_gguf`, `hints`, `remove`, and `provider`. The unreleased
 `select_installed_gguf` operation additionally verifies a node-installed text GGUF
 by ID, without caller paths or ports; see [installed selection](INSTALLED-MODEL-SELECTION.md).
+Both CLIs generate fresh request correlation for this operation. A confirmed
+`installed_selection_preflight_rejected` reports a static cache reason and that
+no configuration write was attempted. Lost/stale replies and later save errors
+remain uncertain; correlation does not authorize a retry or deduplicate writes.
 See the shared
 typed commands in `eefn/src/model_selection.rs`. Edits use the same config lock as
 other node settings, preserve unrelated values, reject corrupt/missing files,

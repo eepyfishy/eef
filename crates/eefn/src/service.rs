@@ -576,12 +576,16 @@ impl NodeService {
         let crate::model_selection::ModelCommand::SelectInstalledGguf {
             model_id,
             interpreter,
+            request_id,
         } = &request.command
         else {
             return self.model_command_authorized(request, remote);
         };
         if request.schema_version != 1 || request.expected_node_id != self.node_id {
             bail!("command schema or target node does not match this instance")
+        }
+        if request_id.is_some() && !crate::installed_selection::correlated(&request.command) {
+            bail!("installed selection request ID must be a canonical non-nil UUID")
         }
         if !self.config_path.is_file() {
             bail!("saved node configuration is missing")
@@ -593,18 +597,28 @@ impl NodeService {
         if remote && snapshot.pointer("/management/allow_remote") != Some(&json!(true)) {
             return Ok(self.model_approval_required());
         }
-        let _verification = self.installed_selection.try_lock().map_err(|_| {
-            anyhow::anyhow!(
-                "An installed model is already being verified; no selection was started"
-            )
-        })?;
+        let Ok(_verification) = self.installed_selection.try_lock() else {
+            return crate::installed_selection::busy_rejection(&self.node_id, &request.command);
+        };
         let prepared = crate::installed_selection::prepare(
             self.model_directory(),
             snapshot,
             model_id.clone(),
             *interpreter,
         )
-        .await?;
+        .await;
+        // This barrier precedes model_command_checked and every configuration
+        // write. Later save/transport failures deliberately remain uncertain.
+        let prepared = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                return crate::installed_selection::rejection(
+                    &self.node_id,
+                    &request.command,
+                    error,
+                );
+            }
+        };
         let resolved = crate::model_selection::ModelCommandRequest {
             schema_version: request.schema_version,
             expected_node_id: request.expected_node_id,

@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The installed-selection failure follow-up distinguishes correlated preparation
+rejection from uncertain save/transport outcomes. Both CLIs generate fresh
+request IDs; strict no-write reports require the exact node/command/correlation,
+static cause and flags. Lost/stale/malformed reports and later save errors remain
+uncertain, without replay or a deduplication claim. Both suites pass 710 tests
+plus one ignored each. Fresh executable local and coordinator-mediated synthetic
+cache regressions pass, including stale-rejection substitution after a real save;
+see [evidence and boundaries](INSTALLED-MODEL-SELECTION.md#verified-scope).
+This improves failure usability, not bootstrap, real-model quality, physical
+acceptance, strong termination or release completion.
+
 The unreleased [installed GGUF selection command](INSTALLED-MODEL-SELECTION.md)
 selects a verified node-cache text artifact by ID without caller paths or ports.
 Optional explicit interpreter assignment shares the existing atomic role service;

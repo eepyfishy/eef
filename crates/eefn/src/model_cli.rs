@@ -135,6 +135,7 @@ impl ModelsAction {
                 ModelCommand::SelectInstalledGguf {
                     model_id: model.clone(),
                     interpreter: *interpreter,
+                    request_id: Some(uuid::Uuid::new_v4().to_string()),
                 }
             }
             ModelsAction::Interpreter {
@@ -246,8 +247,11 @@ mod tests {
                 .action
                 .to_command(true)
                 .unwrap();
+            assert!(crate::installed_selection::correlated(&command));
+            let mut value = serde_json::to_value(command).unwrap();
+            value.as_object_mut().unwrap().remove("request_id");
             assert_eq!(
-                serde_json::to_value(command).unwrap(),
+                value,
                 serde_json::json!({
                 "operation":"select_installed_gguf","model_id":"chosen","interpreter":wants_role})
             );

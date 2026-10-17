@@ -1,5 +1,31 @@
 # Architecture conformance status
 
+## Unreleased: correlated installed-model preparation failures (2026-10-17)
+
+Installed-GGUF selection now reports static, typed cache-preparation rejection
+before entering configuration saving. Both CLIs create a fresh request ID;
+node/coordinator adapters require exact node, echoed command/correlation, static
+fields and false write/unknown flags before confirming no write was attempted.
+Missing IDs preserve legacy successful-selection compatibility, not this negative
+acknowledgement guarantee. Invalid IDs fail before preparation. Correlation is
+not durable deduplication or authority. Later snapshot/save errors, lost replies
+and stale or malformed reports remain uncertain and are never automatically
+replayed. Cache files and existing configuration are not repaired or deleted.
+
+Both locked/offline workspace/all-target suites pass **710 tests plus one ignored
+each**, including the no-dashboard build. Fresh binaries/examples build;
+`installed-selection-GJEMo2` and `model-metadata-RC5rma` pass actual owner commands,
+confirmed local/remote corruption rejection, stale rejection substituted after
+a real save, lost-reply no-replay and the existing protocol regressions. Tests
+use synthetic cache bytes/mock Ollama in isolated same-PC processes. Format, JS
+syntax, source dependency-boundary and diff checks pass. See
+[contract and measured scope](INSTALLED-MODEL-SELECTION.md).
+
+No release, model download/load, installed application, physical node, updater
+feed or UI changes. Default interpreter quality/bootstrap, first-run automation,
+physical/release acceptance, strong termination, media/peer paths and the later
+mesh/cluster roadmap remain unfinished.
+
 ## Unreleased: explicit interrupted-result reconciliation (2026-10-11)
 
 Origin/EEF-owner `requests recover-result` now reconciles an exact idle

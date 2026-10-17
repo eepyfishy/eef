@@ -184,6 +184,14 @@ try{
   assert(cacheSelected.data.saved_selections.some(m=>m.backend==='llamacpp'&&m.model_id===cacheId&&m.model_metadata.roles.includes('request_interpreter')));
   assert.equal(cacheSelected.data.registered_models.length,2);assert.equal(requests.length,requestsBeforeCache);
   assert.equal((await json(node+'/api/diagnostics')).runtime_id,runtimeBeforeCache);
+  const beforeCacheFailure=await readFile(nodeConfig,'utf8');
+  await writeFile(cachePath,Buffer.alloc(cacheBytes.length,43));
+  const cacheRejected=await remoteModels(['select-installed-gguf','--model',cacheId,'--interpreter'],false);
+  assert.equal(cacheRejected.error_code,'installed_selection_preflight_rejected');
+  assert.equal(cacheRejected.outcome_unknown,false);assert.equal(cacheRejected.configuration_write_attempted,false);
+  assert.equal(cacheRejected.data.cache_issue,'checksum_mismatch');assert.equal(cacheRejected.data.automatically_retried,false);
+  assert.equal(cacheRejected.data.command.request_id,cacheRejected.command.request_id);
+  assert.equal(await readFile(nodeConfig,'utf8'),beforeCacheFailure);await writeFile(cachePath,cacheBytes);
   await remoteModels(['remove','--backend','llamacpp','--model',cacheId]);
   const cacheRestored=(await json(node+'/api/config')).config;
   if(priorCatalog===undefined)delete cacheRestored.model_catalog;else cacheRestored.model_catalog=priorCatalog;
@@ -548,7 +556,7 @@ try{
  }
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,backend:'fake HTTP Ollama fixture',real_inference:false,model_downloads:false,legacy_node:!!legacyNode,pinned_tls:!legacyNode,reviewed_grants:!legacyNode,ordinary_workloads_refused:true,versioned_inventory:!legacyNode,owner_cli:true,api_only_both_roles:true,saved_ui_preferences:uiConfig,connection_commands:!legacyNode,origin_guard:true,selection_commands:!legacyNode,remote_selection_commands:!legacyNode,old_node_remote_command_refusal:!!legacyNode,node_job_commands:!legacyNode,node_origin_receipts:!legacyNode,explicit_text_output:!legacyNode,unsupported_pause_resume_refused:!legacyNode,stop_waits_for_returned_backend_evidence:!legacyNode,native_termination_proven:false,local_restart:!legacyNode,pending_api_port_change:!legacyNode,role_preview_and_reviewed_jobs:!legacyNode,capability_restrictions_enforced:!legacyNode,explicit_backend_no_fallback:!legacyNode,empty_snapshot_replacement:true,stable_node_identity:true},null,2));
  if(!legacyNode)await writeFile(join(scratch,'installed-selection-results.json'),JSON.stringify({passed:true,
-  target_cache_verified:true,remote_approval_required:true,explicit_interpreter_role:true,provider_preserved:true,
+  target_cache_verified:true,remote_approval_required:true,remote_preflight_rejection_confirmed:true,explicit_interpreter_role:true,provider_preserved:true,
   saved_not_applied:true,model_downloads:false,synthetic_cache_only:true,physical_two_pc:false},null,2));
  console.log('Model metadata and remote selection protocol checks passed: '+scratch);
 }finally{

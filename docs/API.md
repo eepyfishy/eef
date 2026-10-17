@@ -6,6 +6,13 @@ boolean to existing local/approved remote model commands. Resolution and checksu
 verification happen on the target node; no caller path, download, load, provider
 switch or restart is implicit. `installed_artifact` is selection-time integrity
 metadata, not model-quality or running-readiness approval.
+An optional canonical non-nil UUID `request_id` provides fresh rejection
+correlation (both CLIs generate one). Confirmed preparation failures return
+`installed_selection_preflight_rejected`, a static `cache_issue` and
+`configuration_write_attempted: false`. Only an exact correlated report can
+establish that boundary; lost/stale replies or errors after preparation remain
+uncertain. Missing IDs preserve legacy selection compatibility, not confirmed
+no-write failures. This field is not an idempotency key or grant.
 
 Unreleased [interpreter rejection diagnostics](INTERPRETER-REJECTIONS.md) preserve
 `interpretation_invalid` while adding an optional static `rejection_reason` and

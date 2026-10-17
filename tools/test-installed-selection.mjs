@@ -23,7 +23,7 @@ async function json(url,body,method){const r=await fetch(url,{method:method||(bo
 async function until(fn,label){const end=Date.now()+45000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('Timeout: '+label);}
 async function listen(s){await new Promise(r=>s.listen(0,'127.0.0.1',r));return s.address().port;}
 async function freePort(){const s=tcpServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
-let inferences=0,node='',proxyMode='drop',forwarded=0;
+let inferences=0,node='',proxyMode='drop',forwarded=0,capturedRejection;
 const provider=createServer(async(req,res)=>{res.setHeader('Content-Type','application/json');
  if(req.url==='/api/tags')return res.end(JSON.stringify({models:[{name:'other'}]}));
  if(req.url==='/api/show')return res.end(JSON.stringify({capabilities:['completion']}));
@@ -32,7 +32,10 @@ const proxy=createServer(async(req,res)=>{try{
  if(proxyMode==='old'){res.writeHead(404,{'Content-Type':'application/json'});return res.end('{}');}
  let raw='';for await(const b of req)raw+=b;forwarded++;
  const r=await fetch(node+req.url,{method:'POST',headers:{'Content-Type':'application/json'},body:raw});
- await r.text();res.destroy();
+ const response=await r.text();
+ if(proxyMode==='capture'){capturedRejection=JSON.parse(response);res.writeHead(r.status,{'Content-Type':'application/json'});return res.end(response);}
+ if(proxyMode==='stale'){res.writeHead(200,{'Content-Type':'application/json'});return res.end(JSON.stringify(capturedRejection));}
+ res.destroy();
 }catch{res.destroy();}});
 try{
  const providerPort=await listen(provider),proxyPort=await listen(proxy);
@@ -77,12 +80,15 @@ try{
  assert.equal(await readFile(configPath,'utf8'),raw,'existing tuning/roles/extensions must not be reserialized away');
  await writeFile(cache,Buffer.alloc(body.length,43));
  const corrupt=await cli(['select-installed-gguf','--model',entry.id],false);
- assert.equal(corrupt.error_code,'local_model_installed_selection_reply_unconfirmed');assert.equal(corrupt.automatically_retried,false);
+ assert.equal(corrupt.error_code,'installed_selection_preflight_rejected');assert.equal(corrupt.automatically_retried,false);
+ assert.equal(corrupt.cache_issue,'checksum_mismatch');assert.equal(corrupt.outcome_unknown,false);assert.equal(corrupt.configuration_write_attempted,false);
  assert.equal(await readFile(configPath,'utf8'),raw);assert.equal((await stat(cache)).size,body.length);
  await writeFile(cache,body);
  const indexRaw=await readFile(indexPath,'utf8'),altered=JSON.parse(indexRaw);altered[0].path=join(scratch,'not-a-cache-file');
  await writeFile(indexPath,JSON.stringify(altered));
- assert.equal((await cli(['select-installed-gguf','--model',entry.id],false)).success,false);assert.equal(await readFile(configPath,'utf8'),raw);
+ const mismatch=await cli(['select-installed-gguf','--model',entry.id],false);
+ assert.equal(mismatch.cache_issue,'cache_path_mismatch');assert.equal(mismatch.outcome_unknown,false);assert.equal(mismatch.configuration_write_attempted,false);
+ assert.equal(await readFile(configPath,'utf8'),raw);
  await writeFile(indexPath,indexRaw);
  await cli(['clear-interpreter']);
  const originalMarker=await readFile(marker,'utf8');
@@ -92,16 +98,29 @@ try{
   assert.equal(lost.outcome_unknown,true);assert.equal(lost.automatically_retried,false);assert.equal(forwarded,1);
   await writeFile(marker,originalMarker);
   assert((await cli(['show'])).saved_selections.some(m=>m.model_id===entry.id&&m.model_metadata.roles.includes('request_interpreter')));
+  await cli(['clear-interpreter']);
+  await writeFile(cache,Buffer.alloc(body.length,43));raw=await readFile(configPath,'utf8');
+  proxyMode='capture';await writeFile(marker,JSON.stringify(changed));
+  const captured=await cli(['select-installed-gguf','--model',entry.id,'--interpreter'],false);
+  assert.equal(captured.outcome_unknown,false);assert.equal(captured.cache_issue,'checksum_mismatch');
+  assert.equal(await readFile(configPath,'utf8'),raw);
+  await writeFile(cache,body);proxyMode='stale';
+  const stale=await cli(['select-installed-gguf','--model',entry.id,'--interpreter'],false);
+  assert.equal(stale.error_code,'local_model_installed_selection_reply_unconfirmed');assert.equal(stale.outcome_unknown,true);
+  assert.notEqual(stale.command.request_id,capturedRejection.command.request_id);assert.equal(stale.automatically_retried,false);
+  assert.equal(forwarded,3,'each explicit command is forwarded once, never replayed');
+  await writeFile(marker,originalMarker);
+  assert((await cli(['show'])).saved_selections.some(m=>m.model_id===entry.id&&m.model_metadata.roles.includes('request_interpreter')));
   proxyMode='old';await writeFile(marker,JSON.stringify(changed));raw=await readFile(configPath,'utf8');
   const unsupported=await cli(['select-installed-gguf','--model',entry.id],false);
-  assert.equal(unsupported.error_code,'unsupported_command');assert.equal(unsupported.outcome_unknown,false);assert.equal(forwarded,1);
+  assert.equal(unsupported.error_code,'unsupported_command');assert.equal(unsupported.outcome_unknown,false);assert.equal(forwarded,3);
   assert.equal(await readFile(configPath,'utf8'),raw);
  }finally{await writeFile(marker,originalMarker);}
  assert.equal(inferences,0);assert.equal((await json(node+'/api/diagnostics')).runtime_id,runtime);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,api_only:true,synthetic_cache_only:true,
   offline_no_launch:true,local_cli_no_paths_or_ports:true,verified_selection:true,explicit_interpreter_role:true,
   provider_permissions_preserved:true,saved_not_applied:true,owner_tuning_extensions_preserved:true,corruption_and_index_rejected:true,
-  lost_reply_no_replay:true,unsupported_no_fallback:true,model_downloads:false,real_model_loading:false,physical_two_pc:false},null,2));
+  preflight_rejection_confirmed:true,stale_rejection_refused:true,lost_reply_no_replay:true,unsupported_no_fallback:true,model_downloads:false,real_model_loading:false,physical_two_pc:false},null,2));
  console.log('Installed selection checks passed: '+scratch);
 }catch(error){
  await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({error:String(error),children:children.map(c=>({pid:c.pid,exit_code:c.exitCode,...c.logs()}))},null,2));

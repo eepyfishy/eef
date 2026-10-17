@@ -157,9 +157,11 @@ async fn execute_model_command(
         let mut result = service.dispatch_model_command(request, false).await?;
         result["running"] = serde_json::json!(false);
         result["restart_required"] = serde_json::json!(false);
-        result["note"] = serde_json::json!(
-            "Saved for next node start. No backend download or model load was performed."
-        );
+        if result["success"] == true {
+            result["note"] = serde_json::json!(
+                "Saved for next node start. No backend download or model load was performed."
+            );
+        }
         return Ok(result);
     }
     let local = file.dashboard.unwrap_or_default();
@@ -200,6 +202,10 @@ async fn execute_model_command(
         }
         let ok = response.status().is_success();
         let mut result = eefn::model_manager::bounded_json(response).await?;
+        if ok && eefn::model_selection::confirmed_installed_rejection(&result, &request.expected_node_id, &request.command) {
+            result["running"] = serde_json::json!(true);
+            return Ok(result);
+        }
         if !ok {
             bail!(
                 "{}",

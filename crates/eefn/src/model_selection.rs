@@ -67,6 +67,9 @@ pub enum ModelCommand {
     SelectInstalledGguf {
         model_id: String,
         interpreter: bool,
+        /// Fresh reply correlation, not an idempotency key or execution grant.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
     },
     Remove {
         backend: Backend,
@@ -475,6 +478,11 @@ pub fn selection_view(config: &Value) -> Result<Vec<Value>> {
     Ok(selections)
 }
 
+/// Confirm a current-request rejection before configuration-save admission.
+pub fn confirmed_installed_rejection(value: &Value, node: &str, command: &ModelCommand) -> bool {
+    crate::installed_selection::confirmed_rejection(value, node, command)
+}
+
 /// Confirm explicit role/CPU operations. Saved settings never attest to
 /// applied readiness, model quality or execution authority.
 pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) -> bool {
@@ -572,6 +580,7 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
         ModelCommand::SelectInstalledGguf {
             model_id,
             interpreter,
+            ..
         } => {
             let Some(proof) = report.installed_artifact else {
                 return false;

@@ -434,6 +434,21 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
         }
         Ok(reply)
             if reply["success"] == true
+                && eefn::model_selection::confirmed_installed_rejection(
+                    &reply["data"],
+                    &request.node_id,
+                    &command.command,
+                ) =>
+        {
+            result["error_code"] = reply["data"]["error_code"].clone();
+            result["configuration_write_attempted"] = json!(false);
+            result["data"] = reply["data"].clone();
+            result["note"] = json!(
+                "Node rejected installed-cache preparation before any configuration write. No automatic retry or fallback was sent."
+            );
+        }
+        Ok(reply)
+            if reply["success"] == true
                 && reply["data"]["schema_version"] == 1
                 && reply["data"]["node_id"] == request.node_id
                 && reply["data"]["success"] == false
