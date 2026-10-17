@@ -53,6 +53,11 @@ See [choices, bounds and idle timing](MODEL-LIFECYCLE-POLICY.md).
 Shared Ollama inference has a separate applied request preference:
 `set --ollama-keep-alive-seconds SECONDS` (-1 indefinite, 0 after response,
 1-86400 seconds) or `set --ollama-keep-alive-default` (inherit server policy).
+`set --ollama-context-tokens TOKENS` saves an optional Ollama context preference
+(512–1,048,576); `--ollama-context-default` restores inherited behavior. They
+conflict and require the same current policy digest/runtime and remote approval
+as other policy saves. Restart separately to apply. This is a request option,
+not a RAM/VRAM quota or shared-service ownership; see [details](OLLAMA-CONTEXT.md).
 New code defaults to inheritance rather than forcing indefinite retention.
 Saved changes require explicit restart. This does not stop/control the shared
 service, prove residency or enable owned lifecycle commands for Ollama.

@@ -1,5 +1,12 @@
 # HTTP API
 
+Unreleased model policy accepts optional `ollama_context_tokens` and the explicit
+`ollama_context_default` reset command flag. Applied owner policy supplies
+`options.num_ctx` for EEF-owned Ollama inference, without modifying server/model
+configuration or accepting a request-level override. Existing context defaults
+and normalized policy hashes are preserved when unset. See
+[policy contract and limits](OLLAMA-CONTEXT.md).
+
 Unreleased [installed GGUF selection](INSTALLED-MODEL-SELECTION.md) adds
 `operation: "select_installed_gguf"` with `model_id` and explicit `interpreter`
 boolean to existing local/approved remote model commands. Resolution and checksum

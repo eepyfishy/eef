@@ -45,10 +45,11 @@ try {
  const oldCoordinator=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==oldCoordinator,'apply certificate pin');await local(['connection','resume']);
  await until(async()=>(await json(node+'/api/status')).execution_grants.available,'independent node credential');runtime=(await policy()).runtime_id;
  let current=await policy(true);assert.equal(current.applied_policy.startup,'manual');
- await setPolicy(current.saved_digest,['--idle-unload-seconds','2','--receipt-capacity','16','--load-timeout-seconds','6','--thinking-mode','disabled','--interpreter-temperature','1','--interpreter-seed','42'],true,false);
+ await setPolicy(current.saved_digest,['--idle-unload-seconds','2','--receipt-capacity','16','--load-timeout-seconds','6','--thinking-mode','disabled','--interpreter-temperature','1','--interpreter-seed','42','--ollama-context-tokens','4096'],true,false);
  assert.equal((await policy()).saved_digest,current.saved_digest,'denied owner approval cannot change policy');
  const saved=(await json(node+'/api/config')).config;saved.management.allow_remote=true;await json(node+'/api/config',{config:saved},'PUT');
- const changed=(await setPolicy(current.saved_digest,['--idle-unload-seconds','2','--receipt-capacity','16','--load-timeout-seconds','6','--thinking-mode','disabled','--interpreter-temperature','1','--interpreter-seed','42'],true)).result;
+ const changed=(await setPolicy(current.saved_digest,['--idle-unload-seconds','2','--receipt-capacity','16','--load-timeout-seconds','6','--thinking-mode','disabled','--interpreter-temperature','1','--interpreter-seed','42','--ollama-context-tokens','4096'],true)).result;
+ assert.equal(changed.saved_policy.ollama_context_tokens,4096);assert.equal(changed.applied_policy.ollama_context_tokens,undefined);
  assert.equal(changed.saved_policy.interpreter_sampling.temperature_milli,1000);assert.equal(changed.saved_policy.interpreter_sampling.seed,42);
  assert.equal(changed.applied_policy.interpreter_sampling,undefined);
  assert.equal(changed.saved_policy.thinking_mode,'disabled');assert.equal(changed.applied_policy.thinking_mode||'inherit','inherit');
@@ -59,6 +60,7 @@ try {
  current=await policy();assert.deepEqual(current.saved_policy,current.applied_policy);assert.equal(current.restart_required,false);assert.equal(slot(await show()).owned_pid,null);
  assert.equal(current.applied_policy.thinking_mode,'disabled');
  assert.deepEqual(current.applied_policy.interpreter_sampling,{temperature_milli:1000,seed:42});
+ assert.equal(current.applied_policy.ollama_context_tokens,4096);
  const loadOperation=await load(),resident=slot(await show());assert(resident.owned_pid);
  await until(async()=>{const rows=(await json(eef+'/api/commands/models')).nodes.find(n=>n.node_id===id)?.models;return rows?.some(m=>m.instance.model_id==='selected'&&m.lifecycle==='ready');},'ready model advertised');
  const review=reviewedFixture(eef,node,id);const plan=await review.save({template:'generate_text',params:{model_id:'selected',prompt:'fixture-gate'},constraints:{backend:'llamacpp',node_id:id}});
@@ -104,13 +106,15 @@ try {
  await until(async()=>slot(await show()).state==='error'&&slot(await show()).owned_pid===null,'expired demand cleans partial startup');
  const afterExpiry=await show();await new Promise(r=>setTimeout(r,1500));assert.equal(slot(await show()).generation,slot(afterExpiry).generation);assert.equal(slot(await show()).owned_pid,null);
  current=await policy();
- const reset=(await setPolicy(current.saved_digest,['--thinking-mode','inherit','--interpreter-sampling-default'],true)).result;
+ const reset=(await setPolicy(current.saved_digest,['--thinking-mode','inherit','--interpreter-sampling-default','--ollama-context-default'],true)).result;
+ assert.equal(reset.saved_policy.ollama_context_tokens,undefined);assert.equal(reset.applied_policy.ollama_context_tokens,4096);
  assert.equal(reset.saved_policy.interpreter_sampling,undefined);assert.equal(reset.applied_policy.interpreter_sampling.temperature_milli,1000);
  assert.equal(reset.saved_policy.thinking_mode||'inherit','inherit');assert.equal(reset.applied_policy.thinking_mode,'disabled');
  assert.equal(reset.restart_requested,false);assert.equal(reset.model_inference_requested,false);assert.equal(reset.runtime_id,runtime);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,no_ui_controller:true,pinned_tls:true,physical_two_pc:false,synthetic_backend:true,real_model_inference:false,
   thinking_hint_owner_approval:true,thinking_hint_saved_applied_separation:true,thinking_hint_applied_on_explicit_restart:true,thinking_inherit_reset_saved_only:true,
   interpreter_sampling_owner_approval:true,interpreter_sampling_saved_applied_separation:true,interpreter_sampling_explicit_restart:true,interpreter_sampling_default_reset_saved_only:true,
+  ollama_context_saved_applied_separate:true,ollama_context_explicit_restart:true,
   locked_offline_policy_setup:true,default_compatibility:true,manual_startup_without_model_process:true,remote_owner_approval:true,cas_policy_fence:true,saved_applied_separation:true,explicit_restart_only:true,
   active_pin_blocks_idle_unload:true,last_pin_release_resets_monotonic_idle_deadline:true,automatic_owned_idle_unload:true,historical_load_no_replay:true,reserved_policy_status:true,saved_policy_change_pauses_automatic_unload:true,eager_startup_after_explicit_restart:true,disabled_idle_keeps_residency:true,rollback_cannot_revive_old_cas_or_idle_policy:true,
   on_demand_cold_availability_truthful:true,authoring_approval_status_no_model_load:true,authorized_request_loads_once:true,next_request_reloads_after_idle:true,expired_demand_retains_unknown_and_cleans_partial_startup:true,demand_failure_not_automatically_retried:true},null,2));

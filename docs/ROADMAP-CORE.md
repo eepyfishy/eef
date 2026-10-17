@@ -31,6 +31,16 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+Owner commands now save/reset a node-wide optional Ollama context window through
+the existing lifecycle policy service, preserving inherited defaults and explicit
+restart semantics. Both suites pass 720 tests plus one ignored each; synthetic
+command/provider checks pass. A real already-installed larger Ollama model
+receives the requested 4,096 context but cold loading exceeds the unchanged
+20-second preview deadline. This is failed cold-start evidence, not reliable
+inference or quality approval. Explicit shared-provider preparation/readiness,
+the full quality comparison, bootstrap and release acceptance remain open. See
+[contract and measured scope](OLLAMA-CONTEXT.md).
+
 An optional pinned `qwen3-1.7b` manual catalog entry now has explicit public-
 command download/hash and real CPU lifecycle evidence. It remains unapproved
 for default use: four fixed production evaluations accept all twenty proposals

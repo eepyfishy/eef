@@ -1,5 +1,26 @@
 # Architecture conformance status
 
+## Unreleased: owner-controlled Ollama context (2026-10-17)
+
+Local/offline and owner-approved coordinator commands can save/reset the optional
+Ollama context size through the existing policy service. Values are bounded,
+saved/applied state remains separate until explicit restart, and callers cannot
+override the applied engine option. Inherited policy/wire digests stay compatible;
+no shared-service setting, model definition, permission or default changes.
+
+Both locked/offline workspace/all-target suites pass **720 tests plus one ignored
+each**, including no-dashboard; fresh binaries/examples build. Mock-provider
+preview and policy/lifecycle regressions pass, along with observer admission and
+synthetic success/rejection checks. The one real existing-Ollama cold-load preview
+fails at the unchanged 20-second deadline: local provider logs confirm 4,096
+context but loading is canceled before a proposal is returned. No retry or
+automatic timeout increase hides this failure. See [contract, evidence and
+limits](OLLAMA-CONTEXT.md#measured-checkpoint-2026-10-17).
+
+Explicit shared-provider preparation/readiness, real-model quality/default
+approval, full bootstrap and physical/release gates remain unfinished. No model
+download/copy, installed/physical node, UI, release or stable update feed changed.
+
 ## Optional Qwen3 1.7B evaluation (2026-10-17; no default approval)
 
 Added one pinned, manual-only Q4_K_M catalog option with publisher-declared

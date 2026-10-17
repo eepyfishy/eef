@@ -65,6 +65,12 @@ The optional `model_lifecycle` node configuration uses these validated fields:
 | `termination_wait_seconds` | 5 | 1-30 seconds for explicit/idle owned-root termination wait. |
 | `ollama_keep_alive_seconds` | null (inherit backend) | Ollama inference request preference: -1 indefinite, 0 request unload after its response, or 1-86400 seconds. Not ownership or observed residency. |
 | `thinking_mode` | inherit (omitted on the wire) | Node-wide inference hint: inherit, disabled or enabled. Not observed thinking state or per-model capability discovery. |
+| `ollama_context_tokens` | null / omitted | Optional 512–1,048,576-token `num_ctx` preference for EEF-owned Ollama requests. Not a model support or memory/quota claim. |
+
+The context setting has explicit `--ollama-context-tokens` and
+`--ollama-context-default` choices, sharing existing saved/applied/CAS controls.
+See [scope, compatibility and verification](OLLAMA-CONTEXT.md). Inherited policy
+serialization and digests remain unchanged; application requires node restart.
 
 Each numeric field has the corresponding hyphenated `set` option. Missing
 policy fields retain defaults; malformed/null policy objects, unknown fields,

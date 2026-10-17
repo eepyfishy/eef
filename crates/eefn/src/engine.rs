@@ -225,6 +225,7 @@ pub struct NodeEngine {
     ollama_url: String,
     ollama_models: HashMap<String, crate::model_metadata::ModelMetadata>,
     ollama_keep_alive_seconds: Option<i64>,
+    ollama_context_tokens: Option<u32>,
     thinking_mode: crate::model_lifecycle_policy::ThinkingMode,
     interpreter_sampling: crate::interpreter_sampling::InterpreterSampling,
     service: Option<Arc<crate::NodeService>>,
@@ -268,6 +269,7 @@ impl NodeEngine {
             ollama_url: String::new(),
             ollama_models: HashMap::new(),
             ollama_keep_alive_seconds: None,
+            ollama_context_tokens: None,
             thinking_mode: Default::default(),
             interpreter_sampling: Default::default(),
             service: None,
@@ -347,6 +349,7 @@ impl NodeEngine {
     ) -> Result<Self> {
         policy.validate()?;
         self.ollama_keep_alive_seconds = policy.ollama_keep_alive_seconds;
+        self.ollama_context_tokens = policy.ollama_context_tokens;
         self.thinking_mode = policy.thinking_mode;
         self.interpreter_sampling = policy.interpreter_sampling.clone();
         Ok(self)
@@ -361,6 +364,9 @@ impl NodeEngine {
     }
     pub(crate) fn applied_ollama_keep_alive_seconds(&self) -> Option<i64> {
         self.ollama_keep_alive_seconds
+    }
+    pub(crate) fn applied_ollama_context_tokens(&self) -> Option<u32> {
+        self.ollama_context_tokens
     }
 
     pub fn with_ollama(
@@ -1351,6 +1357,9 @@ impl NodeEngine {
         if let Some(seconds) = self.ollama_keep_alive_seconds {
             payload["keep_alive"] = json!(seconds);
         }
+        if let Some(tokens) = self.ollama_context_tokens {
+            payload["options"]["num_ctx"] = json!(tokens);
+        }
         if let Some(enabled) = self.thinking_mode.hint() {
             payload["think"] = json!(enabled);
         }
@@ -2167,6 +2176,33 @@ mod tests {
             assert_eq!(payload["format"], schema);
             assert_eq!(payload["options"]["num_predict"], 16);
             assert_eq!(payload["stream"], false);
+        }
+    }
+    #[test]
+    fn ollama_context_is_only_applied_owner_preference_and_not_a_llamacpp_option() {
+        let directory = tempfile::tempdir().unwrap();
+        for tokens in [None, Some(512), Some(4096), Some(1_048_576)] {
+            let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+                ollama_context_tokens: tokens,
+                ..Default::default()
+            };
+            let engine = NodeEngine::new(false, vec![], directory.path().into())
+                .unwrap()
+                .with_model_request_preferences(&policy)
+                .unwrap();
+            let params = json!({"model":"selected","prompt":"unchanged","max_tokens":24,"num_ctx":999999,
+                "ollama_context_tokens":999999,"options":{"num_ctx":999999}});
+            let payload = engine.ollama_payload(&params, None).unwrap();
+            assert_eq!(
+                payload["options"].get("num_ctx"),
+                tokens.map(|value| json!(value)).as_ref()
+            );
+            assert_eq!(payload["options"]["num_predict"], 24);
+            assert_eq!(payload["messages"][0]["content"], "unchanged");
+            let llama = engine.llamacpp_payload(&params, None);
+            assert!(llama.get("num_ctx").is_none());
+            assert!(llama.get("ollama_context_tokens").is_none());
+            assert_eq!(engine.applied_ollama_context_tokens(), tokens);
         }
     }
 

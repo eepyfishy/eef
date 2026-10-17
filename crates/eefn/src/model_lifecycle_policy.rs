@@ -47,6 +47,9 @@ pub struct ModelLifecyclePolicy {
     /// Shared Ollama request hint: null inherits backend policy; -1 is explicit
     /// indefinite retention. This does not confer ownership of service/models.
     pub ollama_keep_alive_seconds: Option<i64>,
+    /// Applied request option, not a RAM quota or a shared-service setting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ollama_context_tokens: Option<u32>,
     /// Applied owner request preference, not proof of backend thinking state.
     /// Omit inherit to preserve pre-extension policy digests and wire reports.
     #[serde(skip_serializing_if = "ThinkingMode::is_inherit")]
@@ -64,6 +67,7 @@ impl Default for ModelLifecyclePolicy {
             load_timeout_seconds: 300,
             termination_wait_seconds: 5,
             ollama_keep_alive_seconds: None,
+            ollama_context_tokens: None,
             thinking_mode: ThinkingMode::Inherit,
             interpreter_sampling: Default::default(),
         }
@@ -83,6 +87,9 @@ impl ModelLifecyclePolicy {
             || self
                 .ollama_keep_alive_seconds
                 .is_some_and(|n| !(-1..=86400).contains(&n))
+            || self
+                .ollama_context_tokens
+                .is_some_and(|n| !(512..=1_048_576).contains(&n))
         {
             bail!("Invalid model lifecycle policy bounds")
         }
@@ -156,6 +163,14 @@ pub enum PolicyCommand {
         #[arg(long, conflicts_with = "ollama_keep_alive_seconds")]
         #[serde(default)]
         ollama_keep_alive_default: bool,
+        /// Save Ollama num_ctx for EEF-owned requests; restart this node to apply.
+        #[arg(long, conflicts_with = "ollama_context_default", value_parser=clap::value_parser!(u32).range(512..=1_048_576))]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ollama_context_tokens: Option<u32>,
+        /// Omit num_ctx and inherit the model/server's context preference.
+        #[arg(long, conflicts_with = "ollama_context_tokens")]
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        ollama_context_default: bool,
         /// Thinking request hint for future inference; inherit omits the hint.
         #[arg(long, value_enum)]
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -203,6 +218,8 @@ impl PolicyRequest {
             termination_wait_seconds,
             ollama_keep_alive_seconds,
             ollama_keep_alive_default,
+            ollama_context_tokens,
+            ollama_context_default,
             thinking_mode,
             interpreter_sampling,
         } = &self.command
@@ -222,6 +239,8 @@ impl PolicyRequest {
                 && termination_wait_seconds.is_none()
                 && ollama_keep_alive_seconds.is_none()
                 && !ollama_keep_alive_default
+                && ollama_context_tokens.is_none()
+                && !ollama_context_default
                 && thinking_mode.is_none()
                 && interpreter_sampling.is_empty()
             {
@@ -236,6 +255,8 @@ impl PolicyRequest {
                 || termination_wait_seconds.is_some_and(|n| !(1..=30).contains(&n))
                 || ollama_keep_alive_seconds.is_some_and(|n| !(-1..=86400).contains(&n))
                 || (*ollama_keep_alive_default && ollama_keep_alive_seconds.is_some())
+                || ollama_context_tokens.is_some_and(|n| !(512..=1_048_576).contains(&n))
+                || (*ollama_context_default && ollama_context_tokens.is_some())
             {
                 bail!("Invalid lifecycle policy choice")
             }
@@ -256,12 +277,17 @@ impl PolicyCommand {
             termination_wait_seconds,
             ollama_keep_alive_seconds,
             ollama_keep_alive_default,
+            ollama_context_tokens,
+            ollama_context_default,
             thinking_mode,
             interpreter_sampling,
         } = self
         {
             if *expected_digest != current.versioned_digest(revision)? {
                 bail!("Saved model policy changed; inspect before a new owner decision")
+            }
+            if *ollama_context_default && ollama_context_tokens.is_some() {
+                bail!("Choose Ollama context tokens or inherited context, not both")
             }
             if let Some(value) = startup {
                 next.startup = *value;
@@ -288,6 +314,11 @@ impl PolicyCommand {
             }
             if let Some(value) = thinking_mode {
                 next.thinking_mode = *value;
+            }
+            if *ollama_context_default {
+                next.ollama_context_tokens = None;
+            } else if let Some(value) = ollama_context_tokens {
+                next.ollama_context_tokens = Some(*value);
             }
             next.interpreter_sampling = interpreter_sampling.apply(&next.interpreter_sampling)?;
         }
@@ -431,6 +462,8 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
         termination_wait_seconds,
         ollama_keep_alive_seconds,
         ollama_keep_alive_default,
+        ollama_context_tokens,
+        ollama_context_default,
         thinking_mode,
         interpreter_sampling,
         ..
@@ -447,6 +480,9 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
             || ollama_keep_alive_seconds
                 .is_some_and(|v| Some(v) != r.saved_policy.ollama_keep_alive_seconds)
             || (*ollama_keep_alive_default && r.saved_policy.ollama_keep_alive_seconds.is_some())
+            || ollama_context_tokens
+                .is_some_and(|v| Some(v) != r.saved_policy.ollama_context_tokens)
+            || (*ollama_context_default && r.saved_policy.ollama_context_tokens.is_some())
             || thinking_mode.is_some_and(|v| v != r.saved_policy.thinking_mode)
             || !interpreter_sampling.matches(&r.saved_policy.interpreter_sampling)
         {
@@ -471,6 +507,8 @@ mod tests {
             termination_wait_seconds: Some(2),
             ollama_keep_alive_seconds: None,
             ollama_keep_alive_default: false,
+            ollama_context_tokens: None,
+            ollama_context_default: false,
             thinking_mode: None,
             interpreter_sampling: Default::default(),
         }
@@ -537,6 +575,7 @@ mod tests {
             "ollama_keep_alive_seconds":null});
         let policy: ModelLifecyclePolicy = serde_json::from_value(old.clone()).unwrap();
         assert_eq!(policy.thinking_mode, ThinkingMode::Inherit);
+        assert_eq!(policy.ollama_context_tokens, None);
         assert_eq!(json!(policy), old);
         let prior_digest = format!(
             "{:x}",
@@ -551,6 +590,103 @@ mod tests {
         let explicit: ModelLifecyclePolicy = serde_json::from_value(explicit).unwrap();
         assert_eq!(explicit, policy);
         assert_eq!(explicit.versioned_digest(17).unwrap(), prior_digest);
+    }
+    #[test]
+    fn ollama_context_choices_are_bounded_explicit_reset_and_exact_report_confirmation() {
+        let original = ModelLifecyclePolicy::default();
+        for tokens in [512, 4096, 1_048_576] {
+            let command:PolicyCommand=serde_json::from_value(json!({"operation":"set",
+                "expected_digest":original.versioned_digest(0).unwrap(),"ollama_context_tokens":tokens})).unwrap();
+            request(command.clone(), None).validate().unwrap();
+            let next = command.apply(&original, 0).unwrap();
+            assert_eq!(next.ollama_context_tokens, Some(tokens));
+            let reset: PolicyCommand = serde_json::from_value(json!({"operation":"set",
+                "expected_digest":next.versioned_digest(1).unwrap(),"ollama_context_default":true}))
+            .unwrap();
+            assert_eq!(reset.apply(&next, 1).unwrap().ollama_context_tokens, None);
+        }
+        for raw in [
+            json!({"ollama_context_tokens":0}),
+            json!({"ollama_context_tokens":511}),
+            json!({"ollama_context_tokens":1_048_577}),
+            json!({"ollama_context_tokens":4096,"ollama_context_default":true}),
+        ] {
+            let mut value =
+                json!({"operation":"set","expected_digest":original.versioned_digest(0).unwrap()});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(raw.as_object().unwrap().clone());
+            let command: PolicyCommand = serde_json::from_value(value).unwrap();
+            assert!(request(command.clone(), None).validate().is_err());
+            assert!(command.apply(&original, 0).is_err());
+        }
+    }
+    #[test]
+    fn ollama_context_report_cannot_substitute_another_valid_value() {
+        let (_directory, service) = fixture();
+        let shown = service
+            .model_lifecycle_policy_command(request(PolicyCommand::Show {}, None), false, true)
+            .unwrap();
+        let command:PolicyCommand=serde_json::from_value(json!({"operation":"set","expected_digest":shown["saved_digest"],"ollama_context_tokens":4096})).unwrap();
+        let req = request(command, None);
+        let good = service
+            .model_lifecycle_policy_command(req.clone(), false, true)
+            .unwrap();
+        assert!(confirmed(&good, &req));
+        assert_eq!(good["saved_policy"]["ollama_context_tokens"], 4096);
+        for tokens in [Value::Null, json!(2048), json!(8192)] {
+            let mut changed = good.clone();
+            changed["saved_policy"]["ollama_context_tokens"] = tokens;
+            let policy: ModelLifecyclePolicy =
+                serde_json::from_value(changed["saved_policy"].clone()).unwrap();
+            changed["saved_digest"] = json!(
+                policy
+                    .versioned_digest(changed["saved_revision"].as_u64().unwrap())
+                    .unwrap()
+            );
+            assert!(!confirmed(&changed, &req));
+        }
+    }
+    #[test]
+    fn ollama_context_cli_requires_explicit_bounded_choice_or_reset() {
+        use clap::Parser;
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: PolicyArgs,
+        }
+        let digest = "a".repeat(64);
+        for extras in [
+            vec!["--ollama-context-tokens", "4096"],
+            vec!["--ollama-context-default"],
+        ] {
+            let mut argv = vec!["policy", "set", "--expected-digest", digest.as_str()];
+            argv.extend(extras);
+            let parsed = Cli::try_parse_from(argv).unwrap();
+            request(parsed.args.command, None).validate().unwrap();
+        }
+        for extras in [
+            vec!["--ollama-context-tokens", "511"],
+            vec!["--ollama-context-tokens", "1048577"],
+            vec![
+                "--ollama-context-tokens",
+                "4096",
+                "--ollama-context-default",
+            ],
+            vec!["--ollama-context-tokens"],
+        ] {
+            let mut argv = vec!["policy", "set", "--expected-digest", digest.as_str()];
+            argv.extend(extras);
+            assert!(Cli::try_parse_from(argv).is_err());
+        }
+        let legacy: PolicyCommand = serde_json::from_value(
+            json!({"operation":"set","expected_digest":digest,"startup":"manual"}),
+        )
+        .unwrap();
+        let value = serde_json::to_value(legacy).unwrap();
+        assert!(value.get("ollama_context_tokens").is_none());
+        assert!(value.get("ollama_context_default").is_none());
     }
     #[test]
     fn thinking_only_set_reset_are_strict_and_revision_fenced() {

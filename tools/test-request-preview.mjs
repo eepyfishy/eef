@@ -75,6 +75,9 @@ try {
     dashboard: {enabled: true, ui_enabled: false, host: '127.0.0.1', port: apiPort},
     models: {provider: 'ollama', ollama: {base_url: `http://127.0.0.1:${fakePort}`, selected: [selected('fixture')]}, llamacpp: {slots: []}}});
   await writeFile(configPath, JSON.stringify(config));
+  const contextPolicy=(await cli(['model-lifecycle-policy','show'])).result;
+  const contextSaved=await cli(['model-lifecycle-policy','set','--expected-digest',contextPolicy.saved_digest,'--ollama-context-tokens','4096']);
+  assert.equal(contextSaved.result.saved_policy.ollama_context_tokens,4096);assert.equal(contextSaved.result.applied_policy,null);
   assert.equal((await preview('Check status', false)).error_code, 'node_not_running'); assert.equal(calls.length, 0);
   launch(['--no-ui']);
   await until(async () => {const value = JSON.parse(await readFile(marker, 'utf8')); node = 'http://' + value.address; return (await json(node + '/api/status')).connection.state === 'paused';}, 'paused node ready');
@@ -88,6 +91,7 @@ try {
   assert.equal(good.result.interpretation.execution_authorized, false);
   assert.equal(calls.length, 1); assert.equal(calls[0].messages.at(-1).content, text);
   assert.equal(calls[0].options.num_predict, 512);
+  assert.equal(calls[0].options.num_ctx,4096);
   const alternatives=calls[0].format.anyOf;
   assert.equal(alternatives.length,2);assert.deepEqual(Object.keys(calls[0].format),['anyOf']);
   assert(alternatives.every(branch=>branch.additionalProperties===false&&branch.required.length===Object.keys(proposal()).length));

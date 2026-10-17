@@ -205,6 +205,9 @@ impl crate::NodeService {
         if engine.applied_ollama_keep_alive_seconds() != policy.ollama_keep_alive_seconds {
             bail!("Applied Ollama preference does not match the engine; no runtime replacement")
         }
+        if engine.applied_ollama_context_tokens() != policy.ollama_context_tokens {
+            bail!("Applied Ollama context does not match the engine; no runtime replacement")
+        }
         if engine.applied_thinking_mode() != policy.thinking_mode {
             bail!("Applied thinking preference does not match the engine; no runtime replacement")
         }
@@ -1373,6 +1376,28 @@ mod tests {
             1000
         );
         assert!(guard.runtime.is_closed());
+    }
+    #[test]
+    fn unapplied_ollama_context_cannot_replace_running_owner() {
+        let (_directory, service, engine, guard) = fixture();
+        let original = guard.runtime.id.clone();
+        let mut policy = guard.policy().clone();
+        policy.ollama_context_tokens = Some(4096);
+        assert!(
+            service
+                .bind_model_runtime_with_policy(
+                    &engine,
+                    uuid::Uuid::new_v4().to_string(),
+                    policy,
+                    0
+                )
+                .is_err()
+        );
+        assert_eq!(
+            service.model_runtime.lock().unwrap().as_ref().unwrap().id,
+            original
+        );
+        assert!(!guard.runtime.is_closed());
     }
     #[test]
     fn applied_thinking_report_cannot_replace_runtime_with_unapplied_preference() {
