@@ -771,6 +771,39 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn interpreter_activation_requires_exact_saved_provider_without_replay() {
+        use eefn::model_selection::{Backend, ModelCommand};
+        let mut metadata = eefn::model_metadata::ModelMetadata::from_legacy(Some("text"));
+        metadata.roles = Some(vec!["request_interpreter".into()]);
+        for provider in ["ollama", "auto", "llamacpp"] {
+            let reply = json!({"success":true,"data":{"schema_version":1,"success":true,"node_id":"node-b",
+                "report_type":"model_selections","remote_management_allowed":true,"changed":true,
+                "saved_selections":[{"backend":"ollama","model_id":"chosen","model_metadata":metadata}],
+                "registered_models":null,"provider":provider,"restart_required":true,"note":"Saved only"}});
+            let fake = ModelFake(Mutex::new(VecDeque::from([
+                ("show", Some(model_report(true))),
+                ("interpreter", Some(reply)),
+            ])));
+            let result = models_on(
+                &fake,
+                ModelsRequest {
+                    schema_version: 1,
+                    node_id: "node-b".into(),
+                    command: ModelCommand::Interpreter {
+                        backend: Backend::Ollama,
+                        model_id: "chosen".into(),
+                        activate_backend: true,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(result["success"], provider == "ollama");
+            assert_eq!(result["outcome_unknown"], provider != "ollama");
+            assert!(fake.0.lock().unwrap().is_empty());
+        }
+    }
+    #[tokio::test]
     async fn remote_interpreter_changes_confirm_exact_saved_assignment_without_replay() {
         use eefn::model_selection::{Backend, ModelCommand};
         for clear in [false, true] {
@@ -827,6 +860,7 @@ mod tests {
                             ModelCommand::Interpreter {
                                 backend: Backend::Ollama,
                                 model_id: "chosen".into(),
+                                activate_backend: false,
                             }
                         },
                     },

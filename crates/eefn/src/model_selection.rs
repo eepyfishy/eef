@@ -67,6 +67,8 @@ pub enum ModelCommand {
     SelectInstalledGguf {
         model_id: String,
         interpreter: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        activate_backend: bool,
         /// Fresh reply correlation, not an idempotency key or execution grant.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         request_id: Option<String>,
@@ -88,6 +90,8 @@ pub enum ModelCommand {
     Interpreter {
         backend: Backend,
         model_id: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        activate_backend: bool,
     },
     /// Remove only the interpreter role; retain model selections and other roles.
     ClearInterpreter {},
@@ -101,6 +105,10 @@ pub enum ModelCommand {
         #[serde(deserialize_with = "required_memory_limit")]
         mib: Option<u64>,
     },
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn required_memory_limit<'de, D: serde::Deserializer<'de>>(
@@ -161,10 +169,14 @@ pub fn apply(config: &mut Value, command: &ModelCommand) -> Result<bool> {
         ModelCommand::SelectInstalledGguf { .. } => {
             bail!("Installed selection requires the node's asynchronous cache verifier")
         }
-        ModelCommand::Interpreter { backend, model_id } => {
-            assign_interpreter(config, Some((*backend, model_id)))?;
+        ModelCommand::Interpreter {
+            backend,
+            model_id,
+            activate_backend,
+        } => {
+            assign_interpreter(config, Some((*backend, model_id)), *activate_backend)?;
         }
-        ModelCommand::ClearInterpreter {} => assign_interpreter(config, None)?,
+        ModelCommand::ClearInterpreter {} => assign_interpreter(config, None, false)?,
         ModelCommand::MemoryLimit { model_id, mib } => {
             validate_id(model_id)?;
             crate::model_memory::supported(*mib)?;
@@ -349,8 +361,13 @@ pub fn apply(config: &mut Value, command: &ModelCommand) -> Result<bool> {
 }
 
 /// Stage a role move in one validated configuration, never a series of client
-/// hint writes. Do not expand capabilities, select files, change provider or load.
-fn assign_interpreter(config: &mut Value, target: Option<(Backend, &str)>) -> Result<()> {
+/// hint writes. Do not expand capabilities, select files or load. Provider changes
+/// require the caller's explicit activation choice and share the staged save.
+fn assign_interpreter(
+    config: &mut Value,
+    target: Option<(Backend, &str)>,
+    activate_backend: bool,
+) -> Result<()> {
     if let Some((_, id)) = target {
         validate_id(id)?;
     }
@@ -422,6 +439,10 @@ fn assign_interpreter(config: &mut Value, target: Option<(Backend, &str)>) -> Re
     }
     // Includes bounded roles and full adapter restrictions. Failed edits leave
     // even the caller's in-memory value unchanged, not just the saved file.
+    if activate_backend {
+        let (backend, _) = target.context("backend activation requires an interpreter target")?;
+        staged["models"]["provider"] = json!(backend.name());
+    }
     selection_view(&staged)?;
     *config = staged;
     Ok(())
@@ -580,12 +601,14 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
         ModelCommand::SelectInstalledGguf {
             model_id,
             interpreter,
+            activate_backend,
             ..
         } => {
             let Some(proof) = report.installed_artifact else {
                 return false;
             };
-            validate_id(model_id).is_ok()
+            (!activate_backend || (*interpreter && report.provider == "llamacpp"))
+                && validate_id(model_id).is_ok()
                 && proof.model_id == *model_id
                 && proof.verified_at_selection
                 && proof.bytes > 0
@@ -602,8 +625,13 @@ pub fn confirmed_interpreter(value: &Value, node: &str, command: &ModelCommand) 
                         && interpreters[0].model_id == *model_id
                         && interpreters[0].model_metadata.supports("llm.infer")))
         }
-        ModelCommand::Interpreter { backend, model_id } => {
-            validate_id(model_id).is_ok()
+        ModelCommand::Interpreter {
+            backend,
+            model_id,
+            activate_backend,
+        } => {
+            (!activate_backend || report.provider == backend.name())
+                && validate_id(model_id).is_ok()
                 && interpreters.len() == 1
                 && interpreters[0].backend == *backend
                 && interpreters[0].model_id == *model_id
@@ -875,6 +903,7 @@ mod tests {
         ModelCommand::Interpreter {
             backend,
             model_id: id.into(),
+            activate_backend: false,
         }
     }
     #[test]
@@ -930,6 +959,66 @@ mod tests {
         let mut empty = json!({"unrelated":true});
         assert!(!apply(&mut empty, &ModelCommand::ClearInterpreter {}).unwrap());
         assert_eq!(empty, json!({"unrelated":true}));
+    }
+    #[test]
+    fn explicit_interpreter_backend_activation_is_atomic_and_noop_when_already_saved() {
+        for backend in [Backend::Ollama, Backend::Llamacpp] {
+            let mut config = interpreter_config();
+            let before = config.clone();
+            let command = ModelCommand::Interpreter {
+                backend,
+                model_id: "same-id".into(),
+                activate_backend: true,
+            };
+            assert!(apply(&mut config, &command).unwrap());
+            assert_eq!(config["models"]["provider"], backend.name());
+            assert_eq!(config["future"], before["future"]);
+            assert_eq!(
+                config["models"]["ollama"]["base_url"],
+                before["models"]["ollama"]["base_url"]
+            );
+            assert_eq!(
+                config["models"]["llamacpp"]["slots"][0]["model_path"],
+                before["models"]["llamacpp"]["slots"][0]["model_path"]
+            );
+            let roles = selection_view(&config)
+                .unwrap()
+                .into_iter()
+                .filter(|m| {
+                    m["model_metadata"]["roles"]
+                        .as_array()
+                        .is_some_and(|r| r.contains(&json!("request_interpreter")))
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(roles.len(), 1);
+            assert_eq!(roles[0]["backend"], backend.name());
+            let saved = config.clone();
+            assert!(!apply(&mut config, &command).unwrap());
+            assert_eq!(config, saved);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let core = service(dir.path());
+        core.model_command(request(selected("chosen"))).unwrap();
+        let command = ModelCommand::Interpreter {
+            backend: Backend::Ollama,
+            model_id: "chosen".into(),
+            activate_backend: true,
+        };
+        let report = core.model_command(request(command.clone())).unwrap();
+        assert!(confirmed_interpreter(&report, "node", &command));
+        assert_eq!(report["provider"], "ollama");
+        assert_eq!(report["restart_required"], true);
+        for provider in ["auto", "llamacpp"] {
+            let mut bad = report.clone();
+            bad["provider"] = json!(provider);
+            assert!(!confirmed_interpreter(&bad, "node", &command));
+        }
+        let raw = std::fs::read(core.config_path.clone()).unwrap();
+        assert_eq!(
+            core.model_command(request(command)).unwrap()["changed"],
+            false
+        );
+        assert_eq!(std::fs::read(core.config_path.clone()).unwrap(), raw);
     }
     #[test]
     fn interpreter_reports_confirm_exact_saved_role_not_applied_readiness() {
@@ -1015,11 +1104,21 @@ mod tests {
                 }
             };
             let before = config.clone();
-            assert!(
-                apply(&mut config, &interpreter(Backend::Llamacpp, id)).is_err(),
-                "case {case}"
-            );
-            assert_eq!(config, before, "case {case}");
+            for activate_backend in [false, true] {
+                assert!(
+                    apply(
+                        &mut config,
+                        &ModelCommand::Interpreter {
+                            backend: Backend::Llamacpp,
+                            model_id: id.into(),
+                            activate_backend
+                        }
+                    )
+                    .is_err(),
+                    "case {case}"
+                );
+                assert_eq!(config, before, "case {case}, activation {activate_backend}");
+            }
         }
     }
     #[tokio::test]

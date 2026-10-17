@@ -13,7 +13,9 @@ without assigning/moving that role. With it, the existing atomic interpreter-rol
 operation moves only `request_interpreter` off other selections and onto this
 one, retaining other roles and adapter restrictions. A role is not a permission
 or execution grant. This command does **not** download or load weights, start a
-second node, change provider, restart, delete files or approve a default model.
+second node, restart, delete files or approve a default model. The provider is
+preserved unless `--interpreter --activate-backend` explicitly saves llama.cpp
+as provider in that same write; see [atomic backend choice](INTERPRETER-SETUP.md#save-the-interpreter-and-its-backend-together).
 
 The same target-node operation is available from EEF with current node-owner
 management approval:
@@ -81,7 +83,9 @@ Selection and role changes remain saved settings. Running models/interpreter
 preferences are not replaced until an explicit restart; offline edits save for
 the next app start. `auto` retains its preference for reachable Ollama. Selecting
 a local GGUF does not override that choice; inspect the saved provider and decide
-explicitly which backend to activate. Assigning a role to an inactive backend
+explicitly which backend to activate. The optional `--activate-backend` requires
+`--interpreter` and saves that choice atomically, but does not itself restart or
+load the model. Assigning a role to an inactive backend
 does not prove interpreter readiness. `eefn setup` distinguishes saved/applied
 interpreter choices. Restart applies **all** pending settings, not models alone.
 
@@ -103,6 +107,12 @@ persistent selection receipt ledger or exactly-once write claim. This is a
 correlated report from the node, not independent attestation of its behavior.
 
 ## Verified scope
+
+The explicit backend-choice follow-up is verified with 714 passing tests plus
+one ignored in both feature modes, synthetic local/remote command regressions
+and full-size cached CPU startup/unload. See
+[current activation evidence](INTERPRETER-SETUP.md#acceptance-and-remaining-setup)
+for the exact fixtures, measurements and remaining quality/release boundaries.
 
 The preflight-rejection follow-up passes **710 workspace/all-target tests plus
 one ignored in each feature mode**. `installed-selection-GJEMo2/results.json`

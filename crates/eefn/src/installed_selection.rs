@@ -157,6 +157,7 @@ pub(crate) struct Prepared {
     pub slot: ModelSlot,
     pub artifact: GgufArtifact,
     pub interpreter: bool,
+    pub activate_backend: bool,
     pub existing: bool,
     // Retain the verified read handle through the configuration commit. Windows
     // denies writer/delete access while it is held, not after selection returns.
@@ -288,6 +289,7 @@ pub(crate) async fn prepare(
             slot,
             artifact,
             interpreter,
+            activate_backend: false,
             existing: already_selected,
             file: tokio::fs::File::from_std(file),
         })
@@ -372,6 +374,7 @@ pub(crate) mod tests {
             command: ModelCommand::SelectInstalledGguf {
                 model_id: "fixture".into(),
                 interpreter,
+                activate_backend: false,
                 request_id: Some("00000000-0000-4000-8000-000000000001".into()),
             },
         }
@@ -583,6 +586,58 @@ pub(crate) mod tests {
                 "{field}"
             );
         }
+    }
+    #[tokio::test]
+    async fn installed_interpreter_activation_saves_provider_atomically_and_rejects_invalid_combinations()
+     {
+        let root = tempfile::tempdir().unwrap();
+        let service = fixture(root.path());
+        let mut command = request(true);
+        if let ModelCommand::SelectInstalledGguf {
+            activate_backend, ..
+        } = &mut command.command
+        {
+            *activate_backend = true;
+        }
+        let result = service
+            .dispatch_model_command(command.clone(), false)
+            .await
+            .unwrap();
+        assert!(crate::model_selection::confirmed_interpreter(
+            &result,
+            "cache-node",
+            &command.command
+        ));
+        assert_eq!(result["provider"], "llamacpp");
+        let saved = std::fs::read(root.path().join("node.json")).unwrap();
+        assert_eq!(
+            service
+                .dispatch_model_command(command.clone(), false)
+                .await
+                .unwrap()["changed"],
+            false
+        );
+        assert_eq!(std::fs::read(root.path().join("node.json")).unwrap(), saved);
+        for provider in ["auto", "ollama"] {
+            let mut bad = result.clone();
+            bad["provider"] = json!(provider);
+            assert!(!crate::model_selection::confirmed_interpreter(
+                &bad,
+                "cache-node",
+                &command.command
+            ));
+        }
+        if let ModelCommand::SelectInstalledGguf { interpreter, .. } = &mut command.command {
+            *interpreter = false;
+        }
+        assert!(
+            service
+                .dispatch_model_command(command, false)
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(root.path().join("node.json")).unwrap(), saved);
+        assert!(service.restart.notified().now_or_never().is_none());
     }
 
     #[tokio::test]

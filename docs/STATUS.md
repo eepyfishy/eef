@@ -1,5 +1,32 @@
 # Architecture conformance status
 
+## Unreleased: atomic interpreter and backend choice (2026-10-17)
+
+`models interpreter --activate-backend` and installed-GGUF selection with
+`--interpreter --activate-backend` save the exact role/provider together under
+the existing config lock. Without the flag, provider/default wire behavior is
+unchanged. A role or cache failure cannot partially change provider. Adapters
+also check the saved provider; unsupported/lost/substituted replies cause no
+fallback series of writes or automatic retry. Settings remain saved until an
+explicit app start/restart, which applies all pending settings. Other-backend
+selections remain saved; this does not implement concurrent provider activation.
+
+Both locked/offline workspace/all-target suites pass **714 tests plus one ignored
+each**, including no-dashboard builds. Fresh binaries/examples build. Public local
+`installed-selection-COTfk0` and approved remote `model-metadata-6b2ZUj` pass new
+activation/owner-denial/preservation checks and existing regressions. With the
+existing 1.28 GB development cache, `real-installed-selection-R6vXTz` passes full
+checksum/selection (17,019 ms), explicit CPU startup (3,234 ms), applied interpreter
+verification despite reachable mock Ollama, and public unload with owned PID exit
+observed. No model copies/downloads or inference occurred. Format, JS syntax,
+source boundary and diff checks pass. See
+[contract and evidence](INTERPRETER-SETUP.md#acceptance-and-remaining-setup).
+
+This removes a manual setup/provider trap, not default model-quality/bootstrap,
+complete graphical onboarding, physical two-PC, media/peer/cluster, resource/stop
+or installer/signing/Defender acceptance gates. No installed app, physical node,
+release version, published artifact or stable-only update feed changed.
+
 ## Unreleased: correlated installed-model preparation failures (2026-10-17)
 
 Installed-GGUF selection now reports static, typed cache-preparation rejection

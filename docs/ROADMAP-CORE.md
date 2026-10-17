@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The next first-run command increment adds explicit `--activate-backend` to
+interpreter assignment and installed-GGUF selection with interpreter assignment.
+It saves role and provider atomically, preserving the old provider unless asked;
+no automatic load/restart or default-artifact choice follows. Exact-provider
+confirmation, no-op writes, invalid/disabled targets, cache rejection and remote
+approval remain enforced. Both suites pass 714 tests plus one ignored each;
+public local/remote regressions and an opt-in full-size cached CPU startup/unload
+pass. See [measured evidence](INTERPRETER-SETUP.md#acceptance-and-remaining-setup).
+No model is downloaded/copied or inferred by these new acceptance checks, and
+default quality/bootstrap, complete first-run and physical/release gates remain.
+
 The installed-selection failure follow-up distinguishes correlated preparation
 rejection from uncertain save/transport outcomes. Both CLIs generate fresh
 request IDs; strict no-write reports require the exact node/command/correlation,

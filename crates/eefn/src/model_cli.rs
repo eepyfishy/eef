@@ -15,6 +15,9 @@ pub enum ModelsAction {
         backend: String,
         #[arg(long)]
         model: String,
+        /// Save this backend as provider too; does not load or restart.
+        #[arg(long)]
+        activate_backend: bool,
     },
     /// Remove the interpreter role without removing models or other roles.
     ClearInterpreter,
@@ -79,6 +82,9 @@ pub enum ModelsAction {
         /// Explicitly move the interpreter role to this model; restart separately.
         #[arg(long)]
         interpreter: bool,
+        /// Save llama.cpp as provider too; requires --interpreter. Restart separately.
+        #[arg(long, requires = "interpreter")]
+        activate_backend: bool,
     },
     /// Remove selection only, never model files.
     Remove {
@@ -131,19 +137,24 @@ impl ModelsAction {
         };
         let command = match self {
             ModelsAction::Show => ModelCommand::Show {},
-            ModelsAction::SelectInstalledGguf { model, interpreter } => {
-                ModelCommand::SelectInstalledGguf {
-                    model_id: model.clone(),
-                    interpreter: *interpreter,
-                    request_id: Some(uuid::Uuid::new_v4().to_string()),
-                }
-            }
+            ModelsAction::SelectInstalledGguf {
+                model,
+                interpreter,
+                activate_backend,
+            } => ModelCommand::SelectInstalledGguf {
+                model_id: model.clone(),
+                interpreter: *interpreter,
+                activate_backend: *activate_backend,
+                request_id: Some(uuid::Uuid::new_v4().to_string()),
+            },
             ModelsAction::Interpreter {
                 backend: name,
                 model,
+                activate_backend,
             } => ModelCommand::Interpreter {
                 backend: backend(name),
                 model_id: model.clone(),
+                activate_backend: *activate_backend,
             },
             ModelsAction::ClearInterpreter => ModelCommand::ClearInterpreter {},
             ModelsAction::MemoryLimit { model, mib, .. } => ModelCommand::MemoryLimit {
@@ -316,6 +327,62 @@ mod tests {
         }
     }
     #[test]
+    fn backend_activation_is_explicit_and_requires_interpreter_for_installed_gguf() {
+        use clap::Parser;
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(subcommand)]
+            action: ModelsAction,
+        }
+        let selected = Cli::try_parse_from([
+            "models",
+            "interpreter",
+            "--backend",
+            "ollama",
+            "--model",
+            "fixture",
+            "--activate-backend",
+        ])
+        .unwrap()
+        .action
+        .to_command(false)
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(selected).unwrap(),
+            serde_json::json!({
+            "operation":"interpreter","backend":"ollama","model_id":"fixture","activate_backend":true})
+        );
+        assert!(
+            Cli::try_parse_from([
+                "models",
+                "select-installed-gguf",
+                "--model",
+                "fixture",
+                "--activate-backend"
+            ])
+            .is_err()
+        );
+        let selected = Cli::try_parse_from([
+            "models",
+            "select-installed-gguf",
+            "--model",
+            "fixture",
+            "--interpreter",
+            "--activate-backend",
+        ])
+        .unwrap()
+        .action
+        .to_command(false)
+        .unwrap();
+        let value = serde_json::to_value(selected).unwrap();
+        assert_eq!(value["activate_backend"], true);
+        assert_eq!(value["interpreter"], true);
+        let old =
+            serde_json::json!({"operation":"interpreter","backend":"ollama","model_id":"fixture"});
+        let command: ModelCommand = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(serde_json::to_value(command).unwrap(), old);
+    }
+    #[test]
     fn cpu_thread_cli_requires_exact_model_and_explicit_bounded_or_auto_choice() {
         #[derive(clap::Parser)]
         struct Cli {
@@ -402,7 +469,7 @@ mod tests {
         .unwrap()
         .action;
         assert!(
-            matches!(action.to_command(false).unwrap(), ModelCommand::Interpreter {backend:Backend::Llamacpp,model_id} if model_id == "fixture")
+            matches!(action.to_command(false).unwrap(), ModelCommand::Interpreter {backend:Backend::Llamacpp,model_id,activate_backend:false} if model_id == "fixture")
         );
         let clear = Cli::try_parse_from(["models", "clear-interpreter"])
             .unwrap()

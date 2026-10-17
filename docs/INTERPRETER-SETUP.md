@@ -17,9 +17,51 @@ eefn models show --json
 Use the actual backend and selected model ID. Installed inventory and saved
 selections are different: select the model first with existing selection
 commands if necessary. For an existing selected GGUF use `--backend llamacpp`.
-Provider selection remains independent: `auto` prefers available Ollama and
+Without `--activate-backend`, provider selection remains independent: `auto`
+prefers available Ollama and
 does not activate a llama.cpp selection merely because it has this role.
 Choose a provider explicitly with `models provider` if needed, then restart.
+
+## Save the interpreter and its backend together
+
+An explicit `--activate-backend` also saves the specified backend as provider in
+the **same validated configuration write** as the role move:
+
+```powershell
+eefn models interpreter --backend ollama --model ACTUAL_SELECTED_MODEL_ID --activate-backend --json
+eefn models interpreter --backend llamacpp --model ACTUAL_SELECTED_MODEL_ID --activate-backend --json
+```
+
+For a node-installed text GGUF, selection, role assignment and provider choice
+can share that one save, without file paths or port numbers:
+
+```powershell
+eefn models select-installed-gguf --model ACTUAL_INSTALLED_MODEL_ID --interpreter --activate-backend --json
+eefn restart --wait-seconds 60 --json
+eefn setup --json
+```
+
+The flag means **save this backend for the next app start/restart**, not load it
+now or prove interpreter quality. Omitting it still preserves the saved provider;
+`auto` still prefers reachable Ollama. Activation selects one backend, not
+simultaneous operation of both: other-backend selections remain saved but will
+not be activated by that provider. A restart applies all pending app settings,
+not only the interpreter. Inspect pending settings before restarting.
+
+The same flag works on approved `eef node models --node NODE_ID ...` commands.
+It cannot grant remote management, widen model capabilities/permissions, download
+weights, infer, restart or override an invalid target. Invalid role/metadata or
+cache checks leave both provider and role unchanged. Matching repeated saves are
+no-ops, not requests to restart or replay work. A changed provider does not select
+an automatic/default artifact or approve a candidate's semantic quality.
+
+For either `interpreter` or `select_installed_gguf`, the wire field is optional
+`activate_backend: true`. Omitted/false retains the old wire shape and behavior;
+installed selection requires `interpreter: true` when activating. Adapters check
+the saved provider as well as the role before confirming activation. Older nodes
+may reject the new field; there is no fallback sequence of provider/role writes.
+Lost or substituted replies remain uncertain; inspect `models show` before a
+new explicit attempt. Correlation does not deduplicate configuration writes.
 
 ## Scope and atomicity
 
@@ -91,6 +133,31 @@ permission, support or saved-state confirmation fails.
 
 ## Acceptance and remaining setup
 
+The explicit backend-choice follow-up passes **714 workspace/all-target tests
+plus one ignored each**, with and without dashboard features. Fresh default
+binaries/examples build; format, JS syntax, source boundary and diff checks pass.
+`installed-selection-COTfk0` passes public local/offline commands, saved-versus-
+applied checks, activation no-op/no-write and corrupt-cache refusal without a
+partial provider change. `model-metadata-6b2ZUj` passes approved remote Ollama and
+GGUF activation and owner denial alongside existing protocol regressions. These
+two fixtures use mock Ollama and synthetic cache bytes, not real inference.
+
+`real-installed-selection-R6vXTz/results.json` reuses the existing verified
+1,280,835,840-byte 2B development cache without copying/downloading weights or
+changing its installed index. Public offline selection with explicit activation
+verifies the artifact in **17,019 ms**. Starting the isolated node with the bundled
+CPU runtime reaches ready in **3,234 ms**, applies that interpreter despite a
+reachable mock Ollama service, and subsequently completes explicit unload with
+the owned native PID observed exited. Only a new unique test configuration is
+changed. No inference, model-quality/default approval, physical two-PC or complete
+installer/onboarding acceptance follows. Job commit accounting in the result is
+not total/current RAM, VRAM, a resource quota or a general termination guarantee.
+
+The test script defaults to offline selection without activation or runtime
+loading. Real startup requires explicit `EEF_TEST_ACTIVATE_BACKEND=1` and
+`EEF_TEST_RUNTIME_BUNDLE` plus its existing-cache directory/catalog-ID arguments;
+it never enables downloading. All test-owned processes are stopped afterward.
+
 Rust checks cover cross-backend role preservation, same-name identity, clear/no-op,
 invalid/disabled targets, duplicate selections, role overflow, concurrent writes,
 remote owner denial, strict CLI/JSON and corrupted saved-role reports. The public
@@ -101,6 +168,7 @@ read-only inspection, exact pre-send targets, no replay and older-endpoint refus
 The input fixture checks interpreter withdrawal with retained-history inspection.
 
 This is explicit role setup, not completion of non-coder onboarding or the default
-lightweight model requirement. Friendly private pairing, approved configurable
+lightweight model requirement. Automatic first-run integration of private pairing,
+approved configurable
 bootstrap/model quality, physical two-PC acceptance and MSI/Defender/signing
 remain release gates. No published alpha.6 artifact or update feed is replaced.

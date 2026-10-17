@@ -78,8 +78,16 @@ try{
  let raw=await readFile(configPath,'utf8');
  assert.equal((await cli(['select-installed-gguf','--model',entry.id])).changed,false);
  assert.equal(await readFile(configPath,'utf8'),raw,'existing tuning/roles/extensions must not be reserialized away');
+ const activated=await cli(['select-installed-gguf','--model',entry.id,'--interpreter','--activate-backend']);
+ assert.equal(activated.provider,'llamacpp');assert.equal(activated.changed,true);assert.equal(activated.restart_required,true);
+ assert.deepEqual((await nodeCli(['setup'])).applied_interpreter,appliedBefore,'backend activation saves only; no hidden restart');
+ assert.equal((await json(node+'/api/diagnostics')).runtime_id,runtime);assert.equal(inferences,0);
+ const activatedRaw=await readFile(configPath,'utf8');
+ assert.equal((await cli(['select-installed-gguf','--model',entry.id,'--interpreter','--activate-backend'])).changed,false);
+ assert.equal(await readFile(configPath,'utf8'),activatedRaw);
+ await cli(['provider','auto']);raw=await readFile(configPath,'utf8');
  await writeFile(cache,Buffer.alloc(body.length,43));
- const corrupt=await cli(['select-installed-gguf','--model',entry.id],false);
+ const corrupt=await cli(['select-installed-gguf','--model',entry.id,'--interpreter','--activate-backend'],false);
  assert.equal(corrupt.error_code,'installed_selection_preflight_rejected');assert.equal(corrupt.automatically_retried,false);
  assert.equal(corrupt.cache_issue,'checksum_mismatch');assert.equal(corrupt.outcome_unknown,false);assert.equal(corrupt.configuration_write_attempted,false);
  assert.equal(await readFile(configPath,'utf8'),raw);assert.equal((await stat(cache)).size,body.length);
@@ -120,6 +128,7 @@ try{
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,api_only:true,synthetic_cache_only:true,
   offline_no_launch:true,local_cli_no_paths_or_ports:true,verified_selection:true,explicit_interpreter_role:true,
   provider_permissions_preserved:true,saved_not_applied:true,owner_tuning_extensions_preserved:true,corruption_and_index_rejected:true,
+  explicit_backend_activation_saved_only:true,activation_noop_no_write:true,rejected_activation_preserves_provider:true,
   preflight_rejection_confirmed:true,stale_rejection_refused:true,lost_reply_no_replay:true,unsupported_no_fallback:true,model_downloads:false,real_model_loading:false,physical_two_pc:false},null,2));
  console.log('Installed selection checks passed: '+scratch);
 }catch(error){

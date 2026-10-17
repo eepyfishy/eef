@@ -577,6 +577,7 @@ impl NodeService {
             model_id,
             interpreter,
             request_id,
+            activate_backend,
         } = &request.command
         else {
             return self.model_command_authorized(request, remote);
@@ -586,6 +587,9 @@ impl NodeService {
         }
         if request_id.is_some() && !crate::installed_selection::correlated(&request.command) {
             bail!("installed selection request ID must be a canonical non-nil UUID")
+        }
+        if *activate_backend && !*interpreter {
+            bail!("backend activation requires explicit interpreter assignment")
         }
         if !self.config_path.is_file() {
             bail!("saved node configuration is missing")
@@ -609,7 +613,7 @@ impl NodeService {
         .await;
         // This barrier precedes model_command_checked and every configuration
         // write. Later save/transport failures deliberately remain uncertain.
-        let prepared = match prepared {
+        let mut prepared = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
                 return crate::installed_selection::rejection(
@@ -619,6 +623,7 @@ impl NodeService {
                 );
             }
         };
+        prepared.activate_backend = *activate_backend;
         let resolved = crate::model_selection::ModelCommandRequest {
             schema_version: request.schema_version,
             expected_node_id: request.expected_node_id,
@@ -695,6 +700,7 @@ impl NodeService {
                 &crate::model_selection::ModelCommand::Interpreter {
                     backend: crate::model_selection::Backend::Llamacpp,
                     model_id: prepared.slot.model_id.clone(),
+                    activate_backend: prepared.activate_backend,
                 },
             )?;
         }
@@ -1144,7 +1150,7 @@ mod tests {
             let mut config = service.read_config().unwrap();
             config["management"]["allow_remote"] = json!(true);
             service.save_config(config.clone()).unwrap();
-            let prepared = crate::installed_selection::prepare(
+            let mut prepared = crate::installed_selection::prepare(
                 service.model_directory(),
                 config,
                 "fixture".into(),
@@ -1152,6 +1158,7 @@ mod tests {
             )
             .await
             .unwrap();
+            prepared.activate_backend = true;
             #[cfg(windows)]
             {
                 assert!(
@@ -1192,6 +1199,10 @@ mod tests {
             );
             if case == "unrelated" {
                 assert_eq!(result.unwrap()["success"], true);
+                assert_eq!(
+                    service.read_config().unwrap()["models"]["provider"],
+                    "llamacpp"
+                );
                 assert_eq!(
                     service.read_config().unwrap()["name"],
                     "Owner's latest name"

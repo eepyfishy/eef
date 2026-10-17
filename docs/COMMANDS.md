@@ -1620,6 +1620,10 @@ Both CLIs generate fresh request correlation for this operation. A confirmed
 `installed_selection_preflight_rejected` reports a static cache reason and that
 no configuration write was attempted. Lost/stale replies and later save errors
 remain uncertain; correlation does not authorize a retry or deduplicate writes.
+`interpreter --activate-backend` and `select-installed-gguf --interpreter
+--activate-backend` explicitly save that backend as provider in the same write.
+Without the flag provider stays unchanged. This is saved setup, not immediate
+load/restart; see [backend choice](INTERPRETER-SETUP.md#save-the-interpreter-and-its-backend-together).
 See the shared
 typed commands in `eefn/src/model_selection.rs`. Edits use the same config lock as
 other node settings, preserve unrelated values, reject corrupt/missing files,

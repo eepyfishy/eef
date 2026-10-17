@@ -13,6 +13,12 @@ correlation (both CLIs generate one). Confirmed preparation failures return
 establish that boundary; lost/stale replies or errors after preparation remain
 uncertain. Missing IDs preserve legacy selection compatibility, not confirmed
 no-write failures. This field is not an idempotency key or grant.
+Optional `activate_backend: true` on `interpreter` and on installed-GGUF
+selection with `interpreter: true` saves the chosen provider in the same
+configuration write as the role move. Omitted/false preserves provider and old
+wire shape. Confirmation requires the exact saved provider; no restart, load,
+download, capability widening or default-model approval follows. See
+[explicit backend activation](INTERPRETER-SETUP.md#save-the-interpreter-and-its-backend-together).
 
 Unreleased [interpreter rejection diagnostics](INTERPRETER-REJECTIONS.md) preserve
 `interpretation_invalid` while adding an optional static `rejection_reason` and
