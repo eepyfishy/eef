@@ -31,6 +31,15 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The unreleased [interpreter rejection diagnostics](INTERPRETER-REJECTIONS.md)
+preserve the owner-command error code while exposing a typed, static cause and
+readable guidance for invalid proposals. Rejected text/parser excerpts are not
+returned, no output is repaired or retried, and authority/validation stay unchanged.
+Both suites pass 703 tests plus one ignored each; expanded public preview and
+durable review/resolution regressions pass with redaction and unchanged saved
+drafts. The prompt is unchanged. Better failure explanation is not semantic
+quality, automatic bootstrap, physical acceptance or release completion.
+
 The unreleased [application-context prompt increment](INTERPRETER-QUALITY.md#application-context-increment-unreleased-no-default-approval)
 explains EEF nodes and origin-relative references while preserving the original
 ambiguity, schema and authority rules. Both suites pass 701 tests plus one ignored

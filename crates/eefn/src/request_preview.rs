@@ -424,6 +424,7 @@ impl NodeService {
         if let Err(code) = result {
             report["error_code"] = json!(code);
         }
+        annotate_rejection(&mut report);
         report
     }
 
@@ -561,6 +562,7 @@ impl NodeService {
         if let Err(code) = result {
             report["error_code"] = json!(code);
         }
+        annotate_rejection(&mut report);
         report
     }
 
@@ -929,11 +931,35 @@ impl NodeService {
         } else {
             "local_node"
         });
+        annotate_rejection(&mut report);
         if let Some(hint) = interpreter_setup_hint(report["error_code"].as_str().unwrap_or("")) {
             report["setup_hint"] = json!(hint);
         }
         report
     }
+}
+
+/// Keep the established public error code; add only a typed, static category.
+/// No output fragments, parser errors, model IDs or request contents are exposed.
+fn annotate_rejection(report: &mut Value) {
+    if report["success"] != false {
+        return;
+    }
+    let Some(reason) = report["error_code"]
+        .as_str()
+        .and_then(crate::interpretation::RejectionReason::from_engine_code)
+    else {
+        return;
+    };
+    report["error_code"] = json!("interpretation_invalid");
+    report["rejection_reason"] = json!(reason);
+    report["error"] = json!(format!(
+        "{} The rejected proposal was not saved or executed. No automatic retry was requested.",
+        reason.explanation()
+    ));
+    report["setup_hint"] = json!(
+        "Explicit commands do not require an interpreter. Inspect the selected model with eefn models show before deciding whether to change it; this diagnostic changed no settings."
+    );
 }
 
 /// Readable adapter guidance, never a command, role selection or fallback.
@@ -952,6 +978,34 @@ fn interpreter_setup_hint(code: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rejection_annotation_preserves_public_code_and_never_changes_authority_or_payload() {
+        let mut failure = json!({"success":false,"error_code":"interpretation_rejected_clarification",
+            "execution_authorized":false,"dispatched":false,"automatically_retried":false});
+        annotate_rejection(&mut failure);
+        assert_eq!(failure["error_code"], "interpretation_invalid");
+        assert_eq!(failure["rejection_reason"], "clarification_required");
+        assert!(failure["error"].as_str().unwrap().contains("inconsistent"));
+        assert_eq!(failure["execution_authorized"], false);
+        assert_eq!(failure["dispatched"], false);
+        assert_eq!(failure["automatically_retried"], false);
+        assert!(failure.get("result").is_none());
+        for code in [
+            "interpretation_invalid",
+            "interpretation_timeout",
+            "interpreter_backend_failed",
+            "PRIVATE_MODEL_TEXT",
+        ] {
+            let mut unknown = json!({"success":false,"error_code":code});
+            let original = unknown.clone();
+            annotate_rejection(&mut unknown);
+            assert_eq!(unknown, original);
+        }
+        let mut success = json!({"success":true,"error_code":"interpretation_rejected_schema"});
+        let original = success.clone();
+        annotate_rejection(&mut success);
+        assert_eq!(success, original);
+    }
     #[test]
     fn setup_guidance_does_not_imply_selection_fallback_or_retry() {
         let missing = interpreter_setup_hint("interpreter_unavailable").unwrap();

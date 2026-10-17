@@ -9,6 +9,101 @@ pub const MAX_INPUT_BYTES: usize = 32 * 1024;
 pub const MAX_PROPOSAL_BYTES: usize = 16 * 1024;
 const MAX_HINTS: usize = 8;
 
+/// Static validation categories only: never model text, parser excerpts or IDs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, thiserror::Error)]
+#[serde(rename_all = "snake_case")]
+pub enum RejectionReason {
+    #[error("interpretation input is invalid")]
+    InputInvalid,
+    #[error("interpretation capability context is invalid")]
+    ContextInvalid,
+    #[error("interpretation proposal is oversized")]
+    OutputTooLarge,
+    #[error("invalid interpretation proposal schema")]
+    SchemaInvalid,
+    #[error("unsupported interpretation schema version")]
+    VersionUnsupported,
+    #[error("interpretation goal is invalid")]
+    GoalInvalid,
+    #[error("interpretation hints are invalid")]
+    HintsInvalid,
+    #[error("interpretation capability suggestions are invalid")]
+    CapabilitiesInvalid,
+    #[error("interpretation clarification question is invalid")]
+    ClarificationInvalid,
+    #[error("uncertain interpretation needs an explicit clarification question")]
+    ClarificationRequired,
+}
+impl RejectionReason {
+    const ALL: [Self; 10] = [
+        Self::InputInvalid,
+        Self::ContextInvalid,
+        Self::OutputTooLarge,
+        Self::SchemaInvalid,
+        Self::VersionUnsupported,
+        Self::GoalInvalid,
+        Self::HintsInvalid,
+        Self::CapabilitiesInvalid,
+        Self::ClarificationInvalid,
+        Self::ClarificationRequired,
+    ];
+    pub(crate) fn engine_code(self) -> &'static str {
+        match self {
+            Self::InputInvalid => "interpretation_rejected_input",
+            Self::ContextInvalid => "interpretation_rejected_context",
+            Self::OutputTooLarge => "interpretation_rejected_size",
+            Self::SchemaInvalid => "interpretation_rejected_schema",
+            Self::VersionUnsupported => "interpretation_rejected_version",
+            Self::GoalInvalid => "interpretation_rejected_goal",
+            Self::HintsInvalid => "interpretation_rejected_hints",
+            Self::CapabilitiesInvalid => "interpretation_rejected_capabilities",
+            Self::ClarificationInvalid => "interpretation_rejected_question",
+            Self::ClarificationRequired => "interpretation_rejected_clarification",
+        }
+    }
+    pub(crate) fn from_engine_code(code: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|reason| reason.engine_code() == code)
+    }
+    pub(crate) fn explanation(self) -> &'static str {
+        match self {
+            Self::InputInvalid => {
+                "The request text is empty, too large or contains unsupported control characters."
+            }
+            Self::ContextInvalid => "The interpreter's capability context is invalid.",
+            Self::OutputTooLarge => "The interpreter returned more proposal data than allowed.",
+            Self::SchemaInvalid => {
+                "The interpreter returned invalid JSON, fields, types or enum values."
+            }
+            Self::VersionUnsupported => "The interpreter returned an unsupported proposal version.",
+            Self::GoalInvalid => {
+                "The interpreter's goal is empty, too large or contains unsupported control characters."
+            }
+            Self::HintsInvalid => {
+                "The interpreter returned invalid or excessive context hints or constraints."
+            }
+            Self::CapabilitiesInvalid => {
+                "The interpreter returned excessive, duplicate or unavailable capability suggestions."
+            }
+            Self::ClarificationInvalid => {
+                "The interpreter's clarification question is empty, too large or contains unsupported control characters."
+            }
+            Self::ClarificationRequired => {
+                "The interpreter's uncertainty and clarification fields are inconsistent. Uncertain intent or workload requires a question."
+            }
+        }
+    }
+}
+
+/// Only the typed validator error can select a diagnostic; never match its text.
+pub(crate) fn rejection_engine_code(error: anyhow::Error) -> &'static str {
+    error
+        .downcast_ref::<RejectionReason>()
+        .map(|reason| reason.engine_code())
+        .unwrap_or("interpretation_invalid")
+}
+
 /// Read-only vocabulary disclosed by EEF, not routes, permissions or grants.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -172,43 +267,44 @@ pub(crate) fn validate_with_cap_limit(
     allowed_capabilities: &[String],
     cap_limit: usize,
 ) -> Result<ValidatedInterpretation> {
-    text_bound(original_text, MAX_INPUT_BYTES)?;
+    text_bound(original_text, MAX_INPUT_BYTES).map_err(|_| RejectionReason::InputInvalid)?;
     if output.len() > MAX_PROPOSAL_BYTES {
-        bail!("interpretation proposal is oversized");
+        return Err(RejectionReason::OutputTooLarge.into());
     }
-    let allowed = capability_set(allowed_capabilities)?;
+    let allowed =
+        capability_set(allowed_capabilities).map_err(|_| RejectionReason::ContextInvalid)?;
     // Typed deserialization rejects duplicate fields as well as unknown fields.
-    let proposal: Proposal = serde_json::from_slice(output)
-        .map_err(|_| anyhow::anyhow!("invalid interpretation proposal schema"))?;
+    let proposal: Proposal =
+        serde_json::from_slice(output).map_err(|_| RejectionReason::SchemaInvalid)?;
     if proposal.schema_version != 1 {
-        bail!("unsupported interpretation schema version");
+        return Err(RejectionReason::VersionUnsupported.into());
     }
-    text_bound(&proposal.goal, 2048)?;
+    text_bound(&proposal.goal, 2048).map_err(|_| RejectionReason::GoalInvalid)?;
     for hints in [&proposal.context_hints, &proposal.constraints] {
         if hints.len() > MAX_HINTS {
-            bail!("too many interpretation hints");
+            return Err(RejectionReason::HintsInvalid.into());
         }
         for hint in hints {
-            text_bound(hint, 256)?;
+            text_bound(hint, 256).map_err(|_| RejectionReason::HintsInvalid)?;
         }
     }
     if proposal.suggested_capabilities.len() > cap_limit {
-        bail!("too many suggested capabilities");
+        return Err(RejectionReason::CapabilitiesInvalid.into());
     }
     let mut seen = HashSet::new();
     for capability in &proposal.suggested_capabilities {
         if !allowed.contains(capability.as_str()) || !seen.insert(capability) {
-            bail!("unknown or duplicate suggested capability");
+            return Err(RejectionReason::CapabilitiesInvalid.into());
         }
     }
     if let Some(question) = &proposal.clarification {
-        text_bound(question, 1024)?;
+        text_bound(question, 1024).map_err(|_| RejectionReason::ClarificationInvalid)?;
     }
     if proposal.needs_clarification != proposal.clarification.is_some()
         || (proposal.intent == Intent::Unknown && !proposal.needs_clarification)
         || (proposal.workload == Workload::Unknown && !proposal.needs_clarification)
     {
-        bail!("uncertain interpretation needs an explicit clarification question");
+        return Err(RejectionReason::ClarificationRequired.into());
     }
     let review_state = if proposal.needs_clarification {
         ReviewState::ClarificationRequired
@@ -335,6 +431,87 @@ mod tests {
             &serde_json::to_vec(value)?,
             &["system.info".into()],
         )
+    }
+    #[test]
+    fn rejection_categories_are_typed_and_never_include_rejected_contents() {
+        let cases = [
+            (
+                "schema_version",
+                json!(2),
+                RejectionReason::VersionUnsupported,
+            ),
+            (
+                "intent",
+                json!("PRIVATE_MODEL_TEXT"),
+                RejectionReason::SchemaInvalid,
+            ),
+            ("goal", json!(""), RejectionReason::GoalInvalid),
+            (
+                "context_hints",
+                json!(["x".repeat(257)]),
+                RejectionReason::HintsInvalid,
+            ),
+            (
+                "suggested_capabilities",
+                json!(["PRIVATE_MODEL_TEXT"]),
+                RejectionReason::CapabilitiesInvalid,
+            ),
+            (
+                "clarification",
+                json!(""),
+                RejectionReason::ClarificationInvalid,
+            ),
+            (
+                "needs_clarification",
+                json!(true),
+                RejectionReason::ClarificationRequired,
+            ),
+        ];
+        for (field, value, expected) in cases {
+            let mut invalid = candidate();
+            invalid[field] = value;
+            let error = parse(&invalid).unwrap_err();
+            assert_eq!(error.downcast_ref::<RejectionReason>(), Some(&expected));
+            assert!(!format!("{error:#}").contains("PRIVATE_MODEL_TEXT"));
+            assert_eq!(rejection_engine_code(error), expected.engine_code());
+        }
+        for (input, output, capabilities, expected) in [
+            ("", vec![], vec![], RejectionReason::InputInvalid),
+            (
+                "input",
+                vec![0; MAX_PROPOSAL_BYTES + 1],
+                vec![],
+                RejectionReason::OutputTooLarge,
+            ),
+            (
+                "input",
+                b"PRIVATE_MODEL_TEXT".to_vec(),
+                vec![],
+                RejectionReason::SchemaInvalid,
+            ),
+            (
+                "input",
+                vec![],
+                vec!["invalid context".into()],
+                RejectionReason::ContextInvalid,
+            ),
+        ] {
+            let error = validate(input, &output, &capabilities).unwrap_err();
+            assert_eq!(error.downcast_ref::<RejectionReason>(), Some(&expected));
+            assert!(!format!("{error:#}").contains("PRIVATE_MODEL_TEXT"));
+        }
+        for reason in RejectionReason::ALL {
+            assert_eq!(
+                RejectionReason::from_engine_code(reason.engine_code()),
+                Some(reason)
+            );
+        }
+        // Matching an arbitrary error's text would let unrelated data spoof a category.
+        assert_eq!(
+            rejection_engine_code(anyhow::anyhow!("interpretation_rejected_schema")),
+            "interpretation_invalid"
+        );
+        assert_eq!(RejectionReason::from_engine_code("unknown"), None);
     }
     #[test]
     fn generation_schema_is_bounded_and_cannot_advertise_extra_authority() {

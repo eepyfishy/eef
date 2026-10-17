@@ -39,7 +39,15 @@ const fake = createServer(async (req, res) => {
     let body = ''; for await (const chunk of req) body += chunk;
     calls.push(JSON.parse(body));
     if (mode === 'gate') {res.write(' '); gates.add(res); res.on('close', () => gates.delete(res)); return;}
-    const value = proposal(); if (mode === 'invalid') value.permissions = ['everything'];
+    const value = proposal();
+    if (mode === 'invalid') {value.permissions = ['PRIVATE_MODEL_TEXT']; value.PRIVATE_MODEL_TEXT = 'PRIVATE_MODEL_TEXT';}
+    if (mode === 'version') value.schema_version = 2;
+    if (mode === 'goal') value.goal = 'PRIVATE_MODEL_TEXT' + 'x'.repeat(2048);
+    if (mode === 'hints') value.context_hints = ['PRIVATE_MODEL_TEXT' + 'x'.repeat(256)];
+    if (mode === 'capabilities') value.suggested_capabilities = ['PRIVATE_MODEL_TEXT'];
+    if (mode === 'question') {value.needs_clarification = true; value.clarification = 'PRIVATE_MODEL_TEXT' + 'x'.repeat(1024);}
+    if (mode === 'uncertainty') value.intent = 'unknown';
+    if (mode === 'output-size') value.goal = 'PRIVATE_MODEL_TEXT' + 'x'.repeat(16384);
     return res.end(JSON.stringify({message: {content: JSON.stringify(value)}, done: true,
       ...(mode === 'unknown' ? {} : {done_reason: mode === 'partial' ? 'length' : 'stop'})}));
   }
@@ -80,6 +88,18 @@ try {
   for (const [next, expected] of [['invalid', 'interpretation_invalid'], ['partial', 'interpretation_incomplete'], ['unknown', 'interpretation_incomplete']]) {
     mode = next; const result = await preview('Check status', false);
     assert.equal(result.error_code, expected); assert.equal(result.dispatched, false); assert.equal(result.result, undefined);
+    assert.equal(result.rejection_reason, next === 'invalid' ? 'schema_invalid' : undefined);
+    assert(!JSON.stringify(result).includes('PRIVATE_MODEL_TEXT'));
+  }
+  for (const [next, reason] of [['version','version_unsupported'],['goal','goal_invalid'],['hints','hints_invalid'],
+      ['capabilities','capabilities_invalid'],['question','clarification_invalid'],['uncertainty','clarification_required'],['output-size','output_too_large']]) {
+    mode = next; const beforeInvalid = calls.length, result = await preview('Check status', false);
+    assert.equal(result.error_code, 'interpretation_invalid'); assert.equal(result.rejection_reason, reason);
+    assert.equal(result.execution_authorized, false); assert.equal(result.dispatched, false);
+    assert.equal(result.automatically_retried, false); assert.equal(result.result, undefined);
+    assert.equal(calls.length, beforeInvalid + 1, 'invalid proposals must not trigger retries');
+    assert(!JSON.stringify(result).includes('PRIVATE_MODEL_TEXT'), 'rejected output must not leak into diagnostics');
+    assert(result.setup_hint.includes('changed no settings'));
   }
   const endpoint = node + '/api/commands/requests/preview';
   const request = {schema_version: 1, expected_node_id: config.node_id, request_id: randomUUID(), text: 'check'};
@@ -123,7 +143,8 @@ try {
   assert.equal(calls.length, beforeAmbiguous, 'missing/ambiguous role never falls back');
   await writeFile(join(scratch, 'results.json'), JSON.stringify({passed: true, api_only: true, coordinator_required: false,
     preview_only: true, original_input_preserved: true, role_required: true, ambiguous_role_rejected: true,
-    invalid_and_incomplete_rejected: true, no_configuration_changes: true, concurrency_bounded: true,
+    invalid_and_incomplete_rejected: true, rejection_reasons_checked: true, rejected_output_redacted: true,
+    no_configuration_changes: true, concurrency_bounded: true,
     restart_invalidates_inflight: true, inference_timeout_bounded: true, no_automatic_retry: true, no_legacy_fallback: true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request preview checks passed: ' + scratch);

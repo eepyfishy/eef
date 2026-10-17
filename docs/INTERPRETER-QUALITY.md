@@ -608,3 +608,8 @@ The rebuilt reference emits the committed application-context system-prompt hash
 `f9ec6ea9d7341bb7a5594959667b184485d5c9749f6a107c0228ce6866373216`;
 the interpretation source has no diff against the committed baseline. The
 example-based prompt is not retained or shipped.
+
+The subsequent [typed rejection diagnostics](INTERPRETER-REJECTIONS.md) now make
+future structurally rejected proposals more understandable without raw model text
+or relaxed validation. Historical failures recorded only as `interpretation_invalid`
+remain unclassified; no new quality result or default approval is inferred.

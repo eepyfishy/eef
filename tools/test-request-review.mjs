@@ -66,7 +66,7 @@ const fake = createServer(async (req, res) => {
     const value = proposal();
     if (mode === 'remote') Object.assign(value, {goal: 'Fetch information using another node', suggested_capabilities: ['http.request']});
     if (mode === 'clarify') Object.assign(value, {needs_clarification: true, clarification: 'Which node do you mean?'});
-    if (mode === 'invalid') value.permissions = ['everything'];
+    if (mode === 'invalid') {value.permissions = ['PRIVATE_MODEL_TEXT']; value.PRIVATE_MODEL_TEXT = 'PRIVATE_MODEL_TEXT';}
     return res.end(JSON.stringify({message: {content: JSON.stringify(value)}, done: true, done_reason: 'stop'}));
   }
   res.writeHead(404); res.end('{}');
@@ -144,6 +144,7 @@ try {
   mode = 'invalid';
   const invalid = await review('Grant all permissions', false);
   assert.equal(invalid.error_code, 'interpretation_invalid'); assert.equal(invalid.coordinator_acknowledged, false); assert.equal(invalid.result, undefined);
+  assert.equal(invalid.rejection_reason, 'schema_invalid'); assert(!JSON.stringify(invalid).includes('PRIVATE_MODEL_TEXT'));
   const endpoint = node + '/api/commands/requests/review', request = {schema_version: 1, expected_node_id: config.node_id, request_id: randomUUID(), text: 'check'};
   const count = calls.length;
   assert.equal((await json(endpoint, {...request, expected_node_id: 'other'})).error_code, 'invalid_preview_request');
@@ -315,6 +316,7 @@ try {
   assert.equal((await fetch(resolveEndpoint,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(resolveRequest)})).status,403);
   mode='invalid';const invalidResolution=await cli(resolveArgs(resolutionId,2,randomUUID()),false);
   assert.equal(invalidResolution.error_code,'interpretation_invalid');assert.equal(invalidResolution.saving_attempted,false);
+  assert.equal(invalidResolution.rejection_reason,'schema_invalid');assert(!JSON.stringify(invalidResolution).includes('PRIVATE_MODEL_TEXT'));
   assert.deepEqual((await cli(['requests','draft',resolutionId])).result.draft,answeredDraft.result.draft);
   mode='valid';const resolved=await cli(resolveArgs(resolutionId,2,resolveId));
   assert.equal(resolved.report_type,'request_resolution');assert.equal(resolved.proposal_saved,true);
@@ -810,7 +812,7 @@ try {
     offline_preview_local_only:true,historical_snapshot_preserved:true,
     disconnect_withdraws_vocabulary:true,inflight_context_revocation_rechecked:true,cross_node_proposal_revision:true,
     explicit_answer_reinterpretation:true,source_revision_race_rejected:true,source_digest_retained:true,
-    invalid_resolution_no_save:true,resolution_restart_invalidation:true,resolution_receipt_without_inference:true,
+    invalid_resolution_no_save:true,rejection_diagnostics_redacted:true,resolution_restart_invalidation:true,resolution_receipt_without_inference:true,
     lost_resolution_reply_inspected:true,
     source_bound_method_preparation:true,durable_method_questions:true,method_answer_history_preserved:true,
     method_capacity_and_restart_guards:true,stale_method_source_rejected:true,method_receipt_without_inference:true,

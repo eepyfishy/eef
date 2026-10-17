@@ -1221,7 +1221,7 @@ impl NodeEngine {
             .as_str()
             .ok_or("interpretation_invalid")?;
         let interpretation = crate::interpretation::validate(text, output.as_bytes(), capabilities)
-            .map_err(|_| "interpretation_invalid")?;
+            .map_err(crate::interpretation::rejection_engine_code)?;
         Ok(json!({"model":response["model"],"interpretation":interpretation}))
     }
 
@@ -1325,7 +1325,7 @@ impl NodeEngine {
             .as_str()
             .ok_or("interpretation_invalid")?;
         if output.len() > crate::interpretation::MAX_PROPOSAL_BYTES {
-            return Err("interpretation_invalid");
+            return Err(crate::interpretation::RejectionReason::OutputTooLarge.engine_code());
         }
         Ok(json!({"model":{"backend":backend,"model_id":model},"output":output}))
     }

@@ -1,5 +1,11 @@
 # HTTP API
 
+Unreleased [interpreter rejection diagnostics](INTERPRETER-REJECTIONS.md) preserve
+`interpretation_invalid` while adding an optional static `rejection_reason` and
+readable guidance for typed validation failures. Model/parser excerpts are not
+returned. Successful, incomplete, timed-out, missing-role and unclassified replies
+retain their existing semantics; no validation or execution rule is relaxed.
+
 v0.4.0a3: both roles support API-only startup with `--no-ui`. The node HTTP
 adapter is now `eefn::api`; optional browser assets/native picker live separately
 in `eefn::dashboard`. Core configuration, status, connection, startup and update
