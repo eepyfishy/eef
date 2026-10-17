@@ -1369,6 +1369,140 @@ impl NodeEngine {
         Ok(payload)
     }
 
+    pub(crate) fn can_prepare_ollama(&self, model: &str) -> bool {
+        !self.ollama_url.is_empty()
+            && self.ollama_models.get(model).is_some_and(|metadata| {
+                metadata.supports("llm.infer") || metadata.supports("vlm.analyze")
+            })
+    }
+
+    pub(crate) fn supports_ollama_preparation(&self) -> bool {
+        self.ollama_models
+            .keys()
+            .any(|model| self.can_prepare_ollama(model))
+    }
+
+    /// Empty-message preload only. Provider reports do not establish exclusive
+    /// ownership, a memory quota, future residency or successful interpretation.
+    pub(crate) async fn prepare_ollama_checked(
+        &self,
+        model: &str,
+        digest: &str,
+        authorized: impl Fn() -> Result<()>,
+    ) -> Result<crate::model_lifecycle::OllamaPreparationObservation> {
+        use crate::model_lifecycle::{OllamaPreparationObservation, valid_provider_digest};
+        if !self.can_prepare_ollama(model)
+            || !valid_provider_digest(digest)
+            || self.ollama_keep_alive_seconds == Some(0)
+        {
+            bail!("Applied Ollama preparation selection/retention unavailable")
+        }
+        let inspect = async || -> Result<Value> {
+            authorized()?;
+            let response = self
+                .http
+                .get(format!("{}/api/tags", self.ollama_url))
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await?
+                .error_for_status()?;
+            crate::model_manager::bounded_json(response).await
+        };
+        let check_tag = |tags: &Value| -> Result<()> {
+            let matches: Vec<_> = tags["models"]
+                .as_array()
+                .context("Invalid installed model report")?
+                .iter()
+                .filter(|item| item["name"].as_str() == Some(model))
+                .collect();
+            if matches.len() != 1
+                || matches[0]["digest"].as_str() != Some(digest)
+                || !matches[0]["size"].as_u64().is_some_and(|size| size > 0)
+                || ["remote_host", "remote_model"].iter().any(|key| {
+                    matches[0]
+                        .get(*key)
+                        .is_some_and(|v| !v.is_null() && v != "")
+                })
+            {
+                bail!("Installed local Ollama identity changed or unavailable")
+            }
+            Ok(())
+        };
+        check_tag(&inspect().await?)?;
+        // Nothing from user/model input is included. No prompt, template, tools,
+        // system message, thinking or sampling option can turn this into inference.
+        let mut payload = json!({"model":model,"messages":[],"stream":false});
+        if let Some(context) = self.ollama_context_tokens {
+            payload["options"]["num_ctx"] = json!(context);
+        }
+        if let Some(retention) = self.ollama_keep_alive_seconds {
+            payload["keep_alive"] = json!(retention);
+        }
+        authorized()?;
+        let response = self
+            .http
+            .post(format!("{}/api/chat", self.ollama_url))
+            .json(&payload)
+            .send()
+            .await?
+            .error_for_status()?;
+        let result = crate::model_manager::bounded_json(response).await?;
+        if result.get("error").is_some_and(|v| !v.is_null())
+            || result["done"] != true
+            || result["done_reason"] != "load"
+            || ["content", "thinking"].iter().any(|key| {
+                result["message"]
+                    .get(*key)
+                    .is_some_and(|v| v != "" && !v.is_null())
+            })
+            || result["message"]
+                .get("tool_calls")
+                .is_some_and(|v| !v.is_null() && v != &json!([]))
+        {
+            bail!("Ollama did not confirm empty-request preparation")
+        }
+        check_tag(&inspect().await?)?;
+        authorized()?;
+        let response = self
+            .http
+            .get(format!("{}/api/ps", self.ollama_url))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?
+            .error_for_status()?;
+        let residency = crate::model_manager::bounded_json(response).await?;
+        let matches: Vec<_> = residency["models"]
+            .as_array()
+            .context("Invalid residency report")?
+            .iter()
+            .filter(|item| item["digest"].as_str() == Some(digest))
+            .collect();
+        if matches.len() != 1 {
+            bail!("Prepared model is not uniquely reported resident")
+        }
+        let context = match matches[0].get("context_length") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(u32::try_from(
+                value
+                    .as_u64()
+                    .filter(|v| *v > 0)
+                    .context("Invalid context report")?,
+            )?),
+        };
+        if self
+            .ollama_context_tokens
+            .zip(context)
+            .is_some_and(|(wanted, reported)| wanted != reported)
+        {
+            bail!("Provider reports a different prepared context")
+        }
+        authorized()?;
+        Ok(OllamaPreparationObservation {
+            provider_reported_digest: digest.into(),
+            observed_context_tokens: context,
+        })
+    }
+
     async fn ollama(
         &self,
         params: &Value,

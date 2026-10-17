@@ -84,12 +84,19 @@ unload, cancellation targets only one load, and exact receipt reuse never replay
 Remote mutations require current node-owner management approval. No model files
 are deleted, no model is selected/downloaded and no inference is authorized.
 
+The same worker now accepts `prepare-ollama --model MODEL_ID --digest
+PROVIDER_DIGEST --operation-id OPERATION_UUID`, with the exact applied runtime.
+It prepares an already-installed applied Ollama selection using empty messages,
+then records matching provider residency. Remote owner approval, bounded queue,
+receipt inspection/cancellation and no-replay semantics remain. Cancellation
+never stops/unloads the shared service. See [contract and limits](OLLAMA-PREPARATION.md).
+
 Lifecycle Show also returns scoped owned-job accounting when available: observed
 job-commit ceiling, peak commit, active process count and cumulative CPU ticks.
 Missing/unsupported/failed observations are explicit, never zero estimates.
 See [states, units and limits](OWNED-JOB-ACCOUNTING.md); these are not RAM/VRAM
 quotas, readiness evidence or permission to execute.
-Ollama is not controlled by this increment. See [commands, bounds and remaining
+Ollama has no owned-process accounting or forced unload. See [commands, bounds and remaining
 lifecycle work](MODEL-LIFECYCLE.md).
 
 ## Finite local pipeline authoring (unreleased after alpha.6)

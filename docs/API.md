@@ -316,3 +316,15 @@ route filtering](MODEL-METADATA.md). This does not grant execution access.
 The node's local owner POST `/api/commands/models` now supports typed saved model
 selection changes and inspection, distinct from the coordinator's read-only GET
 inventory. See [command schemas and saved/applied semantics](COMMANDS.md).
+
+## Shared-Ollama preparation extension (unreleased)
+
+Existing model-lifecycle owner/remote endpoints also accept `command.operation:
+"prepare_ollama"` with exact `model`, provider-reported `digest` and `operation_id`.
+Mutations require `expected_runtime_id`. Preparation uses the existing queue and
+retained receipts, not inference authorization. Ollama reports add optional
+`ollama_preparation_supported:true`; `supported` retains owned-GGUF semantics.
+Preparation receipts require `shared_service_effects_possible:true`; completed
+ones add `preparation:{provider_reported_digest,observed_context_tokens}`. Missing
+context stays null. Cancellation/timeout/restart never proves shared server work
+ended. See [full contract and failure semantics](OLLAMA-PREPARATION.md).

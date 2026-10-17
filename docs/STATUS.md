@@ -1,5 +1,29 @@
 # Architecture conformance status
 
+## Unreleased: explicit Ollama model preparation (2026-10-17)
+
+The existing model lifecycle worker/queue now accepts owner-directed
+`prepare-ollama`, locally and over approved authenticated coordinator commands.
+It checks the applied selection/runtime/policy and exact installed digest, uses
+empty-message loading, and confirms identity/residency afterward. Saved `auto`
+works only when Ollama is actually applied. Reports distinguish shared effects
+from owned GGUF state; cancellation/timeout never forces an unload or claims
+server work ended. Receipts are bounded, runtime-local and never replayed.
+
+Both final locked/offline workspace/all-target suites pass **726 tests plus one
+ignored each**, including no-dashboard. Fresh binaries/examples build. Public
+synthetic preparation, observer and existing preview/policy regressions cover
+identity/authority/cancellation and preservation of owned lifecycle behavior.
+The real existing-Ollama run completes preparation in **12,982 ms**, matching
+reported digest and 4,096 context. Its subsequent warm preview **still times out**
+after **20,026 ms**: no accepted proposal or quality approval, no automatic retry
+or changed inference deadline. See [exact evidence and limits](OLLAMA-PREPARATION.md#verification-2026-10-17).
+
+This removes a missing explicit loading operation, not full automatic bootstrap,
+model-quality/latency acceptance, physical two-PC or release gates. No downloads,
+model copies, shared-service changes, installed app/physical node updates,
+dashboard, release version or stable update feed changed.
+
 ## Unreleased: owner-controlled Ollama context (2026-10-17)
 
 Local/offline and owner-approved coordinator commands can save/reset the optional

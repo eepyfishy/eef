@@ -14,6 +14,7 @@ for(const [allow,args,pattern] of [
  ['1',['fixture','http://user:secret@127.0.0.1:11434'],/IP-literal loopback/],
  ['1',['fixture','http://127.0.0.1:11434/path'],/IP-literal loopback/],
  ['1',['fixture','http://127.0.0.1:11434/?query=1'],/IP-literal loopback/],
+ ['1',['fixture','http://127.0.0.1:11434','--unexpected'],/Only optional --prepare/],
 ]){
  const child=spawnSync(process.execPath,[script,...args],{cwd:root,windowsHide:true,timeout:10000,maxBuffer:65536,
   env:{...process.env,EEF_TEST_ALLOW_SHARED_OLLAMA:allow}});

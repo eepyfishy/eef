@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The same lifecycle worker now supports explicit shared-Ollama preparation with
+owner-approved commands, applied selection/policy/runtime checks, exact installed
+digest, bounded receipts and empty-message loading. `auto` follows the actual
+applied engine. Shared cancellation/timeout is not forced unload or proof of
+termination. Both suites pass 726 tests plus one ignored each; public synthetic
+identity/authority/cancellation regressions pass. Real existing-provider
+preparation completes in 12,982 ms with matching digest/context, but the one warm
+preview still times out at 20,026 ms. The full fixture is failed, not model-quality
+or latency acceptance. See [evidence and remaining scope](OLLAMA-PREPARATION.md).
+Automatic bootstrap, reliable interpretation and physical/release gates remain.
+
 Owner commands now save/reset a node-wide optional Ollama context window through
 the existing lifecycle policy service, preserving inherited defaults and explicit
 restart semantics. Both suites pass 720 tests plus one ignored each; synthetic

@@ -1,4 +1,4 @@
-//! Runtime-owned selected-GGUF lifecycle controls, not workload authorization.
+//! Runtime-owned model lifecycle controls, not workload authorization.
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -29,6 +29,17 @@ pub enum LifecycleCommand {
         #[arg(long)]
         operation_id: String,
     },
+    /// Prepare an installed applied Ollama selection without generating text.
+    /// Shared residency can change; cancellation never unloads the shared model.
+    PrepareOllama {
+        #[arg(long)]
+        model: String,
+        /// Exact provider-reported digest from installed-model inspection.
+        #[arg(long)]
+        digest: String,
+        #[arg(long)]
+        operation_id: String,
+    },
     /// Unload only when no EEF-owned inference pin is active; no forced stop.
     Unload {
         #[arg(long)]
@@ -38,7 +49,7 @@ pub enum LifecycleCommand {
         #[arg(long)]
         operation_id: String,
     },
-    /// Cancel this exact queued/running load; never cancel inference or another receipt.
+    /// Cancel this exact queued/running load/preparation; never cancel inference.
     Cancel {
         #[arg(long)]
         operation_id: String,
@@ -75,6 +86,17 @@ impl LifecycleRequest {
             crate::automation_occurrence::uuid(id)?;
         }
         match &self.command {
+            LifecycleCommand::PrepareOllama {
+                model,
+                digest,
+                operation_id,
+            } => {
+                crate::model_selection::validate_id(model)?;
+                crate::automation_occurrence::uuid(operation_id)?;
+                if !valid_provider_digest(digest) {
+                    bail!("Inspect the installed Ollama model's exact SHA-256 digest")
+                }
+            }
             LifecycleCommand::Load {
                 model,
                 operation_id,
@@ -106,6 +128,23 @@ struct Receipt {
     command: LifecycleCommand,
     phase: String,
     error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    shared_service_effects_possible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preparation: Option<OllamaPreparationObservation>,
+}
+/// A point-in-time provider report, not a verified file hash or residency lease.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OllamaPreparationObservation {
+    pub provider_reported_digest: String,
+    pub observed_context_tokens: Option<u32>,
+}
+pub(crate) fn valid_provider_digest(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 struct Operation {
     receipt: Receipt,
@@ -273,8 +312,11 @@ impl crate::NodeService {
                 let old = records
                     .get_mut(operation_id)
                     .context("Model lifecycle receipt unavailable")?;
-                if !matches!(old.receipt.command, LifecycleCommand::Load { .. }) {
-                    bail!("Only an exact load can be cancelled")
+                if !matches!(
+                    old.receipt.command,
+                    LifecycleCommand::Load { .. } | LifecycleCommand::PrepareOllama { .. }
+                ) {
+                    bail!("Only an exact load or preparation can be cancelled")
                 }
                 if matches!(old.receipt.phase.as_str(), "queued" | "running") {
                     self.inspect_grant_configuration(|config| {
@@ -291,6 +333,40 @@ impl crate::NodeService {
                     })?;
                 } else {
                     reused = true;
+                }
+                Some(operation_id.clone())
+            }
+            LifecycleCommand::PrepareOllama {
+                model,
+                operation_id,
+                ..
+            } => {
+                let mut records = runtime.records.lock().unwrap();
+                if let Some(old) = records.get(operation_id) {
+                    if old.receipt.command != request.command {
+                        bail!("Model lifecycle receipt conflicts; inspect original")
+                    }
+                    reused = true;
+                } else {
+                    if records.len() >= runtime.policy.receipt_capacity {
+                        bail!("Model lifecycle receipt capacity reached; no admission")
+                    }
+                    let engine = runtime.engine.upgrade().context("Model runtime closed")?;
+                    self.inspect_grant_configuration(|config| {
+                        runtime.authorized(config, remote)?;
+                        if !matches!(config.pointer("/models/provider").and_then(Value::as_str).unwrap_or("auto"), "auto" | "ollama")
+                            || !engine.can_prepare_ollama(model)
+                            || runtime.policy.ollama_keep_alive_seconds == Some(0) {
+                            bail!("Applied Ollama preparation unavailable; inspect selection and retention")
+                        }
+                        runtime.queue.try_send(operation_id.clone())?;
+                        records.insert(operation_id.clone(), Operation {
+                            receipt: Receipt { command: request.command.clone(), phase: "queued".into(), error_code: None,
+                                shared_service_effects_possible: true, preparation: None },
+                            cancel: watch::channel(false).0, remote,
+                        });
+                        Ok(())
+                    })?;
                 }
                 Some(operation_id.clone())
             }
@@ -333,7 +409,8 @@ impl crate::NodeService {
                             return Err(error.into());
                         }
                         records.insert(operation_id.clone(), Operation {
-                            receipt: Receipt { command: request.command.clone(), phase: "queued".into(), error_code: None },
+                            receipt: Receipt { command: request.command.clone(), phase: "queued".into(), error_code: None,
+                                shared_service_effects_possible: false, preparation: None },
                             cancel: watch::channel(false).0,
                             remote,
                         });
@@ -361,11 +438,18 @@ impl crate::NodeService {
             .map(|s| s.snapshot())
             .transpose()?
             .unwrap_or_default();
-        let reply = json!({"schema_version":1,"report_type":"model_lifecycle","node_id":self.node_id,"runtime_id":runtime.id,
+        let mut reply = json!({"schema_version":1,"report_type":"model_lifecycle","node_id":self.node_id,"runtime_id":runtime.id,
             "command":request.command,"supported":runtime.server.is_some(),"models":models,"receipt":receipt,"reused":reused,
             "idle_events":runtime.idle_events.lock().unwrap().iter().cloned().collect::<Vec<_>>(),
             "execution_authorized":false,"model_inference_requested":false,"file_deletion":false,"automatically_retried":false,
-            "note":"Private selected-GGUF runtime state. Load/unload controls owned processes, not inference permission or physical memory guarantees. Exact receipt reuse never replays. Runtime restart interrupts, never resumes, model operations."});
+            "note":"Load/unload controls owned GGUF processes. Ollama preparation observes shared residency only; cancellation/timeout/restart does not undo shared effects. Neither grants inference permission or physical memory guarantees. Exact receipt reuse never replays. Restart interrupts, never resumes, model operations."});
+        if runtime
+            .engine
+            .upgrade()
+            .is_some_and(|engine| engine.supports_ollama_preparation())
+        {
+            reply["ollama_preparation_supported"] = json!(true);
+        }
         if !confirmed(&reply, &request) {
             bail!("Model lifecycle reply not confirmed; inspect exact receipt")
         }
@@ -450,41 +534,50 @@ impl ModelRuntime {
                 op.receipt.phase = "running".into();
                 (op.receipt.command.clone(), op.cancel.subscribe(), op.remote)
             };
-            let server = self
-                .server
-                .as_ref()
-                .context("Owned model runtime unavailable")?;
             let model = match &command {
-                LifecycleCommand::Load { model, .. } | LifecycleCommand::Unload { model, .. } => {
-                    model
-                }
+                LifecycleCommand::Load { model, .. }
+                | LifecycleCommand::Unload { model, .. }
+                | LifecycleCommand::PrepareOllama { model, .. } => model,
                 _ => unreachable!(),
             };
             let mut cancelled = *cancel.borrow_and_update();
             let outcome = if cancelled {
-                Ok(())
+                Ok(None)
             } else {
                 tokio::select! {biased;
-                    _=cancel.changed()=>{cancelled=true;Ok(())},
+                    _=cancel.changed()=>{cancelled=true;Ok(None)},
                     result=async {match &command {
+                        LifecycleCommand::PrepareOllama{digest,..}=>{
+                            let service=self.service.upgrade().context("model owner service closed")?;
+                            let engine=self.engine.upgrade().context("model engine closed")?;
+                            tokio::time::timeout(Duration::from_secs(self.policy.load_timeout_seconds),
+                                engine.prepare_ollama_checked(model,digest,||service.inspect_grant_configuration(|config|self.authorized(config,remote))))
+                                .await.context("Ollama preparation deadline exceeded")?.map(Some)
+                        },
                         LifecycleCommand::Load{..}=>{
+                            let server=self.server.as_ref().context("Owned model runtime unavailable")?;
                             let service=self.service.upgrade().context("model owner service closed")?;
                             server.load_reserved_checked(model,&id,Duration::from_secs(self.policy.load_timeout_seconds),|slot|{
                             service.inspect_grant_configuration(|config| {
                                 self.authorized(config,remote)?;
                                 server.spawn_slot(slot,Some(&id))
                             })
-                            },||service.guard_grant_configuration(|config|self.authorized(config,remote))).await
+                            },||service.guard_grant_configuration(|config|self.authorized(config,remote))).await.map(|()|None)
                         },
                         LifecycleCommand::Unload{..}=>{
+                            let server=self.server.as_ref().context("Owned model runtime unavailable")?;
                             let service=self.service.upgrade().context("model owner service closed")?;
-                            server.unload_reserved_with_timeout(model,&id,Duration::from_secs(self.policy.termination_wait_seconds),||service.guard_grant_configuration(|config|self.authorized(config,remote))).await
+                            server.unload_reserved_with_timeout(model,&id,Duration::from_secs(self.policy.termination_wait_seconds),||service.guard_grant_configuration(|config|self.authorized(config,remote))).await.map(|()|None)
                         },
                         _=>unreachable!(),
                     }}=>result,
                 }
             };
-            server.release_control(model, &id);
+            if !matches!(command, LifecycleCommand::PrepareOllama { .. }) {
+                if let Some(server) = &self.server {
+                    server.release_control(model, &id);
+                }
+            }
             let mut records = self.records.lock().unwrap();
             let op = records.get_mut(&id).context("Model receipt disappeared")?;
             if op.receipt.phase == "interrupted" {
@@ -498,7 +591,19 @@ impl ModelRuntime {
                 "failed"
             }
             .into();
-            op.receipt.error_code = outcome.err().map(|_| "owned_model_operation_failed".into());
+            match outcome {
+                Ok(observation) => op.receipt.preparation = observation,
+                Err(_) => {
+                    op.receipt.error_code = Some(
+                        if matches!(command, LifecycleCommand::PrepareOllama { .. }) {
+                            "ollama_preparation_failed"
+                        } else {
+                            "owned_model_operation_failed"
+                        }
+                        .into(),
+                    )
+                }
+            }
         }
         Ok(())
     }
@@ -591,6 +696,8 @@ struct Report {
     runtime_id: String,
     command: LifecycleCommand,
     supported: bool,
+    #[serde(default)]
+    ollama_preparation_supported: bool,
     models: Vec<Snapshot>,
     #[serde(default)]
     idle_events: Vec<IdleEvent>,
@@ -661,6 +768,7 @@ pub fn confirmed(value: &Value, request: &LifecycleRequest) -> bool {
         LifecycleCommand::Show { operation_id } => operation_id.as_deref(),
         LifecycleCommand::Load { operation_id, .. }
         | LifecycleCommand::Unload { operation_id, .. }
+        | LifecycleCommand::PrepareOllama { operation_id, .. }
         | LifecycleCommand::Cancel { operation_id } => Some(operation_id.as_str()),
     };
     if selected.is_some() != r.receipt.is_some() {
@@ -673,11 +781,23 @@ pub fn confirmed(value: &Value, request: &LifecycleRequest) -> bool {
             expected_runtime_id: Some(r.runtime_id.clone()),
             command: receipt.command.clone(),
         };
-        if nested.validate().is_err() || !r.supported {
+        let shared = matches!(receipt.command, LifecycleCommand::PrepareOllama { .. });
+        if nested.validate().is_err()
+            || (if shared {
+                !r.ollama_preparation_supported
+            } else {
+                !r.supported
+            })
+            || receipt.shared_service_effects_possible != shared
+            || receipt.preparation.is_some() != (shared && receipt.phase == "completed")
+        {
             return false;
         }
         if matches!(request.command, LifecycleCommand::Cancel { .. })
-            && !matches!(receipt.command, LifecycleCommand::Load { .. })
+            && !matches!(
+                receipt.command,
+                LifecycleCommand::Load { .. } | LifecycleCommand::PrepareOllama { .. }
+            )
         {
             return false;
         }
@@ -700,6 +820,21 @@ pub fn confirmed(value: &Value, request: &LifecycleRequest) -> bool {
             return false;
         }
         match &receipt.command {
+            LifecycleCommand::PrepareOllama {
+                operation_id,
+                digest,
+                ..
+            } => {
+                if Some(operation_id.as_str()) != selected
+                    || receipt.preparation.as_ref().is_some_and(|p| {
+                        p.provider_reported_digest != *digest
+                            || !valid_provider_digest(&p.provider_reported_digest)
+                            || p.observed_context_tokens == Some(0)
+                    })
+                {
+                    return false;
+                }
+            }
             LifecycleCommand::Load { operation_id, .. }
             | LifecycleCommand::Unload { operation_id, .. } => {
                 if Some(operation_id.as_str()) != selected {
@@ -710,7 +845,9 @@ pub fn confirmed(value: &Value, request: &LifecycleRequest) -> bool {
         }
         if matches!(
             request.command,
-            LifecycleCommand::Load { .. } | LifecycleCommand::Unload { .. }
+            LifecycleCommand::Load { .. }
+                | LifecycleCommand::Unload { .. }
+                | LifecycleCommand::PrepareOllama { .. }
         ) && receipt.command != request.command
         {
             return false;
@@ -764,6 +901,337 @@ mod tests {
             expected_runtime_id: Some(guard.runtime.id.clone()),
             command,
         }
+    }
+    fn ollama_fixture() -> (
+        tempfile::TempDir,
+        Arc<crate::NodeService>,
+        Arc<crate::NodeEngine>,
+        ModelRuntimeGuard,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+            ollama_context_tokens: Some(4096),
+            ollama_keep_alive_seconds: Some(60),
+            ..Default::default()
+        };
+        let selected: crate::SelectedModel =
+            serde_json::from_value(json!({"model_id":"selected","modality":"text"})).unwrap();
+        crate::setup::write_json(&path, &json!({"node_id":"owner","models":{"provider":"ollama",
+            "ollama":{"base_url":"http://127.0.0.1:1","selected":[selected]}},"model_lifecycle":policy,"management":{"allow_remote":true}})).unwrap();
+        let service = crate::NodeService::new(path, "owner".into());
+        let engine = Arc::new(
+            crate::NodeEngine::new(false, vec![], dir.path().into())
+                .unwrap()
+                .with_service(service.clone())
+                .with_ollama("http://127.0.0.1:1".into(), [selected])
+                .unwrap()
+                .with_model_request_preferences(&policy)
+                .unwrap(),
+        );
+        let guard = service
+            .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        (dir, service, engine, guard)
+    }
+    fn prepare_command() -> LifecycleCommand {
+        LifecycleCommand::PrepareOllama {
+            model: "selected".into(),
+            digest: "a".repeat(64),
+            operation_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+    #[tokio::test]
+    async fn auto_provider_prepares_only_when_ollama_is_actually_applied() {
+        let (_dir, service, engine, guard) = ollama_fixture();
+        let mut config = service.read_config().unwrap();
+        config["models"]["provider"] = json!("auto");
+        service.save_config(config).unwrap();
+        drop(guard);
+        let guard = service
+            .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        let reply = service
+            .model_lifecycle_command(request(&guard, prepare_command()), false)
+            .await
+            .unwrap();
+        assert_eq!(reply["ollama_preparation_supported"], true);
+        assert_eq!(reply["receipt"]["phase"], "queued");
+        let (dir, service, _old_engine, guard) = fixture();
+        let mut config = service.read_config().unwrap();
+        config["models"]["provider"] = json!("auto");
+        service.save_config(config).unwrap();
+        drop(guard);
+        // A real restart builds a fresh engine. The old owned GGUF server is
+        // permanently closed by its guard and must never be reused here.
+        let engine = Arc::new(
+            crate::NodeEngine::new(false, vec![], dir.path().into())
+                .unwrap()
+                .with_service(service.clone()),
+        );
+        let guard = service
+            .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+            .unwrap();
+        let reply = service
+            .model_lifecycle_command(
+                request(&guard, LifecycleCommand::Show { operation_id: None }),
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(reply.get("ollama_preparation_supported").is_none());
+        assert!(
+            service
+                .model_lifecycle_command(request(&guard, prepare_command()), false)
+                .await
+                .is_err()
+        );
+    }
+    #[test]
+    fn preparation_requires_exact_digest_runtime_and_explicit_cli_arguments() {
+        use clap::Parser;
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: LifecycleArgs,
+        }
+        let runtime = uuid::Uuid::new_v4().to_string();
+        let id = uuid::Uuid::new_v4().to_string();
+        let digest = "a".repeat(64);
+        let cli = Cli::try_parse_from([
+            "policy",
+            "--runtime",
+            &runtime,
+            "prepare-ollama",
+            "--model",
+            "selected",
+            "--digest",
+            &digest,
+            "--operation-id",
+            &id,
+        ])
+        .unwrap();
+        let mut request = LifecycleRequest {
+            schema_version: 1,
+            expected_node_id: "owner".into(),
+            expected_runtime_id: cli.args.runtime,
+            command: cli.args.command,
+        };
+        request.validate().unwrap();
+        for bad in [
+            "A".repeat(64),
+            "a".repeat(63),
+            "x".repeat(64),
+            "sha256:".to_string() + &digest,
+        ] {
+            if let LifecycleCommand::PrepareOllama { digest, .. } = &mut request.command {
+                *digest = bad;
+            }
+            assert!(request.validate().is_err());
+        }
+        request.command = prepare_command();
+        request.expected_runtime_id = None;
+        assert!(request.validate().is_err());
+        assert!(
+            Cli::try_parse_from([
+                "policy",
+                "prepare-ollama",
+                "--model",
+                "selected",
+                "--operation-id",
+                &id
+            ])
+            .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn shared_preparation_admission_cancel_and_historical_reuse_never_claim_owned_unload() {
+        let (_dir, service, engine, guard) = ollama_fixture();
+        assert!(engine.can_prepare_ollama("selected"));
+        assert!(!engine.can_prepare_ollama("not-selected"));
+        let req = request(&guard, prepare_command());
+        let queued = service
+            .model_lifecycle_command(req.clone(), true)
+            .await
+            .unwrap();
+        assert!(confirmed(&queued, &req));
+        assert_eq!(queued["supported"], false);
+        assert_eq!(queued["ollama_preparation_supported"], true);
+        assert_eq!(queued["receipt"]["shared_service_effects_possible"], true);
+        assert!(queued["models"].as_array().unwrap().is_empty());
+        let LifecycleCommand::PrepareOllama { operation_id, .. } = &req.command else {
+            unreachable!()
+        };
+        service
+            .model_lifecycle_command(
+                request(
+                    &guard,
+                    LifecycleCommand::Cancel {
+                        operation_id: operation_id.clone(),
+                    },
+                ),
+                false,
+            )
+            .await
+            .unwrap();
+        let worker = guard.runtime.clone();
+        let task = tokio::spawn(async move { worker.run().await });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if guard.runtime.records.lock().unwrap()[operation_id]
+                    .receipt
+                    .phase
+                    == "cancelled"
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let reply = service
+            .model_lifecycle_command(req.clone(), false)
+            .await
+            .unwrap();
+        assert_eq!(reply["reused"], true);
+        assert_eq!(reply["receipt"]["shared_service_effects_possible"], true);
+        assert!(reply["receipt"].get("preparation").is_none());
+        assert!(confirmed(&reply, &req));
+        let mut conflict = req.clone();
+        if let LifecycleCommand::PrepareOllama { digest, .. } = &mut conflict.command {
+            *digest = "b".repeat(64);
+        }
+        assert!(
+            service
+                .model_lifecycle_command(conflict, false)
+                .await
+                .is_err()
+        );
+        guard.runtime.close();
+        task.await.unwrap().unwrap();
+    }
+    #[tokio::test]
+    async fn shared_preparation_denies_wrong_backend_selection_approval_and_pending_policy() {
+        let (_dir, service, engine, guard) = ollama_fixture();
+        let req = request(&guard, prepare_command());
+        let mut wrong = req.clone();
+        if let LifecycleCommand::PrepareOllama { model, .. } = &mut wrong.command {
+            *model = "other".into();
+        }
+        assert!(service.model_lifecycle_command(wrong, false).await.is_err());
+        let mut config = service.read_config().unwrap();
+        config["management"]["allow_remote"] = json!(false);
+        service.save_config(config.clone()).unwrap();
+        assert!(
+            service
+                .model_lifecycle_command(req.clone(), true)
+                .await
+                .is_err()
+        );
+        config["model_lifecycle"]["ollama_context_tokens"] = json!(8192);
+        service.save_config(config).unwrap();
+        assert!(service.model_lifecycle_command(req, false).await.is_err());
+        assert!(guard.runtime.records.lock().unwrap().is_empty());
+        let no_network = std::sync::atomic::AtomicUsize::new(0);
+        assert!(
+            engine
+                .prepare_ollama_checked("selected", &"a".repeat(64), || {
+                    no_network.fetch_add(1, Ordering::SeqCst);
+                    bail!("revoked")
+                })
+                .await
+                .is_err()
+        );
+        assert_eq!(no_network.load(Ordering::SeqCst), 1);
+        let (_dir, service, _engine, guard) = fixture();
+        assert!(
+            service
+                .model_lifecycle_command(request(&guard, prepare_command()), false)
+                .await
+                .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn shared_preparation_queue_and_receipts_share_bounded_admission() {
+        let (_dir, service, _engine, guard) = ollama_fixture();
+        for _ in 0..guard.policy().queue_capacity {
+            service
+                .model_lifecycle_command(request(&guard, prepare_command()), false)
+                .await
+                .unwrap();
+        }
+        assert!(
+            service
+                .model_lifecycle_command(request(&guard, prepare_command()), false)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            guard.runtime.records.lock().unwrap().len(),
+            guard.policy().queue_capacity
+        );
+        guard.runtime.close();
+        assert!(
+            guard
+                .runtime
+                .records
+                .lock()
+                .unwrap()
+                .values()
+                .all(|op| op.receipt.phase == "interrupted"
+                    && op.receipt.shared_service_effects_possible)
+        );
+    }
+    #[tokio::test]
+    async fn shared_preparation_completion_reports_cannot_drop_effects_or_substitute_identity() {
+        let (_dir, service, _engine, guard) = ollama_fixture();
+        let req = request(&guard, prepare_command());
+        let mut report = service
+            .model_lifecycle_command(req.clone(), false)
+            .await
+            .unwrap();
+        report["receipt"]["phase"] = json!("completed");
+        assert!(!confirmed(&report, &req));
+        report["receipt"]["preparation"] =
+            json!({"provider_reported_digest":"a".repeat(64),"observed_context_tokens":4096});
+        assert!(confirmed(&report, &req));
+        for (pointer, value) in [
+            ("/receipt/shared_service_effects_possible", json!(false)),
+            ("/ollama_preparation_supported", json!(false)),
+            (
+                "/receipt/preparation/provider_reported_digest",
+                json!("b".repeat(64)),
+            ),
+            ("/receipt/preparation/observed_context_tokens", json!(0)),
+            ("/receipt/phase", json!("cancelled")),
+            ("/model_inference_requested", json!(true)),
+            ("/execution_authorized", json!(true)),
+        ] {
+            let mut bad = report.clone();
+            *bad.pointer_mut(pointer).unwrap() = value;
+            assert!(!confirmed(&bad, &req), "{pointer}");
+        }
+        let (_dir, service, _engine, guard) = fixture();
+        let legacy = request(
+            &guard,
+            LifecycleCommand::Load {
+                model: "selected".into(),
+                generation: 0,
+                operation_id: uuid::Uuid::new_v4().to_string(),
+            },
+        );
+        let old = service
+            .model_lifecycle_command(legacy.clone(), false)
+            .await
+            .unwrap();
+        assert!(old.get("ollama_preparation_supported").is_none());
+        assert!(
+            old["receipt"]
+                .get("shared_service_effects_possible")
+                .is_none()
+        );
+        assert!(confirmed(&old, &legacy));
     }
     #[tokio::test]
     async fn exact_load_receipts_are_bounded_inspection_and_cancel_without_spawning() {
@@ -1105,6 +1573,8 @@ mod tests {
                         command: command.command.clone(),
                         phase: "cancelled".into(),
                         error_code: None,
+                        shared_service_effects_possible: false,
+                        preparation: None,
                     },
                     cancel: watch::channel(false).0,
                     remote: false,

@@ -1,5 +1,9 @@
 # Selected GGUF lifecycle commands
 
+The subsequent [shared-Ollama preparation](OLLAMA-PREPARATION.md) operation
+extends this same worker and receipt service. Its observed shared residency is
+not the owned-process load/unload behavior described below.
+
 Unreleased after `0.4.0-alpha.6`. This is the manual owned-GGUF increment,
 not completion of the full model lifecycle roadmap or stable 0.4.0.
 Commands use the running node service; no dashboard, model inference, model

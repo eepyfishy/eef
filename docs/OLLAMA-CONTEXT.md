@@ -113,3 +113,8 @@ or performed by this checkpoint. That operation still needs explicit owner
 admission, applied-selection/context checks, bounded status/cancellation and
 truthful shared-service side-effect reporting; it must not retry inference or
 claim exclusive ownership of shared residency.
+
+The subsequent [preparation checkpoint](OLLAMA-PREPARATION.md#verification-2026-10-17)
+implements this owner command and completes one real-provider preparation. Its
+following preview still times out; the original failed cold run above remains
+unchanged, and reliable/default interpretation is not approved.
