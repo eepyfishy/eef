@@ -24,8 +24,9 @@ the partial was cleaned up and no model was installed or selected.
   Ordinary cancellation/failure still removes the owned partial. An in-process
   node-runtime restart leaves the same service-owned transfer alive, with its
   existing receipt; there is no repeated install or new transfer budget. Full
-  app replacement loses that in-memory receipt and never automatically resumes
-  or replays the transfer. A crash/forced termination can leave an abandoned
+  app replacement now retains an interrupted admission/outcome receipt under the
+  [subsequent durable-receipt increment](MODEL-INSTALL-RECEIPTS.md), without byte
+  progress restoration or automatic resume/replay. A crash/forced termination can leave an abandoned
   partial on disk; it is never trusted or resumed. Automatic orphan reclamation
   is not implemented. Ollama pulls retain their existing semantics.
 
@@ -54,8 +55,10 @@ or accepting an unverifiable prefix.
   an actual public restart command during a mock pull: runtime changes, owner
   process remains, transfer ID/progress survive and exactly one provider request
   was issued. Exact cancellation still works afterwards. Forced replacement of
-  the isolated owner during another mock pull starts idle, loses the old receipt
-  and does not repeat the provider request. These are service-lifetime checks,
+  the isolated owner during another mock pull originally started idle, lost the
+  old receipt and did not repeat the provider request. This historical behavior
+  is superseded by durable interrupted receipts, not automatic continuation.
+  These are service-lifetime checks,
   not proof of GGUF cleanup on a crash or durable transfer recovery. The first
   expanded fixture (`model-downloads-y1Ujvv`) failed a wrongly placed expected
   request-count assertion; moving the process-replacement scenario after the

@@ -15,6 +15,7 @@ pub mod context;
 pub mod credential_pairing;
 pub mod crypto;
 pub mod dashboard;
+mod download_receipts;
 pub mod engine;
 pub mod enrollment;
 pub mod execution_boundary;

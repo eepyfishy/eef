@@ -1,5 +1,5 @@
 //! Local owner model-transfer commands, backed by the existing installer.
-//! Receipts identify the latest in-memory transfer; this is not a durable ledger.
+//! Durable installation receipts; byte progress remains live-only, never resumed.
 use crate::NodeService;
 use anyhow::{Result, bail};
 use clap::Subcommand;
@@ -28,7 +28,7 @@ pub enum NodeModelsAction {
         #[arg(long)]
         model: String,
     },
-    /// Inspect the latest retained download, optionally requiring an exact receipt.
+    /// Inspect a retained installation outcome and current live progress when available.
     DownloadStatus {
         #[arg(long)]
         id: Option<String>,
@@ -132,10 +132,16 @@ impl NodeService {
                         "note":"Download admitted. Inspect its receipt for completion; installation does not select or load the model."}))
                 }
                 DownloadCommand::Status { operation_id } => {
-                    let progress = self.live.lock().unwrap()["download"].clone();
-                    if operation_id.as_deref().is_some_and(|id| progress["id"].as_str() != Some(id)) {
+                    let mut progress = self.live.lock().unwrap()["download"].clone();
+                    let query=operation_id.as_deref().or_else(||progress["id"].as_str());
+                    let receipt=if let Some(id)=query { self.download_receipts.lock().map_err(|_|anyhow::anyhow!("Model download receipt owner unavailable"))?.get(id)? } else { None };
+                    if query.is_some() && receipt.is_none() {
                         return Ok(json!({"success":false,"error_code":"operation_not_found","known":false,
-                            "note":"Only the latest in-memory download is retained. No match is not proof that an earlier request was never accepted."}));
+                            "note":"No retained receipt matches this ID. Missing evidence is not proof an earlier request was never accepted."}));
+                    }
+                    if let Some(receipt)=receipt {
+                        if progress["id"]!=receipt.id || progress["state"]=="interrupted" { progress=receipt.progress(); }
+                        else {progress["durable_receipt"]=json!(receipt);}
                     }
                     Ok(json!({"download":progress,"known":true}))
                 }
@@ -162,7 +168,8 @@ impl NodeService {
         report["report_type"] = json!("model_download");
         report["node_id"] = json!(self.node_id);
         report["operation_id"] = json!(id);
-        report["retention"] = json!("latest_in_memory");
+        report["retention"] = json!("durable_receipts");
+        report["progress_retention"] = json!("live_only");
         report
     }
 }
@@ -175,8 +182,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let service = NodeService::new(dir.path().join("node.json"), "node".into());
         let active = uuid::Uuid::new_v4().to_string();
-        service.live.lock().unwrap()["download"] =
-            json!({"id":active,"state":"downloading","cancel_requested":false});
+        service.begin_model_download(&service.read_config().unwrap(),false,
+            json!({"id":active,"model_id":"fixture","backend":"ollama","definition_sha256":"a".repeat(64),"state":"downloading","cancel_requested":false})).unwrap();
         let request = |command| DownloadRequest {
             schema_version: 1,
             expected_node_id: "node".into(),
@@ -212,6 +219,12 @@ mod tests {
             .await;
         assert_eq!(cancel["cancel_requested"], true);
         assert_eq!(cancel["completed"], false);
+        service
+            .download_receipts
+            .lock()
+            .unwrap()
+            .finish(&active, crate::download_receipts::State::Cancelled)
+            .unwrap();
         service.live.lock().unwrap()["download"]["state"] = json!("cancelled");
         let cancel = service
             .download_command(request(DownloadCommand::Cancel {
@@ -292,6 +305,88 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn verified_file_with_failed_final_receipt_is_unknown_not_installed_success() {
+        use sha2::{Digest, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        let bytes = b"synthetic verified cache";
+        let hash = hex::encode(Sha256::digest(bytes));
+        let config = json!({"node_id":"node","models":{"provider":"llamacpp"},"model_catalog":[{"id":"fixture","url":"https://example.invalid/not-fetched","sha256":hash,"bytes":bytes.len()}]});
+        crate::setup::write_json(&path, &config).unwrap();
+        let service = NodeService::new(path.clone(), "node".into());
+        std::fs::create_dir_all(service.model_directory()).unwrap();
+        let file = service.model_directory().join(format!("{hash}.gguf"));
+        std::fs::write(&file, bytes).unwrap();
+        let seed = uuid::Uuid::new_v4().to_string();
+        service.begin_model_download(&config,false,json!({"id":seed,"model_id":"fixture","backend":"llamacpp","total":bytes.len(),"definition_sha256":"a".repeat(64),"state":"downloading"})).unwrap();
+        service
+            .download_receipts
+            .lock()
+            .unwrap()
+            .finish(&seed, crate::download_receipts::State::Error)
+            .unwrap();
+        service.live.lock().unwrap()["download"]["state"] = json!("error");
+        let mut journal = path.as_os_str().to_os_string();
+        journal.push(".model-downloads.sqlite3");
+        let db = rusqlite::Connection::open(std::path::PathBuf::from(journal)).unwrap();
+        db.execute_batch("CREATE TRIGGER final_fault BEFORE UPDATE ON model_download_receipts WHEN json_extract(NEW.payload,'$.state')='installed' BEGIN SELECT RAISE(ABORT,'fixture final receipt failure'); END;").unwrap();
+        drop(db);
+        let id = uuid::Uuid::new_v4().to_string();
+        let request = |command| DownloadRequest {
+            schema_version: 1,
+            expected_node_id: "node".into(),
+            command,
+        };
+        assert_eq!(
+            service
+                .download_command(request(DownloadCommand::Install {
+                    model: "fixture".into(),
+                    operation_id: id.clone()
+                }))
+                .await["accepted"],
+            true
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while service.live.lock().unwrap()["download"]["state"] == "downloading"
+                || Arc::strong_count(&service) != 1
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let status = service
+            .download_command(request(DownloadCommand::Status {
+                operation_id: Some(id.clone()),
+            }))
+            .await;
+        assert_eq!(status["download"]["state"], "unknown");
+        assert_eq!(status["download"]["receipt_checkpoint_failed"], true);
+        assert_eq!(
+            status["download"]["durable_receipt"]["state"],
+            "downloading"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+        assert_eq!(
+            crate::model_manager::installed_index(&service.model_directory())
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(service.read_config().unwrap(), config);
+        drop(service);
+        let recovered = NodeService::new(path, "node".into());
+        let status = recovered
+            .download_command(request(DownloadCommand::Status {
+                operation_id: Some(id),
+            }))
+            .await;
+        assert_eq!(status["download"]["state"], "interrupted");
+        assert!(status["download"]["completed"].is_null());
+        assert_eq!(status["download"]["termination_confirmed"], false);
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    }
     #[test]
     fn flattened_cli_preserves_selection_commands_and_requires_exact_cancel_id() {
         use clap::Parser;

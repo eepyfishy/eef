@@ -1,5 +1,37 @@
 # Architecture conformance status
 
+## Unreleased: durable model-install admission and outcomes
+
+The existing node installation service now commits bounded receipts before
+transfer admission and before publishing terminal outcome. Full app replacement
+preserves an unfinished admission as interrupted, with no restored percentage,
+selection change or download replay. Earlier IDs remain inspectable and cannot
+be readmitted; capacity refuses new work instead of evicting history. Ordinary
+runtime restart still keeps the same live transfer. See
+[storage, configuration, recovery and limits](MODEL-INSTALL-RECEIPTS.md).
+
+Public headless `model-downloads-QpAF1W` passes full process/runtime replacement,
+terminal history, exact cancellation, lost replies, non-replay and read-only
+inspection. Receipt-policy failure leaves core controls usable; explicit
+revalidation after correction still cannot replay an old ID. Browser regression
+passes copy stability and truthful unknown/interrupted/progress rendering. This
+is a minimal status fix, not resumed UI redesign. Fixtures use synthetic data and
+mock provider streams, not real model downloads or physical two-PC acceptance.
+
+Both final locked/offline all-target modes pass **768 tests plus one ignored
+each**, including no-dashboard. Fresh headless binaries/examples build;
+final-binary `model-downloads-AtDkU5` repeats the full public chain successfully.
+The additional service fault case observes an intact verified cache/index with
+failed final receipt persistence: live unknown, then interrupted on a new owner,
+never inferred success or file deletion.
+Final-binary `local-pipelines-LmJsgu` also passes finite/native/recurrence and
+durable-progress/restart regressions; both fixture chains are terminal with no
+matching fixture processes left.
+
+Automatic bootstrap/default quality, partial-file reclamation/resume, physical
+and full release gates remain open. No installed/remote node, model default,
+release/feed or shared-service settings changed.
+
 ## Unreleased: claim-local scheduler validation and precise fence failures
 
 Due claims reuse dependencies from their fully validated read phase, discard

@@ -816,9 +816,12 @@ automatic recovery, per-slot lifecycle control or completion of step 10.
 The next command increment exposes the existing installed-model browser,
 explicit model installation and exact receipt progress/cancellation through the
 running node's CLI/API. It retains the current transfer service, provider policy,
-verification and disk limits. Receipts are only the latest in-memory transfer,
-not durable bootstrap state. Default artifact selection, verified bootstrap
-manifest policy and automatic interpreter role binding remain planned.
+verification and disk limits. The subsequent
+[durable installation receipts](MODEL-INSTALL-RECEIPTS.md) preserve bounded
+admission/outcome history across app replacement, without restoring byte progress
+or replaying downloads. This is not automatic bootstrap. Default artifact
+selection, verified bootstrap manifest policy and automatic interpreter role
+binding remain planned.
 
 Install preflight now normalizes GGUF artifact metadata into a versioned contract
 shared with the installer and reports backend-specific storage/verification

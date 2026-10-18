@@ -92,7 +92,9 @@ try {
   await writeFile(marker,originalMarker);
   await until(()=>pulls.length===2,'exactly one second transfer admitted');
   const recovered=await cli(['download-status','--id',lost.operation_id]);assert.equal(recovered.known,true);assert.equal(recovered.download.model_id,'lost-reply-fixture');
-  assert.equal((await cli(['download-status','--id',id],false)).error_code,'operation_not_found');
+  const historical=await cli(['download-status','--id',id]);
+  assert.equal(historical.download.state,'cancelled');assert.equal(historical.download.progress_available,false);
+  assert.equal(historical.retention,'durable_receipts');assert.equal(historical.download.durable_receipt.id,id);
   assert.equal((await cli(['cancel-download','--id',id],false)).success,false,'stale receipt cannot cancel newer transfer');
   await cli(['cancel-download','--id',lost.operation_id]);
   await until(async()=>(await cli(['download-status','--id',lost.operation_id])).download.state==='cancelled','lost-reply transfer cancels');
@@ -107,17 +109,29 @@ try {
   assert.equal((await cli(['install','--model','unsupported-fixture'],false)).error_code,'unsupported_command');
   assert.equal(legacyRequests,1);assert.equal(pulls.length,3,'no legacy fallback installation');
  } finally {await writeFile(marker,originalMarker);}
- // A full process replacement has no durable transfer ledger. It must not
- // replay the active install or pretend its old operation receipt is current.
+ // Full replacement preserves admission, but cannot restore an active request,
+ // byte progress or prove a shared provider stopped. No install is replayed.
  const processTransfer=await cli(['install','--model','process-restart-fixture']);
  await until(async()=>(await cli(['download-status','--id',processTransfer.operation_id])).download.completed===1,'active transfer before process replacement');
  assert.equal(pulls.length,4);
  const replacedRuntime=(await json(node+'/api/diagnostics')).runtime_id;
  owner.kill();await owner.result;
- launch(['--no-ui']);
+ const replacementOwner=launch(['--no-ui']);
  await until(async()=>{const m=JSON.parse(await readFile(marker,'utf8'));node='http://'+m.address;const d=await json(node+'/api/diagnostics');return !!d.runtime_id&&d.runtime_id!==replacedRuntime;},'replacement process discovers its own runtime');
- assert.equal((await json(node+'/api/status')).download.state,'idle');
- assert.equal((await cli(['download-status','--id',processTransfer.operation_id],false)).error_code,'operation_not_found');
+ assert.equal((await json(node+'/api/status')).download.state,'interrupted');
+ const interrupted=await cli(['download-status','--id',processTransfer.operation_id]);
+ assert.equal(interrupted.known,true);assert.equal(interrupted.download.state,'interrupted');
+ assert.equal(interrupted.download.completed,null);assert.equal(interrupted.download.progress_available,false);
+ assert.equal(interrupted.download.termination_confirmed,false);assert.equal(interrupted.download.automatically_retried,false);
+ assert.equal(interrupted.download.durable_receipt.id,processTransfer.operation_id);
+ const receiptBytesBefore=await readFile(configPath+'.model-downloads.sqlite3');
+ assert.equal((await cli(['download-status','--id',complete.operation_id])).download.state,'installed');
+ assert.equal((await cli(['download-status','--id',id])).download.state,'cancelled');
+ assert.equal((await cli(['cancel-download','--id',processTransfer.operation_id])).cancel_requested,false);
+ assert.deepEqual(await readFile(configPath+'.model-downloads.sqlite3'),receiptBytesBefore,'receipt inspection and terminal cancellation do not write history');
+ const replay=await json(node+'/api/commands/model-downloads',{schema_version:1,expected_node_id:config.node_id,
+  command:{operation:'install',model:'process-restart-fixture',operation_id:processTransfer.operation_id}});
+ assert.equal(replay.success,false);assert.equal(replay.error_code,'download_command_rejected');
  assert.equal((await cli(['show'])).saved_selections.length,0);
  assert.equal(pulls.length,4,'process restart must not reissue an install');
  // GGUF inspection uses saved configuration, without contacting the artifact or
@@ -136,9 +150,26 @@ try {
  ggufConfig.model_catalog[0].sha256='invalid';
  await json(node+'/api/config',{config:ggufConfig},'PUT');
  assert.equal((await cli(['install','--model','gguf-fixture'],false)).error_code,'download_command_rejected');
- assert.equal((await json(node+'/api/status')).download.state,'idle','invalid admission preserves replacement process state');
+ assert.equal((await json(node+'/api/status')).download.state,'interrupted','invalid admission preserves replacement process state');
  assert.equal(pulls.length,4);assert.equal(tagRequests,tagsBefore);
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,api_only:true,offline_no_launch:true,installed_and_inspect:true,read_only_install_preflight:true,gguf_preflight_no_provider_query:true,invalid_admission_preserves_receipt:true,provider_storage_unknown:true,busy_preflight:true,progress_and_exact_cancel:true,lost_reply_receipt:true,no_automatic_retry:true,no_legacy_fallback:true,no_selection_changes:true,runtime_restart_continues_same_transfer:true,process_restart_does_not_replay_transfer:true,process_restart_old_receipt_unknown:true,physical_two_pc:false,real_model_downloads:false},null,2));
+ // A bad receipt policy disables only installation recovery, not node controls.
+ const badPolicy=structuredClone(before);badPolicy.dashboard.port=Number(new URL(node).port);
+ badPolicy.models.download_receipts={max_records:0};await json(node+'/api/config',{config:badPolicy},'PUT');
+ const beforeBadPolicy=(await json(node+'/api/diagnostics')).runtime_id;
+ replacementOwner.kill();await replacementOwner.result;launch(['--no-ui']);
+ await until(async()=>{const m=JSON.parse(await readFile(marker,'utf8'));node='http://'+m.address;const d=await json(node+'/api/diagnostics');return !!d.runtime_id&&d.runtime_id!==beforeBadPolicy;},'receipt failure leaves core running');
+ assert.equal((await json(node+'/api/status')).download.state,'unavailable');
+ assert.equal((await cli(['show'])).saved_selections.length,0);
+ assert.equal((await cli(['install','--model','process-restart-fixture'],false)).error_code,'download_command_rejected');
+ assert.equal(pulls.length,4,'receipt failure cannot start another provider request');
+ const repairedPolicy=structuredClone(before);repairedPolicy.dashboard.port=Number(new URL(node).port);
+ await json(node+'/api/config',{config:repairedPolicy},'PUT');
+ const retainedRetry=await json(node+'/api/commands/model-downloads',{schema_version:1,expected_node_id:config.node_id,
+  command:{operation:'install',model:'process-restart-fixture',operation_id:processTransfer.operation_id}});
+ assert.equal(retainedRetry.success,false,'opening repaired receipt policy must not replay an old ID');
+ assert.equal((await cli(['download-status','--id',processTransfer.operation_id])).download.state,'interrupted');
+ assert.equal(pulls.length,4);
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,api_only:true,offline_no_launch:true,installed_and_inspect:true,read_only_install_preflight:true,gguf_preflight_no_provider_query:true,invalid_admission_preserves_receipt:true,provider_storage_unknown:true,busy_preflight:true,progress_and_exact_cancel:true,lost_reply_receipt:true,no_automatic_retry:true,no_legacy_fallback:true,no_selection_changes:true,runtime_restart_continues_same_transfer:true,process_restart_does_not_replay_transfer:true,process_restart_receipt_retained_as_interrupted:true,byte_progress_not_fabricated:true,terminal_history_preserved:true,shared_provider_termination_not_claimed:true,physical_two_pc:false,real_model_downloads:false},null,2));
  console.log('Model download command checks passed: '+scratch);
 } finally {
  for(const stream of streams)stream.destroy();

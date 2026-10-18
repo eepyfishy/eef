@@ -29,6 +29,7 @@ pub struct NodeService {
     config_lock: Arc<std::sync::Mutex<()>>,
     pub(crate) local_enrollment: Arc<tokio::sync::Mutex<()>>,
     pub(crate) installed_selection: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) download_receipts: Arc<std::sync::Mutex<crate::download_receipts::Journal>>,
     started: std::time::Instant,
 }
 
@@ -93,12 +94,14 @@ impl NodeService {
     }
 
     pub fn new(config_path: PathBuf, node_id: String) -> Arc<Self> {
+        let (download_receipts, recovered) =
+            crate::download_receipts::Journal::recover(&config_path, &node_id);
         Arc::new(Self {
             config_path,
             node_id,
             model_runtime: Arc::new(std::sync::Mutex::new(None)),
             live: Arc::new(std::sync::Mutex::new(
-                json!({"connection":{"state":"starting"},"pending_restart":false,"download":{"state":"idle"}}),
+                json!({"connection":{"state":"starting"},"pending_restart":false,"download":recovered.unwrap_or_else(||json!({"state":"idle"}))}),
             )),
             restart: Arc::new(tokio::sync::Notify::new()),
             submissions: Arc::new(crate::submission::SubmissionMailbox::default()),
@@ -106,6 +109,7 @@ impl NodeService {
             config_lock: Arc::new(std::sync::Mutex::new(())),
             local_enrollment: Arc::new(tokio::sync::Mutex::new(())),
             installed_selection: Arc::new(tokio::sync::Mutex::new(())),
+            download_receipts: Arc::new(std::sync::Mutex::new(download_receipts)),
             started: std::time::Instant::now(),
         })
     }
@@ -896,14 +900,21 @@ impl NodeService {
                 "Model settings changed during backend inspection. Inspect current settings before retrying."
             )
         }
-        let mut live = self.live.lock().unwrap();
+        let live = self.live.lock().unwrap();
         if progress["id"].is_string() && live["download"]["id"] == progress["id"] {
             bail!("This download ID was already admitted. Inspect its status; do not replay it.")
         }
         if live["download"]["state"] == "downloading" {
             bail!("A model is already downloading. Wait or cancel it first.")
         }
-        live["download"] = progress;
+        // Config ownership serializes admissions. Never hold the general live
+        // status mutex across a receipt fsync.
+        drop(live);
+        self.download_receipts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Model download receipt owner unavailable"))?
+            .begin(&self.config_path, &self.node_id, &current, &progress)?;
+        self.live.lock().unwrap()["download"] = progress;
         Ok(())
     }
 
@@ -1554,7 +1565,7 @@ mod tests {
         let snapshot = json!({"node_id":"stable","management":{"allow_remote":true},"models":{"provider":"ollama"}});
         crate::setup::write_json(&path, &snapshot).unwrap();
         let service = NodeService::new(path, "stable".into());
-        let progress = json!({"state":"downloading","id":"fixture"});
+        let progress = json!({"state":"downloading","id":uuid::Uuid::new_v4().to_string(),"model_id":"fixture","backend":"ollama","definition_sha256":"a".repeat(64)});
         let mut revoked = snapshot.clone();
         revoked["management"]["allow_remote"] = json!(false);
         service.save_config(revoked).unwrap();

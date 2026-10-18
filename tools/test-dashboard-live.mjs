@@ -91,8 +91,16 @@ try{
  await page.getByRole('button',{name:'Remove history',exact:true}).click();
  await page.waitForFunction(()=>document.getElementById('jobState').textContent.includes('No saved jobs yet'));
  assert.deepEqual(jobActions,['resume','pause','stop','remove']);
+ const progress=async job=>page.evaluate(job=>{renderProgress(job);const root=document.getElementById('modelProgress'),bar=root.querySelector('progress');return {text:root.textContent,bar:!!bar,value:bar?.getAttribute('value')};},job);
+ const history=await progress({id:'retained',model_id:'fixture',state:'interrupted',progress_available:false,completed:null,total:1000000000,cancel_requested:true});
+ assert(history.text.includes('Progress unavailable'));assert(!history.text.includes('0 MB'));assert(!history.text.includes('Cancelling'));assert.equal(history.bar,false);
+ assert((await progress({state:'installed',progress_available:false,completed:null,total:1000000000})).text.includes('Previous installation'));
+ assert((await progress({state:'unknown',error:'Final installation receipt could not be saved.'})).text.includes('could not be saved'));
+ assert((await progress({state:'unavailable',message:'Receipt journal could not be opened.'})).text.includes('could not be opened'));
+ assert.equal((await progress({state:'downloading',completed:50,total:100})).value,'50');
+ assert.equal((await progress({state:'downloading',completed:null,total:100})).value,null);
  role='eef';await page.goto('about:blank');await page.goto('http://localhost:51336/#devices');
  try{await page.getByRole('button',{name:'Configure node'}).waitFor({timeout:5000});}
  catch(error){console.error('EEF DOM:',await page.locator('#devices').innerHTML(),'Health:',await page.locator('#health').textContent());throw error;}
- console.log('Dashboard initialization and copy stability passed');
+ console.log('Dashboard initialization, copy stability and truthful installation status passed');
 }finally{await browser.close();}

@@ -307,6 +307,19 @@ fn plan_snapshot(
             plan["blocker"] = json!("download_in_progress");
         }
     }
+    drop(live);
+    let receipt_storage = state
+        .download_receipts
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Model download receipt owner unavailable"))?
+        .availability(&state.read_config()?)?;
+    if receipt_storage["available"] != true {
+        plan["can_request"] = json!(false);
+        if plan["blocker"].is_null() {
+            plan["blocker"] = receipt_storage["blocker"].clone();
+        }
+    }
+    plan["receipt_storage"] = receipt_storage;
     Ok(plan)
 }
 
@@ -330,6 +343,19 @@ async fn install_authorized(
     let selected = request["id"]
         .as_str()
         .context("Choose a model to install")?;
+    {
+        let recovered = state
+            .download_receipts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Model download receipt owner unavailable"))?
+            .reopen_for_install(&state.config_path, &state.node_id)?;
+        if let Some(progress) = recovered {
+            let mut live = state.live.lock().unwrap();
+            if live["download"]["state"] == "unavailable" {
+                live["download"] = progress;
+            }
+        }
+    }
     let (backend, entry, available) = resolve_install(&config, selected).await?;
     let plan = plan_snapshot(&state, backend, &entry, available)?;
     if plan["can_request"] != true {
@@ -338,7 +364,10 @@ async fn install_authorized(
             plan["blocker"].as_str().unwrap_or("preflight_failed")
         );
     }
-    state.begin_model_download(&config, remote, json!({"id":operation_id,"model_id":selected,"backend":backend,"state":"downloading","phase":"Starting","name":entry["name"],"completed":0,"total":if backend=="ollama" {Value::Null} else {entry["bytes"].clone()},"cancel_requested":false}))?;
+    let definition_sha256 = crate::grants::definition_digest(
+        &json!({"backend":backend,"entry":entry,"models":config.get("models")}),
+    )?;
+    state.begin_model_download(&config, remote, json!({"id":operation_id,"model_id":selected,"backend":backend,"definition_sha256":definition_sha256,"state":"downloading","phase":"Starting","name":entry["name"],"completed":0,"total":if backend=="ollama" {Value::Null} else {entry["bytes"].clone()},"cancel_requested":false}))?;
     tokio::spawn(async move {
         let transfer = async {
             if backend == "ollama" {
@@ -354,7 +383,35 @@ async fn install_authorized(
                 if state.live.lock().unwrap()["download"]["cancel_requested"] == true {break;}
             }} => Err(anyhow::anyhow!("Download cancelled. You can try again later. The model service may retain reusable download layers.")),
         };
+        let live = state.live.lock().unwrap();
+        if live["download"]["id"].as_str() != Some(&operation_id) {
+            return;
+        }
+        let terminal = if result.is_ok() {
+            crate::download_receipts::State::Installed
+        } else if live["download"]["cancel_requested"] == true {
+            crate::download_receipts::State::Cancelled
+        } else {
+            crate::download_receipts::State::Error
+        };
+        drop(live);
+        let saved = state
+            .download_receipts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Model download receipt owner unavailable"))
+            .and_then(|mut store| store.finish(&operation_id, terminal));
         let mut live = state.live.lock().unwrap();
+        if live["download"]["id"].as_str() != Some(&operation_id) {
+            return;
+        }
+        if saved.is_err() {
+            live["download"]["state"] = json!("unknown");
+            live["download"]["error"] = json!(
+                "Final installation receipt could not be saved. Effects may have completed; inspect installed models. No retry was sent."
+            );
+            live["download"]["receipt_checkpoint_failed"] = json!(true);
+            return;
+        }
         match result {
             Ok(()) => live["download"]["state"] = json!("installed"),
             Err(error) => {
@@ -375,14 +432,27 @@ async fn install_authorized(
     Ok(())
 }
 pub fn cancel(state: &NodeService, id: Option<&str>) -> Result<bool> {
-    let mut live = state.live.lock().unwrap();
+    let live = state.live.lock().unwrap();
     if live["download"]["state"] != "downloading" {
         return Ok(false);
     }
     if id.is_some_and(|id| live["download"]["id"].as_str() != Some(id)) {
         bail!("That download is no longer active. Refresh its progress before cancelling.")
     }
-    live["download"]["cancel_requested"] = json!(true);
+    let retained = live["download"]["id"]
+        .as_str()
+        .context("Download receipt ID missing")?
+        .to_owned();
+    drop(live);
+    state
+        .download_receipts
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Model download receipt owner unavailable"))?
+        .cancel(&retained)?;
+    let mut live = state.live.lock().unwrap();
+    if live["download"]["id"].as_str() == Some(&retained) {
+        live["download"]["cancel_requested"] = json!(true);
+    }
     Ok(true)
 }
 
@@ -772,14 +842,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = NodeService::new(dir.path().join("node.json"), "node".into());
         assert!(!cancel(&state, None).unwrap());
-        state.live.lock().unwrap()["download"] =
-            json!({"state":"downloading","id":"current","cancel_requested":false});
+        let id = uuid::Uuid::new_v4().to_string();
+        state.begin_model_download(&state.read_config().unwrap(),false,
+            json!({"state":"downloading","id":id,"model_id":"fixture","backend":"ollama","definition_sha256":"a".repeat(64),"cancel_requested":false})).unwrap();
         assert!(cancel(&state, Some("old")).is_err());
         assert_eq!(
             state.live.lock().unwrap()["download"]["cancel_requested"],
             false
         );
-        assert!(cancel(&state, Some("current")).unwrap());
+        assert!(cancel(&state, Some(&id)).unwrap());
         state.live.lock().unwrap()["download"] =
             json!({"state":"installed","cancel_requested":false});
         assert!(!cancel(&state, None).unwrap());

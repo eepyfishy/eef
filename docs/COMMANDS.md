@@ -1168,17 +1168,20 @@ No new default model or automatic bootstrap has been selected or enabled.
 
 An install returns a CLI-generated `operation_id`, `accepted:true` and
 `completed:false`. The running service owns the transfer after the CLI exits.
-Inspect `download.state` for `downloading`, `installed`, `cancelled` or `error`;
+Inspect `download.state` for `downloading`, `installed`, `cancelled`, `error`,
+`interrupted`, `unknown` or `unavailable`;
 an accepted request is not installation success. Cancellation requires the exact
 ID and reports `cancel_requested` separately from terminal status. It never
 cancels whichever download happens to be active. Cancellation cannot undo a
 completed file or stop other users of shared Ollama layers/transfers.
 
-Receipts retain only the latest transfer **in memory**, not durable job history.
-A newer admitted download replaces the old record; a process restart loses it.
-Repeated admission of the currently retained ID is refused. This is not durable
-deduplication or exactly-once installation. Ordinary node runtime restarts retain
-the service and its transfer; a process upgrade/shutdown does not.
+Unreleased after alpha.6, installation receipts are durable and bounded. A newer
+download does not erase older IDs. Full process replacement retains an unfinished
+admission as `interrupted`, without restoring byte progress or replaying it;
+ordinary runtime restarts keep the same live transfer. Historical inspection is
+not current installed inventory or proof shared effects stopped. See
+[receipt storage, limits and recovery](MODEL-INSTALL-RECEIPTS.md). Published older
+nodes retain their previous latest-in-memory behavior.
 
 A lost or unrecognized mutation reply returns `outcome_unknown`, retains the ID,
 and does not retry. Query `download-status --id` before deciding to try again.
