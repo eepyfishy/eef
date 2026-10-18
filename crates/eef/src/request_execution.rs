@@ -1295,6 +1295,7 @@ mod tests {
                 // Deliberately different node wall clock; do not compare to issuer time.
                 accepted_at_ms: 1,
                 updated_at_ms: 2,
+                pipeline_progress: None,
             },
             max_result_bytes: g.limits.max_result_bytes,
             availability: "retained_final_report".into(),

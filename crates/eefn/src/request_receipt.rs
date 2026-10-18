@@ -18,6 +18,8 @@ pub struct ConsumedReceipt {
     pub state: String,
     pub accepted_at_ms: u64,
     pub updated_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_progress: Option<crate::pipeline_progress::PipelineProgress>,
 }
 fn digest(s: &str) -> bool {
     s.len() == 64
@@ -39,6 +41,11 @@ impl ConsumedReceipt {
             || self.accepted_at_ms == 0
             || self.updated_at_ms < self.accepted_at_ms
             || self.updated_at_ms > i64::MAX as u64
+            || self.pipeline_progress.as_ref().is_some_and(|progress| {
+                progress.validate().is_err()
+                    || progress.recorded_at_ms < self.accepted_at_ms
+                    || progress.recorded_at_ms > self.updated_at_ms
+            })
         {
             bail!("Damaged consumed receipt; retained without recovery or replay")
         }
@@ -54,6 +61,10 @@ impl ConsumedReceipt {
             && self.task_id == grant.task_id
             && self.attempt == grant.attempt
             && crate::grants::definition_digest(&json!(grant)).is_ok_and(|d| d == self.grant_sha256)
+            && self
+                .pipeline_progress
+                .as_ref()
+                .is_none_or(|progress| progress.confirms(grant))
     }
 }
 /// No writes/repair/pruning. Owner/version and all bounded identity fields are validated even during local inspection.
@@ -76,17 +87,49 @@ pub(crate) fn read_consumed(
     if !matches!(version, 1 | 2) || owner != node {
         bail!("Receipt journal version/owner changed")
     }
-    let value = db.query_row(
-        "SELECT issuer_id,grant_digest,job_id,task_id,attempt,state,accepted_ms,updated_ms FROM execution_receipts WHERE grant_id=?1 AND (?2 IS NULL OR issuer_id=?2)",
-        rusqlite::params![id, issuer], |r| {
+    let (progress, join) = crate::pipeline_progress::projection(db)?;
+    let sql = format!(
+        "SELECT issuer_id,execution_receipts.grant_digest,job_id,task_id,attempt,state,accepted_ms,updated_ms,{progress} FROM execution_receipts{join} WHERE execution_receipts.grant_id=?1 AND (?2 IS NULL OR issuer_id=?2)"
+    );
+    let (mut value, progress_digest, progress_payload, progress_checksum) = db
+        .query_row(&sql, rusqlite::params![id, issuer], |r| {
             let timestamp = |column| -> rusqlite::Result<u64> {
-                r.get::<_,i64>(column)?.try_into().map_err(|e| rusqlite::Error::FromSqlConversionFailure(column, rusqlite::types::Type::Integer, Box::new(e)))
+                r.get::<_, i64>(column)?.try_into().map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        column,
+                        rusqlite::types::Type::Integer,
+                        Box::new(e),
+                    )
+                })
             };
-            Ok(ConsumedReceipt {
-            schema_version: 1, node_id: node.into(), grant_id: id.into(),
-            issuer_id: r.get(0)?, grant_sha256: r.get(1)?, job_id: r.get(2)?, task_id: r.get(3)?,
-            attempt: r.get(4)?, state: r.get(5)?, accepted_at_ms: timestamp(6)?, updated_at_ms: timestamp(7)?,
-        })}).optional()?.context("Consumed receipt unavailable for this issuer")?;
+            Ok((
+                ConsumedReceipt {
+                    schema_version: 1,
+                    node_id: node.into(),
+                    grant_id: id.into(),
+                    issuer_id: r.get(0)?,
+                    grant_sha256: r.get(1)?,
+                    job_id: r.get(2)?,
+                    task_id: r.get(3)?,
+                    attempt: r.get(4)?,
+                    state: r.get(5)?,
+                    accepted_at_ms: timestamp(6)?,
+                    updated_at_ms: timestamp(7)?,
+                    pipeline_progress: None,
+                },
+                r.get::<_, Option<String>>(8)?,
+                r.get::<_, Option<String>>(9)?,
+                r.get::<_, Option<String>>(10)?,
+            ))
+        })
+        .optional()?
+        .context("Consumed receipt unavailable for this issuer")?;
+    value.pipeline_progress = crate::pipeline_progress::decode(
+        progress_digest,
+        progress_payload,
+        progress_checksum,
+        &value.grant_sha256,
+    )?;
     value.validate()?;
     Ok(value)
 }
@@ -277,6 +320,7 @@ mod tests {
             state: "accepted".into(),
             accepted_at_ms: g.issued_at_ms + 1,
             updated_at_ms: g.issued_at_ms + 1,
+            pipeline_progress: None,
         };
         (g, r)
     }

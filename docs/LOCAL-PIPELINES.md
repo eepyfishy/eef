@@ -131,9 +131,9 @@ During execution, permission/selection checks remain active for the whole graph.
 Completed model stages do not require their process to remain resident afterward;
 the next actual model stage checks readiness again. Actual inference still uses
 the existing selected backend and model lifetime pins. Data resolution cannot
-change those identities. Progress is bounded runtime-local metadata on the exact
-current `last_workload.grant_id`; it contains no intermediate payload and is not
-durable stage evidence or a stop acknowledgement.
+change those identities. Progress is bounded metadata on the exact current
+`last_workload.grant_id`, backed by the latest durable receipt observation below.
+It contains no intermediate payload and is not a stop acknowledgement.
 
 Only the final output and ordered completed stage IDs become successful result
 data. A known unsuccessful native exit retains its exit/output under failed-step
@@ -142,6 +142,100 @@ deadline, dropped future or permission loss preserve the existing parent unknown
 state and consumed nonce; no stages resume or migrate. The completion validator
 rejects substituted/missing stage identities and false pipeline success. A client
 future drop still does not prove shared backend/native effects have stopped.
+
+## Latest durable finite-pipeline observation (unreleased)
+
+Use existing commands; no dashboard, new execution endpoint or second job ID:
+
+```text
+eefn --json grants receipt --id GRANT_ID
+eefn --json requests receipt JOB_ID --grant-id GRANT_ID
+eef --json requests receipt JOB_ID --grant-id GRANT_ID
+```
+
+The first reads the executor's local consumed receipt. The second queries through
+the request's origin node; the third is coordinator-owner inspection. Existing
+issuer, origin and exact-grant checks still apply. Inspection is read-only and
+does not reconcile, resume, retry, dispatch, approve or extend a lease.
+
+An optional `receipt.pipeline_progress` contains schema version 1, sequence,
+phase (`pending`, `starting`, `completed`, `failed`), current step ID, completed
+and total step counts, bounded encoded-byte accounting, observation timestamp,
+`durable:true`, and `termination_confirmed:false`. Stage params, prompts, file
+paths, outputs and intermediate model text are not stored in this observation.
+Missing legacy observations remain absent, not synthesized as zero progress.
+The observation remains endpoint-reported evidence, not physical proof.
+
+The initial pending observation is committed atomically with parent consumption,
+before acceptance or stage effects. Each starting observation is committed before
+the corresponding adapter call. A completed observation follows a returned stage;
+known unsuccessful native exit records failed instead. The original monotonic
+deadline is rechecked after pre-effect journal I/O. A write failure aborts the
+pipeline and leaves its parent outcome uncertain; no later stage is started and
+no completed external effect is undone or replayed. A latest completed step can
+coexist with an accepted/unknown parent if its final report was not confirmed.
+Parent acceptance/final-report evidence remains authoritative for parent state.
+
+One adjunct row per pipeline grant replaces its previous observation. Payloads
+are capped at 2 KiB; admission conservatively reserves another 4 KiB per accepted
+pipeline receipt within the existing journal quota. This is bounded journal
+storage, not a physical RAM/VRAM guarantee. Sequence, graph identity, parent
+digest, timestamp bounds and payload SHA-256 are checked. The checksum detects accidental corruption, not a
+malicious local owner who can rewrite both payload and digest. Damaged, partial,
+unsupported or misowned observation metadata is rejected without repair.
+
+The adjunct has its own schema version 1; the root receipt journal stays version
+2. Read-only inspection supports old journals without creating tables; opening
+an otherwise valid old journal does not create progress tables. A first new
+pipeline claim creates them in its own claim transaction without inventing old
+progress. Ordinary work does not pay the unused progress-storage cost. Older
+root-v2 binaries ignore the adjunct, so downgrade/overlapping runtimes are not a
+supported progress-writing workflow. New fields can be
+rejected by old strict wire readers; there is no automatic compatibility retry.
+
+Neither the persisted observation nor a runtime restart supplies missing stage
+outputs, new execution authority or a resume cursor. Consumed parents remain
+non-replayable. Continuous capture, migration, strong stop acknowledgements and
+physical two-PC/media acceptance remain separate requirements.
+
+### Verification (2026-10-18)
+
+Both final locked/offline workspace/all-target modes pass **755 tests plus one
+ignored each**: EEF 244 plus one ignored, owner CLI 17, installer 6, EEFN 470,
+node CLI 18. Fresh headless binaries/examples build; formatter, diff, JS syntax
+and backend/browser source-boundary checks pass. Ten added cases cover exact
+transitions/scope/clock/authority, bounded durable reads after reopen, non-replay,
+native failed-step observation, initial-claim rollback, absent legacy metadata,
+corruption/oversize/schema refusal, failed pre/post-effect progress checkpoints,
+and completed stages with a failed parent final checkpoint.
+
+Public `local-pipelines-dOSfu4` uses two separately authenticated logical nodes
+on one PC, pinned TLS and the existing commands. Local/origin/coordinator reads
+agree for completed, pending and known-failed stages; wrong-origin inspection is
+denied and inspection leaves the executor DB bytes unchanged. Permission loss
+leaves the last starting observation with an unknown parent. Executor and
+coordinator restart preserve those observations without new stages or inference.
+Existing compound admission, native exit, explicit finite recurrence and
+no-intermediate-payload checks also pass. The model is synthetic; this does not
+prove physical two-PC operation, model quality or continuous streaming/stop.
+
+Broader public `request-drafts-3EKRho` also passes origin/issuer-scoped remote
+receipt inspection, uncertain restart, explicit tracking abandonment and
+non-replay regressions. Both harnesses completed with no matching fixture
+EEF/EEFN/native-helper processes remaining. Evaluated headless binary SHA-256:
+
+```text
+eef.exe  0e00fa99140e19572a9cd2ad408dc85736697410fb6b90bcc60910459ce61f98
+eefn.exe 5c5751288c87abf4ca20cee455a13ada0d98d6c806e801a8ec5dfb01ad8877e4
+```
+
+An intermediate default suite rejected the first ordinary grant in the existing
+64-KiB reservation case. The test and configured quota were not enlarged: unused
+progress tables are no longer created on journal open and only pipeline parents
+reserve progress storage. First table creation is inside the new pipeline's
+claim transaction. Final suites pass the original small-journal case unchanged.
+The previously documented one-second timer reliability failures remain open;
+the five-second finite recurrence fixture does not clear them.
 
 ## Required remaining integration and acceptance
 

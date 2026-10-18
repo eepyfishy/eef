@@ -340,6 +340,7 @@ mod tests {
             .into(),
             accepted_at_ms: 1,
             updated_at_ms: 2,
+            pipeline_progress: None,
         };
         let result = RetainedResult {
             schema_version: 1,

@@ -74,6 +74,18 @@ try{
  await until(async()=>{const status=await json(executor.url+'/api/status');return status.execution_grants.available&&status.capabilities.includes('pipeline.run')&&(await json(eef+'/api/diagnostics')).registered_node_count===2;},'pipeline registration');
  for(const base of [eef,...nodes.map(n=>n.url)])assert.equal((await fetch(base+'/')).status,404);
  const review=reviewedFixture(eef,origin.url,origin.id);
+ async function progressReceipt(id,grantId){
+  const before=await readFile(executor.config+'.grant-receipts.sqlite3');
+  const localReceipt=(await local(executor,['grants','receipt','--id',grantId])).receipt;
+  const throughOrigin=(await local(origin,['requests','receipt',id,'--grant-id',grantId])).result;
+  const throughOwner=await owner(['requests','receipt',id,'--grant-id',grantId]);
+  assert.deepEqual(throughOrigin.receipt,localReceipt);assert.deepEqual(throughOwner.receipt,localReceipt);
+  assert.equal(throughOrigin.execution_requested,false);assert.equal(throughOrigin.automatically_retried,false);assert.equal(throughOrigin.reconciled,false);
+  assert.deepEqual(await readFile(executor.config+'.grant-receipts.sqlite3'),before,'progress inspection cannot write receipts');
+  assert.equal(localReceipt.pipeline_progress.durable,true);assert.equal(localReceipt.pipeline_progress.termination_confirmed,false);
+  for(const key of ['params','output','prompt','path'])assert.equal(key in localReceipt.pipeline_progress,false);
+  return localReceipt;
+ }
  const pipeline=(source,dest)=>({template:'local_pipeline',constraints:{node_id:executor.id},params:{pipeline:{schema_version:1,max_retained_bytes:2048,steps:[
   {id:'read',capability:'filesystem',action:'read',params:{path:source}},
   {id:'infer',capability:'llm.infer',action:'run',model_id:'selected',backend:'ollama',params:{max_tokens:16},inputs:[{parameter:'prompt',source_step:'read',pointer:'/content'}]},
@@ -94,12 +106,20 @@ try{
  const saved=await review.inspect(plan.id);assert.equal(saved.tasks.length,1);assert.equal(saved.execution.attempts.length,1);const granted=saved.execution.attempts[0].grant;
  assert.equal(granted.capability,'pipeline.run');assert.equal(granted.executor_node,executor.id);assert.equal(granted.request_context.origin_node,origin.id);
  assert.deepEqual(granted.params,pipeline(source,dest).params);assert.equal(report.data.output.content,undefined,'intermediate model text is not separate coordinator output');
+ const completedReceipt=await progressReceipt(plan.id,granted.grant_id);
+ assert.equal(completedReceipt.state,'completed');assert.equal(completedReceipt.pipeline_progress.phase,'completed');
+ assert.equal(completedReceipt.pipeline_progress.sequence,6);assert.equal(completedReceipt.pipeline_progress.completed_steps,3);assert.equal(completedReceipt.pipeline_progress.current_step,'write');
+ assert.equal((await cli('eefn',executor.config,['requests','receipt',plan.id,'--grant-id',granted.grant_id],undefined,false)).success,false,'executor is not the request origin');
  await review.start(command);assert.equal(calls.length,1);assert.equal((await review.inspect(plan.id)).execution.attempts.length,1);
  // Later-stage permission loss while the existing model stage is pending.
  checkpoint('permission-loss');
  const gatedSource=join(work,'gated-source.txt'),gatedDest=join(work,'must-not-write.txt');await writeFile(gatedSource,'gated pipeline input');
  const gated=await review.save(pipeline(gatedSource,gatedDest));await review.start(await review.approve(gated,{max_execution_ms:8000,max_result_bytes:8192}));
  await until(()=>gates.size===1,'model stage is pending');
+ const gatedGrant=(await review.inspect(gated.id)).execution.attempts[0].grant;
+ const pendingReceipt=await progressReceipt(gated.id,gatedGrant.grant_id);
+ assert.equal(pendingReceipt.state,'accepted');assert.equal(pendingReceipt.pipeline_progress.phase,'starting');
+ assert.equal(pendingReceipt.pipeline_progress.sequence,3);assert.equal(pendingReceipt.pipeline_progress.completed_steps,1);assert.equal(pendingReceipt.pipeline_progress.current_step,'infer');
  const admission=(await owner(['scheduling','show'])).admission;
  assert.equal(admission.total_in_flight,1,'compound work counts one parent future');
  assert.equal(admission.node_counts.find(n=>n.node_id===executor.id).in_flight,1);
@@ -107,6 +127,8 @@ try{
  const permissions=(await json(executor.url+'/api/config')).config;
  permissions.permissions.filesystem.write=false;await json(executor.url+'/api/config',{config:permissions},'PUT');
  const unknown=await review.result(gated.id);assert.equal(unknown.state,'unknown');assert.equal(unknown.error_code,'local_policy_changed');assert.equal(await exists(gatedDest),false);
+ const interruptedReceipt=await progressReceipt(gated.id,gatedGrant.grant_id);
+ assert.equal(interruptedReceipt.state,'unknown');assert.deepEqual(interruptedReceipt.pipeline_progress,pendingReceipt.pipeline_progress);
  await until(async()=>(await owner(['scheduling','show'])).admission.total_in_flight===0,'compound reservations released');
  for(const response of gates)response.destroy();gates.clear();
  permissions.permissions.filesystem.write=true;await json(executor.url+'/api/config',{config:permissions},'PUT');await local(executor,['restart','--wait-seconds','60']);
@@ -116,6 +138,7 @@ try{
   &&(await json(eef+'/api/capabilities')).providers.some(p=>p.node_id===executor.id&&p.capability==='process.exec'),
   'executor restored and native provider registered explicitly');
  assert.equal((await review.inspect(gated.id)).execution.attempts.length,1);assert.equal(await exists(gatedDest),false);
+ assert.deepEqual(await progressReceipt(gated.id,gatedGrant.grant_id),interruptedReceipt,'restart preserves the observation without resuming the pipeline');
  // Known unsuccessful native stage stops the graph without a later sink effect.
  checkpoint('native-stage');
  const native=join(scratch,'native-failed'),failedDest=join(work,'after-failure.txt');await mkdir(native);
@@ -133,6 +156,10 @@ try{
  assert.equal(failedReport.error_code,'pipeline_stage_unsuccessful');assert.deepEqual(failedReport.data.completed_steps,[]);
  assert.equal(failedReport.data.failed_step,'process');assert.equal(failedReport.data.output.exit_code,17);
  assert.equal((await review.get(failed.id)).status,'failed');assert.equal(await exists(failedDest),false);
+ const failedGrant=(await review.inspect(failed.id)).execution.attempts[0].grant;
+ const failedReceipt=await progressReceipt(failed.id,failedGrant.grant_id);
+ assert.equal(failedReceipt.state,'completed');assert.equal(failedReceipt.pipeline_progress.phase,'failed');
+ assert.equal(failedReceipt.pipeline_progress.sequence,2);assert.equal(failedReceipt.pipeline_progress.completed_steps,0);assert.equal(failedReceipt.pipeline_progress.current_step,'process');
  await review.start(failedCommand);assert.equal((await review.inspect(failed.id)).execution.attempts.length,1);
  assert.equal(await readFile(join(native,'pids.json'),'utf8'),identities,'failed graph cannot replay native work');
  const failedBefore=JSON.stringify(await review.inspect(failed.id));
@@ -180,6 +207,8 @@ try{
  await owner(['restart']);await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==coordinatorBefore&&(await json(eef+'/api/diagnostics')).registered_node_count===2,'coordinator restart');
  assert.equal(JSON.stringify(await review.inspect(plan.id)),completedBefore);assert.equal(calls.length,2);assert.equal(await exists(gatedDest),false);
  assert.equal(JSON.stringify(await review.inspect(failed.id)),failedBefore);assert.equal(await exists(failedDest),false);
+ assert.deepEqual(await progressReceipt(plan.id,granted.grant_id),completedReceipt);
+ assert.deepEqual(await progressReceipt(gated.id,gatedGrant.grant_id),interruptedReceipt);
  assert.equal((await owner(enableArgs)).result.reused,true);assert.equal((await owner(['automation-schedules','show',schedule])).result.timer_active,false);
  assert.equal((await owner(['automation-occurrences','list','--policy',policy.id])).result.items.length,2);
  for(const p of automaticJobs)assert.equal(JSON.stringify(await review.inspect(p.plan_id)),JSON.stringify(p));
@@ -188,6 +217,8 @@ try{
   explicit_source_compilation:true,no_work_before_approval_and_execution:true,one_local_compound_parent:true,atomic_child_provider_accounting:true,exact_stage_definitions:true,local_dataflow:true,one_selected_model_call:true,
   no_intermediate_coordinator_payload:true,one_attempt_no_replay:true,later_permission_loss_stops_pending_work:true,unknown_retained_after_restart:true,completed_history_unchanged:true,origin_permissions_unchanged:true,
   known_failed_native_stage_stops_later_work:true,native_creation_verified_exit_observed:true,failed_history_unchanged:true,
+  durable_bounded_pipeline_observations:true,existing_local_origin_and_owner_receipt_commands:true,read_only_progress_inspection:true,
+  completed_failed_and_pending_progress_correlated:true,interrupted_progress_survives_restart_without_replay:true,progress_is_not_termination_proof:true,
   bounded_explicit_recurring_graph:true,two_fresh_approved_parent_occurrences:true,no_work_before_policy_and_enable:true,immutable_automatic_source:true,
   exhausted_schedule_no_receipt_rearm_or_restart_replay:true,
   continuous_workloads:false,physical_resource_quota_proven:false,strong_stop_acknowledgement:false},null,2));

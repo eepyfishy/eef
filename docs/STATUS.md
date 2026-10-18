@@ -1,5 +1,33 @@
 # Architecture conformance status
 
+## Unreleased: durable finite-pipeline progress through existing receipts
+
+The executor persists one bounded latest observation per finite pipeline grant.
+Initial progress shares the consumption transaction; stage admission checkpoints
+precede effects, and failed writes prevent the next stage. Existing local,
+origin-node and coordinator receipt commands expose it without UI dependencies,
+payload retention, reconciliation, replay or resume authority. Parent terminal
+evidence remains separate; completed stages do not manufacture parent success
+or proof of stopped effects. Legacy missing progress stays absent. See
+[contract and verification](LOCAL-PIPELINES.md#latest-durable-finite-pipeline-observation-unreleased).
+
+Both final locked/offline workspace/all-target suites pass **755 tests plus one
+ignored each**, including no-dashboard. Fresh headless binaries/examples build.
+Public `local-pipelines-dOSfu4` passes completed, failed and pending observations,
+all three existing receipt routes, read-only inspection, scope denial, permission
+loss and executor/coordinator restart without replay. This is two authenticated
+logical nodes on one PC with a synthetic model, not physical two-PC acceptance.
+Broader `request-drafts-3EKRho` also passes authenticated receipt inspection,
+uncertain restart, tracking abandonment and no-replay regressions. Both harnesses
+completed; no fixture EEF/EEFN/native-helper processes remain.
+
+An intermediate suite caught a small-journal regression. Progress tables and
+reservations are now pipeline-only and first creation shares the claim
+transaction; the original 64-KiB ordinary-work test passes unchanged. Continuous
+workloads, strong stop, physical resource limits, the documented one-second timer
+reliability gate, default interpreter/bootstrap and physical/release gates remain
+open. No installed/remote node, UI, release/feed or model changes.
+
 ## Unreleased: controlled restart waits for owned model cleanup
 
 Node restart now requests shutdown and awaits the existing runtime instead of

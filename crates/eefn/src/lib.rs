@@ -44,6 +44,7 @@ pub mod model_server;
 pub mod network;
 pub mod permission_commands;
 pub mod pipeline;
+pub mod pipeline_progress;
 mod pipeline_runtime;
 mod process_lifetime;
 pub mod protocol;

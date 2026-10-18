@@ -490,6 +490,9 @@ impl GrantLedger {
         if !matches!(version, 0 | 1 | 2) {
             bail!("Unknown grant journal version; retained for recovery")
         }
+        if crate::pipeline_progress::available(&db)? && version == 0 {
+            bail!("Unversioned pipeline observation evidence; retained without initialization")
+        }
         if version == 0 {
             let old: i64 = db.query_row(
                 "SELECT count(*) FROM sqlite_master WHERE name='execution_receipts'",
@@ -559,6 +562,9 @@ impl GrantLedger {
             tx.execute_batch("ALTER TABLE execution_receipts ADD COLUMN max_result_bytes INTEGER NOT NULL DEFAULT 0; ALTER TABLE execution_receipts ADD COLUMN report TEXT; ALTER TABLE execution_receipts ADD COLUMN report_sha256 TEXT; PRAGMA user_version=2;")?;
             tx.commit()?;
         }
+        if crate::pipeline_progress::available(&db)? {
+            crate::pipeline_progress::initialize(&db)?;
+        }
         Ok(Arc::new(Self {
             node_id: node_id.into(),
             connection: Mutex::new(db),
@@ -597,6 +603,10 @@ impl GrantLedger {
         if previous.is_some_and(|(attempt, state)| g.attempt <= attempt || state != "completed") {
             return Err(GrantDenied("grant_attempt_replayed_or_unresolved").into());
         }
+        let pipeline = g.capability == "pipeline.run";
+        if pipeline && !crate::pipeline_progress::available(&tx)? {
+            crate::pipeline_progress::initialize(&tx)?;
+        }
         let count: i64 =
             tx.query_row("SELECT count(*) FROM execution_receipts", [], |r| r.get(0))?;
         let pages =
@@ -607,12 +617,24 @@ impl GrantLedger {
             "SELECT coalesce(sum(max_result_bytes+?2+4*?1),0) FROM execution_receipts WHERE state='accepted' AND max_result_bytes>0",
             params![i64::try_from(page_size)?,i64::try_from(REPORT_HEADROOM)?], |r| r.get(0),
         )?;
+        let progress_reserved = if crate::pipeline_progress::available(&tx)? {
+            let count: i64 = tx.query_row("SELECT count(*) FROM execution_pipeline_progress p JOIN execution_receipts r ON r.grant_id=p.grant_id WHERE r.state='accepted' AND r.max_result_bytes>0", [], |r| r.get(0))?;
+            usize::try_from(count)?.saturating_mul(crate::pipeline_progress::JOURNAL_RESERVATION)
+        } else {
+            0
+        };
         if usize::try_from(count)? >= self.policy.max_receipts
             || pages
                 .saturating_mul(page_size)
                 .saturating_add(usize::try_from(reserved)?)
+                .saturating_add(progress_reserved)
                 .saturating_add(g.limits.max_result_bytes)
                 .saturating_add(REPORT_HEADROOM)
+                .saturating_add(if pipeline {
+                    crate::pipeline_progress::JOURNAL_RESERVATION
+                } else {
+                    0
+                })
                 .saturating_add(4 * page_size)
                 > self.policy.max_journal_bytes
         {
@@ -632,8 +654,20 @@ impl GrantLedger {
                 i64::try_from(g.limits.max_result_bytes)?
             ],
         )?;
+        crate::pipeline_progress::initial(&tx, g, u64::try_from(now)?)?;
         tx.commit()?;
         Ok(())
+    }
+    pub(crate) fn record_pipeline_progress(
+        &self,
+        g: &ExecutionGrant,
+        checkpoint: crate::pipeline_progress::PipelineProgress,
+    ) -> Result<crate::pipeline_progress::PipelineProgress> {
+        let mut db = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Grant journal lock unavailable"))?;
+        crate::pipeline_progress::update(&mut db, &self.node_id, g, checkpoint)
     }
     fn finish(&self, g: &ExecutionGrant, report: &GrantReport) -> Result<()> {
         if !report.confirms(g) || !report.persisted {
@@ -652,7 +686,7 @@ impl GrantLedger {
             .connection
             .lock()
             .map_err(|_| anyhow::anyhow!("Grant journal lock unavailable"))?;
-        let n=db.execute("UPDATE execution_receipts SET state=?2,updated_ms=max(accepted_ms,?3),report=?5,report_sha256=?7 WHERE grant_id=?1 AND grant_digest=?4 AND state='accepted' AND report IS NULL AND report_sha256 IS NULL AND max_result_bytes=?6",
+        let n=db.execute("UPDATE execution_receipts SET state=?2,updated_ms=max(updated_ms,accepted_ms,?3),report=?5,report_sha256=?7 WHERE grant_id=?1 AND grant_digest=?4 AND state='accepted' AND report IS NULL AND report_sha256 IS NULL AND max_result_bytes=?6",
             params![g.grant_id,state,i64::try_from(crate::protocol::now_ms())?,definition_digest(&json!(g))?,encoded,i64::try_from(g.limits.max_result_bytes)?,definition_digest(&json!(report))?])?;
         if n != 1 {
             bail!("Grant receipt changed before completion")
@@ -793,6 +827,8 @@ impl AcceptedGrant {
     }
     pub async fn run(mut self, engine: &crate::NodeEngine) -> GrantReport {
         let g = &self.grant;
+        let ledger = &self.ledger;
+        let execution_deadline = self.deadline;
         let mut params = g.params.clone();
         if let Some(model) = &g.model_id {
             params["model"] = json!(model);
@@ -800,7 +836,7 @@ impl AcceptedGrant {
         }
         let operation = async {
             if g.capability == "pipeline.run" {
-                crate::pipeline_runtime::execute(engine, g).await
+                crate::pipeline_runtime::execute(engine, g, ledger, execution_deadline).await
             } else {
                 engine.execute(&g.capability, &g.action, params).await
             }

@@ -46,7 +46,7 @@ pub struct DataInput {
     #[serde(default)]
     pub wrap_array: bool,
 }
-fn step_id(id: &str) -> Result<()> {
+pub(crate) fn step_id(id: &str) -> Result<()> {
     if id.is_empty()
         || id.len() > 32
         || !id

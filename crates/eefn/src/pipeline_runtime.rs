@@ -68,7 +68,12 @@ pub(crate) fn confirmed_result(g: &ExecutionGrant, data: &Value) -> Result<bool>
     }
     Ok(report.success)
 }
-pub(crate) async fn execute(engine: &NodeEngine, g: &ExecutionGrant) -> Result<Value> {
+pub(crate) async fn execute(
+    engine: &NodeEngine,
+    g: &ExecutionGrant,
+    ledger: &crate::grants::GrantLedger,
+    deadline: std::time::Instant,
+) -> Result<Value> {
     g.validate()?;
     engine.check_grant_admission(g)?;
     let definition = FinitePipeline::from_grant(g)?;
@@ -110,13 +115,18 @@ pub(crate) async fn execute(engine: &NodeEngine, g: &ExecutionGrant) -> Result<V
         }
         progress(
             engine,
+            ledger,
             g,
-            &step.id,
             index,
-            definition.steps.len(),
+            crate::pipeline_progress::Phase::Starting,
             retained,
             resolved_bytes,
-        );
+        )?;
+        // Journal I/O cannot extend the parent's lease or start effects after
+        // a deadline that elapsed while saving the pre-effect observation.
+        if std::time::Instant::now() >= deadline {
+            bail!("Pipeline parent deadline expired before stage")
+        }
         let output = engine
             .execute(&step.capability, &step.action, params)
             .await?;
@@ -125,10 +135,27 @@ pub(crate) async fn execute(engine: &NodeEngine, g: &ExecutionGrant) -> Result<V
             && step.action == "run"
             && output.get("success").and_then(Value::as_bool) == Some(false)
         {
+            progress(
+                engine,
+                ledger,
+                g,
+                index,
+                crate::pipeline_progress::Phase::Failed,
+                retained,
+                0,
+            )?;
             return Ok(result(&definition, index, true, output));
         }
         if index + 1 == definition.steps.len() {
-            progress(engine, g, &step.id, index + 1, definition.steps.len(), 0, 0);
+            progress(
+                engine,
+                ledger,
+                g,
+                index,
+                crate::pipeline_progress::Phase::Completed,
+                0,
+                0,
+            )?;
             return Ok(result(&definition, index + 1, false, output));
         }
         if references[&step.id] > 0 {
@@ -139,20 +166,33 @@ pub(crate) async fn execute(engine: &NodeEngine, g: &ExecutionGrant) -> Result<V
             sizes.insert(step.id.clone(), bytes);
             values.insert(step.id.clone(), output);
         }
+        progress(
+            engine,
+            ledger,
+            g,
+            index,
+            crate::pipeline_progress::Phase::Completed,
+            retained,
+            0,
+        )?;
     }
     bail!("Pipeline ended without a final result")
 }
 fn progress(
     engine: &NodeEngine,
+    ledger: &crate::grants::GrantLedger,
     g: &ExecutionGrant,
-    step: &str,
-    completed: usize,
-    total: usize,
+    index: usize,
+    phase: crate::pipeline_progress::Phase,
     retained: usize,
     resolved: usize,
-) {
-    engine.record_pipeline_progress(g,json!({"current_step":step,"completed_steps":completed,"total_steps":total,
-        "retained_encoded_bytes":retained,"resolved_encoded_bytes":resolved,"durable":false,"termination_confirmed":false}));
+) -> Result<()> {
+    let checkpoint = crate::pipeline_progress::PipelineProgress::checkpoint(
+        g, index, phase, retained, resolved,
+    )?;
+    let checkpoint = ledger.record_pipeline_progress(g, checkpoint)?;
+    engine.record_pipeline_progress(g, json!(checkpoint));
+    Ok(())
 }
 
 #[cfg(test)]
@@ -177,6 +217,139 @@ mod tests {
             {"id":"write","capability":"filesystem","action":"write","params":{"path":dir.join("copy.txt")},
                 "inputs":[{"parameter":"content","source_step":"read","pointer":"/content"}]}
         ])
+    }
+    #[tokio::test]
+    async fn all_stage_observations_do_not_replace_a_missing_final_parent_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("receipts.db");
+        let effect = dir.path().join("effect.txt");
+        let engine = engine(dir.path(), true);
+        let g = grant(
+            json!([
+                {"id":"write","capability":"filesystem","action":"write","params":{"path":effect,"content":"finished stage"}}
+            ]),
+            2048,
+        );
+        let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        let accepted = AcceptedGrant::prepare(
+            g.clone(),
+            ledger.clone(),
+            &engine,
+            &g.issuer_id,
+            &g.session_id,
+            &g.executor_node,
+        )
+        .unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TRIGGER fail_final BEFORE UPDATE ON execution_receipts WHEN NEW.state!='accepted' BEGIN SELECT RAISE(ABORT,'fixture final checkpoint failure'); END;").unwrap();
+        let report = accepted.run(&engine).await;
+        assert_eq!(report.state, ReceiptState::Unknown);
+        assert!(!report.persisted);
+        assert_eq!(
+            report.error_code.as_deref(),
+            Some("completion_checkpoint_failed")
+        );
+        assert_eq!(std::fs::read_to_string(&effect).unwrap(), "finished stage");
+        let retained = ledger.receipt(&g.issuer_id, &g.grant_id).unwrap();
+        assert_eq!(retained["state"], "accepted");
+        assert_eq!(retained["pipeline_progress"]["phase"], "completed");
+        assert_eq!(retained["pipeline_progress"]["completed_steps"], 1);
+        assert_eq!(
+            retained["pipeline_progress"]["termination_confirmed"],
+            false
+        );
+        db.execute_batch("DROP TRIGGER fail_final").unwrap();
+        drop(db);
+        drop(ledger);
+        let reopened = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        assert_eq!(
+            reopened.receipt(&g.issuer_id, &g.grant_id).unwrap(),
+            retained
+        );
+        assert!(
+            AcceptedGrant::prepare(
+                g.clone(),
+                reopened,
+                &engine,
+                &g.issuer_id,
+                &g.session_id,
+                &g.executor_node
+            )
+            .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn failed_progress_write_never_starts_or_replays_the_next_effect() {
+        for fail_after_first_effect in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("receipts.db");
+            let first = dir.path().join("first.txt");
+            let later = dir.path().join("later.txt");
+            let engine = engine(dir.path(), true);
+            let g = grant(
+                json!([
+                    {"id":"first","capability":"filesystem","action":"write","params":{"path":first,"content":"private first effect"}},
+                    {"id":"later","capability":"filesystem","action":"write","params":{"path":later,"content":"must not execute"}}
+                ]),
+                2048,
+            );
+            let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+            let accepted = AcceptedGrant::prepare(
+                g.clone(),
+                ledger.clone(),
+                &engine,
+                &g.issuer_id,
+                &g.session_id,
+                &g.executor_node,
+            )
+            .unwrap();
+            let db = rusqlite::Connection::open(&path).unwrap();
+            let when = if fail_after_first_effect {
+                "WHEN NEW.payload LIKE '%\"phase\":\"completed\"%'"
+            } else {
+                ""
+            };
+            db.execute_batch(&format!("CREATE TRIGGER fail_progress BEFORE UPDATE ON execution_pipeline_progress {when} BEGIN SELECT RAISE(ABORT,'fixture checkpoint write failure'); END;")).unwrap();
+            let report = accepted.run(&engine).await;
+            assert_eq!(report.state, ReceiptState::Unknown);
+            assert_eq!(first.exists(), fail_after_first_effect);
+            assert!(!later.exists());
+            let retained = ledger.receipt(&g.issuer_id, &g.grant_id).unwrap();
+            assert_eq!(retained["state"], "unknown");
+            assert_eq!(
+                retained["pipeline_progress"]["sequence"],
+                if fail_after_first_effect { 1 } else { 0 }
+            );
+            assert_eq!(
+                retained["pipeline_progress"]["termination_confirmed"],
+                false
+            );
+            assert!(
+                !serde_json::to_string(&retained)
+                    .unwrap()
+                    .contains("private first effect")
+            );
+            db.execute_batch("DROP TRIGGER fail_progress").unwrap();
+            drop(db);
+            drop(ledger);
+            let reopened = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+            assert_eq!(
+                reopened.receipt(&g.issuer_id, &g.grant_id).unwrap(),
+                retained
+            );
+            assert!(
+                AcceptedGrant::prepare(
+                    g.clone(),
+                    reopened,
+                    &engine,
+                    &g.issuer_id,
+                    &g.session_id,
+                    &g.executor_node
+                )
+                .is_err()
+            );
+            assert!(!later.exists());
+        }
     }
     #[tokio::test]
     async fn one_consumed_parent_executes_local_dataflow_and_never_replays() {
