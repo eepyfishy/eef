@@ -1,5 +1,12 @@
 # HTTP API
 
+Incomplete interpretation retains `error_code:"interpretation_incomplete"` and
+may add static `completion_reason`: `reasoning_only_output_limit`, `output_limit`,
+`tool_call`, `content_filter`, `not_finished` or `unconfirmed_finish`. This never
+returns reasoning, partial model text or arbitrary finish strings in the error
+diagnostic, never repairs/retries output and never grants execution. See
+[completion failure contract](INTERPRETER-COMPLETION.md).
+
 Owner request-command endpoints for preview/review/open/input/resolve/prepare/
 respond accept optional top-level `inference_timeout_seconds` (integer 1–120).
 Omission/null preserves the 20-second default. The option is not model output,

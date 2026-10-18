@@ -53,6 +53,11 @@ const fake = createServer(async (req, res) => {
     if (mode === 'question-missing') value.needs_clarification = true;
     if (mode === 'question-unneeded') value.clarification = 'PRIVATE_MODEL_TEXT';
     if (mode === 'output-size') value.goal = 'PRIVATE_MODEL_TEXT' + 'x'.repeat(16384);
+    if(mode==='reasoning-limit')return res.end(JSON.stringify({message:{content:'',thinking:'PRIVATE_REASONING_TRACE'},done:true,done_reason:'length'}));
+    if(mode==='tool-call')return res.end(JSON.stringify({message:{content:'PRIVATE_PARTIAL'},done:true,done_reason:'tool_calls'}));
+    if(mode==='filtered')return res.end(JSON.stringify({message:{content:'PRIVATE_PARTIAL'},done:true,done_reason:'content_filter'}));
+    if(mode==='unfinished')return res.end(JSON.stringify({message:{content:'PRIVATE_PARTIAL'},done:false,done_reason:'stop'}));
+    if(mode==='private-finish')return res.end(JSON.stringify({message:{content:'PRIVATE_PARTIAL'},done:true,done_reason:'PRIVATE_FINISH'}));
     return res.end(JSON.stringify({message: {content: JSON.stringify(value)}, done: true,
       ...(mode === 'unknown' ? {} : {done_reason: mode === 'partial' ? 'length' : 'stop'})}));
   }
@@ -108,6 +113,13 @@ try {
     assert.equal(result.error_code, expected); assert.equal(result.dispatched, false); assert.equal(result.result, undefined);
     assert.equal(result.rejection_reason, next === 'invalid' ? 'schema_invalid' : undefined);
     assert(!JSON.stringify(result).includes('PRIVATE_MODEL_TEXT'));
+    assert.equal(result.completion_reason,next==='partial'?'output_limit':next==='unknown'?'unconfirmed_finish':undefined);
+  }
+  for(const [next,reason] of [['reasoning-limit','reasoning_only_output_limit'],['tool-call','tool_call'],['filtered','content_filter'],['unfinished','not_finished'],['private-finish','unconfirmed_finish']]){
+    mode=next;const count=calls.length,result=await preview('Diagnose incomplete completion',false);
+    assert.equal(result.error_code,'interpretation_incomplete');assert.equal(result.completion_reason,reason);
+    assert.equal(result.execution_authorized,false);assert.equal(result.dispatched,false);assert.equal(result.automatically_retried,false);
+    assert.equal(result.result,undefined);assert.equal(calls.length,count+1);assert(!JSON.stringify(result).includes('PRIVATE_'));
   }
   for (const [next, reason] of [['version','version_unsupported'],['goal','goal_invalid'],['hints','hints_invalid'],
       ['capabilities','capabilities_invalid'],['question','clarification_invalid'],['uncertainty','clarification_required'],
@@ -177,7 +189,8 @@ try {
     provider_schema_forwarded:true,ignored_grammar_inconsistencies_rejected:true,
     no_configuration_changes: true, concurrency_bounded: true,
     restart_invalidates_inflight: true, inference_timeout_bounded: true, explicit_long_wait_crosses_prior_client_backend_deadlines:true,
-    explicit_short_timeout:true, default_timeout_unchanged:true, invalid_timeout_no_inference:true, no_automatic_retry: true, no_legacy_fallback: true,
+    explicit_short_timeout:true, default_timeout_unchanged:true, invalid_timeout_no_inference:true, completion_diagnostics_text_free:true,
+    reasoning_never_promoted_to_answer:true, no_automatic_retry: true, no_legacy_fallback: true,
     real_inference: false, physical_two_pc: false}, null, 2));
   console.log('Request preview checks passed: ' + scratch);
 } finally {

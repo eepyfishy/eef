@@ -67,6 +67,8 @@ const fake=createServer(async(req,res)=>{
  if(!preparing&&mode==='continuous')value.workload='continuous';
  if(!preparing&&mode==='resolve-question')Object.assign(value,{needs_clarification:true,clarification:'Which room did you mean after your answer?'});
  if(!preparing&&mode==='invalid-resolution')value.permissions=['everything'];
+ if((preparing&&mode==='reasoning-method')||(!preparing&&mode==='reasoning-resolution'))
+  return res.end(JSON.stringify({message:{content:'',thinking:'PRIVATE_REASONING_TRACE'},done:true,done_reason:'length'}));
  res.end(JSON.stringify({message:{content:JSON.stringify(value)},done:true,done_reason:'stop'}));
 });
 const proxy=createServer(async(req,res)=>{
@@ -154,6 +156,17 @@ try {
  const respond=(job,revision,text,operation=randomUUID(),success=true,budget)=>nodeCli(['requests','respond',job,'--revision',String(revision),'--text',text,'--operation-id',operation,
   ...(budget===undefined?[]:['--inference-timeout-seconds',String(budget)])],success);
  const newQuestion=async text=>{mode='clarify';return(await input(text)).result;};
+ mode='reasoning-method';count=calls.length;const reasoningInputId=randomUUID();
+ const reasoningInput=await input('Method reasoning is not an answer',reasoningInputId,false);
+ assert.equal(reasoningInput.preparation.error_code,'interpretation_incomplete');assert.equal(reasoningInput.preparation.completion_reason,'reasoning_only_output_limit');
+ assert.equal(reasoningInput.result.revision,1);assert.equal(calls.length,count+2);assert(!JSON.stringify(reasoningInput).includes('PRIVATE_REASONING_TRACE'));
+ assert.equal((await input('Method reasoning is not an answer',reasoningInputId)).status,'historical_snapshot');assert.equal(calls.length,count+2);
+ const reasoningSource=await newQuestion('Clarification reasoning is not an answer');mode='reasoning-resolution';count=calls.length;
+ const reasoningAnswerId=randomUUID(),reasoningAnswer=await respond(reasoningSource.id,1,'This node',reasoningAnswerId,false);
+ assert.equal(reasoningAnswer.resolution.error_code,'interpretation_incomplete');assert.equal(reasoningAnswer.resolution.completion_reason,'reasoning_only_output_limit');
+ assert.equal(reasoningAnswer.answer_confirmed,true);assert.equal(reasoningAnswer.result.revision,2);assert.equal(calls.length,count+1);
+ assert(!JSON.stringify(reasoningAnswer).includes('PRIVATE_REASONING_TRACE'));
+ assert.equal((await respond(reasoningSource.id,1,'This node',reasoningAnswerId)).status,'historical_snapshot');assert.equal(calls.length,count+1);
  mode='gate-resolution';count=calls.length;const timedOpeningId=randomUUID();let timingStarted=Date.now();
  const timedOpening=await input('Explicit timing for initial interpretation',timedOpeningId,false,1);
  assert.equal(timedOpening.error_code,'interpretation_timeout');assert.equal(calls.length,count+1);assert(Date.now()-timingStarted<8000);
@@ -349,6 +362,7 @@ try {
  evidence={passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
+  reasoning_completion_failure_retains_source_and_answer:true,completion_diagnostics_do_not_echo_reasoning_or_replay:true,
   checkpoint_rejection_diagnosed_without_replay:true,
   immutable_input_context:true,read_only_receipt_reuse:true,partial_preparation_no_implicit_retry:true,current_question_returned:true,
   clarification_and_continuous_not_auto_prepared:true,saved_applied_policy_separate:true,runtime_change_cancels_workflow:true,

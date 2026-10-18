@@ -1347,7 +1347,14 @@ impl NodeEngine {
             .await
             .map_err(|_| "interpreter_backend_failed")?;
         if response["completion_complete"] != true {
-            return Err("interpretation_incomplete");
+            return Err(
+                serde_json::from_value::<crate::model_response::IncompleteReason>(
+                    response["completion_reason"].clone(),
+                )
+                .ok()
+                .map(crate::model_response::IncompleteReason::engine_code)
+                .unwrap_or("interpretation_incomplete"),
+            );
         }
         let output = response["content"]
             .as_str()

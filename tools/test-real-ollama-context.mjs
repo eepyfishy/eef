@@ -7,6 +7,7 @@ import {createServer,request} from 'node:http';
 import {spawn} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {freemem} from 'node:os';
+import {observeOllama} from './ollama-test-observer.mjs';
 
 assert.equal(process.env.EEF_TEST_ALLOW_SHARED_OLLAMA,'1','Explicitly opt in to shared Ollama load/resource/retention effects');
 const model=process.argv[2];assert(model&&model.length<=256&&model.trim()===model&&!/[\x00-\x1f\x7f]/.test(model),'Supply one installed model name');
@@ -18,6 +19,8 @@ assert(process.argv.length<=4||(process.argv.length===5&&prepareFirst),'Only opt
 const timing=process.env.EEF_TEST_INFERENCE_TIMEOUT_SECONDS;
 assert(timing===undefined||(/^[1-9]\d{0,2}$/.test(timing)&&Number(timing)<=120),'Use an explicit inference test budget from 1 to 120 seconds');
 const inferenceSeconds=timing===undefined?undefined:Number(timing);
+const capture=process.env.EEF_TEST_CAPTURE_OLLAMA_RESPONSE==='1';
+assert(process.env.EEF_TEST_CAPTURE_OLLAMA_RESPONSE===undefined||capture,'Use explicit capture opt-in 1 or omit it');
 const root=resolve(import.meta.dirname,'..'),bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 function json(url,body){return new Promise((done,fail)=>{
  const payload=body===undefined?undefined:JSON.stringify(body);
@@ -37,6 +40,8 @@ const details=await json(new URL('/api/show',provider),{model});
 assert(details.capabilities?.includes('completion'),'Installed model must report text completion');
 const thinking=details.capabilities.includes('thinking')?'disabled':'inherit';
 const scratch=await mkdtemp(join(root,'.validation/real-ollama-context-')),configPath=join(scratch,'node.json'),children=[];
+const input='Show the operating system and memory usage of this node.';
+let observer;
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),
  HTTP_PROXY:'',HTTPS_PROXY:'',ALL_PROXY:'',NO_PROXY:'127.0.0.1,localhost,::1',
  PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
@@ -55,12 +60,14 @@ const evidence={passed:false,shared_existing_ollama:true,provider_version:versio
  provider_reported_model_size_bytes:entry.size,free_system_ram_at_inspection_bytes:availableRam,
  model_file_hash_verified:false,model_downloads:false,model_copies:false,physical_two_pc:false,model_quality_approved:false,
  context_tokens_requested:4096,retention_seconds_requested:60,thinking_hint:thinking,inference_timeout_seconds_requested:inferenceSeconds??20,
- owner_preview_commands:0,preparation_requested:prepareFirst,preparation_commands:0,force_unload_requested:false,service_stopped:false};
+ owner_preview_commands:0,preparation_requested:prepareFirst,preparation_commands:0,force_unload_requested:false,service_stopped:false,
+ private_response_capture_opted_in:capture};
 try{
+ if(capture)observer=await observeOllama({provider:provider.origin,model,input,directory:scratch});
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
  Object.assign(config,{node_id:'ollama-context-'+randomUUID(),name:'Shared Ollama context fixture',auto_local:false,local_pairing:false,
   connection_enabled:false,endpoints:[],update:{policy:'off'},dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:await port()},
-  models:{provider:'ollama',ollama:{base_url:provider.origin,selected:[{model_id:model,modality:'text'}]},llamacpp:{slots:[]}}});
+  models:{provider:'ollama',ollama:{base_url:observer?.origin||provider.origin,selected:[{model_id:model,modality:'text'}]},llamacpp:{slots:[]}}});
  await writeFile(configPath,JSON.stringify(config));
  await cli(['models','interpreter','--backend','ollama','--model',model]);
  const initial=(await cli(['model-lifecycle-policy','show'])).result;
@@ -90,7 +97,7 @@ try{
   assert.equal(evidence.preparation_report.receipt.preparation.provider_reported_digest,entry.digest);
   assert.equal(evidence.preparation_report.model_inference_requested,false);
  }
- const configBefore=await readFile(configPath,'utf8'),input='Show the operating system and memory usage of this node.';
+ const configBefore=await readFile(configPath,'utf8');
  const started=performance.now();evidence.owner_preview_commands++;
  const preview=await cli(['requests','preview','--text',input,...(inferenceSeconds===undefined?[]:['--inference-timeout-seconds',String(inferenceSeconds)])],true);
  evidence.preview_elapsed_ms=Math.round(performance.now()-started);
@@ -114,6 +121,7 @@ try{
 }catch(error){evidence.error=String(error);await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({pid:c.pid,exit_code:c.exitCode,...c.logs()})),null,2));throw error;}
 finally{
  for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));
+ if(observer){await observer.close();evidence.provider_observations=observer.records;}
  await writeFile(join(scratch,'results.json'),JSON.stringify(evidence,null,2));
  console.log('Shared-Ollama context evidence: '+scratch);
 }

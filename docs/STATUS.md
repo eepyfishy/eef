@@ -1,5 +1,30 @@
 # Architecture conformance status
 
+## Unreleased: reasoning-aware completion failures (2026-10-18)
+
+Incomplete interpreter responses keep the existing generic failure code and add
+an optional static completion category. Reasoning-only output exhaustion,
+ordinary output limits, tool calls, filtering, explicit unfinished generation and
+unconfirmed finish metadata now have text-free explanations. The shared engine
+and owner services never promote reasoning/partial output, call tools, retry,
+increase caps, select a replacement model or grant authority. Completed output
+keeps its old normalized shape; logic contains no model-name exceptions.
+
+Both locked/offline workspace/all-target suites pass **735 tests plus one ignored
+each**, including no-dashboard; fresh binaries/examples build. Public preview and
+pinned-TLS input/answer regressions verify classifications, redaction, partial
+history and no replay. The opt-in bounded test observer preserves bytes and keeps
+raw responses private, with synthetic admission/privacy/bounds tests passing.
+See [contract and measured scope](INTERPRETER-COMPLETION.md).
+
+Captured Qwen evidence confirms `think:false` nevertheless yielded zero answer
+bytes and reasoning-only `length` termination at 512 tokens. A separate existing
+Gemma model completes the same bounded synthetic preview in **7,196 ms** after
+explicit preparation, but asks an unnecessary format question. This proves one
+completed structurally accepted response, not semantic/default model approval.
+No downloads, installed/physical node, UI, service-setting, release or stable
+update-feed changes. Quality comparison, bootstrap and release gates remain open.
+
 ## Unreleased: explicit owner inference wait (2026-10-17)
 
 Seven model-backed request commands accept an explicit 1–120-second per-call

@@ -3,6 +3,64 @@ use crate::model_selection::Backend;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
+/// Static observations only: never provider text, token counts or reasoning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum IncompleteReason {
+    ReasoningOnlyOutputLimit,
+    OutputLimit,
+    ToolCall,
+    ContentFilter,
+    NotFinished,
+    UnconfirmedFinish,
+}
+impl IncompleteReason {
+    pub(crate) fn engine_code(self) -> &'static str {
+        match self {
+            Self::ReasoningOnlyOutputLimit => "interpretation_incomplete_reasoning_limit",
+            Self::OutputLimit => "interpretation_incomplete_output_limit",
+            Self::ToolCall => "interpretation_incomplete_tool_call",
+            Self::ContentFilter => "interpretation_incomplete_content_filter",
+            Self::NotFinished => "interpretation_incomplete_not_finished",
+            Self::UnconfirmedFinish => "interpretation_incomplete_unconfirmed_finish",
+        }
+    }
+    pub(crate) fn from_engine_code(code: &str) -> Option<Self> {
+        [
+            Self::ReasoningOnlyOutputLimit,
+            Self::OutputLimit,
+            Self::ToolCall,
+            Self::ContentFilter,
+            Self::NotFinished,
+            Self::UnconfirmedFinish,
+        ]
+        .into_iter()
+        .find(|reason| reason.engine_code() == code)
+    }
+    pub(crate) fn explanation(self) -> &'static str {
+        match self {
+            Self::ReasoningOnlyOutputLimit => {
+                "The backend exhausted its output allowance on reasoning without a final answer. A thinking request hint is not proof it was honored. Choose an appropriate installed interpreter; reasoning was not used as an answer."
+            }
+            Self::OutputLimit => {
+                "The backend reported its output limit before a complete final answer. Partial output was not repaired or used as a proposal."
+            }
+            Self::ToolCall => {
+                "The backend requested a tool/function call instead of completing an interpretation. No tool was called."
+            }
+            Self::ContentFilter => {
+                "The backend reported a filtered completion. No substitute answer was generated."
+            }
+            Self::NotFinished => {
+                "The backend explicitly reported that generation was not finished. Partial output was not used."
+            }
+            Self::UnconfirmedFinish => {
+                "The backend did not confirm a supported completed answer. No completion was invented."
+            }
+        }
+    }
+}
+
 pub(crate) async fn chat(response: reqwest::Response, backend: Backend) -> Result<Value> {
     let response = crate::model_manager::bounded_json(response).await?;
     normalize(&response, backend)
@@ -50,12 +108,135 @@ fn normalize(response: &Value, backend: Backend) -> Result<Value> {
     };
     // Additive metadata; existing consumers can continue reading `content`.
     // Provider completion is not semantic validity or authorization to execute.
-    Ok(json!({"content":content,"finish_reason":reason,"completion_complete":complete}))
+    let mut normalized =
+        json!({"content":content,"finish_reason":reason,"completion_complete":complete});
+    if complete != Some(true) {
+        let reasoning = match backend {
+            Backend::Ollama => response.pointer("/message/thinking"),
+            Backend::Llamacpp => response
+                .pointer("/choices/0/message/reasoning_content")
+                .or_else(|| response.pointer("/choices/0/message/reasoning")),
+        }
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.trim().is_empty());
+        let issue = if done == Some(false) {
+            IncompleteReason::NotFinished
+        } else {
+            match reason {
+                Some("length") if content.trim().is_empty() && reasoning => {
+                    IncompleteReason::ReasoningOnlyOutputLimit
+                }
+                Some("length") => IncompleteReason::OutputLimit,
+                Some("tool_calls" | "function_call") => IncompleteReason::ToolCall,
+                Some("content_filter") => IncompleteReason::ContentFilter,
+                _ => IncompleteReason::UnconfirmedFinish,
+            }
+        };
+        normalized["completion_reason"] = json!(issue);
+    }
+    Ok(normalized)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn incomplete_categories_never_promote_reasoning_or_echo_provider_diagnostics() {
+        for backend in [Backend::Ollama, Backend::Llamacpp] {
+            for (reason, content, thinking, done, expected) in [
+                (
+                    "length",
+                    "",
+                    "PRIVATE_REASONING",
+                    true,
+                    IncompleteReason::ReasoningOnlyOutputLimit,
+                ),
+                (
+                    "length",
+                    " \n",
+                    "PRIVATE_REASONING",
+                    true,
+                    IncompleteReason::ReasoningOnlyOutputLimit,
+                ),
+                (
+                    "length",
+                    "PRIVATE_PARTIAL_ANSWER",
+                    "PRIVATE_REASONING",
+                    true,
+                    IncompleteReason::OutputLimit,
+                ),
+                ("length", "", " \n", true, IncompleteReason::OutputLimit),
+                (
+                    "tool_calls",
+                    "",
+                    "PRIVATE_REASONING",
+                    true,
+                    IncompleteReason::ToolCall,
+                ),
+                ("function_call", "", "", true, IncompleteReason::ToolCall),
+                (
+                    "content_filter",
+                    "",
+                    "",
+                    true,
+                    IncompleteReason::ContentFilter,
+                ),
+                (
+                    "PRIVATE_FINISH_REASON",
+                    "",
+                    "",
+                    true,
+                    IncompleteReason::UnconfirmedFinish,
+                ),
+            ] {
+                let response = match backend {
+                    Backend::Ollama => {
+                        json!({"message":{"content":content,"thinking":thinking},"done":done,"done_reason":reason})
+                    }
+                    Backend::Llamacpp => {
+                        json!({"choices":[{"message":{"content":content,"reasoning_content":thinking},"finish_reason":reason}]})
+                    }
+                };
+                let value = normalize(&response, backend).unwrap();
+                assert_ne!(value["completion_complete"], true);
+                assert_eq!(value["content"], content);
+                assert_eq!(value["completion_reason"], json!(expected));
+                assert!(!value.to_string().contains("PRIVATE_REASONING"));
+                assert!(value.get("thinking").is_none());
+                assert_eq!(
+                    IncompleteReason::from_engine_code(expected.engine_code()),
+                    Some(expected)
+                );
+            }
+        }
+        let value=normalize(&json!({"message":{"content":"","thinking":"PRIVATE_REASONING"},"done":false,"done_reason":"length"}),Backend::Ollama).unwrap();
+        assert_eq!(
+            value["completion_reason"],
+            json!(IncompleteReason::NotFinished)
+        );
+    }
+    #[test]
+    fn completed_shape_is_unchanged_and_unknown_reason_classes_are_not_accepted() {
+        let value=normalize(&json!({"message":{"content":"answer","thinking":"PRIVATE_REASONING"},"done":true,"done_reason":"stop"}),Backend::Ollama).unwrap();
+        assert_eq!(
+            value,
+            json!({"content":"answer","finish_reason":"stop","completion_complete":true})
+        );
+        for backend in [Backend::Ollama, Backend::Llamacpp] {
+            let body = match backend {
+                Backend::Ollama => json!({"message":{"content":""},"done_reason":"stop"}),
+                Backend::Llamacpp => json!({"choices":[{"message":{"content":""}}]}),
+            };
+            assert_eq!(
+                normalize(&body, backend).unwrap()["completion_reason"],
+                json!(IncompleteReason::UnconfirmedFinish)
+            );
+        }
+        for raw in ["PRIVATE_REASON", "length", "stop"] {
+            assert!(serde_json::from_value::<IncompleteReason>(json!(raw)).is_err());
+            assert_eq!(IncompleteReason::from_engine_code(raw), None);
+        }
+    }
     #[test]
     fn both_adapters_preserve_content_without_inventing_completion() {
         for backend in [Backend::Ollama, Backend::Llamacpp] {

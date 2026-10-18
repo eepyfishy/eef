@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+Incomplete completions now carry optional static, text-free causes under the
+existing error code, including reasoning-only output exhaustion. Both adapters,
+preview/resolution/preparation and public input/answer history regressions pass;
+both suites pass 735 tests plus one ignored each. Private opt-in capture confirms
+the Qwen failure consumed its cap in reasoning despite a false request hint.
+Another already-installed model completes one bounded preview in 7,196 ms, but
+asks an unnecessary clarification. No model-name workaround, raw reasoning
+promotion, automatic retry/default selection or semantic approval follows. See
+[evidence and limits](INTERPRETER-COMPLETION.md). Full model quality, bootstrap,
+physical and stable-release gates remain unfinished.
+
 Owner request commands now optionally choose a 1–120-second inference allowance;
 omission preserves the 20-second default and old request shapes. The option
 propagates through input/answer model stages with bounded client/workflow waits,

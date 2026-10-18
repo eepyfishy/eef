@@ -32,6 +32,12 @@ Changing this option on retained input/answer receipts still reads history only.
 This is per-command, not a saved node preference. See [contract, wait bounds and
 limits](INFERENCE-TIMING.md).
 
+An `interpretation_incomplete` failure may also report a static completion cause
+and explanation, including when the backend spends its allowance on reasoning
+without a final answer. It does not use reasoning as an answer, raise limits or
+retry. Earlier input/answer history stays retained. See
+[completion diagnostics](INTERPRETER-COMPLETION.md).
+
 ## Explicit native command authoring (unreleased after alpha.6)
 
 `eefn requests submit-process --text PURPOSE --program PROGRAM --arg=VALUE`

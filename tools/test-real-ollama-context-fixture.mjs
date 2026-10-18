@@ -27,7 +27,7 @@ try{
  for(mode of ['valid','rejected','prepared']){
   calls=[];
   const child=spawn(process.execPath,[join(root,'tools/test-real-ollama-context.mjs'),model,'http://127.0.0.1:'+server.address().port,...(mode==='prepared'?['--prepare']:[])],
-   {cwd:root,windowsHide:true,env:{...process.env,EEF_TEST_ALLOW_SHARED_OLLAMA:'1',...(mode==='prepared'?{EEF_TEST_INFERENCE_TIMEOUT_SECONDS:'1'}:{})},stdio:['ignore','pipe','pipe']});
+   {cwd:root,windowsHide:true,env:{...process.env,EEF_TEST_ALLOW_SHARED_OLLAMA:'1',...(mode==='prepared'?{EEF_TEST_INFERENCE_TIMEOUT_SECONDS:'1',EEF_TEST_CAPTURE_OLLAMA_RESPONSE:'1'}:{})},stdio:['ignore','pipe','pipe']});
   let out='',err='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>err+=b);
   const timer=setTimeout(()=>child.kill(),45000);
   let code;try{code=await new Promise((r,j)=>{child.on('error',j);child.on('close',r);});}finally{clearTimeout(timer);}
@@ -43,6 +43,10 @@ try{
   assert.equal(calls.at(-1).messages.at(-1).content,'Show the operating system and memory usage of this node.');
   if(mode==='prepared'){
    assert.equal(report.inference_timeout_seconds_requested,1);
+   assert.equal(report.private_response_capture_opted_in,true);assert.equal(report.provider_observations.length,2);
+   const observed=JSON.parse(await readFile(join(path,'PRIVATE-observed-chat-2.json'),'utf8'));
+   assert.deepEqual(JSON.parse(observed.request_body),calls[1]);assert.equal(JSON.parse(observed.response_body).done_reason,'stop');
+   assert.equal(report.provider_observations[1].requested_think,false);assert.equal(report.provider_observations[1].finish_reason,'stop');
    assert.equal(report.preparation_commands,1);assert.equal(report.preparation_report.receipt.phase,'completed');
    assert.deepEqual(calls[0].messages,[]);assert.equal(calls[0].think,undefined);
   }

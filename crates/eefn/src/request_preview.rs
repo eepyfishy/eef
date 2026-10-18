@@ -442,6 +442,7 @@ impl NodeService {
             report["error_code"] = json!(code);
         }
         annotate_rejection(&mut report);
+        annotate_completion(&mut report);
         report
     }
 
@@ -581,6 +582,7 @@ impl NodeService {
             report["error_code"] = json!(code);
         }
         annotate_rejection(&mut report);
+        annotate_completion(&mut report);
         report
     }
 
@@ -951,6 +953,7 @@ impl NodeService {
             "local_node"
         });
         annotate_rejection(&mut report);
+        annotate_completion(&mut report);
         if let Some(hint) = interpreter_setup_hint(report["error_code"].as_str().unwrap_or("")) {
             report["setup_hint"] = json!(hint);
         }
@@ -960,6 +963,24 @@ impl NodeService {
 
 /// Keep the established public error code; add only a typed, static category.
 /// No output fragments, parser errors, model IDs or request contents are exposed.
+fn annotate_completion(report: &mut Value) {
+    if report["success"] != false {
+        return;
+    }
+    let Some(reason) = report["error_code"]
+        .as_str()
+        .and_then(crate::model_response::IncompleteReason::from_engine_code)
+    else {
+        return;
+    };
+    report["error_code"] = json!("interpretation_incomplete");
+    report["completion_reason"] = json!(reason);
+    report["error"] = json!(format!(
+        "{} No proposal was saved, no action was authorized and no automatic retry was requested.",
+        reason.explanation()
+    ));
+}
+
 fn annotate_rejection(report: &mut Value) {
     if report["success"] != false {
         return;
@@ -997,6 +1018,44 @@ fn interpreter_setup_hint(code: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn completion_diagnostics_preserve_generic_failure_and_never_publish_model_text() {
+        use crate::model_response::IncompleteReason;
+        for reason in [
+            IncompleteReason::ReasoningOnlyOutputLimit,
+            IncompleteReason::OutputLimit,
+            IncompleteReason::ToolCall,
+            IncompleteReason::ContentFilter,
+            IncompleteReason::NotFinished,
+            IncompleteReason::UnconfirmedFinish,
+        ] {
+            let mut value = json!({"success":false,"error_code":reason.engine_code(),"error":"PRIVATE_PROVIDER_TEXT",
+                "execution_authorized":false,"dispatched":false,"automatically_retried":false,"result":null});
+            annotate_completion(&mut value);
+            assert_eq!(value["error_code"], "interpretation_incomplete");
+            assert_eq!(value["completion_reason"], json!(reason));
+            assert_eq!(value["execution_authorized"], false);
+            assert_eq!(value["dispatched"], false);
+            assert_eq!(value["automatically_retried"], false);
+            assert!(value["result"].is_null());
+            assert!(!value.to_string().contains("PRIVATE_PROVIDER_TEXT"));
+            let mut success = json!({"success":true,"error_code":reason.engine_code()});
+            let before = success.clone();
+            annotate_completion(&mut success);
+            assert_eq!(success, before);
+        }
+        for code in [
+            "interpretation_incomplete",
+            "interpretation_timeout",
+            "interpreter_backend_failed",
+            "PRIVATE_ENGINE_CODE",
+        ] {
+            let mut value = json!({"success":false,"error_code":code});
+            let before = value.clone();
+            annotate_completion(&mut value);
+            assert_eq!(value, before);
+        }
+    }
     #[test]
     fn rejection_annotation_preserves_public_code_and_never_changes_authority_or_payload() {
         let mut failure = json!({"success":false,"error_code":"interpretation_rejected_clarification",
