@@ -52,6 +52,8 @@ pub struct ExecutionRecord {
     pub attempts: Vec<GrantedAttempt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub abandonment: Option<eefn::request_abandon::AbandonRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer: Option<crate::peer_jobs::Issuance>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -96,6 +98,11 @@ pub(crate) fn abandon(
         eefn::request_abandon::AbandonActor::CoordinatorOwner
     };
     let execution = p.execution.as_ref().context("No reviewed execution")?;
+    if execution.peer.is_some() {
+        bail!(
+            "Paired tracking closure needs explicit joint uncertainty handling; inspect both receipts"
+        )
+    }
     if let Some(existing) = &execution.abandonment {
         if existing.command == *command && existing.actor == actor {
             return Ok(false);
@@ -201,6 +208,7 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
     let Some(e) = &plan.execution else {
         return Ok(());
     };
+    let paired = crate::peer_jobs::validate_retained(plan)?;
     e.command.validate()?;
     let approval = plan
         .approval
@@ -279,7 +287,8 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             || g.grant_id == planning.operation_id
             || task.attempts != 1
             || task.assignments.len() != 1
-            || (index > 0
+            || (!paired
+                && index > 0
                 && (e.attempts[index - 1].state != AttemptState::Completed
                     || e.attempts[index - 1]
                         .final_report()
@@ -380,7 +389,8 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
                     TaskStatus::Pending | TaskStatus::Running | TaskStatus::Interrupted
                 )
             }))
-        || (matches!(plan.status, PlanStatus::Running | PlanStatus::Stopping)
+        || (!paired
+            && matches!(plan.status, PlanStatus::Running | PlanStatus::Stopping)
             && plan
                 .tasks
                 .iter()
@@ -390,7 +400,7 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             .iter()
             .filter(|a| matches!(a.state, AttemptState::Issued | AttemptState::Accepted))
             .count()
-            > 1)
+            > if paired { 2 } else { 1 })
     {
         bail!("Reviewed execution/result state is inconsistent")
     }
@@ -468,6 +478,12 @@ impl GrantObserver for AttemptJournal {
                 if !report.confirms(&a.grant) {
                     bail!("Report does not confirm issued authority")
                 }
+                if e.peer
+                    .as_ref()
+                    .is_some_and(|r| !r.confirms(&a.grant, report))
+                {
+                    bail!("Report belongs to another paired session")
+                }
                 if a.acknowledgement
                     .as_ref()
                     .is_some_and(|old| json!(old) == json!(report))
@@ -522,7 +538,9 @@ impl GrantObserver for AttemptJournal {
                 let r = result(&g, report);
                 task.result = Some(r.clone());
                 p.results.insert(g.task_id.clone(), r);
-                if report.state == ReceiptState::Unknown {
+                if p.execution.as_ref().unwrap().peer.is_some() {
+                    crate::peer_jobs::settle(p);
+                } else if report.state == ReceiptState::Unknown {
                     p.status = PlanStatus::Interrupted;
                 } else if !report.success {
                     p.status = PlanStatus::Failed;
@@ -542,14 +560,29 @@ impl GrantObserver for AttemptJournal {
 
 #[derive(Clone)]
 pub(crate) struct Driver {
-    runtime_id: String,
-    engine: Arc<TaskEngine>,
-    server: eefn::NodeServer,
-    registry: crate::capability::CapabilityRegistry,
+    pub(crate) runtime_id: String,
+    pub(crate) engine: Arc<TaskEngine>,
+    pub(crate) server: eefn::NodeServer,
+    pub(crate) registry: crate::capability::CapabilityRegistry,
     models: crate::model::ModelRegistry,
     tiers: BTreeMap<String, Vec<String>>,
 }
 impl Driver {
+    #[cfg(test)]
+    pub(crate) fn peer_fixture(
+        engine: Arc<TaskEngine>,
+        server: eefn::NodeServer,
+        registry: crate::capability::CapabilityRegistry,
+    ) -> Self {
+        Self {
+            runtime_id: uuid::Uuid::new_v4().to_string(),
+            engine,
+            server,
+            registry,
+            models: Default::default(),
+            tiers: Default::default(),
+        }
+    }
     pub(crate) fn new(runtime: &crate::Runtime) -> Self {
         Self {
             runtime_id: runtime.instance_id.clone(),
@@ -574,7 +607,11 @@ impl Driver {
             self.registry.scheduling_policy().freshness_seconds,
         )
         .await?;
-        let session = self.server.grant_session(&b.node_id).await?;
+        let session = if t.capability == "peer.transfer" {
+            self.server.peer_grant_session(&b.node_id).await?
+        } else {
+            self.server.grant_session(&b.node_id).await?
+        };
         if t.capability == "pipeline.run" {
             let definition = crate::pipeline_planning::definition(&t.params, Some(&b.node_id))?;
             crate::pipeline_planning::validate_peer(
@@ -629,6 +666,9 @@ impl Driver {
         Ok(session)
     }
     async fn drive(&self, id: &str) -> Result<()> {
+        if crate::peer_jobs::definition(&self.engine.store.get(id)?)?.is_some() {
+            return self.drive_peer(id).await;
+        }
         loop {
             let p = self.engine.store.get(id)?;
             if p.status == PlanStatus::Stopping {
@@ -759,6 +799,9 @@ impl Driver {
     }
 }
 fn issue(p: &mut Plan, index: usize, g: ExecutionGrant) -> Result<()> {
+    if crate::peer_jobs::definition(p)?.is_some() {
+        bail!("Peer grants require one atomic paired issuance")
+    }
     if p.status != PlanStatus::Running {
         bail!("Issuance requires the active reviewed execution")
     }
@@ -774,6 +817,12 @@ fn issue(p: &mut Plan, index: usize, g: ExecutionGrant) -> Result<()> {
     {
         bail!("Task already issued or dependencies unresolved")
     }
+    append_attempt(p, g);
+    Ok(())
+}
+pub(crate) fn append_attempt(p: &mut Plan, g: ExecutionGrant) {
+    let e = p.execution.as_mut().unwrap();
+    let index = e.attempts.len();
     p.tasks[index].status = TaskStatus::Running;
     p.tasks[index].attempts = 1;
     p.tasks[index].assignments.push(crate::jobs::Assignment {
@@ -791,9 +840,8 @@ fn issue(p: &mut Plan, index: usize, g: ExecutionGrant) -> Result<()> {
         report: None,
         recovery: None,
     });
-    Ok(())
 }
-fn start(p: &mut Plan, command: &ExecuteCommand, now: u64) -> Result<()> {
+pub(crate) fn start(p: &mut Plan, command: &ExecuteCommand, now: u64) -> Result<()> {
     command.validate()?;
     let a = p.approval.as_ref().context("Owner approval missing")?;
     if p.execution.is_some()
@@ -810,6 +858,7 @@ fn start(p: &mut Plan, command: &ExecuteCommand, now: u64) -> Result<()> {
         started_at_ms: now,
         attempts: vec![],
         abandonment: None,
+        peer: None,
     });
     p.status = PlanStatus::Running;
     Ok(())

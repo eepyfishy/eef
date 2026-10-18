@@ -108,12 +108,13 @@ fn unbound_plan(plan: &Plan, input: &PlanInput) -> Result<Plan> {
                 .flat_map(|p| p.keys().map(String::as_str))
         })
         .collect();
-    if input
-        .params
-        .as_object()
-        .unwrap()
-        .keys()
-        .any(|k| !used.contains(k.as_str()))
+    if input.template != "peer_transfer"
+        && input
+            .params
+            .as_object()
+            .unwrap()
+            .keys()
+            .any(|k| !used.contains(k.as_str()))
     {
         bail!("Plan input contains parameters unused by its template")
     }
@@ -239,15 +240,19 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             || task.retry_delay_ms != 0
             || task.timeout_ms != expected.timeout_ms
             || task.dependencies
-                != plan.tasks[..index]
-                    .iter()
-                    .map(|t| t.task_id.clone())
-                    .collect::<Vec<_>>()
+                != if record.input.template == "peer_transfer" {
+                    vec![]
+                } else {
+                    plan.tasks[..index]
+                        .iter()
+                        .map(|t| t.task_id.clone())
+                        .collect::<Vec<_>>()
+                }
         {
             bail!("Concrete plan task is not its compiled non-executable definition")
         }
         let mut params = expected.params.clone();
-        let mut constraints = record.input.constraints.clone();
+        let mut constraints = expected.constraints.clone();
         if constraints
             .get("node_id")
             .is_some_and(|id| id != &json!(binding.node_id))
@@ -319,6 +324,11 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
                     .is_some_and(|r| binding.resource_id.as_deref() != r.as_str())
             {
                 bail!("Binding violates explicit resource selection")
+            }
+            if record.input.template == "peer_transfer"
+                && expected.constraints["resource_id"] != json!(binding.resource_id)
+            {
+                bail!("Peer resource binding differs from the exact definition")
             }
             if let Some(resource) = &binding.resource_id {
                 if resource.len() > 256

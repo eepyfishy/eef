@@ -437,6 +437,33 @@ impl NodeServer {
             "limits":c.state.as_ref().unwrap().registration["execution_grants"]["limits"],"timing_mode":crate::grant_time::MODE}),
         )
     }
+    pub async fn peer_grant_session(&self, node_id: &str) -> Result<Value> {
+        let mut session = self.grant_session(node_id).await?;
+        let connections = self.inner.connections.read().await;
+        let c = connections
+            .get(node_id)
+            .context("Peer control connection unavailable")?;
+        if session["session_id"] != c.session_id.to_string() {
+            bail!("Peer control session changed")
+        }
+        let state = c.state.as_ref().context("Peer registration unavailable")?;
+        let support: crate::peer::plan::Advertisement =
+            serde_json::from_value(state.registration["peer_transfer"].clone())?;
+        support.validate()?;
+        let offer: crate::registration::Offer =
+            serde_json::from_value(state.registration["registration_receipt"].clone())?;
+        offer.validate()?;
+        if support.runtime_generation != offer.runtime_id
+            || !state.registration["capabilities"]
+                .as_array()
+                .is_some_and(|v| v.iter().any(|v| v == "peer.transfer"))
+        {
+            bail!("Peer runtime/capability changed")
+        }
+        session["runtime_generation"] = json!(support.runtime_generation);
+        session["destination_address"] = json!(support.destination_address);
+        Ok(session)
+    }
     fn check_grant_connection(&self, c: &Connection) -> Result<()> {
         if !c.credential_transport
             || c.state.as_ref().is_none_or(|s| {
@@ -493,6 +520,43 @@ impl NodeServer {
             Some(lease_deadline),
         )
         .await
+    }
+    pub async fn invoke_peer_grant_observed(
+        &self,
+        grant: crate::grants::ExecutionGrant,
+        scope: crate::peer::scope::Scope,
+        material: crate::peer::SealedMaterial,
+        wait: Duration,
+        observer: Arc<dyn crate::grants::GrantObserver>,
+        lease_deadline: Instant,
+    ) -> Result<Value> {
+        grant.validate()?;
+        let (role, _) = crate::peer::admission::Definition::from_grant(&grant)?;
+        if !scope.valid_at(now_ms()) {
+            bail!("Peer scope is no longer current")
+        }
+        let party = scope.party(role);
+        if party.grant_id != grant.grant_id
+            || party.grant_sha256 != crate::grants::definition_digest(&json!(grant))?
+            || party.node_id != grant.executor_node
+            || material.role != role
+        {
+            bail!("Peer delivery grant differs")
+        }
+        crate::peer::verify_envelope(
+            &scope,
+            &material,
+            &self
+                .inner
+                .authentication
+                .tls
+                .as_ref()
+                .context("No peer issuer")?
+                .certificate,
+        )?;
+        let node = grant.executor_node.clone();
+        self.invoke_message(&node,json!({"type":"execute_peer_grant","grant":grant,"peer":{"scope":scope,"material":material}}),
+            wait,Some(grant),Some(observer),Some(lease_deadline)).await
     }
     /// Read the current authenticated executor's journal for a previously issued grant.
     /// Older sessions/issuers and missing or mismatched receipts never imply effects did not occur.
@@ -608,6 +672,29 @@ impl NodeServer {
                 .fingerprint()?;
             if !g.matches_session(&issuer, &connection.session_id.to_string(), node_id) {
                 bail!("Grant issuer/session changed before dispatch")
+            }
+            if message["type"] == "execute_peer_grant" {
+                let r = &connection
+                    .state
+                    .as_ref()
+                    .context("Peer registration unavailable")?
+                    .registration;
+                let support: crate::peer::plan::Advertisement =
+                    serde_json::from_value(r["peer_transfer"].clone())?;
+                support.validate()?;
+                let (role, _) = crate::peer::admission::Definition::from_grant(g)?;
+                let key = if role == crate::peer::scope::Role::Source {
+                    "source"
+                } else {
+                    "destination"
+                };
+                if message["peer"]["scope"][key]["runtime_generation"] != support.runtime_generation
+                    || (role == crate::peer::scope::Role::Destination
+                        && message["peer"]["scope"]["destination_address"]
+                            != json!(support.destination_address))
+                {
+                    bail!("Peer generation or route changed before dispatch")
+                }
             }
         }
         let request_id = Uuid::new_v4().simple().to_string();
@@ -1038,6 +1125,18 @@ impl NodeServer {
                         a.validate()?;
                     }
                     let advertisement = crate::network::PeerRecord::from_registration(&message)?;
+                    if let Some(value) = message.get("peer_transfer") {
+                        let support: crate::peer::plan::Advertisement =
+                            serde_json::from_value(value.clone())?;
+                        support.validate()?;
+                        if offered
+                            .as_ref()
+                            .is_none_or(|o| o.runtime_id != support.runtime_generation)
+                            || !capabilities.iter().any(|c| c == "peer.transfer")
+                        {
+                            bail!("Peer support lacks its exact registration generation")
+                        }
+                    }
                     let acknowledgement = offered
                         .as_ref()
                         .map(|offer| {
@@ -1085,6 +1184,7 @@ impl NodeServer {
                                     "network",
                                     "execution_grants",
                                     "registration_receipt",
+                                    "peer_transfer",
                                 ],
                                 received_at_ms,
                             ),

@@ -1,5 +1,30 @@
 # Architecture conformance status
 
+## Unreleased: atomic paired coordinator issuance and joint outcomes
+
+The explicit finite pair template retains origin review, fixed endpoint bindings
+and owner approval in the existing journal. Both exact grants and sealed delivery
+are checkpointed atomically before dispatch. A durably saved destination ACK
+gates source dispatch; both scope-bound results are required for parent success.
+Ordinary reviewed jobs remain serial. Failed writes cannot retain half a pair;
+restart preserves issued authority as uncertain without replay. One-grant paired
+recovery/abandonment and reusable paired automation authorization are refused.
+See [contract and remaining boundaries](PEER-TRANSPORT.md#coordinator-paired-jobs-unreleased-native-delivery-still-unavailable).
+
+Seven focused tests pass, including the real coordinator with authenticated
+control sockets and emulated endpoint receipts. This is not native peer-data or
+physical-node acceptance. Native startup still advertises no peer support and
+implements no delivery/socket handler: no user-facing native peer session is
+enabled. No installed/remote node, model, update policy or release changed.
+
+Both final locked/offline all-target modes pass **808 tests plus one ignored
+each**, including no-dashboard. Fresh headless binaries/examples build. Public
+`local-pipelines-BVbdaV`, `model-downloads-OAapCW`, `node-credentials-KuhF7n`
+and `request-drafts-zsRVWd` pass existing command, history and restart/no-replay
+regressions; all fixture apps/helpers are terminal. Browser copying/status smoke
+and the recursive backend/browser guard pass. These public regressions do not
+exercise a native peer session, which remains unavailable.
+
 ## Unreleased: consumed finite peer admission, still no app peer sessions
 
 The experimental library now binds each signed delivery to a full exact grant

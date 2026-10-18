@@ -747,6 +747,7 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
             );
             value["can_abandon_tracking"] = json!(
                     plan.status == PlanStatus::Interrupted
+                        && execution.peer.is_none()
                         && execution.abandonment.is_none()
                         && execution.attempts.last().is_some_and(
                             |a| a.state == crate::request_execution::AttemptState::Unknown

@@ -2,8 +2,9 @@
 
 This is an experimental library in `eefn::peer`, not a usable node-to-node
 feature. No app command, listener, capability advertisement or media route
-enables it. Library-only finite grant admission is described below; it is not
-paired-job or application delivery integration. It is the transport
+enables it. Library finite admission and coordinator paired-job issuance are
+described below; the native node application delivery handler is still absent.
+It is the transport
 foundation for step 8 of the [command-first roadmap](ROADMAP-CORE.md), not
 completion of that step or of [presence and media](PRESENCE-AND-MEDIA.md).
 
@@ -141,10 +142,91 @@ The sender's receipt alone cannot establish durable receiver completion.
 Existing consumed-attempt uniqueness and grant-ID checks refuse reuse after
 completion, drop, cancellation or reopening the same journal. Raw `open` remains
 stateless and must not become a production bypass. This admission primitive is
-not evidence that the coordinator has approved, atomically issued or supervised
-both sides: paired-job planning/issuance, fresh discovery and actual application
-socket/delivery commands remain the next integration work. Current reviewed jobs
-remain serial; their predecessor and one-active-attempt rules were not relaxed.
+not evidence by itself that the coordinator approved or supervised both sides.
+The following coordinator increment adds paired planning/issuance, but fresh
+native application socket/delivery integration remains required. Ordinary
+reviewed jobs retain their predecessor and one-active-attempt rules.
+
+## Coordinator paired jobs (unreleased; native delivery still unavailable)
+
+The explicit `peer_transfer` input now describes two fixed node/resource
+endpoints and an exact finite manifest/limits. Each endpoint definition includes
+its own `resource_id`, consistent with existing resource binding conventions.
+The template is not an inferred language-model method. Root constraints cannot
+override either endpoint, and route addresses, epochs and credentials are not
+accepted inside the immutable input.
+
+Compilation uses existing origin review and planning records; only the existing
+coordinator owner can approve it. Exactly two tasks (`send`, `receive`) have no
+predecessor dependency, no retry and fixed distinct node/resource bindings.
+This is a special bounded pair, not general concurrent reviewed execution:
+ordinary templates retain their predecessor and one-active-attempt invariants.
+Reusable automation authorization for pairs is refused for now.
+
+The driver revalidates providers, issuer, fresh credential/TLS grant sessions,
+node bounds and registration-generation-bound peer support, then reserves both
+providers before minting. Runtime destination address and node generations come
+from those accepted advertisements, not model output. One existing journal
+transaction saves **both** grants, full digests, the scope, public coordinator
+certificate and recipient-encrypted/signed deliveries before either dispatch.
+Quota/signature/binding failure leaves both tasks unissued, with no partial
+checkpoint. Private keys or bulk payloads are not added to the job record.
+
+Destination dispatch precedes source dispatch. A readiness observer releases
+the source only after the destination's exact ACK has been saved by the existing
+journal observer. The future native handler must bind and retain its authorized
+route before emitting that ACK. Rejection, timeout, stop or changed scope before
+readiness sends no source request; it does not fabricate a source-node receipt.
+The new control envelope reuses existing framing, leases and report queues;
+ordinary `execute_grant` is not a delivery fallback.
+
+Each endpoint's result must confirm its own grant **and the saved pair session
+and scope hash**. One endpoint cannot complete the parent. While its counterpart
+is active, an individual failure remains visible but the parent stays running
+or stopping. Once both are terminal, any unknown result yields interrupted;
+otherwise failure yields failed, and two matching successful transport reports
+can complete the transport job. This still proves no application sink effects.
+
+Restart preserves the exact pair and changes unfinished attempts to unknown,
+without renewal, replay, rebinding or migration. Saved envelope signatures are
+validated at issuance time, so inspection does not become invalid merely because
+the short scope or signing certificate later expires; this renews no authority.
+Partial paired reconciliation and one-grant tracking abandonment are explicitly
+refused until joint uncertainty handling is implemented. Exact read-only receipt
+inspection remains available. Older development coordinators lacking the typed
+optional execution field cannot safely inspect these pair records: do not
+downgrade a journal containing them. Ordinary records keep their prior shape.
+
+Compatible nodes must declare versioned peer support tied to their accepted
+registration runtime. Missing/old/changed support is refused before dispatch.
+**Current native node startup still declares no such support**, enables no peer
+admission and handles no new delivery envelope. There is therefore no usable
+native command-driven peer session yet. The coordinator path is implemented,
+but node socket/ACK lifecycle, producers/sinks, strong stop, joint recovery,
+bandwidth supervision and physical acceptance are not complete.
+
+Seven focused tests cover structural bindings, atomic/failed journal writes,
+joint completion, cross-session results, rejection/unknown and restart. One
+drives the actual coordinator over authenticated TLS control sockets, checking
+both-grants-before-dispatch and ACK/result ordering with **emulated executors**.
+It does not move peer payloads, consume real executor journals or substitute for
+native public-command or physical two-PC acceptance.
+
+Both final locked/offline workspace/all-target modes pass **808 tests plus one
+ignored each**: EEF 254 plus one ignored opt-in profiler, owner CLI 17, installer
+6, EEFN 511 and node CLI 20. Fresh headless binaries/examples build. Existing
+public `local-pipelines-BVbdaV`, `model-downloads-OAapCW`,
+`node-credentials-KuhF7n` and `request-drafts-zsRVWd` pass command, private
+credential, history, restart and no-replay regressions. Browser initialization,
+copy stability/status and the recursive backend/browser source guard pass.
+The fixture processes are terminal; no installed/remote node or release changed.
+
+Paired-coordinator checkpoint headless binary SHA-256:
+
+```text
+eef.exe  a359a9446b921cfc48e862615844ad7ca26fefc05b53d07f6a995791f585576f
+eefn.exe 37f1f53847d727beb288a261f52c1d140400877f0b01d7f0af11cd7c18b3dd1a
+```
 
 ## Verification and remaining product integration
 

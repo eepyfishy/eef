@@ -183,8 +183,16 @@ impl TaskPlanner {
             goal.template.clone()
         };
         let steps = eefn::request_planning::template_steps(&template)?;
+        let peer = if template == "peer_transfer" {
+            if goal.constraints.as_object().is_none_or(|v| !v.is_empty()) {
+                bail!("Peer bindings must be explicit inside the pair definition")
+            }
+            Some(eefn::peer::plan::Pair::from_params(&goal.params)?)
+        } else {
+            None
+        };
         let mut tasks: Vec<Task> = Vec::new();
-        for (capability, action, keys) in steps {
+        for (index, (capability, action, keys)) in steps.into_iter().enumerate() {
             let mut params = goal
                 .params
                 .as_object()
@@ -203,17 +211,33 @@ impl TaskPlanner {
                     params["resource_id"] = resource.clone();
                 }
             }
+            let constraints = if let Some(peer) = &peer {
+                let role = if index == 0 {
+                    eefn::peer::scope::Role::Source
+                } else {
+                    eefn::peer::scope::Role::Destination
+                };
+                params = json!(peer.definition(role));
+                let endpoint = peer.endpoint(role);
+                json!({"node_id":endpoint.node_id,"resource_id":endpoint.resource_id})
+            } else {
+                goal.constraints.clone()
+            };
             tasks.push(Task {
                 request_context: goal.request_context.clone(),
                 task_id: short_id(),
                 capability: capability.into(),
                 action: action.into(),
                 params,
-                dependencies: tasks.iter().map(|task| task.task_id.clone()).collect(),
+                dependencies: if peer.is_some() {
+                    vec![]
+                } else {
+                    tasks.iter().map(|task| task.task_id.clone()).collect()
+                },
                 timeout_ms: task_timeout(),
                 retry_count: retries(),
                 retry_delay_ms: retry_delay(),
-                constraints: goal.constraints.clone(),
+                constraints,
                 status: TaskStatus::Pending,
                 result: None,
                 attempts: 0,

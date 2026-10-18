@@ -25,7 +25,10 @@ impl ConcreteInput {
             || self.title.len() > 512
             || self.title.chars().any(char::is_control)
             || (!crate::request_planning::METHOD_TEMPLATES.contains(&self.input.template.as_str())
-                && self.input.template != "local_pipeline")
+                && !matches!(
+                    self.input.template.as_str(),
+                    "local_pipeline" | "peer_transfer"
+                ))
             || serde_json::to_vec(self)?.len() > 160 * 1024
         {
             bail!("Invalid explicit concrete request")

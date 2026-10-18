@@ -8,6 +8,10 @@ pub fn template_steps(
     Ok(match template {
         "system_info" => vec![("system.info", "run", &[])],
         "local_pipeline" => vec![("pipeline.run", "run", &["pipeline"])],
+        "peer_transfer" => vec![
+            ("peer.transfer", "send", &[]),
+            ("peer.transfer", "receive", &[]),
+        ],
         "generate_text" => vec![(
             "llm.infer",
             "run",
@@ -162,6 +166,12 @@ impl PlanInput {
                 bail!(
                     "Pipeline stage identities belong inside the definition, not ignored root constraints"
                 )
+            }
+        }
+        if self.template == "peer_transfer" {
+            crate::peer::plan::Pair::from_params(&self.params)?;
+            if !self.constraints.as_object().unwrap().is_empty() {
+                bail!("Peer endpoint bindings belong inside the exact pair definition")
             }
         }
         for (key, value) in self.constraints.as_object().unwrap() {
@@ -410,6 +420,36 @@ pub fn confirmed(value: &Value, node: &str, receipt: &str, command: &PlanningCom
                 || view.bindings.len() != view.tasks.len()
             {
                 return false;
+            }
+            if input.template == "peer_transfer" {
+                let Ok(pair) = crate::peer::plan::Pair::from_params(&input.params) else {
+                    return false;
+                };
+                if view.tasks.len() != 2 || view.bindings.len() != 2 {
+                    return false;
+                }
+                for (i, role) in [
+                    crate::peer::scope::Role::Source,
+                    crate::peer::scope::Role::Destination,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let t = &view.tasks[i];
+                    let b = &view.bindings[i];
+                    let ep = pair.endpoint(role);
+                    if t.capability != "peer.transfer"
+                        || t.action != if i == 0 { "send" } else { "receive" }
+                        || t.params != json!(pair.definition(role))
+                        || !t.dependencies.is_empty()
+                        || t.constraints
+                            != json!({"node_id":ep.node_id,"resource_id":ep.resource_id})
+                        || b.node_id != ep.node_id
+                        || b.resource_id.as_ref() != Some(&ep.resource_id)
+                    {
+                        return false;
+                    }
+                }
             }
             let mut ids = std::collections::BTreeSet::new();
             for (task, binding) in view.tasks.iter().zip(&view.bindings) {

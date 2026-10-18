@@ -103,11 +103,15 @@ fn signed_bytes(envelope: &SealedMaterial) -> Result<Vec<u8>> {
     )?)
 }
 fn verify_signature(certificate: &str, envelope: &SealedMaterial) -> Result<()> {
+    verify_signature_at(certificate, envelope, crate::protocol::now_ms())
+}
+fn verify_signature_at(certificate: &str, envelope: &SealedMaterial, when: u64) -> Result<()> {
     use x509_parser::prelude::{FromDer, X509Certificate};
     let bytes = der(certificate)?;
     let (rest, cert) = X509Certificate::from_der(&bytes)
         .map_err(|_| anyhow::anyhow!("Invalid peer coordinator certificate"))?;
-    if !rest.is_empty() || !cert.validity().is_valid() || envelope.signature.len() > 256 {
+    let at = x509_parser::time::ASN1Time::from_timestamp(i64::try_from(when / 1000)?)?;
+    if !rest.is_empty() || !cert.validity().is_valid_at(at) || envelope.signature.len() > 256 {
         bail!("Peer coordinator certificate or signature is not current")
     }
     let signature = STANDARD
@@ -119,6 +123,23 @@ fn verify_signature(certificate: &str, envelope: &SealedMaterial) -> Result<()> 
     )
     .verify(&signed_bytes(envelope)?, &signature)
     .map_err(|_| anyhow::anyhow!("Peer coordinator signature verification failed"))
+}
+/// Validate saved coordinator issuance at its issue time, without decrypting,
+/// opening a channel, renewing expiry or requiring a still-current certificate.
+pub fn verify_envelope(scope: &Scope, envelope: &SealedMaterial, certificate: &str) -> Result<()> {
+    let hash = scope.digest()?;
+    let party = scope.party(envelope.role);
+    if crate::tls::certificate_fingerprint(certificate)? != scope.issuer_id
+        || envelope.schema_version != 1
+        || envelope.scope_sha256 != hash
+        || envelope.recipient_node != party.node_id
+        || envelope.grant_id != party.grant_id
+        || envelope.token.is_empty()
+        || envelope.token.len() > 32768
+    {
+        bail!("Saved peer envelope identity or scope differs")
+    }
+    verify_signature_at(certificate, envelope, scope.issued_at_ms)
 }
 fn seal(
     scope: &Scope,

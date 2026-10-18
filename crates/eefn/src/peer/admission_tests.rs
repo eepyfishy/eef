@@ -42,6 +42,7 @@ impl Fixture {
             g.resource_id = Some(party.resource_id.clone());
             g.params = json!(Definition {
                 schema_version: 1,
+                resource_id: party.resource_id.clone(),
                 peer_node: remote.node_id.clone(),
                 peer_resource_id: remote.resource_id.clone(),
                 payload_bytes: bytes.len() as u64,

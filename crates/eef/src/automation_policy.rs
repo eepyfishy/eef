@@ -7,6 +7,9 @@ use eefn::automation_policy::{
 use serde_json::{Value, json};
 
 pub(crate) fn fixed_scope(plan: &Plan) -> Result<FixedScope> {
+    if crate::peer_jobs::definition(plan)?.is_some() {
+        bail!("Paired transport currently requires an explicit one-shot owner approval")
+    }
     crate::jobs::validate_retained_review(plan)?;
     let planning = plan
         .planning

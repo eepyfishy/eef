@@ -48,6 +48,11 @@ pub(crate) fn eligible(
         bail!("Recovery already retained; inspect without replacing the receipt")
     }
     let e = p.execution.as_ref().unwrap();
+    if e.peer.is_some() {
+        bail!(
+            "Paired reconciliation is not available; inspect both retained receipts without replay"
+        )
+    }
     if unavailable
         || p.status != PlanStatus::Interrupted
         || p.revision != command.expected_revision

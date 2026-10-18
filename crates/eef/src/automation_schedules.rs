@@ -2749,6 +2749,7 @@ mod tests {
                         started_at_ms: t.claimed_at_ms + 1,
                         attempts: vec![],
                         abandonment: None,
+                        peer: None,
                     });
                     Ok(())
                 })

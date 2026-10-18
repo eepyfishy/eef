@@ -63,6 +63,7 @@ impl Policy {
 #[serde(deny_unknown_fields)]
 pub struct Definition {
     pub schema_version: u32,
+    pub resource_id: String,
     pub peer_node: String,
     pub peer_resource_id: String,
     pub payload_bytes: u64,
@@ -77,7 +78,18 @@ impl Definition {
             .peer_resource_id
             .split_once("::")
             .ok_or_else(|| anyhow::anyhow!("Peer resource needs an owner"))?;
+        let (own_node, own_local) = self
+            .resource_id
+            .split_once("::")
+            .ok_or_else(|| anyhow::anyhow!("Local peer resource needs owner"))?;
+        crate::network::validate_remote_node_id(own_node)?;
         if self.schema_version != 1
+            || own_node == self.peer_node
+            || own_local.is_empty()
+            || own_local.len() > 100
+            || !own_local
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
             || owner != self.peer_node
             || local.is_empty()
             || local.len() > 100
@@ -111,7 +123,8 @@ impl Definition {
         let (owner, local) = resource
             .split_once("::")
             .ok_or_else(|| anyhow::anyhow!("Peer grant resource needs owner"))?;
-        if owner != g.executor_node
+        if resource != definition.resource_id
+            || owner != g.executor_node
             || local.is_empty()
             || local.len() > 100
             || !local
