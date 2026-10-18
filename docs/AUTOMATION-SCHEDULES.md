@@ -459,3 +459,73 @@ contention/clock/physical release gates. No timing window or authority limit cha
 
 No installed runtime, physical node, release/feed, installer, UI, model or shared
 service changes follow. Full 0.4.0 acceptance remains incomplete.
+
+## Claim-local validation frames (2026-10-18)
+
+Due-claim eligibility now reuses the fully validated history's policy,
+definition, generation and schedule data for that read phase, instead of
+reloading and recompiling those same dependencies again. The pre-write view is
+discarded before staging. The staged transaction constructs a separate complete
+validated view before checking current authority and the final clock/window/time
+budget. Nothing is cached across writes or calls; the view itself is not work
+authority. Other lifecycle point readers retain their existing checks.
+
+Commit-fence errors distinguish a backward clock, an elapsed trigger window,
+changed/expired authority and insufficient remaining execution time. They still
+roll back the schedule cursor and every staged trigger identity. The timer's
+existing error handler may retain `checkpoint_failed`; it never relabels the
+failure as successful work or authorizes catch-up. No timing window, interval,
+run/resource allowance, lease, expiry, inspection predicate or replay condition
+is widened. No schema, command or wire version changes.
+
+New tests compare snapshot eligibility with the original point reader for time,
+runtime, issuer, revocation and source removal. An isolated SQLite trigger
+revokes or corrupts policy after staging; the new complete post-write validation
+refuses the claim and rolls back both the trigger and policy change. Backward/
+late/time-budget cases retain their original unclaimed state and report distinct
+causes. Existing count/byte/insert faults, corruption, concurrency, lineage,
+budget, stop and restart tests remain applicable.
+
+The public scheduler harness now writes `timer-checkpoints.json` on success or
+failure. With `RUST_LOG=warn,eef::jobs::automation_schedules=debug`, it summarizes
+the existing phase logs (sample count, median and maximum microseconds since
+checkpoint start), plus slow-checkpoint warnings. No source/prompt/operation
+payload or credentials are copied into that diagnostic. Missing phase logging is
+reported as absent, not as zero latency. Diagnostic write failure cannot skip
+fixture cleanup. These bounded log samples are not a performance guarantee or
+a complete tracing profile.
+
+The old blanket failure wording in the pipeline/status trackers was stale:
+one-second passes were already recorded in the preceding history-reader section.
+Fresh pre-change `automation-schedules-5j6QCp` and measured `k2yW5v` also pass.
+The measured baseline has eight committed claims, median 152625 us and maximum
+243564 us, with no slow-checkpoint warning. This increment is a reduction of
+repeated validation cost, not proof of the complete cause/fix for all earlier
+contention/native-exit failures. Loaded and physical acceptance remain open.
+
+Final locked/offline workspace/all-target suites pass **758 tests plus one
+ignored each**, including no-dashboard: EEF 247 plus ignored opt-in profiler,
+owner CLI 17, installer 6, EEFN 470, node CLI 18. Fresh headless binaries/examples,
+formatting/diff, JS syntax and the backend/browser source guard pass.
+
+Fresh final-binary `automation-schedules-mc895D` passes the unchanged ordinary
+one-second/native/concurrent-activation, stop, revocation, restart, uncertain
+enable/resolution replies, refusal and fresh-replacement cases. Its eight claims
+commit with median 115649 us and maximum 197281 us, with no slow-checkpoint
+warning or refused commit fence. The single pre/post comparison is a local
+debug-build sample, not a controlled benchmark or guarantee under load. Both
+validation phases still run; no window or permission was increased.
+
+Final-binary `local-pipelines-6ldaE8` also passes finite dataflow, durable
+progress, permission loss, native failure, recurrence and restart/no-replay
+regressions. Both harnesses completed with no matching fixture EEF/EEFN/native
+helper processes remaining. No installed/physical node, UI, model, release/feed,
+signing or shared-service changes follow. Full stable 0.4.0 acceptance remains
+incomplete.
+
+Evaluated headless binary SHA-256:
+
+```text
+eef.exe  0e5ef5e0de39ce08b2548a3781418a04a81af8c1d08f85254501d97281934787
+eefn.exe 5c5751288c87abf4ca20cee455a13ada0d98d6c806e801a8ec5dfb01ad8877e4
+```

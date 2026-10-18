@@ -1,5 +1,27 @@
 # Architecture conformance status
 
+## Unreleased: claim-local scheduler validation and precise fence failures
+
+Due claims reuse dependencies from their fully validated read phase, discard
+that view before staging, and build a new complete view afterward. Final-fence
+errors distinguish lateness, backward time, changed authority and insufficient
+remaining execution time. The existing rollback/no-catch-up rules and every
+authorization/window/quota remain unchanged. See
+[contract and evidence](AUTOMATION-SCHEDULES.md#claim-local-validation-frames-2026-10-18).
+
+Both final all-target modes pass **758 tests plus one ignored each**, including
+no-dashboard; fresh headless binaries/examples build. Public scheduling
+`mc895D` passes with eight committed claims (local median 116 ms, maximum 197 ms;
+pre-change measured median 153 ms, maximum 244 ms). This is a single debug-build
+comparison, not loaded/physical timing acceptance. Stale pipeline/status text
+calling ordinary one-second acceptance failed has been corrected; earlier
+successful one-second evidence already existed and old failures remain recorded.
+Final-binary public `local-pipelines-6ldaE8` also passes finite/native/recurrence,
+durable-progress and restart/no-replay regressions. Both harnesses are terminal
+with no matching fixture processes left. No installed/remote node, model, UI or
+release/feed changed.
+Full bootstrap/model-quality/media/peer/physical/release acceptance remains open.
+
 ## Unreleased: durable finite-pipeline progress through existing receipts
 
 The executor persists one bounded latest observation per finite pipeline grant.
@@ -24,9 +46,11 @@ completed; no fixture EEF/EEFN/native-helper processes remain.
 An intermediate suite caught a small-journal regression. Progress tables and
 reservations are now pipeline-only and first creation shares the claim
 transaction; the original 64-KiB ordinary-work test passes unchanged. Continuous
-workloads, strong stop, physical resource limits, the documented one-second timer
-reliability gate, default interpreter/bootstrap and physical/release gates remain
-open. No installed/remote node, UI, release/feed or model changes.
+workloads, strong stop, physical resource limits, loaded/physical timer
+reliability, default interpreter/bootstrap and physical/release gates remain open.
+Ordinary one-second scheduling has separate passing public evidence; see
+[the scheduler follow-up](AUTOMATION-SCHEDULES.md#request-local-history-readers-2026-10-13).
+No installed/remote node, UI, release/feed or model changes.
 
 ## Unreleased: controlled restart waits for owned model cleanup
 

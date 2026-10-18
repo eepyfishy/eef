@@ -234,8 +234,10 @@ An intermediate default suite rejected the first ordinary grant in the existing
 progress tables are no longer created on journal open and only pipeline parents
 reserve progress storage. First table creation is inside the new pipeline's
 claim transaction. Final suites pass the original small-journal case unchanged.
-The previously documented one-second timer reliability failures remain open;
-the five-second finite recurrence fixture does not clear them.
+The five-second finite recurrence fixture alone does not clear the older
+one-second failures. Ordinary one-second acceptance subsequently passed, as
+recorded in [request-local history readers](AUTOMATION-SCHEDULES.md#request-local-history-readers-2026-10-13)
+and the 2026-10-18 scheduler follow-up. Loaded/physical timing remains unproven.
 
 ## Required remaining integration and acceptance
 
@@ -437,7 +439,7 @@ hidden by a generic poller. Production missed-trigger, budget and no-catch-up
 rules are unchanged. The passing isolated run does not establish a performance
 guarantee under compilation, disk pressure or other hardware/load.
 
-The subsequent ordinary regression `automation-schedules-DVNvnb` also fails:
+At this historical checkpoint, ordinary regression `automation-schedules-DVNvnb` also failed:
 read-only inspection finds two completed system-information jobs, two claimed
 runs and an interrupted schedule labelled `job_unresolved`. Its timer logged
 `Trigger clock/policy changed before commit; no claim saved`, with slow journal
@@ -446,13 +448,16 @@ journal reliability and diagnostic-classification gate, not passing automation
 acceptance or a failure that can be erased by the successful five-second pipeline
 fixture. No catch-up, budget refund or automatic continuation was authorized.
 
-Isolated `automation-schedules-m1C9Ta` reproduces the same third-claim refusal
+Isolated `automation-schedules-m1C9Ta` reproduced the same third-claim refusal
 after two completed jobs and two claimed runs, with no next due time or third
 job/grant. Checkpoints reached 2191 ms and the same pre-commit clock/policy error
-was logged. Ordinary one-second scheduling acceptance therefore remains failed;
+was logged. Ordinary one-second scheduling acceptance was therefore failed here;
 the successful five-second finite-graph test does not clear this gate. Investigate
 journal/timer cost and truthful failure classification without extending authority,
-silently catching up or treating missing issuance as replay permission.
+silently catching up or treating missing issuance as replay permission. Subsequent
+one-second passes are recorded in
+[request-local history readers](AUTOMATION-SCHEDULES.md#request-local-history-readers-2026-10-13);
+the earlier failures remain evidence, not current blanket fixture failures.
 
 No installed runtime, physical node, release/feed, installer, UI, shared service
 or model changes follow from this source increment. Bounded recurrence does not

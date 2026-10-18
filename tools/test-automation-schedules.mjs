@@ -32,6 +32,23 @@ async function until(fn,label){const end=Date.now()+65000;while(Date.now()<end){
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 function enableArgs(c){return ['automation-schedules','enable','--policy',c.policy,'--policy-sha256',c.policy_sha256,'--operation-id',c.operation_id];}
 const show=id=>owner(['automation-schedules','show',id]);
+async function timerDiagnostics(){
+ const daemon=children.find(c=>c.spawnargs.includes('--database'));
+ if(!daemon)return;
+ const logs=daemon.privateLogs(),text=(logs.out+'\n'+logs.err).replace(/\u001b\[[0-9;]*m/g,'');
+ const phases={};
+ for(const line of text.split('\n')){
+  if(!line.includes('Timer claim phase'))continue;
+  const match=line.match(/phase="?(\w+)"?.*elapsed_us=(\d+)/);if(!match)continue;
+  (phases[match[1]]??=[]).push(Number(match[2]));
+ }
+ const summary={};for(const [phase,values]of Object.entries(phases)){
+  values.sort((a,b)=>a-b);summary[phase]={samples:values.length,median_us:values[Math.floor(values.length/2)],max_us:values.at(-1)};
+ }
+ const slow=[...text.matchAll(/Slow timer journal checkpoint[^\n]*elapsed_ms=(\d+)/g)].map(m=>Number(m[1]));
+ await writeFile(join(scratch,'timer-checkpoints.json'),JSON.stringify({diagnostic_only:true,not_a_performance_guarantee:true,elapsed_since_checkpoint_start:true,
+  phase_logging_observed:Object.keys(summary).length>0,phases:summary,slow_checkpoints:slow.length,max_slow_checkpoint_ms:slow.length?Math.max(...slow):null},null,2));
+}
 try{
  await new Promise(r=>tags.listen(0,'127.0.0.1',r));const [api,gateway]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${api}`;
  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
@@ -137,6 +154,8 @@ try{
  await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));
  const daemon=children.find(c=>c.spawnargs.includes('--database'));if(daemon)await writeFile(join(scratch,'PRIVATE-coordinator-failure.json'),JSON.stringify(daemon.privateLogs(),null,2));throw error;
 }finally{
- for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));
- await Promise.all([new Promise(r=>tags.close(r)),...(proxy?[new Promise(r=>proxy.close(r))]:[])]);
+ try{await timerDiagnostics();}finally{
+  for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));
+  await Promise.all([new Promise(r=>tags.close(r)),...(proxy?[new Promise(r=>proxy.close(r))]:[])]);
+ }
 }

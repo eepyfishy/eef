@@ -784,6 +784,11 @@ Command/service separation is a cross-cutting requirement from the first slice,
 not a separate rewrite prerequisite. Each row must compile and remain compatible
 before proceeding. "Planned" includes extensions to working baseline components.
 
+The [2026-10-18 scheduler follow-up](AUTOMATION-SCHEDULES.md#claim-local-validation-frames-2026-10-18)
+reduces repeated validation within due claims while retaining full pre/post-write
+checks and exact commit fences. Ordinary one-second commands pass; older blanket
+failure wording was stale. Loaded/physical timing and full release gates remain.
+
 | Order | Increment | Acceptance boundary | State |
 | --- | --- | --- | --- |
 | 1 | Identity + advertised address | Local coordinator connection and different advertised address coexist; rename/address change preserves identity; command config/readback; old configs migrate. | Implemented in development; one-PC command tests passed; physical acceptance pending |

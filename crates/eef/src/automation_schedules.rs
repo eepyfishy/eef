@@ -378,6 +378,26 @@ pub(super) fn validate_all(connection: &Connection) -> Result<()> {
 struct HistoryView {
     schedules: std::collections::BTreeMap<String, Schedule>,
     triggers: Vec<Trigger>,
+    policies: std::collections::BTreeMap<String, Authorization>,
+    definitions: std::collections::BTreeMap<String, eefn::automation::Definition>,
+}
+impl HistoryView {
+    /// Same eligibility predicate as the point reader, using only dependencies
+    /// fully validated for this read snapshot. Never reuse across a write.
+    fn current(&self, s: &Schedule, runtime: &str, issuer: &str, now: u64) -> Result<bool> {
+        let p = self
+            .policies
+            .get(&s.creation.policy)
+            .context("Trigger policy missing")?;
+        let d = self
+            .definitions
+            .get(&s.definition_id)
+            .context("Trigger definition missing")?;
+        let latest = self.policies.values().filter(|p| matches!(&p.creation, PolicyCommand::Approve { definition, .. } if definition == &s.definition_id)).map(|p| p.generation).max().unwrap_or(0);
+        Ok(s.runtime_id == runtime
+            && s.issuer_id == issuer
+            && p.current_at(runtime, issuer, latest, d, now))
+    }
 }
 fn validated_history(connection: &Connection) -> Result<HistoryView> {
     // Read and fully validate dependencies once for THIS invocation only. The
@@ -524,7 +544,21 @@ fn validated_history(connection: &Connection) -> Result<HistoryView> {
     Ok(HistoryView {
         schedules: retained_schedules,
         triggers: claims,
+        policies,
+        definitions,
     })
+}
+
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+enum ClaimFenceDenied {
+    #[error("Trigger clock moved backward before commit; no claim saved")]
+    BackwardClock,
+    #[error("Trigger authority changed or expired before commit; no claim saved")]
+    AuthorityChanged,
+    #[error("Trigger window elapsed before commit; no claim saved (missed_trigger)")]
+    MissedTrigger,
+    #[error("Trigger remaining time budget became insufficient before commit; no claim saved")]
+    TimeBudget,
 }
 fn current(
     connection: &Connection,
@@ -1133,8 +1167,12 @@ impl JobStore {
         let phase = |phase: &str| tracing::debug!(schedule_id=%id,phase,elapsed_us=checkpoint_started.elapsed().as_micros(),"Timer claim phase");
         let connection = self.connection.lock().expect("job journal");
         phase("lock_acquired");
-        validate_all(&connection)?;
-        let mut s = read_schedule(&connection, id)?.context("Schedule missing")?;
+        let history = validated_history(&connection)?;
+        let mut s = history
+            .schedules
+            .get(id)
+            .cloned()
+            .context("Schedule missing")?;
         phase("initial_validation");
         if s.state != State::Waiting {
             return Ok(None);
@@ -1143,7 +1181,7 @@ impl JobStore {
         let due = s.next_due_ms.unwrap();
         let reason = if now < s.observed_at_ms {
             Some("backward_clock")
-        } else if !current(&connection, &s, runtime, issuer, now)? {
+        } else if !history.current(&s, runtime, issuer, now)? {
             Some("policy_changed")
         } else if now >= due.saturating_add(s.every_ms) {
             Some("missed_trigger")
@@ -1152,6 +1190,7 @@ impl JobStore {
         };
         phase("eligibility");
         if let Some(reason) = reason {
+            drop(history);
             interrupted(&mut s, reason, now)?;
             save_schedule(self, &connection, &mut s, false)?;
             return Ok(None);
@@ -1159,7 +1198,12 @@ impl JobStore {
         if now < due {
             return Ok(None);
         };
-        let p = policy(&connection, &s)?;
+        let p = history
+            .policies
+            .get(&s.creation.policy)
+            .cloned()
+            .context("Trigger policy missing")?;
+        drop(history);
         let (resolved, budget_available) =
             automation_occurrences::trigger_admission_state(&connection, &s.definition_id, &p)?;
         phase("occurrence_admission");
@@ -1226,17 +1270,26 @@ impl JobStore {
             true,
         )?;
         tx.execute("INSERT INTO automation_triggers(trigger_id,schedule_id,ordinal,request_id,reservation_id,record_json) VALUES(?1,?2,?3,?4,?5,?6)",params![t.id,t.schedule_id,t.ordinal,t.request_context.request_id(),t.reservation_id,raw])?;
-        validate_all(&tx)?;
+        let history = validated_history(&tx)?;
         phase("staged_validation");
         let commit = clock();
-        if commit < now
-            || commit >= due.saturating_add(s.every_ms)
-            || !current(&tx, &s, runtime, issuer, commit)?
-            || p.scope.run_allowance(&p.creation.limits().unwrap())?.0
-                > s.expires_at_ms.saturating_sub(commit)
+        let denied = if commit < now {
+            Some(ClaimFenceDenied::BackwardClock)
+        } else if commit >= due.saturating_add(s.every_ms) {
+            Some(ClaimFenceDenied::MissedTrigger)
+        } else if !history.current(&s, runtime, issuer, commit)? {
+            Some(ClaimFenceDenied::AuthorityChanged)
+        } else if p.scope.run_allowance(&p.creation.limits().unwrap())?.0
+            > s.expires_at_ms.saturating_sub(commit)
         {
+            Some(ClaimFenceDenied::TimeBudget)
+        } else {
+            None
+        };
+        drop(history);
+        if let Some(denied) = denied {
             phase("commit_fence_refused");
-            bail!("Trigger clock/policy changed before commit; no claim saved");
+            return Err(denied.into());
         }
         phase("commit_fence_accepted");
         tx.commit()?;
@@ -2363,6 +2416,20 @@ mod tests {
                 }
             });
             assert!(result.is_err(), "{fault}");
+            if matches!(fault, "backward" | "late") {
+                let error = result
+                    .as_ref()
+                    .unwrap_err()
+                    .downcast_ref::<ClaimFenceDenied>();
+                assert_eq!(
+                    error,
+                    Some(if fault == "backward" {
+                        &ClaimFenceDenied::BackwardClock
+                    } else {
+                        &ClaimFenceDenied::MissedTrigger
+                    })
+                );
+            }
             let connection = store.connection.lock().unwrap();
             assert_eq!(read_schedule(&connection, &s.id).unwrap().unwrap(), s);
             assert!(triggers(&connection).unwrap().is_empty());
@@ -2372,6 +2439,128 @@ mod tests {
                 before["trigger_count"]
             );
         }
+    }
+    #[test]
+    fn final_time_budget_refusal_is_distinct_and_preserves_unclaimed_state() {
+        let store = JobStore::in_memory().unwrap();
+        let (_engine, _source, p, s) = fixture_with_validity(store.clone(), 2500);
+        let calls = std::cell::Cell::new(0);
+        let due = s.next_due_ms.unwrap();
+        let result = store.schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || {
+            let n = calls.get();
+            calls.set(n + 1);
+            if n == 0 { due } else { due + 600 }
+        });
+        assert_eq!(
+            result.unwrap_err().downcast_ref::<ClaimFenceDenied>(),
+            Some(&ClaimFenceDenied::TimeBudget)
+        );
+        let db = store.connection.lock().unwrap();
+        assert_eq!(read_schedule(&db, &s.id).unwrap().unwrap(), s);
+        assert!(triggers(&db).unwrap().is_empty());
+    }
+    #[test]
+    fn claim_revalidates_authority_after_staging_and_rolls_back_trigger_side_changes() {
+        for corrupt in [false, true] {
+            let store = JobStore::in_memory().unwrap();
+            let (_engine, _source, p, s) = fixture(store.clone());
+            let mut changed = p.clone();
+            changed.state = "revoked".into();
+            changed.revision = 2;
+            changed.revocation = Some(eefn::automation_policy::Revocation {
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                source_revision: 1,
+                revoked_at_ms: s.next_due_ms.unwrap(),
+                runtime_id: p.runtime_id.clone(),
+            });
+            let db = store.connection.lock().unwrap();
+            let definition = automations::read_definition(&db, &s.definition_id).unwrap();
+            crate::automation_policy::validate_authorization(&changed, &definition).unwrap();
+            let payload = if corrupt {
+                "{}".into()
+            } else {
+                serde_json::to_string(&changed).unwrap()
+            };
+            let quoted: String = db
+                .query_row("SELECT quote(?1)", [payload], |r| r.get(0))
+                .unwrap();
+            db.execute_batch(&format!("CREATE TRIGGER change_authority AFTER INSERT ON automation_triggers BEGIN UPDATE automation_authorizations SET record_json={quoted},reserved_bytes=0 WHERE authorization_id='{}'; END;", p.id)).unwrap();
+            drop(db);
+            let result = store.schedule_claim_due(&s.id, &p.runtime_id, &p.issuer_id, || {
+                s.next_due_ms.unwrap()
+            });
+            assert!(result.is_err());
+            if !corrupt {
+                assert_eq!(
+                    result.unwrap_err().downcast_ref::<ClaimFenceDenied>(),
+                    Some(&ClaimFenceDenied::AuthorityChanged)
+                );
+            }
+            let db = store.connection.lock().unwrap();
+            assert_eq!(read_schedule(&db, &s.id).unwrap().unwrap(), s);
+            assert_eq!(
+                automation_authorizations::read(&db, &p.id)
+                    .unwrap()
+                    .unwrap(),
+                p
+            );
+            assert!(triggers(&db).unwrap().is_empty());
+            validate_all(&db).unwrap();
+        }
+    }
+    #[test]
+    fn snapshot_authority_matches_point_reader_for_time_identity_and_revocation() {
+        let store = JobStore::in_memory().unwrap();
+        let (_engine, _source, p, s) = fixture(store.clone());
+        let check = || {
+            let db = store.connection.lock().unwrap();
+            let view = validated_history(&db).unwrap();
+            for (runtime, issuer, at) in [
+                (
+                    p.runtime_id.as_str(),
+                    p.issuer_id.as_str(),
+                    s.next_due_ms.unwrap(),
+                ),
+                ("different", p.issuer_id.as_str(), s.next_due_ms.unwrap()),
+                (p.runtime_id.as_str(), "different", s.next_due_ms.unwrap()),
+                (
+                    p.runtime_id.as_str(),
+                    p.issuer_id.as_str(),
+                    p.approved_at_ms - 1,
+                ),
+                (p.runtime_id.as_str(), p.issuer_id.as_str(), p.expires_at_ms),
+            ] {
+                assert_eq!(
+                    view.current(&s, runtime, issuer, at).unwrap(),
+                    current(&db, &s, runtime, issuer, at).unwrap()
+                );
+            }
+        };
+        check();
+        store
+            .automation_policy_checkpoint(
+                PolicyCommand::Revoke {
+                    id: p.id.clone(),
+                    revision: 1,
+                    operation_id: uuid::Uuid::new_v4().to_string(),
+                },
+                None,
+                &p.runtime_id,
+                s.next_due_ms.unwrap() - 1,
+            )
+            .unwrap();
+        check();
+        store
+            .automation_command(
+                eefn::automation::AutomationCommand::Remove {
+                    id: s.definition_id.clone(),
+                    revision: 1,
+                    operation_id: uuid::Uuid::new_v4().to_string(),
+                },
+                None,
+            )
+            .unwrap();
+        check();
     }
     #[test]
     fn missed_backward_or_changed_authority_interrupts_without_catchup() {
