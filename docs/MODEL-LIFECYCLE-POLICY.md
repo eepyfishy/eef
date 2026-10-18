@@ -62,7 +62,7 @@ The optional `model_lifecycle` node configuration uses these validated fields:
 | `queue_capacity` | 8 | 1-64 queued manual model operations. |
 | `receipt_capacity` | 256 | 1-4096 retained manual receipts, at least queue capacity. No replay-protection eviction. |
 | `load_timeout_seconds` | 300 | 1-3600 seconds for configured group startup, explicit and demand load health readiness. Existing request deadlines can end demand loading earlier. |
-| `termination_wait_seconds` | 5 | 1-30 seconds for explicit/idle owned-root termination wait. |
+| `termination_wait_seconds` | 5 | 1-30 seconds covering explicit/idle owned termination observation and root reaping together. Windows also observes the owned job empty; other platforms retain root-only guarantees. |
 | `ollama_keep_alive_seconds` | null (inherit backend) | Ollama inference request preference: -1 indefinite, 0 request unload after its response, or 1-86400 seconds. Not ownership or observed residency. |
 | `thinking_mode` | inherit (omitted on the wire) | Node-wide inference hint: inherit, disabled or enabled. Not observed thinking state or per-model capability discovery. |
 | `ollama_context_tokens` | null / omitted | Optional 512–1,048,576-token `num_ctx` preference for EEF-owned Ollama requests. Not a model support or memory/quota claim. |

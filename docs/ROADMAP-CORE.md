@@ -31,6 +31,18 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+Targeted owned-GGUF unload now separates pending withdrawal from observed exit.
+Windows observes its exact owned job empty and reaps the root under one deadline;
+errors/cancellation/late results become an unreloadable same-runtime unconfirmed
+state instead of `unloaded`. Group cleanup cannot erase that fence. Exact owner
+status exposes the state while registration retains a conservative legacy
+busy/error view. See [contract and verification](MODEL-LIFECYCLE.md#targeted-unload-observations-unreleased).
+Both all-target feature modes pass 739 tests plus one ignored each; public
+lifecycle/startup/policy and cached real-CPU unload/reload regressions pass.
+This does not complete ordinary group-stop observation, physical resource release,
+continuous pipeline termination, shared-service control or the remaining release
+acceptance requirements.
+
 A balanced replacement for the prompt's ambiguous-only illustration fails both
 backend comparisons: all eighty accepted, but 36/80 label matches versus 51/80
 and eighteen required questions lost. Its source and candidate-only test are

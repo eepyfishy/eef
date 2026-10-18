@@ -21,6 +21,30 @@ async fn main() -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("missing {key}"))
     };
     let config: serde_json::Value = serde_json::from_slice(&std::fs::read(arg("--model")?)?)?;
+    // Optional nested finite process fixture inherits this model's owned job.
+    // It is never a production llama argument or a packaged executable.
+    #[cfg(windows)]
+    let _descendants = if let Some(directory) = config["process_tree_fixture_dir"].as_str() {
+        use std::os::windows::process::CommandExt;
+        let directory = PathBuf::from(directory);
+        anyhow::ensure!(
+            directory.is_absolute() && directory.is_dir(),
+            "isolated tree directory required"
+        );
+        let helper = std::env::current_exe()?.with_file_name("process-fixture.exe");
+        Some(
+            std::process::Command::new(helper)
+                .arg("loop")
+                .arg(directory)
+                .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()?,
+        )
+    } else {
+        None
+    };
     let ready = PathBuf::from(config["ready_file"].as_str().unwrap());
     let marker = PathBuf::from(config["pid_file"].as_str().unwrap());
     let infer_gate = config["infer_gate"].as_str().map(PathBuf::from);

@@ -1,6 +1,6 @@
 // Backend-only selected GGUF control; synthetic model server, not model quality.
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,writeFile,unlink} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,writeFile,unlink} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
@@ -43,6 +43,11 @@ const owner=(args,ok=true)=>cli('eef',eefConfig,args,ok),local=(args,ok=true,inp
 async function json(url,body,method){const r=await fetch(url,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(10000)});const v=await r.json();assert(r.ok,'HTTP failed; private '+scratch);return v;}
 async function until(fn,label){const end=Date.now()+25000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,50));}throw Error('Timeout: '+label);}
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
+function observeTree(directory){
+ const child=spawn(join(bin,'examples/process-fixture.exe'),['observe',directory],{cwd:root,windowsHide:true,env,stdio:['ignore','pipe','pipe']});
+ let out='',err='';child.stdout.on('data',b=>out=(out+b).slice(-65536));child.stderr.on('data',b=>err=(err+b).slice(-65536));child.logs=()=>({out,err});
+ child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r({code,out,err}));});children.push(child);return child;
+}
 const show=async(op,remote=false)=>(await (remote?owner(['node','model-lifecycle','--node',id,'show',...(op?['--operation-id',op]:[])]):local(['model-lifecycle','show',...(op?['--operation-id',op]:[]) ]))).result;
 const model=(r,name)=>r.models.find(m=>m.model_id===name);
 const control=(verb,m,g,op,remote=false,ok=true)=>(remote?owner(['node','model-lifecycle','--node',id,'--runtime',runtime,verb,'--model',m,'--generation',String(g),'--operation-id',op],ok):local(['model-lifecycle','--runtime',runtime,verb,'--model',m,'--generation',String(g),'--operation-id',op],ok));
@@ -50,8 +55,10 @@ try {
  await new Promise(r=>proxy.listen(0,'127.0.0.1',r));const proxyPort=proxy.address().port;
  const [api,gateway,eefPort,aPort,bPort]=await Promise.all(Array.from({length:5},()=>port()));node=`http://127.0.0.1:${api}`;eef=`http://127.0.0.1:${eefPort}`;
  const readyA=join(scratch,'a-ready'),readyB=join(scratch,'b-ready'),inferGate=join(scratch,'infer-gate'),inferStarted=join(scratch,'infer-started');
- const aFile=join(scratch,'a.gguf'),bFile=join(scratch,'b.gguf');
- await writeFile(aFile,JSON.stringify({ready_file:readyA,pid_file:join(scratch,'a.pid'),infer_gate:inferGate,infer_started:inferStarted}));
+ const aFile=join(scratch,'a.gguf'),bFile=join(scratch,'b.gguf'),tree=join(scratch,'a-owned-tree');
+ if(process.platform==='win32')await mkdir(tree);
+ await writeFile(aFile,JSON.stringify({ready_file:readyA,pid_file:join(scratch,'a.pid'),infer_gate:inferGate,infer_started:inferStarted,
+  ...(process.platform==='win32'?{process_tree_fixture_dir:tree}:{})}));
  await writeFile(bFile,JSON.stringify({ready_file:readyB,pid_file:join(scratch,'b.pid'),infer_gate:inferGate,infer_started:inferStarted}));
  await writeFile(readyA,'synthetic health');await writeFile(readyB,'synthetic health');
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
@@ -87,7 +94,19 @@ try {
  }
  const denied=await control('unload','a',a.generation,randomUUID(),true,false);assert.equal(denied.success,false);assert.equal(model(await show(),'a').owned_pid,a.owned_pid);
  const saved=(await json(node+'/api/config')).config;saved.management.allow_remote=true;await json(node+'/api/config',{config:saved},'PUT');
+ let observer;
+ if(process.platform==='win32'){
+  await until(async()=>!!JSON.parse(await readFile(join(tree,'pids.json'),'utf8')).child.pid,'model-owned descendants started');
+  assert(model(await show(),'a').job_accounting.active_processes>=3,'model job must contain root and nested descendants');
+  observer=observeTree(tree);
+  await until(async()=>!!await readFile(join(tree,'observer-ready')),'observer holds creation-verified live descendant handles');
+ }
  const unloadId=randomUUID();await control('unload','a',a.generation,unloadId,true);await until(async()=>(await show(unloadId)).receipt.phase==='completed','targeted unload');
+ let treeExitProof;
+ if(observer){
+  const observed=await observer.result;assert.equal(observed.code,0,'native tree exit observation failed; private '+scratch);
+  treeExitProof=JSON.parse(observed.out);assert.equal(treeExitProof.both_exited,true);assert.equal(treeExitProof.held_creation_verified_handles,true);
+ }
  assert.equal(model(await show(),'a').state,'unloaded');assert.equal(model(await show(),'b').owned_pid,b.owned_pid);assert.equal((await show()).runtime_id,runtime);
  assert.equal((await control('unload','a',a.generation,unloadId,true)).result.reused,true);
  const unloaded=model(await show(),'a');assert.deepEqual(unloaded.job_accounting,{state:'no_owned_job'});
@@ -143,7 +162,8 @@ try {
  await local(['model-lifecycle','--runtime',oldRuntime,'load','--model','a','--generation',String(cold.generation),'--operation-id',cancelledLoad],false);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,no_ui_controller:true,pinned_tls:true,physical_two_pc:false,real_model_inference:false,synthetic_backend:true,
   exact_remote_owner_approval:true,owned_job_observation_without_restart:true,malformed_job_accounting_reply_rejected:true,legacy_missing_job_accounting_accepted:true,
-  targeted_unload_and_reload_no_sibling_or_node_restart:true,historical_receipt_no_replay:true,active_inference_pin_blocks_unload:true,control_status_during_work_saturation:true,warm_idle_on_pin_release:true,
+  targeted_unload_and_reload_no_sibling_or_node_restart:true,windows_owned_descendant_exit_observed:process.platform==='win32'?treeExitProof:null,
+  historical_receipt_no_replay:true,active_inference_pin_blocks_unload:true,control_status_during_work_saturation:true,warm_idle_on_pin_release:true,
   explicit_partial_load_cancellation:true,closed_old_runtime_refuses_replay:true,selected_model_files_not_deleted:true,lost_corrupt_negative_unsupported_reply_no_retry_or_fallback:true,queued_mutation_rechecks_revoked_owner_approval:true},null,2));
  console.log('Model lifecycle validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;

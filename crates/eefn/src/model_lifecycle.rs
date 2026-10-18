@@ -752,6 +752,14 @@ pub fn confirmed(value: &Value, request: &LifecycleRequest) -> bool {
                     ) && s.owned_pid.is_some())
             })
             || (s.active_requests > 0 && s.state != crate::model_metadata::ModelLifecycle::Active)
+            || (s.state == crate::model_metadata::ModelLifecycle::Unloading
+                && (!s.control_pending
+                    || s.owned_pid.is_some()
+                    || s.job_accounting.as_ref().is_some_and(|sample| {
+                        !matches!(sample, crate::job_accounting::JobAccounting::Unavailable {})
+                    })))
+            || (s.state == crate::model_metadata::ModelLifecycle::UnloadUnconfirmed
+                && (s.control_pending || s.owned_pid.is_some()))
         {
             return false;
         }
@@ -1402,6 +1410,35 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+    #[tokio::test]
+    async fn termination_states_are_explicit_and_inconsistent_reports_are_not_confirmed() {
+        let (_dir, service, _engine, guard) = fixture();
+        let request = request(&guard, LifecycleCommand::Show { operation_id: None });
+        let good = service
+            .model_lifecycle_command(request.clone(), false)
+            .await
+            .unwrap();
+        for (state, pending, accounting) in [
+            ("unloading", true, json!({"state":"unavailable"})),
+            ("unload_unconfirmed", false, json!({"state":"no_owned_job"})),
+        ] {
+            let mut reply = good.clone();
+            reply["models"][0]["state"] = json!(state);
+            reply["models"][0]["control_pending"] = json!(pending);
+            reply["models"][0]["job_accounting"] = accounting;
+            assert!(confirmed(&reply, &request));
+            let mut bad = reply.clone();
+            bad["models"][0]["control_pending"] = json!(!pending);
+            assert!(!confirmed(&bad, &request));
+            let mut bad = reply.clone();
+            bad["models"][0]["owned_pid"] = json!(1234);
+            assert!(!confirmed(&bad, &request));
+            if pending {
+                reply["models"][0]["job_accounting"] = json!({"state":"no_owned_job"});
+                assert!(!confirmed(&reply, &request));
+            }
+        }
     }
     #[tokio::test]
     async fn lifecycle_accounting_rejects_invalid_claims_and_preserves_legacy_reports() {

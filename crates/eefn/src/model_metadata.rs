@@ -24,6 +24,8 @@ pub struct ModelMetadata {
 pub enum ModelLifecycle {
     Unloaded,
     Loading,
+    Unloading,
+    UnloadUnconfirmed,
     Ready,
     Active,
     WarmIdle,
@@ -108,7 +110,12 @@ impl ModelMetadata {
         self.availability != Some(ModelAvailability::Unavailable)
             && !matches!(
                 self.lifecycle,
-                Some(ModelLifecycle::Loading | ModelLifecycle::Error)
+                Some(
+                    ModelLifecycle::Loading
+                        | ModelLifecycle::Unloading
+                        | ModelLifecycle::UnloadUnconfirmed
+                        | ModelLifecycle::Error
+                )
             )
     }
 }
@@ -169,7 +176,12 @@ mod tests {
     fn reported_unavailability_blocks_routing_without_inventing_readiness() {
         let mut m = ModelMetadata::from_legacy(None);
         assert!(m.routable());
-        for state in [ModelLifecycle::Loading, ModelLifecycle::Error] {
+        for state in [
+            ModelLifecycle::Loading,
+            ModelLifecycle::Unloading,
+            ModelLifecycle::UnloadUnconfirmed,
+            ModelLifecycle::Error,
+        ] {
             m.lifecycle = Some(state);
             assert!(!m.routable());
         }

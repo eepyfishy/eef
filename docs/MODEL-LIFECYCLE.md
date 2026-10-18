@@ -52,7 +52,8 @@ not retained across restart or evidence authorizing workload recovery.
 
 Each selected slot reports `model_id`, `state`, `generation`, `active_requests`,
 `control_pending` and `owned_pid`. Private artifact paths are omitted. States
-include `unloaded`, `loading`, `ready`, `active`, `warm_idle` and `error`.
+include `unloaded`, `loading`, `ready`, `active`, `warm_idle`, `error`,
+`unloading` and `unload_unconfirmed`.
 An inference pin changes ready/warm-idle to active; the last release publishes
 warm-idle. Pending control withdraws availability before worker application,
 so new inference cannot race a reserved unload. Active pins reject unload;
@@ -76,13 +77,94 @@ Windows GGUF children now use the existing typed, non-inheritable, unnamed
 job-object containment: suspended creation, assignment before resume, and
 kill-on-close descendants. Failure has no uncontained/elevated fallback.
 Non-Windows retains root-child cleanup only; no descendant guarantee is claimed.
-Unload retains the process/tree handle through a bounded root termination wait.
+Explicit and idle unload now retain the process/tree handle through one bounded
+termination observation. On Windows, this terminates only the owned unnamed job,
+observes its active-process count reach zero, and reaps the root before completion.
+Non-Windows observes root termination only; no descendant guarantee is added.
 No user model/projector files are deleted. State/PID withdrawal is not a measured
 physical RAM/VRAM release guarantee or proof that arbitrary external effects ended.
 
+### Targeted unload observations (unreleased)
+
+Withdrawal advances the slot generation and retains its exact control reservation
+while state is `unloading`. It is unavailable to inference, on-demand loading,
+idle selection and replacement controls. Its job belongs to the termination
+future rather than the resident map: status reports unavailable accounting, not
+invented zero usage or `no_owned_job`. An empty process map is not exit proof.
+
+Only successful observation before the same absolute deadline publishes
+`unloaded` and permits a completed unload receipt. The existing
+`termination_wait_seconds` covers both OS tree observation and root reaping;
+there is no second cleanup allowance. A late ready result, observation error,
+missing owned process, timeout or dropped unload future instead leaves
+`unload_unconfirmed`. No inference or same-runtime load/startup retry is allowed
+from that state. Inspect the original receipt and deliberately restart the node
+before trying a new load. This requirement does not claim restart proves physical
+memory release or that unknown external effects are reversible.
+
+The terminal transition checks runtime, generation, reservation and pending state
+again. Closing/replacing the runtime or another group-state transition cannot be
+overwritten by a late stop result. A denied authorization before withdrawal leaves
+residency unchanged. Sibling slots and shared Ollama services are not targeted.
+Normal group shutdown/startup-failure cleanup remains separate: it retains its
+existing kill-on-drop behavior and is not newly claimed as observed tree exit.
+
+Owner-command status carries the two precise new states. Registration preserves
+the existing vocabulary for older coordinators: pending unload projects to
+`loading`/`unavailable`, and unconfirmed unload to `error`/`unavailable`. This is a
+legacy busy/error view, not a claim that another load is running. Updated model
+metadata readers also reject routing for the precise new states when supplied.
+Old owner CLI decoders may reject a new diagnostic enum; use the matching CLI,
+not automatic fallback/retry. New clients still accept old reports and optional
+accounting omission. No schema/grant permission, force-unload or replay policy is
+relaxed.
+
+### Targeted termination verification (2026-10-18)
+
+Both locked/offline workspace/all-target suites pass **739 tests plus one ignored
+each**, including no-dashboard. The final default suite is rerun after the
+group-state fence refinement. New contract tests hold termination pending to
+inspect non-routability/accounting, and cover observation errors, timeouts,
+external future cancellation, missing ownership, non-yielding late completion,
+group-state overwrites and closed-runtime late results. Same-runtime reload is
+refused after every unconfirmed path. Typed-report tests accept the new exact
+states and reject contradictory reservation/PID/accounting claims while retaining
+old report compatibility.
+
+Public `model-lifecycle-bMBUGH` passes the pinned-TLS owner command path, exact
+remote approval, targeted unload/reload, unchanged sibling, historical no-replay,
+active inference pins, partial-load cancellation and malformed/lost reply checks.
+Its Windows model job contains the synthetic backend plus two nested finite
+processes. A separate native observer holds both descendants' live,
+creation-verified handles before unload and confirms both exited afterward
+(`observed_after_ms:71`, measured since observer admission, not a termination
+latency benchmark). This supplements the production job-empty observation and
+pending-state ordering tests; it is one-PC synthetic process evidence, not model
+quality or physical second-PC acceptance. Test helpers are never packaged.
+
+`model-startup-L3izuZ` and `model-policy-9E2QBk` pass nonblocking startup,
+failure withdrawal, restart, saved/applied policy, active-use pinning and
+automatic idle/on-demand regressions. `real-model-zSuIyJ` additionally passes
+reviewed pinned-TLS CPU inference, explicit unload/reload without node restart,
+historical unload no-replay, inference after reload, automatic idle unload and a
+later on-demand load/inference/idle cycle. It reuses the existing exact-size/hash
+verified 1,280,835,840-byte artifact
+`aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223`
+without a model download/copy; interpreter-quality acceptance remains false.
+No compiler runs during that real-inference fixture.
+
+Fresh default binaries/examples build; formatting, JavaScript syntax,
+backend/browser source-boundary and diff checks pass. The evaluated node binary
+SHA-256 is `3ca5b6d8b767dba6d7ac0829d5b0829605a5798ca0b07ff424b3f2d05233511a`;
+coordinator is `d9af1eac72be8d0032d58079302f293794d4f094cd7b7c6e4b81939b5fb1851a`.
+Validation processes are terminal after cleanup; no model files are deleted.
+No installed/physical node, shared Ollama, UI, release version/assets or stable
+feed is changed. Physical RAM/VRAM release, ordinary group-stop observation,
+default interpreter/bootstrap and full release acceptance remain open.
+
 The implementation defaults to an eight-entry queue, 256 retained receipts
-without eviction, 300-second load health readiness and a five-second root
-termination wait. The subsequent [owner lifecycle policy](MODEL-LIFECYCLE-POLICY.md)
+without eviction, 300-second load health readiness and a five-second owned
+termination observation. The subsequent [owner lifecycle policy](MODEL-LIFECYCLE-POLICY.md)
 configures these bounds, startup mode and optional monotonic idle unloading.
 Queue rejection releases
 only the rejected reservation; receipt exhaustion refuses new admission rather

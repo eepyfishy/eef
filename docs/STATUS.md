@@ -1,5 +1,28 @@
 # Architecture conformance status
 
+## Unreleased: observed targeted model termination
+
+Explicit and idle owned-GGUF unload retain their generation/control fence while
+`unloading`; they publish `unloaded` only after termination observation. Windows
+observes the exact owned job empty and reaps its root under one existing deadline;
+other platforms retain root-only guarantees. Error, timeout, cancellation, missing
+ownership or a late ready result becomes `unload_unconfirmed`, not success. That
+state blocks inference/load/startup in the same runtime and survives group cleanup.
+Late results cannot overwrite a closed/replaced generation. Pending accounting is
+unavailable, not fabricated zero usage; legacy registration remains busy/error
+and unavailable. See [contract and verification](MODEL-LIFECYCLE.md#targeted-unload-observations-unreleased).
+
+Both final locked/offline all-target suites pass **739 tests plus one ignored
+each**, including no-dashboard; fresh binaries/examples build. Public lifecycle
+`bMBUGH` independently observes nested owned-process exits and preserves the
+sibling. Startup `L3izuZ`, lifecycle policy `9E2QBk`, and cached real CPU model
+`zSuIyJ` pass, including explicit/idle/on-demand unload/reload without downloads
+or model-quality approval. All validation processes are terminal after cleanup.
+
+This does not newly observe ordinary group shutdown, release physical RAM/VRAM,
+undo external effects, terminate shared Ollama, add force unload or complete
+pipeline stop/physical/bootstrap/release gates. No installed-node/UI changes.
+
 ## Rejected balanced-illustration comparison (2026-10-18)
 
 A replacement for the ambiguous-only prompt illustration was evaluated on both
