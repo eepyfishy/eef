@@ -5,9 +5,53 @@ production prompt, selected backend and strict Rust validator. It is separate
 from execution acceptance and the older small classifier benchmark. An accepted
 proposal remains untrusted and cannot authorize work.
 
-The latest [two-backend frozen-case baseline](#two-backend-frozen-case-baseline-2026-10-18-no-default-approval)
-extends evaluation to existing shared Ollama without changing the production
-interpreter, expectations or scorer. Neither evaluated candidate is approved.
+The retained [two-backend frozen-case baseline](#two-backend-frozen-case-baseline-2026-10-18-no-default-approval)
+extends evaluation to existing shared Ollama. A subsequent
+[balanced-illustration experiment](#rejected-balanced-illustrations-2026-10-18)
+was rejected on both backends; its gains on clear inputs lost required questions.
+Production interpreter, expectations and scorer are restored unchanged. Neither
+evaluated model is approved.
+
+## Rejected balanced illustrations (2026-10-18)
+
+The [experiment and criteria fixed before inference](experiments/interpreter-balanced-illustrations.md)
+replace the baseline's ambiguous-only shape with clear/underspecified complete
+illustrations and distinguish optional presentation choices from essential missing
+details. Both frozen suites run on both existing backends under the same schema,
+validator, capabilities, sampling, context and output bounds as the retained
+baseline. No model download/copy or installed-node changes occur.
+
+All eighty proposals are structurally accepted. CPU label scores fall to **7/20
+and 6/20**; shared Ollama gives **11/20 and 12/20**. Although unnecessary questions
+and exact sample-goal copies drop to zero, **eighteen required questions are lost**
+across the four runs. Finite actions become continuous and one CPU question treats
+illustration text as possible actual request context. Full result tables,
+identities, review limits and private fixture/reference locations are in the
+experiment record. All four reference-capture regression checks pass before
+candidate binaries are replaced. No proposal authorizes or executes work.
+
+**Rejected:** the candidate source and experiment-only test are removed, leaving
+all production source unchanged from `c0151b3`. Restored focused interpretation
+tests pass **11/11**, and fresh node/reference-helper builds succeed. The rebuilt
+helper's entire messages/schema reference exactly matches the preceding baseline,
+including prompt SHA
+`f9ec6ea9d7341bb7a5594959667b184485d5c9749f6a107c0228ce6866373216`
+and schema SHA
+`2660caf1caed38b74c11e266d1c79de1060ed80284d8ba270977c5b4aa84aa8b`.
+The archived rejected text also matches the evaluated candidate bytes/hash.
+Binary reproducibility is not claimed. Expectations, grading, validation,
+permissions and generation limits are never loosened to retain the candidate.
+The restored public preview regression passes in `request-preview-FUD6HR`,
+including completion rejection/redaction, bounded inference waits and no replay.
+Frozen scorer, argument-admission, backend/browser source-boundary, formatting
+and diff checks also pass. Test-owned processes are terminal after cleanup.
+
+No default model/bootstrap, installed/physical node, UI, release or stable feed
+changes. The latest full Rust checkpoint remains 735 passed plus one ignored
+in each mode; those full suites are not rerun for this source-restored evidence
+checkpoint. Further interpreter work needs stronger method/model/grounding
+evidence, not repeated prompt additions alone. Physical/bootstrap/release gates
+remain open.
 
 ## Reproduction
 

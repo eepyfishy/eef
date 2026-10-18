@@ -31,6 +31,16 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+A balanced replacement for the prompt's ambiguous-only illustration fails both
+backend comparisons: all eighty accepted, but 36/80 label matches versus 51/80
+and eighteen required questions lost. Its source and candidate-only test are
+removed; the committed prompt is restored. Removing unnecessary questions is not
+acceptable if essential missing details become assumptions. See [frozen results
+and restoration checks](INTERPRETER-QUALITY.md#rejected-balanced-illustrations-2026-10-18).
+Next interpretation work needs stronger grounding/method/model evidence, not
+repeated prompt additions or relaxed expectations. No default, bootstrap,
+physical-node or release gate is closed by this rejected experiment.
+
 The evaluator now covers both verified owned CPU GGUF and existing shared Ollama
 through the same production preview and frozen cases/scorer. Both suites finish
 on both: CPU remains 14/20 and 12/20, with all forty proposals unchanged; Gemma/

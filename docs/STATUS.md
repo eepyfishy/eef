@@ -1,5 +1,19 @@
 # Architecture conformance status
 
+## Rejected balanced-illustration comparison (2026-10-18)
+
+A replacement for the ambiguous-only prompt illustration was evaluated on both
+frozen suites and both existing backends, without downloads or installed-node
+changes. All eighty proposals were structurally accepted, but matches fell from
+51/80 to 36/80 and eighteen required questions were lost. Removing all unnecessary
+questions and literal sample-goal copies did not establish reliable grounding.
+The candidate and its isolated unit test were removed; production source is
+restored exactly to `c0151b3`. See [criteria, complete results and restoration
+checks](INTERPRETER-QUALITY.md#rejected-balanced-illustrations-2026-10-18).
+This is negative quality evidence, not a shipped prompt improvement or default
+approval. Further method/model/grounding work, bootstrap and physical/release
+acceptance remain required; prompt additions alone are not an acceptance strategy.
+
 ## Two-backend interpreter quality baseline (2026-10-18; not approved)
 
 The production-preview evaluator now supports existing shared Ollama as well as
