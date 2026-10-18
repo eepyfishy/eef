@@ -15,7 +15,15 @@ const report=JSON.parse(await readFile(join(fixture,'results.json'),'utf8'));
 const hasSchema=Object.hasOwn(report.prompt_reference,'schema_sha256');
 if(hasSchema)assert(typeof report.prompt_reference.schema_sha256==='string'&&/^[a-f0-9]{64}$/.test(report.prompt_reference.schema_sha256),'Invalid generation-schema reference hash.');
 assert(report.schema_version===1&&report.rubric_version===1&&report.harness_completed===true&&report.api_only===true
- &&report.coordinator_started===false&&report.real_cpu_interpretation===true&&report.model_downloads===false&&report.model_copies===false);
+ &&report.coordinator_started===false&&report.model_downloads===false&&report.model_copies===false);
+if(report.backend==='ollama'){
+ assert(report.real_cpu_interpretation===false&&report.shared_ollama_provider===true&&report.shared_service_owned===false&&report.model_file_hash_verified===false
+  &&/^[a-f0-9]{64}$/.test(report.provider_reported_model_digest)&&report.model_process_sample===null,
+  'Shared-provider reports must not claim owned CPU execution or verified artifact identity.');
+ for(const field of ['sha256','bytes','runtime_sha256','gpu_layers','threads'])assert(!Object.hasOwn(report,field),'Do not substitute CPU/GGUF evidence for provider reports.');
+}else{
+ assert((report.backend===undefined||report.backend==='llamacpp')&&report.real_cpu_interpretation===true&&report.shared_ollama_provider!==true,'Unsupported interpreter evidence backend.');
+}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const {cases}=caseSet(report.case_set);
 assert.equal(sha(JSON.stringify(cases)),report.rubric_sha256,'Case set differs from evaluation.');

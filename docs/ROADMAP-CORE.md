@@ -31,6 +31,16 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The evaluator now covers both verified owned CPU GGUF and existing shared Ollama
+through the same production preview and frozen cases/scorer. Both suites finish
+on both: CPU remains 14/20 and 12/20, with all forty proposals unchanged; Gemma/
+Ollama scores 13/20 and 12/20 and unnecessarily questions every clear case.
+All eighty are structurally accepted, none is default-approved. Profile/resource
+identity is kept distinct, and synthetic admission/abort/no-replay/reference
+checks pass without production Rust, prompt, schema or rubric changes. See
+[baseline and full scope](INTERPRETER-QUALITY.md#two-backend-frozen-case-baseline-2026-10-18-no-default-approval).
+Clarification quality, bootstrap, physical and release acceptance remain open.
+
 Incomplete completions now carry optional static, text-free causes under the
 existing error code, including reasoning-only output exhaustion. Both adapters,
 preview/resolution/preparation and public input/answer history regressions pass;

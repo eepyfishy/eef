@@ -5,7 +5,17 @@ production prompt, selected backend and strict Rust validator. It is separate
 from execution acceptance and the older small classifier benchmark. An accepted
 proposal remains untrusted and cannot authorize work.
 
+The latest [two-backend frozen-case baseline](#two-backend-frozen-case-baseline-2026-10-18-no-default-approval)
+extends evaluation to existing shared Ollama without changing the production
+interpreter, expectations or scorer. Neither evaluated candidate is approved.
+
 ## Reproduction
+
+The same evaluator supports owned CPU GGUF and explicitly opted-in existing
+loopback Ollama. These are developer test tools, not end-user setup requirements.
+Neither mode downloads/copies models, changes installed nodes or approves quality.
+
+### Owned CPU GGUF
 
 Build fresh default-feature binaries, then supply an existing, exact catalog
 artifact and a runtime bundle. The harness verifies the artifact's size/SHA-256,
@@ -20,6 +30,62 @@ $env:EEF_TEST_MODEL_FILE = 'ABSOLUTE_EXISTING_CATALOG_MODEL_FILE'
 $env:EEF_TEST_MODEL_ID = 'qwen2.5-small'
 node tools/test-interpreter-quality.mjs ABSOLUTE_RUNTIME_BUNDLE_DIRECTORY
 ```
+
+### Existing shared Ollama
+
+Use an already-installed text-capable model. Clear CPU-artifact variables so a
+provider-reported tag/digest cannot be mistaken for a hash-verified GGUF:
+
+```powershell
+$env:EEF_TEST_MODEL_FILE = $null
+$env:EEF_TEST_MODEL_ID = $null
+$env:EEF_TEST_ALLOW_SHARED_OLLAMA = '1'
+$env:EEF_TEST_THINKING_MODE = 'disabled'
+$env:EEF_TEST_INFERENCE_TIMEOUT_SECONDS = '120'
+$env:EEF_TEST_QUALITY_SUITE = 'original-v1'
+node tools/test-interpreter-quality.mjs --ollama INSTALLED_MODEL_ID http://127.0.0.1:11434
+$env:EEF_TEST_QUALITY_SUITE = 'generalization-v1'
+node tools/test-interpreter-quality.mjs --ollama INSTALLED_MODEL_ID http://127.0.0.1:11434
+```
+
+Thinking remains an owner-request hint, not proof of provider behavior; omission
+still inherits policy. An explicit per-call wait is recorded, while omission
+retains the existing 20-second default. Prompt/schema, 512 output-token cap,
+rubric and case sets are the same in both modes. No repair, expected-label change
+or automatic inference retry makes a run pass. Completed harness execution is
+not a model-quality approval, and accepted JSON is not faithful interpretation.
+
+Shared mode checks loopback IP-literal origin, preinstalled tag/digest/size,
+reported non-cloud identity, completion capability, observed free system RAM and
+unrelated resident models before fixture creation. Metadata has a five-second
+absolute deadline, strict UTF-8 parsing and a 4 MiB bound. No redirect is followed.
+Owner/provider inspection uses an explicit direct HTTP agent; the Node 24.5+
+[`proxyEnv` option](https://nodejs.org/docs/latest-v24.x/api/http.html#new-agentoptions)
+is empty, and the fixture's shared-provider child has proxy environment settings
+cleared. The tested portable toolchain is Node 24.20.0. These checks do not reserve
+memory, attest provider identity or prevent another shared client from changing
+state between observations.
+
+Only a scratch node is started. Its ordinary owner commands assign the role,
+save/apply context 4,096 and retention 60 seconds, confirm the applied selection
+through `setup`, then request one explicit preparation. API startup is reported
+separately from provider preparation; paused advertisement lists do not prove
+model health. The tag/residency/context are checked around each case. A tag,
+context or competing-resident change aborts without another inference. Timeouts,
+backend/runtime/transport failures and unfinished/unconfirmed provider outcomes
+also stop further cases rather than compound uncertain shared work.
+
+Reports distinguish `backend:"ollama"`, `shared_ollama_provider:true`, reported
+identity/residency and `model_file_hash_verified:false` from owned CPU file SHA,
+runtime hash and process samples. They do not invent GPU-layer counts, thread
+settings or CPU-only measurements for an unowned service. Reference capture
+supports both typed evidence forms and legacy CPU reports, and rejects CPU
+artifact/resource claims in shared-provider reports. Configured context is a
+request preference; absent/null observed context stays unknown, not zero or
+confirmed. Cleanup stops only test-owned node/CLI processes;
+it never stops the shared service or forces a model unload. Ordinary shared
+retention/other clients remain in charge. New outputs stay in ignored validation
+storage; do not publish private reference files as model attestation.
 
 Optional `EEF_TEST_THINKING_MODE=inherit|disabled|enabled` uses the public owner
 policy command in the isolated fixture before launch; inheritance remains the
@@ -826,3 +892,74 @@ inventory/selection and approved remote protocol regressions with mock Ollama,
 not physical or real-Ollama model acceptance. Formatting, diff, frozen grader,
 evaluation-argument and source dependency-boundary checks pass. None changes the
 failed default-interpreter quality decision.
+
+## Two-backend frozen-case baseline (2026-10-18; no default approval)
+
+The evaluator now runs the same production preview, frozen expectations and
+grader on either a verified owned CPU GGUF or an explicitly selected existing
+shared Ollama model. No Rust interpreter, prompt, generation schema, scorer or
+case set changed in this checkpoint. All eighty proposals below are structurally
+accepted; that does not make them useful or authorize work.
+
+| Candidate/backend | Cases | Accepted | Label matches | Unnecessary questions | Required questions lost | Exact template-goal copies |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Existing 2B GGUF / CPU | original-v1 | 20/20 | 14/20 | 6 | 0 | 12 |
+| Existing 2B GGUF / CPU | generalization-v1 | 20/20 | 12/20 | 7 | 0 | 13 |
+| Existing Gemma tag / Ollama | original-v1 | 20/20 | 13/20 | 7 | 0 | 0 |
+| Existing Gemma tag / Ollama | generalization-v1 | 20/20 | 12/20 | 8 | 0 | 0 |
+
+The CPU runs `interpreter-quality-XezHEU` / `interpreter-quality-QZu3r5` reproduce
+all forty parsed proposals from the preceding `Bvx75l` / `iDUGub` references,
+including their defects. An earlier original-suite harness regression
+`interpreter-quality-6NMvfP` also reproduces all twenty baseline proposals.
+The 1,280,835,840-byte cached file is verified against
+`aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223`;
+the existing CPU runtime hash remains
+`0f706d509ce7937504d527f49cc1e68a0e45ee60cfc4153b3ff16f76a0f4e3ac`.
+No copies/downloads are used. CPU inference retains its default 20-second limit.
+
+The Ollama runs `interpreter-quality-klktwv` / `interpreter-quality-rbhOIM` use
+the owner's already-installed Gemma tag on provider version 0.40.4. The provider
+reports 9,608,350,718 installed bytes and digest
+`c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb`;
+these are **not independently verified GGUF size/hash or pinned tag provenance**.
+Both runs explicitly request a 120-second allowance, disabled-thinking hint,
+context 4,096 and 60-second retention. The 512-token output cap and temperature-zero
+sampling remain unchanged. The original suite starts with no resident model;
+the second observes the same model resident. Preparation observations are 6,776
+and 261 ms respectively, not comparable cold-start benchmarks. No CPU-only,
+GPU-layer, thread, owned-process or exclusive-resource claim is made for Ollama.
+
+Gemma asks a clarification question on all forty inputs, including all fifteen
+expected-clear cases. Its goals no longer exactly copy the instructional sample,
+but unnecessary questions and one additional intent error remain. The table's
+label score does not assess every aspect of goal faithfulness; zero exact copies
+is not general semantic approval. Both backends retain required questions in
+these cases, but neither meets default interpreter/bootstrap quality acceptance.
+The next interpretation change should target unnecessary clarification while
+retaining required questions and checking both fixed suites, without changing
+expected labels, validation, output limits or authority to produce a green score.
+
+All four runs use node SHA-256
+`6bfb37c0e536fcb7009eb93dc2db3d591ef6d3034e805b4b54e62a55cd073010`,
+system-prompt SHA-256
+`f9ec6ea9d7341bb7a5594959667b184485d5c9749f6a107c0228ce6866373216`
+and generation-schema SHA-256
+`2660caf1caed38b74c11e266d1c79de1060ed80284d8ba270977c5b4aa84aa8b`.
+Reference checks `reference-capture-XTRQC8`, `reference-capture-57AoG5`,
+`reference-capture-ytLmGL` and `reference-capture-EeQZkM` verify matching reference
+captures, old CPU/reference shapes, mixed-profile refusal, source case/hash/schema
+substitution refusal and exclusive output without overwriting evaluations.
+
+Synthetic evaluator checks exercise all twenty fixed inputs without assuming
+good semantic scores, timeout/tag/context/duplicate/unrelated-resident aborts,
+null context as unknown, proxy-environment bypass, no redirects, oversized and
+slow-drip metadata refusal before node/config work, and no shared-service stop,
+forced unload or inference replay. Argument rejection, frozen-rubric, syntax,
+diff and backend/browser source-boundary checks pass. Production Rust is unchanged
+from the 735-test-plus-one-ignored checkpoint; no new application test-count or
+release-completion claim follows this tool-only change.
+
+No installed/physical node, UI, model default, shared-service setting, release or
+stable update feed changed. Default model quality, automatic setup, physical
+two-PC and remaining v0.4.0 acceptance gates remain open.

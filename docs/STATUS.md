@@ -1,5 +1,29 @@
 # Architecture conformance status
 
+## Two-backend interpreter quality baseline (2026-10-18; not approved)
+
+The production-preview evaluator now supports existing shared Ollama as well as
+verified owned CPU GGUF. It separates provider reports from verified file/runtime
+identity and owned CPU samples, explicitly prepares the selected shared model,
+and stops further cases after uncertain outcomes or changed tag/residency/context.
+Reference tools support both typed profiles and legacy CPU evidence without
+confusing ownership or silently rewriting existing records.
+
+Both frozen suites complete on both backends: all eighty proposals are accepted
+structurally. CPU matches remain **14/20 and 12/20**, with all forty parsed
+proposals identical to the prior baseline. Existing Gemma/Ollama matches
+**13/20 and 12/20**; it asks unnecessary questions on all fifteen clear cases.
+Neither model is default-approved. See [exact runs, identity scope and remaining
+quality defects](INTERPRETER-QUALITY.md#two-backend-frozen-case-baseline-2026-10-18-no-default-approval).
+
+Synthetic shared-protocol, bounded metadata, proxy/redirect, no-replay/abort,
+argument, frozen scorer, reference and source-boundary checks pass. This is a
+test-tool change: production Rust/prompt/schema/scorer stay unchanged from the
+735-test checkpoint. No models downloaded/copied, installed/physical nodes,
+UI, shared settings, release or stable feed changed. The next interpretation
+increment must address unnecessary clarification without losing required
+questions. Default bootstrap and physical/release gates remain unfinished.
+
 ## Unreleased: reasoning-aware completion failures (2026-10-18)
 
 Incomplete interpreter responses keep the existing generic failure code and add

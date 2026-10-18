@@ -121,7 +121,8 @@ same 512-token cap and unchanged synthetic input. No workload was dispatched.
 The proposal passes structural validation and preserves the original text, but
 asks an unnecessary output-format question for a clear system-information
 request. This is **one successful completion, not semantic/default approval**;
-the full frozen-case quality comparison remains necessary. The requested wait
+the subsequent [full frozen-case baseline](INTERPRETER-QUALITY.md#two-backend-frozen-case-baseline-2026-10-18-no-default-approval)
+records both backends without approving either candidate. The requested wait
 is explicitly 120 seconds; the observed warm response also fits the unchanged
 20-second default, but cold/physical and general latency are not proved.
 The tested node binary SHA-256 is

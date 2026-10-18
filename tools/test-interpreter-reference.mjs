@@ -21,6 +21,16 @@ async function run(value,ok,directory=scratch){
  assert.equal(child.error,undefined);assert.equal(child.status===0,ok);
 }
 // Unknown suites and known-but-substituted case hashes fail before output.
+if(report.backend==='ollama'){
+ for(const changes of [{real_cpu_interpretation:true},{shared_service_owned:true},{model_file_hash_verified:true},
+   {provider_reported_model_digest:'not-a-digest'},{sha256:'a'.repeat(64)},{runtime_sha256:'a'.repeat(64)},{gpu_layers:0},{threads:1}])
+  await run({...report,...changes},false);
+}else{
+ await run({...report,backend:'unsupported'},false);
+ await run({...report,shared_ollama_provider:true},false);
+ const oldCpu=structuredClone(report);delete oldCpu.backend;
+ const oldCpuScratch=await mkdtemp(join(validation,'reference-old-cpu-'));await run(oldCpu,true,oldCpuScratch);
+}
 await run({...report,case_set:'unsupported-v1'},false);
 await run({...report,case_set:report.case_set==='generalization-v1'?'original-v1':'generalization-v1'},false);
 await run({...report,rubric_sha256:'0'.repeat(64)},false);

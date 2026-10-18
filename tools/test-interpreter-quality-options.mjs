@@ -16,3 +16,20 @@ for(const options of invalid){
  assert.match(result.stderr.toString(),/bounded interpreter sampling CLI arguments|Unknown\/duplicate sampling flag|explicit bounded numeric sampling values/);
 }
 console.log('Interpreter evaluation argument rejection passed; no model/config/process fixture started');
+for(const [args,extra,pattern] of [
+ [['--ollama','fixture'],{EEF_TEST_ALLOW_SHARED_OLLAMA:'0'},/Explicitly opt in/],
+ [['--ollama'],{EEF_TEST_ALLOW_SHARED_OLLAMA:'1'},/Supply --ollama/],
+ [['--ollama','fixture','http://example.invalid:11434'],{EEF_TEST_ALLOW_SHARED_OLLAMA:'1'},/IP-literal loopback/],
+ [['--ollama','fixture','http://localhost:11434'],{EEF_TEST_ALLOW_SHARED_OLLAMA:'1'},/IP-literal loopback/],
+ [['--ollama','fixture','http://0.0.0.0:11434'],{EEF_TEST_ALLOW_SHARED_OLLAMA:'1'},/IP-literal loopback/],
+ [['--ollama','fixture','http://user:secret@127.0.0.1:11434'],{EEF_TEST_ALLOW_SHARED_OLLAMA:'1'},/IP-literal loopback/],
+ [['--ollama','fixture','http://127.0.0.1:11434/path'],{EEF_TEST_ALLOW_SHARED_OLLAMA:'1'},/IP-literal loopback/],
+ [['--ollama','fixture'],{EEF_TEST_ALLOW_SHARED_OLLAMA:'1',EEF_TEST_MODEL_FILE:'must-not-read.gguf'},/Supply --ollama/],
+ [['--ollama','fixture'],{EEF_TEST_ALLOW_SHARED_OLLAMA:'1',EEF_TEST_MODEL_ID:'must-not-select'},/Supply --ollama/],
+ [['--ollama','fixture'],{EEF_TEST_INFERENCE_TIMEOUT_SECONDS:'121'},/inference test budget/],
+]){
+ const result=spawnSync(process.execPath,[harness,...args],{cwd:root,windowsHide:true,timeout:10000,maxBuffer:65536,
+  env:{...process.env,EEF_TEST_MODEL_FILE:'',EEF_TEST_MODEL_ID:'',EEF_TEST_THINKING_MODE:'inherit',EEF_TEST_INTERPRETER_SAMPLING_ARGS:'[]',...extra}});
+ assert.equal(result.error,undefined);assert.notEqual(result.status,0);assert.match(result.stderr.toString(),pattern);
+}
+console.log('Shared-provider evaluation admission arguments passed; no provider/fixture/process work started.');
