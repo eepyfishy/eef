@@ -240,6 +240,10 @@ impl ExecutionGrant {
             crate::pipeline::FinitePipeline::from_grant(self)?;
             return Ok(());
         }
+        if self.capability == "peer.transfer" {
+            crate::peer::admission::Definition::from_grant(self)?;
+            return Ok(());
+        }
         OperationShape {
             capability: &self.capability,
             action: &self.action,
@@ -452,6 +456,14 @@ impl GrantReport {
                                 Some("pipeline_stage_unsuccessful")
                             }
                 }))
+            && (g.capability != "peer.transfer"
+                || self.state != ReceiptState::Completed
+                || (self.data.is_null()
+                    && !self.success
+                    && self.error_code.as_deref() == Some("result_too_large"))
+                || (self.success
+                    && self.error_code.is_none()
+                    && crate::peer::admission::confirmed_result(g, &self.data)))
             && (self.state != ReceiptState::Accepted
                 || (self.persisted
                     && self.data.is_null()
@@ -765,7 +777,7 @@ impl AcceptedGrant {
         }
         let deadline = Instant::now()
             + Duration::from_millis(g.limits.max_execution_ms.min(g.expires_at_ms - now));
-        Self::prepare_deadline(g, ledger, engine, issuer, session, node, deadline)
+        Self::prepare_deadline(g, ledger, engine, issuer, session, node, deadline, false)
     }
     pub fn prepare_with_lease(
         g: ExecutionGrant,
@@ -779,7 +791,21 @@ impl AcceptedGrant {
         let deadline = lease
             .deadline(&g)
             .map_err(|_| GrantDenied("grant_lease_changed_or_expired"))?;
-        Self::prepare_deadline(g, ledger, engine, issuer, session, node, deadline)
+        Self::prepare_deadline(g, ledger, engine, issuer, session, node, deadline, false)
+    }
+    pub(crate) fn prepare_peer_with_lease(
+        g: ExecutionGrant,
+        ledger: Arc<GrantLedger>,
+        engine: &crate::NodeEngine,
+        issuer: &str,
+        session: &str,
+        node: &str,
+        lease: crate::grant_time::GrantLease,
+    ) -> Result<Self> {
+        let deadline = lease
+            .deadline(&g)
+            .map_err(|_| GrantDenied("grant_lease_changed_or_expired"))?;
+        Self::prepare_deadline(g, ledger, engine, issuer, session, node, deadline, true)
     }
     fn prepare_deadline(
         g: ExecutionGrant,
@@ -789,9 +815,13 @@ impl AcceptedGrant {
         session: &str,
         node: &str,
         deadline: Instant,
+        peer: bool,
     ) -> Result<Self> {
         g.validate()
             .map_err(|_| GrantDenied("invalid_grant_scope"))?;
+        if (g.capability == "peer.transfer") != peer {
+            return Err(GrantDenied("peer_delivery_admission_required").into());
+        }
         if !g.matches_session(issuer, session, node) {
             return Err(GrantDenied("grant_identity_changed").into());
         }
@@ -825,9 +855,9 @@ impl AcceptedGrant {
     pub fn acknowledgement(&self) -> GrantReport {
         GrantReport::new(&self.grant, ReceiptState::Accepted, Value::Null, None)
     }
-    pub async fn run(mut self, engine: &crate::NodeEngine) -> GrantReport {
-        let g = &self.grant;
-        let ledger = &self.ledger;
+    pub async fn run(self, engine: &crate::NodeEngine) -> GrantReport {
+        let g = self.grant.clone();
+        let ledger = self.ledger.clone();
         let execution_deadline = self.deadline;
         let mut params = g.params.clone();
         if let Some(model) = &g.model_id {
@@ -836,11 +866,25 @@ impl AcceptedGrant {
         }
         let operation = async {
             if g.capability == "pipeline.run" {
-                crate::pipeline_runtime::execute(engine, g, ledger, execution_deadline).await
+                crate::pipeline_runtime::execute(engine, &g, &ledger, execution_deadline).await
             } else {
                 engine.execute(&g.capability, &g.action, params).await
             }
         };
+        self.run_operation(engine, operation).await
+    }
+    /// Shared lease, permission watcher, uncertainty and durable outcome path.
+    /// Peer operations must enter through recipient-bound admission, never this
+    /// ordinary executor or a separate receipt implementation.
+    pub(crate) async fn run_operation<F>(
+        mut self,
+        engine: &crate::NodeEngine,
+        operation: F,
+    ) -> GrantReport
+    where
+        F: std::future::Future<Output = Result<Value>>,
+    {
+        let g = &self.grant;
         tokio::pin!(operation);
         let deadline = tokio::time::Instant::from_std(self.deadline);
         let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -903,6 +947,16 @@ impl AcceptedGrant {
 }
 
 fn completed_outcome(grant: &ExecutionGrant, data: Value) -> GrantReport {
+    if grant.capability == "peer.transfer"
+        && !crate::peer::admission::confirmed_result(grant, &data)
+    {
+        return GrantReport::new(
+            grant,
+            ReceiptState::Unknown,
+            Value::Null,
+            Some("peer_result_unconfirmed"),
+        );
+    }
     if grant.capability == "pipeline.run" {
         return match crate::pipeline_runtime::confirmed_result(grant, &data) {
             Ok(success) => GrantReport::new(

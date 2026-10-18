@@ -51,6 +51,8 @@ pub struct NodePolicy {
     pub wake_on_lan: WakeOnLanPolicy,
     #[serde(default)]
     pub media: MediaPolicy,
+    #[serde(default)]
+    pub peer_transfers: crate::peer::admission::Policy,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -233,6 +235,8 @@ pub struct NodeEngine {
     resources: Vec<crate::context::Resource>,
     granted_model_config: Option<Value>,
     pipeline_enabled: bool,
+    peer_admission_enabled: bool,
+    peer_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl NodeEngine {
@@ -275,6 +279,8 @@ impl NodeEngine {
             service: None,
             granted_model_config: None,
             pipeline_enabled: false,
+            peer_admission_enabled: false,
+            peer_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             resource_owner: String::new(),
             resources: Vec::new(),
         })
@@ -282,7 +288,27 @@ impl NodeEngine {
 
     pub fn with_policy(mut self, policy: NodePolicy) -> Result<Self> {
         self.policy = normalize_policy(policy)?;
+        self.peer_slots = Arc::new(tokio::sync::Semaphore::new(usize::from(
+            self.policy.peer_transfers.max_sessions,
+        )));
         Ok(self)
+    }
+
+    /// Experimental library admission only, not an advertised app capability.
+    /// App startup does not enable this until paired jobs, delivery and socket
+    /// admission are wired together.
+    pub fn with_peer_admission(mut self) -> Self {
+        self.peer_admission_enabled = true;
+        self
+    }
+    pub(crate) fn peer_slot(&self) -> Result<tokio::sync::OwnedSemaphorePermit> {
+        if !self.peer_admission_enabled || !self.policy.peer_transfers.enabled {
+            bail!("Peer grant runtime is unavailable")
+        }
+        self.peer_slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| anyhow::anyhow!("Node peer session capacity is full"))
     }
 
     pub(crate) fn applied_permissions(&self) -> &NodePolicy {
@@ -484,6 +510,10 @@ impl NodeEngine {
         g: &crate::grants::ExecutionGrant,
         admission: bool,
     ) -> Result<()> {
+        if g.capability == "peer.transfer" {
+            let (_, definition) = crate::peer::admission::Definition::from_grant(g)?;
+            self.policy.peer_transfers.permits(&definition)?;
+        }
         if g.capability == "pipeline.run" {
             if !self.pipeline_enabled {
                 bail!("Pipeline compiler/runtime integration is not enabled")
@@ -529,6 +559,9 @@ impl NodeEngine {
         }
         if (require_ready || !model_operation)
             && !self.capabilities().iter().any(|c| c == g.capability)
+            && !(g.capability == "peer.transfer"
+                && self.peer_admission_enabled
+                && self.policy.peer_transfers.enabled)
         {
             bail!("Granted capability is not enabled on this node")
         }
@@ -540,6 +573,7 @@ impl NodeEngine {
             "http.request" => Some("http"),
             "stt.transcribe" => Some("stt"),
             "network.wol" => Some("wake_on_lan"),
+            "peer.transfer" => Some("peer_transfers"),
             "audio.capture" | "audio.play" | "tts.speak" | "camera.capture" | "screen.capture"
             | "input.control" => Some("media"),
             "llm.infer" | "vlm.analyze" => Some("models"),
@@ -636,7 +670,7 @@ impl NodeEngine {
         action: &str,
         mut params: Value,
     ) -> Result<Value> {
-        if capability == "pipeline.run" {
+        if matches!(capability, "pipeline.run" | "peer.transfer") {
             return Err(crate::execution_boundary::ExecutionGrantRequired.into());
         }
         if let Some(id) = params.get("resource_id") {
@@ -1736,6 +1770,7 @@ fn grant_policy_scope(policy: &NodePolicy, capability: &str, action: &str, secti
     json!({"scope":scope,"full_access":policy.unrestricted(&full)})
 }
 fn normalize_policy(mut policy: NodePolicy) -> Result<NodePolicy> {
+    policy.peer_transfers.validate()?;
     let scoped_filesystem = (policy.filesystem.read && !policy.unrestricted("filesystem.read"))
         || (policy.filesystem.write && !policy.unrestricted("filesystem.write"));
     if scoped_filesystem {

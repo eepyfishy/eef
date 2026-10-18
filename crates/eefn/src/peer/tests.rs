@@ -18,6 +18,7 @@ impl Fixture {
             control_session_id: uuid::Uuid::new_v4().to_string(),
             runtime_generation: uuid::Uuid::new_v4().to_string(),
             grant_id: uuid::Uuid::new_v4().to_string(),
+            grant_sha256: "b".repeat(64),
             resource_id: crate::context::resource_id(node, "transport"),
         };
         let now = crate::protocol::now_ms();

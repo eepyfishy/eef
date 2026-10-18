@@ -17,11 +17,15 @@ pub struct Party {
     pub control_session_id: String,
     pub runtime_generation: String,
     pub grant_id: String,
+    pub grant_sha256: String,
     pub resource_id: String,
 }
 impl Party {
     fn validate(&self) -> Result<()> {
         crate::network::validate_remote_node_id(&self.node_id)?;
+        if !crate::request_result::valid_digest(&self.grant_sha256) {
+            bail!("Invalid peer grant digest")
+        }
         for id in [
             &self.control_session_id,
             &self.runtime_generation,
@@ -54,6 +58,21 @@ pub struct Limits {
     pub max_frame_bytes: u32,
     pub max_frames: u32,
     pub max_inflight_frames: u8,
+}
+impl Limits {
+    pub fn validate(&self) -> Result<()> {
+        if !(1..=64 * 1024 * 1024).contains(&self.max_wire_bytes)
+            || !(1..=64 * 1024 * 1024).contains(&self.max_bytes_per_second)
+            || !(1..=256 * 1024).contains(&self.max_frame_bytes)
+            || !(1..=8).contains(&self.max_inflight_frames)
+            || !(1..=65536).contains(&self.max_frames)
+            || u64::from(self.max_frame_bytes) * u64::from(self.max_inflight_frames)
+                > 2 * 1024 * 1024
+        {
+            bail!("Invalid peer transfer bounds")
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -94,7 +113,7 @@ impl Scope {
         uuid(self.request_context.request_id())?;
         self.source.validate()?;
         self.destination.validate()?;
-        let limits = &self.limits;
+        self.limits.validate()?;
         if self.schema_version != 1
             || !crate::request_result::valid_digest(&self.issuer_id)
             || !crate::request_result::valid_digest(&self.plan_sha256)
@@ -103,13 +122,6 @@ impl Scope {
             || self.issued_at_ms == 0
             || self.expires_at_ms <= self.issued_at_ms
             || self.expires_at_ms - self.issued_at_ms > crate::grants::MAX_DURATION_MS
-            || !(1..=64 * 1024 * 1024).contains(&limits.max_wire_bytes)
-            || !(1..=64 * 1024 * 1024).contains(&limits.max_bytes_per_second)
-            || !(1..=256 * 1024).contains(&limits.max_frame_bytes)
-            || !(1..=8).contains(&limits.max_inflight_frames)
-            || !(1..=65536).contains(&limits.max_frames)
-            || u64::from(limits.max_frame_bytes) * u64::from(limits.max_inflight_frames)
-                > 2 * 1024 * 1024
             || self.destination_address.port() == 0
             || self.destination_address.ip().is_unspecified()
             || self.destination_address.ip().is_multicast()

@@ -1,8 +1,9 @@
 # Peer transport security foundation (unreleased)
 
 This is an experimental library in `eefn::peer`, not a usable node-to-node
-feature. No app command, listener, capability advertisement, permission,
-execution-grant operation or media route enables it. It is the transport
+feature. No app command, listener, capability advertisement or media route
+enables it. Library-only finite grant admission is described below; it is not
+paired-job or application delivery integration. It is the transport
 foundation for step 8 of the [command-first roadmap](ROADMAP-CORE.md), not
 completion of that step or of [presence and media](PRESENCE-AND-MEDIA.md).
 
@@ -14,7 +15,7 @@ bundle or completing TLS does not approve a job or consume a grant. There is no
 second peer approval system in this increment.
 
 A scope binds both nodes, their control sessions and runtime generations,
-distinct grant/resource identities, coordinator identity/runtime, immutable
+distinct grant IDs and full grant digests/resource identities, coordinator identity/runtime, immutable
 request context, job and plan digest, one destination address, direction,
 lifetime and transfer limits. Strict shape/size checks reject incompatible
 metadata; they do not establish current permission, resource availability,
@@ -94,6 +95,57 @@ record headers and underlying network overhead are excluded. These are
 per-channel limits, not aggregate node quotas or hard OS memory/CPU limits.
 No unbounded offline queue or automatic retransmission is supplied.
 
+## Consumed finite transport admission (unreleased follow-up)
+
+`peer::admission` adds a finite, transport-only `peer.transfer` grant contract
+(`send`/`receive`). Its immutable definition names the other node/resource,
+exact payload length and SHA-256, and transfer limits. It contains no credential,
+runtime, address or plan hash. Ephemeral signed/encrypted delivery remains
+separate, so an approved plan never needs to hash itself or expose raw keys.
+Both parties in the signed scope now include their full execution-grant digest.
+These are unreleased library types, not an existing application wire migration.
+
+`AdmittedPeer::prepare` checks the definition, exact grant and recipient delivery
+(including issuer, job, plan, request origin, node/session/generation, resource,
+limits and time containment), then uses the **existing** `GrantLease` and
+`AcceptedGrant`/`GrantLedger` admission. There is no second receipt database,
+deserializable lease or production wall-clock admission fallback. Signature,
+scope, policy, resource, local capacity or journal failure cannot return an
+admitted endpoint. Ordinary grant preparation and `NodeEngine::execute` refuse
+this operation rather than silently discard its delivery requirements.
+
+An admitted object owns its consumed grant and transport slot together. It
+offers no raw channel extraction, reconnect or restart continuation. Finite IO
+uses the same grant deadline, permission/resource watcher, cancellation-to-unknown
+and durable final-report path as existing operations. A shorter fresh issuer
+lease terminates a stalled handshake even if the signed scope lasts longer.
+Peer TLS/scope validation still requires a suitable local clock; this is not a
+claim of clock-independent peer certificate acceptance.
+
+The experimental engine admission flag is **not enabled by app startup** and
+does not add a capability advertisement, even for a library caller enabling it.
+An additive `permissions.peer_transfers` policy defaults disabled. It bounds
+payload, application wire bytes, rate and concurrent admitted sessions per engine
+(default one, ceiling eight). Definitions have a 4-MiB payload ceiling; receive
+processing hashes/discards one bounded frame at a time. These limits are not
+machine-wide CPU/memory quotas or a shared aggregate bandwidth scheduler.
+
+The finite executor checks the source manifest before TLS IO and checks the
+received layout/hash before acknowledging its final frame. Its final report
+retains only scope/session, role, digest and counts, with explicit
+`payload_retained: false` and `sink_effects_confirmed: false`. It does **not**
+capture a camera, read/write a file, play audio or deliver to an application.
+Such producers/sinks require their own approved resource/permission integration.
+The sender's receipt alone cannot establish durable receiver completion.
+
+Existing consumed-attempt uniqueness and grant-ID checks refuse reuse after
+completion, drop, cancellation or reopening the same journal. Raw `open` remains
+stateless and must not become a production bypass. This admission primitive is
+not evidence that the coordinator has approved, atomically issued or supervised
+both sides: paired-job planning/issuance, fresh discovery and actual application
+socket/delivery commands remain the next integration work. Current reviewed jobs
+remain serial; their predecessor and one-active-attempt rules were not relaxed.
+
 ## Verification and remaining product integration
 
 Focused tests exercise recipient isolation, coordinator signature forgery,
@@ -105,8 +157,9 @@ synthetic bytes; another observes the underlying TLS wire and checks that the
 plaintext and its base64 representation are absent. These are local synthetic
 tests, not physical two-PC or live audio/video acceptance.
 
-Both final locked/offline workspace/all-target suites pass **789 tests plus one
-ignored each**, including no-dashboard: EEF 247 plus one ignored opt-in profiler,
+The transport-foundation checkpoint passed **789 tests plus one ignored each**
+in both locked/offline workspace/all-target modes, including no-dashboard:
+EEF 247 plus one ignored opt-in profiler,
 owner CLI 17, installer 6, EEFN 501 and node CLI 18. The EEFN suite includes 21
 new peer tests. The backend/browser source guard now checks nested runtime
 modules as well as top-level services; it passes without a UI dependency.
@@ -119,18 +172,58 @@ left. Browser smoke also passes initialization, copying/selection stability and
 truthful installation status; no browser source was changed. These regressions
 show the existing services remain usable, not that a public peer path exists.
 
-Evaluated headless binary SHA-256:
+Foundation-checkpoint headless binary SHA-256 (before the admission follow-up):
 
 ```text
 eef.exe  2b55c82fce8bde4f2dbe0a70ef1aeecee9dabf3d1bfc05d0ec0ac896b58d5bea
 eefn.exe 619b0dda63ecde44b69aaab13b33ec59f15c2845c99106753a1ee3e2ede85db2
 ```
 
+The admission follow-up adds ten focused tests: exact consumed-grant TCP
+transfer and retained metrics without payload storage, ordinary-path refusal,
+scope/signature/manifest/lease substitution, dropped/reopened journal replay,
+shorter issuer lease, cancellation, saved permission loss, local quota/resource
+denial, full journal without eviction, and source/receiver payload mismatch.
+Its lease demultiplexer is synthetic; do not treat it as public paired-command
+or physical-network approval evidence.
+
+The initial fresh-binary regression exposed a separate native startup/pairing
+failure (`local-pipelines-JcnMLR` and `fs8can`). It was not accepted as a pass.
+LLDB located the stack overflow in Clap command-tree construction on the
+1-MiB Windows main stack; type measurements showed dispatch/pairing/runtime
+futures of 5,376/3,784/8,896 bytes, not an enormous async future. Argument parsing
+now happens synchronously before Tokio entry, retaining selected-version handoff
+before parsing. A regression constructs representative command trees on a
+1-MiB thread; the evaluated executable still reserves 1,048,576 stack bytes.
+Fresh-binary public pairing/command regressions below pass after this fix.
+
+Both final locked/offline workspace/all-target modes pass **801 tests plus one
+ignored each**: EEF 247 plus one ignored opt-in profiler, owner CLI 17, installer
+6, EEFN 511 and node CLI 20. Fresh headless binaries/examples build. Public
+`local-pipelines-c8jcbY`, `model-downloads-1dj8ED` and
+`node-credentials-m62kSj` pass existing pipeline/progress/permission/restart,
+installation history/no-replay, independent credential/pinning/rotation/revocation
+and private pairing commands. No matching fixture app/helper process remains.
+These are existing public regressions, not public peer-session support.
+
+The first browser rerun read the hidden Advanced textarea before its hash-change
+handler refreshed it. The smoke test now waits for the Advanced page's visible
+state before reading, preserving every existing assertion and application file.
+Two final browser runs pass initialization, copy/selection stability and truthful
+installation status; the recursive backend/browser source guard also passes.
+
+Admission-follow-up evaluated headless binary SHA-256:
+
+```text
+eef.exe  529c84baa973a43ba6c182857c92c208b01f329b197ce5b6478c3dab0a40df75
+eefn.exe 25d0e2e38deec3ed2d786b56f0ec618d696f71fccd4e6c70b6d7f6788c94badc
+```
+
 Before exposing a usable node session, integrate and verify all of:
 
 1. Existing reviewed jobs, paired execution grants and durable consumption before
-   effects; one attempt cannot reopen/replay a bundle after restart/reconnect.
-   `open` is stateless and **does not provide** durable replay admission.
+   effects; integrate the consumed-admission primitive into actual command
+   dispatch, and never bypass it with stateless `open` after restart/reconnect.
 2. Fresh control identities, permission/resource/disclosure checks, destination
    reachability, exact listener/dial ownership and bounded simultaneous sessions.
 3. Existing command/report services for issuance, acceptance, progress and

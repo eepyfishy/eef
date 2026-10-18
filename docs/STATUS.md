@@ -1,5 +1,39 @@
 # Architecture conformance status
 
+## Unreleased: consumed finite peer admission, still no app peer sessions
+
+The experimental library now binds each signed delivery to a full exact grant
+digest and admits finite transport through existing `GrantLease`,
+`AcceptedGrant` and `GrantLedger`, not a second authority or journal. It shares
+the existing deadline/policy watcher, drop-to-unknown behavior and retained
+reports. Local permission/resource/session-capacity and journal checks precede
+admission; ordinary grant execution refuses the special delivery contract.
+See [contract and limitations](PEER-TRANSPORT.md#consumed-finite-transport-admission-unreleased-follow-up).
+
+Fresh native regressions exposed a real Windows parser stack overflow, not a
+Defender removal. LLDB traced Clap command-tree construction inside Tokio entry;
+argument parsing now precedes the async runtime while preserving version handoff
+before parsing. The executable's 1-MiB stack reservation is unchanged; a 1-MiB
+parser regression and bounded-future checks pass.
+
+Both final locked/offline all-target modes pass **801 tests plus one ignored
+each**, including no-dashboard, ten new peer-admission cases and two CLI gates.
+Fresh headless binaries/examples build. Final-binary public
+`local-pipelines-c8jcbY`, `model-downloads-1dj8ED` and `node-credentials-m62kSj`
+pass existing command/restart/no-replay and private credential/pairing regressions.
+They are terminal with no matching fixture processes. The browser harness now
+waits for visible hash navigation before inspecting edited configuration; no
+application UI changed or assertion was removed. Two browser runs and the
+recursive backend/browser guard pass. Initial failures remain recorded, not
+substituted for final-artifact verification.
+
+App startup does not enable it and no capability/command/listener is exposed.
+Static byte manifests and transport-only receipts are not camera/file/audio
+production or sink delivery. Paired coordinator planning/atomic issuance,
+discovery/disclosure, actual socket admission, supervision/strong stop,
+aggregate quotas, producers/sinks and physical acceptance remain open. Existing
+reviewed jobs remain serial. No installed/remote node, model or release changed.
+
 ## Unreleased: peer transport library foundation, not node session support
 
 The experimental `eefn::peer` library prepares recipient-encrypted,

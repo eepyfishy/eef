@@ -1,6 +1,7 @@
 //! Experimental peer-channel building blocks, NOT execution/session authority.
-//! No runtime, command, listener, permission, registration or grant integration.
-//! A future caller must use existing approved jobs and consumed execution grants.
+//! Includes library-only grant admission, not a runtime/command/listener or
+//! registration integration. Paired jobs and application delivery remain open.
+pub mod admission;
 mod credentials;
 pub mod scope;
 mod transport;

@@ -5,6 +5,12 @@ import {chromium} from '../.tooling/ui-tests/node_modules/playwright/index.mjs';
 const browser=await chromium.launch({executablePath:process.env.EEF_TEST_BROWSER||'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true});
 try{
  const page=await browser.newPage();page.on('pageerror',e=>console.error(e));
+ async function advanced(){
+  await page.getByRole('link',{name:'Advanced',exact:true}).click();
+  // Hash navigation is handled asynchronously. inputValue() can read the
+  // still-hidden textarea before page() refreshes it from edited settings.
+  await page.locator('[data-page="advanced"]').waitFor({state:'visible'});
+ }
  let role='device';
  let job={id:'job-fixture',description:'Paused fixture job',status:'paused',can_resume:true,completed_tasks:0,task_count:1,updated_at_ms:Date.now(),tasks:[],history:[]},jobActions=[];
  let details={capabilities_known:true,modality:'vlm',capabilities:['llm.infer','vlm.analyze']};
@@ -38,7 +44,7 @@ try{
  await page.locator('[data-resource-field="name"]').fill('Desk camera');
  await page.locator('#resources details').evaluate(e=>e.open=true);
  await page.locator('[data-resource-field="device"]').fill('2');
- await page.getByRole('link',{name:'Advanced',exact:true}).click();
+ await advanced();
  let edited=JSON.parse(await page.locator('#rawConfig').inputValue());
  assert.deepEqual(edited.metadata.area,['Home','Upstairs','Office']);
  assert.equal(edited.metadata.resources[0].parameters.device,2);
@@ -48,7 +54,7 @@ try{
  await page.locator('[data-resource-field="name"]').fill('Renamed camera');
  await page.waitForTimeout(3500);
  assert.equal(await page.locator('[data-resource-field="name"]').inputValue(),'Renamed camera');
- await page.getByRole('link',{name:'Advanced',exact:true}).click();
+ await advanced();
  edited=JSON.parse(await page.locator('#rawConfig').inputValue());
  assert.equal(edited.metadata.resources[0].id,resourceId);
  assert.deepEqual(edited.permissions,config.permissions);
@@ -59,7 +65,7 @@ try{
  await page.getByRole('link',{name:'Models',exact:true}).click();
  await page.getByRole('button',{name:'Use model',exact:true}).click();
  await page.getByRole('button',{name:'Selected',exact:true}).waitFor();
- await page.getByRole('link',{name:'Advanced',exact:true}).click();
+ await advanced();
  assert.equal(JSON.parse(await page.locator('#rawConfig').inputValue()).models.ollama.selected[0].modality,'vlm');
  await page.locator('#discard').click();details={capabilities_known:false,modality:null};
  await page.getByRole('link',{name:'Models',exact:true}).click();
@@ -69,7 +75,7 @@ try{
  await page.locator('[data-model-type]').selectOption('text');
  await page.getByRole('button',{name:'Use model',exact:true}).click();
  await page.getByRole('button',{name:'Selected',exact:true}).waitFor();
- await page.getByRole('link',{name:'Advanced',exact:true}).click();
+ await advanced();
  assert.equal(JSON.parse(await page.locator('#rawConfig').inputValue()).models.ollama.selected[0].modality,'text');
  await page.locator('#discard').click();
  await page.getByRole('link',{name:'Home',exact:true}).click({timeout:5000});

@@ -2320,8 +2320,7 @@ fn default_llama_binary() -> PathBuf {
     PathBuf::from("tools/llama-server.exe")
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
@@ -2334,7 +2333,15 @@ async fn main() -> Result<()> {
     if eefn::updater::handoff_if_selected(&install_dir, eefn::VERSION, "eefn")? {
         return Ok(());
     }
-    let mut args = Args::parse();
+    // Clap builds the whole command tree synchronously. Keep it outside the
+    // async poll frame and Tokio block_on stack (Windows main reserves 1 MiB).
+    // Handoff remains before parsing, so the selected version owns its syntax.
+    let args = Args::parse();
+    run(args, install_dir)
+}
+
+#[tokio::main]
+async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
     if args.config == PathBuf::from("config.json") && install_dir.join("config.json").is_file() {
         args.config = install_dir.join("config.json");
     }
@@ -3129,6 +3136,58 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn command_and_runtime_futures_remain_bounded() {
+        // Inspect types without constructing/polling the futures or doing IO.
+        fn bytes<F: std::future::Future>(_: impl FnOnce() -> F) -> usize {
+            std::mem::size_of::<F>()
+        }
+        let args = Args::try_parse_from(["eefn", "connection", "pair-stdin"]).unwrap();
+        let command = args.command.as_ref().unwrap();
+        let Commands::Connection {
+            command: connection,
+        } = command
+        else {
+            unreachable!()
+        };
+        let dispatch = bytes(|| execute_command(&args, command));
+        let pairing = bytes(|| execute_connection_command(&args, connection));
+        let runtime = bytes(|| {
+            run_node(
+                &args,
+                PathBuf::new(),
+                NodeService::new(PathBuf::new(), "size-test".into()),
+                tokio::sync::watch::channel(false).1,
+                Arc::new(std::sync::Mutex::new(None)),
+            )
+        });
+        for (name, size) in [
+            ("dispatch", dispatch),
+            ("pairing", pairing),
+            ("runtime", runtime),
+        ] {
+            assert!(size <= 64 * 1024, "{name} future grew to {size} bytes");
+        }
+    }
+
+    #[test]
+    fn parser_fits_the_windows_main_stack_without_a_runtime_poll_frame() {
+        std::thread::Builder::new()
+            .name("cli-parser-1mib".into())
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                for args in [
+                    vec!["eefn", "connection", "pair-stdin"],
+                    vec!["eefn", "models", "show"],
+                    vec!["eefn", "requests", "plan", "request-id"],
+                ] {
+                    Args::try_parse_from(args).unwrap();
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
     use super::*;
     use serde_json::{Value, json};
     #[tokio::test]
