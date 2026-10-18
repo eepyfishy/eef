@@ -526,6 +526,7 @@ dependencies = [
  "rcgen",
  "regex",
  "reqwest",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",
@@ -533,12 +534,14 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "thiserror",
+ "time",
  "tokio",
  "tokio-rustls",
  "tracing",
  "tracing-subscriber",
  "uuid",
  "windows-sys 0.61.2",
+ "x509-parser",
  "zip",
 ]
 

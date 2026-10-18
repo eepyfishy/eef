@@ -43,6 +43,7 @@ mod model_response;
 pub mod model_selection;
 pub mod model_server;
 pub mod network;
+pub mod peer;
 pub mod permission_commands;
 pub mod pipeline;
 pub mod pipeline_progress;

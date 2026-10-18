@@ -1,5 +1,33 @@
 # Architecture conformance status
 
+## Unreleased: peer transport library foundation, not node session support
+
+The experimental `eefn::peer` library prepares recipient-encrypted,
+coordinator-signed bundles without exposing raw private material in inspectable
+parameters. Scoped mutual TLS and existing encrypted newline framing enforce
+exact peer/direction/sequence, bounded frames/windows/application bytes/rate and
+original expiry. Protocol/time/IO failure and cancelled partial IO fence the
+channel; acknowledgements must match an exact sent prefix. See
+[contract, limits and outstanding integration](PEER-TRANSPORT.md).
+
+Both final locked/offline all-target modes pass **789 tests plus one ignored
+each**, including no-dashboard and 21 new peer tests. The backend/browser source
+guard now includes nested runtime modules and passes. Local synthetic TLS/TCP
+evidence is not public peer command, physical two-PC or media acceptance.
+Fresh headless binaries/examples build; final-binary public
+`local-pipelines-TX38Bw` and `model-downloads-MB5qua` pass existing command,
+history, permission-loss and restart/no-replay regressions. Both fixtures are
+terminal with no matching EEF/EEFN/native-helper processes. Browser smoke passes
+initialization, copy stability and truthful installation status, without UI edits.
+
+No app listener, command, permission, capability, grant operation or media path
+enables this module. Existing approved jobs and consumed grants must remain
+the authority. In particular, stateless bundle opening does not prevent session
+replay across reconnect/restart. Durable paired admission, current permissions,
+resources/disclosure, stop/revocation, aggregate quotas, public command integration
+and physical two-PC/media acceptance remain open. No model, installed/remote
+node, update policy or release changed.
+
 ## Unreleased: durable model-install admission and outcomes
 
 The existing node installation service now commits bounded receipts before

@@ -4,11 +4,20 @@ import {readFile,readdir} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 const root=resolve(import.meta.dirname,'..');
 const adapters=new Set(['api.rs','dashboard.rs','web_ui.rs','main.rs','lib.rs']);
+// Runtime submodules have the same boundary as top-level services. Adapter
+// exceptions apply only at src/, not to identically named nested modules.
+async function* modules(dir,prefix=''){
+ for(const entry of await readdir(dir,{withFileTypes:true})){
+  const file=prefix+entry.name;
+  if(entry.isDirectory())yield* modules(join(dir,entry.name),file+'/');
+  else if(entry.isFile()&&file.endsWith('.rs'))yield [file,join(dir,entry.name)];
+ }
+}
 for(const role of ['eef','eefn']){
  const dir=join(root,'crates',role,'src');
- for(const file of await readdir(dir)){
-  if(!file.endsWith('.rs')||adapters.has(file))continue;
-  const source=await readFile(join(dir,file),'utf8');
+ for await(const [file,path] of modules(dir)){
+  if(adapters.has(file))continue;
+  const source=await readFile(path,'utf8');
   assert(!/\b(?:crate|eefn)::(?:api|dashboard|web_ui)::/.test(source),`${role}/${file} imports an adapter`);
   assert(!/\bNodeDashboard\b/.test(source),`${role}/${file} depends on dashboard state`);
   assert(!/include_(?:str|bytes)!\([^\n]*dashboard\//.test(source),`${role}/${file} embeds browser assets`);
