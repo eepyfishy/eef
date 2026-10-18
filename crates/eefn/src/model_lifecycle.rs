@@ -457,6 +457,11 @@ impl crate::NodeService {
     }
 }
 impl ModelRuntimeGuard {
+    /// Withdraw admission before awaiting owned process termination. This is
+    /// not an exit acknowledgement; the caller must still await server.stop().
+    pub fn begin_shutdown(&self) {
+        self.runtime.close();
+    }
     pub fn policy(&self) -> &crate::model_lifecycle_policy::ModelLifecyclePolicy {
         &self.runtime.policy
     }
@@ -486,7 +491,9 @@ impl ModelRuntime {
         self.policy_revision
     }
     fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return;
+        }
         for op in self.records.lock().unwrap().values_mut() {
             if matches!(
                 op.receipt.phase.as_str(),

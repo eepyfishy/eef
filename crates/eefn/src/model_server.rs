@@ -345,7 +345,7 @@ mod advertisement_tests {
             server.snapshot().unwrap()[0]["owned_pid"],
             first["owned_pid"]
         );
-        server.stop().await;
+        server.stop().await.unwrap();
         assert_eq!(
             server.snapshot().unwrap()[0]["job_accounting"],
             json!({"state":"no_owned_job"})
@@ -393,7 +393,7 @@ mod advertisement_tests {
         assert!(server.start(Duration::from_secs(1)).await.is_err());
         assert_eq!(
             server.models().unwrap()[0]["model_metadata"]["lifecycle"],
-            "unloaded"
+            "error"
         );
     }
     #[tokio::test]
@@ -483,18 +483,18 @@ mod advertisement_tests {
         server
             .reserve_control("owned-model", generation, &id, false)
             .unwrap();
-        let release = tokio::sync::Notify::new();
+        let release = Arc::new(tokio::sync::Notify::new());
         let unload = server.unload_reserved_checked(
             "owned-model",
             &id,
             Duration::from_secs(3),
             || Ok(()),
             |process, deadline| {
-                let release = &release;
-                async move {
+                let release = release.clone();
+                Box::pin(async move {
                     release.notified().await;
                     process.terminate_until(deadline).await
-                }
+                })
             },
         );
         tokio::pin!(unload);
@@ -553,18 +553,20 @@ mod advertisement_tests {
                     &id,
                     Duration::from_millis(40),
                     || Ok(()),
-                    |process, _| async move {
-                        let _owned = process;
-                        if mode == "error" {
-                            bail!("synthetic observation failure")
-                        }
-                        if mode == "late" {
-                            // Timeout futures may poll an immediately ready
-                            // result first after a non-yielding OS operation.
-                            std::thread::sleep(Duration::from_millis(60));
-                            return Ok(());
-                        }
-                        std::future::pending::<Result<()>>().await
+                    |process, _| {
+                        Box::pin(async move {
+                            let _owned = process;
+                            if mode == "error" {
+                                bail!("synthetic observation failure")
+                            }
+                            if mode == "late" {
+                                // Timeout futures may poll an immediately ready
+                                // result first after a non-yielding OS operation.
+                                std::thread::sleep(Duration::from_millis(60));
+                                return Ok(());
+                            }
+                            std::future::pending::<Result<()>>().await
+                        })
                     },
                 );
                 tokio::pin!(unload);
@@ -614,6 +616,158 @@ mod advertisement_tests {
                 );
             }
             server.close();
+            if mode == "missing" {
+                assert!(
+                    server.stop().await.is_err(),
+                    "missing handles cannot become exit proof"
+                );
+            } else {
+                assert!(!server.retired.lock().unwrap().is_empty());
+                server.stop().await.unwrap();
+                assert!(server.retired.lock().unwrap().is_empty());
+                server.stop().await.unwrap();
+            }
+        }
+    }
+    #[tokio::test]
+    async fn retired_live_process_cannot_be_replaced_as_an_ordinary_load_error() {
+        let server = resident_server();
+        server.set_all(ModelLifecycle::Error);
+        let generation = server.snapshot().unwrap()[0]["generation"]
+            .as_u64()
+            .unwrap();
+        assert!(
+            server
+                .reserve_control("owned-model", generation, "resident-retry", true)
+                .is_err()
+        );
+        let process = server
+            .processes
+            .lock()
+            .unwrap()
+            .remove("owned-model")
+            .unwrap();
+        // Keep this synthetic process live to verify admission, rather than
+        // depending on how quickly a requested OS termination happens.
+        server
+            .retired
+            .lock()
+            .unwrap()
+            .push(("owned-model".into(), process));
+        server.set_all(ModelLifecycle::Error);
+        let row = server.snapshot().unwrap();
+        assert_eq!(row[0]["job_accounting"], json!({"state":"unavailable"}));
+        let generation = row[0]["generation"].as_u64().unwrap();
+        assert!(
+            server
+                .reserve_control("owned-model", generation, "retry", true)
+                .is_err()
+        );
+        assert!(server.start(Duration::from_secs(1)).await.is_err());
+        server.close();
+        server.stop().await.unwrap();
+        assert!(server.retired.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn process_monitor_serializes_failure_cleanup_and_keeps_group_unroutable() {
+        let server = resident_server();
+        let operation = server.operation.lock().await;
+        server
+            .processes
+            .lock()
+            .unwrap()
+            .get_mut("owned-model")
+            .unwrap()
+            .child
+            .start_kill()
+            .unwrap();
+        let monitor = server.monitor_processes();
+        tokio::pin!(monitor);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut monitor)
+                .await
+                .is_err()
+        );
+        assert!(server.retired.lock().unwrap().is_empty());
+        drop(operation);
+        assert!(monitor.await.is_err());
+        assert_eq!(server.snapshot().unwrap()[0]["state"], "error");
+        assert!(!server.can_infer(Some("owned-model")));
+        assert!(server.retired.lock().unwrap().is_empty());
+        server.close();
+        server.stop().await.unwrap();
+    }
+    #[tokio::test]
+    async fn group_stop_budget_includes_operation_admission_without_starting_a_new_wait() {
+        let server = resident_server();
+        server
+            .termination_wait_seconds
+            .store(1, std::sync::atomic::Ordering::SeqCst);
+        let initial = server.snapshot().unwrap();
+        let operation = server.operation.lock().await;
+        let result = tokio::time::timeout(Duration::from_secs(2), server.stop())
+            .await
+            .unwrap();
+        assert!(result.is_err());
+        let after = server.snapshot().unwrap();
+        assert_eq!(after[0]["generation"], initial[0]["generation"]);
+        assert_eq!(after[0]["owned_pid"], initial[0]["owned_pid"]);
+        assert!(server.retired.lock().unwrap().is_empty());
+        drop(operation);
+        server.close();
+        server.stop().await.unwrap();
+        assert!(server.retired.lock().unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn cancelled_or_failed_group_stop_retains_ownership_for_observed_cleanup() {
+        for mode in ["cancel", "timeout", "error", "late"] {
+            let server = resident_server();
+            let initial = server.snapshot().unwrap()[0]["owned_pid"].as_u64().unwrap();
+            {
+                let stop = server.stop_children_checked(Duration::from_millis(40), async {
+                    if mode == "error" {
+                        bail!("synthetic group observation failure")
+                    }
+                    if mode == "late" {
+                        std::thread::sleep(Duration::from_millis(60));
+                        return Ok(());
+                    }
+                    std::future::pending::<Result<()>>().await
+                });
+                tokio::pin!(stop);
+                if mode == "cancel" {
+                    assert!(
+                        tokio::time::timeout(Duration::from_millis(10), &mut stop)
+                            .await
+                            .is_err()
+                    );
+                    let row = server.snapshot().unwrap();
+                    assert_eq!(row[0]["state"], "unloading");
+                    assert_eq!(row[0]["control_pending"], true);
+                    assert_eq!(row[0]["job_accounting"], json!({"state":"unavailable"}));
+                    assert!(!server.can_infer(Some("owned-model")));
+                } else {
+                    assert!(stop.await.is_err());
+                }
+            }
+            assert_eq!(server.snapshot().unwrap()[0]["state"], "unload_unconfirmed");
+            assert_eq!(
+                server.retired.lock().unwrap()[0]
+                    .1
+                    .child
+                    .id()
+                    .map(u64::from),
+                Some(initial)
+            );
+            server.close();
+            server.stop().await.unwrap();
+            assert!(server.retired.lock().unwrap().is_empty());
+            assert!(
+                server
+                    .exit_observed
+                    .load(std::sync::atomic::Ordering::SeqCst)
+            );
+            server.stop().await.unwrap();
         }
     }
     #[tokio::test]
@@ -627,18 +781,18 @@ mod advertisement_tests {
             server
                 .reserve_control("owned-model", generation, &id, false)
                 .unwrap();
-            let release = tokio::sync::Notify::new();
+            let release = Arc::new(tokio::sync::Notify::new());
             let unload = server.unload_reserved_checked(
                 "owned-model",
                 &id,
                 Duration::from_secs(3),
                 || Ok(()),
                 |process, deadline| {
-                    let release = &release;
-                    async move {
+                    let release = release.clone();
+                    Box::pin(async move {
                         release.notified().await;
                         process.terminate_until(deadline).await
-                    }
+                    })
                 },
             );
             tokio::pin!(unload);
@@ -653,14 +807,7 @@ mod advertisement_tests {
                 server.set_all(ModelLifecycle::Error);
             }
             let closed = server.residency.lock().unwrap().slots["owned-model"].clone();
-            assert_eq!(
-                closed.state,
-                if close {
-                    ModelLifecycle::Unloaded
-                } else {
-                    ModelLifecycle::UnloadUnconfirmed
-                }
-            );
+            assert_eq!(closed.state, ModelLifecycle::UnloadUnconfirmed);
             release.notify_one();
             assert!(unload.await.is_err());
             let after = server.residency.lock().unwrap().slots["owned-model"].clone();
@@ -808,7 +955,7 @@ mod advertisement_tests {
         assert!(!metadata.routable());
         assert!(server.require_ready().is_err());
         assert!(server.processes.lock().unwrap().is_empty());
-        server.stop().await;
+        server.stop().await.unwrap();
         assert_eq!(*changes.borrow(), ModelLifecycle::Unloaded);
         let invalid = serde_json::from_value(json!({
             "model_id":"invalid-hints", "selection":{"roles":["not a valid role"]}
@@ -871,7 +1018,7 @@ mod advertisement_tests {
         tokio::time::timeout(Duration::from_secs(3), async {
             tokio::join!(server.monitor_processes(), async {
                 sleep(Duration::from_millis(20)).await;
-                server.stop().await;
+                server.stop().await.unwrap();
             })
             .0
             .unwrap();
@@ -906,6 +1053,9 @@ pub struct ModelServer {
     pub binary: PathBuf,
     pub slots: Vec<ModelSlot>,
     processes: SyncMutex<HashMap<String, OwnedProcess>>,
+    retired: SyncMutex<Vec<(String, OwnedProcess)>>,
+    exit_observed: std::sync::atomic::AtomicBool,
+    termination_wait_seconds: std::sync::atomic::AtomicU64,
     residency: SyncMutex<Residency>,
     operation: Mutex<()>,
     lifecycle: watch::Sender<ModelLifecycle>,
@@ -918,7 +1068,7 @@ struct OwnedProcess {
     _tree: crate::process_lifetime::ProcessTree,
 }
 impl OwnedProcess {
-    async fn terminate_until(mut self, deadline: tokio::time::Instant) -> Result<()> {
+    async fn terminate_until(&mut self, deadline: tokio::time::Instant) -> Result<()> {
         // One deadline covers OS tree observation and root reaping. The job
         // stays owned until both finish; cancellation still closes its handle.
         #[cfg(windows)]
@@ -930,6 +1080,25 @@ impl OwnedProcess {
         }
         self.child.wait().await?;
         Ok(())
+    }
+}
+// Cancelled cleanup keeps the original process/tree handles, not just a PID.
+// Normal runtime shutdown can still observe them before allowing replacement.
+struct PendingProcess<'a> {
+    server: &'a ModelServer,
+    model: String,
+    process: Option<OwnedProcess>,
+}
+impl PendingProcess<'_> {
+    fn confirmed(&mut self) {
+        self.process.take();
+    }
+}
+impl Drop for PendingProcess<'_> {
+    fn drop(&mut self) {
+        if let Some(process) = self.process.take() {
+            self.server.retire_process(self.model.clone(), process);
+        }
     }
 }
 #[derive(Clone)]
@@ -972,6 +1141,12 @@ impl ModelServer {
         &self,
         runtime: std::sync::Weak<crate::model_lifecycle::ModelRuntime>,
     ) {
+        if let Some(applied) = runtime.upgrade() {
+            self.termination_wait_seconds.store(
+                applied.policy().termination_wait_seconds,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
         *self.demand_runtime.lock().unwrap() = Some(runtime);
         self.changed();
     }
@@ -1019,6 +1194,8 @@ impl ModelServer {
     }
     #[cfg(test)]
     fn test_spawn_resident(&self, model: &str) -> Result<()> {
+        self.exit_observed
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         let mut command = Command::new(std::env::current_exe()?);
         command
             .args([
@@ -1051,6 +1228,12 @@ impl ModelServer {
     }
     pub fn new(binary: PathBuf, slots: Vec<ModelSlot>) -> Arc<Self> {
         Arc::new(Self {
+            exit_observed: std::sync::atomic::AtomicBool::new(false),
+            termination_wait_seconds: std::sync::atomic::AtomicU64::new(
+                crate::model_lifecycle_policy::ModelLifecyclePolicy::default()
+                    .termination_wait_seconds,
+            ),
+            retired: SyncMutex::new(Vec::new()),
             demand_runtime: SyncMutex::new(None),
             host: "127.0.0.1".into(),
             binary,
@@ -1166,8 +1349,10 @@ impl ModelServer {
     }
     pub(crate) fn snapshot(&self) -> Result<Vec<Value>> {
         self.initialize_residency()?;
+        self.release_observed_errors();
         let gate = self.residency.lock().unwrap();
         let processes = self.processes.lock().unwrap();
+        let retired = self.retired.lock().unwrap();
         let mut records = self
             .slots
             .iter()
@@ -1177,7 +1362,11 @@ impl ModelServer {
                 let accounting = owned
                     .map(|process| process._tree.accounting())
                     .unwrap_or_else(|| {
-                        if state.state == ModelLifecycle::Unloading {
+                        if matches!(
+                            state.state,
+                            ModelLifecycle::Unloading | ModelLifecycle::UnloadUnconfirmed
+                        ) || retired.iter().any(|(model, _)| model == &slot.model_id)
+                        {
                             // The termination future owns the withdrawn job;
                             // absence from the resident map is not zero usage.
                             crate::job_accounting::JobAccounting::Unavailable {}
@@ -1270,6 +1459,7 @@ impl ModelServer {
         load: bool,
     ) -> Result<()> {
         self.initialize_residency()?;
+        self.release_observed_errors();
         let mut gate = self.residency.lock().unwrap();
         if gate.closed {
             bail!("model runtime closed")
@@ -1280,12 +1470,27 @@ impl ModelServer {
                 "previous model unload was not confirmed; inspect its receipt and restart the node before another load"
             )
         }
+        if load
+            && self
+                .retired
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(name, _)| name == model)
+        {
+            bail!(
+                "previous owned model exit is not confirmed; inspect lifecycle before another load"
+            )
+        }
         if s.generation != generation
             || s.active != 0
             || s.control.is_some()
             || matches!(s.state, ModelLifecycle::Loading | ModelLifecycle::Unloading)
         {
             bail!("model generation changed, busy or in use")
+        }
+        if load && self.processes.lock().unwrap().contains_key(model) {
+            bail!("previous owned model is still resident; inspect lifecycle before another load")
         }
         if load && !matches!(s.state, ModelLifecycle::Unloaded | ModelLifecycle::Error) {
             bail!("model already resident; inspect exact receipt")
@@ -1352,14 +1557,24 @@ impl ModelServer {
     pub(crate) fn close(&self) {
         let mut gate = self.residency.lock().unwrap();
         gate.closed = true;
-        for s in gate.slots.values_mut() {
+        self.retire_children();
+        let retired = self.retired.lock().unwrap();
+        for (model, s) in &mut gate.slots {
             s.generation = s.generation.saturating_add(1);
-            s.state = ModelLifecycle::Unloaded;
+            s.state = if matches!(
+                s.state,
+                ModelLifecycle::Unloading | ModelLifecycle::UnloadUnconfirmed
+            ) || retired.iter().any(|(name, _)| name == model)
+            {
+                ModelLifecycle::UnloadUnconfirmed
+            } else {
+                ModelLifecycle::Unloaded
+            };
             s.active = 0;
             s.control = None;
             s.idle_since = None;
         }
-        self.processes.lock().unwrap().clear();
+        drop(retired);
         drop(gate);
         self.changed();
     }
@@ -1370,6 +1585,7 @@ impl ModelServer {
             .try_lock()
             .context("model operation already running")?;
         self.initialize_residency()?;
+        self.release_observed_errors();
         {
             let gate = self.residency.lock().unwrap();
             if gate
@@ -1378,6 +1594,9 @@ impl ModelServer {
                 .any(|s| s.state == ModelLifecycle::UnloadUnconfirmed)
             {
                 bail!("previous model unload was not confirmed; no startup retry in this runtime")
+            }
+            if !self.retired.lock().unwrap().is_empty() {
+                bail!("previous owned model exit is not confirmed; no startup retry")
             }
             if gate.slots.values().any(|s| {
                 s.active > 0
@@ -1409,8 +1628,13 @@ impl ModelServer {
                 self.set_all(ModelLifecycle::Ready);
             }
             Err(_) => {
-                self.stop_children().await;
+                let stopped = self.stop_children().await;
                 self.set_all(ModelLifecycle::Error);
+                if let Err(error) = stopped {
+                    cleanup.armed = false;
+                    return Err(error)
+                        .context("startup failed and owned model termination is unconfirmed");
+                }
             }
         }
         cleanup.armed = false;
@@ -1444,17 +1668,163 @@ impl ModelServer {
         Ok(())
     }
 
-    pub async fn stop(&self) {
-        let _operation = self.operation.lock().await;
-        self.set_all(ModelLifecycle::Unloaded);
-        self.stop_children().await;
+    pub async fn stop(&self) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + self.termination_timeout();
+        tokio::time::timeout_at(deadline, async {
+            let _operation = self.operation.lock().await;
+            self.stop_children_until(deadline, std::future::ready(Ok(())))
+                .await?;
+            self.set_all(ModelLifecycle::Unloaded);
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .context("model group stop admission/observation timed out")?
     }
 
-    async fn stop_children(&self) {
-        let mut processes = std::mem::take(&mut *self.processes.lock().unwrap());
-        for process in processes.values_mut() {
-            let _ = process.child.kill().await;
+    fn retire_process(&self, model: String, mut process: OwnedProcess) {
+        self.exit_observed
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        #[cfg(windows)]
+        let _ = process._tree.request_termination();
+        let _ = process.child.start_kill();
+        self.retired.lock().unwrap().push((model, process));
+    }
+    fn retire_children(&self) {
+        let processes = std::mem::take(&mut *self.processes.lock().unwrap());
+        for (model, process) in processes {
+            self.retire_process(model, process);
         }
+    }
+    fn release_observed_errors(&self) {
+        let gate = self.residency.lock().unwrap();
+        if gate.closed {
+            return;
+        }
+        let mut retired = self.retired.lock().unwrap();
+        retired.retain_mut(|(model, process)| {
+            // An old failed unload remains fenced until a fresh runtime. Only
+            // ordinary startup/load errors can be explicitly retried in place.
+            if !gate
+                .slots
+                .get(model)
+                .is_some_and(|slot| slot.state == ModelLifecycle::Error)
+            {
+                return true;
+            }
+            let root_exited = process
+                .child
+                .try_wait()
+                .is_ok_and(|status| status.is_some());
+            #[cfg(windows)]
+            let tree_empty = matches!(
+                process._tree.accounting(),
+                crate::job_accounting::JobAccounting::Available {
+                    active_processes: 0,
+                    ..
+                }
+            );
+            #[cfg(not(windows))]
+            let tree_empty = true;
+            !(root_exited && tree_empty)
+        });
+    }
+    fn termination_timeout(&self) -> Duration {
+        Duration::from_secs(
+            self.termination_wait_seconds
+                .load(std::sync::atomic::Ordering::SeqCst),
+        )
+    }
+    async fn stop_children(&self) -> Result<()> {
+        self.stop_children_checked(self.termination_timeout(), std::future::ready(Ok(())))
+            .await
+    }
+    async fn stop_children_checked(
+        &self,
+        timeout: Duration,
+        before_observation: impl std::future::Future<Output = Result<()>>,
+    ) -> Result<()> {
+        if timeout.is_zero() || timeout > Duration::from_secs(30) {
+            bail!("invalid model group termination wait")
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        self.stop_children_until(deadline, before_observation).await
+    }
+    async fn stop_children_until(
+        &self,
+        deadline: tokio::time::Instant,
+        before_observation: impl std::future::Future<Output = Result<()>>,
+    ) -> Result<()> {
+        if tokio::time::Instant::now() >= deadline {
+            bail!("model group stop deadline expired")
+        }
+        let id = format!("stop:{}", uuid::Uuid::new_v4());
+        let (mut pending, fences, missing) = {
+            let mut gate = self.residency.lock().unwrap();
+            // Transfer ownership and withdraw the same slots atomically with
+            // status/admission. An empty map between these steps is not exit.
+            self.retire_children();
+            let processes = std::mem::take(&mut *self.retired.lock().unwrap());
+            let pending = processes
+                .into_iter()
+                .map(|(model, process)| PendingProcess {
+                    server: self,
+                    model,
+                    process: Some(process),
+                })
+                .collect::<Vec<_>>();
+            let mut fences = Vec::new();
+            let mut missing = false;
+            for (model, slot) in &mut gate.slots {
+                if !pending.iter().any(|process| &process.model == model) {
+                    missing |= slot.state == ModelLifecycle::UnloadUnconfirmed
+                        && !self.exit_observed.load(std::sync::atomic::Ordering::SeqCst);
+                    continue;
+                }
+                let sticky = slot.state == ModelLifecycle::UnloadUnconfirmed;
+                slot.state = ModelLifecycle::Unloading;
+                slot.generation = slot.generation.saturating_add(1);
+                slot.active = 0;
+                slot.idle_since = None;
+                slot.control = Some(id.clone());
+                fences.push((model.clone(), slot.generation, sticky));
+            }
+            (pending, fences, missing)
+        };
+        let mut cleanup = GroupStopCleanup {
+            server: self,
+            id,
+            fences,
+            armed: true,
+        };
+        self.changed();
+        tokio::time::timeout_at(deadline, async {
+            before_observation.await?;
+            let outcomes = futures_util::future::join_all(
+                pending
+                    .iter_mut()
+                    .map(|process| process.process.as_mut().unwrap().terminate_until(deadline)),
+            )
+            .await;
+            for outcome in outcomes {
+                outcome?;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!("model group observation completed after deadline")
+            }
+            if missing {
+                bail!("model termination evidence unavailable")
+            }
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .context("model group termination observation timed out")??;
+        cleanup.finish()?;
+        for process in &mut pending {
+            process.confirmed();
+        }
+        self.exit_observed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
     }
 
     fn check_children(&self) -> Result<()> {
@@ -1672,11 +2042,11 @@ impl ModelServer {
         authorize: impl FnOnce() -> Result<G>,
     ) -> Result<()> {
         self.unload_reserved_checked(model, id, timeout, authorize, |process, deadline| {
-            process.terminate_until(deadline)
+            Box::pin(process.terminate_until(deadline))
         })
         .await
     }
-    async fn unload_reserved_checked<G, F, Fut>(
+    async fn unload_reserved_checked<G, F>(
         &self,
         model: &str,
         id: &str,
@@ -1685,8 +2055,12 @@ impl ModelServer {
         terminate: F,
     ) -> Result<()>
     where
-        F: FnOnce(OwnedProcess, tokio::time::Instant) -> Fut,
-        Fut: std::future::Future<Output = Result<()>>,
+        F: for<'p> FnOnce(
+            &'p mut OwnedProcess,
+            tokio::time::Instant,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<()>> + Send + 'p>,
+        >,
     {
         if timeout.is_zero() || timeout > Duration::from_secs(30) {
             bail!("invalid model termination wait")
@@ -1725,18 +2099,29 @@ impl ModelServer {
             armed: true,
         };
         let process = process.context("reserved model has no owned process to observe")?;
+        let mut pending = PendingProcess {
+            server: self,
+            model: model.into(),
+            process: Some(process),
+        };
         let deadline = tokio::time::Instant::now() + timeout;
-        let outcome = tokio::time::timeout_at(deadline, terminate(process, deadline))
-            .await
-            .context("owned model termination observation timed out")
-            .and_then(|result| result)
-            .and_then(|()| {
-                if tokio::time::Instant::now() >= deadline {
-                    bail!("owned model termination observation completed after deadline")
-                }
-                Ok(())
-            });
+        let outcome = tokio::time::timeout_at(
+            deadline,
+            terminate(pending.process.as_mut().unwrap(), deadline),
+        )
+        .await
+        .context("owned model termination observation timed out")
+        .and_then(|result| result)
+        .and_then(|()| {
+            if tokio::time::Instant::now() >= deadline {
+                bail!("owned model termination observation completed after deadline")
+            }
+            Ok(())
+        });
         cleanup.finish(outcome.is_ok())?;
+        if outcome.is_ok() {
+            pending.confirmed();
+        }
         outcome
     }
     pub(crate) fn spawn_slot(&self, slot: &ModelSlot, control: Option<&str>) -> Result<()> {
@@ -1777,14 +2162,16 @@ impl ModelServer {
         if state.state != ModelLifecycle::Loading || state.control.as_deref() != control {
             bail!("model load ownership withdrawn before spawn")
         }
-        let (child, tree) = crate::process_lifetime::spawn_with_job_memory_limit(
-            &mut command,
-            slot.job_memory_limit_mib,
-        )?;
         let mut owned = self.processes.lock().unwrap();
         if owned.contains_key(&slot.model_id) {
             bail!("owned model already present")
         }
+        let (child, tree) = crate::process_lifetime::spawn_with_job_memory_limit(
+            &mut command,
+            slot.job_memory_limit_mib,
+        )?;
+        self.exit_observed
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         owned.insert(slot.model_id.clone(), OwnedProcess { child, _tree: tree });
         Ok(())
     }
@@ -1792,9 +2179,12 @@ impl ModelServer {
     /// Observe owned process exits after startup, without restarting or replaying
     /// work. This does not probe ongoing HTTP health or prove inference works.
     /// The caller owns this future as part of the runtime, never a detached task.
+    /// Check and cleanup share operation admission so a delayed monitor cannot
+    /// destroy a replacement loaded while it was waiting.
     pub async fn monitor_processes(&self) -> Result<()> {
         loop {
             {
+                let _operation = self.operation.lock().await;
                 if *self.lifecycle.borrow() != ModelLifecycle::Ready {
                     return Ok(());
                 }
@@ -1824,7 +2214,9 @@ impl ModelServer {
                 if let Err(error) = outcome {
                     // Withdraw routing before asynchronous sibling cleanup.
                     self.set_all(ModelLifecycle::Error);
-                    self.stop_children().await;
+                    let stopped = self.stop_children().await;
+                    self.set_all(ModelLifecycle::Error);
+                    stopped.context("failed model group termination is unconfirmed")?;
                     return Err(error);
                 }
             }
@@ -1846,6 +2238,7 @@ impl ModelServer {
     pub fn models(&self) -> Result<Vec<Value>> {
         // Invalid selections remain unroutable; do not poison node control.
         let _ = self.initialize_residency();
+        self.release_observed_errors();
         let demand = self.demand_authorized();
         let gate = self.residency.lock().unwrap();
         self.slots
@@ -1929,6 +2322,57 @@ struct SlotUnloadCleanup<'a> {
     generation: u64,
     armed: bool,
 }
+struct GroupStopCleanup<'a> {
+    server: &'a ModelServer,
+    id: String,
+    fences: Vec<(String, u64, bool)>,
+    armed: bool,
+}
+impl GroupStopCleanup<'_> {
+    fn finish(&mut self) -> Result<()> {
+        let mut gate = self.server.residency.lock().unwrap();
+        for (model, generation, _) in &self.fences {
+            let slot = gate.slots.get(model).context("model stop state missing")?;
+            if slot.generation != *generation
+                || slot.control.as_deref() != Some(&self.id)
+                || slot.state != ModelLifecycle::Unloading
+            {
+                bail!("model group stop ownership changed")
+            }
+        }
+        for (model, _, sticky) in &self.fences {
+            let slot = gate.slots.get_mut(model).unwrap();
+            slot.state = if *sticky {
+                ModelLifecycle::UnloadUnconfirmed
+            } else {
+                ModelLifecycle::Unloaded
+            };
+            slot.control = None;
+        }
+        self.armed = false;
+        drop(gate);
+        self.server.changed();
+        Ok(())
+    }
+}
+impl Drop for GroupStopCleanup<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut gate = self.server.residency.lock().unwrap();
+        for (model, generation, _) in &self.fences {
+            if let Some(slot) = gate.slots.get_mut(model) {
+                if slot.generation == *generation && slot.control.as_deref() == Some(&self.id) {
+                    slot.state = ModelLifecycle::UnloadUnconfirmed;
+                    slot.control = None;
+                }
+            }
+        }
+        drop(gate);
+        self.server.changed();
+    }
+}
 impl SlotUnloadCleanup<'_> {
     fn finish(&mut self, confirmed: bool) -> Result<()> {
         let mut gate = self.server.residency.lock().unwrap();
@@ -1982,9 +2426,11 @@ impl Drop for SlotStartupCleanup<'_> {
             return;
         }
         let mut gate = self.server.residency.lock().unwrap();
-        self.server.processes.lock().unwrap().remove(&self.model);
         if let Some(s) = gate.slots.get_mut(&self.model) {
             if s.control.as_deref() == Some(&self.id) {
+                if let Some(process) = self.server.processes.lock().unwrap().remove(&self.model) {
+                    self.server.retire_process(self.model.clone(), process);
+                }
                 s.state = ModelLifecycle::Error;
                 s.idle_since = None;
                 s.control = None;
@@ -2000,8 +2446,13 @@ impl Drop for StartupCleanup<'_> {
         if self.armed {
             // Child::kill_on_drop is enabled. This is synchronous so cancellation
             // cannot leave a detached task spawning children after a restart.
-            self.server.processes.lock().unwrap().clear();
-            self.server.set_all(ModelLifecycle::Unloaded);
+            self.server.retire_children();
+            let state = if self.server.retired.lock().unwrap().is_empty() {
+                ModelLifecycle::Unloaded
+            } else {
+                ModelLifecycle::Error
+            };
+            self.server.set_all(state);
         }
     }
 }

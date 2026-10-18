@@ -1,6 +1,6 @@
 // Isolated process acceptance: fake llama-server, no weights or real inference.
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
@@ -10,6 +10,7 @@ const root=resolve(import.meta.dirname,'..');
 const scratch=await mkdtemp(join(root,'.validation/model-startup-'));
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const children=[],modelPids=new Set();
+let inspectFailure=async()=>({});
 const env={...process.env,EEF_MODEL_STARTUP_FIXTURE:'1',EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 function launch(name,args,extra={}) {
  const child=spawn(join(bin,name+'.exe'),args,{cwd:root,windowsHide:true,env:{...env,...extra},stdio:['ignore','pipe','pipe']});
@@ -23,11 +24,18 @@ const alive=pid=>{try{process.kill(pid,0);return true;}catch(e){if(e.code==='ESR
 try {
  const [apiPort,eefPort,gateway,modelPort,siblingPort]=await Promise.all([port(),port(),port(),port(),port()]);
  const node=`http://127.0.0.1:${apiPort}`,eef=`http://127.0.0.1:${eefPort}`;
+ inspectFailure=async()=>({
+  node_status:await json(node+'/api/status').catch(error=>({unavailable:String(error)})),
+  diagnostics:await json(node+'/api/diagnostics').catch(error=>({unavailable:String(error)})),
+  inventory:await json(eef+'/api/commands/models').catch(error=>({unavailable:String(error)})),
+ });
  const secret=randomBytes(24).toString('hex'),id='startup-fixture-node';
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
  const modelFile=join(scratch,'fixture.gguf'),readyFile=join(scratch,'ready'),pidFile=join(scratch,'model.pid');
  const siblingFile=join(scratch,'sibling.gguf'),siblingPidFile=join(scratch,'sibling.pid');
- await writeFile(modelFile,JSON.stringify({ready_file:readyFile,pid_file:pidFile}));
+ const tree=join(scratch,'loading-owned-tree');if(process.platform==='win32')await mkdir(tree);
+ await writeFile(modelFile,JSON.stringify({ready_file:readyFile,pid_file:pidFile,
+  ...(process.platform==='win32'?{process_tree_fixture_dir:tree}:{})}));
  await writeFile(siblingFile,JSON.stringify({ready_file:readyFile,pid_file:siblingPidFile}));
  Object.assign(config,{node_id:id,name:'Startup fixture',psk:secret,auto_local:false,local_pairing:false,endpoints:[`127.0.0.1:${gateway}`],heartbeat_seconds:0.5,dashboard:{enabled:true,host:'127.0.0.1',port:apiPort},update:{policy:'off'},models:{provider:'llamacpp',ollama:{selected:[],base_url:'http://127.0.0.1:1'},llamacpp:{binary:join(bin,'examples/model_startup_fixture.exe'),slots:[{model_id:'gated-model',model_path:modelFile,port:modelPort}]}}});
  config.models.llamacpp.slots.push({model_id:'sibling-model',model_path:siblingFile,port:siblingPort});
@@ -51,7 +59,15 @@ try {
  assert.equal(denied.status,400);assert.equal((await denied.json()).error_code,'execution_grant_required');
  const command=async(args)=>{const child=launch('eefn',['--config',nodeConfig,...args,'--json']);const timer=setTimeout(()=>child.kill(),65000);try{const r=await child.result;assert.equal(r.code,0,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}};
  assert.equal((await command(['jobs','list'])).success,true);
+ let observer,treeExitProof;
+ if(process.platform==='win32'){
+  await until(async()=>!!JSON.parse(await readFile(join(tree,'pids.json'),'utf8')).child.pid,'nested loading model processes');
+  observer=launch('examples/process-fixture',['observe',tree]);
+  await until(async()=>!!await readFile(join(tree,'observer-ready')),'hold native identities before loading restart');
+ }
  const restarted=await command(['restart','--wait-seconds','60']);assert.equal(restarted.completed,true);assert.notEqual(restarted.runtime_id,before.runtime_id);
+ if(observer){const observed=await observer.result;assert.equal(observed.code,0,'loading-restart native observer failed');treeExitProof=JSON.parse(observed.out);
+  assert.equal(treeExitProof.both_exited,true);assert.equal(treeExitProof.held_creation_verified_handles,true);}
  await until(()=>!alive(oldPid),'cancelled startup child exits');
  await until(()=>!alive(oldSiblingPid),'cancelled startup sibling exits');
  let newPid;
@@ -129,8 +145,13 @@ try {
  process.kill(offlinePid);
  await until(async()=>{const s=await json(node+'/api/status');return s.connection.state==='paused'&&s.models.every(m=>m.model_metadata.lifecycle==='error')&&!s.capabilities.includes('llm.infer');},'offline process failure status');
  await until(()=>!alive(offlineSibling),'offline failed group stops sibling');
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,registration_while_loading:true,commands_while_loading:true,ordinary_inference_refused:true,reviewed_model_grants:true,pinned_tls:true,restart_cancels_owned_child:true,readiness_without_reconnect:true,offline_readiness:true,process_exit_withdraws_group:true,failed_group_stops_siblings:true,commands_after_process_exit:true,explicit_restart_recovers:true,offline_process_failure:true,real_inference:false,physical_two_pc:false},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,registration_while_loading:true,commands_while_loading:true,ordinary_inference_refused:true,reviewed_model_grants:true,pinned_tls:true,restart_cancels_owned_child:true,
+  windows_loading_restart_descendant_exit:process.platform==='win32'?treeExitProof:null,
+  readiness_without_reconnect:true,offline_readiness:true,process_exit_withdraws_group:true,failed_group_stops_siblings:true,commands_after_process_exit:true,explicit_restart_recovers:true,offline_process_failure:true,real_inference:false,physical_two_pc:false},null,2));
  console.log('Nonblocking model startup checks passed: '+scratch);
+} catch(error) {
+ await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error),...await inspectFailure()},null,2));
+ throw error;
 } finally {
  for(const child of children)if(child.exitCode===null)child.kill();
  // Abrupt test teardown bypasses graceful application cleanup on Windows;

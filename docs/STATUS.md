@@ -1,5 +1,29 @@
 # Architecture conformance status
 
+## Unreleased: controlled restart waits for owned model cleanup
+
+Node restart now requests shutdown and awaits the existing runtime instead of
+dropping it. Cancelled cleanup retains original process/tree handles. One applied
+termination budget covers admission, concurrent group observation and root
+reaping; an old-server barrier prevents replacement initialization or version
+handoff while cleanup remains uncertain. A later explicit owner restart inspects
+that same barrier, with no inference/workload replay or automatic restart loop.
+Read-only exit observation can release ordinary failed-load objects only after
+the root and Windows job are confirmed exited; live retirees block new loads.
+See [contract, limits and verification](MODEL-SHUTDOWN.md).
+
+Both final all-target modes pass **745 tests plus one ignored each**. Public
+startup `r7pv8V`, lifecycle `Jz7wAo`, policy `zONquI`, and cached real CPU model
+`HV3XFX` pass. Native observers verify loading/ready restart descendant exits;
+the real run covers controlled restart, unload/reload and idle/on-demand use.
+No model download/copy or model-quality approval follows; final processes are
+terminal after cleanup. An intermediate failed withdrawal fixture is retained
+and documented, not recategorized as a pass.
+
+This is not observed abrupt process death, physical RAM/VRAM release, shared
+Ollama termination, continuous pipeline stop, default model/bootstrap or complete
+physical/release acceptance. No installed-node/UI/release changes.
+
 ## Unreleased: observed targeted model termination
 
 Explicit and idle owned-GGUF unload retain their generation/control fence while
@@ -19,9 +43,11 @@ sibling. Startup `L3izuZ`, lifecycle policy `9E2QBk`, and cached real CPU model
 `zSuIyJ` pass, including explicit/idle/on-demand unload/reload without downloads
 or model-quality approval. All validation processes are terminal after cleanup.
 
-This does not newly observe ordinary group shutdown, release physical RAM/VRAM,
-undo external effects, terminate shared Ollama, add force unload or complete
-pipeline stop/physical/bootstrap/release gates. No installed-node/UI changes.
+That targeted checkpoint did not observe ordinary group shutdown; the subsequent
+controlled-restart increment above extends it. Neither proves physical RAM/VRAM
+release, reversibility of external effects, shared Ollama termination, continuous
+pipeline stop or complete bootstrap/physical/release acceptance. No force unload
+or installed-node/UI change is added.
 
 ## Rejected balanced-illustration comparison (2026-10-18)
 

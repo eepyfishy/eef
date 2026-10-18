@@ -55,11 +55,12 @@ try {
  await new Promise(r=>proxy.listen(0,'127.0.0.1',r));const proxyPort=proxy.address().port;
  const [api,gateway,eefPort,aPort,bPort]=await Promise.all(Array.from({length:5},()=>port()));node=`http://127.0.0.1:${api}`;eef=`http://127.0.0.1:${eefPort}`;
  const readyA=join(scratch,'a-ready'),readyB=join(scratch,'b-ready'),inferGate=join(scratch,'infer-gate'),inferStarted=join(scratch,'infer-started');
- const aFile=join(scratch,'a.gguf'),bFile=join(scratch,'b.gguf'),tree=join(scratch,'a-owned-tree');
- if(process.platform==='win32')await mkdir(tree);
+ const aFile=join(scratch,'a.gguf'),bFile=join(scratch,'b.gguf'),tree=join(scratch,'a-owned-tree'),bTree=join(scratch,'b-owned-tree');
+ if(process.platform==='win32'){await mkdir(tree);await mkdir(bTree);}
  await writeFile(aFile,JSON.stringify({ready_file:readyA,pid_file:join(scratch,'a.pid'),infer_gate:inferGate,infer_started:inferStarted,
   ...(process.platform==='win32'?{process_tree_fixture_dir:tree}:{})}));
- await writeFile(bFile,JSON.stringify({ready_file:readyB,pid_file:join(scratch,'b.pid'),infer_gate:inferGate,infer_started:inferStarted}));
+ await writeFile(bFile,JSON.stringify({ready_file:readyB,pid_file:join(scratch,'b.pid'),infer_gate:inferGate,infer_started:inferStarted,
+  ...(process.platform==='win32'?{process_tree_fixture_dir:bTree}:{})}));
  await writeFile(readyA,'synthetic health');await writeFile(readyB,'synthetic health');
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
  Object.assign(config,{node_id:id,name:'Model lifecycle fixture',connection_enabled:false,auto_local:false,local_pairing:false,endpoints:[],psk:'',heartbeat_seconds:0.5,request_limits:{work:1,control:2},management:{allow_remote:false},
@@ -149,6 +150,7 @@ try {
  await local(['model-lifecycle','--runtime',runtime,'cancel','--operation-id',cancelledLoad]);
  await until(async()=>(await show(cancelledLoad)).receipt.phase==='cancelled','local owner cancels exact partial load');
  await until(async()=>(await show(queuedUnload)).receipt.phase==='failed','queued unload rechecks revoked authority');
+ await until(async()=>model(await show(),'a').job_accounting?.state==='no_owned_job','cancelled load exit observed before explicit replacement');
  assert.equal(model(await show(),'b').owned_pid,b.owned_pid);
  assert.equal((await control('unload','b',b.generation,queuedUnload,true)).result.reused,true,'failed historical receipt is inspection, not renewed authority');
  const restored=(await json(node+'/api/config')).config;restored.management.allow_remote=true;await json(node+'/api/config',{config:restored},'PUT');
@@ -158,11 +160,24 @@ try {
  await until(async()=>(await show(freshLoad)).receipt.phase==='cancelled','EEF owner cancels exact partial load');
  assert.equal(model(await show(),'a').owned_pid,null);assert.equal(model(await show(),'b').owned_pid,b.owned_pid);assert.equal((await control('load','a',cold.generation,cancelledLoad,true)).result.reused,true);
  let response=await fetch(node+'/api/commands/model-lifecycle',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({schema_version:1,expected_node_id:id,expected_runtime_id:runtime,command:{operation:'show',operation_id:null}})});assert.equal(response.status,403);
+ let restartObserver,restartTreeExitProof;
+ if(process.platform==='win32'){
+  const oldTree=JSON.parse(await readFile(join(bTree,'pids.json'),'utf8'));
+  const beforeRestart=model(await show(),'b'),unload=randomUUID();await control('unload','b',beforeRestart.generation,unload);
+  await until(async()=>(await show(unload)).receipt.phase==='completed','refresh finite test descendants before restart');
+  const coldB=model(await show(),'b'),load=randomUUID();await control('load','b',coldB.generation,load);
+  await until(async()=>(await show(load)).receipt.phase==='completed','ready model before observed group restart');
+  await until(async()=>JSON.parse(await readFile(join(bTree,'pids.json'),'utf8')).root.pid!==oldTree.root.pid,'fresh nested test identities');
+  restartObserver=observeTree(bTree);await until(async()=>!!await readFile(join(bTree,'observer-ready')),'hold native identities before ready restart');
+ }
  const oldRuntime=runtime;await local(['restart']);await until(async()=>(await json(node+'/api/diagnostics')).runtime_id!==oldRuntime,'runtime owner closes');
+ if(restartObserver){const observed=await restartObserver.result;assert.equal(observed.code,0,'ready-restart native observer failed');restartTreeExitProof=JSON.parse(observed.out);
+  assert.equal(restartTreeExitProof.both_exited,true);assert.equal(restartTreeExitProof.held_creation_verified_handles,true);}
  await local(['model-lifecycle','--runtime',oldRuntime,'load','--model','a','--generation',String(cold.generation),'--operation-id',cancelledLoad],false);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,no_ui_controller:true,pinned_tls:true,physical_two_pc:false,real_model_inference:false,synthetic_backend:true,
   exact_remote_owner_approval:true,owned_job_observation_without_restart:true,malformed_job_accounting_reply_rejected:true,legacy_missing_job_accounting_accepted:true,
   targeted_unload_and_reload_no_sibling_or_node_restart:true,windows_owned_descendant_exit_observed:process.platform==='win32'?treeExitProof:null,
+  windows_ready_restart_descendant_exit:process.platform==='win32'?restartTreeExitProof:null,
   historical_receipt_no_replay:true,active_inference_pin_blocks_unload:true,control_status_during_work_saturation:true,warm_idle_on_pin_release:true,
   explicit_partial_load_cancellation:true,closed_old_runtime_refuses_replay:true,selected_model_files_not_deleted:true,lost_corrupt_negative_unsupported_reply_no_retry_or_fallback:true,queued_mutation_rechecks_revoked_owner_approval:true},null,2));
  console.log('Model lifecycle validation passed: '+scratch);

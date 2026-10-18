@@ -2488,6 +2488,7 @@ async fn main() -> Result<()> {
         None
     };
     let mut handoff = false;
+    let shutdown_barrier: ModelShutdownBarrier = Arc::new(std::sync::Mutex::new(None));
     loop {
         if let Ok(file) = load_file(&args.config) {
             let next = file.dashboard.unwrap_or_default();
@@ -2521,20 +2522,47 @@ async fn main() -> Result<()> {
             status["connection"] = serde_json::json!({"state":"starting"});
             status["startup_issues"] = serde_json::json!([]);
         }
-        tokio::select! {
-            result = run_node(&args, install_dir.clone(), dashboard.clone()) => {
-                if !interactive { return result; }
-                if let Err(error)=result {
-                    warn!(%error,"device needs attention");
-                    dashboard.live.lock().unwrap()["connection"]=serde_json::json!({"state":"error","last_error":format!("{error:#}")});
-                }
-                tokio::select! { _=dashboard.restart.notified()=>{}, _=tokio::signal::ctrl_c()=>break }
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        let signal = async {
+            tokio::select! {
+                _ = dashboard.restart.notified() => StopReason::Restart,
+                _ = tokio::signal::ctrl_c() => StopReason::Exit,
             }
-            _ = dashboard.restart.notified() => {},
-            _ = tokio::signal::ctrl_c() => break,
+        };
+        let (result, reason) = supervise_runtime(
+            run_node(
+                &args,
+                install_dir.clone(),
+                dashboard.clone(),
+                stopped,
+                shutdown_barrier.clone(),
+            ),
+            signal,
+            stop,
+        )
+        .await;
+        if reason == Some(StopReason::Exit) {
+            if let Err(error) = result {
+                warn!(%error, "owned model shutdown unconfirmed");
+            }
+            break;
         }
-        if std::fs::read_to_string(install_dir.join("current.txt"))
-            .is_ok_and(|v| !v.trim().is_empty() && v.trim() != eefn::VERSION)
+        if result.is_err() || reason.is_none() {
+            if !interactive {
+                return result;
+            }
+            if let Err(error) = result {
+                warn!(%error, "device needs attention");
+                dashboard.live.lock().unwrap()["connection"] =
+                    serde_json::json!({"state":"error","last_error":format!("{error:#}")});
+            }
+            // An uncertain cleanup never automatically starts another runtime.
+            // A subsequent explicit restart retries the same retained barrier.
+            tokio::select! { _=dashboard.restart.notified()=>{}, _=tokio::signal::ctrl_c()=>break }
+        }
+        if shutdown_barrier.lock().unwrap().is_none()
+            && std::fs::read_to_string(install_dir.join("current.txt"))
+                .is_ok_and(|v| !v.trim().is_empty() && v.trim() != eefn::VERSION)
         {
             handoff = true;
             break;
@@ -2560,7 +2588,45 @@ impl Drop for AbortTask {
     }
 }
 
-async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>) -> Result<()> {
+type ModelShutdownBarrier = Arc<std::sync::Mutex<Option<Arc<ModelServer>>>>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StopReason {
+    Restart,
+    Exit,
+}
+
+async fn supervise_runtime(
+    runtime: impl std::future::Future<Output = Result<()>>,
+    signal: impl std::future::Future<Output = StopReason>,
+    stop: tokio::sync::watch::Sender<bool>,
+) -> (Result<()>, Option<StopReason>) {
+    tokio::pin!(runtime);
+    tokio::select! {
+        result = &mut runtime => (result, None),
+        reason = signal => {
+            stop.send_replace(true);
+            (runtime.await, Some(reason))
+        }
+    }
+}
+
+async fn run_node(
+    args: &Args,
+    install_dir: PathBuf,
+    dashboard: Arc<NodeService>,
+    mut stopped: tokio::sync::watch::Receiver<bool>,
+    barrier: ModelShutdownBarrier,
+) -> Result<()> {
+    let previous = barrier.lock().unwrap().clone();
+    if let Some(previous) = previous {
+        previous.stop().await.context(
+            "previous owned model shutdown remains unconfirmed; no replacement runtime started",
+        )?;
+        *barrier.lock().unwrap() = None;
+    }
+    if *stopped.borrow() {
+        return Ok(());
+    }
     let mut file = load_file(&args.config)?;
     file.model_lifecycle.validate()?;
     merge_args(&mut file, &args);
@@ -2675,6 +2741,9 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
     } else {
         None
     };
+    if let Some(server) = &model_server {
+        *barrier.lock().unwrap() = Some(server.clone());
+    }
 
     let active_ollama_models = if use_ollama {
         ollama_models
@@ -2871,24 +2940,30 @@ async fn run_node(args: &Args, install_dir: PathBuf, dashboard: Arc<NodeService>
             start_update_monitor(file.update.as_ref(), install_dir.clone(), dashboard.clone())?
                 .map(AbortTask);
         if let Some(client) = &client {
-            tokio::select! {
-                result = client.run() => result?,
-                _ = tokio::signal::ctrl_c() => info!("shutdown requested"),
-            }
+            client.run().await?;
         } else {
-            tokio::signal::ctrl_c().await?;
-            info!("shutdown requested");
+            std::future::pending::<Result<()>>().await?;
         }
         drop(update_task);
         Ok::<(), anyhow::Error>(())
     };
     let result = tokio::select! {
+        biased;
+        result = async {
+            if !*stopped.borrow() { stopped.changed().await?; }
+            Ok::<(), anyhow::Error>(())
+        } => result,
         result = model_startup => result,
         result = run => result,
         result = model_runtime.run()=>result,
     };
+    model_runtime.begin_shutdown();
     if let Some(server) = &model_server {
-        server.stop().await;
+        server
+            .stop()
+            .await
+            .context("owned model shutdown unconfirmed; replacement runtime is blocked")?;
+        *barrier.lock().unwrap() = None;
     }
     result
 }
@@ -3056,6 +3131,57 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+    #[tokio::test]
+    async fn restart_supervisor_awaits_existing_cleanup_instead_of_dropping_runtime() {
+        for reason in [StopReason::Restart, StopReason::Exit] {
+            let (stop, mut stopped) = tokio::sync::watch::channel(false);
+            let release = tokio::sync::Notify::new();
+            let cleaning = std::sync::atomic::AtomicBool::new(false);
+            let finished = std::sync::atomic::AtomicBool::new(false);
+            let runtime = async {
+                stopped.changed().await?;
+                assert!(*stopped.borrow());
+                cleaning.store(true, std::sync::atomic::Ordering::SeqCst);
+                release.notified().await;
+                finished.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            };
+            let supervised = supervise_runtime(runtime, std::future::ready(reason), stop);
+            tokio::pin!(supervised);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(10), &mut supervised)
+                    .await
+                    .is_err()
+            );
+            assert!(cleaning.load(std::sync::atomic::Ordering::SeqCst));
+            assert!(!finished.load(std::sync::atomic::Ordering::SeqCst));
+            release.notify_one();
+            let (result, actual) = supervised.await;
+            result.unwrap();
+            assert_eq!(actual, Some(reason));
+            assert!(finished.load(std::sync::atomic::Ordering::SeqCst));
+        }
+    }
+    #[tokio::test]
+    async fn restart_supervisor_preserves_cleanup_failure_and_natural_exit() {
+        let (stop, mut stopped) = tokio::sync::watch::channel(false);
+        let (result, reason) = supervise_runtime(
+            async {
+                stopped.changed().await?;
+                bail!("synthetic cleanup unconfirmed")
+            },
+            std::future::ready(StopReason::Restart),
+            stop,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(reason, Some(StopReason::Restart));
+        let (stop, _) = tokio::sync::watch::channel(false);
+        let (result, reason) =
+            supervise_runtime(async { Ok(()) }, std::future::pending(), stop).await;
+        result.unwrap();
+        assert_eq!(reason, None);
+    }
     #[test]
     fn inference_timeout_cli_is_explicit_for_all_model_workflows_only() {
         let id = "00112233445566778899aabbccddeeff";

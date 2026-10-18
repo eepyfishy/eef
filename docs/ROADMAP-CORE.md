@@ -31,6 +31,18 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+Controlled restart now awaits the existing node future and its retained owned
+model cleanup. One applied deadline includes stop admission and group/root
+observation, with an old-server barrier preventing replacement or version
+handoff under uncertainty. Owner-directed retry checks that same barrier, never
+replays inference/work or enters an automatic restart loop. See
+[contract and measured scope](MODEL-SHUTDOWN.md). Abrupt death, physical resource
+release, shared services, continuous pipeline stop and full release gates remain
+separate requirements.
+Both final all-target modes pass 745 tests plus one ignored each; public
+loading/ready restart, lifecycle/policy and cached real CPU regressions pass.
+No physical second-PC or default-model acceptance is implied.
+
 Targeted owned-GGUF unload now separates pending withdrawal from observed exit.
 Windows observes its exact owned job empty and reaps the root under one deadline;
 errors/cancellation/late results become an unreloadable same-runtime unconfirmed

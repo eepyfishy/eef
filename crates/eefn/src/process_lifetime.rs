@@ -74,6 +74,14 @@ mod windows {
         Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
     }
     impl ProcessTree {
+        pub(crate) fn request_termination(&self) -> Result<()> {
+            // SAFETY: this live handle belongs exclusively to our contained tree.
+            if unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) } == 0 {
+                return Err(std::io::Error::last_os_error())
+                    .context("Terminate owned process tree");
+            }
+            Ok(())
+        }
         /// Query only this owned handle. These two observations are not atomic,
         /// a process-liveness guarantee, working-set usage or a permission.
         pub(crate) fn accounting(&self) -> crate::job_accounting::JobAccounting {
@@ -127,11 +135,7 @@ mod windows {
             if tokio::time::Instant::now() >= deadline {
                 bail!("Process tree observation deadline expired");
             }
-            // SAFETY: this live handle belongs exclusively to our contained tree.
-            if unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) } == 0 {
-                return Err(std::io::Error::last_os_error())
-                    .context("Terminate owned process tree");
-            }
+            self.request_termination()?;
             loop {
                 if tokio::time::Instant::now() >= deadline {
                     bail!("Owned process tree exit unconfirmed before deadline");

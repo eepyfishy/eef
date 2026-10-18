@@ -106,8 +106,10 @@ The terminal transition checks runtime, generation, reservation and pending stat
 again. Closing/replacing the runtime or another group-state transition cannot be
 overwritten by a late stop result. A denied authorization before withdrawal leaves
 residency unchanged. Sibling slots and shared Ollama services are not targeted.
-Normal group shutdown/startup-failure cleanup remains separate: it retains its
-existing kill-on-drop behavior and is not newly claimed as observed tree exit.
+The subsequent [controlled shutdown extension](MODEL-SHUTDOWN.md) retains
+cancelled cleanup handles and gates normal runtime replacement on observation.
+Abrupt external process death still uses kill-on-close fallback, not observed
+shutdown. This does not extend the guarantee to arbitrary external effects.
 
 Owner-command status carries the two precise new states. Registration preserves
 the existing vocabulary for older coordinators: pending unload projects to
@@ -161,6 +163,11 @@ Validation processes are terminal after cleanup; no model files are deleted.
 No installed/physical node, shared Ollama, UI, release version/assets or stable
 feed is changed. Physical RAM/VRAM release, ordinary group-stop observation,
 default interpreter/bootstrap and full release acceptance remain open.
+
+The following [controlled shutdown increment](MODEL-SHUTDOWN.md) supersedes this
+checkpoint's ordinary group-stop observation gap for controlled model-runtime
+replacement only. Abrupt death, arbitrary effects and broader workload/resource
+acceptance remain separate.
 
 The implementation defaults to an eight-entry queue, 256 retained receipts
 without eviction, 300-second load health readiness and a five-second owned
