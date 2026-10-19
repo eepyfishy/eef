@@ -291,9 +291,23 @@ impl NodeService {
     }
 
     pub fn status(&self) -> Value {
-        let config = self.read_config().unwrap_or_else(|_| json!({}));
+        let saved = self.read_config();
+        let config_available = saved.is_ok();
+        let config = saved.unwrap_or_else(|_| json!({}));
         let live = self.live.lock().unwrap().clone();
+        let bridge: Option<crate::python::BridgeLimits> = serde_json::from_value(
+            config
+                .get("python_bridge")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+        )
+        .ok()
+        .filter(|limits: &crate::python::BridgeLimits| {
+            config_available && limits.validate().is_ok()
+        });
         json!({"node_id":self.node_id,"network":live["network"],"runtime":"rust","version":crate::VERSION,
+            "python_bridge":{"saved":bridge,"saved_valid":bridge.is_some(),"applied":live["python_bridge"],
+                "enabled":live["python_bridge"].is_object(),"restart_required":live["python_bridge"].is_object() && json!(bridge)!=live["python_bridge"]},
             "registration":crate::registration::State::observe(&live,&self.node_id,self.submissions.state()),
             "node_alive":true,"coordinator_required_for_node":false,"coordinator_required_for_orchestration":true,
             "startup_issues":startup_issues(&live),
@@ -862,6 +876,7 @@ impl NodeService {
             "update",
             "metadata",
             "network",
+            "python_bridge",
         ] {
             if let Some(value) = changes.get(key) {
                 config[key] = value.clone();
@@ -1042,6 +1057,13 @@ fn validate_config(value: &Value) -> Result<()> {
     let metadata: crate::context::NodeMetadata =
         serde_json::from_value(value.get("metadata").cloned().unwrap_or_else(|| json!({})))?;
     metadata.validate()?;
+    serde_json::from_value::<crate::python::BridgeLimits>(
+        value
+            .get("python_bridge")
+            .cloned()
+            .unwrap_or_else(|| json!({})),
+    )?
+    .validate()?;
     if let Some(dashboard) = value.get("dashboard") {
         if !dashboard.is_object() {
             bail!("Dashboard settings must be an object")
@@ -1753,5 +1775,48 @@ mod tests {
             .unwrap();
         let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(saved["psk"], "secret-value");
+    }
+
+    #[tokio::test]
+    async fn python_bridge_policy_is_validated_approved_and_saved_applied_are_distinct() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        crate::setup::write_json(
+            &path,
+            &json!({"node_id":"stable","psk":"private","endpoints":[]}),
+        )
+        .unwrap();
+        let service = NodeService::new(path.clone(), "stable".into());
+        let before = std::fs::read(&path).unwrap();
+        assert!(
+            service
+                .remote(
+                    "save",
+                    json!({"config":{"python_bridge":{"timeout_seconds":0}}})
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let limits = json!({"timeout_seconds":4,"max_request_bytes":2048,"max_stdout_bytes":4096,"max_stderr_bytes":1024});
+        let proposed = service
+            .remote("save", json!({"config":{"python_bridge":limits}}))
+            .await
+            .unwrap();
+        assert_eq!(proposed["approval_required"], true);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(service.status()["python_bridge"]["enabled"], false);
+        service.live.lock().unwrap()["python_bridge"] =
+            json!(crate::python::BridgeLimits::default());
+        service.save_config(json!({"node_id":"stable","psk":SECRET_PLACEHOLDER,"endpoints":[],"python_bridge":limits})).unwrap();
+        let status = service.status()["python_bridge"].clone();
+        assert_eq!(status["saved"], limits);
+        assert_eq!(status["saved_valid"], true);
+        assert_eq!(
+            status["applied"],
+            json!(crate::python::BridgeLimits::default())
+        );
+        assert_eq!(status["restart_required"], true);
+        assert_eq!(service.read_config().unwrap()["psk"], "private");
     }
 }

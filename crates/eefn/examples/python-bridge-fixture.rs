@@ -1,0 +1,55 @@
+//! Isolated verification adapter for the production Python bridge. Not packaged
+//! or an execution authority; the caller supplies its own interpreter/plugin.
+use anyhow::{Context, Result};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::{io::Read, path::PathBuf, time::Duration};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Input {
+    python: PathBuf,
+    plugin: PathBuf,
+    #[serde(default)]
+    limits: eefn::python::BridgeLimits,
+    action: String,
+    #[serde(default)]
+    params: Value,
+    cancel_after_ms: Option<u64>,
+}
+#[tokio::main]
+async fn main() -> Result<()> {
+    let mut bytes = vec![];
+    std::io::stdin()
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    anyhow::ensure!(bytes.len() <= 1024 * 1024, "Fixture input too large");
+    let input: Input = serde_json::from_slice(&bytes)?;
+    let runtime = eefn::PythonRuntime::discover(Some(input.python))
+        .context("Fixture interpreter missing")?
+        .with_limits(input.limits)?;
+    let started = std::time::Instant::now();
+    let result = async {
+        let plugin = runtime.inspect(input.plugin).await?;
+        runtime.invoke(&plugin, &input.action, input.params).await
+    };
+    let output = match input.cancel_after_ms {
+        Some(ms) => match tokio::time::timeout(Duration::from_millis(ms), result).await {
+            Ok(result) => Some(result),
+            Err(_) => None,
+        },
+        None => Some(result.await),
+    };
+    let response = match output {
+        Some(Ok(data)) => json!({"success":true,"data":data}),
+        Some(Err(error)) => {
+            json!({"success":false,"failure":error.downcast_ref::<eefn::python::BridgeFailure>().map(|e|format!("{e:?}")).unwrap_or_else(||"Other".into()),"error":format!("{error:#}")})
+        }
+        None => json!({"success":false,"failure":"Cancelled"}),
+    };
+    println!(
+        "{}",
+        json!({"elapsed_ms":started.elapsed().as_millis(),"result":response})
+    );
+    Ok(())
+}

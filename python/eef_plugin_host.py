@@ -50,11 +50,13 @@ def main():
             data = run_awaitable(handler(request.get("action", "run"), request.get("params", {})))
     else:
         raise RuntimeError("unknown plugin host operation")
-    json.dump({"ok": True, "data": data}, sys.stdout, default=str)
+    json.dump({"ok": True, "data": data}, sys.stdout, default=str,
+              ensure_ascii=False, separators=(",", ":"))
 
 
 try:
     main()
 except Exception as exc:
-    json.dump({"ok": False, "error": str(exc), "trace": traceback.format_exc(limit=5)}, sys.stdout)
+    json.dump({"ok": False, "error": str(exc), "trace": traceback.format_exc(limit=5)},
+              sys.stdout, ensure_ascii=False, separators=(",", ":"))
     raise SystemExit(1)

@@ -31,6 +31,14 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The Python-backed capture/extension boundary now uses bounded request/stdout/
+stderr exchange, one I/O deadline and existing Windows owned-job containment.
+Parent grants and pipeline stages tighten its result pipe, and failures retain
+static private-output-free causes under existing uncertain consumed outcomes.
+Saved/applied bridge policy remains a node setting, not work authority. See
+[contract and scope](PYTHON-BRIDGE.md). This is a prerequisite correction for
+resource/media integration, not implemented peer capture, playback or streaming.
+
 The opt-in native `NodeClient` peer executor now consumes exact paired grants
 and owns bind/readiness/accept/connect through the existing lease/policy watcher.
 It requires explicitly bound finite memory sources or verification-only receivers;
@@ -1065,12 +1073,14 @@ The [peer transport library foundation](PEER-TRANSPORT.md) adds recipient-only
 signed credential delivery, scoped mutual TLS and bounded framed transfer.
 Its follow-up finite admission binds full grant digests, uses existing consumed
 receipts and issuer leases, and shares deadline/policy/cancellation handling.
-It remains a non-advertised library primitive without app socket/delivery or
-native peer-session commands; finite transport receipts do not claim producer/sink work.
+The native NodeClient follow-up owns consumed socket/readiness/report handling
+for explicitly supplied finite memory sources and verification-only receivers.
+App startup still supplies no such producer binding or native peer command;
+finite transport receipts do not claim producer/sink work.
 The coordinator follow-up adds explicit fixed-pair compilation/owner approval,
 one-transaction issuance, destination-ACK gating and joint scope-bound outcomes
 inside the existing journal. Current native nodes still declare no compatible
-delivery support; socket handling, producers/sinks, joint recovery and physical
+delivery support; app producer/sink setup, joint recovery and physical
 acceptance remain required. Ordinary reviewed jobs remain serial.
 It does not enable an application path, supply work authority or replace
 existing durable job/grant admission. Stateless credential opening is not

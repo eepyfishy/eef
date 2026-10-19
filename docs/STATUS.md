@@ -3,6 +3,43 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: bounded Python capture/extension boundary
+
+The existing Python bridge now bounds request encoding, stdout and stderr,
+drains both output pipes while writing input, and places the full exchange under
+one original deadline. Parent grants and local pipeline stages intersect the
+local response ceiling with their existing result/retained-data budget.
+Metadata preflight is awaited under that deadline; compact UTF-8 exchange avoids
+locale-dependent decoding and ASCII-escape expansion of non-English data.
+Windows uses the existing owned job before the host resumes; root exit retires
+descendants within the same deadline. Timeout/error/cancellation retains existing
+uncertainty, never permits replay or proves physical device release.
+
+Optional validated `python_bridge` settings use the shared configuration service
+and existing remote approval, with saved/applied/enabled/restart status. Decoded
+out-of-range bridge limits disable Python startup without disabling core transport.
+Raw plugin output/error/trace is no longer forwarded in errors; static
+`python_*` report causes preserve useful failure diagnostics without capture data.
+See [limits, lifetime and remaining scope](PYTHON-BRIDGE.md).
+
+Both final locked/offline all-target modes pass **823 tests plus one ignored
+each**, including no-dashboard. Fresh headless binaries/examples build. Actual
+cached CPython 3.14.5 passes standalone `python-bridge-nsRyTw` bounds, privacy,
+Unicode, deadline/cancellation and descendant/inherited-pipe cases. Public
+`local-pipelines-tq2Urg` additionally runs synthetic capture through real
+reviewed/approved/consumed single grants and pipelines: static causes, unknown
+outcomes, no replay and healthy fresh work after failure. It uses no real camera.
+
+Final-binary `model-downloads-fCfgrN`, `node-credentials-sv2zpt` and
+`request-drafts-a26Vua` pass existing public commands, history and restart/no-replay
+regressions. Browser copy/status smoke and recursive backend/browser guard pass.
+All matching fixture apps/helpers are terminal. No installed/remote node, model,
+update policy, published installer or release changed.
+
+This corrects a prerequisite in the actual capture path; it does not enable
+installed-node peer media, provide continuous capture, impose Python heap/CPU
+quotas, complete physical two-PC acceptance or close the stable-release gates.
+
 ## Unreleased: native finite peer delivery lifecycle, not installed-node media
 
 Opt-in `NodeClient` delivery now consumes the existing grant, uses observed

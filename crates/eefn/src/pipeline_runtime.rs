@@ -128,7 +128,12 @@ pub(crate) async fn execute(
             bail!("Pipeline parent deadline expired before stage")
         }
         let output = engine
-            .execute(&step.capability, &step.action, params)
+            .execute_with_python_output_limit(
+                &step.capability,
+                &step.action,
+                params,
+                Some(definition.max_retained_bytes),
+            )
             .await?;
         let bytes = encoded_bytes(&output, definition.max_retained_bytes)?;
         if step.capability == "process.exec"

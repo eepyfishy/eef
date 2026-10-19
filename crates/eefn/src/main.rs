@@ -2221,6 +2221,8 @@ struct FileConfig {
     #[serde(default)]
     python: Option<PathBuf>,
     #[serde(default)]
+    python_bridge: eefn::python::BridgeLimits,
+    #[serde(default)]
     python_plugins: Vec<PathBuf>,
     #[serde(default)]
     update: Option<UpdateConfig>,
@@ -2791,12 +2793,17 @@ async fn run_node(
         (media.screen_capture, "screen_capture.py"),
         (media.input_control, "input_control.py"),
     ];
+    dashboard.live.lock().unwrap()["python_bridge"] = serde_json::Value::Null;
     if !file.python_plugins.is_empty() || builtin_plugins.iter().any(|(enabled, _)| *enabled) {
-        let runtime = match PythonRuntime::discover(file.python.clone()) {
-            Some(runtime) if runtime.check_available().await.is_ok() => Some(Arc::new(runtime)),
+        let configured = PythonRuntime::discover(file.python.clone())
+            .map(|runtime| runtime.with_limits(file.python_bridge.clone()))
+            .transpose();
+        let runtime = match configured {
+            Ok(Some(runtime)) if runtime.check_available().await.is_ok() => Some(Arc::new(runtime)),
             _ => None,
         };
         if let Some(runtime) = runtime {
+            dashboard.live.lock().unwrap()["python_bridge"] = serde_json::json!(runtime.limits());
             info!(python = %runtime.executable().display(), "Python plugin runtime enabled");
             for (_, filename) in builtin_plugins.iter().filter(|(enabled, _)| *enabled) {
                 let load = async {

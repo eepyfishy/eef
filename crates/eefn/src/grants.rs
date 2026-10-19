@@ -868,7 +868,14 @@ impl AcceptedGrant {
             if g.capability == "pipeline.run" {
                 crate::pipeline_runtime::execute(engine, &g, &ledger, execution_deadline).await
             } else {
-                engine.execute(&g.capability, &g.action, params).await
+                engine
+                    .execute_with_python_output_limit(
+                        &g.capability,
+                        &g.action,
+                        params,
+                        Some(g.limits.max_result_bytes),
+                    )
+                    .await
             }
         };
         self.run_operation(engine, operation).await
@@ -920,7 +927,8 @@ impl AcceptedGrant {
                 value=&mut operation=>break match value {
                     Ok(data) if serde_json::to_vec(&data).is_ok_and(|v|v.len()<=g.limits.max_result_bytes)=>completed_outcome(g,data),
                     Ok(_)=>GrantReport::new(g,ReceiptState::Completed,Value::Null,Some("result_too_large")),
-                    Err(_)=>GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some("execution_failed_effects_unknown")),
+                    Err(error)=>GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some(
+                        error.downcast_ref::<crate::python::BridgeFailure>().map(|failure|failure.code()).unwrap_or("execution_failed_effects_unknown"))),
                 }
             }
         };

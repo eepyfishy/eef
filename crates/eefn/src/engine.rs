@@ -667,11 +667,19 @@ impl NodeEngine {
         Ok(())
     }
 
-    pub async fn execute(
+    pub async fn execute(&self, capability: &str, action: &str, params: Value) -> Result<Value> {
+        self.execute_with_python_output_limit(capability, action, params, None)
+            .await
+    }
+
+    /// Internal data-budget intersection, not another execution authority.
+    /// Ordinary grants and finite stages retain all existing policy checks.
+    pub(crate) async fn execute_with_python_output_limit(
         &self,
         capability: &str,
         action: &str,
         mut params: Value,
+        python_output_limit: Option<usize>,
     ) -> Result<Value> {
         if matches!(capability, "pipeline.run" | "peer.transfer") {
             return Err(crate::execution_boundary::ExecutionGrantRequired.into());
@@ -729,7 +737,13 @@ impl NodeEngine {
                     .python
                     .as_ref()
                     .context("Python runtime is unavailable")?;
-                runtime.invoke(plugin, action, params).await
+                if let Some(limit) = python_output_limit {
+                    runtime
+                        .invoke_with_output_limit(plugin, action, params, limit)
+                        .await
+                } else {
+                    runtime.invoke(plugin, action, params).await
+                }
             }
         }
     }

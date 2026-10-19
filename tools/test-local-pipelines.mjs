@@ -32,13 +32,13 @@ const fake=createServer(async(req,res)=>{
  if(prompt==='gated pipeline input'){gates.add(res);res.on('close',()=>gates.delete(res));res.write(' ');return;}
  res.end(JSON.stringify({message:{content:'synthetic local result: '+prompt},done:true,done_reason:'stop'}));
 });
-function spawnCommand(exe,args,input,extra={}) {
- const child=spawn(exe,args,{cwd:root,windowsHide:true,env:{...env,...extra},stdio:[input===undefined?'ignore':'pipe','pipe','pipe']});
+function spawnCommand(exe,args,input,extra={},cwd=root) {
+ const child=spawn(exe,args,{cwd,windowsHide:true,env:{...env,...extra},stdio:[input===undefined?'ignore':'pipe','pipe','pipe']});
  let out='',err='';child.stdout.on('data',b=>out=(out+b).slice(-1048576));child.stderr.on('data',b=>err=(err+b).slice(-1048576));child.logs=()=>({out,err});
  child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r({code,out,err}));});children.push(child);
  if(input!==undefined){child.stdin.on('error',()=>{});child.stdin.end(input);}return child;
 }
-const launch=(name,config,args,input,extra)=>spawnCommand(join(bin,name+'.exe'),['--config',config,...args],input,extra);
+const launch=(name,config,args,input,extra,cwd)=>spawnCommand(join(bin,name+'.exe'),['--config',config,...args],input,extra,cwd);
 async function cli(name,config,args,input,ok=true){const child=launch(name,config,['--json',...args],input),timer=setTimeout(()=>child.kill(),70000);
  try{const r=await child.result;assert.equal(r.code,ok?0:1,'CLI failed; private '+scratch);return JSON.parse(r.out);}finally{clearTimeout(timer);}}
 const owner=args=>cli('eef',eefConfig,args),local=(node,args,input)=>cli('eefn',node.config,args,input);
@@ -47,6 +47,21 @@ async function until(fn,label){const end=Date.now()+45000;while(Date.now()<end){
 async function port(){const s=tcpServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 const exists=path=>stat(path).then(()=>true,()=>false);
 try{
+ const python=process.env.EEF_TEST_PYTHON, cameraPlugin=join(scratch,'synthetic-camera.py');
+ if(python){
+  await stat(python);
+  assert.equal(await exists(join(bin,'python/plugins/camera.py')),false,'Use isolated development binaries without an installed built-in camera plugin');
+  await writeFile(cameraPlugin,`import os,time
+CAPABILITY='camera.capture'
+ACTIONS=['capture']
+def handle(action,params):
+    device=params.get('device',0)
+    if device==1: os.write(1,b'PRIVATE_CAPTURE_BYTES'*10000)
+    if device==2: os.write(2,b'PRIVATE_CAPTURE_BYTES'*10000)
+    if device==3: time.sleep(20)
+    return {'data_base64':'x'*(20000 if device==4 else 16),'synthetic':True}
+`);
+ }
  checkpoint('coordinator-start');
  await mkdir(work);await new Promise(r=>fake.listen(0,'127.0.0.1',r));const [api,gateway]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${api}`;
  await writeFile(eefConfig,(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
@@ -61,8 +76,13 @@ try{
   if(role==='executor'){
    Object.assign(value.permissions.filesystem,{read:true,write:true,roots:[work]});
    Object.assign(value.permissions.process,{enabled:true,allowed_executables:[helper],max_seconds:30,max_output_bytes:65536});
+   if(python){value.python=python;value.python_plugins=[cameraPlugin];value.permissions.media.camera=true;
+    value.python_bridge={timeout_seconds:2,max_request_bytes:65536,max_stdout_bytes:1048576,max_stderr_bytes:1024};}
   }
-  await writeFile(config,JSON.stringify(value));launch('eefn',config,['--no-ui']);const node={id,config,url:`http://127.0.0.1:${api}`};nodes.push(node);
+  // With the explicitly supplied interpreter, isolate cwd so built-in plugin
+  // lookup cannot import the repository's real camera adapter. The configured
+  // synthetic extension still uses the normal loader and permissions.
+  await writeFile(config,JSON.stringify(value));launch('eefn',config,['--no-ui'],undefined,{},python?scratch:root);const node={id,config,url:`http://127.0.0.1:${api}`};nodes.push(node);
   await until(async()=>!!(await json(node.url+'/api/diagnostics')).runtime_id,'node API');
   checkpoint('node-pair-'+role);
   const invitation=await owner(['credentials','provision','--node',id,'--address',`127.0.0.1:${gateway}`]);await local(node,['connection','pair-stdin'],JSON.stringify(invitation));
@@ -111,6 +131,32 @@ try{
  assert.equal(completedReceipt.pipeline_progress.sequence,6);assert.equal(completedReceipt.pipeline_progress.completed_steps,3);assert.equal(completedReceipt.pipeline_progress.current_step,'write');
  assert.equal((await cli('eefn',executor.config,['requests','receipt',plan.id,'--grant-id',granted.grant_id],undefined,false)).success,false,'executor is not the request origin');
  await review.start(command);assert.equal(calls.length,1);assert.equal((await review.inspect(plan.id)).execution.attempts.length,1);
+ if(python){
+  checkpoint('real-python-bounds');
+  await until(async()=>(await json(executor.url+'/api/status')).capabilities.includes('camera.capture'),'synthetic Python capture plugin');
+  const bridge=(await json(executor.url+'/api/status')).python_bridge;
+  assert.equal(bridge.enabled,true);assert.equal(bridge.restart_required,false);assert.equal(bridge.applied.timeout_seconds,2);
+  async function capture(device){
+   const p=await review.save({template:'local_pipeline',constraints:{node_id:executor.id},params:{pipeline:{schema_version:1,max_retained_bytes:2048,
+    steps:[{id:'capture',capability:'camera.capture',action:'capture',params:{device}}]}}});
+   await review.start(await review.approve(p,{max_execution_ms:6000,max_result_bytes:8192}));
+   return {id:p.id,report:await review.result(p.id)};
+  }
+  assert.equal((await capture(0)).report.success,true);
+  for(const device of [1,2,3,4]){
+   const {id,report}=await capture(device);assert.equal(report.state,'unknown');assert.equal(report.success,false);
+   assert.equal(report.error_code,device===2?'python_stderr_byte_limit':device===3?'python_exchange_deadline':'python_stdout_byte_limit');
+   assert(!JSON.stringify(report).includes('PRIVATE_CAPTURE_BYTES'));
+   const retained=await review.inspect(id);assert.equal(retained.execution.attempts.length,1);assert.equal(retained.status,'interrupted');
+   assert.equal((await capture(0)).report.success,true,'bounded plugin failure must not retire core commands or later fresh work');
+  }
+  const ordinary=await review.save({template:'capture_camera',constraints:{node_id:executor.id},params:{device:4}});
+  await review.start(await review.approve(ordinary,{max_execution_ms:6000,max_result_bytes:1024}));
+  const ordinaryResult=await review.result(ordinary.id);
+  assert.equal(ordinaryResult.state,'unknown','ordinary grant must also tighten the Python result pipe before decoding');
+  assert.equal(ordinaryResult.success,false);
+  assert.equal(ordinaryResult.error_code,'python_stdout_byte_limit');
+ }
  // Later-stage permission loss while the existing model stage is pending.
  checkpoint('permission-loss');
  const gatedSource=join(work,'gated-source.txt'),gatedDest=join(work,'must-not-write.txt');await writeFile(gatedSource,'gated pipeline input');
