@@ -594,6 +594,7 @@ pub fn validate_question_lineage(draft: &DraftRecord, index: usize) -> Result<()
         schema_version: draft.schema_version,
         original_text: draft.original_text.clone(),
         concrete_input: draft.concrete_input.clone(),
+        audio_source: draft.audio_source.clone(),
         proposals: draft.proposals[..index].to_vec(),
         answers: draft.answers[..e.source_answer_count].to_vec(),
     };

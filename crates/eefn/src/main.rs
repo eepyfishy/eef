@@ -810,6 +810,53 @@ async fn execute_preparation_command(
         "execution_authorized":false,"dispatched":false,"automatically_retried":false,
         "note":"No confirmed preparation reply. Inspect requests plan or reuse the exact operation ID to inspect a saved receipt. No automatic inference or checkpoint retry was sent."})))
 }
+async fn execute_audio_command(
+    args: &Args,
+    command: eefn::audio_submission::AudioCommand,
+) -> Result<serde_json::Value> {
+    use eefn::audio_submission::{AudioRequest, confirmed_node, unavailable};
+    command.validate()?;
+    let file = load_file(&args.config)?;
+    eefn::network::validate_remote_node_id(&file.node_id)?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        return Ok(unavailable(&file.node_id, command, false));
+    }
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!("http://{address}/api/commands/requests/audio"))
+            .timeout(Duration::from_secs(150))
+            .json(&AudioRequest {
+                schema_version: 1,
+                expected_node_id: file.node_id.clone(),
+                command: command.clone(),
+            })
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(unavailable(&file.node_id, command.clone(), false));
+        }
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok || !confirmed_node(&value, &file.node_id, &command) {
+            bail!("Unconfirmed typed audio submission reply")
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| unavailable(&file.node_id, command, true)))
+}
+
 async fn execute_concrete_command(
     args: &Args,
     command: eefn::request_submission::ConcreteCommand,
@@ -2115,6 +2162,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
             eefn::request_preview::RequestAction::SubmitProcess(input) => {
                 execute_concrete_command(args, input.command()?).await
             }
+            eefn::request_preview::RequestAction::SubmitAudio(input) => {
+                execute_audio_command(args, input.command()?).await
+            }
             eefn::request_preview::RequestAction::Submit {
                 text,
                 title,
@@ -2466,6 +2516,13 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     print!("{}", eefn::local_setup::render(&value)?);
                 } else if matches!(command, Commands::Setup { .. }) {
                     print!("{}", eefn::setup_check::render(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::SubmitAudio(_)
+                    }
+                ) {
+                    print!("{}", eefn::audio_submission::render_node(&value)?);
                 } else if matches!(command, Commands::Relay { .. }) {
                     if value["success"] == true {
                         print!("{}", eefn::relay_setup::render(&value["result"])?);
@@ -3279,6 +3336,54 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn submit_audio_cli_needs_no_json_or_resource_ids_and_cannot_approve_or_execute() {
+        let args = Args::try_parse_from([
+            "eefn",
+            "requests",
+            "submit-audio",
+            "--to",
+            "destination",
+            "--duration-ms",
+            "500",
+            "--operation-id",
+            "11111111-1111-4111-8111-111111111111",
+        ])
+        .unwrap();
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::SubmitAudio(source),
+        }) = args.command
+        else {
+            panic!("wrong audio authoring adapter")
+        };
+        let command = source.command().unwrap();
+        assert_eq!(command.input.destination_node, "destination");
+        assert_eq!(command.input.source_node, None);
+        assert_eq!(command.input.duration_ms, 500);
+        assert!(command.input.microphone.is_none());
+        assert!(command.input.speaker.is_none());
+        assert_eq!(command.operation_id, "11111111-1111-4111-8111-111111111111");
+        for extra in [
+            vec!["--execute"],
+            vec!["--approve"],
+            vec!["--permissions"],
+            vec!["--restart"],
+            vec!["--file", "input.json"],
+            vec!["--force"],
+            vec!["--retry"],
+            vec!["--duration-ms", "99"],
+            vec!["--channels", "3"],
+        ] {
+            assert!(
+                Args::try_parse_from(
+                    ["eefn", "requests", "submit-audio", "--to", "destination"]
+                        .into_iter()
+                        .chain(extra)
+                )
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn relay_setup_cli_preserves_explicit_roles_without_json_or_authority_flags() {
         let args =

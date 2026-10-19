@@ -3,6 +3,57 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: JSON-free finite audio request authoring
+
+Running nodes now expose requests submit-audio through one shared typed backend:
+source defaults to the authenticated origin; an exact destination node ID and
+finite format are enough when each endpoint has unambiguous available resources.
+Fresh pinned registrations are resolved only after directional disclosure checks.
+No resource UUID, JSON file, port, model invocation, configuration mutation,
+permission change, work approval or execution is required/performed by authoring.
+The plain result reports actual endpoints/format, saved job/status and review
+steps. See [authoring, receipt behavior and limits](AUDIO-REQUESTS.md).
+
+The existing durable review stores immutable typed audio intent beside its exact
+concrete pair. Stored opening comparisons and journal edits protect provenance,
+resource choices and origin, including before approval. Default-source intent is
+bound to the saved authenticated origin. Omitted optional audio provenance keeps
+legacy serialized shapes/hashes unchanged. No second job store, runner, approval
+authority or dashboard controller was added.
+
+Retained compiled receipts are matched before live resource lookup: node-resource
+changes, node/coordinator restart and revoked disclosure cannot retarget history.
+Conflicting intent or stripped provenance is refused. New explicit operation IDs
+may select newly configured resources, still requiring separate review, approval
+and execution. Dropped, corrupted and unsupported replies do not retry, generate
+replacement operations, accept altered proof or fall back to generic jobs/chat,
+inference, permissions or execution.
+
+Focused all-target audio tests pass. Fresh headless binaries/examples build.
+Public real-command/TLS/journal fixtures local-pipelines-4183qC and expanded
+local-pipelines-u4YeGS use real cached CPython and synthetic audio adapters:
+no-JSON setup/authoring, no effects before approval/execution, scoped resolution,
+single-send reply loss/corruption/unsupported cases, stable retained choices after
+live microphone replacement and discovery revocation/coordinator restart, plus
+healthy explicitly approved fresh work and existing pipeline/recurrence cases.
+No real microphone, camera or speaker is opened. Existing
+permission-commands-OAQvYf, node-commands-jx6Id2, model-downloads-MLnPdk,
+node-credentials-sNNSIe, request-drafts-apiUfJ, browser copy/status smoke and
+recursive backend/browser source guard pass. Public fixture apps/helpers are terminal.
+
+Both locked/offline workspace/all-target modes pass **847 tests plus one ignored
+each**, including no-dashboard: EEF 263 plus one ignored profiler, owner CLI 18,
+installer 6, EEFN 538 and node CLI 22. Logs are retained in
+`.validation/audio-authoring-workspace-default.log` and
+`.validation/audio-authoring-workspace-headless.log`.
+Final headless binaries/examples build and match the evaluated production
+binary hashes; no workspace fixture app or cached Python helper remains running.
+No installed/remote node, UI source, model, release version, installer or update
+feed/policy changed. Complete non-coder first-run/model/dependency setup, physical
+two-PC media/stop/resource acceptance, continuous media/virtual devices, presence,
+mesh/ESP/Bluetooth, measured migration, coordinator clustering and signing/
+Defender/stable-release acceptance remain unfinished.
+
 ## Unreleased: typed local and EEF relay configuration
 
 `eefn relay show/configure` and `eef node relay --node NODE_ID show/configure`

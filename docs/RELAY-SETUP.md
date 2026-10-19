@@ -5,7 +5,7 @@ installers do not gain them automatically. They configure the running node's
 existing backend services. No browser, model, JSON file, resource UUID or port
 number is required for the ordinary setup steps. This is not complete non-coder
 media acceptance: pairing, Python/audio dependency availability, directional
-discovery, reviewed request authoring and physical two-PC tests still matter.
+discovery, reviewed request approval/execution and physical two-PC tests still matter.
 
 ## Prepare a role, then give separate permission
 
@@ -107,8 +107,8 @@ No second permissions authority,
 job runner, journal, dashboard controller or work-approval path is added.
 
 Finite recording/transfer/playback still uses the existing
-[paired grants and content contract](PEER-TRANSPORT.md). Request submission is
-currently the explicit reviewed template interface, not a finished plain-language
-or JSON-free audio-job authoring command. Continuous media, physical resource
+[paired grants and content contract](PEER-TRANSPORT.md). Finite requests now have
+[typed JSON-free authoring](AUDIO-REQUESTS.md); this is not plain-language
+interpretation or automatic work approval. Continuous media, physical resource
 quotas/strong stop, presence, virtual devices, public installer/signing/Defender
 acceptance and stable v0.4.0 acceptance remain unfinished.

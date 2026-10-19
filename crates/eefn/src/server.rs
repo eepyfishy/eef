@@ -472,6 +472,58 @@ impl NodeServer {
         session["finite_audio"] = json!(support.finite_audio);
         Ok(session)
     }
+    /// A bounded current registration snapshot, not private bindings or authority.
+    /// Callers must apply directional disclosure before selecting the node.
+    pub async fn audio_authoring_resources(
+        &self,
+        node_id: &str,
+        freshness_seconds: u64,
+    ) -> Result<crate::audio_submission::EndpointResources> {
+        use crate::audio_submission::{EndpointResources, ResourceChoice};
+        if !(1..=300).contains(&freshness_seconds) {
+            bail!("Invalid audio registration freshness")
+        }
+        let session = self.peer_grant_session(node_id).await?;
+        let connections = self.inner.connections.read().await;
+        let connection = connections
+            .get(node_id)
+            .context("Audio endpoint is unavailable")?;
+        if session["session_id"] != connection.session_id.to_string()
+            || connection.last_seen.elapsed() >= Duration::from_secs(freshness_seconds)
+        {
+            bail!("Audio endpoint registration changed or is stale")
+        }
+        let state = connection
+            .state
+            .as_ref()
+            .context("Audio registration unavailable")?;
+        let metadata: crate::context::NodeMetadata =
+            serde_json::from_value(state.registration["metadata"].clone())?;
+        metadata.validate()?;
+        let snapshot = EndpointResources {
+            node_id: node_id.into(),
+            finite_audio: session["finite_audio"] == true,
+            can_receive: session["destination_address"]
+                .as_str()
+                .and_then(|v| v.parse::<SocketAddr>().ok())
+                .is_some_and(|v| crate::peer::plan::validate_address(v).is_ok()),
+            resources: metadata
+                .resources
+                .iter()
+                .filter(|r| {
+                    ["peer.transfer", "audio.capture", "audio.play"]
+                        .contains(&r.capability.as_str())
+                })
+                .map(|r| ResourceChoice {
+                    id: crate::context::resource_id(node_id, &r.id),
+                    capability: r.capability.clone(),
+                    available: r.available,
+                })
+                .collect(),
+        };
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
     fn check_grant_connection(&self, c: &Connection) -> Result<()> {
         if !c.credential_transport
             || c.state.as_ref().is_none_or(|s| {

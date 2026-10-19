@@ -79,6 +79,9 @@ pub struct DraftRecord {
     /// Immutable caller-supplied template input, never model-authored authority.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub concrete_input: Option<crate::request_planning::PlanInput>,
+    /// Immutable typed audio intent; concrete bindings are retained separately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_source: Option<crate::audio_submission::AudioInput>,
     pub proposals: Vec<ProposalRevision>,
     pub answers: Vec<ClarificationAnswer>,
 }
@@ -93,6 +96,22 @@ impl DraftRecord {
             bail!("durable request review exceeds bounds")
         }
         let mut receipts = std::collections::HashSet::new();
+        if let Some(source) = &self.audio_source {
+            let input = self
+                .concrete_input
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Audio source requires retained concrete input"))?;
+            let pair = crate::peer::plan::Pair::from_params(&input.params)?;
+            let expected = source.concrete(&pair, None)?;
+            if self.proposals.len() != 1
+                || !self.answers.is_empty()
+                || *input != expected.input
+                || self.original_text != expected.original_text
+                || self.proposals[0].proposal != expected.proposal()?
+            {
+                bail!("Immutable typed audio source differs from its reviewed choices")
+            }
+        }
         if let Some(input) = &self.concrete_input {
             input.validate()?;
             if !crate::request_planning::METHOD_TEMPLATES.contains(&input.template.as_str())
@@ -142,6 +161,7 @@ impl DraftRecord {
                     schema_version: self.schema_version,
                     original_text: self.original_text.clone(),
                     concrete_input: self.concrete_input.clone(),
+                    audio_source: self.audio_source.clone(),
                     proposals: self.proposals[..index].to_vec(),
                     answers: self.answers[..evidence.source_answer_count].to_vec(),
                 };
@@ -176,6 +196,7 @@ impl DraftRecord {
                     schema_version: self.schema_version,
                     original_text: self.original_text.clone(),
                     concrete_input: self.concrete_input.clone(),
+                    audio_source: self.audio_source.clone(),
                     proposals: self.proposals[..source.proposal_count].to_vec(),
                     answers: self.answers[..index].to_vec(),
                 };
@@ -217,6 +238,7 @@ impl DraftRecord {
     pub fn same_opening(&self, other: &Self) -> bool {
         self.original_text == other.original_text
             && self.concrete_input == other.concrete_input
+            && self.audio_source == other.audio_source
             && self.proposals.first().map(|p| &p.proposal)
                 == other.proposals.first().map(|p| &p.proposal)
     }

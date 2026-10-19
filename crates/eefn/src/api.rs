@@ -144,6 +144,10 @@ impl NodeService {
             .route("/api/commands/requests/resolve", post(request_resolution))
             .route("/api/commands/requests/prepare", post(request_preparation))
             .route("/api/commands/requests/submit", post(request_submission))
+            .route(
+                "/api/commands/requests/audio",
+                post(audio_submission).layer(axum::extract::DefaultBodyLimit::max(65536)),
+            )
             .route("/api/commands/requests/planning", post(request_planning))
             .route("/api/commands/automations", post(automation_command))
             .route(
@@ -242,6 +246,12 @@ async fn model_command(
     Ok(Json(state.dispatch_model_command(request, false).await?))
 }
 
+async fn audio_submission(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::audio_submission::AudioRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.audio_request(request).await?))
+}
 async fn permission_command(
     State(state): State<Arc<NodeService>>,
     Json(request): Json<crate::permission_commands::PermissionRequest>,

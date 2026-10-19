@@ -1,12 +1,13 @@
 # Explicit requests without model interpretation (unreleased after alpha.6)
 
-Caller-supplied one-step inputs can now enter the existing durable review/compiler
+Caller-supplied inputs can now enter the existing durable review/compiler
 workflow without an interpreter, proposed-input JSON or direct RPC execution:
 
 ```powershell
 eefn requests submit --text "Show status" --template system_info --operation-id UUID --json
 eefn jobs request-text --prompt "Explain this topic" --role USER_SELECTED_ROLE --operation-id UUID --json
 eefn requests submit-process --text "Check this tool" --program TOOL --arg=--version --node NODE_ID --operation-id UUID --json
+eefn requests submit-audio --to NODE_ID --duration-ms 2000 --operation-id UUID
 eefn requests plan JOB_ID --json
 ```
 

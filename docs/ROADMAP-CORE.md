@@ -31,14 +31,22 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+Finite audio now has [JSON-free typed authoring](AUDIO-REQUESTS.md). Fresh
+disclosed registrations supply unambiguous endpoint resources; immutable intent
+and exact concrete choices share the existing review journal. Receipt reuse
+keeps those choices after resource/disclosure changes and coordinator restart,
+without fresh resolution, inference or execution. Focused/public synthetic
+command and fault cases pass; both workspace/all-target feature modes pass 847
+tests plus one ignored each. Physical hardware and stable-release gates remain.
+
 Typed local/EEF relay setup now creates missing resource declarations and selects
 a receiver port without user JSON or port numbers. Existing bindings/settings
 survive repeated setup; ambiguous/disabled/foreign resources are not substituted.
 Setup never enables permissions, opens a listener or starts media/restarts.
 The separate `peer-transfers` switch retains existing limits; current local
 management consent gates EEF writes. Public synthetic command/fault cases pass.
-This is not JSON-free audio-job authoring, complete first-run dependency/model
-setup or physical acceptance. See [workflow and remaining scope](RELAY-SETUP.md).
+This is not complete first-run dependency/model setup or physical acceptance.
+Finite authoring is described above. See [setup workflow and scope](RELAY-SETUP.md).
 
 Advanced opt-in finite audio now connects the existing microphone and playback
 adapters to paired consumed grants and authenticated peer transport. Public
@@ -837,7 +845,7 @@ failure wording was stale. Loaded/physical timing and full release gates remain.
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, origin-owned durable history, fresh cross-node vocabulary and source-bound method/questions. Normal input and explicit-target answers follow configurable bounded preparation/resolution policy, without approval/execution or implicit continuation. Offline preview stays local. Real-model quality, bootstrap and complete non-coder setup remain required |
 | 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: origin-scoped compile/plan inspection, source-bound preparation/questions, immutable explicit inputs, separate owner approval/execution, exact grants and durable issuance/ACK/completion, replay protection, clock-independent leases, restart-to-unknown, explicit abandonment and retained-completion reconciliation without continuation. Public core and node ordinary RPC now fence legacy workloads; text creation uses reviewed compilation. Origin and executor may differ. Automatic triggers/heavy planning, complete client/regression migration, general continuation, stronger termination, physical acceptance and cluster fencing remain required |
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Partial, unreleased: explicit reviewed finite graphs execute on one fixed node under one parent grant/deadline, local data bounds and atomic child-provider reservations; bounded recurrence reuses existing frozen policies and timers. Latest finite-stage observations use existing durable receipts without resume authority. One-shot ACK/completion, read-only recovery and retained-completion reconciliation preserve no replay. Continuous pipelines, acknowledged strong stop and physical resource budgets remain open |
-| 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Partial, unreleased: signed recipient-only material, mutual TLS, bounded finite admission, fixed paired compilation/owner approval, atomic two-grant issuance, destination-ACK gating and joint outcomes in existing receipts/journal. Native node delivery/socket handler and usable peer sessions remain unavailable; source/sink integration, joint recovery, strong stop, aggregate quotas and physical acceptance remain open |
+| 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Partial, unreleased: native mutual-TLS finite delivery, signed recipient-only material, bounded admission, fixed paired compilation/owner approval, atomic consumed grants, destination-ACK gating and joint outcomes in existing receipts/journal. Opt-in finite microphone/speaker integration, command-first relay setup and JSON-free authoring pass synthetic native fixtures. Continuous sessions, joint recovery, strong stop, aggregate quotas and physical acceptance remain open |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |
 | 10 | Full model lifecycle + unload | Measured transitions, load cancellation, active-use pinning and configurable idle unload; scheduler considers startup cost and actual usage. | Partial, unreleased: selected owned-GGUF load/unload/status/cancel, exact runtime/generation receipts, active inference pins, scoped native lifetime, command-configurable eager/manual/on-demand startup, opt-in monotonic idle unload and shared Ollama request retention preferences. Full Ollama ownership/lifecycle, broader per-model policy, measured resources/startup-cost scheduling and physical acceptance remain required |
 

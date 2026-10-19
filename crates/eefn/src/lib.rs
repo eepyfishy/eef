@@ -5,6 +5,7 @@
 
 pub mod api;
 mod artifact_transfer;
+pub mod audio_submission;
 pub mod authentication;
 pub mod automation;
 pub mod automation_occurrence;

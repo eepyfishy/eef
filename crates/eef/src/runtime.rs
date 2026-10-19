@@ -647,6 +647,19 @@ impl Runtime {
             .await
     }
 
+    pub(crate) async fn disclosed_audio_endpoint(
+        &self,
+        origin: &str,
+        node: &str,
+    ) -> Result<eefn::audio_submission::EndpointResources> {
+        if !self.disclosed_planning_nodes(origin).await?.contains(node) {
+            anyhow::bail!("Audio node unavailable or not authorized")
+        }
+        self.node_server
+            .audio_authoring_resources(node, self.discovery.freshness_seconds)
+            .await
+    }
+
     async fn on_node_submission(&self, message: Value) {
         let Some(node_id) = message
             .get("node_id")
@@ -792,6 +805,12 @@ impl Runtime {
                     )),
                 }
             }
+            "requests.audio" => match serde_json::from_value::<eefn::audio_submission::AudioInput>(
+                message["payload"].clone(),
+            ) {
+                Ok(input) => self.origin_audio_request(input, &context).await,
+                Err(_) => Err(anyhow::anyhow!("Invalid typed audio source")),
+            },
             "requests.concrete" => {
                 match serde_json::from_value::<eefn::request_submission::ConcreteInput>(
                     message["payload"].clone(),

@@ -4,6 +4,15 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Finite audio authoring (unreleased after alpha.6)
+
+    eefn requests submit-audio --to NODE_ID --duration-ms 2000
+
+This prepares finite microphone-to-speaker work through the existing review and
+compiler, without an LM, JSON file or ordinary resource UUIDs. It never records,
+plays, approves or executes work. Exact receipt reuse preserves saved intent and
+resource choices. See [scope, review and uncertainty handling](AUDIO-REQUESTS.md).
+
 ## Plain-language setup inspection (unreleased after alpha.6)
 
 Finite relay configuration is also command-based: `eefn relay show`,

@@ -183,6 +183,25 @@ pub struct ConcreteReport {
     pub automatically_retried: bool,
 }
 pub fn confirmed(value: &Value, node: &str, command: &ConcreteCommand) -> bool {
+    confirmed_with_source(value, node, command, None)
+}
+pub fn confirmed_with_source(
+    value: &Value,
+    node: &str,
+    command: &ConcreteCommand,
+    source: Option<&crate::audio_submission::AudioInput>,
+) -> bool {
+    if let Some(source) = source {
+        let Ok(pair) = crate::peer::plan::Pair::from_params(&command.request.input.params) else {
+            return false;
+        };
+        if !source
+            .concrete(&pair, Some(node))
+            .is_ok_and(|expected| expected == command.request)
+        {
+            return false;
+        }
+    }
     if command.validate().is_err() {
         return false;
     }
@@ -212,6 +231,7 @@ pub fn confirmed(value: &Value, node: &str, command: &ConcreteCommand) -> bool {
         && r.plan.request_context.request_id() == command.operation_id
         && r.plan.draft.original_text == command.request.original_text
         && r.plan.draft.concrete_input.as_ref() == Some(&command.request.input)
+        && r.plan.draft.audio_source.as_ref() == source
         && r.plan.draft.proposals.len() == 1
         && r.plan.draft.answers.is_empty()
         && r.plan.draft.proposals[0].proposal == proposal
@@ -299,6 +319,7 @@ mod tests {
             schema_version: 1,
             original_text: request.original_text,
             concrete_input: Some(request.input),
+            audio_source: None,
             answers: vec![],
             proposals: vec![crate::request_drafts::ProposalRevision {
                 operation_id: uuid::Uuid::new_v4().to_string(),

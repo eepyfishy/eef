@@ -3,6 +3,7 @@
 pub mod adapters;
 pub mod api;
 pub mod assistant;
+pub mod audio_submission;
 pub mod automation_occurrence;
 pub mod automation_policy;
 pub mod automation_schedule;

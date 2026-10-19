@@ -383,6 +383,11 @@ impl JobStore {
     ) -> Result<Plan> {
         let connection = self.connection.lock().expect("job journal");
         let mut plan = read(&connection, id)?;
+        let frozen_audio = plan
+            .request_review
+            .as_ref()
+            .filter(|draft| draft.audio_source.is_some())
+            .map(|draft| (json!(draft), json!(plan.goal.request_context)));
         let uncompiled = plan.planning.is_none();
         if let Some((runtime, issuer)) = fence {
             automation_occurrences::fence(
@@ -395,6 +400,13 @@ impl JobStore {
         }
         if !edit(&mut plan)? {
             return Ok(plan);
+        }
+        if frozen_audio.as_ref().is_some_and(|(draft, context)| {
+            *draft != json!(plan.request_review) || *context != json!(plan.goal.request_context)
+        }) {
+            bail!(
+                "Typed audio intent, resource choices and origin are immutable; create a new reviewed request"
+            )
         }
         if uncompiled && plan.planning.is_some() {
             if let Some(context) = &plan.goal.request_context {
@@ -579,6 +591,16 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
         }
         eefn::job_commands::validate_operation_id(context.request_id())?;
         eefn::network::validate_remote_node_id(context.origin_node())?;
+        if let Some(source) = &draft.audio_source {
+            let input = draft
+                .concrete_input
+                .as_ref()
+                .context("Missing retained audio input")?;
+            let pair = eefn::peer::plan::Pair::from_params(&input.params)?;
+            if source.concrete(&pair, Some(context.origin_node()))?.input != *input {
+                bail!("Retained audio origin differs from its typed source")
+            }
+        }
         if (plan.execution.is_none() && !plan.results.is_empty())
             || context.request_id() != draft.proposals[0].operation_id
             || plan.goal.description != draft.proposals[0].proposal.goal

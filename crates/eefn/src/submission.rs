@@ -83,6 +83,7 @@ impl SubmissionMailbox {
                 | "requests.planning"
                 | "requests.preparation_checkpoint"
                 | "requests.concrete"
+                | "requests.audio"
                 | "automations.command"
                 | "requests.review"
                 | "requests.open"

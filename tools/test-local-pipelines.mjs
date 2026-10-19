@@ -232,20 +232,62 @@ def handle(action,params):
   assert.equal(ordinaryResult.error_code,'python_stdout_byte_limit');
   checkpoint('finite-peer-audio');
   await until(async()=>{const a=await json(origin.url+'/api/status'),b=await json(executor.url+'/api/status');return a.peer_advertisement?.finite_audio&&b.peer_advertisement?.finite_audio;},'audio registration');
-  const audioInput={template:'peer_transfer',constraints:{},params:{transfer:{schema_version:2,
-   source:{node_id:origin.id,resource_id:origin.relay.saved_resources.find(r=>r.capability==='peer.transfer').id},destination:{node_id:executor.id,resource_id:executor.relay.saved_resources.find(r=>r.capability==='peer.transfer').id},payload_bytes:17026,
-   audio:{duration_ms:500,sample_rate:16000,channels:1,source_resource_id:origin.relay.saved_resources.find(r=>r.capability==='audio.capture').id,destination_resource_id:executor.relay.saved_resources.find(r=>r.capability==='audio.play').id},
-   limits:{max_wire_bytes:1048576,max_bytes_per_second:1048576,max_frame_bytes:4096,max_frames:256,max_inflight_frames:1}}}};
+  const audioArgs=(operation=randomUUID())=>['requests','submit-audio','--to',executor.id,'--duration-ms','500','--operation-id',operation];
   async function audioCounts(){
    return Promise.all(['audio-captured.json','audio-played.json'].map(async name=>
     await exists(join(scratch,name))?JSON.parse(await readFile(join(scratch,name),'utf8')).calls:0));
   }
   async function audioStart(){
-   const before=await audioCounts(),p=await review.save(audioInput,'Relay one approved short synthetic audio capture');
+   const before=await audioCounts(),args=audioArgs(),submitted=await local(origin,args),p=submitted.result.result.plan;
+   assert.equal(submitted.execution_authorized,false);assert.equal(submitted.dispatched,false);assert.equal(p.status,'awaiting_approval');
+   assert.deepEqual(p.draft.audio_source,submitted.command.input,'typed intent is retained with concrete resource choices');
+   const repeated=await local(origin,args);assert.equal(repeated.result.result.creation_reused,true);assert.equal(repeated.result.result.plan.id,p.id);
+   assert.deepEqual(repeated.result.concrete,submitted.result.concrete);assert.equal(repeated.result.result.plan.revision,p.revision);
    assert.deepEqual(await audioCounts(),before,'saving/compiling cannot capture or play');
    const command=await review.approve(p,{max_execution_ms:6000,max_result_bytes:4096});
    assert.deepEqual(await audioCounts(),before,'approval alone cannot capture or play');
-   await review.start(command);return {id:p.id,command};
+   await review.start(command);return {id:p.id,command,args,submitted};
+  }
+  // Reverse discovery is not implied by the origin -> executor disclosure grant.
+  const jobsBeforeDenied=(await json(eef+'/api/jobs')).jobs.length;
+  const deniedAuthor=await cli('eefn',executor.config,['requests','submit-audio','--source-node',origin.id,'--to',executor.id,'--duration-ms','500'],undefined,false);
+  assert.equal(deniedAuthor.success,false);assert.equal(deniedAuthor.result,null);assert.equal(deniedAuthor.dispatched,false);
+  assert.equal((await json(eef+'/api/jobs')).jobs.length,jobsBeforeDenied,'undisclosed authoring cannot create a review');
+  // Drop/corrupt real saved replies, or simulate an old unsupported node.
+  // None may cause a second send, fallback or source-provenance acceptance.
+  for(const authorMode of ['drop','corrupt','prose','old']){
+  const lostArgs=audioArgs(),marker=origin.config+'.api.json',originalMarker=await readFile(marker,'utf8');
+  let authorWrites=0,lostReport;
+  const authorProxy=createServer(async(req,res)=>{
+   try{let body='';for await(const chunk of req){body+=chunk;assert(body.length<65536);}
+    assert.equal(req.url,'/api/commands/requests/audio');authorWrites++;
+    if(authorMode==='old'){res.writeHead(404);return res.end('{}');}
+    const response=await fetch(origin.url+req.url,{method:'POST',headers:{'Content-Type':'application/json'},body,signal:AbortSignal.timeout(15000)});
+    lostReport=await response.json();assert(response.ok);
+    if(authorMode==='drop')return res.destroy();
+    const forged=structuredClone(lostReport);
+    if(authorMode==='corrupt')forged.result.result.plan.draft.audio_source=null;
+    if(authorMode==='prose')forged.note='PRIVATE_AUDIO_FORGED_REPLY_MUST_NOT_ECHO';
+    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(forged));
+   }catch{res.destroy();}
+  });
+  await new Promise(r=>authorProxy.listen(0,'127.0.0.1',r));
+  const endpoint=JSON.parse(originalMarker);endpoint.address='127.0.0.1:'+authorProxy.address().port;
+  const noAudioBefore=await audioCounts();
+  await writeFile(marker,JSON.stringify(endpoint));
+  try{const lost=await cli('eefn',origin.config,lostArgs,undefined,false);assert.equal(lost.outcome_unknown,authorMode!=='old');assert.equal(lost.automatically_retried,false);assert.equal(authorWrites,1);assert(!JSON.stringify(lost).includes('PRIVATE_AUDIO_FORGED_REPLY_MUST_NOT_ECHO'));}
+  finally{await writeFile(marker,originalMarker);authorProxy.closeAllConnections();await new Promise(r=>authorProxy.close(r));}
+  assert.deepEqual(await audioCounts(),noAudioBefore);
+  const found=await local(origin,['jobs','find','--operation-id',lostArgs.at(-1)]);
+  assert.equal(found.data.jobs.length,authorMode==='old'?0:1);
+  if(authorMode!=='old'){assert.equal(lostReport.success,true);assert.equal(found.data.jobs[0].id,lostReport.result.result.plan.id);}
+  const inspectedAuthor=await local(origin,lostArgs);assert.equal(inspectedAuthor.result.result.creation_reused,authorMode!=='old');
+  if(authorMode!=='old'){
+   assert.deepEqual(inspectedAuthor.result.concrete,lostReport.result.concrete);
+   assert.equal(inspectedAuthor.result.result.plan.revision,lostReport.result.result.plan.revision);
+  }
+  assert.equal((await owner(['scheduling','show'])).admission.total_in_flight,0,'authoring does not reserve execution slots');
+  assert.deepEqual(await audioCounts(),noAudioBefore);
   }
   const completed=await audioStart();await review.wait(completed.id);const audioPlan=await review.inspect(completed.id);
   assert.equal(audioPlan.status,'completed');assert.equal(audioPlan.execution.attempts.length,2);
@@ -283,6 +325,34 @@ def handle(action,params):
   await unlink(join(scratch,'audio-bad'));
   const freshAudio=await audioStart();await review.wait(freshAudio.id);assert.equal((await review.inspect(freshAudio.id)).status,'completed');
   assert.equal(JSON.parse(await readFile(join(scratch,'audio-played.json'),'utf8')).calls,2);
+  // Change the live microphone resource after an old request has completed.
+  // Reusing its receipt must not discover/select the replacement.
+  const originConfig=(await json(origin.url+'/api/config')).config;
+  const previousMic=completed.submitted.result.concrete.input.params.transfer.audio.source_resource_id;
+  const newMic='changed-'+randomUUID();
+  originConfig.metadata.resources.find(r=>r.capability==='audio.capture').id=newMic;
+  await json(origin.url+'/api/config',{config:originConfig},'PUT');await local(origin,['restart','--wait-seconds','30']);
+  await until(async()=>(await local(origin,['relay','show'])).result.session_advertised,'reconfigured microphone registration');
+  const beforeRetained=await audioCounts(),retained=await local(origin,completed.args);
+  assert.equal(retained.result.result.creation_reused,true);assert.equal(retained.result.result.plan.id,completed.id);
+  assert.equal(retained.result.concrete.input.params.transfer.audio.source_resource_id,previousMic);
+  assert.deepEqual(retained.result.concrete,completed.submitted.result.concrete);assert.deepEqual(await audioCounts(),beforeRetained);
+  const plainAuthor=await launch('eefn',origin.config,completed.args).result;assert.equal(plainAuthor.code,0);assert(plainAuthor.out.includes('Retained finite audio relay'));assert(!plainAuthor.out.includes('\"schema_version\"'));
+  const replacement=await audioStart();assert.equal(replacement.submitted.result.concrete.input.params.transfer.audio.source_resource_id,origin.id+'::'+newMic);
+  await review.wait(replacement.id);assert.equal((await review.inspect(replacement.id)).status,'completed');
+  assert.equal(JSON.parse(await readFile(join(scratch,'audio-played.json'),'utf8')).calls,3);
+  await owner(['discovery','revoke','--requester',origin.id,'--target',executor.id]);
+  const beforeRevokeRestart=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);
+  await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==beforeRevokeRestart&&(await json(eef+'/api/diagnostics')).registered_node_count===2,'apply directional disclosure revocation');
+  const revokedCounts=await audioCounts(),historical=await local(origin,completed.args);
+  assert.equal(historical.result.result.plan.id,completed.id);assert.equal(historical.result.result.creation_reused,true);
+  assert.deepEqual(historical.result.concrete,completed.submitted.result.concrete,'retained history needs no new peer disclosure or resolution');
+  const jobsAfterRevocation=(await json(eef+'/api/jobs')).jobs.length;
+  const noDisclosure=await cli('eefn',origin.config,audioArgs(),undefined,false);assert.equal(noDisclosure.success,false);
+  assert.equal((await json(eef+'/api/jobs')).jobs.length,jobsAfterRevocation);assert.deepEqual(await audioCounts(),revokedCounts);
+  await owner(['discovery','grant','--requester',origin.id,'--target',executor.id]);
+  const beforeRestore=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);
+  await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==beforeRestore&&(await json(eef+'/api/diagnostics')).registered_node_count===2,'restore fixture disclosure for remaining cases');
  }
  // Later-stage permission loss while the existing model stage is pending.
  checkpoint('permission-loss');
@@ -396,6 +466,9 @@ def handle(action,params):
   exhausted_schedule_no_receipt_rearm_or_restart_replay:true,
   real_python_bridge:!!python,synthetic_finite_peer_audio:!!python,physical_audio:false,
   typed_local_and_remote_relay_setup:!!python,setup_without_json_resources_or_port_numbers:!!python,setup_never_grants_permissions_or_restarts:!!python,
+  typed_audio_authoring_without_json_or_model:!!python,disclosure_before_resolution:!!python,lost_authoring_reply_single_send:!!python,
+  corrupted_and_unsupported_audio_authoring_no_fallback:!!python,retained_audio_history_after_disclosure_revocation:!!python,
+  retained_audio_choices_survive_resource_reconfiguration:!!python,explicit_new_audio_request_can_choose_new_resource:!!python,
   paired_audio_permission_and_route_revocation:!!python,malformed_audio_never_played:!!python,paired_audio_no_replay:!!python,
   continuous_workloads:false,physical_resource_quota_proven:false,strong_stop_acknowledgement:false},null,2));
  checkpoint('passed');console.log('Public local pipeline validation passed: '+scratch);

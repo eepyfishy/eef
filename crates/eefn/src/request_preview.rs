@@ -64,6 +64,8 @@ pub enum RequestAction {
     },
     /// Save/compile a literal program/argument request without JSON or a model; never execute.
     SubmitProcess(crate::request_submission::ProcessSubmission),
+    /// Prepare an explicit finite microphone relay without JSON or model inference; never execute.
+    SubmitAudio(crate::audio_submission::AudioSubmission),
     /// Propose and save a source-bound method or clarification; never approve/execute.
     Prepare {
         #[command(flatten)]
