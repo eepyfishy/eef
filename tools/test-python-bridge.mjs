@@ -9,13 +9,23 @@ assert.equal(process.platform,'win32','This native owned-job acceptance fixture 
 assert(python,'Set EEF_TEST_PYTHON to an existing trusted interpreter; no download is attempted');
 await stat(python);
 const scratch=await mkdtemp(join(root,'.validation/python-bridge-'));
-const plugin=join(scratch,'plugin.py'),children=[];
+const plugin=join(scratch,'plugin.py'),children=[],memoryResults=[];
 await writeFile(plugin,`import os,sys,time,subprocess,pathlib
 CAPABILITY='camera.capture'
 ACTIONS=['run']
 ROOT=pathlib.Path(__file__).parent
 def handle(action,params):
     mode=params.get('mode','ok')
+    if mode=='memory':
+        try: memory=bytearray(192*1024*1024)
+        except MemoryError: return {'allocation_succeeded':False}
+        return {'allocation_succeeded':True,'bytes':len(memory)}
+    if mode=='child-memory':
+        code=chr(10).join(["import json,sys; result=False", "try: memory=bytearray(192*1024*1024); result=True", "except MemoryError: pass", "sys.stdout.write(json.dumps({'allocation_succeeded':result}))"])
+        child=subprocess.run([sys.executable,'-I','-c',code],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=5)
+        if child.returncode!=0: raise RuntimeError('child allocation probe failed')
+        import json
+        return json.loads(child.stdout)
     if mode=='stdout':
         os.write(1,b'PRIVATE_CAPTURE_BYTES'*10000)
     if mode=='stderr':
@@ -43,6 +53,14 @@ async function probe(params,limits={},cancel_after_ms=null,cancel_after_marker=n
 }
 try{
  assert.equal((await probe({text:'bounded input'})).result.data.request,'bounded input');
+ for(const mode of ['memory','child-memory']){
+  const control=(await probe({mode},{timeout_seconds:8})).result.data.allocation_succeeded;
+  const capped=(await probe({mode},{timeout_seconds:8,max_job_memory_mib:128})).result.data.allocation_succeeded;
+  assert.equal(control,true,'control without commit ceiling must allocate');
+  assert.equal(capped,false,'owned-job commit ceiling must cover root and descendant allocations');
+  memoryResults.push({mode,allocation_bytes:192*1024*1024,ceiling_mib:128,uncapped_allocation_succeeded:control,capped_allocation_succeeded:capped});
+ }
+ assert.equal((await probe({text:'bounded startup'},{max_job_memory_mib:128})).result.success,true);
  const unicode='สวัสดี世界🌊'.repeat(250);
  assert.equal((await probe({text:unicode})).result.data.request,unicode,'UTF-8 content must round-trip within its byte budget without locale decoding or ASCII-escape expansion');
  for(const [mode,expected] of [['stdout','StdoutLimit'],['stderr','StderrLimit'],['invalid','Reply'],['error','Process']]){
@@ -76,6 +94,6 @@ try{
  await new Promise(r=>setTimeout(r,3300));
  assert.equal(await stat(join(scratch,'late-child-effect')).then(()=>true,()=>false),false);
  assert.equal((await probe({text:'still usable'})).result.success,true);
- await writeFile(join(scratch,'result.json'),JSON.stringify({passed:true,scope:'real-interpreter, bounded synthetic plugin; no hardware or grant authority'}));
+ await writeFile(join(scratch,'result.json'),JSON.stringify({passed:true,scope:'real-interpreter, bounded synthetic plugin; no hardware or grant authority',memoryResults}));
  console.log('Python bridge native checks passed: '+scratch);
 }finally{for(const child of children)if(child.exitCode===null)child.kill();}

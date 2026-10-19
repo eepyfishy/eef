@@ -52,6 +52,7 @@ mod pipeline_runtime;
 mod process_lifetime;
 pub mod protocol;
 pub mod python;
+pub mod python_policy;
 pub mod registration;
 pub mod relay_setup;
 pub mod request_abandon;

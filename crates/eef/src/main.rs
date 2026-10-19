@@ -99,6 +99,13 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum NodeCommand {
+    /// Inspect/save a node's Python budgets; writes need current local consent.
+    Python {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eefn::python_policy::Action,
+    },
     /// Configure finite relay resources with current local node-owner approval.
     Relay {
         #[arg(long)]
@@ -198,6 +205,54 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn remote_python_policy_cli_preserves_explicit_budgets_without_execution_flags() {
+        let args = Args::try_parse_from([
+            "eef",
+            "node",
+            "python",
+            "--node",
+            "node",
+            "configure",
+            "--memory-mib",
+            "128",
+        ])
+        .unwrap();
+        let Some(Command::Node {
+            command:
+                NodeCommand::Python {
+                    command: eefn::python_policy::Action::Configure(settings),
+                    ..
+                },
+        }) = args.command
+        else {
+            panic!("Wrong command")
+        };
+        assert_eq!(
+            settings
+                .merge(Default::default())
+                .unwrap()
+                .max_job_memory_mib,
+            Some(128)
+        );
+        for extra in [
+            vec!["--memory-mib", "63"],
+            vec!["--restart"],
+            vec!["--execute"],
+            vec!["--allow-remote"],
+            vec!["--retry"],
+            vec!["--force"],
+        ] {
+            assert!(
+                Args::try_parse_from(
+                    ["eef", "node", "python", "--node", "node", "configure"]
+                        .into_iter()
+                        .chain(extra)
+                )
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn relay_setup_cli_never_includes_workload_or_permission_authority() {
         let args = Args::try_parse_from([
@@ -976,6 +1031,76 @@ async fn remote_relay_cli(
         "error_code":"relay_setup_unconfirmed","note":"Inspect this exact node with relay show. No automatic retry, permissions, restart or workload was sent."})))
 }
 
+async fn remote_python_policy_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eefn::python_policy::Action,
+) -> Result<serde_json::Value> {
+    use eef::node_python_policy::Request;
+    use eefn::python_policy::{Action, Command};
+    use serde_json::json;
+    eefn::network::validate_remote_node_id(node)?;
+    if let Action::Configure(settings) = action {
+        settings.merge(Default::default())?;
+    }
+    let mutation = matches!(action, Action::Configure(_));
+    let mut sending_mutation = false;
+    let mut requested = serde_json::Value::Null;
+    let exchange = async {
+        let url = format!("{base}/api/commands/node/python");
+        let mut request = Request {
+            schema_version: 1,
+            node_id: node.into(),
+            expected_runtime_id: None,
+            command: Command::Show,
+        };
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Python policy inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_python_policy::confirmed(&inspected, &request) {
+            bail!("Unconfirmed Python policy inspection")
+        }
+        let Action::Configure(settings) = action else {
+            return Ok::<_, anyhow::Error>(inspected);
+        };
+        request.expected_runtime_id = Some(
+            inspected["result"]["runtime_id"]
+                .as_str()
+                .context("Missing node runtime")?
+                .into(),
+        );
+        request.command = Command::Configure {
+            limits: settings.merge(serde_json::from_value(
+                inspected["result"]["saved"].clone(),
+            )?)?,
+            expected_digest: inspected["result"]["saved_digest"]
+                .as_str()
+                .context("Missing Python policy digest")?
+                .into(),
+        };
+        request.validate()?;
+        requested = json!(request.command);
+        sending_mutation = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Python policy save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_python_policy::confirmed(&saved, &request) {
+            bail!("Unconfirmed Python policy save")
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"remote_python_policy","node_id":node,
+        "success":false,"mutation_requested":mutation,"sending_attempted":sending_mutation,"outcome_unknown":sending_mutation,
+        "command":requested,"result":null,"execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "error_code":"python_policy_unconfirmed","note":"Inspect this exact node with python show; no automatic retry, permission change, restart or workload was sent."})))
+}
+
 async fn remote_permissions_cli(
     client: &reqwest::Client,
     base: &str,
@@ -1532,6 +1657,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 .send().await?
         }
         Command::Node {
+            command: NodeCommand::Python { node, command },
+        } => return remote_python_policy_cli(&client, &base, node, command).await,
+        Command::Node {
             command: NodeCommand::Relay { node, command },
         } => {
             return remote_relay_cli(&client, &base, node, command).await;
@@ -1755,6 +1883,21 @@ async fn main() -> Result<()> {
                     );
                 }
                 if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::Python { .. }
+                        }
+                    )
+                {
+                    if value["success"] == true {
+                        print!("{}", eefn::python_policy::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Python policy outcome was not confirmed. Inspect this node with python show; no retry, permission change, restart or workload was sent."
+                        );
+                    }
+                } else if !args.json
                     && matches!(
                         command,
                         Command::Node {

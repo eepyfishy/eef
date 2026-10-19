@@ -108,6 +108,10 @@ impl NodeService {
             )
             .route("/api/commands/models", post(model_command))
             .route(
+                "/api/commands/python",
+                post(python_policy).layer(axum::extract::DefaultBodyLimit::max(8192)),
+            )
+            .route(
                 "/api/commands/permissions",
                 post(permission_command).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
@@ -257,6 +261,12 @@ async fn permission_command(
     Json(request): Json<crate::permission_commands::PermissionRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.permission_command(request, false)?))
+}
+async fn python_policy(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::python_policy::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.python_policy(request, false)?))
 }
 async fn relay_command(
     State(state): State<Arc<NodeService>>,

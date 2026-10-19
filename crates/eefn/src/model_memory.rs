@@ -1,10 +1,10 @@
-//! Optional owned-model Windows job-commit ceiling, not working-set/RAM/VRAM.
+//! Shared owned-process Windows job-commit ceiling, not working-set/RAM/VRAM.
 use anyhow::{Result, bail};
 pub const MIN_JOB_MEMORY_MIB: u64 = 64;
 pub const MAX_JOB_MEMORY_MIB: u64 = 1_048_576;
 pub fn validate(limit: Option<u64>) -> Result<()> {
     if limit.is_some_and(|mib| !(MIN_JOB_MEMORY_MIB..=MAX_JOB_MEMORY_MIB).contains(&mib)) {
-        bail!("Owned-model job memory limit must be 64-1048576 MiB, or explicit default")
+        bail!("Owned-process job memory limit must be 64-1048576 MiB, or explicit default")
     }
     Ok(())
 }
@@ -12,7 +12,9 @@ pub(crate) fn supported(limit: Option<u64>) -> Result<()> {
     validate(limit)?;
     #[cfg(not(windows))]
     if limit.is_some() {
-        bail!("Owned-model job memory limits are supported only on Windows; no unlimited fallback")
+        bail!(
+            "Owned-process job memory limits are supported only on Windows; no unlimited fallback"
+        )
     }
     Ok(())
 }

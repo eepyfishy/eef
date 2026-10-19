@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Inspect/save Python bridge budgets; never enable plugins or run work.
+    Python {
+        #[command(subcommand)]
+        command: eefn::python_policy::Action,
+    },
     /// Configure finite audio relay resources; never enable permissions or execute.
     Relay {
         #[command(subcommand)]
@@ -1795,7 +1800,104 @@ async fn execute_relay_command(
     )
 }
 
+async fn execute_python_policy(
+    args: &Args,
+    action: &eefn::python_policy::Action,
+) -> Result<serde_json::Value> {
+    use eefn::python_policy::{Action, Command, Request};
+    use serde_json::{Value, json};
+    if let Action::Configure(settings) = action {
+        settings.merge(Default::default())?;
+    }
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start this node first; Python policy commands never launch a runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    let mutation = matches!(action, Action::Configure(_));
+    let mut sending_mutation = false;
+    let mut requested = Value::Null;
+    let exchange = async {
+        let response = client
+            .get(format!("http://{address}/api/diagnostics"))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Node diagnostics unavailable")
+        }
+        let diagnostics = eefn::model_manager::bounded_json(response).await?;
+        if diagnostics["node_id"] != file.node_id || diagnostics["success"] != true {
+            bail!("Unconfirmed node diagnostics")
+        }
+        let mut request = Request {
+            schema_version: 1,
+            expected_node_id: file.node_id.clone(),
+            expected_runtime_id: diagnostics["runtime_id"]
+                .as_str()
+                .context("Node runtime unavailable")?
+                .into(),
+            command: Command::Show,
+        };
+        request.validate()?;
+        let url = format!("http://{address}/api/commands/python");
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Python policy inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::python_policy::confirmed(&inspected, &request) {
+            bail!("Unconfirmed Python policy inspection")
+        }
+        let Action::Configure(settings) = action else {
+            return Ok::<_, anyhow::Error>(inspected);
+        };
+        request.command = Command::Configure {
+            limits: settings.merge(serde_json::from_value(inspected["saved"].clone())?)?,
+            expected_digest: inspected["saved_digest"]
+                .as_str()
+                .context("Python policy digest missing")?
+                .into(),
+        };
+        request.validate()?;
+        requested = json!(request.command);
+        sending_mutation = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Python policy save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::python_policy::confirmed(&saved, &request) {
+            bail!("Unconfirmed Python policy save")
+        }
+        Ok(saved)
+    }
+    .await;
+    let success = exchange.is_ok();
+    Ok(
+        json!({"schema_version":1,"report_type":"node_python_policy_command","node_id":file.node_id,
+        "success":success,"mutation_requested":mutation,"sending_attempted":sending_mutation,
+        "outcome_unknown":!success && sending_mutation,"command":requested,"result":exchange.ok(),
+        "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "note":"Inspect python show after uncertainty; no retry, permission change, restart or workload was sent."}),
+    )
+}
+
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Python { command } = command {
+        return execute_python_policy(args, command).await;
+    }
     if let Commands::Relay { command } = command {
         return execute_relay_command(args, command).await;
     }
@@ -2523,6 +2625,14 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     }
                 ) {
                     print!("{}", eefn::audio_submission::render_node(&value)?);
+                } else if matches!(command, Commands::Python { .. }) {
+                    if value["success"] == true {
+                        print!("{}", eefn::python_policy::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Python policy outcome was not confirmed. Inspect python show; no retry, permission change, restart or workload was sent."
+                        );
+                    }
                 } else if matches!(command, Commands::Relay { .. }) {
                     if value["success"] == true {
                         print!("{}", eefn::relay_setup::render(&value["result"])?);
@@ -3336,6 +3446,42 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn python_policy_cli_has_bounded_limits_and_no_workload_authority() {
+        let args = Args::try_parse_from([
+            "eefn",
+            "python",
+            "configure",
+            "--memory-mib",
+            "128",
+            "--timeout-seconds",
+            "7",
+        ])
+        .unwrap();
+        let Some(Commands::Python {
+            command: eefn::python_policy::Action::Configure(settings),
+        }) = args.command
+        else {
+            panic!("Wrong command")
+        };
+        let limits = settings.merge(Default::default()).unwrap();
+        assert_eq!(limits.max_job_memory_mib, Some(128));
+        assert_eq!(limits.timeout_seconds, 7);
+        for extra in [
+            vec!["--memory-mib", "63"],
+            vec!["--memory-mib", "128", "--default-memory"],
+            vec!["--restart"],
+            vec!["--execute"],
+            vec!["--allow"],
+            vec!["--force"],
+            vec!["--file", "policy.json"],
+        ] {
+            assert!(
+                Args::try_parse_from(["eefn", "python", "configure"].into_iter().chain(extra))
+                    .is_err()
+            );
+        }
+    }
     #[test]
     fn submit_audio_cli_needs_no_json_or_resource_ids_and_cannot_approve_or_execute() {
         let args = Args::try_parse_from([

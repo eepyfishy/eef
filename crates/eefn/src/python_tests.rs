@@ -28,12 +28,20 @@ fn limits_are_compatible_bounded_and_strict() {
     let defaults: BridgeLimits = serde_json::from_value(json!({})).unwrap();
     assert_eq!(defaults, BridgeLimits::default());
     defaults.validate().unwrap();
+    assert!(
+        serde_json::to_value(&defaults)
+            .unwrap()
+            .get("max_job_memory_mib")
+            .is_none()
+    );
     for value in [
         json!({"timeout_seconds":0}),
         json!({"timeout_seconds":301}),
         json!({"max_request_bytes":1023}),
         json!({"max_stdout_bytes":64*1024*1024+1}),
         json!({"max_stderr_bytes":1024*1024+1}),
+        json!({"max_job_memory_mib":63}),
+        json!({"max_job_memory_mib":1048577}),
     ] {
         assert!(
             serde_json::from_value::<BridgeLimits>(value)

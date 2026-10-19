@@ -16,8 +16,8 @@ use tokio::time::{Instant, timeout, timeout_at};
 
 const PLUGIN_HOST: &str = include_str!("../../../python/eef_plugin_host.py");
 
-/// Bounds the bridge exchange, not Python's heap, device buffers or external
-/// effects. Defaults retain the bundled adapters' 25-MiB encoded-media ceiling.
+/// Bounds the bridge exchange, plus an optional Windows owned-job commit ceiling.
+/// This is not working-set RAM, VRAM, a sandbox or external-effect containment.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BridgeLimits {
@@ -25,6 +25,8 @@ pub struct BridgeLimits {
     pub max_request_bytes: usize,
     pub max_stdout_bytes: usize,
     pub max_stderr_bytes: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_job_memory_mib: Option<u64>,
 }
 impl Default for BridgeLimits {
     fn default() -> Self {
@@ -33,11 +35,13 @@ impl Default for BridgeLimits {
             max_request_bytes: 36 * 1024 * 1024,
             max_stdout_bytes: 36 * 1024 * 1024,
             max_stderr_bytes: 64 * 1024,
+            max_job_memory_mib: None,
         }
     }
 }
 impl BridgeLimits {
     pub fn validate(&self) -> Result<()> {
+        crate::model_memory::validate(self.max_job_memory_mib)?;
         if !(1..=300).contains(&self.timeout_seconds)
             || !(1024..=64 * 1024 * 1024).contains(&self.max_request_bytes)
             || !(1024..=64 * 1024 * 1024).contains(&self.max_stdout_bytes)
@@ -135,10 +139,13 @@ impl PythonRuntime {
 
     /// Probe only the configured interpreter, without importing a device plugin.
     pub async fn check_available(&self) -> Result<()> {
+        self.limits.validate()?;
+        crate::model_memory::supported(self.limits.max_job_memory_mib)?;
+        let deadline = Instant::now() + Duration::from_secs(5);
         let mut command = Command::new(&self.executable);
         #[cfg(windows)]
         command.creation_flags(0x0800_0000);
-        let mut child = command
+        command
             .arg("-I")
             .arg("-X")
             .arg("utf8")
@@ -147,12 +154,18 @@ impl PythonRuntime {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .context("Python interpreter could not start")?;
-        let status = timeout(Duration::from_secs(5), child.wait())
+            .kill_on_drop(true);
+        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit(
+            &mut command,
+            self.limits.max_job_memory_mib,
+        )
+        .context("Python interpreter could not start")?;
+        let status = timeout_at(deadline, child.wait())
             .await
             .context("Python interpreter availability check timed out")??;
+        #[cfg(windows)]
+        tree.terminate_and_observe_until(deadline).await?;
+        drop(tree);
         if !status.success() {
             bail!("Python interpreter availability check failed")
         }
@@ -221,6 +234,8 @@ impl PythonRuntime {
 
     async fn call(&self, plugin_path: &Path, request: Value, stdout_limit: usize) -> Result<Value> {
         self.limits.validate()?;
+        // Never silently drop an explicitly requested native ceiling.
+        crate::model_memory::supported(self.limits.max_job_memory_mib)?;
         let stdout_limit = stdout_limit.min(self.limits.max_stdout_bytes);
         let deadline = Instant::now() + Duration::from_secs(self.limits.timeout_seconds);
         // Bounded serialization precedes spawn. No large copy first, and an
@@ -253,13 +268,16 @@ impl PythonRuntime {
         if Instant::now() >= deadline {
             return Err(BridgeFailure::Deadline.into());
         }
-        let (mut child, tree) =
-            crate::process_lifetime::spawn(&mut command).with_context(|| {
-                format!(
-                    "could not start bundled Python at '{}'",
-                    self.executable.display()
-                )
-            })?;
+        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit(
+            &mut command,
+            self.limits.max_job_memory_mib,
+        )
+        .with_context(|| {
+            format!(
+                "could not start bundled Python at '{}'",
+                self.executable.display()
+            )
+        })?;
         let stdin = child.stdin.take().context("Python stdin unavailable")?;
         let stdout = child.stdout.take().context("Python stdout unavailable")?;
         let stderr = child.stderr.take().context("Python stderr unavailable")?;

@@ -31,6 +31,15 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+Python adapter budgets now have typed local/EEF show/configure commands with
+saved/applied separation, runtime/digest fences and current local consent for
+remote writes. An optional Windows owned-job commit ceiling covers each bridge
+host and its descendants using existing native containment; defaults are
+unchanged. This is not node-wide RAM/VRAM/CPU accounting or aggregate quotas.
+Native allocation/descendant and public command/fault regressions pass; both
+workspace/all-target modes pass 855 tests plus one ignored each. Physical and
+full release acceptance remain open. See [scope and commands](PYTHON-BRIDGE.md).
+
 Finite audio now has [JSON-free typed authoring](AUDIO-REQUESTS.md). Fresh
 disclosed registrations supply unambiguous endpoint resources; immutable intent
 and exact concrete choices share the existing review journal. Receipt reuse

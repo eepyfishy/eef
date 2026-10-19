@@ -3,6 +3,58 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: command-first Python budgets and owned-job commit ceiling
+
+Running nodes expose python show/configure through the node-owned service,
+local-owner API and EEF adapter. CLI changes merge only specified time/pipe/memory
+fields against inspected saved settings. Exact runtime binding and normalized
+saved-policy digest fence saves under the existing configuration lock; current
+local management consent is rechecked for remote writes. No-op saves do not
+rewrite settings, and unsupported/lost/altered replies cause no generic save,
+retry, permission widening, process execution or restart. Saved and applied
+budgets remain distinct. See [commands and limits](PYTHON-BRIDGE.md).
+
+The optional max_job_memory_mib field reuses the existing native owned-job
+commit ceiling before the Python host or availability-check process resumes.
+Defaults omit it and retain the old wire shape. Explicit unsupported ceilings
+never fall back to unlimited Python; deterministic Rust node controls remain
+independent. Each invocation tree has its own ceiling, not a total-node quota,
+resident RAM/VRAM measurement, device-buffer limit or security sandbox.
+
+Eight focused policy tests pass. Public python-policy-vnmOvx and expanded
+python-policy-iawAA9 pass local/EEF commands, current owner approval/revocation,
+saved/applied separation, explicit restart, no-op preservation, runtime/digest/
+origin/body rejection and lost/corrupt/unsupported replies without retry or
+fallback. The expanded fixture also refuses an older inspection endpoint before
+any mutation. Synthetic plugin-import observations remain unchanged throughout
+configuration commands; only the separate explicit restart imports it again.
+
+Native python-bridge-TzEeVD and python-bridge-LxnpNO use the existing trusted
+CPython with synthetic plugins, not hardware. The latter retains paired root
+and descendant probes: each 201,326,592-byte allocation succeeds uncapped and
+is refused under a 128-MiB owned-job commit ceiling. Existing timeout/output/
+cancellation/descendant cleanup and fresh-follow-up cases still pass. These are
+allocation/containment observations, not grant rollback or physical stop proof.
+Permission-commands-q0ZzvZ, node-commands-GF6VG4 and local-pipelines-qg15KX pass
+existing public regressions, including synthetic finite audio through real
+reviewed/consumed grants. No real microphone, camera or speaker is opened.
+
+Both locked/offline workspace/all-target modes pass **855 tests plus one ignored
+each**: EEF 264 plus one ignored profiler, owner CLI 19, installer 6, EEFN 543 and
+node CLI 23. Logs are retained in .validation/python-policy-workspace-default.log
+and .validation/python-policy-workspace-headless.log. Final headless binaries/
+examples build; EEF/EEFN hashes match the evaluated production binaries. Source
+boundary, JS syntax and diff checks pass; fixture apps/helpers are terminal.
+
+Earlier python-policy-VAgrN4 used an invalid fixture discovery-marker field and
+python-policy-o5oyUC assumed exactly one setup-time plugin import. Neither failed
+run is acceptance; the corrected fixture records the observed pre-command
+baseline and retains strict no-import/no-restart assertions for commands.
+
+No installed/remote node, UI, model, version, installer or update policy changed.
+Full bootstrap, physical two-PC/stop/resource, continuous-media, mesh/cluster,
+installer/signing/Defender and stable-release acceptance remain open.
+
 ## Unreleased: JSON-free finite audio request authoring
 
 Running nodes now expose requests submit-audio through one shared typed backend:

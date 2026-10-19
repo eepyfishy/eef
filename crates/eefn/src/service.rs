@@ -943,6 +943,14 @@ impl NodeService {
             .and_then(Value::as_bool)
             == Some(true);
         match action {
+            "python_policy" => self.python_policy(serde_json::from_value(params)?, true),
+            "python_policy_status" => {
+                let request: crate::python_policy::Request = serde_json::from_value(params)?;
+                if !matches!(request.command, crate::python_policy::Command::Show) {
+                    bail!("Reserved Python policy status action mismatch")
+                }
+                self.python_policy(request, true)
+            }
             "relay_command" => self.relay_command(serde_json::from_value(params)?, true),
             "relay_status" => {
                 let request: crate::relay_setup::RelayRequest = serde_json::from_value(params)?;

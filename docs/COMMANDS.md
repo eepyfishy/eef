@@ -13,6 +13,17 @@ compiler, without an LM, JSON file or ordinary resource UUIDs. It never records,
 plays, approves or executes work. Exact receipt reuse preserves saved intent and
 resource choices. See [scope, review and uncertainty handling](AUDIO-REQUESTS.md).
 
+## Python bridge budgets (unreleased after alpha.6)
+
+    eefn python show
+    eefn python configure --memory-mib 256 --timeout-seconds 30
+    eef node python --node NODE_ID configure --max-stdout-bytes 8388608
+
+These save only the specified limits, with current local consent for remote
+writes. Saved/applied budgets are distinct; restart is separate. The optional
+Windows job-commit ceiling covers one bridge tree, not total RAM/VRAM or the
+whole node. See [limits, platform support and uncertainty](PYTHON-BRIDGE.md).
+
 ## Plain-language setup inspection (unreleased after alpha.6)
 
 Finite relay configuration is also command-based: `eefn relay show`,
