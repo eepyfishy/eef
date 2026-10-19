@@ -75,6 +75,43 @@ and [thread resume semantics](https://learn.microsoft.com/en-us/windows/win32/ap
 
 ## What this does not prove
 
+### Executor retirement before final grant checkpoint (subsequent increment)
+
+The shared consumed-grant executor now scopes its executing future so that it
+drops before the final synchronous journal save begins. Previously, deadline or
+permission failure could enter that save while the pending operation still owned
+its process tree; a contended journal lock therefore delayed cancellation cleanup.
+The same ordering fix covers Python/peer/pipeline futures through AcceptedGrant,
+without adding another runner, approval system or grant outcome format.
+
+The regression first holds the real journal mutex, runs work on another runtime
+thread and observes retirement before releasing storage. Five cases cover normal
+success/failure, deadline, policy loss and native Windows parent/child cleanup.
+The native case retains live process handles and observes both exit while the
+receipt remains accepted and the final writer remains blocked. It never kills a
+PID-selected unrelated process. Storage is released before assertions/join, even
+against the failing baseline. Exact original permissions are restored in a fresh
+engine when checking that the consumed grant still refuses replay.
+
+The 25caca2 baseline reproduces three delayed-cleanup failures; normal outcomes
+pass. After the fix, all five pass. Retained evidence is in
+.validation/grant-cleanup-before.log and .validation/grant-cleanup-after.log.
+Public process, Python-budget/bridge, finite-pipeline and permission/node-command
+regressions pass on fresh headless binaries; exact fixture paths are retained in
+[status](STATUS.md). Both workspace/all-target feature modes pass 860 tests plus
+one ignored each. Final headless apps/helpers build and match the evaluated
+binary hashes; no fixture app/helper remains running.
+
+Dropping an adapter future requests its existing cleanup; this is not a new
+physical stop proof, rollback, recovery or migration authority. A fast final save
+can still precede OS exit observation, and outside services or already-dispatched
+OS effects can outlive their waiter. A synchronous operation blocked inside its
+own poll is also not made preemptible by this scope change. Node/EEF stop remains
+a separate protocol requirement: current jobs stop prevents further dispatch
+and may wait for the current grant rather than acknowledging immediate executor
+termination. Do not interpret Cancelled tracking as proof every remote effect
+stopped.
+
 A Job Object is lifetime containment, not a security sandbox. It does not undo
 filesystem/network/device effects, contain work delegated to an external service
 or guarantee a hostile program cannot act with the user's permissions. Microsoft

@@ -93,6 +93,13 @@ result may therefore fail even when the global bridge ceiling is higher.
 
 ## Lifetime and failure semantics
 
+The shared consumed-grant loop now drops its executing future before final
+blocking journal I/O. Deadline/permission failure therefore requests Python's
+existing owned-tree cleanup before attempting the final outcome save, even if
+that save subsequently waits on a journal lock. This does not add an immediate
+remotely acknowledged jobs-stop command or prove external effects stopped.
+See [blocked-journal/native evidence and limits](PROCESS-LIFETIME.md#executor-retirement-before-final-grant-checkpoint-subsequent-increment).
+
 Request JSON is serialized through a bounded writer before spawning the host;
 oversized input cannot execute that invocation's import/handler. The original
 deadline begins before serialization and is checked again before spawn. After

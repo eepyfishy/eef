@@ -31,6 +31,15 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The shared consumed-grant outcome loop now retires its executing future before
+final blocking journal I/O. A held-journal regression reproduces delayed cleanup
+on the previous baseline and passes after the fix, including native parent/child
+exit after permission revocation while storage stays locked. This is an adapter
+cleanup prerequisite, not remotely acknowledged jobs stop, external-effect stop
+or full release acceptance. Six public regression suites and both full feature
+modes pass (860 tests plus one ignored each); see
+[scope and evidence](PROCESS-LIFETIME.md#executor-retirement-before-final-grant-checkpoint-subsequent-increment).
+
 Python adapter budgets now have typed local/EEF show/configure commands with
 saved/applied separation, runtime/digest fences and current local consent for
 remote writes. An optional Windows owned-job commit ceiling covers each bridge

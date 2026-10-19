@@ -892,43 +892,49 @@ impl AcceptedGrant {
         F: std::future::Future<Output = Result<Value>>,
     {
         let g = &self.grant;
-        tokio::pin!(operation);
-        let deadline = tokio::time::Instant::from_std(self.deadline);
-        let mut tick = tokio::time::interval(Duration::from_millis(100));
-        let mut result = loop {
-            let now = crate::protocol::now_ms();
-            let expected = self.accepted_wall.saturating_add(
-                self.accepted
-                    .elapsed()
-                    .as_millis()
-                    .try_into()
-                    .unwrap_or(u64::MAX),
-            );
-            if Instant::now() >= self.deadline || now.abs_diff(expected) > 1000 {
-                break GrantReport::new(
-                    g,
-                    ReceiptState::Unknown,
-                    Value::Null,
-                    Some("grant_deadline_or_clock_changed"),
+        // Retire the executing future before any synchronous final journal I/O.
+        // Deadline/policy loss must not keep owned child processes, peer sockets
+        // or adapter guards alive merely because storage is blocked. Dropping a
+        // waiter still is not proof that remote/external effects have stopped.
+        let mut result = {
+            tokio::pin!(operation);
+            let deadline = tokio::time::Instant::from_std(self.deadline);
+            let mut tick = tokio::time::interval(Duration::from_millis(100));
+            loop {
+                let now = crate::protocol::now_ms();
+                let expected = self.accepted_wall.saturating_add(
+                    self.accepted
+                        .elapsed()
+                        .as_millis()
+                        .try_into()
+                        .unwrap_or(u64::MAX),
                 );
-            }
-            if engine.check_grant_policy(g).is_err() {
-                break GrantReport::new(
-                    g,
-                    ReceiptState::Unknown,
-                    Value::Null,
-                    Some("local_policy_changed"),
-                );
-            }
-            tokio::select! {
-                biased;
-                _=tokio::time::sleep_until(deadline)=>break GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some("grant_deadline_exceeded")),
-                _=tick.tick()=>{},
-                value=&mut operation=>break match value {
-                    Ok(data) if serde_json::to_vec(&data).is_ok_and(|v|v.len()<=g.limits.max_result_bytes)=>completed_outcome(g,data),
-                    Ok(_)=>GrantReport::new(g,ReceiptState::Completed,Value::Null,Some("result_too_large")),
-                    Err(error)=>GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some(
-                        error.downcast_ref::<crate::python::BridgeFailure>().map(|failure|failure.code()).unwrap_or("execution_failed_effects_unknown"))),
+                if Instant::now() >= self.deadline || now.abs_diff(expected) > 1000 {
+                    break GrantReport::new(
+                        g,
+                        ReceiptState::Unknown,
+                        Value::Null,
+                        Some("grant_deadline_or_clock_changed"),
+                    );
+                }
+                if engine.check_grant_policy(g).is_err() {
+                    break GrantReport::new(
+                        g,
+                        ReceiptState::Unknown,
+                        Value::Null,
+                        Some("local_policy_changed"),
+                    );
+                }
+                tokio::select! {
+                    biased;
+                    _=tokio::time::sleep_until(deadline)=>break GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some("grant_deadline_exceeded")),
+                    _=tick.tick()=>{},
+                    value=&mut operation=>break match value {
+                        Ok(data) if serde_json::to_vec(&data).is_ok_and(|v|v.len()<=g.limits.max_result_bytes)=>completed_outcome(g,data),
+                        Ok(_)=>GrantReport::new(g,ReceiptState::Completed,Value::Null,Some("result_too_large")),
+                        Err(error)=>GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some(
+                            error.downcast_ref::<crate::python::BridgeFailure>().map(|failure|failure.code()).unwrap_or("execution_failed_effects_unknown"))),
+                    }
                 }
             }
         };
@@ -991,6 +997,10 @@ fn completed_outcome(grant: &ExecutionGrant, data: Value) -> GrantReport {
     .then_some("process_exit_unsuccessful");
     GrantReport::new(grant, ReceiptState::Completed, data, error)
 }
+
+#[cfg(test)]
+#[path = "grant_cleanup_tests.rs"]
+mod cleanup_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {

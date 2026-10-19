@@ -313,7 +313,7 @@ mod windows {
 }
 
 #[cfg(all(test, windows))]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::{Value, json};
     use std::{
@@ -335,7 +335,7 @@ mod tests {
     const HELPER: &str = "process_lifetime::tests::process_tree_child_helper";
     const PREFIX: &str = "eef-contained-fixture:";
 
-    fn args(mode: &str, root: &Path) -> Vec<String> {
+    pub(crate) fn args(mode: &str, root: &Path) -> Vec<String> {
         // A recognized libtest skip filter carries test-only data without global
         // environment edits, shell quoting, or a shipping executable backdoor.
         vec![
@@ -432,9 +432,9 @@ mod tests {
             .stderr(Stdio::null());
         cmd
     }
-    struct Processes(Vec<OwnedHandle>);
+    pub(crate) struct Processes(Vec<OwnedHandle>);
     impl Processes {
-        async fn observe(root: &Path) -> Self {
+        pub(crate) async fn observe(root: &Path) -> Self {
             tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
                     if let Ok(bytes) = std::fs::read(root.join("pids.json")) {
@@ -465,13 +465,18 @@ mod tests {
             .await
             .expect("own root/child helpers must start")
         }
-        fn alive(&self) {
+        pub(crate) fn alive(&self) {
             for h in &self.0 {
                 assert_eq!(
                     unsafe { WaitForSingleObject(h.as_raw_handle(), 0) },
                     WAIT_TIMEOUT
                 );
             }
+        }
+        pub(crate) fn exited_now(&self) -> bool {
+            self.0
+                .iter()
+                .all(|h| unsafe { WaitForSingleObject(h.as_raw_handle(), 0) } == WAIT_OBJECT_0)
         }
         async fn exited(&self) {
             tokio::time::timeout(Duration::from_secs(3), async {

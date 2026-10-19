@@ -3,6 +3,46 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: executor retirement before final grant checkpoints
+
+The shared AcceptedGrant outcome loop now drops its executing future before
+entering synchronous final journal I/O. Deadline, clock or policy failure cannot
+retain that future's owned process tree, peer socket or adapter guard merely
+because the subsequent outcome save is blocked. This requests each adapter's
+existing cancellation cleanup; it does not prove external-service/device effects
+stopped, undo effects or add a remotely acknowledged jobs-stop protocol.
+Consumed grants, unknown outcomes, final-checkpoint failure and replay rules are
+unchanged. The same path covers ordinary grants, finite pipelines and peer work.
+
+Five focused grant-cleanup tests hold the actual journal mutex until after
+observing executor retirement. Success/failure, deadline and policy cases retain
+the original report semantics. A native Windows case holds live parent/child
+process handles, revokes local permission and observes both exited while final
+storage remains locked and the receipt is still accepted; only then is the
+checkpoint released. Original-permission fresh engines verify consumption still
+refuses replay. The native helper additions are cfg(test)-only, not shipping
+commands or authority.
+
+Against production baseline 25caca2, grant-cleanup-before.log records two passing
+normal-outcome cases and three reproduced failures: deadline, policy and native
+tree cleanup waited for the journal lock. With the fix, grant-cleanup-after.log
+passes all five. Both logs are retained under .validation. Public
+process-lifetime-HQSsBD, python-policy-eU4hKk, python-bridge-cipX6H,
+local-pipelines-eDFM58, permission-commands-r4rCxN and node-commands-ScpQEY pass.
+They exercise native process containment, explicit Python budgets, synthetic
+finite audio/pipelines and existing command/permission/restart workflows, not
+physical two-PC media or default-model acceptance.
+
+Both locked/offline workspace/all-target modes pass **860 tests plus one ignored
+each**: EEF 264 plus one ignored profiler, owner CLI 19, installer 6, EEFN 548 and
+node CLI 23. Logs are retained in .validation/grant-cleanup-workspace-default.log
+and .validation/grant-cleanup-workspace-headless.log. Final headless binaries/
+examples build; EEF, EEFN and both native fixture helpers match the evaluated
+binary hashes. Source-boundary and diff checks pass; fixture apps/helpers are
+terminal. No installed/remote node, UI,
+model, version, installer or update policy changed. Strong stop acknowledgement,
+physical two-PC and the remaining roadmap/release acceptance stay open.
+
 ## Unreleased: command-first Python budgets and owned-job commit ceiling
 
 Running nodes expose python show/configure through the node-owned service,
