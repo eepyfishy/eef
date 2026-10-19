@@ -6,6 +6,13 @@ Older v0.4.0a installers do not contain them.
 
 ## Plain-language setup inspection (unreleased after alpha.6)
 
+Finite relay configuration is also command-based: `eefn relay show`,
+`eefn relay configure --microphone` and `eefn relay configure --receive`.
+`eef node relay --node NODE_ID ...` uses the same node-owned service with current
+local remote-management consent for writes. Setup does not enable permissions,
+restart or run work; peer consent is separately `permissions allow peer-transfers`.
+See [setup, automatic port selection and remaining authoring limits](RELAY-SETUP.md).
+
 Whole-feature permission commands are also shared backend services:
 `eefn permissions show`, `eefn permissions allow FEATURE`, and
 `eefn permissions deny FEATURE`; approved coordinator adapters use

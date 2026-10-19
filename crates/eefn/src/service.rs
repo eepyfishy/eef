@@ -943,6 +943,14 @@ impl NodeService {
             .and_then(Value::as_bool)
             == Some(true);
         match action {
+            "relay_command" => self.relay_command(serde_json::from_value(params)?, true),
+            "relay_status" => {
+                let request: crate::relay_setup::RelayRequest = serde_json::from_value(params)?;
+                if !matches!(request.command, crate::relay_setup::RelayCommand::Show) {
+                    bail!("Reserved relay status action mismatch")
+                }
+                self.relay_command(request, true)
+            }
             "permission_command" => self.permission_command(serde_json::from_value(params)?, true),
             "permission_status" => {
                 let request: crate::permission_commands::PermissionRequest =

@@ -296,6 +296,7 @@ impl NodeClient {
         status["registration_observation"] = Value::Null;
         if state != "connected" {
             status["peer_transfer"] = Value::Null;
+            status["control_local_ip"] = Value::Null;
         }
     }
 
@@ -388,11 +389,12 @@ impl NodeClient {
     async fn probe_endpoint(
         &self,
         endpoint: &CoordinatorEndpoint,
-    ) -> Result<crate::tls::NodeStream> {
+    ) -> Result<(crate::tls::NodeStream, std::net::IpAddr)> {
         self.connection_status("checking", &endpoint.address, None, 0.0);
         let (host, port) = parse_endpoint(&endpoint.address)?;
         let stream = timeout(Duration::from_secs(5), async {
             let mut stream = TcpStream::connect((host.as_str(), port)).await?;
+            let local_ip = stream.local_addr()?.ip();
             let stream: crate::tls::NodeStream = if let Some(config) = &self.tls_config {
                 crate::authentication::write_selector(&mut stream, &self.config.node_id).await?;
                 crate::tls::connect(
@@ -423,7 +425,7 @@ impl NodeClient {
                 && reply["protocol"] == crate::PROTOCOL_VERSION
             {
                 // Preserve any read-ahead bytes across probe/authentication.
-                return Ok(Box::new(connection) as crate::tls::NodeStream);
+                return Ok((Box::new(connection) as crate::tls::NodeStream, local_ip));
             }
             // 0.3.x answers this encrypted probe with an auth denial and closes.
             // This proves service reachability only. Normal authentication remains
@@ -432,8 +434,9 @@ impl NodeClient {
                 && reply["type"] == "denied"
                 && reply["error"] == "auth failed"
             {
-                return Ok(Box::new(TcpStream::connect((host.as_str(), port)).await?)
-                    as crate::tls::NodeStream);
+                let fallback = TcpStream::connect((host.as_str(), port)).await?;
+                let local_ip = fallback.local_addr()?.ip();
+                return Ok((Box::new(fallback) as crate::tls::NodeStream, local_ip));
             }
             bail!("EEF returned an invalid reachability response")
         })
@@ -445,7 +448,7 @@ impl NodeClient {
 
     async fn serve_endpoint(&self, endpoint: &CoordinatorEndpoint) -> Result<()> {
         let (host, port) = parse_endpoint(&endpoint.address)?;
-        let stream = self.probe_endpoint(endpoint).await?;
+        let (stream, local_ip) = self.probe_endpoint(endpoint).await?;
         let (reader, writer) = tokio::io::split(stream);
         let mut reader = BufReader::new(reader);
         let writer = Arc::new(Mutex::new(writer));
@@ -469,6 +472,9 @@ impl NodeClient {
         if reply.get("type").and_then(Value::as_str) != Some("ok") {
             bail!("coordinator denied auth: {reply}");
         }
+        // Local interface observation only, not a peer route/reachability proof.
+        // Configuration uses it only on a connected pinned-TLS control session.
+        self.status.lock().expect("status")["control_local_ip"] = json!(local_ip);
         let specs = telemetry_worker(system_specs).await?;
         let grant_session = reply["grant_session_id"]
             .as_str()

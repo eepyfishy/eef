@@ -583,7 +583,7 @@ fn parse_runtime_id(response: &Value, id: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("node requires runtime-aware diagnostics"))
 }
 
-fn control_status(reply: &Value, id: &str) -> bool {
+pub(crate) fn control_status(reply: &Value, id: &str) -> bool {
     reply["success"] == true
         && reply["data"]["control_schema_version"] == 1
         && reply["data"]["node_id"] == id

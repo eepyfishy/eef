@@ -111,6 +111,10 @@ impl NodeService {
                 "/api/commands/permissions",
                 post(permission_command).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
+            .route(
+                "/api/commands/relay",
+                post(relay_command).layer(axum::extract::DefaultBodyLimit::max(8192)),
+            )
             .route("/api/commands/model-lifecycle", post(model_lifecycle))
             .route(
                 "/api/commands/model-lifecycle-policy",
@@ -243,6 +247,12 @@ async fn permission_command(
     Json(request): Json<crate::permission_commands::PermissionRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.permission_command(request, false)?))
+}
+async fn relay_command(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::relay_setup::RelayRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.relay_command(request, false)?))
 }
 async fn model_lifecycle(
     State(state): State<Arc<NodeService>>,

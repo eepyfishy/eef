@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Configure finite audio relay resources; never enable permissions or execute.
+    Relay {
+        #[command(subcommand)]
+        command: eefn::relay_setup::RelayAction,
+    },
     /// Inspect or explicitly allow/deny whole features; never execute or restart.
     Permissions {
         #[command(subcommand)]
@@ -1651,7 +1656,102 @@ async fn execute_setup_check(args: &Args, local_plan: bool) -> Result<serde_json
     Ok(value)
 }
 
+async fn execute_relay_command(
+    args: &Args,
+    action: &eefn::relay_setup::RelayAction,
+) -> Result<serde_json::Value> {
+    use eefn::relay_setup::{RelayAction, RelayCommand, RelayRequest};
+    use serde_json::json;
+    if let RelayAction::Configure(settings) = action {
+        settings.validate()?;
+    }
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start this node first; relay setup never launches a runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    let mutation = matches!(action, RelayAction::Configure(_));
+    let mut sending_mutation = false;
+    let exchange = async {
+        let response = client
+            .get(format!("http://{address}/api/diagnostics"))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Node diagnostics unavailable")
+        }
+        let diagnostics = eefn::model_manager::bounded_json(response).await?;
+        if diagnostics["node_id"] != file.node_id || diagnostics["success"] != true {
+            bail!("Unconfirmed node diagnostics")
+        }
+        let mut request = RelayRequest {
+            schema_version: 1,
+            expected_node_id: file.node_id.clone(),
+            expected_runtime_id: diagnostics["runtime_id"]
+                .as_str()
+                .context("Node runtime unavailable")?
+                .into(),
+            command: RelayCommand::Show,
+        };
+        request.validate()?;
+        let url = format!("http://{address}/api/commands/relay");
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Relay setup inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::relay_setup::confirmed(&inspected, &request) {
+            bail!("Unconfirmed relay setup inspection")
+        }
+        let RelayAction::Configure(settings) = action else {
+            return Ok::<_, anyhow::Error>(inspected);
+        };
+        request.command = RelayCommand::Configure {
+            settings: settings.clone(),
+            expected_digest: inspected["saved_digest"]
+                .as_str()
+                .context("Relay setup digest missing")?
+                .into(),
+        };
+        request.validate()?;
+        sending_mutation = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Relay configuration was not confirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::relay_setup::confirmed(&saved, &request) {
+            bail!("Unconfirmed relay configuration reply")
+        }
+        Ok(saved)
+    }
+    .await;
+    let success = exchange.is_ok();
+    Ok(
+        json!({"schema_version":1,"report_type":"node_relay_setup_command","node_id":file.node_id,
+        "success":success,"mutation_requested":mutation,"sending_attempted":sending_mutation,
+        "outcome_unknown":!success && sending_mutation,"result":exchange.ok(),
+        "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "note":"Inspect relay show after uncertainty; no retry, permission change, restart or workload was sent."}),
+    )
+}
+
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Relay { command } = command {
+        return execute_relay_command(args, command).await;
+    }
     if let Commands::Permissions { command } = command {
         return execute_permission_command(args, command).await;
     }
@@ -2366,6 +2466,14 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     print!("{}", eefn::local_setup::render(&value)?);
                 } else if matches!(command, Commands::Setup { .. }) {
                     print!("{}", eefn::setup_check::render(&value)?);
+                } else if matches!(command, Commands::Relay { .. }) {
+                    if value["success"] == true {
+                        print!("{}", eefn::relay_setup::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Relay setup outcome was not confirmed. Inspect `eefn relay show` before deciding what to do. No retry, restart or workload was sent."
+                        );
+                    }
                 } else if matches!(command, Commands::Permissions { .. }) {
                     if value["success"] == true {
                         print!("{}", eefn::permission_commands::render(&value["result"])?);
@@ -2865,6 +2973,7 @@ async fn run_node(
         status["hardware"] = hardware;
         status["runtime_id"] = serde_json::json!(runtime_id);
         status["peer_transfer"] = serde_json::Value::Null;
+        status["control_local_ip"] = serde_json::Value::Null;
         status["metadata"] = serde_json::json!(file.metadata.advertised(&engine.capabilities()));
         status["network"] = serde_json::json!(file.network);
         status["name"] = serde_json::json!(file.name);
@@ -3170,6 +3279,42 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn relay_setup_cli_preserves_explicit_roles_without_json_or_authority_flags() {
+        let args =
+            Args::try_parse_from(["eefn", "relay", "configure", "--microphone", "--receive"])
+                .unwrap();
+        let Some(Commands::Relay {
+            command: eefn::relay_setup::RelayAction::Configure(settings),
+        }) = args.command
+        else {
+            panic!("wrong relay command")
+        };
+        assert!(settings.microphone && settings.receive);
+        assert!(settings.address.is_none());
+        assert!(settings.port.is_none());
+        settings.validate().unwrap();
+        for extra in [
+            vec!["--send-only"],
+            vec!["--port", "0"],
+            vec!["--address", "untrusted.invalid"],
+            vec!["--permissions"],
+            vec!["--execute"],
+            vec!["--restart"],
+            vec!["--force"],
+            vec!["--retry"],
+        ] {
+            assert!(
+                Args::try_parse_from(
+                    ["eefn", "relay", "configure", "--receive"]
+                        .into_iter()
+                        .chain(extra)
+                )
+                .is_err()
+            );
+        }
+        assert!(Args::try_parse_from(["eefn", "permissions", "allow", "peer-transfers"]).is_ok());
+    }
     #[test]
     fn command_and_runtime_futures_remain_bounded() {
         // Inspect types without constructing/polling the futures or doing IO.

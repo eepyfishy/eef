@@ -48,7 +48,7 @@ async function port(){const s=tcpServer();await new Promise(r=>s.listen(0,'127.0
 const exists=path=>stat(path).then(()=>true,()=>false);
 try{
  const python=process.env.EEF_TEST_PYTHON, cameraPlugin=join(scratch,'synthetic-camera.py'),micPlugin=join(scratch,'synthetic-mic.py'),speakerPlugin=join(scratch,'synthetic-speaker.py');
- const audioAddress=python?`127.0.0.1:${await port()}`:null;
+ let audioAddress=null;
  if(python){
   await stat(python);
   assert.equal(await exists(join(bin,'python/plugins/camera.py')),false,'Use isolated development binaries without an installed built-in camera plugin');
@@ -116,10 +116,10 @@ def handle(action,params):
   if(python){
    value.python=python;value.python_plugins=role==='origin'?[micPlugin]:[cameraPlugin,speakerPlugin];
    value.python_bridge={timeout_seconds:role==='origin'?10:2,max_request_bytes:65536,max_stdout_bytes:1048576,max_stderr_bytes:1024};
-   value.permissions.media.microphone=role==='origin';value.permissions.media.audio_output=role==='executor';
-   value.permissions.peer_transfers={enabled:true};
-   value.peer_destination_address=role==='executor'?audioAddress:null;
-   value.metadata={resources:[{id:'transport',capability:'peer.transfer'},role==='origin'?{id:'microphone',capability:'audio.capture',parameters:{device:0}}:{id:'speaker',capability:'audio.play'}]};
+   value.permissions.media.microphone=false;value.permissions.media.audio_output=false;
+   value.permissions.peer_transfers={enabled:false};
+   value.peer_destination_address=null;
+   value.metadata={resources:[],extensions:{fixture_keep:true}};
   }
   // With the explicitly supplied interpreter, isolate cwd so built-in plugin
   // lookup cannot import the repository's real camera adapter. The configured
@@ -134,6 +134,38 @@ def handle(action,params):
  const old=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==old,'apply pinned credentials/disclosure');
  for(const node of nodes)await local(node,['connection','resume']);
  await until(async()=>{const status=await json(executor.url+'/api/status');return status.execution_grants.available&&status.capabilities.includes('pipeline.run')&&(await json(eef+'/api/diagnostics')).registered_node_count===2;},'pipeline registration');
+ if(python){
+  checkpoint('typed-relay-setup');
+  for(const node of nodes){
+   const before=JSON.parse(await readFile(node.config,'utf8')),runtime=(await json(node.url+'/api/diagnostics')).runtime_id;
+   const configured=await local(node,['relay','configure',node===origin?'--microphone':'--receive']);
+   assert.equal(configured.success,true);assert.equal(configured.result.changed,true);
+   assert.equal(configured.result.peer_permission_saved,false,'resource setup never enables permissions');
+   assert.equal(configured.result.restart_requested,false);assert.equal(configured.result.execution_authorized,false);
+   assert.equal((await json(node.url+'/api/diagnostics')).runtime_id,runtime,'setup never restarts');
+   const saved=JSON.parse(await readFile(node.config,'utf8'));
+   for(const key of ['node_id','name','psk','coordinator_certificate','permissions','models','endpoints'])assert.deepEqual(saved[key],before[key],`setup preserves ${key}`);
+   assert.deepEqual(saved.metadata.extensions,before.metadata.extensions);
+   const repeated=await local(node,['relay','configure',node===origin?'--microphone':'--receive','--transport-resource',configured.result.saved_resources.find(r=>r.capability==='peer.transfer').id]);assert.equal(repeated.result.changed,false);
+   assert.deepEqual(JSON.parse(await readFile(node.config,'utf8')),saved,'repeat configuration preserves generated resource IDs and route');
+   const remoteRead=await owner(['node','relay','--node',node.id,'show']);assert.deepEqual(remoteRead.result.saved_resources,configured.result.saved_resources);
+   const denied=await cli('eef',eefConfig,['node','relay','--node',node.id,'configure',node===origin?'--microphone':'--send-only'],undefined,false);
+   assert.equal(denied.success,false);assert.deepEqual(JSON.parse(await readFile(node.config,'utf8')),saved,'remote writes need current local consent');
+   await local(node,['permissions','allow','peer-transfers']);
+   await local(node,['permissions','allow',node===origin?'microphone':'audio-output']);
+   assert.equal((await local(node,['relay','show'])).result.peer_permission_applied,false,'saving consent does not apply/restart the runtime');
+   node.relay=configured.result;
+  }
+  await local(executor,['permissions','allow','remote-management']);
+  const senderOnly=await owner(['node','relay','--node',executor.id,'configure','--send-only']);assert.equal(senderOnly.result.saved_receive_address,null);
+  const receiving=await owner(['node','relay','--node',executor.id,'configure','--receive']);
+  assert.equal(receiving.result.changed,true);assert.deepEqual(receiving.result.saved_resources,executor.relay.saved_resources);
+  audioAddress=receiving.result.saved_receive_address;assert(audioAddress.startsWith('127.0.0.1:'));
+  const plain=await launch('eefn',executor.config,['relay','show']).result;assert.equal(plain.code,0);assert(plain.out.includes('loopback-only'));
+  assert.equal(calls.length,0);assert.equal(await exists(join(scratch,'audio-captured.json')),false);assert.equal(await exists(join(scratch,'audio-played.json')),false);
+  for(const node of nodes){await local(node,['restart','--wait-seconds','30']);}
+  await until(async()=>{const a=await local(origin,['relay','show']),b=await owner(['node','relay','--node',executor.id,'show']);return a.result.session_advertised&&b.result.session_advertised&&!a.result.restart_required&&!b.result.restart_required;},'apply explicit relay setup/consent restart');
+ }
  for(const base of [eef,...nodes.map(n=>n.url)])assert.equal((await fetch(base+'/')).status,404);
  const review=reviewedFixture(eef,origin.url,origin.id);
  async function progressReceipt(id,grantId){
@@ -201,8 +233,8 @@ def handle(action,params):
   checkpoint('finite-peer-audio');
   await until(async()=>{const a=await json(origin.url+'/api/status'),b=await json(executor.url+'/api/status');return a.peer_advertisement?.finite_audio&&b.peer_advertisement?.finite_audio;},'audio registration');
   const audioInput={template:'peer_transfer',constraints:{},params:{transfer:{schema_version:2,
-   source:{node_id:origin.id,resource_id:origin.id+'::transport'},destination:{node_id:executor.id,resource_id:executor.id+'::transport'},payload_bytes:17026,
-   audio:{duration_ms:500,sample_rate:16000,channels:1,source_resource_id:origin.id+'::microphone',destination_resource_id:executor.id+'::speaker'},
+   source:{node_id:origin.id,resource_id:origin.relay.saved_resources.find(r=>r.capability==='peer.transfer').id},destination:{node_id:executor.id,resource_id:executor.relay.saved_resources.find(r=>r.capability==='peer.transfer').id},payload_bytes:17026,
+   audio:{duration_ms:500,sample_rate:16000,channels:1,source_resource_id:origin.relay.saved_resources.find(r=>r.capability==='audio.capture').id,destination_resource_id:executor.relay.saved_resources.find(r=>r.capability==='audio.play').id},
    limits:{max_wire_bytes:1048576,max_bytes_per_second:1048576,max_frame_bytes:4096,max_frames:256,max_inflight_frames:1}}}};
   async function audioCounts(){
    return Promise.all(['audio-captured.json','audio-played.json'].map(async name=>
@@ -363,6 +395,7 @@ def handle(action,params):
   bounded_explicit_recurring_graph:true,two_fresh_approved_parent_occurrences:true,no_work_before_policy_and_enable:true,immutable_automatic_source:true,
   exhausted_schedule_no_receipt_rearm_or_restart_replay:true,
   real_python_bridge:!!python,synthetic_finite_peer_audio:!!python,physical_audio:false,
+  typed_local_and_remote_relay_setup:!!python,setup_without_json_resources_or_port_numbers:!!python,setup_never_grants_permissions_or_restarts:!!python,
   paired_audio_permission_and_route_revocation:!!python,malformed_audio_never_played:!!python,paired_audio_no_replay:!!python,
   continuous_workloads:false,physical_resource_quota_proven:false,strong_stop_acknowledgement:false},null,2));
  checkpoint('passed');console.log('Public local pipeline validation passed: '+scratch);

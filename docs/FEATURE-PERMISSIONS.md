@@ -31,6 +31,7 @@ for the whole feature, not an inspection or automatic permission grant.
 | `speech-to-text` | Existing STT enabled flag; requires configured owner endpoint/model |
 | `microphone`, `audio-output`, `text-to-speech` | Existing media flags |
 | `camera`, `screen-capture`, `input-control` | Existing media flags |
+| `peer-transfers` | Existing peer transport switch and local byte/rate/session limits; no work approval |
 | `remote-updates` | Existing owner update permission; does not choose an update/feed |
 | `remote-management` | Existing current owner approval for management from EEF |
 

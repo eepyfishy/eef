@@ -22,11 +22,12 @@ pub enum Feature {
     Camera,
     ScreenCapture,
     InputControl,
+    PeerTransfers,
     RemoteUpdates,
     RemoteManagement,
 }
 impl Feature {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::FilesystemRead,
         Self::FilesystemWrite,
         Self::ProcessExecution,
@@ -40,6 +41,7 @@ impl Feature {
         Self::Camera,
         Self::ScreenCapture,
         Self::InputControl,
+        Self::PeerTransfers,
         Self::RemoteUpdates,
         Self::RemoteManagement,
     ];
@@ -58,6 +60,7 @@ impl Feature {
             Self::Camera => "/permissions/media/camera",
             Self::ScreenCapture => "/permissions/media/screen_capture",
             Self::InputControl => "/permissions/media/input_control",
+            Self::PeerTransfers => "/permissions/peer_transfers/enabled",
             Self::RemoteUpdates => "/permissions/remote_updates",
             Self::RemoteManagement => "/management/allow_remote",
         }
@@ -88,6 +91,7 @@ impl Feature {
             Self::Camera => "Camera",
             Self::ScreenCapture => "Screen capture",
             Self::InputControl => "Keyboard / mouse",
+            Self::PeerTransfers => "Approved peer transfers",
             Self::RemoteUpdates => "Remote updates",
             Self::RemoteManagement => "Management from EEF",
         }

@@ -52,6 +52,7 @@ mod process_lifetime;
 pub mod protocol;
 pub mod python;
 pub mod registration;
+pub mod relay_setup;
 pub mod request_abandon;
 pub mod request_drafts;
 pub mod request_execution;

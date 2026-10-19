@@ -195,6 +195,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(node_permissions).layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
         .route(
+            "/api/commands/node/relay",
+            post(node_relay).layer(axum::extract::DefaultBodyLimit::max(8192)),
+        )
+        .route(
             "/api/commands/node/model-lifecycle",
             post(node_model_lifecycle),
         )
@@ -416,6 +420,14 @@ async fn node_model_lifecycle(
 ) -> ApiResult<Value> {
     Ok(Json(
         crate::node_control::model_lifecycle(&runtime.node_server, request).await?,
+    ))
+}
+async fn node_relay(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::node_relay::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_relay::command(&runtime.node_server, request).await?,
     ))
 }
 async fn node_permissions(

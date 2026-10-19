@@ -3,6 +3,50 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: typed local and EEF relay configuration
+
+`eefn relay show/configure` and `eef node relay --node NODE_ID show/configure`
+now use one node-owned setup service. They create missing transport/microphone/
+speaker resource declarations, reuse unambiguous existing bindings and preserve
+credentials, identity, permissions, models and future settings. Qualified IDs
+from `relay show` can be copied into selectors; foreign, ambiguous, disabled or
+incompatible resources are not silently substituted. Binding changes are saved
+with exact runtime/configuration checks; private adapter parameters are omitted
+from reports. The existing feature command adds the separate `peer-transfers`
+switch while retaining byte/rate/session limits. See [commands and limits](RELAY-SETUP.md).
+
+Receiving can select this node's authenticated pinned-control local interface
+and an OS candidate port by temporarily binding without listening/connecting.
+The candidate is not a reservation or peer connectivity proof; loopback-only
+routes are reported explicitly, and an advanced local IP/port override remains
+available. Source interface observations are cleared on connection retirement
+and runtime replacement. Configuration never starts media, grants permissions,
+changes pairing/discovery, restarts, approves work or introduces another runner.
+Remote writes recheck current local management consent under the config lock.
+
+Fresh headless binaries/examples build. Public `local-pipelines-IYFmFP` starts
+with no relay resources and disabled peer/media switches, configures both
+logical nodes through local/EEF commands without JSON/resource UUIDs/port numbers,
+checks preserved identity/preferences and stable repeated setup, then separately
+consents/restarts and passes finite synthetic audio and existing pipeline cases.
+No real microphone, speaker or camera is opened; physical two-PC acceptance is
+not implied. `permission-commands-fdTaoc` additionally verifies dropped,
+corrupted/prose and unsupported configuration replies: exactly one write attempt,
+no permission widening, restart, resource reallocation, retry or generic fallback.
+Existing `node-commands-1T98D6`, `model-downloads-1v0ayB`,
+`node-credentials-K1sYfL`, `request-drafts-8vjLe5`, browser copy/status smoke and
+the recursive backend/browser source guard pass. Fixture apps/helpers are terminal.
+
+Both locked/offline workspace/all-target modes pass **839 tests plus one ignored
+each**, including no-dashboard: EEF 261 plus one ignored profiler, owner CLI 18,
+installer 6, EEFN 533 and node CLI 21. Final headless binaries/examples build and
+match the evaluated production binary hashes; fixture apps/helpers are terminal.
+No installed/remote node, UI source, model, published installer, version or update
+policy changed. JSON-free audio-job authoring, complete first-run model/dependency
+setup, physical two-PC media/termination/resource tests, continuous media/virtual
+devices, mesh/ESP/Bluetooth, measured migration, coordinator cluster safety and
+signing/Defender/stable-release acceptance remain unfinished.
+
 ## Unreleased: opt-in finite microphone-to-speaker peer execution
 
 Native app startup can now opt into finite PCM16 capture/transfer/playback using

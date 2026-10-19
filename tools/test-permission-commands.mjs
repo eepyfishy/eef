@@ -12,7 +12,7 @@ const scratch=await mkdtemp(join(root,'.validation/permission-commands-')),child
 const nodeConfig=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml'),id='permissions-fixture';let node,eef,proxyMode='drop',writes=0;
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 const proxy=createServer(async(req,res)=>{
- try{let body='';for await(const part of req)body+=part;const incoming=body&&JSON.parse(body),mutation=incoming?.command?.operation==='set';
+ try{let body='';for await(const part of req)body+=part;const incoming=body&&JSON.parse(body),mutation=['set','configure'].includes(incoming?.command?.operation);
   if(mutation){writes++;if(proxyMode==='old'){res.writeHead(404);return res.end('{}');}}
   const response=await fetch(node+req.url,{method:req.method,headers:{'Content-Type':'application/json'},body:body||undefined,signal:AbortSignal.timeout(10000)});const value=await response.json();
   if(mutation){if(proxyMode==='drop')return res.destroy();if(proxyMode==='corrupt')value.execution_authorized=true;if(proxyMode==='prose')value.note='PRIVATE-MUST-NOT-ECHO';}
@@ -55,6 +55,24 @@ try{
   await writeFile(marker,JSON.stringify(endpoint));try{const value=await local(['permissions','allow','http-requests'],false);assert.equal(value.outcome_unknown,true);assert.equal(value.automatically_retried,false);assert.equal(writes,count+1);assert(!JSON.stringify(value).includes('PRIVATE-MUST-NOT-ECHO'));}finally{await writeFile(marker,original);}
   assert.equal(feature(await show(),'http_requests').saved,mode==='old'?'disabled':'feature_wide');
  }
+ // Relay configuration has the same no-retry rule even though it does not
+ // grant permissions or execute work. Corrupt/lost responses must not allocate
+ // replacement resources or silently write twice.
+ const relaySetup=(await local(['relay','configure','--microphone'])).result;
+ const microphoneId=relaySetup.saved_resources.find(row=>row.capability==='audio.capture').id.split('::')[1];
+ const relayPermissions=JSON.parse(await readFile(nodeConfig,'utf8')).permissions;
+ for(const [index,mode] of ['drop','corrupt','prose','old'].entries()){
+  const before=JSON.parse(await readFile(nodeConfig,'utf8')),marker=nodeConfig+'.api.json',original=await readFile(marker,'utf8'),endpoint=JSON.parse(original);endpoint.address=`127.0.0.1:${proxy.address().port}`;proxyMode=mode;const count=writes;
+  await writeFile(marker,JSON.stringify(endpoint));
+  try{const value=await local(['relay','configure','--microphone','--microphone-device',String(index)],false);assert.equal(value.outcome_unknown,true);assert.equal(value.automatically_retried,false);assert.equal(writes,count+1);assert(!JSON.stringify(value).includes('PRIVATE-MUST-NOT-ECHO'));}
+  finally{await writeFile(marker,original);}
+  const after=JSON.parse(await readFile(nodeConfig,'utf8'));
+  assert.deepEqual(after.permissions,relayPermissions,'uncertain setup never grants permissions');
+  assert.deepEqual(after.metadata.resources.map(r=>r.id),before.metadata.resources.map(r=>r.id));
+  const microphone=after.metadata.resources.find(r=>r.id===microphoneId),previous=before.metadata.resources.find(r=>r.id===microphoneId);
+  assert.equal(microphone.parameters?.device,mode==='old'?previous.parameters?.device:index);
+  assert.equal((await local(['relay','show'])).result.runtime_id,relaySetup.runtime_id,'uncertain setup never restarts');
+ }
  await local(['permissions','deny','http-requests']);await local(['permissions','allow','process-execution']);await local(['restart']);
  await until(async()=>(await json(node+'/api/status')).connection.state==='connected','applied features reconnected');
  assert.equal(feature(await show(),'filesystem_write').applied,'feature_wide');assert.equal(feature(await show(),'process_execution').applied,'feature_wide');
@@ -80,7 +98,8 @@ try{
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,no_models:true,no_ui_controller:true,plain_text_and_json:true,
   no_per_object_allowlists:true,byte_limits_and_unrelated_settings_preserved:true,saved_applied_separation:true,remote_owner_approval_and_revocation:true,
   stale_digest_and_cross_origin_and_body_bounds:true,lost_corrupt_unsupported_write_no_retry_or_fallback:true,reviewed_real_filesystem_effect:true,
-  native_pending_work_revocation:process.platform==='win32',administrator_bypass:false,automatic_restart:false,automatic_permissions:false},null,2));
+  native_pending_work_revocation:process.platform==='win32',uncertain_relay_configuration_no_retry_or_resource_reallocation:true,
+  administrator_bypass:false,automatic_restart:false,automatic_permissions:false},null,2));
  console.log('Permission command validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;
 }finally{for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));proxy.closeAllConnections();await new Promise(r=>proxy.close(r));}

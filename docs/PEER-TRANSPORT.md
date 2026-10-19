@@ -27,8 +27,10 @@ materials are saved atomically. Destination readiness must be durably observed
 before dispatching the source. Both nodes consume their existing grants before
 effects; repeated execution or reconnect never replays them.
 
-Advanced setup currently requires owner configuration, not a finished non-coder
-workflow. Set `permissions.peer_transfers.enabled`, provide an available
+Owner setup now has [typed local/EEF commands](RELAY-SETUP.md), including missing
+resource declarations and OS-selected receiver ports; complete non-coder media
+acceptance is not claimed. The underlying configuration still needs
+`permissions.peer_transfers.enabled` and an available
 `peer.transfer` transport resource, and enable the appropriate microphone/output
 switch and installed Python adapter. The source needs a physical `audio.capture`
 resource, optionally with its `device` binding; the destination needs an

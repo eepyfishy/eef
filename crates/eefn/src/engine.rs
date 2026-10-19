@@ -332,6 +332,9 @@ impl NodeEngine {
     pub(crate) fn applied_permissions(&self) -> &NodePolicy {
         &self.policy
     }
+    pub(crate) fn applied_resources(&self) -> &[crate::context::Resource] {
+        &self.resources
+    }
     fn media_allowed(&self, capability: &str) -> bool {
         match capability {
             "audio.capture" => self.policy.media.microphone,

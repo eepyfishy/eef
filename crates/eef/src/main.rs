@@ -99,6 +99,13 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum NodeCommand {
+    /// Configure finite relay resources with current local node-owner approval.
+    Relay {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eefn::relay_setup::RelayAction,
+    },
     /// Inspect or allow/deny whole node features with current local node-owner approval.
     Permissions {
         #[arg(long)]
@@ -191,6 +198,56 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn relay_setup_cli_never_includes_workload_or_permission_authority() {
+        let args = Args::try_parse_from([
+            "eef",
+            "node",
+            "relay",
+            "--node",
+            "node",
+            "configure",
+            "--microphone",
+            "--receive",
+            "--address",
+            "127.0.0.1",
+        ])
+        .unwrap();
+        let Some(Command::Node {
+            command:
+                NodeCommand::Relay {
+                    command: eefn::relay_setup::RelayAction::Configure(settings),
+                    ..
+                },
+        }) = args.command
+        else {
+            panic!("wrong relay command")
+        };
+        assert!(settings.microphone && settings.receive);
+        assert!(settings.port.is_none());
+        settings.validate().unwrap();
+        for flag in [
+            "--execute",
+            "--permissions",
+            "--restart",
+            "--force",
+            "--retry",
+        ] {
+            assert!(
+                Args::try_parse_from([
+                    "eef",
+                    "node",
+                    "relay",
+                    "--node",
+                    "node",
+                    "configure",
+                    "--microphone",
+                    flag
+                ])
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn remote_ollama_residency_cli_preserves_exact_policy_choices() {
         for extra in [
@@ -853,6 +910,72 @@ async fn owner_automation_exchange(
         "note":"Private automation checkpoints only, never timers or execution. Inspect the exact receipt after uncertainty. No new receipt, fallback or automatic retry."})
 }
 
+async fn remote_relay_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eefn::relay_setup::RelayAction,
+) -> Result<serde_json::Value> {
+    use eef::node_relay::Request;
+    use eefn::relay_setup::{RelayAction, RelayCommand};
+    use serde_json::json;
+    eefn::network::validate_remote_node_id(node)?;
+    if let RelayAction::Configure(settings) = action {
+        settings.validate()?;
+    }
+    let mutation_requested = matches!(action, RelayAction::Configure(_));
+    let mut sending_mutation = false;
+    let exchange = async {
+        let url = format!("{base}/api/commands/node/relay");
+        let mut request = Request {
+            schema_version: 1,
+            node_id: node.into(),
+            expected_runtime_id: None,
+            command: RelayCommand::Show,
+        };
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Relay inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_relay::confirmed(&inspected, &request) {
+            bail!("Unconfirmed relay inspection")
+        }
+        let RelayAction::Configure(settings) = action else {
+            return Ok::<_, anyhow::Error>(inspected);
+        };
+        request.expected_runtime_id = Some(
+            inspected["result"]["runtime_id"]
+                .as_str()
+                .context("Missing node runtime")?
+                .into(),
+        );
+        request.command = RelayCommand::Configure {
+            settings: settings.clone(),
+            expected_digest: inspected["result"]["saved_digest"]
+                .as_str()
+                .context("Missing relay configuration digest")?
+                .into(),
+        };
+        request.validate()?;
+        sending_mutation = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Relay save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_relay::confirmed(&saved, &request) {
+            bail!("Unconfirmed relay save")
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"remote_relay_setup","node_id":node,
+        "success":false,"mutation_requested":mutation_requested,"sending_attempted":sending_mutation,"outcome_unknown":sending_mutation,"result":null,
+        "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "error_code":"relay_setup_unconfirmed","note":"Inspect this exact node with relay show. No automatic retry, permissions, restart or workload was sent."})))
+}
+
 async fn remote_permissions_cli(
     client: &reqwest::Client,
     base: &str,
@@ -1409,6 +1532,11 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 .send().await?
         }
         Command::Node {
+            command: NodeCommand::Relay { node, command },
+        } => {
+            return remote_relay_cli(&client, &base, node, command).await;
+        }
+        Command::Node {
             command: NodeCommand::Permissions { node, command },
         } => {
             return remote_permissions_cli(&client, &base, node, command).await;
@@ -1627,6 +1755,21 @@ async fn main() -> Result<()> {
                     );
                 }
                 if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::Relay { .. }
+                        }
+                    )
+                {
+                    if value["success"] == true {
+                        print!("{}", eefn::relay_setup::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Relay setup outcome was not confirmed. Inspect this node with relay show. No retry, permission change, restart or workload was sent."
+                        );
+                    }
+                } else if !args.json
                     && matches!(
                         command,
                         Command::Node {

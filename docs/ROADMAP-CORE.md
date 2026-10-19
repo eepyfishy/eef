@@ -31,14 +31,23 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+Typed local/EEF relay setup now creates missing resource declarations and selects
+a receiver port without user JSON or port numbers. Existing bindings/settings
+survive repeated setup; ambiguous/disabled/foreign resources are not substituted.
+Setup never enables permissions, opens a listener or starts media/restarts.
+The separate `peer-transfers` switch retains existing limits; current local
+management consent gates EEF writes. Public synthetic command/fault cases pass.
+This is not JSON-free audio-job authoring, complete first-run dependency/model
+setup or physical acceptance. See [workflow and remaining scope](RELAY-SETUP.md).
+
 Advanced opt-in finite audio now connects the existing microphone and playback
 adapters to paired consumed grants and authenticated peer transport. Public
 commands pass synthetic one-PC acceptance, not finished continuous media or
 physical two-PC acceptance. Review discloses both media operations; saved
 permission/receive-route changes fence active work, and matching endpoint content
 reports are required.
-Defaults remain off; advanced resource/receiver configuration and the remaining
-non-coder setup, strong-stop and release gates are not complete. See
+Defaults remain off; complete non-coder media workflow, strong-stop and release
+gates are not complete. See
 [contract and limits](PEER-TRANSPORT.md#finite-capture-to-playback-unreleased-advanced-configuration).
 
 The Python-backed capture/extension boundary now uses bounded request/stdout/
