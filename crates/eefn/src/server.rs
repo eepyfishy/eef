@@ -468,6 +468,8 @@ impl NodeServer {
         }
         session["runtime_generation"] = json!(support.runtime_generation);
         session["destination_address"] = json!(support.destination_address);
+        session["finite_transport"] = json!(support.finite_transport);
+        session["finite_audio"] = json!(support.finite_audio);
         Ok(session)
     }
     fn check_grant_connection(&self, c: &Connection) -> Result<()> {
@@ -688,7 +690,14 @@ impl NodeServer {
                 let support: crate::peer::plan::Advertisement =
                     serde_json::from_value(r["peer_transfer"].clone())?;
                 support.validate()?;
-                let (role, _) = crate::peer::admission::Definition::from_grant(g)?;
+                let (role, definition) = crate::peer::admission::Definition::from_grant(g)?;
+                if if definition.audio.is_some() {
+                    !support.finite_audio
+                } else {
+                    !support.finite_transport
+                } {
+                    bail!("Peer content support changed before dispatch")
+                }
                 let key = if role == crate::peer::scope::Role::Source {
                     "source"
                 } else {

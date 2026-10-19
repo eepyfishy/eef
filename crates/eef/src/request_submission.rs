@@ -201,6 +201,48 @@ mod tests {
         );
     }
     #[test]
+    fn explicit_peer_content_survives_review_without_authorizing_execution() {
+        let engine = TaskEngine::new(EventBus::new(20));
+        for version in [1, 2] {
+            let mut transfer = json!({"schema_version":version,
+                "source":{"node_id":"source","resource_id":"source::transport"},
+                "destination":{"node_id":"sink","resource_id":"sink::transport"},
+                "payload_bytes":3,"payload_sha256":"a".repeat(64),
+                "limits":{"max_wire_bytes":1048576,"max_bytes_per_second":1048576,
+                    "max_frame_bytes":4096,"max_frames":256,"max_inflight_frames":1}});
+            if version == 2 {
+                transfer.as_object_mut().unwrap().remove("payload_sha256");
+                transfer["payload_bytes"] = json!(17026);
+                transfer["audio"] = json!({"duration_ms":500,"sample_rate":16000,"channels":1,
+                    "source_resource_id":"source::microphone",
+                    "destination_resource_id":"sink::speaker"});
+            }
+            let mut input = input();
+            input.input = serde_json::from_value(json!({"schema_version":1,
+                "template":"peer_transfer","params":{"transfer":transfer},"constraints":{}}))
+            .unwrap();
+            let context =
+                RequestContext::new(uuid::Uuid::new_v4().to_string(), "source".into(), vec![])
+                    .unwrap();
+            let mut review = draft(&input, &context);
+            review.proposals[0].allowed_capabilities =
+                eefn::request_planning::concrete_capabilities(&input.input).unwrap();
+            let saved = crate::request_drafts::store_review(&engine, review, &context).unwrap();
+            matches_source(&saved.plan, &input).unwrap();
+            assert_eq!(saved.plan.status, PlanStatus::Review);
+            assert!(saved.plan.approval.is_none());
+            assert!(saved.plan.execution.is_none());
+            assert!(saved.plan.tasks.is_empty());
+            assert!(!eefn::request_planning::METHOD_TEMPLATES.contains(&"peer_transfer"));
+            let mut hidden = saved.plan.request_review.unwrap();
+            hidden.proposals[0].allowed_capabilities.clear();
+            assert!(
+                hidden.validate().is_err(),
+                "explicit work still needs disclosed capabilities"
+            );
+        }
+    }
+    #[test]
     fn explicit_input_cannot_be_rebound_by_compilation_or_hidden_by_omitting_the_source() {
         let engine = TaskEngine::new(EventBus::new(20));
         let mut saved = crate::request_planning::tests::review(&engine);

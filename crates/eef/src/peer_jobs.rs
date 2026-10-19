@@ -211,6 +211,18 @@ pub(crate) fn validate_retained(p: &Plan) -> Result<bool> {
         _ => bail!("Incomplete or misplaced paired issuance"),
     }
     if e.peer.is_some() {
+        let reports = e
+            .attempts
+            .iter()
+            .filter_map(|a| a.report.as_ref())
+            .filter(|r| r.state == ReceiptState::Completed && r.success)
+            .collect::<Vec<_>>();
+        if reports.len() == 2
+            && (reports[0].data["payload_bytes"] != reports[1].data["payload_bytes"]
+                || reports[0].data["payload_sha256"] != reports[1].data["payload_sha256"])
+        {
+            bail!("Paired endpoints reported different content; no joint completion")
+        }
         if e.abandonment.is_some() || e.attempts.iter().any(|a| a.recovery.is_some()) {
             bail!("Unsupported partial paired recovery/closure")
         }
@@ -315,6 +327,14 @@ impl crate::request_execution::Driver {
             bail!("Paired transport requires explicit one-shot approval")
         }
         let sessions = [self.session(&p, 0).await?, self.session(&p, 1).await?];
+        let support = if pair.audio.is_some() {
+            "finite_audio"
+        } else {
+            "finite_transport"
+        };
+        if sessions.iter().any(|s| s[support] != true) {
+            bail!("An endpoint does not support the approved peer content mode")
+        }
         let mut reservations = Vec::new();
         for (i, s) in sessions.iter().enumerate() {
             let policy: eefn::grants::GrantPolicy = serde_json::from_value(s["limits"].clone())?;
@@ -326,13 +346,34 @@ impl crate::request_execution::Driver {
                 bail!("Peer issuer or owner bounds changed")
             }
             let t = &p.tasks[i];
+            let role = if i == 0 {
+                Role::Source
+            } else {
+                Role::Destination
+            };
+            let ep = pair.endpoint(role);
+            let dependencies = if let Some(audio) = &pair.audio {
+                vec![(
+                    if i == 0 {
+                        "audio.capture"
+                    } else {
+                        "audio.play"
+                    }
+                    .into(),
+                    if i == 0 { "record" } else { "play" }.into(),
+                    json!({"node_id":ep.node_id,"resource_id":audio.resource(role)}),
+                )]
+            } else {
+                vec![]
+            };
             let permit = self
                 .registry
-                .reserve_best_with_context(
+                .reserve_bundle_with_context(
                     &t.capability,
                     &t.action,
                     &t.constraints,
                     t.request_context.as_ref(),
+                    &dependencies,
                 )
                 .context("Peer provider has no scheduling capacity")?;
             let ep = pair.endpoint(if i == 0 {

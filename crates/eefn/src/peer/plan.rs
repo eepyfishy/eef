@@ -21,7 +21,10 @@ pub struct Pair {
     pub source: Endpoint,
     pub destination: Endpoint,
     pub payload_bytes: u64,
-    pub payload_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<super::audio::Audio>,
     pub limits: Limits,
 }
 impl Pair {
@@ -40,20 +43,25 @@ impl Pair {
             Role::Source
         });
         Definition {
-            schema_version: 1,
+            schema_version: self.schema_version,
             resource_id: local.resource_id.clone(),
             peer_node: remote.node_id.clone(),
             peer_resource_id: remote.resource_id.clone(),
             payload_bytes: self.payload_bytes,
             payload_sha256: self.payload_sha256.clone(),
+            audio: self.audio.clone(),
             limits: self.limits.clone(),
         }
     }
     pub fn validate(&self) -> Result<()> {
-        if self.schema_version != 1 || self.source.node_id == self.destination.node_id {
+        if ![1, 2].contains(&self.schema_version) || self.source.node_id == self.destination.node_id
+        {
             bail!("Invalid distinct peer pair")
         }
         self.definition(Role::Source).validate()?;
+        if let Some(audio) = &self.audio {
+            audio.validate_nodes(&self.source.node_id, &self.destination.node_id)?;
+        }
         self.definition(Role::Destination).validate()
     }
     pub fn from_params(value: &Value) -> Result<Self> {
@@ -83,12 +91,14 @@ pub struct Advertisement {
     pub schema_version: u32,
     pub runtime_generation: String,
     pub finite_transport: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub finite_audio: bool,
     pub destination_address: Option<SocketAddr>,
 }
 impl Advertisement {
     pub fn validate(&self) -> Result<()> {
         super::scope::uuid(&self.runtime_generation)?;
-        if self.schema_version != 1 || !self.finite_transport {
+        if self.schema_version != 1 || !(self.finite_transport || self.finite_audio) {
             bail!("Unsupported peer delivery protocol")
         }
         if let Some(address) = self.destination_address {

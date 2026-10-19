@@ -1,6 +1,6 @@
 //! Explicit finite producer bindings for the native control-session executor.
-//! No files, devices, capture, playback or implicit permissions. The embedding
-//! owner supplies immutable bytes; receive resources verify and discard bytes.
+//! Constructors create no effects or implicit permissions. Static embedding
+//! buffers verify/discard; finite audio invokes approved adapters under grants.
 use super::{
     admission::Definition,
     plan::Advertisement,
@@ -21,6 +21,7 @@ const MAX_RESOURCES: usize = 8;
 /// Deliberately not Debug/Serialize: source bytes never enter diagnostics,
 /// registration, scope material, model prompts or retained execution receipts.
 pub struct FiniteRuntime {
+    audio: bool,
     node_id: String,
     sources: BTreeMap<String, Arc<[u8]>>,
     receivers: BTreeSet<String>,
@@ -101,7 +102,8 @@ mod tests {
             peer_node: f.scope.destination.node_id.clone(),
             peer_resource_id: f.scope.destination.resource_id.clone(),
             payload_bytes: bytes.len() as u64,
-            payload_sha256: hex::encode(Sha256::digest(&bytes)),
+            payload_sha256: Some(hex::encode(Sha256::digest(&bytes))),
+            audio: None,
             limits: f.scope.limits.clone(),
         };
         let runtime = FiniteRuntime::new(
@@ -118,7 +120,7 @@ mod tests {
                 .as_deref(),
             Some(bytes.as_slice())
         );
-        d.payload_sha256 = "a".repeat(64);
+        d.payload_sha256 = Some("a".repeat(64));
         assert!(runtime.payload(Role::Source, &d, &f.scope).is_err());
         assert!(runtime.payload(Role::Destination, &d, &f.scope).is_err());
         let receiver = FiniteRuntime::new(
@@ -182,6 +184,7 @@ impl FiniteRuntime {
             bail!("Invalid bounded finite peer runtime bindings")
         }
         Ok(Self {
+            audio: false,
             node_id: node_id.into(),
             sources: sources
                 .into_iter()
@@ -211,11 +214,43 @@ impl FiniteRuntime {
     pub(crate) fn has_resource(&self, id: &str) -> bool {
         self.sources.contains_key(id) || self.receivers.contains(id)
     }
+    pub(crate) fn address(&self) -> Option<SocketAddr> {
+        self.address
+    }
+    /// Explicit finite audio bindings, not capture, playback or socket authority.
+    pub fn audio(
+        node_id: &str,
+        metadata: &crate::context::NodeMetadata,
+        address: Option<SocketAddr>,
+    ) -> Result<Self> {
+        crate::network::validate_remote_node_id(node_id)?;
+        metadata.validate()?;
+        if let Some(address) = address {
+            super::plan::validate_address(address)?;
+        }
+        let receivers: BTreeSet<String> = metadata
+            .resources
+            .iter()
+            .filter(|r| r.available && r.capability == "peer.transfer")
+            .map(|r| r.id.clone())
+            .collect();
+        if receivers.is_empty() || receivers.len() > MAX_RESOURCES {
+            bail!("Finite audio requires an available transport resource")
+        }
+        Ok(Self {
+            audio: true,
+            node_id: node_id.into(),
+            sources: BTreeMap::new(),
+            receivers,
+            address,
+        })
+    }
     pub(crate) fn advertisement(&self, generation: &str) -> Result<Advertisement> {
         let value = Advertisement {
             schema_version: 1,
             runtime_generation: generation.into(),
-            finite_transport: true,
+            finite_transport: !self.audio,
+            finite_audio: self.audio,
             destination_address: self.address,
         };
         value.validate()?;
@@ -237,13 +272,24 @@ impl FiniteRuntime {
         if owner != self.node_id {
             bail!("Peer resource belongs to another runtime")
         }
+        if d.audio.is_some() {
+            if !self.audio
+                || !self.has_resource(local)
+                || role == Role::Destination && self.address != Some(scope.destination_address)
+            {
+                bail!("Audio resource or destination route differs from local binding")
+            }
+            return Ok(None);
+        } else if self.audio {
+            bail!("Finite static source binding unavailable")
+        }
         if role == Role::Source {
             let bytes = self
                 .sources
                 .get(local)
                 .ok_or_else(|| anyhow::anyhow!("Source producer unavailable"))?;
             if bytes.len() as u64 != d.payload_bytes
-                || hex::encode(Sha256::digest(bytes.as_ref())) != d.payload_sha256
+                || Some(hex::encode(Sha256::digest(bytes.as_ref()))) != d.payload_sha256
             {
                 bail!("Source producer differs from approved manifest")
             }

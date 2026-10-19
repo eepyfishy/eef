@@ -1,7 +1,10 @@
 //! Experimental peer-channel building blocks, NOT execution/session authority.
 //! Includes consumed finite admission and opt-in NodeClient delivery bindings.
-//! Native app startup does not enable these or supply media/file producers.
+//! Native startup can opt into finite audio with local permission/resources.
+//! No continuous stream, virtual device or file producer is supplied.
 pub mod admission;
+pub mod audio;
+mod audio_runtime;
 mod credentials;
 pub mod plan;
 pub mod runtime;

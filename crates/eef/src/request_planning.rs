@@ -98,6 +98,13 @@ fn unbound_plan(plan: &Plan, input: &PlanInput) -> Result<Plan> {
             bail!("Pipeline stage widens the reviewed capability hints")
         }
     }
+    if input.template == "peer_transfer"
+        && eefn::request_planning::concrete_capabilities(input)?
+            .iter()
+            .any(|cap| !draft.current().suggested_capabilities.contains(cap))
+    {
+        bail!("Peer media operation widens the reviewed capability hints")
+    }
     let used: BTreeSet<&str> = compiled
         .tasks
         .iter()
@@ -1144,6 +1151,33 @@ pub(crate) mod tests {
         assert!(unbound_plan(&missing, &missing.planning.as_ref().unwrap().input).is_err());
     }
 
+    #[test]
+    fn peer_audio_cannot_hide_capture_or_playback_behind_transport_hints() {
+        let engine = TaskEngine::new(crate::event::EventBus::new(20));
+        let mut saved = review(&engine);
+        let input: PlanInput = serde_json::from_value(json!({"schema_version":1,
+            "template":"peer_transfer","constraints":{},"params":{"transfer":{
+                "schema_version":2,"payload_bytes":17026,
+                "source":{"node_id":"source","resource_id":"source::transport"},
+                "destination":{"node_id":"sink","resource_id":"sink::transport"},
+                "audio":{"duration_ms":500,"sample_rate":16000,"channels":1,
+                    "source_resource_id":"source::microphone","destination_resource_id":"sink::speaker"},
+                "limits":{"max_wire_bytes":1048576,"max_bytes_per_second":1048576,
+                    "max_frame_bytes":4096,"max_frames":256,"max_inflight_frames":1}}}})).unwrap();
+        let caps = eefn::request_planning::concrete_capabilities(&input).unwrap();
+        let revision = &mut saved.request_review.as_mut().unwrap().proposals[0];
+        revision.allowed_capabilities = caps.clone();
+        revision.proposal.suggested_capabilities = caps.clone();
+        unbound_plan(&saved, &input).unwrap();
+        for hidden in ["audio.capture", "audio.play"] {
+            let mut incomplete = saved.clone();
+            incomplete.request_review.as_mut().unwrap().proposals[0]
+                .proposal
+                .suggested_capabilities
+                .retain(|cap| cap != hidden);
+            assert!(unbound_plan(&incomplete, &input).is_err());
+        }
+    }
     fn input() -> PlanInput {
         PlanInput {
             schema_version: 1,

@@ -2223,6 +2223,8 @@ struct FileConfig {
     #[serde(default)]
     python_bridge: eefn::python::BridgeLimits,
     #[serde(default)]
+    peer_destination_address: Option<std::net::SocketAddr>,
+    #[serde(default)]
     python_plugins: Vec<PathBuf>,
     #[serde(default)]
     update: Option<UpdateConfig>,
@@ -2836,12 +2838,33 @@ async fn run_node(
             dashboard.record_startup_issue(eefn::service::StartupIssue::PythonRuntimeUnavailable);
         }
     }
+    let peer_runtime = if file.permissions.peer_transfers.enabled {
+        engine = engine
+            .with_peer_admission()
+            .with_peer_receive_address(file.peer_destination_address)?;
+        match eefn::peer::runtime::FiniteRuntime::audio(
+            &file.node_id,
+            &file.metadata,
+            file.peer_destination_address,
+        ) {
+            Ok(runtime) => Some(runtime),
+            Err(_) => {
+                dashboard.record_startup_issue(eefn::service::StartupIssue::PeerRuntimeUnavailable);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    dashboard.live.lock().unwrap()["peer_transport"] = serde_json::json!({"requested":file.permissions.peer_transfers.enabled,
+        "configured":peer_runtime.is_some(),"destination_address":file.peer_destination_address});
     let engine = Arc::new(engine);
     let runtime_id = uuid::Uuid::new_v4().to_string();
     {
         let mut status = dashboard.live.lock().unwrap();
         status["hardware"] = hardware;
         status["runtime_id"] = serde_json::json!(runtime_id);
+        status["peer_transfer"] = serde_json::Value::Null;
         status["metadata"] = serde_json::json!(file.metadata.advertised(&engine.capabilities()));
         status["network"] = serde_json::json!(file.network);
         status["name"] = serde_json::json!(file.name);
@@ -2897,6 +2920,10 @@ async fn run_node(
             .with_registration_runtime(&runtime_id)?
             .with_submissions(dashboard.submissions.clone()),
         )
+    };
+    let client = match (client, peer_runtime) {
+        (Some(client), Some(runtime)) => Some(client.with_peer_runtime(runtime)?),
+        (client, _) => client,
     };
     // Scoped futures, not detached tasks: runtime restart drops model startup
     // and process monitoring before another runtime begins.

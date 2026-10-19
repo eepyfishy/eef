@@ -46,7 +46,8 @@ impl Fixture {
                 peer_node: remote.node_id.clone(),
                 peer_resource_id: remote.resource_id.clone(),
                 payload_bytes: bytes.len() as u64,
-                payload_sha256: hex::encode(Sha256::digest(&bytes)),
+                payload_sha256: Some(hex::encode(Sha256::digest(&bytes))),
+                audio: None,
                 limits: transport.scope.limits.clone()
             });
             g.issued_at_ms = transport.scope.issued_at_ms;

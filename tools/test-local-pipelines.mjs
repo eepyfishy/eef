@@ -1,7 +1,7 @@
 // Public command-driven finite dataflow through two separately authenticated
 // logical nodes on one PC. No actual LM/media, downloads, UI or physical-network proof.
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,writeFile,mkdir,stat} from 'node:fs/promises';
+import {mkdtemp,readFile,writeFile,mkdir,stat,unlink} from 'node:fs/promises';
 import {writeFileSync,appendFileSync} from 'node:fs';
 import {join,resolve,basename} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -47,10 +47,12 @@ async function until(fn,label){const end=Date.now()+45000;while(Date.now()<end){
 async function port(){const s=tcpServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 const exists=path=>stat(path).then(()=>true,()=>false);
 try{
- const python=process.env.EEF_TEST_PYTHON, cameraPlugin=join(scratch,'synthetic-camera.py');
+ const python=process.env.EEF_TEST_PYTHON, cameraPlugin=join(scratch,'synthetic-camera.py'),micPlugin=join(scratch,'synthetic-mic.py'),speakerPlugin=join(scratch,'synthetic-speaker.py');
+ const audioAddress=python?`127.0.0.1:${await port()}`:null;
  if(python){
   await stat(python);
   assert.equal(await exists(join(bin,'python/plugins/camera.py')),false,'Use isolated development binaries without an installed built-in camera plugin');
+  for(const file of ['microphone.py','audio_output.py'])assert.equal(await exists(join(bin,'python/plugins',file)),false,'Audio fixture must not import a real device adapter');
   await writeFile(cameraPlugin,`import os,time
 CAPABILITY='camera.capture'
 ACTIONS=['capture']
@@ -60,6 +62,38 @@ def handle(action,params):
     if device==2: os.write(2,b'PRIVATE_CAPTURE_BYTES'*10000)
     if device==3: time.sleep(20)
     return {'data_base64':'x'*(20000 if device==4 else 16),'synthetic':True}
+`);
+  await writeFile(micPlugin,`import base64,io,json,pathlib,time,wave
+CAPABILITY='audio.capture'
+ACTIONS=['record']
+ROOT=pathlib.Path(__file__).parent
+def handle(action,params):
+    path=ROOT/'audio-captured.json'
+    calls=json.loads(path.read_text())['calls']+1 if path.exists() else 1
+    path.write_text(json.dumps({'calls':calls}))
+    if (ROOT/'audio-gate').exists():
+        (ROOT/'audio-capturing').write_text('ready')
+        while not (ROOT/'audio-release').exists(): time.sleep(.01)
+    rate=int(params['sample_rate']); channels=int(params['channels']); frames=int(float(params['duration_seconds'])*rate)
+    marker=b'PRIVATE_AUDIO_TEST_SAMPLE_'
+    data=(marker*(frames*channels*2//len(marker)+1))[:frames*channels*2]
+    output=io.BytesIO()
+    with wave.open(output,'wb') as wav:
+        wav.setnchannels(channels); wav.setsampwidth(2); wav.setframerate(rate); wav.writeframes(data)
+    body=output.getvalue()
+    if (ROOT/'audio-bad').exists(): body=b'BAD!'+body[4:]
+    return {'mime_type':'audio/wav','sample_rate':rate,'channels':channels,'duration_seconds':params['duration_seconds'],'data_base64':base64.b64encode(body).decode('ascii')}
+`);
+  await writeFile(speakerPlugin,`import base64,hashlib,json,pathlib
+CAPABILITY='audio.play'
+ACTIONS=['play']
+ROOT=pathlib.Path(__file__).parent
+def handle(action,params):
+    body=base64.b64decode(params['data_base64'],validate=True)
+    path=ROOT/'audio-played.json'
+    calls=json.loads(path.read_text())['calls']+1 if path.exists() else 1
+    path.write_text(json.dumps({'calls':calls,'bytes':len(body),'sha256':hashlib.sha256(body).hexdigest()}))
+    return {'played':True,'bytes':len(body)}
 `);
  }
  checkpoint('coordinator-start');
@@ -78,6 +112,14 @@ def handle(action,params):
    Object.assign(value.permissions.process,{enabled:true,allowed_executables:[helper],max_seconds:30,max_output_bytes:65536});
    if(python){value.python=python;value.python_plugins=[cameraPlugin];value.permissions.media.camera=true;
     value.python_bridge={timeout_seconds:2,max_request_bytes:65536,max_stdout_bytes:1048576,max_stderr_bytes:1024};}
+  }
+  if(python){
+   value.python=python;value.python_plugins=role==='origin'?[micPlugin]:[cameraPlugin,speakerPlugin];
+   value.python_bridge={timeout_seconds:role==='origin'?10:2,max_request_bytes:65536,max_stdout_bytes:1048576,max_stderr_bytes:1024};
+   value.permissions.media.microphone=role==='origin';value.permissions.media.audio_output=role==='executor';
+   value.permissions.peer_transfers={enabled:true};
+   value.peer_destination_address=role==='executor'?audioAddress:null;
+   value.metadata={resources:[{id:'transport',capability:'peer.transfer'},role==='origin'?{id:'microphone',capability:'audio.capture',parameters:{device:0}}:{id:'speaker',capability:'audio.play'}]};
   }
   // With the explicitly supplied interpreter, isolate cwd so built-in plugin
   // lookup cannot import the repository's real camera adapter. The configured
@@ -156,6 +198,59 @@ def handle(action,params):
   assert.equal(ordinaryResult.state,'unknown','ordinary grant must also tighten the Python result pipe before decoding');
   assert.equal(ordinaryResult.success,false);
   assert.equal(ordinaryResult.error_code,'python_stdout_byte_limit');
+  checkpoint('finite-peer-audio');
+  await until(async()=>{const a=await json(origin.url+'/api/status'),b=await json(executor.url+'/api/status');return a.peer_advertisement?.finite_audio&&b.peer_advertisement?.finite_audio;},'audio registration');
+  const audioInput={template:'peer_transfer',constraints:{},params:{transfer:{schema_version:2,
+   source:{node_id:origin.id,resource_id:origin.id+'::transport'},destination:{node_id:executor.id,resource_id:executor.id+'::transport'},payload_bytes:17026,
+   audio:{duration_ms:500,sample_rate:16000,channels:1,source_resource_id:origin.id+'::microphone',destination_resource_id:executor.id+'::speaker'},
+   limits:{max_wire_bytes:1048576,max_bytes_per_second:1048576,max_frame_bytes:4096,max_frames:256,max_inflight_frames:1}}}};
+  async function audioCounts(){
+   return Promise.all(['audio-captured.json','audio-played.json'].map(async name=>
+    await exists(join(scratch,name))?JSON.parse(await readFile(join(scratch,name),'utf8')).calls:0));
+  }
+  async function audioStart(){
+   const before=await audioCounts(),p=await review.save(audioInput,'Relay one approved short synthetic audio capture');
+   assert.deepEqual(await audioCounts(),before,'saving/compiling cannot capture or play');
+   const command=await review.approve(p,{max_execution_ms:6000,max_result_bytes:4096});
+   assert.deepEqual(await audioCounts(),before,'approval alone cannot capture or play');
+   await review.start(command);return {id:p.id,command};
+  }
+  const completed=await audioStart();await review.wait(completed.id);const audioPlan=await review.inspect(completed.id);
+  assert.equal(audioPlan.status,'completed');assert.equal(audioPlan.execution.attempts.length,2);
+  const reports=audioPlan.execution.attempts.map(a=>a.report);assert(reports.every(r=>r.success&&r.persisted));
+  assert.equal(reports[0].data.payload_sha256,reports[1].data.payload_sha256);assert.equal(reports[0].data.payload_bytes,16044);
+  assert.equal(reports[0].data.producer_reported,true);assert.equal(reports[1].data.sink_reported,true);
+  assert(reports.every(r=>r.data.payload_retained===false&&r.data.sink_effects_confirmed===false));
+  assert(!JSON.stringify(audioPlan).includes('"data_base64"'));assert(!JSON.stringify(audioPlan).includes('PRIVATE_AUDIO_TEST_SAMPLE_'));
+  assert.equal(JSON.parse(await readFile(join(scratch,'audio-played.json'),'utf8')).sha256,reports[0].data.payload_sha256);
+  await review.start(completed.command);assert.equal(JSON.parse(await readFile(join(scratch,'audio-captured.json'),'utf8')).calls,1);assert.equal(JSON.parse(await readFile(join(scratch,'audio-played.json'),'utf8')).calls,1);
+  // A saved speaker revocation must reject destination before source capture.
+  const speakerConfig=(await json(executor.url+'/api/config')).config;speakerConfig.permissions.media.audio_output=false;await json(executor.url+'/api/config',{config:speakerConfig},'PUT');
+  const denied=await audioStart();await review.wait(denied.id);const deniedPlan=await review.inspect(denied.id);assert.equal(deniedPlan.status,'interrupted');
+  assert.equal(deniedPlan.execution.attempts[1].state,'rejected');assert.equal(deniedPlan.execution.attempts[0].acknowledgement,null);
+  assert.equal(JSON.parse(await readFile(join(scratch,'audio-captured.json'),'utf8')).calls,1);
+  speakerConfig.permissions.media.audio_output=true;await json(executor.url+'/api/config',{config:speakerConfig},'PUT');
+  // Revoking the applied receiver route while capture waits must retire that
+  // session; never silently dial/bind the replacement address or play its data.
+  await writeFile(join(scratch,'audio-gate'),'ready');const gatedAudio=await audioStart();await until(()=>exists(join(scratch,'audio-capturing')),'synthetic audio capture pending');
+  const audioAdmission=(await owner(['scheduling','show'])).admission;
+  assert.equal(audioAdmission.total_in_flight,2,'one executor future per endpoint, not one per nested operation');
+  for(const node of [origin,executor])assert.equal(audioAdmission.node_counts.find(n=>n.node_id===node.id).in_flight,1);
+  for(const [node,cap] of [[origin,'audio.capture'],[executor,'audio.play']])assert.equal(audioAdmission.providers.find(p=>p.node_id===node.id&&p.capability===cap).in_flight,1,'media dependencies share existing bundle admission');
+  speakerConfig.peer_destination_address=`127.0.0.1:${await port()}`;await json(executor.url+'/api/config',{config:speakerConfig},'PUT');
+  await until(async()=>(await review.inspect(gatedAudio.id)).execution.attempts[1].state==='unknown','receiver route revocation');
+  await writeFile(join(scratch,'audio-release'),'ready');await review.wait(gatedAudio.id);assert.equal((await review.inspect(gatedAudio.id)).status,'interrupted');
+  assert.equal(JSON.parse(await readFile(join(scratch,'audio-played.json'),'utf8')).calls,1);
+  await unlink(join(scratch,'audio-gate'));
+  speakerConfig.peer_destination_address=audioAddress;await json(executor.url+'/api/config',{config:speakerConfig},'PUT');
+  await writeFile(join(scratch,'audio-bad'),'ready');const badAudio=await audioStart();await review.wait(badAudio.id);
+  assert.equal((await review.inspect(badAudio.id)).status,'interrupted','malformed capture must not reach playback');
+  assert.equal(JSON.parse(await readFile(join(scratch,'audio-played.json'),'utf8')).calls,1);
+  const badCaptures=JSON.parse(await readFile(join(scratch,'audio-captured.json'),'utf8')).calls;
+  await review.start(badAudio.command);assert.equal(JSON.parse(await readFile(join(scratch,'audio-captured.json'),'utf8')).calls,badCaptures,'consumed malformed capture is never replayed');
+  await unlink(join(scratch,'audio-bad'));
+  const freshAudio=await audioStart();await review.wait(freshAudio.id);assert.equal((await review.inspect(freshAudio.id)).status,'completed');
+  assert.equal(JSON.parse(await readFile(join(scratch,'audio-played.json'),'utf8')).calls,2);
  }
  // Later-stage permission loss while the existing model stage is pending.
  checkpoint('permission-loss');
@@ -267,6 +362,8 @@ def handle(action,params):
   completed_failed_and_pending_progress_correlated:true,interrupted_progress_survives_restart_without_replay:true,progress_is_not_termination_proof:true,
   bounded_explicit_recurring_graph:true,two_fresh_approved_parent_occurrences:true,no_work_before_policy_and_enable:true,immutable_automatic_source:true,
   exhausted_schedule_no_receipt_rearm_or_restart_replay:true,
+  real_python_bridge:!!python,synthetic_finite_peer_audio:!!python,physical_audio:false,
+  paired_audio_permission_and_route_revocation:!!python,malformed_audio_never_played:!!python,paired_audio_no_replay:!!python,
   continuous_workloads:false,physical_resource_quota_proven:false,strong_stop_acknowledgement:false},null,2));
  checkpoint('passed');console.log('Public local pipeline validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}

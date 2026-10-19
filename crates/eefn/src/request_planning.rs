@@ -120,6 +120,13 @@ pub fn concrete_capabilities(input: &PlanInput) -> Result<Vec<String>> {
             }
         }
     }
+    if input.template == "peer_transfer"
+        && crate::peer::plan::Pair::from_params(&input.params)?
+            .audio
+            .is_some()
+    {
+        capabilities.extend(["audio.capture".into(), "audio.play".into()]);
+    }
     Ok(capabilities)
 }
 use anyhow::{Context, Result, bail};

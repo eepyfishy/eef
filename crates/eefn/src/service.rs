@@ -14,6 +14,7 @@ pub enum StartupIssue {
     PythonRuntimeUnavailable,
     BuiltinPluginUnavailable,
     CustomPluginUnavailable,
+    PeerRuntimeUnavailable,
 }
 
 #[derive(Clone)]
@@ -308,6 +309,7 @@ impl NodeService {
         json!({"node_id":self.node_id,"network":live["network"],"runtime":"rust","version":crate::VERSION,
             "python_bridge":{"saved":bridge,"saved_valid":bridge.is_some(),"applied":live["python_bridge"],
                 "enabled":live["python_bridge"].is_object(),"restart_required":live["python_bridge"].is_object() && json!(bridge)!=live["python_bridge"]},
+            "peer_transport":live["peer_transport"],"peer_advertisement":live["peer_transfer"],
             "registration":crate::registration::State::observe(&live,&self.node_id,self.submissions.state()),
             "node_alive":true,"coordinator_required_for_node":false,"coordinator_required_for_orchestration":true,
             "startup_issues":startup_issues(&live),
@@ -877,6 +879,7 @@ impl NodeService {
             "metadata",
             "network",
             "python_bridge",
+            "peer_destination_address",
         ] {
             if let Some(value) = changes.get(key) {
                 config[key] = value.clone();
@@ -1057,6 +1060,14 @@ fn validate_config(value: &Value) -> Result<()> {
     let metadata: crate::context::NodeMetadata =
         serde_json::from_value(value.get("metadata").cloned().unwrap_or_else(|| json!({})))?;
     metadata.validate()?;
+    if let Some(address) = serde_json::from_value::<Option<std::net::SocketAddr>>(
+        value
+            .get("peer_destination_address")
+            .cloned()
+            .unwrap_or(Value::Null),
+    )? {
+        crate::peer::plan::validate_address(address)?;
+    }
     serde_json::from_value::<crate::python::BridgeLimits>(
         value
             .get("python_bridge")

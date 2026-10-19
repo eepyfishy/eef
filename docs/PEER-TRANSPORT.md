@@ -1,14 +1,84 @@
 # Peer transport security foundation (unreleased)
 
-This is an experimental library in `eefn::peer`, not a usable node-to-node
-feature. Native app startup enables no peer command, listener, capability
-advertisement or media route. Consumed admission, paired coordinator issuance
-and an opt-in native NodeClient finite-delivery executor are described below.
-The executor requires explicit embedding-owner producer bindings; ordinary
-installed nodes still provide none.
-It is the transport
-foundation for step 8 of the [command-first roadmap](ROADMAP-CORE.md), not
+Experimental `eefn::peer` now includes an advanced opt-in finite audio path in
+native app startup. All permissions remain disabled by default. The earlier
+static-buffer foundation and its historical checkpoints are retained below;
+their startup-disabled descriptions apply to those checkpoints, not this path.
+This advances step 8 of the [command-first roadmap](ROADMAP-CORE.md), not
 completion of that step or of [presence and media](PRESENCE-AND-MEDIA.md).
+
+## Finite capture to playback (unreleased, advanced configuration)
+
+An explicit `peer_transfer` request can now describe schema-version 2 audio:
+`audio` binds `duration_ms`, `sample_rate`, `channels`, `source_resource_id` and
+`destination_resource_id`. The existing source/destination transport resources
+and limits remain required. `payload_bytes` is the format-derived maximum;
+`payload_sha256` is omitted because recording must not happen before approval.
+Legacy schema-version 1 static transfers retain their exact serialized shape
+and preknown digest. Neither content mode silently falls back to the other.
+
+The source and destination advertise `finite_audio` only through their existing
+authenticated, journal-capable control session. Explicit reviewed submission,
+separate owner approval and execution are required; this template is not added
+to the LM method vocabulary or reusable automation. Review includes all three
+operations: `peer.transfer`, `audio.capture` and `audio.play`. Existing directional
+disclosure rules still apply. Both grants and recipient-encrypted delivery
+materials are saved atomically. Destination readiness must be durably observed
+before dispatching the source. Both nodes consume their existing grants before
+effects; repeated execution or reconnect never replays them.
+
+Advanced setup currently requires owner configuration, not a finished non-coder
+workflow. Set `permissions.peer_transfers.enabled`, provide an available
+`peer.transfer` transport resource, and enable the appropriate microphone/output
+switch and installed Python adapter. The source needs a physical `audio.capture`
+resource, optionally with its `device` binding; the destination needs an
+`audio.play` resource with no extra parameters. The existing Windows playback
+adapter uses the default output, not a selectable speaker or virtual call input.
+An optional numeric `peer_destination_address` selects the receiving address;
+null is sender-only. No guessed port, wildcard bind or startup listener is
+created. Configuration uses the existing service/remote approval. Applied route
+changes require restart; changing the saved receive route fences active audio
+rather than silently moving it. Status distinguishes configured transport from
+current session advertisement and clears the latter on disconnect.
+
+Only 100–10,000 ms PCM16 WAV is supported, with one or two channels and rates
+8,000/16,000/24,000/32,000/44,100/48,000 Hz. Byte bounds allow one frame of existing
+adapter rounding and at most 1 KiB RIFF metadata. Capture is validated and
+canonicalized, stripping incidental metadata. A bounded authenticated manifest
+then binds the actual count/digest before PCM transfer. The receiver validates
+the complete canonical WAV before calling the approved sink. Its final data
+acknowledgement is withheld until playback returns. Both successful endpoint
+reports must agree on actual bytes/digest; no raw audio enters coordinator
+inspection or retained job reports. `producer_reported` / `sink_reported` are
+endpoint observations, never physical-effect proof; `sink_effects_confirmed`
+and `payload_retained` remain false.
+
+Derived media operations recheck applied and saved permissions/resources under
+the parent grant watcher. Installing an owner plugin cannot bypass a disabled
+known media switch. Existing bundle admission counts one executor future per
+endpoint and also reserves the exact microphone/speaker provider dependency.
+Bounded bridge/transport deadlines, quota checks and uncertain consumed outcomes
+remain in force. This does not claim Python heap/CPU quotas, strong physical
+stop, continuous streaming, a virtual microphone/mixer, camera relay, presence
+tracking, physical two-PC acceptance, or partition-safe coordinator leadership.
+
+Development acceptance uses fresh headless binaries/examples and an explicitly
+selected existing trusted interpreter, without downloading one:
+
+```powershell
+$env:EEF_TEST_PYTHON = 'C:\path\to\trusted\python.exe'
+node tools/test-local-pipelines.mjs
+node tools/test-python-bridge.mjs
+```
+
+The optional Python pipeline fixture isolates built-in device adapters and uses
+synthetic microphone/speaker plugins through the real loader, permission checks,
+public review/approval/execution services, consumed journals and native mutual
+TLS. It checks no effects on save/approval, matching endpoint receipts,
+permission/route loss, malformed capture, provider accounting, replay refusal
+and fresh work after failure. It opens no real camera/microphone/speaker and is
+not a substitute for installed-node or physical two-PC acceptance. The regular
+pipeline checks remain available without the interpreter environment variable.
 
 ## Authority and credential privacy
 

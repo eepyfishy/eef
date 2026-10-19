@@ -3,6 +3,53 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: opt-in finite microphone-to-speaker peer execution
+
+Native app startup can now opt into finite PCM16 capture/transfer/playback using
+existing Python adapters, paired reviewed jobs, ordinary consumed grant journals
+and native authenticated peer sockets. Defaults remain disabled. Advanced
+resource/receiver configuration is still required; no installed node, release,
+model, update policy or dashboard source changed. See
+[content, authority, configuration and remaining scope](PEER-TRANSPORT.md#finite-capture-to-playback-unreleased-advanced-configuration).
+
+Schema-version 2 separates a format-derived maximum from the actual captured
+digest. Capture is canonicalized to strip WAV metadata; the receiver validates
+the entire bounded WAV before playback and withholds final ACK until the sink
+returns. Both endpoint reports must match content. Capture/playback do not occur
+on review/save or approval alone, and reports retain no raw audio or physical
+sound confirmation. Legacy static-buffer schema-version 1 serialization remains
+compatible. Transport and nested media providers share existing bundle admission,
+with one executor future per endpoint rather than double-counting each child.
+
+The first public run exposed an omitted explicit-template allowance in durable
+review. Retained review now admits this explicit template without adding it to
+LM methods; capture and playback must also appear in reviewed capabilities.
+Known media plugins cannot bypass disabled feature switches. Saved permissions,
+resources and receive-route changes are rechecked under the existing consumed
+parent watcher. Changed routes, malformed capture and uncertainty do not replay.
+
+Fresh headless binaries/examples build. Public `local-pipelines-KEHnYZ` and the
+stricter `local-pipelines-5Knn5J` pass actual command, pairing, approval, journal,
+native TLS and real cached CPython paths with synthetic microphone/speaker
+adapters only. They check matching reports, no effects on save/approval,
+permission/route revocation, malformed capture, dependency accounting, replay
+refusal and healthy fresh work after failure. No real device is opened.
+Standalone `python-bridge-s8o1Ys` passes bounds, Unicode, deadlines, descendants
+and cancellation; its cancellation fixture now waits for observed plugin/child
+startup instead of a fixed delay that could expire before invocation.
+`model-downloads-J5RlLs`, `node-credentials-0IYn5S`, `request-drafts-izS5iA`,
+browser copy/status smoke and the recursive backend/browser source guard pass.
+
+Both locked/offline workspace/all-target modes pass **831 tests plus one ignored
+each**, including no-dashboard: EEF 260 plus one ignored profiler, owner CLI 17,
+installer 6, EEFN 528 and node CLI 20. Final headless binaries/examples build;
+fixture apps/helpers are terminal. Versioned releases and update feeds remain
+unchanged.
+Physical two-PC/current installer acceptance, stronger observed stop/resource
+quotas, non-coder relay setup, default model quality/bootstrap, continuous media,
+virtual call devices/mixing, presence, mesh/ESP/Bluetooth, measured migration,
+coordinator clustering and signing/Defender release acceptance remain unfinished.
+
 ## Unreleased: bounded Python capture/extension boundary
 
 The existing Python bridge now bounds request encoding, stdout and stderr,

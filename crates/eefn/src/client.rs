@@ -230,13 +230,20 @@ impl NodeClient {
         self.registration_runtime = Some(runtime.into());
         Ok(self)
     }
-    /// Explicit embedding hook, not enabled by native app startup. It cannot
-    /// enable permissions or invent producer/device bindings from remote input.
+    /// Explicit producer binding; startup supplies only configured finite audio.
+    /// This cannot enable permissions or invent bindings from remote input.
     pub fn with_peer_runtime(
         mut self,
         runtime: crate::peer::runtime::FiniteRuntime,
     ) -> Result<Self> {
         runtime.validate_metadata(&self.config.node_id, &self.config.metadata)?;
+        if self
+            .engine
+            .peer_receive_address()
+            .is_some_and(|address| address != runtime.address())
+        {
+            bail!("Peer runtime differs from applied receive address")
+        }
         if !self.engine.peer_runtime_enabled() {
             bail!("Peer runtime requires applied local permission and engine admission")
         }
@@ -287,6 +294,9 @@ impl NodeClient {
         status["connection"] = json!({"state":state,"address":address,"last_error":error,"retry_seconds":retry,
                 "auth_mode":self.config.auth_mode,"transport":if self.tls_config.is_some(){"pinned_tls13"}else{"legacy_shared_key"}});
         status["registration_observation"] = Value::Null;
+        if state != "connected" {
+            status["peer_transfer"] = Value::Null;
+        }
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -516,6 +526,7 @@ impl NodeClient {
             _ => None,
         };
         let capabilities = self.session_capabilities(&models, peer_advertisement.as_ref());
+        self.status.lock().expect("status")["peer_transfer"] = json!(peer_advertisement);
         {
             write_session_frame(
                 &self.crypto,

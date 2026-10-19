@@ -97,13 +97,15 @@ impl Wire {
                 scope_sha256: scope.digest().unwrap(),
                 role,
                 payload_bytes: d.payload_bytes,
-                payload_sha256: d.payload_sha256,
+                payload_sha256: d.payload_sha256.unwrap(),
                 data_frames: d
                     .payload_bytes
                     .div_ceil(u64::from(d.limits.max_frame_bytes))
                     as u32,
                 payload_retained: false,
-                sink_effects_confirmed: false
+                sink_effects_confirmed: false,
+                producer_reported: false,
+                sink_reported: false
             }),
             None,
         )

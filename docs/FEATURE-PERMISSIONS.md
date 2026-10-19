@@ -44,6 +44,13 @@ prove media/model health, authorize ambient recording, run work or grant Windows
 administrator privileges. Bluetooth/Wi-Fi settings/stream relays are not invented
 as working switches here.
 
+Known microphone, audio-output, TTS, camera, screen and input-control capability
+names also require their media switch when supplied by an owner-installed
+Python plugin. Merely loading such a plugin does not advertise or enable its
+disabled feature. Finite peer audio requires both endpoint media switches in
+addition to the separate opt-in peer permission and reviewed execution grants;
+see [scope and current setup limits](PEER-TRANSPORT.md#finite-capture-to-playback-unreleased-advanced-configuration).
+
 Running programs and controlling apps/input can affect files independently of the
 file switches. Do not treat feature preferences as a process sandbox. Speech
 recognition still needs a configured service/model, and audio-file access still

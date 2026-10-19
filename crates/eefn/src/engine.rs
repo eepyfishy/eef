@@ -236,6 +236,7 @@ pub struct NodeEngine {
     granted_model_config: Option<Value>,
     pipeline_enabled: bool,
     peer_admission_enabled: bool,
+    peer_receive_address: Option<Option<std::net::SocketAddr>>,
     peer_slots: Arc<tokio::sync::Semaphore>,
 }
 
@@ -280,6 +281,7 @@ impl NodeEngine {
             granted_model_config: None,
             pipeline_enabled: false,
             peer_admission_enabled: false,
+            peer_receive_address: None,
             peer_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             resource_owner: String::new(),
             resources: Vec::new(),
@@ -313,9 +315,33 @@ impl NodeEngine {
     pub(crate) fn peer_runtime_enabled(&self) -> bool {
         self.peer_admission_enabled && self.policy.peer_transfers.enabled
     }
+    pub fn with_peer_receive_address(
+        mut self,
+        address: Option<std::net::SocketAddr>,
+    ) -> Result<Self> {
+        if let Some(address) = address {
+            crate::peer::plan::validate_address(address)?;
+        }
+        self.peer_receive_address = Some(address);
+        Ok(self)
+    }
+    pub(crate) fn peer_receive_address(&self) -> Option<Option<std::net::SocketAddr>> {
+        self.peer_receive_address
+    }
 
     pub(crate) fn applied_permissions(&self) -> &NodePolicy {
         &self.policy
+    }
+    fn media_allowed(&self, capability: &str) -> bool {
+        match capability {
+            "audio.capture" => self.policy.media.microphone,
+            "audio.play" => self.policy.media.audio_output,
+            "tts.speak" => self.policy.media.tts,
+            "camera.capture" => self.policy.media.camera,
+            "screen.capture" => self.policy.media.screen_capture,
+            "input.control" => self.policy.media.input_control,
+            _ => true,
+        }
     }
 
     pub fn with_resources(
@@ -461,7 +487,12 @@ impl NodeEngine {
         if self.policy.wake_on_lan.enabled {
             values.push("network.wol".into());
         }
-        values.extend(self.plugins.keys().cloned());
+        values.extend(
+            self.plugins
+                .keys()
+                .filter(|cap| self.media_allowed(cap))
+                .cloned(),
+        );
         let has_text = self
             .ollama_models
             .values()
@@ -514,8 +545,73 @@ impl NodeEngine {
         admission: bool,
     ) -> Result<()> {
         if g.capability == "peer.transfer" {
-            let (_, definition) = crate::peer::admission::Definition::from_grant(g)?;
+            let (role, definition) = crate::peer::admission::Definition::from_grant(g)?;
             self.policy.peer_transfers.permits(&definition)?;
+            self.check_operation_policy(
+                crate::grants::OperationShape {
+                    capability: &g.capability,
+                    action: &g.action,
+                    params: &g.params,
+                    resource_id: g.resource_id.as_deref(),
+                    model_id: None,
+                    backend: None,
+                    model_role: None,
+                },
+                &g.limits,
+                admission,
+            )?;
+            if let Some(audio) = &definition.audio {
+                if role == crate::peer::scope::Role::Destination {
+                    if let (Some(applied), Some(service)) =
+                        (self.peer_receive_address, &self.service)
+                    {
+                        service.inspect_grant_configuration(|saved| {
+                            let address: Option<std::net::SocketAddr> = serde_json::from_value(
+                                saved
+                                    .get("peer_destination_address")
+                                    .cloned()
+                                    .unwrap_or(Value::Null),
+                            )?;
+                            if address != applied {
+                                bail!("Saved peer receive route changed; restart or stop required")
+                            }
+                            Ok(())
+                        })?;
+                    }
+                }
+                let (cap, action, params) = audio.operation(role);
+                self.check_operation_policy(
+                    crate::grants::OperationShape {
+                        capability: cap,
+                        action,
+                        params: &params,
+                        resource_id: Some(audio.resource(role)),
+                        model_id: None,
+                        backend: None,
+                        model_role: None,
+                    },
+                    &g.limits,
+                    admission,
+                )?;
+                let resource = self
+                    .resources
+                    .iter()
+                    .find(|r| {
+                        crate::context::resource_id(&self.resource_owner, &r.id)
+                            == audio.resource(role)
+                    })
+                    .context("Finite audio resource unavailable")?;
+                if resource
+                    .parameters
+                    .keys()
+                    .any(|key| role == crate::peer::scope::Role::Destination || key != "device")
+                {
+                    bail!(
+                        "Finite audio binding supports microphone device selection and default output only"
+                    )
+                }
+            }
+            return Ok(());
         }
         if g.capability == "pipeline.run" {
             if !self.pipeline_enabled {
@@ -551,6 +647,9 @@ impl NodeEngine {
         require_ready: bool,
     ) -> Result<()> {
         let model_operation = matches!(g.capability, "llm.infer" | "vlm.analyze");
+        if !self.media_allowed(g.capability) {
+            bail!("Local media permission is disabled")
+        }
         if g.capability == "filesystem"
             && if g.action == "write" {
                 !self.policy.filesystem.write
@@ -681,6 +780,9 @@ impl NodeEngine {
         mut params: Value,
         python_output_limit: Option<usize>,
     ) -> Result<Value> {
+        if !self.media_allowed(capability) {
+            bail!("Local media permission is disabled")
+        }
         if matches!(capability, "pipeline.run" | "peer.transfer") {
             return Err(crate::execution_boundary::ExecutionGrantRequired.into());
         }
@@ -2746,5 +2848,35 @@ mod tests {
                 .iter()
                 .all(|chunk| *chunk == mac)
         );
+    }
+
+    #[tokio::test]
+    async fn installed_media_plugins_cannot_bypass_disabled_feature_switches() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = NodeEngine::new(false, vec![], dir.path().into()).unwrap();
+        for (cap, action) in [
+            ("audio.capture", "record"),
+            ("audio.play", "play"),
+            ("camera.capture", "capture"),
+            ("screen.capture", "capture"),
+            ("tts.speak", "speak"),
+            ("input.control", "click"),
+        ] {
+            engine.plugins.insert(
+                cap.into(),
+                PythonPlugin {
+                    path: dir.path().join("never-started.py"),
+                    capability: cap.into(),
+                    actions: vec![action.into()],
+                    params: json!({}),
+                },
+            );
+            assert!(!engine.capabilities().contains(&cap.to_owned()));
+            let error = engine.execute(cap, action, json!({})).await.unwrap_err();
+            assert!(error.to_string().contains("Local media permission"));
+        }
+        engine.policy.media.microphone = true;
+        assert!(engine.capabilities().contains(&"audio.capture".into()));
+        assert!(!engine.capabilities().contains(&"audio.play".into()));
     }
 }

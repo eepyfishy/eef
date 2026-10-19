@@ -6,7 +6,7 @@ use super::{
     scope::{Limits, Role, Scope},
 };
 use crate::grants::{AcceptedGrant, ExecutionGrant, GrantLedger, GrantReport};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -68,7 +68,10 @@ pub struct Definition {
     pub peer_node: String,
     pub peer_resource_id: String,
     pub payload_bytes: u64,
-    pub payload_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<super::audio::Audio>,
     pub limits: Limits,
 }
 impl Definition {
@@ -84,7 +87,7 @@ impl Definition {
             .split_once("::")
             .ok_or_else(|| anyhow::anyhow!("Local peer resource needs owner"))?;
         crate::network::validate_remote_node_id(own_node)?;
-        if self.schema_version != 1
+        if ![1, 2].contains(&self.schema_version)
             || own_node == self.peer_node
             || own_local.is_empty()
             || own_local.len() > 100
@@ -98,7 +101,6 @@ impl Definition {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
             || !(1..=MAX_PAYLOAD).contains(&self.payload_bytes)
-            || !crate::request_result::valid_digest(&self.payload_sha256)
             || self.payload_bytes > self.limits.max_wire_bytes
             || self
                 .payload_bytes
@@ -106,6 +108,19 @@ impl Definition {
                 > u64::from(self.limits.max_frames)
         {
             bail!("Invalid finite peer definition")
+        }
+        match (self.schema_version, &self.audio, &self.payload_sha256) {
+            (1, None, Some(hash)) if crate::request_result::valid_digest(hash) => {}
+            (2, Some(audio), None)
+                if audio.validate().is_ok()
+                    && self.payload_bytes == audio.maximum_bytes()
+                    && self.limits.max_frame_bytes >= 512
+                    && self
+                        .payload_bytes
+                        .div_ceil(u64::from(self.limits.max_frame_bytes))
+                        + 1
+                        <= u64::from(self.limits.max_frames) => {}
+            _ => bail!("Invalid static/audio peer content contract"),
         }
         Ok(())
     }
@@ -117,6 +132,17 @@ impl Definition {
         };
         let definition: Self = serde_json::from_value(g.params.clone())?;
         definition.validate()?;
+        if let Some(audio) = &definition.audio {
+            let (source, destination) = if role == Role::Source {
+                (g.executor_node.as_str(), definition.peer_node.as_str())
+            } else {
+                (definition.peer_node.as_str(), g.executor_node.as_str())
+            };
+            audio.validate_nodes(source, destination)?;
+            if g.limits.max_execution_ms < audio.minimum_execution_ms() {
+                bail!("Finite audio exceeds grant execution allowance")
+            }
+        }
         let resource = g
             .resource_id
             .as_deref()
@@ -154,6 +180,10 @@ pub struct TransferReceipt {
     pub data_frames: u32,
     pub payload_retained: bool,
     pub sink_effects_confirmed: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub producer_reported: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sink_reported: bool,
 }
 pub(crate) fn confirmed_result(g: &ExecutionGrant, value: &Value) -> bool {
     let Ok((role, definition)) = Definition::from_grant(g) else {
@@ -162,16 +192,26 @@ pub(crate) fn confirmed_result(g: &ExecutionGrant, value: &Value) -> bool {
     let Ok(r) = serde_json::from_value::<TransferReceipt>(value.clone()) else {
         return false;
     };
-    r.schema_version == 1
+    r.schema_version == definition.schema_version
         && super::scope::uuid(&r.pair_session_id).is_ok()
         && crate::request_result::valid_digest(&r.scope_sha256)
         && r.role == role
-        && r.payload_bytes == definition.payload_bytes
-        && r.payload_sha256 == definition.payload_sha256
+        && if definition.audio.is_some() {
+            r.payload_bytes >= definition.audio.as_ref().unwrap().minimum_bytes()
+                && r.payload_bytes <= definition.payload_bytes
+                && crate::request_result::valid_digest(&r.payload_sha256)
+                && r.producer_reported == (role == Role::Source)
+                && r.sink_reported == (role == Role::Destination)
+        } else {
+            r.payload_bytes == definition.payload_bytes
+                && Some(&r.payload_sha256) == definition.payload_sha256.as_ref()
+                && !r.producer_reported
+                && !r.sink_reported
+        }
         && u64::from(r.data_frames)
-            == definition
-                .payload_bytes
+            == r.payload_bytes
                 .div_ceil(u64::from(definition.limits.max_frame_bytes))
+                + u64::from(definition.audio.is_some())
         && !r.payload_retained
         && !r.sink_effects_confirmed
 }
@@ -179,6 +219,7 @@ pub(crate) fn confirmed_result(g: &ExecutionGrant, value: &Value) -> bool {
 /// Holds an already consumed ordinary grant, one node-wide transport slot and
 /// the private endpoint together. No channel extraction or reconnect method.
 pub struct AdmittedPeer {
+    grant: ExecutionGrant,
     accepted: AcceptedGrant,
     endpoint: PeerEndpoint,
     role: Role,
@@ -238,6 +279,7 @@ impl AdmittedPeer {
             lease,
         )?;
         Ok(Self {
+            grant: g,
             accepted,
             endpoint,
             role,
@@ -260,6 +302,7 @@ impl AdmittedPeer {
         source_payload: Option<Vec<u8>>,
     ) -> GrantReport {
         let Self {
+            grant,
             accepted,
             endpoint,
             role,
@@ -267,14 +310,27 @@ impl AdmittedPeer {
             definition,
             _slot,
         } = self;
-        let operation = transfer(
-            endpoint,
-            role,
-            scope,
-            definition,
-            stream,
-            source_payload.map(Arc::<[u8]>::from),
-        );
+        let operation = async move {
+            if definition.audio.is_some() {
+                if source_payload.is_some() {
+                    bail!("Audio must use its approved capture adapter")
+                }
+                super::audio_runtime::transfer(
+                    engine, &grant, endpoint, role, scope, definition, stream,
+                )
+                .await
+            } else {
+                transfer(
+                    endpoint,
+                    role,
+                    scope,
+                    definition,
+                    stream,
+                    source_payload.map(Arc::<[u8]>::from),
+                )
+                .await
+            }
+        };
         let report = accepted.run_operation(engine, operation).await;
         drop(_slot);
         report
@@ -296,6 +352,7 @@ impl AdmittedPeer {
     {
         let acknowledgement = self.acknowledgement();
         let Self {
+            grant,
             accepted,
             endpoint,
             role,
@@ -320,7 +377,14 @@ impl AdmittedPeer {
                 ready(acknowledgement).await?;
                 tokio::net::TcpStream::connect(scope.destination_address).await?
             };
-            transfer(endpoint, role, scope, definition, stream, source_payload).await
+            if definition.audio.is_some() {
+                super::audio_runtime::transfer(
+                    engine, &grant, endpoint, role, scope, definition, stream,
+                )
+                .await
+            } else {
+                transfer(endpoint, role, scope, definition, stream, source_payload).await
+            }
         };
         let report = accepted.run_operation(engine, operation).await;
         drop(_slot);
@@ -329,10 +393,16 @@ impl AdmittedPeer {
 }
 
 fn validate_payload(role: Role, definition: &Definition, payload: Option<&[u8]>) -> Result<()> {
+    if definition.audio.is_some() {
+        if payload.is_some() {
+            bail!("Audio must use its approved capture adapter")
+        }
+        return Ok(());
+    }
     if role == Role::Source {
         let bytes = payload.ok_or_else(|| anyhow::anyhow!("Missing approved source bytes"))?;
         if bytes.len() as u64 != definition.payload_bytes
-            || hex::encode(Sha256::digest(bytes)) != definition.payload_sha256
+            || Some(hex::encode(Sha256::digest(bytes))) != definition.payload_sha256
         {
             bail!("Source bytes differ from approved manifest")
         }
@@ -375,7 +445,7 @@ async fn transfer<S: crate::tls::NodeIo + 'static>(
             received += bytes.len() as u64;
             hash.update(&bytes);
             if index + 1 == frames
-                && hex::encode(hash.clone().finalize()) != definition.payload_sha256
+                && Some(hex::encode(hash.clone().finalize())) != definition.payload_sha256
             {
                 bail!("Received bytes differ from approved manifest")
             }
@@ -388,10 +458,14 @@ async fn transfer<S: crate::tls::NodeIo + 'static>(
         scope_sha256: scope.digest()?,
         role,
         payload_bytes: definition.payload_bytes,
-        payload_sha256: definition.payload_sha256,
+        payload_sha256: definition
+            .payload_sha256
+            .context("Missing static payload digest")?,
         data_frames: frames,
         payload_retained: false,
-        sink_effects_confirmed: false
+        sink_effects_confirmed: false,
+        producer_reported: false,
+        sink_reported: false
     }))
 }
 

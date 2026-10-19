@@ -29,6 +29,15 @@ impl Fixture {
         Self::with_manifest(max_bytes, 100, "b".repeat(64))
     }
     fn with_manifest(max_bytes: usize, payload_bytes: u64, payload_sha256: String) -> Self {
+        Self::with_content(max_bytes, payload_bytes, Some(payload_sha256), None)
+    }
+    fn with_content(
+        max_bytes: usize,
+        payload_bytes: u64,
+        payload_sha256: Option<String>,
+        audio: Option<eefn::peer::audio::Audio>,
+    ) -> Self {
+        let audio_mode = audio.is_some();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jobs.db");
         drop(rusqlite::Connection::open(&path).unwrap());
@@ -51,7 +60,7 @@ impl Fixture {
         )
         .unwrap();
         let pair = Pair {
-            schema_version: 1,
+            schema_version: if audio_mode { 2 } else { 1 },
             source: Endpoint {
                 node_id: "source".into(),
                 resource_id: "source::transport".into(),
@@ -62,11 +71,12 @@ impl Fixture {
             },
             payload_bytes,
             payload_sha256,
+            audio,
             limits: Limits {
                 max_wire_bytes: 1024 * 1024,
                 max_bytes_per_second: 1024 * 1024,
-                max_frame_bytes: 64,
-                max_frames: 8,
+                max_frame_bytes: if audio_mode { 512 } else { 64 },
+                max_frames: if audio_mode { 256 } else { 8 },
                 max_inflight_frames: 1,
             },
         };
@@ -93,7 +103,15 @@ impl Fixture {
             &engine,
             json!({"schema_version":1,"original_text":concrete.original_text,"proposal":proposal}),
             &context,
-            &["peer.transfer".into()],
+            &if audio_mode {
+                vec![
+                    "peer.transfer".into(),
+                    "audio.capture".into(),
+                    "audio.play".into(),
+                ]
+            } else {
+                vec!["peer.transfer".into()]
+            },
         )
         .unwrap();
         let id = opened["id"].as_str().unwrap();
@@ -235,10 +253,12 @@ impl Fixture {
                     Role::Destination
                 },
                 payload_bytes: d.payload_bytes,
-                payload_sha256: d.payload_sha256,
+                payload_sha256: d.payload_sha256.unwrap(),
                 data_frames: 2,
                 payload_retained: false,
-                sink_effects_confirmed: false
+                sink_effects_confirmed: false,
+                producer_reported: false,
+                sink_reported: false
             }),
             None,
         )
@@ -461,4 +481,73 @@ fn restart_preserves_both_exact_grants_as_uncertain_without_renewal_or_replay() 
     assert_eq!(crate::jobs::view(&p, true)["can_resume"], false);
     drop(reopened);
     drop(dir);
+}
+
+#[test]
+fn audio_review_declares_both_media_operations_and_mismatched_results_are_not_joint_success() {
+    let audio = eefn::peer::audio::Audio {
+        duration_ms: 500,
+        sample_rate: 16000,
+        channels: 1,
+        source_resource_id: "source::microphone".into(),
+        destination_resource_id: "destination::speaker".into(),
+    };
+    let f = Fixture::with_content(2 * 1024 * 1024, audio.maximum_bytes(), None, Some(audio));
+    let caps = &f.plan.request_review.as_ref().unwrap().proposals[0]
+        .proposal
+        .suggested_capabilities;
+    assert!(
+        caps.contains(&"peer.transfer".into())
+            && caps.contains(&"audio.capture".into())
+            && caps.contains(&"audio.play".into())
+    );
+    let (grants, issued) = f.prepare();
+    f.save(grants.clone(), issued.clone()).unwrap();
+    for g in &grants {
+        f.observer(g)
+            .record(&GrantReport::new(
+                g,
+                ReceiptState::Accepted,
+                Value::Null,
+                None,
+            ))
+            .unwrap();
+    }
+    let report = |i: usize, hash: &str| {
+        GrantReport::new(
+            &grants[i],
+            ReceiptState::Completed,
+            json!(eefn::peer::admission::TransferReceipt {
+                schema_version: 2,
+                pair_session_id: issued.scope.session_id.clone(),
+                scope_sha256: issued.scope.digest().unwrap(),
+                role: if i == 0 {
+                    Role::Source
+                } else {
+                    Role::Destination
+                },
+                payload_bytes: 16044,
+                payload_sha256: hash.repeat(64),
+                data_frames: 1 + 16044u64.div_ceil(512) as u32,
+                payload_retained: false,
+                sink_effects_confirmed: false,
+                producer_reported: i == 0,
+                sink_reported: i == 1
+            }),
+            None,
+        )
+    };
+    let source = report(0, "a");
+    assert!(source.confirms(&grants[0]));
+    f.observer(&grants[0]).record(&source).unwrap();
+    let before = json!(f.engine.store.get(&f.plan.plan_id).unwrap());
+    let mismatch = report(1, "b");
+    assert!(mismatch.confirms(&grants[1]));
+    assert!(f.observer(&grants[1]).record(&mismatch).is_err());
+    assert_eq!(json!(f.engine.store.get(&f.plan.plan_id).unwrap()), before);
+    f.observer(&grants[1]).record(&report(1, "a")).unwrap();
+    assert_eq!(
+        f.engine.store.get(&f.plan.plan_id).unwrap().status,
+        PlanStatus::Completed
+    );
 }

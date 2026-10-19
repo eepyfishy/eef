@@ -96,7 +96,7 @@ impl DraftRecord {
         if let Some(input) = &self.concrete_input {
             input.validate()?;
             if !crate::request_planning::METHOD_TEMPLATES.contains(&input.template.as_str())
-                && input.template != "local_pipeline"
+                && !matches!(input.template.as_str(), "local_pipeline" | "peer_transfer")
             {
                 bail!("Unsupported explicit one-step request template")
             }

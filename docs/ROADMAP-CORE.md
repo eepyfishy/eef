@@ -31,23 +31,35 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+Advanced opt-in finite audio now connects the existing microphone and playback
+adapters to paired consumed grants and authenticated peer transport. Public
+commands pass synthetic one-PC acceptance, not finished continuous media or
+physical two-PC acceptance. Review discloses both media operations; saved
+permission/receive-route changes fence active work, and matching endpoint content
+reports are required.
+Defaults remain off; advanced resource/receiver configuration and the remaining
+non-coder setup, strong-stop and release gates are not complete. See
+[contract and limits](PEER-TRANSPORT.md#finite-capture-to-playback-unreleased-advanced-configuration).
+
 The Python-backed capture/extension boundary now uses bounded request/stdout/
 stderr exchange, one I/O deadline and existing Windows owned-job containment.
 Parent grants and pipeline stages tighten its result pipe, and failures retain
 static private-output-free causes under existing uncertain consumed outcomes.
 Saved/applied bridge policy remains a node setting, not work authority. See
 [contract and scope](PYTHON-BRIDGE.md). This is a prerequisite correction for
-resource/media integration, not implemented peer capture, playback or streaming.
+resource/media integration; the audio extension above uses it for finite capture
+and playback, not continuous streaming.
 
 The opt-in native `NodeClient` peer executor now consumes exact paired grants
 and owns bind/readiness/accept/connect through the existing lease/policy watcher.
-It requires explicitly bound finite memory sources or verification-only receivers;
-native app startup still enables no peer support. Real native loopback cases
-exercise transport and retained authority, not public installed-node commands,
+The static-buffer mode requires explicitly bound finite memory sources or
+verification-only receivers; the audio extension above adds opt-in app startup.
+Earlier native loopback cases exercise transport and retained authority, not
+public installed-node commands,
 media or physical two-PC acceptance. See
 [native delivery and remaining scope](PEER-TRANSPORT.md#native-finite-delivery-executor-unreleased-app-startup-remains-disabled).
-Producer/sink integration, joint recovery, strong stop, aggregate supervision
-and the full release gates remain unfinished.
+Continuous producer/sink integration, joint recovery, strong stop, aggregate
+supervision and the full release gates remain unfinished.
 
 Controlled restart now awaits the existing node future and its retained owned
 model cleanup. One applied deadline includes stop admission and group/root

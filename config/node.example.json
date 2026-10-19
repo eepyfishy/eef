@@ -10,8 +10,10 @@
   "allow_write": false,
   "allowed_roots": [],
   "python_plugins": [],
+  "peer_destination_address": null,
   "python_bridge": { "timeout_seconds": 30, "max_request_bytes": 37748736, "max_stdout_bytes": 37748736, "max_stderr_bytes": 65536 },
   "permissions": {
+    "peer_transfers": {"enabled": false, "max_sessions": 1, "max_payload_bytes": 262144, "max_wire_bytes": 2097152, "max_bytes_per_second": 1048576},
     "filesystem": {"read": false, "write": false, "roots": [], "max_read_bytes": 4194304, "max_write_bytes": 4194304, "max_list_entries": 10000},
     "process": {"enabled": false, "allowed_executables": [], "max_seconds": 30, "max_output_bytes": 1048576},
     "applications": {"enabled": false, "allowed": []},

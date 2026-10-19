@@ -16,6 +16,23 @@ struct Input {
     #[serde(default)]
     params: Value,
     cancel_after_ms: Option<u64>,
+    cancel_after_marker: Option<PathBuf>,
+}
+
+async fn wait_for_marker(path: PathBuf) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            match tokio::fs::read(&path).await {
+                Ok(bytes) if bytes == b"ready" => return Ok(()),
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .context("Fixture cancellation marker was not observed")?
 }
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -25,6 +42,10 @@ async fn main() -> Result<()> {
         .read_to_end(&mut bytes)?;
     anyhow::ensure!(bytes.len() <= 1024 * 1024, "Fixture input too large");
     let input: Input = serde_json::from_slice(&bytes)?;
+    anyhow::ensure!(
+        input.cancel_after_ms.is_none() || input.cancel_after_marker.is_none(),
+        "Choose one fixture cancellation trigger"
+    );
     let runtime = eefn::PythonRuntime::discover(Some(input.python))
         .context("Fixture interpreter missing")?
         .with_limits(input.limits)?;
@@ -33,12 +54,23 @@ async fn main() -> Result<()> {
         let plugin = runtime.inspect(input.plugin).await?;
         runtime.invoke(&plugin, &input.action, input.params).await
     };
-    let output = match input.cancel_after_ms {
-        Some(ms) => match tokio::time::timeout(Duration::from_millis(ms), result).await {
-            Ok(result) => Some(result),
-            Err(_) => None,
-        },
-        None => Some(result.await),
+    let output = if let Some(path) = input.cancel_after_marker {
+        tokio::pin!(result);
+        tokio::select! {
+            output = &mut result => Some(output),
+            observed = wait_for_marker(path) => {
+                observed?;
+                None
+            }
+        }
+    } else {
+        match input.cancel_after_ms {
+            Some(ms) => match tokio::time::timeout(Duration::from_millis(ms), result).await {
+                Ok(result) => Some(result),
+                Err(_) => None,
+            },
+            None => Some(result.await),
+        }
     };
     let response = match output {
         Some(Ok(data)) => json!({"success":true,"data":data}),

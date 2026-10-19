@@ -3,7 +3,10 @@
 Owner direction recorded 2026-09-22, after `v0.4.0a6`.
 This is a design record, not implemented functionality or a release promise.
 The 2026-09-22 request authorized documentation only. Backend development resumed
-on 2026-09-26; the media/presence features below remain planned, not implemented.
+on 2026-09-26. An advanced opt-in finite microphone-to-speaker path now passes
+synthetic one-PC public-command checks; see [its contract and limits](PEER-TRANSPORT.md#finite-capture-to-playback-unreleased-advanced-configuration).
+The continuous routing, virtual devices and presence features below remain
+planned, not implemented.
 
 This extends steps 6-9 of the [command-first roadmap](ROADMAP-CORE.md).
 Reuse its origin/area/resource model, durable jobs, execution grants and command

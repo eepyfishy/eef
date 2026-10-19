@@ -33,11 +33,11 @@ def handle(action,params):
         if mode not in ('descendant','inherited'): time.sleep(30)
     return {'bounded':'valid','request':params.get('text','')}
 `);
-async function probe(params,limits={},cancel_after_ms=null){
+async function probe(params,limits={},cancel_after_ms=null,cancel_after_marker=null){
  const exe=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'),'examples/python-bridge-fixture.exe');
  const child=spawn(exe,[],{cwd:root,windowsHide:true,env:{...process.env,PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH},stdio:['pipe','pipe','pipe']});children.push(child);
  let out='',err='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>err+=b);
- child.stdin.end(JSON.stringify({python,plugin,action:'run',params,limits:{timeout_seconds:2,max_request_bytes:65536,max_stdout_bytes:8192,max_stderr_bytes:1024,...limits},cancel_after_ms}));
+ child.stdin.end(JSON.stringify({python,plugin,action:'run',params,limits:{timeout_seconds:2,max_request_bytes:65536,max_stdout_bytes:8192,max_stderr_bytes:1024,...limits},cancel_after_ms,cancel_after_marker}));
  const code=await new Promise((r,j)=>{const timer=setTimeout(()=>{child.kill();j(Error('Fixture deadline '+scratch));},12000);child.on('error',j);child.on('close',c=>{clearTimeout(timer);r(c);});});
  assert.equal(code,0,'Native fixture failed; private '+scratch);assert(!err.includes('PRIVATE_CAPTURE_BYTES'));const result=JSON.parse(out);assert(!out.includes('PRIVATE_CAPTURE_BYTES'),'private plugin output escaped into diagnostics');return result;
 }
@@ -68,8 +68,11 @@ try{
  await new Promise(r=>setTimeout(r,3300));
  assert.equal(await stat(join(scratch,'late-child-effect')).then(()=>true,()=>false),false);
  await resetMarkers();
- const cancelled=await probe({mode:'cancel'},{timeout_seconds:10},700);assert.equal(cancelled.result.failure,'Cancelled');assert(cancelled.elapsed_ms<4000);
+ // Trigger cancellation only after the root has spawned/observed its child.
+ // A fixed delay can expire during inspection/startup and never test cleanup.
+ const cancelled=await probe({mode:'cancel'},{timeout_seconds:10},null,join(scratch,'root-started'));assert.equal(cancelled.result.failure,'Cancelled');assert(cancelled.elapsed_ms<4000);
  assert.equal(await readFile(join(scratch,'root-started'),'utf8'),'ready');
+ assert.equal(await readFile(join(scratch,'child-started'),'utf8'),'ready');
  await new Promise(r=>setTimeout(r,3300));
  assert.equal(await stat(join(scratch,'late-child-effect')).then(()=>true,()=>false),false);
  assert.equal((await probe({text:'still usable'})).result.success,true);
