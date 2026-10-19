@@ -1,5 +1,6 @@
 //! Finite transport-only grants using the EXISTING consumed receipt journal.
-//! Not a producer/sink permission, paired job driver, socket service or app API.
+//! Not a producer/sink permission. Native socket ownership uses the same lease
+//! and permission watcher, including readiness and pending connect/accept.
 use super::{
     PeerEndpoint, Recipient, SealedMaterial,
     scope::{Limits, Role, Scope},
@@ -250,7 +251,8 @@ impl AdmittedPeer {
     }
 
     /// Finite transport receipt only, not capture, storage, playback or a job
-    /// result for either physical endpoint. IO must come from future admission.
+    /// result for either physical endpoint. The caller owns supplied IO;
+    /// native delivery instead uses run_tcp to include socket waits in the lease.
     pub async fn run<S: crate::tls::NodeIo + 'static>(
         self,
         engine: &crate::NodeEngine,
@@ -265,64 +267,132 @@ impl AdmittedPeer {
             definition,
             _slot,
         } = self;
+        let operation = transfer(
+            endpoint,
+            role,
+            scope,
+            definition,
+            stream,
+            source_payload.map(Arc::<[u8]>::from),
+        );
+        let report = accepted.run_operation(engine, operation).await;
+        drop(_slot);
+        report
+    }
+
+    /// Open exactly one scoped TCP route AFTER durable consumption. Destination
+    /// readiness means its listener is owned, not that a source or sink ran.
+    /// Even binding, readiness output and accept/connect are inside the original
+    /// lease/policy watcher. Dropping the future releases every owned socket.
+    pub async fn run_tcp<F, Fut>(
+        self,
+        engine: &crate::NodeEngine,
+        source_payload: Option<Arc<[u8]>>,
+        ready: F,
+    ) -> GrantReport
+    where
+        F: FnOnce(GrantReport) -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
+    {
+        let acknowledgement = self.acknowledgement();
+        let Self {
+            accepted,
+            endpoint,
+            role,
+            scope,
+            definition,
+            _slot,
+        } = self;
         let operation = async move {
-            let frames = definition
-                .payload_bytes
-                .div_ceil(u64::from(definition.limits.max_frame_bytes))
-                as u32;
-            if role == Role::Source {
-                let bytes = source_payload
-                    .ok_or_else(|| anyhow::anyhow!("Missing approved source bytes"))?;
-                if bytes.len() as u64 != definition.payload_bytes
-                    || hex::encode(Sha256::digest(&bytes)) != definition.payload_sha256
-                {
-                    bail!("Source bytes differ from approved manifest")
-                }
-                let mut channel = endpoint.connect(stream).await?;
-                for frame in bytes.chunks(definition.limits.max_frame_bytes as usize) {
-                    channel.send_data(frame).await?;
-                    channel.receive_acknowledgement().await?;
-                }
+            // No caller-provided route or DNS resolution. The numeric endpoint
+            // is signed, scoped and checked against the runtime's local binding.
+            super::plan::validate_address(scope.destination_address)?;
+            validate_payload(role, &definition, source_payload.as_deref())?;
+            let stream = if role == Role::Destination {
+                let listener = tokio::net::TcpListener::bind(scope.destination_address).await?;
+                ready(acknowledgement).await?;
+                let (stream, _) = listener.accept().await?;
+                // One admitted connection only. An unauthenticated connection
+                // cannot cause retries or acquire another grant/session slot.
+                drop(listener);
+                stream
             } else {
-                if source_payload.is_some() {
-                    bail!("Destination must not supply source bytes")
-                }
-                let mut channel = endpoint.accept(stream).await?;
-                let mut received = 0u64;
-                let mut hash = Sha256::new();
-                for index in 0..frames {
-                    let bytes = channel.receive_data().await?;
-                    let expected = (definition.payload_bytes - received)
-                        .min(u64::from(definition.limits.max_frame_bytes));
-                    if bytes.len() as u64 != expected {
-                        bail!("Peer frame differs from approved finite layout")
-                    }
-                    received += bytes.len() as u64;
-                    hash.update(&bytes);
-                    if index + 1 == frames
-                        && hex::encode(hash.clone().finalize()) != definition.payload_sha256
-                    {
-                        bail!("Received bytes differ from approved manifest")
-                    }
-                    channel.acknowledge().await?;
-                }
-            }
-            Ok(json!(TransferReceipt {
-                schema_version: 1,
-                pair_session_id: scope.session_id.clone(),
-                scope_sha256: scope.digest()?,
-                role,
-                payload_bytes: definition.payload_bytes,
-                payload_sha256: definition.payload_sha256,
-                data_frames: frames,
-                payload_retained: false,
-                sink_effects_confirmed: false
-            }))
+                ready(acknowledgement).await?;
+                tokio::net::TcpStream::connect(scope.destination_address).await?
+            };
+            transfer(endpoint, role, scope, definition, stream, source_payload).await
         };
         let report = accepted.run_operation(engine, operation).await;
         drop(_slot);
         report
     }
+}
+
+fn validate_payload(role: Role, definition: &Definition, payload: Option<&[u8]>) -> Result<()> {
+    if role == Role::Source {
+        let bytes = payload.ok_or_else(|| anyhow::anyhow!("Missing approved source bytes"))?;
+        if bytes.len() as u64 != definition.payload_bytes
+            || hex::encode(Sha256::digest(bytes)) != definition.payload_sha256
+        {
+            bail!("Source bytes differ from approved manifest")
+        }
+    } else if payload.is_some() {
+        bail!("Destination must not supply source bytes")
+    }
+    Ok(())
+}
+
+async fn transfer<S: crate::tls::NodeIo + 'static>(
+    endpoint: PeerEndpoint,
+    role: Role,
+    scope: Scope,
+    definition: Definition,
+    stream: S,
+    source_payload: Option<Arc<[u8]>>,
+) -> Result<Value> {
+    validate_payload(role, &definition, source_payload.as_deref())?;
+    let frames = definition
+        .payload_bytes
+        .div_ceil(u64::from(definition.limits.max_frame_bytes)) as u32;
+    if role == Role::Source {
+        let bytes = source_payload.expect("validated source payload");
+        let mut channel = endpoint.connect(stream).await?;
+        for frame in bytes.chunks(definition.limits.max_frame_bytes as usize) {
+            channel.send_data(frame).await?;
+            channel.receive_acknowledgement().await?;
+        }
+    } else {
+        let mut channel = endpoint.accept(stream).await?;
+        let mut received = 0u64;
+        let mut hash = Sha256::new();
+        for index in 0..frames {
+            let bytes = channel.receive_data().await?;
+            let expected = (definition.payload_bytes - received)
+                .min(u64::from(definition.limits.max_frame_bytes));
+            if bytes.len() as u64 != expected {
+                bail!("Peer frame differs from approved finite layout")
+            }
+            received += bytes.len() as u64;
+            hash.update(&bytes);
+            if index + 1 == frames
+                && hex::encode(hash.clone().finalize()) != definition.payload_sha256
+            {
+                bail!("Received bytes differ from approved manifest")
+            }
+            channel.acknowledge().await?;
+        }
+    }
+    Ok(json!(TransferReceipt {
+        schema_version: 1,
+        pair_session_id: scope.session_id.clone(),
+        scope_sha256: scope.digest()?,
+        role,
+        payload_bytes: definition.payload_bytes,
+        payload_sha256: definition.payload_sha256,
+        data_frames: frames,
+        payload_retained: false,
+        sink_effects_confirmed: false
+    }))
 }
 
 #[cfg(test)]

@@ -91,7 +91,7 @@ pub struct Scope {
     pub expires_at_ms: u64,
     pub limits: Limits,
 }
-pub(super) fn uuid(id: &str) -> Result<()> {
+pub(crate) fn uuid(id: &str) -> Result<()> {
     crate::job_commands::validate_operation_id(id)?;
     if uuid::Uuid::parse_str(id)?.is_nil() {
         bail!("Nil peer identity")

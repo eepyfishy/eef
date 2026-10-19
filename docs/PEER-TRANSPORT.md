@@ -1,9 +1,11 @@
 # Peer transport security foundation (unreleased)
 
 This is an experimental library in `eefn::peer`, not a usable node-to-node
-feature. No app command, listener, capability advertisement or media route
-enables it. Library finite admission and coordinator paired-job issuance are
-described below; the native node application delivery handler is still absent.
+feature. Native app startup enables no peer command, listener, capability
+advertisement or media route. Consumed admission, paired coordinator issuance
+and an opt-in native NodeClient finite-delivery executor are described below.
+The executor requires explicit embedding-owner producer bindings; ordinary
+installed nodes still provide none.
 It is the transport
 foundation for step 8 of the [command-first roadmap](ROADMAP-CORE.md), not
 completion of that step or of [presence and media](PRESENCE-AND-MEDIA.md).
@@ -34,7 +36,7 @@ per-pair CA, leaf keys and framing key, and returns two encrypted bundles:
   a recipient's decryption credential alone cannot forge coordinator issuance.
 - Opening a bundle checks the observed local pairing, control session, runtime
   generation, coordinator epoch, scope digest, signature and time before making
-  an endpoint. The observed identities must eventually come from the running
+  an endpoint. The observed identities come from the running
   grant-owned service, never model output or untrusted discovery.
 - Raw private material is private to the module and omitted from Debug reports.
   Ciphertext delivery is serializable; this is not a claim of memory zeroization.
@@ -47,9 +49,10 @@ download is part of this increment.
 
 ## Authenticated stream and failure behavior
 
-The source initiates and destination accepts an IO stream supplied by the
-caller. The library does not dial or bind a socket. Future runtime admission
-must enforce the approved address, listener ownership and number of attempts.
+The underlying channel accepts caller-supplied IO. Native consumed admission
+also offers `run_tcp`: it owns one numeric scoped bind/accept or connect, with
+socket waits and readiness output under the existing lease/policy watcher.
+See the native-delivery section below for its boundaries.
 
 TLS 1.3 requires both scoped endpoint certificates, the fresh pair CA and the
 exact expected peer leaf. Its ALPN is separate from the coordinator protocol.
@@ -143,8 +146,8 @@ Existing consumed-attempt uniqueness and grant-ID checks refuse reuse after
 completion, drop, cancellation or reopening the same journal. Raw `open` remains
 stateless and must not become a production bypass. This admission primitive is
 not evidence by itself that the coordinator approved or supervised both sides.
-The following coordinator increment adds paired planning/issuance, but fresh
-native application socket/delivery integration remains required. Ordinary
+The following coordinator increment adds paired planning/issuance; the subsequent
+native executor adds opt-in finite delivery, not app producer/sink setup. Ordinary
 reviewed jobs retain their predecessor and one-active-attempt rules.
 
 ## Coordinator paired jobs (unreleased; native delivery still unavailable)
@@ -174,7 +177,7 @@ checkpoint. Private keys or bulk payloads are not added to the job record.
 
 Destination dispatch precedes source dispatch. A readiness observer releases
 the source only after the destination's exact ACK has been saved by the existing
-journal observer. The future native handler must bind and retain its authorized
+journal observer. The native handler binds and retains its authorized
 route before emitting that ACK. Rejection, timeout, stop or changed scope before
 readiness sends no source request; it does not fabricate a source-node receipt.
 The new control envelope reuses existing framing, leases and report queues;
@@ -199,10 +202,9 @@ downgrade a journal containing them. Ordinary records keep their prior shape.
 
 Compatible nodes must declare versioned peer support tied to their accepted
 registration runtime. Missing/old/changed support is refused before dispatch.
-**Current native node startup still declares no such support**, enables no peer
-admission and handles no new delivery envelope. There is therefore no usable
-native command-driven peer session yet. The coordinator path is implemented,
-but node socket/ACK lifecycle, producers/sinks, strong stop, joint recovery,
+**Current native node startup still declares no such support** and enables no
+peer admission. There is therefore no usable installed-node peer command yet.
+The opt-in native executor is described below; app producers/sinks, strong stop, joint recovery,
 bandwidth supervision and physical acceptance are not complete.
 
 Seven focused tests cover structural bindings, atomic/failed journal writes,
@@ -226,6 +228,75 @@ Paired-coordinator checkpoint headless binary SHA-256:
 ```text
 eef.exe  a359a9446b921cfc48e862615844ad7ca26fefc05b53d07f6a995791f585576f
 eefn.exe 37f1f53847d727beb288a261f52c1d140400877f0b01d7f0af11cd7c18b3dd1a
+```
+
+## Native finite delivery executor (unreleased; app startup remains disabled)
+
+`NodeClient::with_peer_runtime` accepts an explicitly constructed `FiniteRuntime`
+only with applied peer permission, engine admission and existing available local
+`peer.transfer` resources. It enables no permission itself. The embedding owner
+supplies immutable in-memory source snapshots or verification-only receive
+resources and one numeric local receive address. Bindings are bounded to eight
+resources and 4 MiB total source snapshots; admitted calls share immutable byte
+storage rather than copying a payload per pending lease. Payloads are neither
+serializable nor included in Debug, registration, status or receipts. There is no
+file access, capture, playback, dynamic producer or application sink in this hook.
+The owner's original source snapshot lives with its runtime; the receipt's
+`payload_retained: false` means no received/report/job payload retention, not
+destruction or memory zeroization of that separately supplied source.
+
+An opt-in client advertises only with independent credential/pinned TLS,
+available consumed journal, immutable node generation/registration offer and a
+valid coordinator epoch from the authenticated welcome. Old coordinators remain
+compatible but cannot activate peer support. Unbound peer resources are marked
+unavailable. The gateway's fresh epoch is also the coordinator Runtime's epoch;
+delivery cannot supply or override the observed identity. This is process/session
+binding, not replicated-state election or stale-leader fencing across a cluster.
+
+The strict `execute_peer_grant` envelope uses existing request capacity, fresh
+issuer lease, consumed ledger, exact recipient-bound admission, control output
+failure guard and connection-owned tasks. Source manifest and local receiver
+resource/address must match before consumption. No fallback to ordinary RPC,
+ordinary execution or stateless channel opening is permitted.
+
+After consumption, `run_tcp` binds the destination route before readiness ACK;
+source opens one connection only after its own ACK. Binding, readiness writes,
+accept/connect, TLS and framed transfer share the original lease and relevant
+permission watcher. No retry/reconnect loop is added. Completion, cancellation
+or control-session loss drops owned socket futures; consumed authority remains
+completed or unknown and cannot be replayed. A caller stopping its coordinator
+RPC is not a strong remote stop: connected node work may remain until its lease.
+
+If a consumed destination cannot bind, it reports persisted `Unknown` without a
+readiness ACK, never `Rejected`. The gateway accepts that conservative report
+only for peer authority after an issued lease probe. The paired journal can save
+it without releasing source dispatch. Successful completion still needs the
+matching saved ACK; ordinary grant lifecycle rules are unchanged. Parent and
+counterpart interruption still use the existing coordinator driver/guard.
+
+Native regression cases exercise real NodeClients, their consumed journals, the
+coordinator paired driver and actual loopback peer TCP/mutual TLS. These are
+finite synthetic producers, not public installed-node commands, physical two-PC
+acceptance, media delivery or proof of application effects. The remaining product
+requirements below still apply.
+
+Final verification: both locked/offline all-target feature modes pass **815
+tests plus one ignored each**. This includes three native coordinator/client
+cases, two socket ownership/deadline/cancellation cases and two bounded runtime
+binding cases added in this increment. Ordinary pre-ACK uncertainty remains
+refused in its existing lifecycle regression. The native disconnect check reads
+SQLite read-only, so opening/reconciling the journal cannot manufacture Unknown.
+Fresh no-dashboard binaries/examples build. Public
+`local-pipelines-KQuE4y`, `model-downloads-KGVT1P`,
+`node-credentials-rwuVyQ` and `request-drafts-Z8puop` pass existing app flows;
+they do not activate the new producer bindings. Browser copy/status smoke and
+the recursive backend/browser guard pass. No UI implementation changed.
+
+Evaluated headless binary SHA-256:
+
+```text
+eef.exe  45ea34b693d23d0584187f282e2b8755bb515f9cd2df9a18c4c908630ea96cdf
+eefn.exe 16f1c0bd9db27953b098f5dd02d9f5e30e74fa94f5c5c5eb8a9d947dea2b1a34
 ```
 
 ## Verification and remaining product integration

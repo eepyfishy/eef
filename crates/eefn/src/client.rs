@@ -21,6 +21,9 @@ use crate::protocol::{
 };
 use crate::session_output::send as write_session_frame;
 
+#[path = "client_peer.rs"]
+mod peer_delivery;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SelectedModel {
     pub model_id: String,
@@ -135,6 +138,7 @@ fn default_ollama_url() -> String {
 }
 
 pub struct NodeClient {
+    peer_runtime: Option<Arc<crate::peer::runtime::FiniteRuntime>>,
     registration_runtime: Option<String>,
     grant_ledger: Option<Arc<crate::grants::GrantLedger>>,
     tls_config: Option<Arc<tokio_rustls::rustls::ClientConfig>>,
@@ -197,6 +201,7 @@ impl NodeClient {
             }
         }
         Ok(Self {
+            peer_runtime: None,
             registration_runtime: None,
             grant_ledger: None,
             tls_config,
@@ -223,6 +228,19 @@ impl NodeClient {
             bail!("invalid registration runtime binding")
         }
         self.registration_runtime = Some(runtime.into());
+        Ok(self)
+    }
+    /// Explicit embedding hook, not enabled by native app startup. It cannot
+    /// enable permissions or invent producer/device bindings from remote input.
+    pub fn with_peer_runtime(
+        mut self,
+        runtime: crate::peer::runtime::FiniteRuntime,
+    ) -> Result<Self> {
+        runtime.validate_metadata(&self.config.node_id, &self.config.metadata)?;
+        if !self.engine.peer_runtime_enabled() {
+            bail!("Peer runtime requires applied local permission and engine admission")
+        }
+        self.peer_runtime = Some(Arc::new(runtime));
         Ok(self)
     }
     pub fn with_grants(
@@ -320,12 +338,26 @@ impl NodeClient {
         specs: &Value,
         models: &[Value],
         receipt: Option<&crate::registration::Offer>,
+        peer: Option<&crate::peer::plan::Advertisement>,
     ) -> Value {
         let mut message = build_register(node_id, name, version, capabilities, specs, models);
-        message["metadata"] = json!(self.config.metadata.advertised(capabilities));
+        let mut metadata = self.config.metadata.advertised(capabilities);
+        for resource in &mut metadata.resources {
+            if resource.capability == "peer.transfer" {
+                resource.available &= peer.is_some()
+                    && self
+                        .peer_runtime
+                        .as_ref()
+                        .is_some_and(|runtime| runtime.has_resource(&resource.id));
+            }
+        }
+        message["metadata"] = json!(metadata);
         message["network"] = json!(self.config.network);
         if let Some(receipt) = receipt {
             message["registration_receipt"] = json!(receipt);
+        }
+        if let Some(peer) = peer {
+            message["peer_transfer"] = json!(peer);
         }
         message["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
             "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE,
@@ -450,7 +482,6 @@ impl NodeClient {
         if let Some(server) = &self.engine.model_server {
             models.extend(server.models()?)
         }
-        let capabilities = advertised_capabilities(&self.engine.capabilities(), &models);
         let receipt_offer = if reply["registration_receipts"]["schema_version"] == 1 {
             if self.registration_runtime.is_some()
                 && !reply["grant_session_id"]
@@ -466,6 +497,25 @@ impl NodeClient {
         } else {
             None
         };
+        // Both epochs are observed from this authenticated session, not status,
+        // grant delivery, discovery or model output. Old coordinators remain
+        // compatible but cannot enable this runtime's peer handler.
+        let coordinator_runtime = reply["coordinator_runtime_id"]
+            .as_str()
+            .filter(|id| crate::peer::scope::uuid(id).is_ok())
+            .map(str::to_owned);
+        let peer_advertisement = match (&self.peer_runtime, &receipt_offer) {
+            (Some(runtime), Some(offer))
+                if self.tls_config.is_some()
+                    && self.grant_ledger.is_some()
+                    && coordinator_runtime.is_some()
+                    && self.engine.peer_runtime_enabled() =>
+            {
+                Some(runtime.advertisement(&offer.runtime_id)?)
+            }
+            _ => None,
+        };
+        let capabilities = self.session_capabilities(&models, peer_advertisement.as_ref());
         {
             write_session_frame(
                 &self.crypto,
@@ -483,6 +533,7 @@ impl NodeClient {
                     &specs,
                     &models,
                     receipt_offer.as_ref(),
+                    peer_advertisement.as_ref(),
                 ),
             )
             .await?;
@@ -575,9 +626,9 @@ impl NodeClient {
                             .cloned().collect::<Vec<_>>();
                         if let Some(server) = &self.engine.model_server { updated.extend(server.models()?); }
                         if updated == models { continue; }
-                        let capabilities = advertised_capabilities(&self.engine.capabilities(), &updated);
+                        let capabilities = self.session_capabilities(&updated, peer_advertisement.as_ref());
                         let registration = self.registration(&self.config.node_id, &self.config.name,
-                            crate::VERSION, &capabilities, &specs, &updated, receipt_offer.as_ref());
+                            crate::VERSION, &capabilities, &specs, &updated, receipt_offer.as_ref(), peer_advertisement.as_ref());
                         write_session_frame(&self.crypto,&writer,&output_write_failed,&registration)
                             .await.context("model registration refresh failed")?;
                         models = updated;
@@ -703,6 +754,21 @@ impl NodeClient {
                     };
                     let _ = write_session_frame(&crypto,&writer,&write_failed,&response).await;
                 });
+                continue;
+            }
+            if message["type"] == "execute_peer_grant" {
+                self.dispatch_peer(
+                    message,
+                    &writer,
+                    &output_write_failed,
+                    &mut tasks,
+                    grant_issuer.as_deref(),
+                    grant_session.as_deref(),
+                    coordinator_runtime.as_deref(),
+                    peer_advertisement.is_some(),
+                    lease_requests.clone(),
+                )
+                .await?;
                 continue;
             }
             if message["type"] == "execute_grant" {
@@ -1700,7 +1766,8 @@ mod tests {
     fn local_connection_does_not_replace_advertised_address() {
         let mut client = probe_client("127.0.0.1:51335".parse().unwrap());
         client.config.network.advertised_address = Some("26.1.2.3".into());
-        let message = client.registration("stable", "Laptop", "test", &[], &json!({}), &[], None);
+        let message =
+            client.registration("stable", "Laptop", "test", &[], &json!({}), &[], None, None);
         assert_eq!(message["network"]["advertised_address"], "26.1.2.3");
         assert_eq!(client.config.endpoints[0].address, "127.0.0.1:51335");
         assert_eq!(message["node_id"], "stable");

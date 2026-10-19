@@ -22,8 +22,13 @@ struct Fixture {
 
 #[path = "peer_driver_tests.rs"]
 mod driver_tests;
+#[path = "peer_native_tests.rs"]
+mod native_tests;
 impl Fixture {
     fn new(max_bytes: usize) -> Self {
+        Self::with_manifest(max_bytes, 100, "b".repeat(64))
+    }
+    fn with_manifest(max_bytes: usize, payload_bytes: u64, payload_sha256: String) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jobs.db");
         drop(rusqlite::Connection::open(&path).unwrap());
@@ -55,8 +60,8 @@ impl Fixture {
                 node_id: "destination".into(),
                 resource_id: "destination::transport".into(),
             },
-            payload_bytes: 100,
-            payload_sha256: "b".repeat(64),
+            payload_bytes,
+            payload_sha256,
             limits: Limits {
                 max_wire_bytes: 1024 * 1024,
                 max_bytes_per_second: 1024 * 1024,

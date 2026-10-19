@@ -310,6 +310,9 @@ impl NodeEngine {
             .try_acquire_owned()
             .map_err(|_| anyhow::anyhow!("Node peer session capacity is full"))
     }
+    pub(crate) fn peer_runtime_enabled(&self) -> bool {
+        self.peer_admission_enabled && self.policy.peer_transfers.enabled
+    }
 
     pub(crate) fn applied_permissions(&self) -> &NodePolicy {
         &self.policy

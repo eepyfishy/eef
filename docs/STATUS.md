@@ -1,5 +1,42 @@
 # Architecture conformance status
 
+Newest checkpoints appear first. Earlier entries retain the implementation and
+verification boundaries at their own checkpoint, not claims about later code.
+
+## Unreleased: native finite peer delivery lifecycle, not installed-node media
+
+Opt-in `NodeClient` delivery now consumes the existing grant, uses observed
+control/node/coordinator identities, and owns one scoped TCP route under the
+existing lease and permission watcher. Destination binds before readiness ACK;
+bind failure is consumed uncertainty without releasing source dispatch. Ordinary
+grant completion still requires its matching saved ACK.
+
+Explicit embedding-owner sources share bounded immutable memory; receive
+resources verify and discard. Neither payloads nor private keys enter status,
+registration or execution receipts, and unbound resources remain unavailable.
+Native app startup still supplies no producers or peer permission/admission:
+installed-node/public peer commands and media remain unavailable. See
+[contract and boundaries](PEER-TRANSPORT.md#native-finite-delivery-executor-unreleased-app-startup-remains-disabled).
+
+Real native client regressions exercise coordinator paired dispatch, consumed
+journals, loopback TCP/mutual TLS, exact joint outcomes, replay refusal, binding
+failure, changed-source refusal and control-disconnect cleanup. The disconnect
+case reads retained node state read-only without reopening/reconciling its
+journal. This is one-PC synthetic finite transport, not physical two-PC, actual
+capture/playback, strong remote stop or release acceptance.
+
+Both final locked/offline all-target modes pass **815 tests plus one ignored
+each**, including no-dashboard. Fresh headless binaries/examples build. Public
+`local-pipelines-KQuE4y`, `model-downloads-KGVT1P` and
+`node-credentials-rwuVyQ` and `request-drafts-Z8puop` pass existing command, history, restart/no-replay and
+credential/pairing regressions. Browser initialization/copy/status smoke and
+the recursive backend/browser guard pass. These public app regressions do not
+activate native peer producers, which remain unavailable in app startup.
+
+No installed/remote node, model, update policy or release changed. Producer/sink
+integration, discovery/disclosure, aggregate bandwidth supervision, joint
+recovery, strong stop and physical/release gates remain open.
+
 ## Unreleased: atomic paired coordinator issuance and joint outcomes
 
 The explicit finite pair template retains origin review, fixed endpoint bindings

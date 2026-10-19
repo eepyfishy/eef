@@ -82,6 +82,7 @@ impl Runtime {
             validate_secret(&psk)?;
         }
         let node_server = NodeServer::with_authentication(&psk, host, port, authentication)?;
+        let instance_id = node_server.runtime_id().to_owned();
 
         let bus = EventBus::new(config.u64("logging.history", 500) as usize);
         let identity = IdentityMemory::new(config.clone());
@@ -208,7 +209,7 @@ impl Runtime {
             node_event_loss_count: AtomicU64::new(0),
             node_state_reconciliation_count: AtomicU64::new(0),
             background: AsyncMutex::new(Vec::new()),
-            instance_id: uuid::Uuid::new_v4().to_string(),
+            instance_id,
             submissions: AsyncMutex::new(tokio::task::JoinSet::new()),
         });
         runtime.start(start_brain).await?;

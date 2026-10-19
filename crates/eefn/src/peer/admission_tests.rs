@@ -603,3 +603,93 @@ async fn substituted_payloads_fail_without_emitting_a_successful_transport_recei
     );
     assert!(received.data.is_null());
 }
+
+#[tokio::test]
+async fn native_socket_readiness_owns_listener_and_accept_wait_expires_under_original_lease() {
+    let mut f = Fixture::new();
+    let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = probe.local_addr().unwrap();
+    drop(probe);
+    f.transport.scope.destination_address = address;
+    f.transport.reseal();
+    let engine = f.engine(Role::Destination, true);
+    let ledger = f.ledger(Role::Destination);
+    let admitted = f
+        .prepare(Role::Destination, &engine, ledger.clone(), 500)
+        .await
+        .unwrap();
+    let started = std::time::Instant::now();
+    let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = ready.clone();
+    let report = admitted
+        .run_tcp(&engine, None, |ack| async move {
+            assert_eq!(ack.state, ReceiptState::Accepted);
+            assert!(
+                tokio::net::TcpListener::bind(address).await.is_err(),
+                "ACK preceded native socket ownership"
+            );
+            observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+    assert!(ready.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(report.state, ReceiptState::Unknown);
+    assert!(report.persisted && !report.success);
+    assert!(started.elapsed() < Duration::from_secs(3));
+    let _released = tokio::net::TcpListener::bind(address).await.unwrap();
+    assert_eq!(
+        ledger
+            .receipt(
+                &f.grant(Role::Destination).issuer_id,
+                &f.grant(Role::Destination).grant_id
+            )
+            .unwrap()["state"],
+        "unknown"
+    );
+    assert!(engine.peer_slot().is_ok());
+}
+
+#[tokio::test]
+async fn cancelling_native_ready_wait_releases_socket_and_fences_consumed_grant() {
+    let mut f = Fixture::new();
+    let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = probe.local_addr().unwrap();
+    drop(probe);
+    f.transport.scope.destination_address = address;
+    f.transport.reseal();
+    let engine = Arc::new(f.engine(Role::Destination, true));
+    let ledger = f.ledger(Role::Destination);
+    let admitted = f
+        .prepare(Role::Destination, &engine, ledger.clone(), 10000)
+        .await
+        .unwrap();
+    let (started, seen) = tokio::sync::oneshot::channel();
+    let running_engine = engine.clone();
+    let work = tokio::spawn(async move {
+        admitted
+            .run_tcp(&running_engine, None, |_| async move {
+                started.send(()).unwrap();
+                std::future::pending::<Result<()>>().await
+            })
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), seen)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(tokio::net::TcpListener::bind(address).await.is_err());
+    work.abort();
+    assert!(work.await.unwrap_err().is_cancelled());
+    let _released = tokio::net::TcpListener::bind(address).await.unwrap();
+    assert!(engine.peer_slot().is_ok());
+    let g = f.grant(Role::Destination);
+    assert_eq!(
+        ledger.receipt(&g.issuer_id, &g.grant_id).unwrap()["state"],
+        "unknown"
+    );
+    assert!(
+        f.prepare(Role::Destination, &engine, ledger, 10000)
+            .await
+            .is_err()
+    );
+}

@@ -81,6 +81,7 @@ pub struct NodeServer {
 }
 
 struct Inner {
+    runtime_id: String,
     host: String,
     port: AtomicU16,
     crypto: Option<NodeCrypto>,
@@ -185,6 +186,7 @@ impl NodeServer {
         let (events, _) = broadcast::channel(256);
         Ok(Self {
             inner: Arc::new(Inner {
+                runtime_id: Uuid::new_v4().to_string(),
                 host: host.into(),
                 port: AtomicU16::new(port),
                 crypto: if authentication.allow_legacy {
@@ -213,6 +215,10 @@ impl NodeServer {
 
     pub fn port(&self) -> u16 {
         self.inner.port.load(Ordering::Relaxed)
+    }
+    /// Fresh process authority epoch, shared with its coordinator runtime.
+    pub fn runtime_id(&self) -> &str {
+        &self.inner.runtime_id
     }
     pub fn authentication_policy(&self) -> &crate::authentication::AuthenticationPolicy {
         &self.inner.authentication
@@ -935,6 +941,7 @@ impl NodeServer {
             &crypto,
             &mut writer,
             &json!({"type": "ok", "protocol": PROTOCOL_VERSION,"grant_session_id":session_id.to_string(),
+                "coordinator_runtime_id":self.inner.runtime_id,
                 "registration_receipts":{"schema_version":1}}),
         )
         .await?;
@@ -1412,6 +1419,12 @@ impl NodeServer {
                                     !pending.acknowledged
                                 } else {
                                     pending.acknowledged
+                                        // A consumed destination may fail to bind
+                                        // before readiness. This is uncertainty,
+                                        // never rejection or permission to send.
+                                        || (r.state == crate::grants::ReceiptState::Unknown
+                                            && g.capability == "peer.transfer"
+                                            && pending.lease_probe_id.is_some())
                                 }
                         })
                 })
@@ -2583,6 +2596,11 @@ mod tests {
         server
             .resolve_response("owner", session, complete.clone())
             .await;
+        assert!(receiver.try_recv().is_err());
+        // Peer pre-readiness uncertainty must not relax ordinary lifecycle.
+        let unknown = json!({"type":"response","id":"wire-id","success":false,
+            "grant":GrantReport::new(&g,ReceiptState::Unknown,Value::Null,Some("unconfirmed"))});
+        server.resolve_response("owner", session, unknown).await;
         assert!(receiver.try_recv().is_err());
         let ack = json!({"type":"grant_ack","id":"wire-id","grant":GrantReport::new(&g,ReceiptState::Accepted,Value::Null,None)});
         server

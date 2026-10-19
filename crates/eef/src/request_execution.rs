@@ -350,7 +350,7 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
                 if a.report
                     .as_ref()
                     .is_none_or(|r| r.state == ReceiptState::Unknown)
-                    && (a.report.is_none() || a.acknowledgement.is_some()) =>
+                    && (a.report.is_none() || a.acknowledgement.is_some() || paired) =>
             {
                 (TaskStatus::Interrupted, a.report.as_ref())
             }
@@ -505,6 +505,9 @@ impl GrantObserver for AttemptJournal {
                     return Ok(true);
                 }
                 if !(a.state == AttemptState::Issued && report.state == ReceiptState::Rejected
+                    || e.peer.is_some()
+                        && a.state == AttemptState::Issued
+                        && report.state == ReceiptState::Unknown
                     || a.state == AttemptState::Accepted
                         && matches!(
                             report.state,
@@ -575,7 +578,7 @@ impl Driver {
         registry: crate::capability::CapabilityRegistry,
     ) -> Self {
         Self {
-            runtime_id: uuid::Uuid::new_v4().to_string(),
+            runtime_id: server.runtime_id().to_owned(),
             engine,
             server,
             registry,

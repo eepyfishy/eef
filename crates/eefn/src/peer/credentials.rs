@@ -39,7 +39,7 @@ pub struct SealedPair {
     pub destination: SealedMaterial,
 }
 
-/// Observed local identity/pairing, supplied by the future grant-owned runtime,
+/// Observed local identity/pairing, supplied by the grant-owned runtime,
 /// never by model output or an untrusted discovery response.
 pub struct Recipient<'a> {
     pub auth_mode: AuthMode,

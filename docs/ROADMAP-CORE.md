@@ -31,6 +31,16 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The opt-in native `NodeClient` peer executor now consumes exact paired grants
+and owns bind/readiness/accept/connect through the existing lease/policy watcher.
+It requires explicitly bound finite memory sources or verification-only receivers;
+native app startup still enables no peer support. Real native loopback cases
+exercise transport and retained authority, not public installed-node commands,
+media or physical two-PC acceptance. See
+[native delivery and remaining scope](PEER-TRANSPORT.md#native-finite-delivery-executor-unreleased-app-startup-remains-disabled).
+Producer/sink integration, joint recovery, strong stop, aggregate supervision
+and the full release gates remain unfinished.
+
 Controlled restart now awaits the existing node future and its retained owned
 model cleanup. One applied deadline includes stop admission and group/root
 observation, with an old-server barrier preventing replacement or version
