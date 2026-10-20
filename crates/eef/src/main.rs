@@ -99,6 +99,13 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum NodeCommand {
+    /// Inspect/save bootstrap preferences with current local node-owner consent.
+    ModelBootstrapPolicy {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eefn::model_bootstrap::Action,
+    },
     /// Inspect/save a node's Python budgets; writes need current local consent.
     Python {
         #[arg(long)]
@@ -205,6 +212,41 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn bootstrap_policy_cli_requires_node_and_exposes_no_download_or_restart() {
+        Args::try_parse_from([
+            "eef",
+            "node",
+            "model-bootstrap-policy",
+            "--node",
+            "owner",
+            "configure",
+            "--mode",
+            "managed",
+        ])
+        .unwrap();
+        assert!(Args::try_parse_from(["eef", "node", "model-bootstrap-policy", "show"]).is_err());
+        for flag in [
+            "--download",
+            "--load",
+            "--restart",
+            "--execute",
+            "--allow-remote",
+        ] {
+            assert!(
+                Args::try_parse_from([
+                    "eef",
+                    "node",
+                    "model-bootstrap-policy",
+                    "--node",
+                    "owner",
+                    "show",
+                    flag
+                ])
+                .is_err()
+            );
+        }
+    }
 
     #[test]
     fn stop_inspection_cli_requires_exact_ids_and_has_no_mutation_options() {
@@ -1050,6 +1092,70 @@ async fn remote_relay_cli(
         "error_code":"relay_setup_unconfirmed","note":"Inspect this exact node with relay show. No automatic retry, permissions, restart or workload was sent."})))
 }
 
+async fn remote_model_bootstrap_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eefn::model_bootstrap::Action,
+) -> Result<serde_json::Value> {
+    use eef::node_model_bootstrap::Request;
+    use eefn::model_bootstrap::{Action, Command};
+    use serde_json::json;
+    eefn::network::validate_remote_node_id(node)?;
+    if let Action::Configure(settings) = action {
+        settings.validate()?;
+    }
+    let mutation = matches!(action, Action::Configure(_));
+    let mut sending_mutation = false;
+    let mut requested = serde_json::Value::Null;
+    let exchange = async {
+        let url = format!("{base}/api/commands/node/model-bootstrap-policy");
+        let mut request = Request {
+            schema_version: 1,
+            node_id: node.into(),
+            expected_runtime_id: None,
+            command: Command::Show,
+        };
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Bootstrap preferences inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_model_bootstrap::confirmed(&inspected, &request) {
+            bail!("Unconfirmed Bootstrap preferences inspection")
+        }
+        let Action::Configure(settings) = action else {
+            return Ok::<_, anyhow::Error>(inspected);
+        };
+        request.expected_runtime_id = Some(
+            inspected["result"]["runtime_id"]
+                .as_str()
+                .context("Missing node runtime")?
+                .into(),
+        );
+        request.command = settings.command(serde_json::from_value(
+            inspected["result"]["saved"].clone(),
+        )?)?;
+        request.validate()?;
+        requested = json!(request.command);
+        sending_mutation = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Bootstrap preferences save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_model_bootstrap::confirmed(&saved, &request) {
+            bail!("Unconfirmed Bootstrap preferences save")
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"remote_model_bootstrap","node_id":node,
+        "success":false,"mutation_requested":mutation,"sending_attempted":sending_mutation,"outcome_unknown":sending_mutation,
+        "command":requested,"result":null,"execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "error_code":"model_bootstrap_unconfirmed","note":"Inspect this exact node with model-bootstrap-policy show; no automatic retry, permission change, restart or workload was sent."})))
+}
+
 async fn remote_python_policy_cli(
     client: &reqwest::Client,
     base: &str,
@@ -1682,6 +1788,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             command: NodeCommand::Python { node, command },
         } => return remote_python_policy_cli(&client, &base, node, command).await,
         Command::Node {
+            command: NodeCommand::ModelBootstrapPolicy { node, command },
+        } => return Box::pin(remote_model_bootstrap_cli(&client, &base, node, command)).await,
+        Command::Node {
             command: NodeCommand::Relay { node, command },
         } => {
             return remote_relay_cli(&client, &base, node, command).await;
@@ -1905,6 +2014,21 @@ async fn main() -> Result<()> {
                     );
                 }
                 if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::ModelBootstrapPolicy { .. }
+                        }
+                    )
+                {
+                    if value["success"] == true {
+                        print!("{}", eefn::model_bootstrap::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Bootstrap preferences unconfirmed. Inspect this node with model-bootstrap-policy show; no retry, download or restart was requested."
+                        );
+                    }
+                } else if !args.json
                     && matches!(
                         command,
                         Command::Node {

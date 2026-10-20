@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Inspect/save bootstrap preferences; automatic setup is not active yet.
+    ModelBootstrapPolicy {
+        #[command(subcommand)]
+        command: eefn::model_bootstrap::Action,
+    },
     /// Inspect/save Python bridge budgets; never enable plugins or run work.
     Python {
         #[command(subcommand)]
@@ -1796,6 +1801,94 @@ async fn execute_relay_command(
     )
 }
 
+async fn execute_model_bootstrap(
+    args: &Args,
+    action: &eefn::model_bootstrap::Action,
+) -> Result<serde_json::Value> {
+    use eefn::model_bootstrap::{Action, Command, Request};
+    use serde_json::{Value, json};
+    if let Action::Configure(settings) = action {
+        settings.validate()?;
+    }
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start this node first; Bootstrap preferences commands never launch a runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    let mutation = matches!(action, Action::Configure(_));
+    let mut sending_mutation = false;
+    let mut requested = Value::Null;
+    let exchange = async {
+        let response = client
+            .get(format!("http://{address}/api/diagnostics"))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Node diagnostics unavailable")
+        }
+        let diagnostics = eefn::model_manager::bounded_json(response).await?;
+        if diagnostics["node_id"] != file.node_id || diagnostics["success"] != true {
+            bail!("Unconfirmed node diagnostics")
+        }
+        let mut request = Request {
+            schema_version: 1,
+            expected_node_id: file.node_id.clone(),
+            expected_runtime_id: diagnostics["runtime_id"]
+                .as_str()
+                .context("Node runtime unavailable")?
+                .into(),
+            command: Command::Show,
+        };
+        request.validate()?;
+        let url = format!("http://{address}/api/commands/model-bootstrap-policy");
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Bootstrap preferences inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::model_bootstrap::confirmed(&inspected, &request) {
+            bail!("Unconfirmed Bootstrap preferences inspection")
+        }
+        let Action::Configure(settings) = action else {
+            return Ok::<_, anyhow::Error>(inspected);
+        };
+        request.command = settings.command(serde_json::from_value(inspected["saved"].clone())?)?;
+        request.validate()?;
+        requested = json!(request.command);
+        sending_mutation = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Bootstrap preferences save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::model_bootstrap::confirmed(&saved, &request) {
+            bail!("Unconfirmed Bootstrap preferences save")
+        }
+        Ok(saved)
+    }
+    .await;
+    let success = exchange.is_ok();
+    Ok(
+        json!({"schema_version":1,"report_type":"node_model_bootstrap_command","node_id":file.node_id,
+        "success":success,"mutation_requested":mutation,"sending_attempted":sending_mutation,
+        "outcome_unknown":!success && sending_mutation,"command":requested,"result":exchange.ok(),
+        "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "note":"Inspect model-bootstrap-policy show after uncertainty; no retry, permission change, restart or workload was sent."}),
+    )
+}
+
 async fn execute_python_policy(
     args: &Args,
     action: &eefn::python_policy::Action,
@@ -1891,6 +1984,9 @@ async fn execute_python_policy(
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::ModelBootstrapPolicy { command } = command {
+        return Box::pin(execute_model_bootstrap(args, command)).await;
+    }
     if let Commands::Python { command } = command {
         return execute_python_policy(args, command).await;
     }
@@ -2631,6 +2727,14 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     }
                 ) {
                     print!("{}", eefn::audio_submission::render_node(&value)?);
+                } else if matches!(command, Commands::ModelBootstrapPolicy { .. }) {
+                    if value["success"] == true {
+                        print!("{}", eefn::model_bootstrap::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Bootstrap preferences unconfirmed. Inspect model-bootstrap-policy show; no retry, download or restart was requested."
+                        );
+                    }
                 } else if matches!(command, Commands::Python { .. }) {
                     if value["success"] == true {
                         print!("{}", eefn::python_policy::render(&value["result"])?);
@@ -3473,6 +3577,68 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bootstrap_policy_cli_preserves_explicit_modes_and_has_no_execution_options() {
+        let base = [
+            "eefn",
+            "model-bootstrap-policy",
+            "configure",
+            "--mode",
+            "auto",
+            "--model",
+            "fixture",
+        ];
+        let args = Args::try_parse_from(base).unwrap();
+        let Some(Commands::ModelBootstrapPolicy {
+            command: eefn::model_bootstrap::Action::Configure(settings),
+        }) = args.command
+        else {
+            panic!("Wrong command")
+        };
+        assert_eq!(settings.mode, Some(eefn::model_bootstrap::Mode::Auto));
+        assert_eq!(settings.model.as_deref(), Some("fixture"));
+        settings.validate().unwrap();
+        for flag in [
+            "--download",
+            "--load",
+            "--restart",
+            "--execute",
+            "--allow-remote",
+        ] {
+            let mut bad = base.to_vec();
+            bad.push(flag);
+            assert!(Args::try_parse_from(bad).is_err());
+        }
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "model-bootstrap-policy",
+                "configure",
+                "--mode",
+                "unsafe"
+            ])
+            .is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eefn",
+                "model-bootstrap-policy",
+                "configure",
+                "--model",
+                "fixture",
+                "--project-default"
+            ])
+            .is_err()
+        );
+        let args = Args::try_parse_from(["eefn", "model-bootstrap-policy", "configure"]).unwrap();
+        let Some(Commands::ModelBootstrapPolicy {
+            command: eefn::model_bootstrap::Action::Configure(settings),
+        }) = args.command
+        else {
+            panic!("Wrong command")
+        };
+        assert!(settings.validate().is_err());
+    }
     #[test]
     fn stop_inspection_cli_requires_exact_ids_and_has_no_mutation_options() {
         for base in [

@@ -22,6 +22,7 @@ pub mod memory;
 pub mod model;
 pub mod model_inventory;
 pub mod node_control;
+pub mod node_model_bootstrap;
 pub mod node_python_policy;
 pub mod node_relay;
 mod peer_jobs;

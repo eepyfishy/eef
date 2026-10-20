@@ -3,6 +3,47 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: bootstrap preferences and exact owner catalog bindings
+
+Node and EEF model-bootstrap-policy commands share the node-owned service.
+Runtime and versioned-policy fences protect atomic preference saves; central
+configuration writes own monotonic revisions, preserve omitted opt-outs and
+refuse counter reset/ABA. Owner-selected text-GGUF catalog bindings retain exact
+definition/artifact/declared-license identity without reporting source URLs.
+Changed catalog data is visible, never silently rebound. Remote writes recheck
+current local management consent. Unsupported/corrupt existing optional policy
+remains opaque during unrelated owner writes, so it does not disable core
+permission controls or acquire an incidental repair/reset.
+
+This is **not the bootstrap runner or an approved default manifest**. Auto/prompt
+are saved future preferences only; project-default selection does not choose the
+first catalog entry. Automatic setup, approval, download/selection/inference,
+execution, restart and retry claims remain false. Existing model setup and
+installer defaults are unchanged. See [contract and remaining automation](MODEL-BOOTSTRAP-POLICY.md).
+
+Fifteen new regressions pass. Public model-bootstrap-uwjwWa verifies local and
+pinned-TLS EEF commands, consent/revocation, immutable catalog binding, strict
+runtime/CAS/body/origin checks, no-op bytes, catalog drift/re-pinning, lost or
+altered save replies without replay/private echo, unsupported endpoints before
+mutation, restart persistence without installation, offline refusal without
+runtime startup and live permission control with opaque future policy metadata.
+It uses synthetic catalog metadata and isolated logical nodes, not physical
+two-PC, model downloads or real-model quality acceptance.
+
+Existing process-lifetime-8W31Pd, local-pipelines-neMSj0,
+python-policy-r20X6c, python-bridge-7qg8Dt,
+permission-commands-tfoUon, node-commands-wc6YHi,
+node-credentials-qvYLuV and model-downloads-IbRhZ2 also pass. Both locked/offline
+workspace/all-target modes pass **901 tests plus one ignored each**: EEF 268 plus
+one ignored profiler, owner CLI 21, installer 6, EEFN 581 and node CLI 25. Logs
+are retained under .validation/bootstrap-policy-workspace-default.log and
+.validation/bootstrap-policy-workspace-headless.log. Final headless apps/examples
+build; all four evaluated native hashes match. Source boundary, format, JS
+syntax and diff checks pass; fixture apps/helpers are terminal. No installed or
+remote node, visual UI, model selection/default, version, installer or update
+policy changed. Automatic setup, stronger runtime/resource guarantees, physical
+and stable v0.4.0 release gates remain open.
+
 ## Interpreter experiment: description-only prompt rejected
 
 Fresh CPU original-v1 runs interpreter-quality-KmZw8R and the restored

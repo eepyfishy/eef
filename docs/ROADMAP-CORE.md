@@ -31,6 +31,13 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The [bootstrap-policy foundation](MODEL-BOOTSTRAP-POLICY.md) adds shared node/EEF
+commands, exact owner catalog bindings and runtime/revision-fenced saves.
+Absent legacy settings preserve existing setup; older/generic saves cannot erase
+opt-outs or reset versions. Opaque unsupported setup metadata does not block
+unrelated core owner controls. This is not the bootstrap runner, an approved
+default manifest or automatic installation; those remain required next steps.
+
 The subsequent [stop inspection commands](STOP-INSPECTION.md) separate historical
 evidence from mutating cancellation. They read the original executor's retained
 intent after reconnect with the same pinned issuer, without signalling work,

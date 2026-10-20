@@ -4,6 +4,19 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Bootstrap preferences (unreleased after alpha.6)
+
+    eefn model-bootstrap-policy show
+    eefn model-bootstrap-policy configure --mode off
+    eefn model-bootstrap-policy configure --mode prompt --model CATALOG_ID
+    eef node model-bootstrap-policy --node NODE_ID show
+
+These save preferences and an exact owner catalog binding only. The bootstrap
+runner and project-approved default are not available yet; auto does not install
+or select a model. Existing setups/opt-outs are preserved. No download, load,
+inference, permission change or restart follows. See [contract and next
+automation steps](MODEL-BOOTSTRAP-POLICY.md).
+
 ## Finite audio authoring (unreleased after alpha.6)
 
     eefn requests submit-audio --to NODE_ID --duration-ms 2000

@@ -32,6 +32,7 @@ pub mod job_commands;
 pub mod local_commands;
 pub mod local_enrollment;
 pub mod local_setup;
+pub mod model_bootstrap;
 pub mod model_cli;
 pub mod model_downloads;
 pub mod model_lifecycle;

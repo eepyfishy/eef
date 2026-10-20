@@ -148,6 +148,7 @@ impl NodeService {
         let old = self.read_config()?;
         // Backend-owned version survives generic saves/restore as well as the
         // typed policy command. Content rollback must not revive an old CAS.
+        crate::model_bootstrap::preserve_revision(&old, &mut value)?;
         let previous_policy =
             crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(&old)?;
         let incoming_policy =
@@ -943,6 +944,16 @@ impl NodeService {
             .and_then(Value::as_bool)
             == Some(true);
         match action {
+            "bootstrap_policy" => {
+                self.model_bootstrap_policy(serde_json::from_value(params)?, true)
+            }
+            "bootstrap_policy_status" => {
+                let request: crate::model_bootstrap::Request = serde_json::from_value(params)?;
+                if !matches!(request.command, crate::model_bootstrap::Command::Show) {
+                    bail!("Reserved bootstrap policy status action mismatch")
+                }
+                self.model_bootstrap_policy(request, true)
+            }
             "python_policy" => self.python_policy(serde_json::from_value(params)?, true),
             "python_policy_status" => {
                 let request: crate::python_policy::Request = serde_json::from_value(params)?;
