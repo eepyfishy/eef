@@ -1827,7 +1827,7 @@ async fn execute_model_bootstrap(
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(10))
         .build()?;
-    let mutation = matches!(action, Action::Configure(_));
+    let mutation = !matches!(action, Action::Show);
     let mut sending_mutation = false;
     let mut requested = Value::Null;
     let exchange = async {
@@ -1861,10 +1861,12 @@ async fn execute_model_bootstrap(
         if !eefn::model_bootstrap::confirmed(&inspected, &request) {
             bail!("Unconfirmed Bootstrap preferences inspection")
         }
-        let Action::Configure(settings) = action else {
-            return Ok::<_, anyhow::Error>(inspected);
+        let previous = serde_json::from_value(inspected["saved"].clone())?;
+        request.command = match action {
+            Action::Show => return Ok::<_, anyhow::Error>(inspected),
+            Action::Configure(settings) => settings.command(previous)?,
+            Action::Approve => Command::Approve { previous },
         };
-        request.command = settings.command(serde_json::from_value(inspected["saved"].clone())?)?;
         request.validate()?;
         requested = json!(request.command);
         sending_mutation = true;
@@ -3629,6 +3631,18 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prompt_approval_is_an_explicit_command_without_setup_or_restart_flags() {
+        use clap::Parser;
+        let args =
+            super::Args::try_parse_from(["eefn", "model-bootstrap-policy", "approve"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Some(super::Commands::ModelBootstrapPolicy {
+                command: eefn::model_bootstrap::Action::Approve,
+            })
+        ));
+    }
     #[test]
     fn bootstrap_restart_flags_are_explicit_conflicting_and_not_ordinary_restarts() {
         use clap::Parser;

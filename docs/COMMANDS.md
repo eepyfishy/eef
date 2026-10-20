@@ -22,6 +22,7 @@ project default or model readiness is implied; restart needs the separate flag a
 
     eefn model-bootstrap-policy configure --mode auto --model CATALOG_ID --enable-automation
     eefn model-bootstrap-policy configure --disable-automation
+    eefn model-bootstrap-policy approve
 
     eefn model-bootstrap-policy show
     eefn model-bootstrap-policy configure --mode off
@@ -31,7 +32,8 @@ project default or model readiness is implied; restart needs the separate flag a
 The preference command saves an exact owner binding and explicit consent; a
 separate runtime-owned runner may then install/select that model, and optionally
 activate it with restart consent. Existing setups/opt-outs are preserved.
-Prompt waits for an explicit owner change to auto; project-default has no approved
+Prompt waits for [one explicit approval](PROMPT-MODEL-APPROVAL.md) without changing
+mode; project-default has no approved
 model yet. These controls do not grant workload permissions or prove inference
 quality/readiness. Inspect retained setup after an uncertain reply; do not replay
 it automatically. See [contract and remaining gates](MODEL-BOOTSTRAP-POLICY.md).

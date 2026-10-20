@@ -117,6 +117,14 @@ try{
  const overrides=await fixture('override',{override:true});await overrides.enable();await until(async()=>(await overrides.show()).setup.attempt?.phase==='apply_blocked','model CLI override refusal');
  assert.equal((await overrides.show()).setup.attempt.reason,'activation_unavailable');assert.equal((await json(overrides.url+'/api/diagnostics')).runtime_id,overrides.original);
 
+ const prompt=await fixture('prompt');
+ await prompt.local(['model-bootstrap-policy','configure','--mode','prompt','--model','fixture','--enable-automation','--restart-after-setup']);
+ const promptSaved=(await prompt.show()).saved;assert.equal((await prompt.show()).setup.state,'awaiting_approval');
+ await prompt.local(['model-bootstrap-policy','approve']);
+ await until(async()=>(await prompt.show()).setup.attempt?.phase==='runtime_configured','approved prompt restart with separate consent');
+ await assertBound(prompt);assert.deepEqual((await prompt.show()).saved,promptSaved);
+ assert.equal((await prompt.show()).saved.policy.mode,'prompt');assert.equal((await prompt.show()).setup.attempt.owner_approved,true);
+
  const crash=await fixture('crash',{gate:true});await crash.enable();await until(async()=>crash.state.held.length>0&&(await json(crash.url+'/api/status')).model_activation?.state==='draining','accepted activation before fixture exit');
  // Terminate only the fixture handle, not any installed app or general process name.
  crash.process.kill();await crash.process.result;crash.state.gate=false;for(const finish of crash.state.held.splice(0))finish();crash.process=crash.launch();
@@ -126,7 +134,8 @@ try{
  for(const state of states.values())assert.equal(state.pulls,0,'installed metadata must not trigger another pull');
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,synthetic_provider_only:true,real_model_inference:false,real_weights_downloaded:false,
   pinned_remote_automatic_restart:true,replacement_engine_binding:true,pending_settings_refused:true,late_settings_saved_not_applied:true,late_opt_out_preserved:true,
-  explicit_restart_still_applies_pending:true,pending_app_version_not_applied_by_activation:true,explicit_restart_consults_pending_version:true,model_overrides_refused:true,interrupted_activation_unknown_no_replay:true,private_snapshot_not_reported:true,readiness_not_claimed:true},null,2));
+  explicit_restart_still_applies_pending:true,pending_app_version_not_applied_by_activation:true,explicit_restart_consults_pending_version:true,model_overrides_refused:true,interrupted_activation_unknown_no_replay:true,private_snapshot_not_reported:true,readiness_not_claimed:true,
+  prompt_approval_uses_separate_restart_consent:true,prompt_policy_unchanged_after_activation:true},null,2));
  console.log('Model activation native validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}
 finally{for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));for(const s of states.values())for(const finish of s.held)finish();provider.closeAllConnections();await new Promise(r=>provider.close(r));for(const path of [...ownedMarkers,...ownedLinks])await unlink(owned(path));}

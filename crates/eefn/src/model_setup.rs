@@ -14,6 +14,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 #[derive(Clone)]
 pub(crate) struct Fence {
     pub saved: Saved,
+    pub owner_approved: bool,
     pub backend: Backend,
     pub runtime_id: String,
     pub models_sha256: String,
@@ -24,7 +25,7 @@ impl Fence {
             || service.live.lock().unwrap()["runtime_id"] != self.runtime_id
             || Saved::from_config(config)? != self.saved
             || !self.saved.policy.automation
-            || self.saved.policy.mode != Mode::Auto
+            || !authorized_mode(self.saved.policy.mode, self.owner_approved)
             || crate::grants::definition_digest(&config["models"])? != self.models_sha256
             || !crate::model_selection::selection_view(config)?.is_empty()
         {
@@ -55,6 +56,7 @@ impl Fence {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
+    Approved,
     Inspecting,
     Downloading,
     Verifying,
@@ -116,10 +118,21 @@ pub struct Attempt {
     pub phase: Phase,
     pub reason: Option<Reason>,
     pub download_admitted: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub owner_approved: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activation: Option<ActivationEvidence>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
+}
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+fn authorized_mode(mode: Mode, owner_approved: bool) -> bool {
+    matches!(
+        (mode, owner_approved),
+        (Mode::Auto, false) | (Mode::Prompt, true)
+    )
 }
 impl Attempt {
     fn validate(&self, node: &str) -> Result<()> {
@@ -132,7 +145,10 @@ impl Attempt {
             || self.created_at_ms == 0
             || self.updated_at_ms < self.created_at_ms
             || !self.saved.policy.automation
-            || self.saved.policy.mode != Mode::Auto
+            || !authorized_mode(self.saved.policy.mode, self.owner_approved)
+            || (self.phase == Phase::Approved && !self.owner_approved)
+            || (self.phase == Phase::Approved
+                && (self.download_admitted || self.activation.is_some()))
             || self.saved.policy.catalog.is_none()
             || self.models_sha256.len() != 64
             || !self.models_sha256.bytes().all(|b| b.is_ascii_hexdigit())
@@ -140,7 +156,8 @@ impl Attempt {
                 && self.reason.is_some())
             || (matches!(
                 self.phase,
-                Phase::Inspecting
+                Phase::Approved
+                    | Phase::Inspecting
                     | Phase::Downloading
                     | Phase::Verifying
                     | Phase::Committing
@@ -279,7 +296,7 @@ impl Journal {
             if old.id != record.id {
                 if !old.phase.terminal()
                     || record.saved.revision <= old.saved.revision
-                    || record.phase != Phase::Inspecting
+                    || !matches!(record.phase, Phase::Approved | Phase::Inspecting)
                 {
                     bail!(
                         "A new setup attempt requires a new explicit policy version after the prior attempt"
@@ -287,6 +304,7 @@ impl Journal {
                 }
             } else {
                 if old.saved != record.saved
+                    || old.owner_approved != record.owner_approved
                     || old.runtime_id != record.runtime_id
                     || old.models_sha256 != record.models_sha256
                     || old.created_at_ms != record.created_at_ms
@@ -308,6 +326,10 @@ impl Journal {
                     _ => bail!("Activation evidence scope changed"),
                 }
                 let allowed = match old.phase {
+                    Phase::Approved => matches!(
+                        record.phase,
+                        Phase::Inspecting | Phase::Stopped | Phase::Unknown
+                    ),
                     Phase::Inspecting => matches!(
                         record.phase,
                         Phase::Downloading
@@ -496,7 +518,7 @@ fn active_snapshot(service: &NodeService, runtime: &str) -> Result<Option<(Value
     service.inspect_grant_configuration(|config| {
         let saved = Saved::from_config(config)?;
         if !saved.policy.automation
-            || saved.policy.mode != Mode::Auto
+            || !matches!(saved.policy.mode, Mode::Auto | Mode::Prompt)
             || saved.policy.catalog.is_none()
         {
             return Ok(None);
@@ -534,7 +556,9 @@ pub async fn run(service: Arc<NodeService>, runtime: String) -> Result<()> {
     // Any unfinished old runtime may have admitted a transfer or config write.
     // Recovery records uncertainty, never resumes/replays the operation.
     let recovered = journal.read().and_then(|old| {
-        if let Some(mut record) = old.filter(|r| !r.phase.terminal()) {
+        if let Some(mut record) = old.filter(|r| {
+            !r.phase.terminal() && !(r.phase == Phase::Approved && r.runtime_id == runtime)
+        }) {
             let _ = crate::model_manager::cancel(&service, Some(&record.id));
             record.phase(Phase::Unknown, Some(Reason::RuntimeInterrupted));
             journal.write(&record)?;
@@ -560,10 +584,35 @@ pub async fn run(service: Arc<NodeService>, runtime: String) -> Result<()> {
 }
 
 async fn tick(service: Arc<NodeService>, runtime: &str, journal: &Journal) -> Result<()> {
+    let retained = journal.read()?;
+    if let Some(mut record) = retained.clone().filter(|r| r.phase == Phase::Approved) {
+        let fence = Fence {
+            saved: record.saved.clone(),
+            owner_approved: record.owner_approved,
+            backend: record.backend,
+            runtime_id: record.runtime_id.clone(),
+            models_sha256: record.models_sha256.clone(),
+        };
+        if record.runtime_id != runtime
+            || service
+                .inspect_grant_configuration(|c| fence.check(&service, c))
+                .is_err()
+        {
+            record.phase(Phase::Stopped, Some(Reason::StateChanged));
+            journal.write(&record)?;
+            return Ok(());
+        }
+    }
     let Some((snapshot, saved)) = active_snapshot(&service, runtime)? else {
         return Ok(());
     };
-    if journal.read()?.is_some_and(|r| r.saved == saved) {
+    let approved = retained
+        .as_ref()
+        .is_some_and(|r| r.saved == saved && r.phase == Phase::Approved && r.owner_approved);
+    if saved.policy.mode == Mode::Prompt && !approved {
+        return Ok(());
+    }
+    if retained.as_ref().is_some_and(|r| r.saved == saved) && !approved {
         return Ok(());
     }
     // Never preempt somebody else's transfer or turn a busy admission into a retry.
@@ -571,25 +620,38 @@ async fn tick(service: Arc<NodeService>, runtime: &str, journal: &Journal) -> Re
         return Ok(());
     }
     let id = saved.policy.catalog.as_ref().unwrap().model_id.clone();
-    let now = crate::protocol::now_ms();
-    let mut record = Attempt {
-        schema_version: 1,
-        node_id: service.node_id.clone(),
-        id: uuid::Uuid::new_v4().to_string(),
-        runtime_id: runtime.into(),
-        models_sha256: crate::grants::definition_digest(&snapshot["models"])?,
-        saved,
-        backend: Backend::Llamacpp,
-        phase: Phase::Inspecting,
-        reason: None,
-        download_admitted: false,
-        activation: None,
-        created_at_ms: now,
-        updated_at_ms: now,
+    let mut record = if approved {
+        retained.unwrap()
+    } else {
+        new_attempt(&service, &snapshot, saved, runtime, false)?
     };
-    // Persist the attempt before even asynchronous provider inspection. Crashes
-    // after this point require an explicit new policy version, not a startup retry.
-    journal.write(&record)?;
+    // Consume prompt consent atomically with its last synchronous configuration
+    // fence. A revocation that won this lock must not start provider inspection.
+    if approved {
+        let proceed = service.inspect_grant_configuration(|config| {
+            let fence = Fence {
+                saved: record.saved.clone(),
+                owner_approved: record.owner_approved,
+                backend: record.backend,
+                runtime_id: record.runtime_id.clone(),
+                models_sha256: record.models_sha256.clone(),
+            };
+            if fence.check(&service, config).is_err() {
+                record.phase(Phase::Stopped, Some(Reason::StateChanged));
+                journal.write(&record)?;
+                return Ok(false);
+            }
+            record.phase(Phase::Inspecting, None);
+            journal.write(&record)?;
+            Ok(true)
+        })?;
+        if !proceed {
+            return Ok(());
+        }
+    } else {
+        // Persist inspection intent before asynchronous provider metadata or installation.
+        journal.write(&record)?;
+    }
     let outcome = Box::pin(perform(
         service.clone(),
         &snapshot,
@@ -617,6 +679,65 @@ async fn tick(service: Arc<NodeService>, runtime: &str, journal: &Journal) -> Re
     Ok(())
 }
 
+fn new_attempt(
+    service: &NodeService,
+    snapshot: &Value,
+    saved: Saved,
+    runtime: &str,
+    owner_approved: bool,
+) -> Result<Attempt> {
+    let now = crate::protocol::now_ms();
+    Ok(Attempt {
+        schema_version: 1,
+        node_id: service.node_id.clone(),
+        id: uuid::Uuid::new_v4().to_string(),
+        runtime_id: runtime.into(),
+        models_sha256: crate::grants::definition_digest(&snapshot["models"])?,
+        saved,
+        backend: Backend::Llamacpp,
+        phase: if owner_approved {
+            Phase::Approved
+        } else {
+            Phase::Inspecting
+        },
+        reason: None,
+        download_admitted: false,
+        owner_approved,
+        activation: None,
+        created_at_ms: now,
+        updated_at_ms: now,
+    })
+}
+
+/// Caller holds the runtime binding and configuration mutex. Consent does not
+/// change policy, probe providers, or dispatch an installation in this call.
+pub(crate) fn approve_locked(
+    service: &NodeService,
+    config: &Value,
+    saved: &Saved,
+    runtime: &str,
+) -> Result<()> {
+    if !saved.policy.automation || saved.policy.mode != Mode::Prompt {
+        bail!("Approval requires enabled prompt mode; inspect model-bootstrap-policy show")
+    }
+    let record = new_attempt(service, config, saved.clone(), runtime, true)?;
+    Fence {
+        saved: saved.clone(),
+        owner_approved: true,
+        backend: record.backend,
+        runtime_id: runtime.into(),
+        models_sha256: record.models_sha256.clone(),
+    }
+    .check(service, config)?;
+    let journal = Journal::new(service);
+    if journal.read()?.is_some_and(|old| old.saved == *saved) {
+        bail!("This policy already has a retained attempt; inspect show, do not repeat approval")
+    }
+    journal.write(&record)?;
+    service.setup_changed.notify_one();
+    Ok(())
+}
+
 async fn perform(
     service: Arc<NodeService>,
     snapshot: &Value,
@@ -634,6 +755,7 @@ async fn perform(
     };
     let fence = Fence {
         saved: record.saved.clone(),
+        owner_approved: record.owner_approved,
         backend: record.backend,
         runtime_id: record.runtime_id.clone(),
         models_sha256: record.models_sha256.clone(),

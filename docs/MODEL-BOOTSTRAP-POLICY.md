@@ -19,6 +19,7 @@ Run these through an already-running node; no port numbers or JSON editing:
     eefn model-bootstrap-policy configure --mode auto --model CATALOG_ID --enable-automation --restart-after-setup
     eefn model-bootstrap-policy configure --manual-apply
     eefn model-bootstrap-policy configure --disable-automation
+    eefn model-bootstrap-policy approve
     eef node model-bootstrap-policy --node NODE_ID show
     eef node model-bootstrap-policy --node NODE_ID configure --mode off
 
@@ -34,8 +35,9 @@ fresh-installer defaults or upgrade existing installations into automatic setup.
 Off records an opt-out; managed records external model management. Neither
 disables core commands or prevents a separate owner-requested manual install.
 Without --enable-automation, prompt/auto remain inactive preferences. With it,
-prompt awaits an explicit owner change to auto; auto permits one setup attempt
-per policy epoch for its exact catalog binding. Disabling requests cancellation
+prompt awaits [one explicit approval](PROMPT-MODEL-APPROVAL.md), without changing
+mode; auto permits one setup attempt per policy epoch for its exact catalog binding.
+Disabling requests cancellation
 only of its own exact admitted transfer, never a different manual transfer.
 The default remains manual application. The separate --restart-after-setup
 opt-in permits a [scoped runtime restart](MODEL-ACTIVATION.md) after a newly

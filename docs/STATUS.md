@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: one-attempt prompt approval
+
+An explicit model-bootstrap-policy approve operation records one durable consent
+for the current prompt policy/runtime/model scope without changing configuration
+or switching to auto mode. Backend inspection/installation consumes it once;
+scope drift/revocation stops queued consent, and old-runtime recovery cannot
+replay it. Local and approved remote adapters share the node-owned command.
+Consumption and the final synchronous scope check share the configuration lock,
+so a revocation that wins the lock prevents provider inspection. Eleven added
+Rust regressions pass; both locked/offline workspace/all-target feature modes
+pass 939 tests plus one ignored each. Final headless apps/examples build;
+fourteen native suites pass, including expanded prompt download/receipt/remote
+consent and scoped restart cases. Frozen source and all four evaluated native
+hashes match; source boundary, formatting, JS syntax and diff checks pass;
+fixture apps/helpers are terminal. See [contract and evidence](PROMPT-MODEL-APPROVAL.md).
+These are synthetic one-PC cases, not model quality or physical two-PC acceptance.
+No installed/remote node, visual UI, default model, version, installer or update
+policy changed. Stable-release gates remain open.
+
 ## Unreleased: opt-in scoped setup activation
 
 Automatic runtime restart has a separate opt-in and one-shot private startup

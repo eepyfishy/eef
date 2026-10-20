@@ -1105,7 +1105,7 @@ async fn remote_model_bootstrap_cli(
     if let Action::Configure(settings) = action {
         settings.validate()?;
     }
-    let mutation = matches!(action, Action::Configure(_));
+    let mutation = !matches!(action, Action::Show);
     let mut sending_mutation = false;
     let mut requested = serde_json::Value::Null;
     let exchange = async {
@@ -1124,18 +1124,21 @@ async fn remote_model_bootstrap_cli(
         if !eef::node_model_bootstrap::confirmed(&inspected, &request) {
             bail!("Unconfirmed Bootstrap preferences inspection")
         }
-        let Action::Configure(settings) = action else {
+        if matches!(action, Action::Show) {
             return Ok::<_, anyhow::Error>(inspected);
-        };
+        }
         request.expected_runtime_id = Some(
             inspected["result"]["runtime_id"]
                 .as_str()
                 .context("Missing node runtime")?
                 .into(),
         );
-        request.command = settings.command(serde_json::from_value(
-            inspected["result"]["saved"].clone(),
-        )?)?;
+        let previous = serde_json::from_value(inspected["result"]["saved"].clone())?;
+        request.command = match action {
+            Action::Show => unreachable!(),
+            Action::Configure(settings) => settings.command(previous)?,
+            Action::Approve => Command::Approve { previous },
+        };
         request.validate()?;
         requested = json!(request.command);
         sending_mutation = true;
@@ -1153,7 +1156,7 @@ async fn remote_model_bootstrap_cli(
     Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"remote_model_bootstrap","node_id":node,
         "success":false,"mutation_requested":mutation,"sending_attempted":sending_mutation,"outcome_unknown":sending_mutation,
         "command":requested,"result":null,"execution_authorized":false,"restart_requested":false,"automatically_retried":false,
-        "error_code":"model_bootstrap_unconfirmed","note":"Inspect this exact node with model-bootstrap-policy show; no automatic retry, permission change, restart or workload was sent."})))
+        "error_code":"model_bootstrap_unconfirmed","note":"Inspect this exact node with model-bootstrap-policy show and its retained attempt. No client replay or fallback was sent; an explicitly enabled backend operation may already have started. Workload permissions are unchanged."})))
 }
 
 async fn remote_python_policy_cli(

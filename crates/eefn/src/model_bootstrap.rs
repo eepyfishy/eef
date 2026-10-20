@@ -5,7 +5,8 @@ use serde_json::{Value, json};
 
 const LEGACY_NOTE: &str = "Bootstrap preferences only. Automatic setup and a project-approved default are not available in this build. No download, probe, model selection/load, permission change, restart, workload or retry was requested. Catalog metadata is not license review, runtime compatibility or model-quality approval.";
 const NOTE: &str = "Setup automation is disabled for this policy; auto/prompt preferences alone do not authorize it. A project-approved default is not available. Enable automation explicitly for an exact owner catalog binding to permit backend setup. This policy reply is not installation, selection, readiness or restart completion; workload permissions are unchanged.";
-const AUTOMATION_NOTE: &str = "Setup automation opt-in recorded. Preserve/off/managed do no setup; prompt awaits an explicit owner change to auto. Auto permits backend setup for the exact owner catalog binding. Inspect retained setup status and models download-status for its attempt ID; this policy reply is not download, selection, readiness or restart completion. No project-approved default, license review, runtime compatibility or model-quality approval is implied. Workload permissions are unchanged; uncertain attempts are not replayed.";
+const LEGACY_AUTOMATION_NOTE: &str = "Setup automation opt-in recorded. Preserve/off/managed do no setup; prompt awaits an explicit owner change to auto. Auto permits backend setup for the exact owner catalog binding. Inspect retained setup status and models download-status for its attempt ID; this policy reply is not download, selection, readiness or restart completion. No project-approved default, license review, runtime compatibility or model-quality approval is implied. Workload permissions are unchanged; uncertain attempts are not replayed.";
+const AUTOMATION_NOTE: &str = "Setup automation opt-in recorded. Preserve/off/managed do no setup; prompt needs explicit approval for one attempt without changing mode. Auto permits one setup per policy epoch for the exact owner catalog binding. Inspect retained setup and installer receipts; this reply is not download, selection, readiness or restart completion. No project-approved default, license review, runtime compatibility or model-quality approval is implied. Workload permissions are unchanged; uncertain attempts are not replayed.";
 
 fn is_false(value: &bool) -> bool {
     !*value
@@ -249,6 +250,9 @@ pub enum Target {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Show,
+    Approve {
+        previous: Saved,
+    },
     Configure {
         previous: Saved,
         mode: Option<Mode>,
@@ -261,6 +265,15 @@ pub enum Command {
 }
 impl Command {
     pub fn validate(&self) -> Result<()> {
+        if let Self::Approve { previous } = self {
+            previous.validate()?;
+            if previous.policy.mode != Mode::Prompt
+                || !previous.policy.automation
+                || previous.policy.catalog.is_none()
+            {
+                bail!("Choose an exact catalog model and enable prompt mode before approval")
+            }
+        }
         if let Self::Configure {
             previous,
             mode,
@@ -386,6 +399,8 @@ impl Settings {
 #[derive(Clone, Debug, clap::Subcommand)]
 pub enum Action {
     Show,
+    /// Approve one setup attempt for the current enabled prompt policy.
+    Approve,
     Configure(Settings),
 }
 
@@ -497,12 +512,27 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
             } else {
                 NOTE
             }
-            || (!r.saved.policy.automation && r.setup.is_none() && r.note == LEGACY_NOTE))
+            || (!r.saved.policy.automation && r.setup.is_none() && r.note == LEGACY_NOTE)
+            || (r.saved.policy.automation
+                && !matches!(request.command, Command::Approve { .. })
+                && r.note == LEGACY_AUTOMATION_NOTE))
     {
         return false;
     }
     match &request.command {
         Command::Show => !r.changed,
+        Command::Approve { previous } => {
+            r.changed
+                && r.saved == *previous
+                && r.setup.as_ref().is_some_and(|s| {
+                    s.current_policy_attempt
+                        && s.attempt.as_ref().is_some_and(|a| {
+                            a.owner_approved
+                                && a.saved == *previous
+                                && a.runtime_id == request.expected_runtime_id
+                        })
+                })
+        }
         Command::Configure {
             previous,
             mode,
@@ -545,8 +575,24 @@ impl crate::NodeService {
                 {
                     bail!("Bootstrap preferences runtime/identity changed")
                 }
+                drop(live);
                 let mut saved = Saved::from_config(config)?;
                 let mut changed = false;
+                if let Command::Approve { previous } = &request.command {
+                    if remote && config.pointer("/management/allow_remote") != Some(&json!(true)) {
+                        bail!("Current local owner approval required for remote bootstrap approval")
+                    }
+                    if *previous != saved {
+                        bail!("Bootstrap preferences changed; inspect before approving")
+                    }
+                    crate::model_setup::approve_locked(
+                        self,
+                        config,
+                        &saved,
+                        &request.expected_runtime_id,
+                    )?;
+                    changed = true;
+                }
                 if let Command::Configure {
                     previous,
                     mode,
@@ -616,6 +662,7 @@ impl crate::NodeService {
                         })
                     })
                     .count();
+                let live = self.live.lock().unwrap();
                 let report = json!(Report {
                     schema_version: 1,
                     report_type: "node_model_bootstrap_policy".into(),

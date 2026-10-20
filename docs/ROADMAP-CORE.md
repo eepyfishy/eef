@@ -31,6 +31,11 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The [one-attempt prompt approval path](PROMPT-MODEL-APPROVAL.md) passes both full
+feature modes (939 tests plus one ignored each) and fourteen native suites.
+It supplies explicit durable setup consent without a dashboard or permanent move
+to auto mode. Default/model-quality and full first-run acceptance remain separate.
+
 The opt-in [scoped setup-activation path](MODEL-ACTIVATION.md) passes both full
 feature modes (928 tests plus one ignored each) and fourteen native suites.
 It retains a one-shot private configuration for a model-only-scope runtime restart,

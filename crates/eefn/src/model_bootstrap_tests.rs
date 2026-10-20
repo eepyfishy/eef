@@ -60,6 +60,117 @@ struct Fixture {
 }
 
 #[test]
+fn prompt_approval_requires_current_remote_consent_and_retains_exact_unchanged_policy() {
+    let f = Fixture::new();
+    let mut configure = f.configure(
+        Some(Mode::Prompt),
+        Target::Catalog {
+            model_id: "fixture".into(),
+        },
+    );
+    if let Command::Configure { automation, .. } = &mut configure.command {
+        *automation = Some(true);
+    }
+    f.service.model_bootstrap_policy(configure, false).unwrap();
+    let previous: Saved = serde_json::from_value(f.show()["saved"].clone()).unwrap();
+    let request = f.request(Command::Approve {
+        previous: previous.clone(),
+    });
+    assert!(
+        f.service
+            .model_bootstrap_policy(request.clone(), true)
+            .is_err()
+    );
+    assert!(
+        !f.service
+            .config_path
+            .with_extension("bootstrap.sqlite3")
+            .exists()
+    );
+    let mut config = f.service.read_config().unwrap();
+    config["management"]["allow_remote"] = json!(true);
+    f.service.save_config(config).unwrap();
+    let before = f.bytes();
+    let report = f
+        .service
+        .model_bootstrap_policy(request.clone(), true)
+        .unwrap();
+    assert!(confirmed(&report, &request));
+    assert_eq!(report["changed"], true);
+    assert_eq!(report["saved"], json!(previous));
+    assert_eq!(report["setup"]["attempt"]["phase"], "approved");
+    assert_eq!(report["setup"]["attempt"]["owner_approved"], true);
+    assert_eq!(f.bytes(), before);
+    assert!(
+        f.service
+            .model_bootstrap_policy(request.clone(), false)
+            .is_err()
+    );
+    let mut legacy = report.clone();
+    legacy["note"] = json!(LEGACY_AUTOMATION_NOTE);
+    assert!(!confirmed(&legacy, &request));
+    legacy["command"] = json!(Command::Show);
+    legacy["changed"] = json!(false);
+    assert!(confirmed(&legacy, &f.request(Command::Show)));
+    let mut forged = report;
+    forged["setup"]["attempt"]["owner_approved"] = json!(false);
+    assert!(!confirmed(&forged, &request));
+}
+
+#[test]
+fn prompt_approval_refuses_stale_scope_without_creating_or_changing_evidence() {
+    for case in ["policy", "runtime", "catalog", "inactive"] {
+        let f = Fixture::new();
+        let mut configure = f.configure(
+            Some(Mode::Prompt),
+            Target::Catalog {
+                model_id: "fixture".into(),
+            },
+        );
+        if let Command::Configure { automation, .. } = &mut configure.command {
+            *automation = Some(true);
+        }
+        f.service.model_bootstrap_policy(configure, false).unwrap();
+        let mut request = f.request(Command::Approve {
+            previous: serde_json::from_value(f.show()["saved"].clone()).unwrap(),
+        });
+        match case {
+            "runtime" => request.expected_runtime_id = uuid::Uuid::new_v4().to_string(),
+            "policy" | "inactive" => {
+                let mut disable = f.configure(None, Target::Keep);
+                if let Command::Configure { automation, .. } = &mut disable.command {
+                    *automation = Some(false);
+                }
+                f.service.model_bootstrap_policy(disable, false).unwrap();
+                if case == "inactive" {
+                    request.command = Command::Approve {
+                        previous: serde_json::from_value(f.show()["saved"].clone()).unwrap(),
+                    };
+                }
+            }
+            "catalog" => {
+                let mut config = f.service.read_config().unwrap();
+                config["model_catalog"][0]["bytes"] = json!(64);
+                f.service.save_config(config).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let before = f.bytes();
+        assert!(
+            f.service.model_bootstrap_policy(request, false).is_err(),
+            "{case}"
+        );
+        assert_eq!(f.bytes(), before);
+        assert!(
+            !f.service
+                .config_path
+                .with_extension("bootstrap.sqlite3")
+                .exists()
+        );
+    }
+}
+
+#[test]
 fn bootstrap_restart_consent_is_separate_and_stale_generic_restore_cannot_reenable_it() {
     let f = Fixture::new();
     let mut request = f.configure(

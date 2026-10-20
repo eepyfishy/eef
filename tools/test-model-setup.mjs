@@ -108,6 +108,36 @@ try{
  assert.equal((await json(node+'/api/diagnostics')).runtime_id,configuredRuntime,'configuration is not an automatic restart');
  const review=reviewedFixture(eef,node,id),plan=await review.save({template:'system_info',constraints:{node_id:id},params:{}});await review.start(await review.approve(plan));assert.equal((await review.wait(plan.id)).status,'completed');
  const safe=JSON.stringify(report);assert(!safe.includes('example.invalid'));assert(!safe.includes(cachePath));
+ // Prompt consent authorizes one exact attempt, not a permanent move to auto.
+ await local(['model-bootstrap-policy','configure','--disable-automation']);
+ await local(['models','remove','--backend','llamacpp','--model','cpu-fixture']);
+ await local(['models','provider','auto']);
+ await remote(['configure','--mode','prompt','--model','fixture','--enable-automation']);
+ assert.equal((await show()).setup.state,'awaiting_approval');
+ const promptSaved=(await show()).saved,priorAttempt=(await show()).setup.attempt.id;
+ await local(['permissions','deny','remote-management']);
+ const deniedApproval=await remote(['approve'],false);assert.equal(deniedApproval.success,false);
+ assert.equal((await show()).setup.attempt.id,priorAttempt);assert.equal(pulls,2);
+ await local(['permissions','allow','remote-management']);
+ installed=false;
+ const beforeApproval=await readFile(config,'utf8'),approval=await remote(['approve']);
+ assert.equal(approval.mutation_requested,true);assert.equal(approval.sending_attempted,true);
+ assert.deepEqual(approval.result.saved,promptSaved);assert.equal(approval.result.setup.attempt.owner_approved,true);
+ await until(async()=>pulls===3&&(await show()).setup.attempt?.phase==='downloading','one explicitly approved prompt transfer');
+ assert.equal(await readFile(config,'utf8'),beforeApproval,'approval and pending transfer do not select models');
+ const promptDownload=(await show()).setup.attempt.id;
+ assert.equal((await local(['models','download-status','--id',promptDownload])).download.state,'downloading');
+ for(const finish of held.splice(0))finish();
+ await until(async()=>(await show()).setup.attempt?.phase==='configured','one explicitly approved prompt attempt');
+ const promptAttempt=(await show()).setup.attempt.id;
+ assert.notEqual(promptAttempt,priorAttempt);assert.equal((await show()).saved.policy.mode,'prompt');
+ assert.deepEqual((await show()).saved,promptSaved);assert.equal(pulls,3);assert.equal(inferences,0);
+ assert.equal((await show()).setup.attempt.download_admitted,true);
+ assert.equal((await local(['models','download-status','--id',promptDownload])).download.state,'installed');
+ assert.notEqual(await readFile(config,'utf8'),beforeApproval,'only the later runner, not consent, selects the model');
+ const repeated=await local(['model-bootstrap-policy','approve'],false);assert.equal(repeated.success,false);
+ assert.equal((await show()).setup.attempt.id,promptAttempt);assert.equal(pulls,3);
+ assert.equal((await json(node+'/api/diagnostics')).runtime_id,configuredRuntime);
  // A run-only CLI selection must be protected before registration populates
  // model inventory, even though its saved selections are empty.
  await mkdir(join(scratch,'cli'));const cliConfig=join(scratch,'cli','node.json'),cliValue=structuredClone(value),cliPort=await port();
@@ -119,10 +149,11 @@ try{
  assert.equal(cliShown.setup.state,'existing_setup');assert.equal(cliShown.setup.attempt,null);
  assert.deepEqual(JSON.parse(await readFile(cliConfig,'utf8')).models.ollama.selected,[]);
  try{await stat(join(scratch,'cli','node.bootstrap.sqlite3'));assert.fail('CLI choice must prevent setup evidence creation');}catch(error){if(error.code!=='ENOENT')throw error;}
- assert.equal(pulls,2);assert.equal(inferences,0);
+ assert.equal(pulls,3);assert.equal(inferences,0);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,synthetic_provider_and_cache_only:true,real_weights_downloaded:false,inference_requested:false,
   legacy_preferences_inactive:true,local_and_pinned_remote_commands:true,remote_consent_required:true,generic_activation_and_stale_restore_rejected:true,exact_transfer_revocation:true,
-  durable_unknown_after_process_exit:true,no_automatic_replay:true,existing_ollama_reused:true,verified_cpu_cache_configured:true,no_automatic_restart:true,applied_command_line_selection_preserved:true,core_reviewed_work:true},null,2));
+  durable_unknown_after_process_exit:true,no_automatic_replay:true,existing_ollama_reused:true,verified_cpu_cache_configured:true,no_automatic_restart:true,applied_command_line_selection_preserved:true,core_reviewed_work:true,
+  explicit_prompt_approval:true,prompt_install_receipt_progress_and_completion:true,prompt_mode_and_policy_epoch_preserved:true,remote_prompt_approval_requires_current_consent:true,repeated_prompt_approval_refused:true},null,2));
  console.log('Model setup native validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}
 finally{for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));for(const finish of held)finish();provider.closeAllConnections();await new Promise(r=>provider.close(r));}

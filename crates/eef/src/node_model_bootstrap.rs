@@ -22,7 +22,7 @@ impl Request {
         if let Some(runtime) = &self.expected_runtime_id {
             eefn::automation_occurrence::uuid(runtime)?;
         }
-        if matches!(self.command, Command::Configure { .. }) {
+        if !matches!(self.command, Command::Show) {
             NodeRequest {
                 schema_version: 1,
                 expected_node_id: self.node_id.clone(),
@@ -57,7 +57,7 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
     let Ok(r) = serde_json::from_value::<Report>(value.clone()) else {
         return false;
     };
-    let mutation = matches!(request.command, Command::Configure { .. });
+    let mutation = !matches!(request.command, Command::Show);
     if request.validate().is_err()
         || r.schema_version != 1
         || r.report_type != "remote_model_bootstrap"
@@ -98,7 +98,7 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
 }
 pub async fn command(server: &eefn::NodeServer, request: Request) -> Result<Value> {
     request.validate()?;
-    let mutation = matches!(request.command, Command::Configure { .. });
+    let mutation = !matches!(request.command, Command::Show);
     let mut report = json!(Report {
         schema_version: 1,
         report_type: "remote_model_bootstrap".into(),
@@ -174,6 +174,38 @@ pub async fn command(server: &eefn::NodeServer, request: Request) -> Result<Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn prompt_approval_is_a_mutation_requiring_exact_runtime_and_explicit_prompt_consent() {
+        let mut policy = eefn::model_bootstrap::Policy::default();
+        policy.mode = eefn::model_bootstrap::Mode::Prompt;
+        policy.automation = true;
+        policy.catalog = Some(eefn::model_bootstrap::CatalogPin {
+            schema_version: 1,
+            model_id: "fixture".into(),
+            definition_sha256: "a".repeat(64),
+            artifact_sha256: "b".repeat(64),
+            artifact_bytes: 4,
+            source_uri_sha256: "c".repeat(64),
+            source_page_sha256: "d".repeat(64),
+            declared_license: "test-only".into(),
+        });
+        let mut request = Request {
+            schema_version: 1,
+            node_id: "node".into(),
+            expected_runtime_id: None,
+            command: Command::Approve {
+                previous: eefn::model_bootstrap::Saved::new(policy, 1).unwrap(),
+            },
+        };
+        assert!(request.validate().is_err());
+        request.expected_runtime_id = Some(uuid::Uuid::new_v4().to_string());
+        request.validate().unwrap();
+        if let Command::Approve { previous } = &mut request.command {
+            previous.policy.automation = false;
+            *previous = eefn::model_bootstrap::Saved::new(previous.policy.clone(), 2).unwrap();
+        }
+        assert!(request.validate().is_err());
+    }
     #[test]
     fn bootstrap_remote_mutations_require_exact_runtime_and_versioned_policy() {
         let mut request = Request {

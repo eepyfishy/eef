@@ -20,8 +20,8 @@ enabled snapshot after opt-out. Omitted policy and existing opt-outs are retaine
 Generic owner saves may still disable automation and make unrelated changes.
 
 Preserve/off/managed never start setup. Prompt with explicit automation enabled
-waits for an explicit owner change to auto; a separate one-shot approval command
-has not been implemented. Auto requires both the new opt-in and an unchanged
+waits for [one explicit approval](PROMPT-MODEL-APPROVAL.md) without changing mode.
+Auto requires both the new opt-in and an unchanged
 catalog binding. Project-default without an approved manifest remains blocked;
 it never chooses the first catalog entry. Any existing saved or applied selection
 is preserved rather than replaced or assigned a role automatically.
@@ -111,7 +111,7 @@ it is not a readiness or real-model quality claim.
     eefn restart
     eefn model-lifecycle show
 
-## Verification
+## Verification (runner checkpoint, before scoped activation and prompt approval)
 
 Thirteen added Rust regressions cover existing/missing Ollama metadata and one
 installer receipt, exact async/admission/revocation fences, cached CPU selection

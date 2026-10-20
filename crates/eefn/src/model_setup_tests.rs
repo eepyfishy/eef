@@ -22,6 +22,23 @@ impl Drop for Fixture {
     }
 }
 impl Fixture {
+    fn prompt(&self) {
+        let mut config = self.service.read_config().unwrap();
+        config["model_bootstrap"]["mode"] = json!("prompt");
+        self.service
+            .inspect_grant_configuration(|_| self.service.save_bootstrap_config_locked(config))
+            .unwrap();
+    }
+    fn approve(&self) -> Result<()> {
+        self.service.inspect_grant_configuration(|config| {
+            approve_locked(
+                &self.service,
+                config,
+                &Saved::from_config(config)?,
+                &self.runtime,
+            )
+        })
+    }
     fn bind_baseline(&self) {
         let startup = self.service.capture_runtime_configuration().unwrap();
         self.service
@@ -110,6 +127,187 @@ impl Fixture {
         )
         .await
         .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn prompt_approval_is_one_durable_attempt_not_a_policy_or_model_write() {
+    let f = Fixture::new(true).await;
+    f.prompt();
+    let before = std::fs::read(&f.service.config_path).unwrap();
+    f.tick().await;
+    assert_eq!(f.status().state, State::AwaitingApproval);
+    assert!(Journal::new(&f.service).read().unwrap().is_none());
+    assert_eq!(f.tags_started.load(Ordering::SeqCst), 0);
+    f.approve().unwrap();
+    let approved = f.record();
+    assert_eq!(approved.phase, Phase::Approved);
+    assert!(approved.owner_approved);
+    assert_eq!(std::fs::read(&f.service.config_path).unwrap(), before);
+    assert_eq!(f.tags_started.load(Ordering::SeqCst), 0);
+    assert!(f.approve().is_err());
+    f.tick().await;
+    assert_eq!(f.record().phase, Phase::Configured);
+    assert_eq!(f.record().id, approved.id);
+    assert_eq!(
+        f.service.read_config().unwrap()["model_bootstrap"]["mode"],
+        "prompt"
+    );
+    let mut config = f.service.read_config().unwrap();
+    config["models"]["ollama"]["selected"] = json!([]);
+    f.service.save_config(config).unwrap();
+    let inspections = f.tags_started.load(Ordering::SeqCst);
+    f.tick().await;
+    assert_eq!(f.tags_started.load(Ordering::SeqCst), inspections);
+    assert_eq!(f.record().id, approved.id);
+    assert!(f.approve().is_err());
+    assert_eq!(f.pulls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn prompt_approval_waits_for_busy_transfer_without_probing_or_consuming_again() {
+    let f = Fixture::new(true).await;
+    f.prompt();
+    f.approve().unwrap();
+    let id = f.record().id;
+    f.service.live.lock().unwrap()["download"]["state"] = json!("downloading");
+    f.tick().await;
+    assert_eq!(f.record().phase, Phase::Approved);
+    assert_eq!(f.tags_started.load(Ordering::SeqCst), 0);
+    f.service.live.lock().unwrap()["download"]["state"] = json!("idle");
+    f.tick().await;
+    assert_eq!(f.record().phase, Phase::Configured);
+    assert_eq!(f.record().id, id);
+}
+
+#[tokio::test]
+async fn prompt_approval_revocation_or_scope_drift_stops_before_provider_inspection() {
+    for case in ["disable", "mode", "catalog", "models", "runtime"] {
+        let f = Fixture::new(false).await;
+        f.prompt();
+        f.approve().unwrap();
+        let mut config = f.service.read_config().unwrap();
+        match case {
+            "disable" => config["model_bootstrap"]["automation"] = json!(false),
+            "mode" => config["model_bootstrap"]["mode"] = json!("off"),
+            "catalog" => config["model_catalog"][0]["bytes"] = json!(64),
+            "models" => config["models"]["provider"] = json!("ollama"),
+            "runtime" => {
+                f.service.live.lock().unwrap()["runtime_id"] =
+                    json!(uuid::Uuid::new_v4().to_string())
+            }
+            _ => unreachable!(),
+        }
+        f.service.save_config(config).unwrap();
+        f.tick().await;
+        assert_eq!(f.record().phase, Phase::Stopped, "{case}");
+        assert_eq!(f.record().reason, Some(Reason::StateChanged));
+        assert_eq!(f.tags_started.load(Ordering::SeqCst), 0);
+        assert_eq!(f.pulls.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn prompt_approval_revoked_during_async_inspection_never_admits_download() {
+    let f = Fixture::new(false).await;
+    f.prompt();
+    f.approve().unwrap();
+    f.hold_tags.store(true, Ordering::SeqCst);
+    let service = f.service.clone();
+    let runtime = f.runtime.clone();
+    let task =
+        tokio::spawn(async move { tick(service.clone(), &runtime, &Journal::new(&service)).await });
+    wait_count(&f.tags_started).await;
+    let mut config = f.service.read_config().unwrap();
+    config["model_bootstrap"]["automation"] = json!(false);
+    f.service.save_config(config).unwrap();
+    f.hold_tags.store(false, Ordering::SeqCst);
+    f.tags_gate.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(f.record().phase, Phase::Stopped);
+    assert!(f.record().owner_approved);
+    assert!(!f.record().download_admitted);
+    assert_eq!(f.pulls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn prompt_approval_recovery_consumes_only_current_runtime_consent_without_crash_replay() {
+    for crash in [false, true] {
+        let f = Fixture::new(true).await;
+        f.prompt();
+        f.approve().unwrap();
+        let id = f.record().id;
+        let runtime = if crash {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            f.runtime.clone()
+        };
+        f.service.live.lock().unwrap()["runtime_id"] = json!(runtime);
+        let service = f.service.clone();
+        let task = tokio::spawn(async move { run(service, runtime).await });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while f.record().phase
+                != if crash {
+                    Phase::Unknown
+                } else {
+                    Phase::Configured
+                }
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        task.abort();
+        let _ = task.await;
+        assert_eq!(f.record().id, id);
+        if crash {
+            assert_eq!(f.tags_started.load(Ordering::SeqCst), 0);
+        }
+        assert_eq!(f.pulls.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn prompt_approval_respects_separate_restart_consent_and_immutable_evidence() {
+    let f = Fixture::new(true).await;
+    f.bind_baseline();
+    f.prompt();
+    f.opt_in_restart();
+    f.approve().unwrap();
+    f.tick().await;
+    assert_eq!(f.record().phase, Phase::RestartRequested);
+    let startup = f.service.claim_model_activation().unwrap().unwrap();
+    f.service
+        .adopt_runtime_configuration(&uuid::Uuid::new_v4().to_string(), &startup, |_, _| {})
+        .unwrap();
+    let mut record = f.record();
+    assert_eq!(record.phase, Phase::RuntimeConfigured);
+    assert!(record.owner_approved);
+    record.owner_approved = false;
+    assert!(record.validate("node").is_err());
+    assert!(Journal::new(&f.service).write(&record).is_err());
+}
+
+#[tokio::test]
+async fn prompt_approval_never_repairs_unavailable_journal_or_implicitly_authorizes_auto() {
+    for auto in [false, true] {
+        let f = Fixture::new(true).await;
+        if !auto {
+            f.prompt();
+        }
+        let before = std::fs::read(&f.service.config_path).unwrap();
+        let path = Journal::new(&f.service).path;
+        let damaged = b"not sqlite; preserve evidence";
+        std::fs::write(&path, damaged).unwrap();
+        assert!(f.approve().is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), damaged);
+        assert_eq!(std::fs::read(&f.service.config_path).unwrap(), before);
+        assert_eq!(f.tags_started.load(Ordering::SeqCst), 0);
     }
 }
 
@@ -375,6 +573,7 @@ async fn setup_fence_refuses_revoked_policy_model_catalog_and_runtime_drift() {
         let f = Fixture::new(false).await;
         let before = f.service.read_config().unwrap();
         let fence = Fence {
+            owner_approved: false,
             saved: Saved::from_config(&before).unwrap(),
             backend: Backend::Ollama,
             runtime_id: f.runtime.clone(),
@@ -421,6 +620,7 @@ async fn setup_interrupted_attempt_is_retained_unknown_and_not_replayed() {
     let c = f.service.read_config().unwrap();
     let now = crate::protocol::now_ms();
     let record = Attempt {
+        owner_approved: false,
         schema_version: 1,
         node_id: "node".into(),
         id: uuid::Uuid::new_v4().to_string(),
