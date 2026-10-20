@@ -107,9 +107,10 @@ read. Preserve existing opt-outs/custom roles, prefer a suitable existing Ollama
 setup without a second provider, and keep GGUF/llama.cpp as the CPU fallback.
 Do not confuse provider-reported identity with a verified local artifact.
 Policy changes should wake a backend-owned supervisor that re-reads durable
-state; a dashboard timer must not own the loop. Keep core owner controls usable
-when model files disappear, separating validation of unchanged unavailable models
-from validation of newly selected paths.
+state; a dashboard timer must not own the loop. The subsequent
+[unavailable-model control fix](UNAVAILABLE-MODEL-CONTROLS.md) separates retained
+references from introduced artifacts so missing files need not block unrelated
+owner saves; this is not general model-health or setup-runner completion.
 
 Retain durable setup lifecycle/unknown outcomes, refuse replay after uncertain
 admission, and bind post-install selection/role changes to unchanged model setup

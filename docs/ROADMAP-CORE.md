@@ -31,6 +31,14 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The [unavailable-model control fix](UNAVAILABLE-MODEL-CONTROLS.md) removes artifact
+health as a prerequisite for unrelated owner saves: retained model/projector
+references can remain unavailable while permission revocation and other core
+controls work. Introduced references are still validated against startup's
+configuration directory. Native core-work, restart, local/remote consent and
+selection regressions pass. This is a reliability prerequisite for setup
+automation, not model-health, bootstrap-runner or release completion.
+
 The [bootstrap-policy foundation](MODEL-BOOTSTRAP-POLICY.md) adds shared node/EEF
 commands, exact owner catalog bindings and runtime/revision-fenced saves.
 Absent legacy settings preserve existing setup; older/generic saves cannot erase

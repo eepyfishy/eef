@@ -4,6 +4,13 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Controls with unavailable model files (unreleased after alpha.6)
+
+Permission and other owner settings saves no longer require every unchanged saved
+model/projector file to remain available. New/rebound references still require
+files; new generic relative paths use the configuration directory. This does not
+load, repair, replace or certify a model. See [scope and validation](UNAVAILABLE-MODEL-CONTROLS.md).
+
 ## Bootstrap preferences (unreleased after alpha.6)
 
     eefn model-bootstrap-policy show

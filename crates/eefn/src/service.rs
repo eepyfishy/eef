@@ -196,7 +196,8 @@ impl NodeService {
                 object.remove("psk");
             }
         }
-        validate_config(&value)?;
+        validate_config_shape(&value)?;
+        validate_model_references(&value, &old, &self.config_path)?;
         if let Some(parent) = self.config_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -869,6 +870,7 @@ impl NodeService {
         }
         let _guard = self.config_lock.lock().expect("config lock");
         let mut config = self.read_config()?;
+        let previous = config.clone();
         let allowed = require_remote_authority(&config).is_ok();
         // Merge into the latest saved state while holding its lock. Never restore
         // an earlier approval value or overwrite unrelated concurrent local edits.
@@ -886,7 +888,8 @@ impl NodeService {
                 config[key] = value.clone();
             }
         }
-        validate_config(&config)?;
+        validate_config_shape(&config)?;
+        validate_model_references(&config, &previous, &self.config_path)?;
         if !allowed {
             config["psk"] = json!(SECRET_PLACEHOLDER);
             crate::setup::write_json(&self.config_path.with_extension("proposal.json"), &config)?;
@@ -1052,7 +1055,8 @@ impl NodeService {
     }
 }
 
-fn validate_config(value: &Value) -> Result<()> {
+/// Structural/policy validation; commits separately validate introduced artifacts.
+fn validate_config_shape(value: &Value) -> Result<()> {
     crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(value)?;
     if let Some(policy) = value.get("input_workflow") {
         serde_json::from_value::<crate::request_input::InputPolicy>(policy.clone())?;
@@ -1149,9 +1153,6 @@ fn validate_config(value: &Value) -> Result<()> {
             if !ids.insert(slot.model_id.clone()) {
                 bail!("local model IDs must be unique")
             }
-            if slot.model_id.trim().is_empty() || !slot.model_path.is_file() {
-                bail!("Choose an installed model file before saving")
-            }
             if slot.port == 0 || !ports.insert(slot.port) {
                 bail!("Each local model needs a different nonzero port")
             }
@@ -1208,6 +1209,61 @@ fn startup_issues(live: &Value) -> Vec<StartupIssue> {
         .filter_map(|value| serde_json::from_value(value.clone()).ok())
         .collect()
 }
+
+/// Validate introduced/rebound artifacts against startup's configuration base.
+/// Keeping an existing identity and model/projector references is not a health claim.
+fn validate_model_references(
+    value: &Value,
+    previous: &Value,
+    config: &std::path::Path,
+) -> Result<()> {
+    let Some(raw) = value.pointer("/models/llamacpp/slots") else {
+        return Ok(());
+    };
+    let slots: Vec<crate::ModelSlot> = serde_json::from_value(raw.clone())?;
+    let prior = previous
+        .pointer("/models/llamacpp/slots")
+        .and_then(Value::as_array);
+    let resolved = |path: &std::path::Path| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            config
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(path)
+        }
+    };
+    for slot in slots {
+        let matching: Vec<_> = prior
+            .into_iter()
+            .flatten()
+            .filter(|old| old["model_id"] == slot.model_id)
+            .collect();
+        let retained = matching.len() == 1
+            && serde_json::from_value::<crate::ModelSlot>(matching[0].clone()).is_ok_and(|old| {
+                old.model_path == slot.model_path && old.mmproj_path == slot.mmproj_path
+            });
+        if retained {
+            continue;
+        }
+        if !resolved(&slot.model_path).is_file() {
+            bail!("Choose an existing model file before selecting new model references")
+        }
+        if slot
+            .mmproj_path
+            .as_ref()
+            .is_some_and(|path| !resolved(path).is_file())
+        {
+            bail!("Choose an existing projector file before selecting new model references")
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "model_reference_tests.rs"]
+mod model_reference_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1366,7 +1422,7 @@ mod tests {
             assert_eq!(std::fs::read(&path).unwrap(), before);
         }
         assert!(
-            validate_config(&json!({})).is_ok(),
+            validate_config_shape(&json!({})).is_ok(),
             "older configurations retain bounded defaults"
         );
     }
@@ -1721,11 +1777,14 @@ mod tests {
 
     #[test]
     fn rejects_unknown_model_provider() {
-        assert!(validate_config(&json!({"dashboard":{"enabled":false,"ui_enabled":true}})).is_ok());
-        assert!(validate_config(&json!({"dashboard":{"ui_enabled":"false"}})).is_err());
-        assert!(validate_config(&json!({"models": {"provider": "magic"}})).is_err());
-        assert!(validate_config(&json!({"models": {"provider": "auto"}})).is_ok());
-        assert!(validate_config(&json!({"models":{"ollama":{"selected":[{"model_id":"fixture","modality":"unknown"}]}}})).is_err());
+        assert!(
+            validate_config_shape(&json!({"dashboard":{"enabled":false,"ui_enabled":true}}))
+                .is_ok()
+        );
+        assert!(validate_config_shape(&json!({"dashboard":{"ui_enabled":"false"}})).is_err());
+        assert!(validate_config_shape(&json!({"models": {"provider": "magic"}})).is_err());
+        assert!(validate_config_shape(&json!({"models": {"provider": "auto"}})).is_ok());
+        assert!(validate_config_shape(&json!({"models":{"ollama":{"selected":[{"model_id":"fixture","modality":"unknown"}]}}})).is_err());
     }
 
     #[tokio::test]

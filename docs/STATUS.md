@@ -3,6 +3,31 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: core owner controls survive unavailable model artifacts
+
+Unchanged saved GGUF/projector references no longer require available files on
+every configuration write. Permission revocation and unrelated owner settings
+remain usable without deleting or repairing a selected model first. New/rebound
+references still require regular files; generic relative paths now use startup's
+configuration directory. Local and approved remote saves share the checks,
+without weakening local management consent or altering model references.
+
+Three focused regressions and twelve isolated native suites pass, including
+unavailable-model-PdWpTG with applied eager startup, pinned-TLS reconnection,
+reviewed system-information work, remote proposals/consent, explicit restart,
+model removal and stale-reference refusal. See [scope and evidence](UNAVAILABLE-MODEL-CONTROLS.md).
+Both locked/offline workspace/all-target feature modes pass 904 tests plus one
+ignored profiler each: EEF 268, owner CLI 21, installer 6, EEFN 584 and node CLI
+25. Final logs are retained under .validation/model-reference-workspace-default-final.log
+and .validation/model-reference-workspace-headless-final.log; final headless
+apps/examples build. A final package-only run passes all three named regressions,
+including structural grant validation. All four evaluated native binary hashes
+match; source boundary, formatting, JS syntax and diff checks pass. Evaluated
+application/helpers and llama-server are terminal.
+Model readiness, automatic setup, physical two-PC and stable
+release acceptance remain open. No installed/remote node, model default,
+visual UI, version, installer or update policy changed.
+
 ## Unreleased: bootstrap preferences and exact owner catalog bindings
 
 Node and EEF model-bootstrap-policy commands share the node-owned service.
