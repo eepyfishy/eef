@@ -619,6 +619,24 @@ impl NodeServer {
             wait,Some(grant),Some(observer),Some(lease_deadline)).await
     }
     /// Read the current authenticated executor's journal for a previously issued grant.
+    /// Deliver one exact stop intent, never execution, lease renewal or a PID kill.
+    pub async fn stop_grant(
+        &self,
+        grant: &crate::grants::ExecutionGrant,
+    ) -> Result<crate::grants::stop::Report> {
+        grant.validate()?;
+        let response = self.invoke_message(&grant.executor_node,
+            json!({"type":"stop_grant","scope":crate::grants::stop::Scope::from_grant(grant)?,"expected_node_id":grant.executor_node,"expected_issuer_id":grant.issuer_id}),
+            Duration::from_secs(5),None,None,None).await?;
+        if response["success"] != true {
+            bail!("Stop intent unconfirmed; effects remain unknown")
+        }
+        let report: crate::grants::stop::Report = serde_json::from_value(response["data"].clone())?;
+        if !report.confirms(grant) {
+            bail!("Stop receipt differs from exact grant")
+        }
+        Ok(report)
+    }
     /// Older sessions/issuers and missing or mismatched receipts never imply effects did not occur.
     pub async fn inspect_grant_receipt(
         &self,
@@ -693,8 +711,38 @@ impl NodeServer {
             .get(node_id)
             .cloned()
             .ok_or_else(|| NodeOfflineError(node_id.into()))?;
-        if message["type"] == "grant_receipt" || message["type"] == "grant_result" {
+        if message["type"] == "grant_receipt"
+            || message["type"] == "grant_result"
+            || message["type"] == "stop_grant"
+        {
             self.check_grant_connection(&connection)?;
+            if message["type"] == "stop_grant" {
+                let support: crate::grants::stop::Advertisement = serde_json::from_value(
+                    connection
+                        .state
+                        .as_ref()
+                        .context("Stop registration unavailable")?
+                        .registration["grant_stop"]
+                        .clone(),
+                )?;
+                support.validate()?;
+                if !support.available {
+                    bail!("Node does not advertise stop requests; no fallback")
+                }
+                let g: crate::grants::stop::Scope =
+                    serde_json::from_value(message["scope"].clone())?;
+                g.validate()?;
+                let issuer = self
+                    .inner
+                    .authentication
+                    .tls
+                    .as_ref()
+                    .context("Stop issuer unavailable")?
+                    .fingerprint()?;
+                if !g.matches_session(&issuer, &connection.session_id.to_string(), node_id) {
+                    bail!("Original stop session changed; no retargeting")
+                }
+            }
             if message["type"] == "grant_result" {
                 let support: crate::grants::GrantAdvertisement = serde_json::from_value(
                     connection
@@ -718,6 +766,13 @@ impl NodeServer {
                 .fingerprint()?;
             if message["expected_issuer_id"] != issuer || message["expected_node_id"] != node_id {
                 bail!("Receipt issuer or node changed; use local owner inspection")
+            }
+            if message["type"] == "stop_grant" {
+                message.as_object_mut().unwrap().remove("expected_node_id");
+                message
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("expected_issuer_id");
             }
         }
         if let Some(g) = &grant {
@@ -1192,6 +1247,14 @@ impl NodeServer {
                             serde_json::from_value(advertisement.clone())?;
                         a.validate()?;
                     }
+                    if let Some(value) = message.get("grant_stop") {
+                        let a: crate::grants::stop::Advertisement =
+                            serde_json::from_value(value.clone())?;
+                        a.validate()?;
+                        if a.available && message["execution_grants"]["available"] != true {
+                            bail!("Stop support requires grant support")
+                        }
+                    }
                     let advertisement = crate::network::PeerRecord::from_registration(&message)?;
                     if let Some(value) = message.get("peer_transfer") {
                         let support: crate::peer::plan::Advertisement =
@@ -1253,6 +1316,7 @@ impl NodeServer {
                                     "execution_grants",
                                     "registration_receipt",
                                     "peer_transfer",
+                                    "grant_stop",
                                 ],
                                 received_at_ms,
                             ),

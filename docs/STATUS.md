@@ -3,6 +3,52 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: command-driven exact grant stop requests
+
+Existing origin jobs stop and coordinator-owner control now save retained stop
+intent, wake backend drivers without UI polling and checkpoint each exact send
+before I/O. Peer targets are contacted concurrently. New nodes persist bounded
+stop evidence beside existing consumption receipts, close the pre-admission race
+by consuming stopped authority as metadata-only unknown, and signal accepted
+grants through a scope-bound watcher. No replay, lease renewal, retargeting,
+permission change, restart, new runner or model invocation follows. Optional
+execution fields retain legacy serialized shapes when absent. Stop evidence is
+immutable after checkpointing. See [semantics and limits](GRANT-STOP.md).
+
+Final audit hardening additionally rejects unversioned/partial stop evidence
+before root initialization writes. Control frames now use a bounded scope/digest
+descriptor rather than resending full private grant payloads. Both follow-up
+regressions pass, including byte preservation and omission of private content.
+
+Stop replies prove durable intent only, never universal physical termination or
+undo. Original pinned credential-TLS session/ownership checks still apply;
+unsupported/lost/changed-session results remain unconfirmed with no fallback.
+Public process-lifetime-RafxTM passes plain origin CLI and coordinator API stops
+plus the seven existing scenarios. The two stop cases observe live creation-checked
+parent/child handles exited at 143 and 102 ms, before their original ten-second grants;
+outcomes remain unknown/interrupted with grant_stop_requested_effects_unknown.
+Those local synthetic observations are not a physical-network latency guarantee.
+Public local-pipelines-F3kBIn passes explicit paired audio stop with both durable
+receipts, no playback, no replay and healthy fresh work, alongside prior cases.
+No actual microphone, camera or speaker is used.
+
+Existing python-policy-6FjATG, python-bridge-bt7cz5,
+permission-commands-4tOc8Q, node-commands-sDOj9m, node-credentials-qvzQLO and
+model-downloads-rObpVn also pass. These use isolated native apps/cached CPython
+and synthetic providers/plugins, not installed or physical nodes. Thirty
+focused stop-selected tests pass, including thirteen new cases (nine node stop,
+two coordinator journal and two plain-output tests).
+
+Both locked/offline workspace/all-target modes pass **873 tests plus one ignored
+each**: EEF 266 plus one ignored profiler, owner CLI 19, installer 6, EEFN 559 and
+node CLI 23. Logs are retained in .validation/grant-stop-workspace-default.log
+and .validation/grant-stop-workspace-headless.log. Final headless apps/examples
+build; EEF, EEFN and both native fixture helpers match evaluated binary hashes.
+Source boundary, JS syntax and diff checks pass; fixture apps/helpers are
+terminal. No installed/remote node, UI source, model, version, installer or update
+policy changed. Strong stop proof, blocked-I/O/external effects, physical two-PC,
+bootstrap, mesh/cluster and stable-release acceptance remain open.
+
 ## Unreleased: executor retirement before final grant checkpoints
 
 The shared AcceptedGrant outcome loop now drops its executing future before

@@ -2649,6 +2649,11 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                             "Permission outcome was not confirmed. Inspect `eefn permissions show` before deciding what to do. No automatic retry, restart or workload was sent."
                         );
                     }
+                } else if let Commands::Jobs {
+                    command: eefn::job_commands::JobCommand::Stop { id },
+                } = command
+                {
+                    print!("{}", eefn::job_commands::render_stop(&value, id)?);
                 } else if value.get("nodes").is_some() || value.get("report_type").is_some() {
                     println!("{}", serde_json::to_string_pretty(&value)?);
                 } else {

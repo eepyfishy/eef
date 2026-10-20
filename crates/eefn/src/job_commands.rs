@@ -4,6 +4,57 @@ use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// Presentation only. Never turn tracking state or an intent ACK into effect proof.
+pub fn render_stop(value: &Value, id: &str) -> Result<String> {
+    crate::request_drafts::validate_id(id)?;
+    let status = value["data"]["status"].as_str();
+    let acknowledged = value["success"] == true
+        && value["acknowledged"] == true
+        && value["data"]["id"] == id
+        && matches!(status, Some("stopping" | "cancelled" | "interrupted"));
+    let heading = if acknowledged {
+        "Stop requested"
+    } else {
+        "Stop outcome unconfirmed"
+    };
+    let state = if acknowledged {
+        format!("Current job state: {}\n", status.unwrap())
+    } else {
+        String::new()
+    };
+    Ok(format!(
+        "{heading} for job {id}\n{state}A request or tracking status is not proof that every remote effect stopped. Finished actions are not undone.\nInspect: eefn jobs get {id}\nNo automatic retry or new execution was sent.\n"
+    ))
+}
+#[cfg(test)]
+mod stop_render_tests {
+    use super::*;
+    #[test]
+    fn stop_render_acknowledges_only_the_matching_job_without_claiming_effect_stop() {
+        let id = "a".repeat(32);
+        let value =
+            json!({"success":true,"acknowledged":true,"data":{"id":id,"status":"stopping"}});
+        let plain = render_stop(&value, &id).unwrap();
+        assert!(plain.starts_with("Stop requested"));
+        assert!(plain.contains("Current job state: stopping"));
+        assert!(plain.contains("not proof"));
+        assert!(plain.contains("eefn jobs get"));
+    }
+    #[test]
+    fn stop_render_uncertainty_or_substitution_never_echoes_private_diagnostics() {
+        let id = "a".repeat(32);
+        for value in [
+            json!({"success":false,"error":"PRIVATE_STOP_ERROR"}),
+            json!({"success":true,"acknowledged":true,"data":{"id":"b".repeat(32),"status":"stopping"}}),
+            json!({"success":true,"acknowledged":true,"data":{"id":id,"status":"PRIVATE_STOP_STATUS"}}),
+        ] {
+            let plain = render_stop(&value, &id).unwrap();
+            assert!(plain.starts_with("Stop outcome unconfirmed"));
+            assert!(!plain.contains("PRIVATE_STOP"));
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Subcommand)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum JobCommand {

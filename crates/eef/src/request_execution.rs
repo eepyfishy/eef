@@ -34,6 +34,8 @@ pub struct GrantedAttempt {
     pub report: Option<GrantReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<eefn::request_recovery::RecoveryRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<crate::execution_stop::Delivery>,
 }
 impl GrantedAttempt {
     pub(crate) fn final_report(&self) -> Option<&GrantReport> {
@@ -54,6 +56,8 @@ pub struct ExecutionRecord {
     pub abandonment: Option<eefn::request_abandon::AbandonRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer: Option<crate::peer_jobs::Issuance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_requested_at_ms: Option<u64>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -205,6 +209,7 @@ pub(crate) fn settle_unissued_stop(plan: &mut Plan) {
     cancel_pending(plan);
 }
 pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
+    crate::execution_stop::validate(plan)?;
     let Some(e) = &plan.execution else {
         return Ok(());
     };
@@ -784,8 +789,16 @@ impl Driver {
                 grant.expires_at_ms.saturating_sub(eefn::protocol::now_ms()) + 5000,
             );
             let reply = self
-                .server
-                .invoke_grant_observed(grant.clone(), wait, observer, lease_deadline)
+                .wait_with_stop(
+                    id,
+                    std::slice::from_ref(&grant),
+                    self.server.invoke_grant_observed(
+                        grant.clone(),
+                        wait,
+                        observer,
+                        lease_deadline,
+                    ),
+                )
                 .await;
             drop(reservation);
             let valid = reply
@@ -842,6 +855,7 @@ pub(crate) fn append_attempt(p: &mut Plan, g: ExecutionGrant) {
         acknowledgement: None,
         report: None,
         recovery: None,
+        stop: None,
     });
 }
 pub(crate) fn start(p: &mut Plan, command: &ExecuteCommand, now: u64) -> Result<()> {
@@ -862,6 +876,7 @@ pub(crate) fn start(p: &mut Plan, command: &ExecuteCommand, now: u64) -> Result<
         attempts: vec![],
         abandonment: None,
         peer: None,
+        stop_requested_at_ms: None,
     });
     p.status = PlanStatus::Running;
     Ok(())
@@ -1035,7 +1050,7 @@ fn report(runtime: &crate::Runtime, p: &Plan, reused: bool) -> Result<Value> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{event::EventBus, request_approval::tests as approval};
     fn abandonment_command(p: &Plan) -> eefn::request_abandon::AbandonCommand {
@@ -1274,7 +1289,7 @@ mod tests {
         g.expires_at_ms = g.issued_at_ms + g.limits.max_execution_ms;
         g
     }
-    fn issued(engine: &TaskEngine) -> (Plan, ExecutionGrant, AttemptJournal) {
+    pub(crate) fn issued(engine: &TaskEngine) -> (Plan, ExecutionGrant, AttemptJournal) {
         let p = requested(engine);
         let g = grant(&p);
         let p = engine

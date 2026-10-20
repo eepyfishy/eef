@@ -12,6 +12,8 @@ use std::{
 };
 
 pub const MAX_DURATION_MS: u64 = 30_000;
+#[path = "grant_stop.rs"]
+pub mod stop;
 // Full report identity/flags/error overhead, in addition to bounded output.
 pub(crate) const REPORT_HEADROOM: usize = 8192;
 /// Durable coordinator journal hook. Called on validated, session-bound reports
@@ -484,6 +486,7 @@ pub struct GrantLedger {
     node_id: String,
     connection: Mutex<Connection>,
     policy: GrantPolicy,
+    stops: Arc<stop::Registry>,
 }
 impl GrantLedger {
     pub fn open(path: &Path, policy: GrantPolicy, node_id: &str) -> Result<Arc<Self>> {
@@ -504,6 +507,9 @@ impl GrantLedger {
         }
         if crate::pipeline_progress::available(&db)? && version == 0 {
             bail!("Unversioned pipeline observation evidence; retained without initialization")
+        }
+        if stop::available(&db)? && version == 0 {
+            bail!("Unversioned stop evidence; retained without initialization")
         }
         if version == 0 {
             let old: i64 = db.query_row(
@@ -559,6 +565,7 @@ impl GrantLedger {
         for id in &ids {
             crate::request_result::read_result(&db, node_id, None, id)?;
         }
+        stop::validate_all(&db, node_id)?;
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")?;
         let page_size: i64 = db.query_row("PRAGMA page_size", [], |r| r.get(0))?;
         db.pragma_update(
@@ -581,6 +588,7 @@ impl GrantLedger {
             node_id: node_id.into(),
             connection: Mutex::new(db),
             policy,
+            stops: Arc::default(),
         }))
     }
     pub fn policy(&self) -> &GrantPolicy {
@@ -602,6 +610,9 @@ impl GrantLedger {
             .lock()
             .map_err(|_| anyhow::anyhow!("Grant journal lock unavailable"))?;
         let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if stop::recorded(&tx, g)? {
+            return Err(GrantDenied("grant_stop_recorded").into());
+        }
         let used: i64 = tx.query_row(
             "SELECT count(*) FROM execution_receipts WHERE grant_id=?1",
             [&g.grant_id],
@@ -741,6 +752,7 @@ pub struct AcceptedGrant {
     accepted: Instant,
     accepted_wall: u64,
     final_checkpoint_attempted: bool,
+    stop: stop::Watch,
 }
 impl Drop for AcceptedGrant {
     fn drop(&mut self) {
@@ -843,6 +855,7 @@ impl AcceptedGrant {
         let accepted_wall = crate::protocol::now_ms();
         let deadline = deadline.min(accepted + Duration::from_millis(g.limits.max_execution_ms));
         ledger.claim(&g)?;
+        let stop = ledger.watch_stop(&g)?;
         Ok(Self {
             grant: g,
             ledger,
@@ -850,6 +863,7 @@ impl AcceptedGrant {
             accepted,
             accepted_wall,
             final_checkpoint_attempted: false,
+            stop,
         })
     }
     pub fn acknowledgement(&self) -> GrantReport {
@@ -901,6 +915,14 @@ impl AcceptedGrant {
             let deadline = tokio::time::Instant::from_std(self.deadline);
             let mut tick = tokio::time::interval(Duration::from_millis(100));
             loop {
+                if *self.stop.receiver.borrow() {
+                    break GrantReport::new(
+                        g,
+                        ReceiptState::Unknown,
+                        Value::Null,
+                        Some("grant_stop_requested_effects_unknown"),
+                    );
+                }
                 let now = crate::protocol::now_ms();
                 let expected = self.accepted_wall.saturating_add(
                     self.accepted
@@ -927,6 +949,7 @@ impl AcceptedGrant {
                 }
                 tokio::select! {
                     biased;
+                    _=self.stop.receiver.changed()=>{},
                     _=tokio::time::sleep_until(deadline)=>break GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some("grant_deadline_exceeded")),
                     _=tick.tick()=>{},
                     value=&mut operation=>break match value {

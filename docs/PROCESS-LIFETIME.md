@@ -106,9 +106,9 @@ Dropping an adapter future requests its existing cleanup; this is not a new
 physical stop proof, rollback, recovery or migration authority. A fast final save
 can still precede OS exit observation, and outside services or already-dispatched
 OS effects can outlive their waiter. A synchronous operation blocked inside its
-own poll is also not made preemptible by this scope change. Node/EEF stop remains
-a separate protocol requirement: current jobs stop prevents further dispatch
-and may wait for the current grant rather than acknowledging immediate executor
+own poll is also not made preemptible by this scope change. The subsequent
+[exact grant stop path](GRANT-STOP.md) now delivers durable intent and signals
+the common executor. It still does not acknowledge universal immediate physical
 termination. Do not interpret Cancelled tracking as proof every remote effect
 stopped.
 

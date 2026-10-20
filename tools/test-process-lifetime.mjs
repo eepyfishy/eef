@@ -61,7 +61,7 @@ try {
  runtime=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);
  await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==runtime&&(await json(eef+'/api/diagnostics')).registered_node_count===2,'apply directional discovery');
  const outcomes=[];
- for(const scenario of [{label:'complete',mode:'complete',seconds:20,grantMs:8000},{label:'nonzero-exit',mode:'fail',seconds:20,grantMs:8000},{label:'process-timeout',mode:'loop',seconds:2,grantMs:8000},{label:'grant-deadline',mode:'loop',seconds:20,grantMs:3000},{label:'permission-revoked',mode:'loop',seconds:20,grantMs:10000},{label:'node-restart',mode:'loop',seconds:20,grantMs:10000},{label:'coordinator-restart',mode:'loop',seconds:20,grantMs:10000}]) {
+ for(const scenario of [{label:'complete',mode:'complete',seconds:20,grantMs:8000},{label:'nonzero-exit',mode:'fail',seconds:20,grantMs:8000},{label:'process-timeout',mode:'loop',seconds:2,grantMs:8000},{label:'grant-deadline',mode:'loop',seconds:20,grantMs:3000},{label:'origin-stop',mode:'loop',seconds:20,grantMs:10000},{label:'coordinator-stop',mode:'loop',seconds:20,grantMs:10000},{label:'permission-revoked',mode:'loop',seconds:20,grantMs:10000},{label:'node-restart',mode:'loop',seconds:20,grantMs:10000},{label:'coordinator-restart',mode:'loop',seconds:20,grantMs:10000}]) {
   phase='scenario-'+scenario.label;
   const dir=join(scratch,scenario.label);await mkdir(dir);
   const sourceArgs=['requests','submit-process','--text','  Owner-selected isolated native command\n','--program',helper,'--arg='+scenario.mode,'--arg='+dir,'--timeout-seconds',String(scenario.seconds),'--node',executor.id,'--operation-id',randomUUID()];
@@ -73,6 +73,11 @@ try {
   await review.start(command);await until(()=>exists(join(dir,'pids.json')),'own native root/child started');
   const identities=await readFile(join(dir,'pids.json'),'utf8'),observer=start(helper,['observe',dir]);
   await until(()=>exists(join(dir,'observer-ready')),'live creation-verified process handles held');
+  if(scenario.label==='origin-stop'){
+   const stopping=start(join(bin,'eefn.exe'),['--config',origin.config,'jobs','stop',plan.id]);
+   const reply=await stopping.result;assert.equal(reply.code,0);assert(reply.out.includes('Stop requested for job '+plan.id));assert(reply.out.includes('not proof'));assert(reply.out.includes('eefn jobs get '+plan.id));
+  }
+  if(scenario.label==='coordinator-stop')await json(eef+'/api/jobs/'+plan.id+'/stop',{});
   if(['complete','fail'].includes(scenario.mode))await writeFile(join(dir,'release'),'own fixture root may finish');
   if(scenario.label==='permission-revoked') {
    const config=(await json(executor.url+'/api/config')).config;config.permissions.process.enabled=false;
@@ -88,7 +93,7 @@ try {
   }
   const observed=await observer.result;assert.equal(observed.code,0,'native observer failed; private '+scratch);const proof=JSON.parse(observed.out);
   assert.equal(proof.both_exited,true);assert.equal(proof.held_creation_verified_handles,true);assert(Number.isSafeInteger(proof.observed_after_ms)&&proof.observed_after_ms>=0);
-  if(['permission-revoked','node-restart','coordinator-restart'].includes(scenario.label))assert(proof.observed_after_ms<2000,'lifecycle cleanup must precede the 10-second grant deadline, not merely eventually expire');
+  if(['origin-stop','coordinator-stop','permission-revoked','node-restart','coordinator-restart'].includes(scenario.label))assert(proof.observed_after_ms<2000,'lifecycle cleanup must precede the 10-second grant deadline, not merely eventually expire');
   const terminal=await review.wait(plan.id),attempts=terminal.grant_attempts;assert.equal(attempts.length,1);
   const report=await review.result(plan.id);assert.equal(report.state,['complete','fail'].includes(scenario.mode)?'completed':'unknown');assert.equal(report.success,scenario.mode==='complete');assert.equal(report.persisted,true);
   if(['complete','fail'].includes(scenario.mode)){
@@ -98,8 +103,17 @@ try {
   }
   if(scenario.mode==='fail'){assert.equal(report.error_code,'process_exit_unsuccessful');assert.equal(report.data.exit_code,17);assert.equal(report.data.success,false);}
   if(scenario.label==='permission-revoked')assert.equal(report.error_code,'local_policy_changed');
+  if(scenario.label.endsWith('-stop'))assert.equal(report.error_code,'grant_stop_requested_effects_unknown');
   assert.equal(terminal.status,scenario.mode==='complete'?'completed':scenario.mode==='fail'?'failed':'interrupted');
   const saved=await review.inspect(plan.id);assert.equal(saved.execution.attempts.length,1);
+  if(scenario.label.endsWith('-stop')){
+   await until(async()=>!!(await review.inspect(plan.id)).execution.attempts[0].stop?.report?.persisted,'exact durable stop receipt retained');
+   const stopped=await review.inspect(plan.id),delivery=stopped.execution.attempts[0].stop;
+   assert(stopped.execution.stop_requested_at_ms);assert.equal(delivery.outcome_unknown,false);assert.equal(delivery.report.execution_stopped,false);assert.equal(delivery.report.external_effects_stopped,false);assert.equal(delivery.report.execution_authorized,false);
+   assert.equal(delivery.report.grant_id,stopped.execution.attempts[0].grant.grant_id);
+   assert.equal((await json(executor.url+'/api/config')).config.permissions.process.enabled,true,'stop is not permission mutation');
+   outcomes.push({stop_control:scenario.label,receipt_persisted:true,execution_stopped_claim:false,external_effects_stopped_claim:false});
+  }
   assert.equal(saved.execution.attempts[0].grant.executor_node,executor.id);
   assert.equal(saved.execution.attempts[0].grant.request_context.origin_node,origin.id);
   assert.deepEqual(saved.execution.attempts[0].grant.params,{program:helper,args:[scenario.mode,dir],timeout_seconds:scenario.seconds});

@@ -458,7 +458,7 @@ impl crate::request_execution::Driver {
                 .saturating_sub(eefn::protocol::now_ms())
                 + 5000,
         );
-        let destination = self.server.invoke_peer_grant_observed(
+        let destination_rpc = self.server.invoke_peer_grant_observed(
             grants[1].clone(),
             issuance.scope.clone(),
             issuance.material.destination.clone(),
@@ -466,6 +466,8 @@ impl crate::request_execution::Driver {
             observer,
             deadline,
         );
+        let destination =
+            self.wait_with_stop(id, std::slice::from_ref(&grants[1]), destination_rpc);
         tokio::pin!(destination);
         // Destination must bind/retain its route before ACK. Only a durably
         // journaled ACK releases source dispatch; early rejection sends no source.
@@ -483,6 +485,7 @@ impl crate::request_execution::Driver {
                 .and_then(|e| e.peer.as_ref())
                 .is_none_or(|r| r.scope != issuance.scope)
         {
+            self.stop_issued(id, &grants).await?;
             bail!("Peer stopped or changed before source dispatch")
         }
         let source_observer = Arc::new(crate::request_execution::AttemptJournal {
@@ -498,7 +501,8 @@ impl crate::request_execution::Driver {
             source_observer,
             deadline,
         );
-        let results = tokio::join!(source, destination);
+        let transfer = async { Ok::<_, anyhow::Error>(tokio::join!(source, destination)) };
+        let results = self.wait_with_stop(id, &grants, transfer).await?;
         for (i, result) in [results.0, results.1].into_iter().enumerate() {
             let value =
                 result.context("Peer outcome unavailable; inspect both receipts, never replay")?;

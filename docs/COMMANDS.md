@@ -13,6 +13,14 @@ compiler, without an LM, JSON file or ordinary resource UUIDs. It never records,
 plays, approves or executes work. Exact receipt reuse preserves saved intent and
 resource choices. See [scope, review and uncertainty handling](AUDIO-REQUESTS.md).
 
+## Exact job stop requests (unreleased after alpha.6)
+
+An existing job can now be stopped through its origin node with
+eefn jobs stop JOB_ID; eefn jobs get JOB_ID inspects retained state/stop receipts.
+Plain stop output acknowledges intent, not physical completion. The shared backend
+contacts the exact issued grant(s) without permission/restart/work fallback.
+See [admission races, uncertainty and remaining stop scope](GRANT-STOP.md).
+
 ## Python bridge budgets (unreleased after alpha.6)
 
     eefn python show

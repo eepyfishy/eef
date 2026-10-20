@@ -383,6 +383,7 @@ impl JobStore {
     ) -> Result<Plan> {
         let connection = self.connection.lock().expect("job journal");
         let mut plan = read(&connection, id)?;
+        let old_stop = crate::execution_stop::snapshot(&plan);
         let frozen_audio = plan
             .request_review
             .as_ref()
@@ -401,6 +402,7 @@ impl JobStore {
         if !edit(&mut plan)? {
             return Ok(plan);
         }
+        crate::execution_stop::preserve(&old_stop, &plan)?;
         if frozen_audio.as_ref().is_some_and(|(draft, context)| {
             *draft != json!(plan.request_review) || *context != json!(plan.goal.request_context)
         }) {
@@ -775,8 +777,18 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
                             |a| a.state == crate::request_execution::AttemptState::Unknown
                         )
                 );
-            value["grant_attempts"] = json!(execution.attempts.iter().map(|a|json!({"task_id":a.grant.task_id,"grant_id":a.grant.grant_id,
-                "state":a.state,"node_id":a.grant.executor_node,"acknowledged":a.acknowledgement.is_some(),"success":a.final_report().map(|r|r.success)})).collect::<Vec<_>>());
+            value["grant_attempts"] = json!(execution.attempts.iter().map(|a| {
+                let mut value = json!({"task_id":a.grant.task_id,"grant_id":a.grant.grant_id,"state":a.state,"node_id":a.grant.executor_node,"acknowledged":a.acknowledgement.is_some(),"success":a.final_report().map(|r|r.success)});
+                if let Some(stop) = &a.stop { value["stop"] = json!(stop); }
+                value
+            }).collect::<Vec<_>>());
+            if execution.stop_requested_at_ms.is_some() {
+                value["stop_requested"] = json!(true);
+                value["remote_stop_confirmed"] = json!(false);
+                value["stop_note"] = json!(
+                    "Stop intent only; inspect per-grant receipts and actual effects. No replay, migration, lease renewal or proof all effects stopped."
+                );
+            }
             if let Some(r) = execution.attempts.iter().find_map(|a| a.recovery.as_ref()) {
                 value["recovery"] = json!({"operation_id":r.command.operation_id,"grant_id":r.command.grant_id,
                     "actor":r.actor,"applied_revision":r.command.expected_revision+1,"result_sha256":r.result.report_sha256,

@@ -317,6 +317,22 @@ def handle(action,params):
   assert.equal(JSON.parse(await readFile(join(scratch,'audio-played.json'),'utf8')).calls,1);
   await unlink(join(scratch,'audio-gate'));
   speakerConfig.peer_destination_address=audioAddress;await json(executor.url+'/api/config',{config:speakerConfig},'PUT');
+  // Stop a live capture through the origin command. Both exact peer grants get
+  // durable intent; source cancellation cannot be replaced by permission edits,
+  // playback or waiting for the original six-second execution deadline.
+  await unlink(join(scratch,'audio-release'));await unlink(join(scratch,'audio-capturing'));
+  await writeFile(join(scratch,'audio-gate'),'ready');const stoppedAudio=await audioStart();
+  await until(()=>exists(join(scratch,'audio-capturing')),'synthetic source capture active before explicit stop');
+  const stopCounts=await audioCounts(),stopStarted=Date.now();
+  await local(origin,['jobs','stop',stoppedAudio.id]);
+  await until(async()=>{const p=await review.inspect(stoppedAudio.id);return p.execution.attempts.every(a=>a.stop?.report?.persisted&&a.state==='unknown');},'both exact peer stop receipts and unknown outcomes');
+  assert(Date.now()-stopStarted<3000,'explicit peer stop must precede the original execution deadline');
+  const stoppedPlan=await review.inspect(stoppedAudio.id);assert.equal(stoppedPlan.status,'interrupted');
+  assert(stoppedPlan.execution.stop_requested_at_ms);assert.equal(stoppedPlan.execution.attempts[0].report.error_code,'grant_stop_requested_effects_unknown');
+  for(const a of stoppedPlan.execution.attempts){assert.equal(a.stop.report.grant_id,a.grant.grant_id);assert.equal(a.stop.report.execution_stopped,false);assert.equal(a.stop.report.external_effects_stopped,false);assert.equal(a.stop.report.execution_authorized,false);}
+  assert.deepEqual(await audioCounts(),stopCounts,'stop cannot create a new capture or playback');
+  await review.start(stoppedAudio.command);assert.deepEqual(await audioCounts(),stopCounts,'stopped paired grants never replay');
+  await unlink(join(scratch,'audio-gate'));
   await writeFile(join(scratch,'audio-bad'),'ready');const badAudio=await audioStart();await review.wait(badAudio.id);
   assert.equal((await review.inspect(badAudio.id)).status,'interrupted','malformed capture must not reach playback');
   assert.equal(JSON.parse(await readFile(join(scratch,'audio-played.json'),'utf8')).calls,1);
@@ -469,7 +485,7 @@ def handle(action,params):
   typed_audio_authoring_without_json_or_model:!!python,disclosure_before_resolution:!!python,lost_authoring_reply_single_send:!!python,
   corrupted_and_unsupported_audio_authoring_no_fallback:!!python,retained_audio_history_after_disclosure_revocation:!!python,
   retained_audio_choices_survive_resource_reconfiguration:!!python,explicit_new_audio_request_can_choose_new_resource:!!python,
-  paired_audio_permission_and_route_revocation:!!python,malformed_audio_never_played:!!python,paired_audio_no_replay:!!python,
+  paired_audio_permission_and_route_revocation:!!python,paired_audio_explicit_stop_intent:!!python,malformed_audio_never_played:!!python,paired_audio_no_replay:!!python,
   continuous_workloads:false,physical_resource_quota_proven:false,strong_stop_acknowledgement:false},null,2));
  checkpoint('passed');console.log('Public local pipeline validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}

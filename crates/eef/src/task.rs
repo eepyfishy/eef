@@ -515,6 +515,7 @@ pub struct TaskEngine {
     pub store: Arc<crate::jobs::JobStore>,
     active: Arc<std::sync::Mutex<ActiveJobs>>,
     stopping: tokio::sync::watch::Sender<bool>,
+    pub(crate) stop_changes: tokio::sync::watch::Sender<u64>,
     reviewed_only: bool,
 }
 
@@ -588,6 +589,7 @@ impl TaskEngine {
             executor: Arc::new(RwLock::new(None)),
             active: Arc::new(std::sync::Mutex::new(ActiveJobs::default())),
             stopping: tokio::sync::watch::channel(false).0,
+            stop_changes: tokio::sync::watch::channel(0).0,
             reviewed_only,
         })
     }
@@ -725,6 +727,11 @@ impl TaskEngine {
                 } else {
                     PlanStatus::Cancelled
                 };
+                if let Some(execution) = &mut plan.execution {
+                    if execution.stop_requested_at_ms.is_none() {
+                        execution.stop_requested_at_ms = Some(eefn::protocol::now_ms().max(execution.started_at_ms));
+                    }
+                }
                 if !has_runner {
                     for task in &mut plan.tasks {
                         if task.status == TaskStatus::Pending {
@@ -736,6 +743,10 @@ impl TaskEngine {
             },
         );
         drop(active);
+        if result.is_ok() {
+            self.stop_changes
+                .send_modify(|version| *version = version.wrapping_add(1));
+        }
         result
     }
     pub fn resume_job(self: &Arc<Self>, id: &str) -> Result<()> {

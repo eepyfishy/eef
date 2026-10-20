@@ -31,6 +31,15 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+Existing jobs stop now has an [exact grant stop path](GRANT-STOP.md): durable
+owner/origin intent, backend wakeup, one saved send attempt per scope, concurrent
+peer targeting, node pre-admission consumption and accepted-grant cancellation.
+Replies prove durable intent, not universal physical stop or rollback. Native
+process and synthetic paired-audio cases plus six existing public suites pass;
+both workspace/all-target feature modes pass 873 tests plus one ignored each.
+No UI controller, permission widening or lease renewal was added. Physical and
+stable-release acceptance remain open.
+
 The shared consumed-grant outcome loop now retires its executing future before
 final blocking journal I/O. A held-journal regression reproduces delayed cleanup
 on the previous baseline and passes after the fix, including native parent/child

@@ -15,6 +15,7 @@ pub mod config;
 pub mod credentials;
 pub mod discovery;
 pub mod event;
+pub mod execution_stop;
 pub mod firmware;
 pub mod jobs;
 pub mod memory;

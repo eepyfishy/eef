@@ -217,6 +217,10 @@ impl NodeClient {
 
     pub fn with_status(mut self, status: Arc<std::sync::Mutex<Value>>) -> Self {
         self.status = status;
+        self.status.lock().expect("status")["grant_stop"] =
+            json!(crate::grants::stop::Advertisement::new(
+                self.grant_ledger.is_some() && self.tls_config.is_some()
+            ));
         self.status.lock().expect("status")["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
             "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE,
             "retained_results":self.grant_ledger.is_some() && self.tls_config.is_some()});
@@ -373,6 +377,9 @@ impl NodeClient {
         message["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
             "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE,
             "retained_results":self.grant_ledger.is_some() && self.tls_config.is_some()});
+        message["grant_stop"] = json!(crate::grants::stop::Advertisement::new(
+            self.grant_ledger.is_some() && self.tls_config.is_some()
+        ));
         message
     }
 
@@ -709,6 +716,52 @@ impl NodeClient {
                         .into())
                     };
                     let _ = reply.send(result);
+                }
+                continue;
+            }
+            if message["type"] == "stop_grant" {
+                let request_id = message["id"].as_str().unwrap_or("").to_owned();
+                let parsed = serde_json::from_value::<crate::grants::stop::WireRequest>(message);
+                let prepared = match (
+                    parsed,
+                    self.request_budget.admit_receipt(),
+                    self.grant_ledger.clone(),
+                    grant_issuer.clone(),
+                    grant_session.clone(),
+                ) {
+                    (Ok(request), Some(permit), Some(ledger), Some(issuer), Some(session))
+                        if request
+                            .validate(&issuer, &session, &self.config.node_id)
+                            .is_ok() =>
+                    {
+                        Some((request, permit, ledger, issuer, session))
+                    }
+                    _ => None,
+                };
+                if let Some((request, permit, ledger, issuer, session)) = prepared {
+                    let crypto = self.crypto.clone();
+                    let writer = writer.clone();
+                    let failed = output_write_failed.clone();
+                    let node = self.config.node_id.clone();
+                    tasks.spawn(async move {
+                        // The control permit remains owned by the blocking callback
+                        // even if its network waiter/runtime is cancelled.
+                        let result = tokio::task::spawn_blocking(move || {
+                            let report = ledger.request_stop_scope(&request.scope, &issuer, &session, &node);
+                            (permit,report)
+                        }).await;
+                        let (held, response) = match result {
+                            Ok((permit,Ok(report))) => (Some(permit),success_response(&request_id,json!(report))),
+                            Ok((permit,Err(_))) => (Some(permit),json!({"type":"response","id":request_id,"success":false,"error_type":"GrantStopUnconfirmed","error":"Stop intent unconfirmed; inspect original work. No retry or new execution."})),
+                            Err(_) => (None,json!({"type":"response","id":request_id,"success":false,"error_type":"GrantStopUnconfirmed","error":"Stop callback unavailable; effects remain unknown."})),
+                        };
+                        let _held = held;
+                        let _ = write_session_frame(&crypto,&writer,&failed,&response).await;
+                    });
+                } else {
+                    let response = json!({"type":"response","id":request_id,"success":false,"error_type":"GrantStopDenied","error":"Stop requires a current pinned scope, journal and bounded control capacity."});
+                    write_session_frame(&self.crypto, &writer, &output_write_failed, &response)
+                        .await?;
                 }
                 continue;
             }
