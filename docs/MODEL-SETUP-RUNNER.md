@@ -2,7 +2,7 @@
 
 This runner installs and configures an exact, explicitly owner-selected catalog
 model without a dashboard. It does not supply an approved project default or
-complete fresh-install onboarding, automatic runtime application or model-quality
+complete fresh-install onboarding or model-quality
 acceptance. Existing inactive auto/prompt preferences stay inactive on upgrade.
 
 ## Commands and consent
@@ -92,6 +92,11 @@ retry an uncertain or failed epoch.
 
 ## Configuration is not activation
 
+Manual application is still the default. A separate opt-in now enables
+[scoped automatic activation](MODEL-ACTIVATION.md), which refuses unrelated pending
+settings and uses a captured startup configuration. Older setup opt-ins do not
+authorize restarting. The statements below describe the default manual mode.
+
 Configured means model/interpreter settings were saved. No model inference,
 loading, application restart, unrelated settings application or workload
 permission is requested by the runner. Pending restart is reported from the
@@ -100,8 +105,8 @@ The setup report's readiness_verified stays false: it does not say a model is
 unavailable, only that this setup flow has not verified it. Applied command-line
 selections are protected even before asynchronous registration fills inventory.
 Use the ordinary explicit node restart command when ready, then inspect model
-lifecycle. Applying setup automatically without applying unrelated pending
-settings still needs a properly fenced runtime-application path.
+lifecycle. Optional automatic application uses the separate scoped path above;
+it is not a readiness or real-model quality claim.
 
     eefn restart
     eefn model-lifecycle show
@@ -140,6 +145,6 @@ syntax and diff checks pass; evaluated fixture applications/helpers and llama-se
 are terminal. No installed/remote node, visual UI, model default, version,
 installer or automatic-update policy changed.
 
-Approved default manifests/licensing/quality, automatic application, first-run
+Approved default manifests/licensing/quality, complete first-run
 dependency setup, fresh physical two-PC and installer/signing/Defender/stable
 release gates remain open.

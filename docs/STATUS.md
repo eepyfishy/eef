@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: opt-in scoped setup activation
+
+Automatic runtime restart has a separate opt-in and one-shot private startup
+snapshot, not a reread of all pending owner settings. Current policy/runtime/
+model/catalog and applied-baseline checks precede admission; later edits remain
+saved/pending and are never overwritten. Ordinary restart retains its full apply
+and version-handoff behavior. Runtime binding evidence is not model readiness.
+Cancellation clears queued/active tokens even when saved JSON or optional setup
+evidence is damaged, without repairing either file. See [scope and verification](MODEL-ACTIVATION.md).
+Both locked/offline workspace/all-target feature modes pass 928 tests plus one
+ignored each, including eleven added regressions. Final headless apps/examples
+build; model-activation-OUXuMs and thirteen existing native suites pass against
+that build. All four evaluated native hashes match; source boundary, formatting,
+JS syntax and diff checks pass; fixture apps/helpers are terminal. These are
+synthetic one-PC tests, not real-model or fresh physical two-PC acceptance.
+Approved defaults, first-run dependencies, model quality, physical testing and
+installer/signing/Defender/stable-release gates remain open. No installed/remote
+node, visual UI, model default, version, installer or automatic-update policy changed.
+
 ## Unreleased: opt-in backend model setup
 
 The runtime-owned setup runner now has explicit automation consent, one bounded

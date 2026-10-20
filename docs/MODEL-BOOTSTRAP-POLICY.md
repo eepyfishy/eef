@@ -16,6 +16,8 @@ Run these through an already-running node; no port numbers or JSON editing:
     eefn model-bootstrap-policy configure --mode prompt --model CATALOG_ID
     eefn model-bootstrap-policy configure --mode auto --project-default
     eefn model-bootstrap-policy configure --mode auto --model CATALOG_ID --enable-automation
+    eefn model-bootstrap-policy configure --mode auto --model CATALOG_ID --enable-automation --restart-after-setup
+    eefn model-bootstrap-policy configure --manual-apply
     eefn model-bootstrap-policy configure --disable-automation
     eef node model-bootstrap-policy --node NODE_ID show
     eef node model-bootstrap-policy --node NODE_ID configure --mode off
@@ -35,7 +37,12 @@ Without --enable-automation, prompt/auto remain inactive preferences. With it,
 prompt awaits an explicit owner change to auto; auto permits one setup attempt
 per policy epoch for its exact catalog binding. Disabling requests cancellation
 only of its own exact admitted transfer, never a different manual transfer.
-No command applies unrelated pending settings or restarts the node automatically.
+The default remains manual application. The separate --restart-after-setup
+opt-in permits a [scoped runtime restart](MODEL-ACTIVATION.md) after a newly
+eligible setup; --manual-apply disables that preference. It does not retroactively
+apply an already-completed manual setup. Unrelated pending runtime settings block
+automatic activation. An admitted restart may finish after later policy edits;
+those edits remain saved/pending, never overwritten by its private snapshot.
 
 Local-owner APIs use POST /api/commands/model-bootstrap-policy. The EEF owner
 adapter uses POST /api/commands/node/model-bootstrap-policy and existing
@@ -103,8 +110,9 @@ save reply can leave a changed policy. Inspect show before deciding on a new
 explicit command; the adapters retain the exact pre-send request and do not
 replay it or interpret uncertainty as rollback. The atomic policy save leaves
 model configuration, other preferences, permissions, registration and update
-policy untouched and does not restart the node. An enabled backend may later
-install/configure its pinned target. Generic saves cannot enable or retarget an
+policy untouched and does not itself restart the node. An enabled backend may later
+install/configure its pinned target and, with separate restart consent, activate
+that new setup. Generic saves cannot enable or retarget an
 automatic epoch, including stale enabled snapshot restoration; use the typed
 current-runtime/version command.
 
@@ -120,8 +128,9 @@ timer owns it. The earlier
 references from introduced artifacts so missing files need not block unrelated
 owner saves; this is not general model-health acceptance.
 
-Automatic application must not restart into
-unrelated pending settings without the owner's chosen apply/restart policy.
+The separately opted-in scoped activation path refuses unrelated pending runtime
+settings and does not piggyback a selected application update. Its durable runtime
+binding observation is not loading, inference or readiness evidence.
 Offline/skip/managed behavior must leave deterministic node controls usable.
 
 Before enabling normal fresh-install bootstrap, supply a replaceable versioned

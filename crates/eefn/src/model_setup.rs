@@ -60,6 +60,10 @@ pub enum Phase {
     Verifying,
     Committing,
     Configured,
+    RestartRequested,
+    RestartDraining,
+    RuntimeConfigured,
+    ApplyBlocked,
     Stopped,
     Failed,
     Unknown,
@@ -68,7 +72,12 @@ impl Phase {
     fn terminal(self) -> bool {
         matches!(
             self,
-            Self::Configured | Self::Stopped | Self::Failed | Self::Unknown
+            Self::Configured
+                | Self::RuntimeConfigured
+                | Self::ApplyBlocked
+                | Self::Stopped
+                | Self::Failed
+                | Self::Unknown
         )
     }
 }
@@ -82,6 +91,15 @@ pub enum Reason {
     CacheVerification,
     ConfigurationUncertain,
     RuntimeInterrupted,
+    PendingSettings,
+    ActivationUnavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivationEvidence {
+    pub models_sha256: String,
+    pub replacement_runtime_id: Option<String>,
 }
 
 /// Sanitized retained evidence, never provider URLs, paths, credentials or raw errors.
@@ -98,6 +116,8 @@ pub struct Attempt {
     pub phase: Phase,
     pub reason: Option<Reason>,
     pub download_admitted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation: Option<ActivationEvidence>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -116,15 +136,61 @@ impl Attempt {
             || self.saved.policy.catalog.is_none()
             || self.models_sha256.len() != 64
             || !self.models_sha256.bytes().all(|b| b.is_ascii_hexdigit())
-            || (self.phase == Phase::Configured && self.reason.is_some())
+            || (matches!(self.phase, Phase::Configured | Phase::RuntimeConfigured)
+                && self.reason.is_some())
             || (matches!(
                 self.phase,
-                Phase::Inspecting | Phase::Downloading | Phase::Verifying | Phase::Committing
+                Phase::Inspecting
+                    | Phase::Downloading
+                    | Phase::Verifying
+                    | Phase::Committing
+                    | Phase::RestartRequested
+                    | Phase::RestartDraining
             ) && self.reason.is_some())
-            || (matches!(self.phase, Phase::Stopped | Phase::Failed | Phase::Unknown)
-                && self.reason.is_none())
+            || (matches!(
+                self.phase,
+                Phase::Stopped | Phase::Failed | Phase::Unknown | Phase::ApplyBlocked
+            ) && self.reason.is_none())
         {
             bail!("Invalid retained model setup evidence")
+        }
+        if matches!(
+            self.phase,
+            Phase::RestartRequested
+                | Phase::RestartDraining
+                | Phase::RuntimeConfigured
+                | Phase::ApplyBlocked
+        ) && !self.saved.policy.restart_after_setup
+        {
+            bail!("Automatic activation was not authorized")
+        }
+        if matches!(
+            self.phase,
+            Phase::RestartRequested | Phase::RestartDraining | Phase::RuntimeConfigured
+        ) && self.activation.is_none()
+        {
+            bail!("Activation evidence missing")
+        }
+        if let Some(activation) = &self.activation {
+            if !self.saved.policy.restart_after_setup
+                || activation.models_sha256.len() != 64
+                || !activation
+                    .models_sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit())
+            {
+                bail!("Invalid activation scope")
+            }
+            if let Some(runtime) = &activation.replacement_runtime_id {
+                crate::automation_occurrence::uuid(runtime)?;
+                if runtime == &self.runtime_id
+                    || !matches!(self.phase, Phase::RuntimeConfigured | Phase::Unknown)
+                {
+                    bail!("Invalid replacement runtime evidence")
+                }
+            } else if self.phase == Phase::RuntimeConfigured {
+                bail!("Replacement runtime missing")
+            }
         }
         Ok(())
     }
@@ -230,6 +296,17 @@ impl Journal {
                 {
                     bail!("Setup evidence scope changed")
                 }
+                match (&old.activation, &record.activation) {
+                    (Some(a), Some(b))
+                        if a.models_sha256 == b.models_sha256
+                            && (a.replacement_runtime_id == b.replacement_runtime_id
+                                || a.replacement_runtime_id.is_none()) => {}
+                    (None, None) => {}
+                    (None, Some(_))
+                        if old.phase == Phase::Committing
+                            && record.phase == Phase::RestartRequested => {}
+                    _ => bail!("Activation evidence scope changed"),
+                }
                 let allowed = match old.phase {
                     Phase::Inspecting => matches!(
                         record.phase,
@@ -247,7 +324,20 @@ impl Journal {
                         record.phase,
                         Phase::Committing | Phase::Failed | Phase::Stopped | Phase::Unknown
                     ),
-                    Phase::Committing => matches!(record.phase, Phase::Configured | Phase::Unknown),
+                    Phase::Committing => matches!(
+                        record.phase,
+                        Phase::Configured
+                            | Phase::RestartRequested
+                            | Phase::ApplyBlocked
+                            | Phase::Unknown
+                    ),
+                    Phase::RestartRequested => matches!(
+                        record.phase,
+                        Phase::RestartDraining | Phase::ApplyBlocked | Phase::Unknown
+                    ),
+                    Phase::RestartDraining => {
+                        matches!(record.phase, Phase::RuntimeConfigured | Phase::Unknown)
+                    }
                     _ => false,
                 };
                 if !allowed {
@@ -304,10 +394,16 @@ impl Status {
         let current = self.attempt.as_ref().is_some_and(|r| r.saved == *saved);
         if self.current_policy_attempt != current
             || (self.restart_required
-                && !self
-                    .attempt
-                    .as_ref()
-                    .is_some_and(|r| current && r.phase == Phase::Configured))
+                && !self.attempt.as_ref().is_some_and(|r| {
+                    current
+                        && matches!(
+                            r.phase,
+                            Phase::Configured
+                                | Phase::ApplyBlocked
+                                | Phase::RestartRequested
+                                | Phase::RestartDraining
+                        )
+                }))
         {
             bail!("Inconsistent setup evidence")
         }
@@ -379,10 +475,16 @@ pub(crate) fn status(service: &NodeService, config: &Value, saved: &Saved, live:
         node_id: service.node_id.clone(),
         policy_digest: saved.digest.clone(),
         state,
-        restart_required: attempt
-            .as_ref()
-            .is_some_and(|r| current && r.phase == Phase::Configured)
-            && live["pending_restart"] == true,
+        restart_required: attempt.as_ref().is_some_and(|r| {
+            current
+                && matches!(
+                    r.phase,
+                    Phase::Configured
+                        | Phase::ApplyBlocked
+                        | Phase::RestartRequested
+                        | Phase::RestartDraining
+                )
+        }) && live["pending_restart"] == true,
         attempt,
         current_policy_attempt: current,
         readiness_verified: false,
@@ -481,6 +583,7 @@ async fn tick(service: Arc<NodeService>, runtime: &str, journal: &Journal) -> Re
         phase: Phase::Inspecting,
         reason: None,
         download_admitted: false,
+        activation: None,
         created_at_ms: now,
         updated_at_ms: now,
     };
@@ -704,8 +807,28 @@ fn commit(
         journal.write(record)?;
         service.save_config_locked(next)?;
         service.live.lock().unwrap()["pending_restart"] = json!(true);
-        record.phase(Phase::Configured, None);
-        journal.write(record)?;
+        if record.saved.policy.restart_after_setup {
+            match crate::model_activation::plan_locked(service, service.read_config()?, record) {
+                Ok(startup) => {
+                    record.activation = Some(ActivationEvidence {
+                        models_sha256: crate::grants::definition_digest(
+                            &service.read_config()?["models"],
+                        )?,
+                        replacement_runtime_id: None,
+                    });
+                    record.phase(Phase::RestartRequested, None);
+                    journal.write(record)?;
+                    crate::model_activation::enqueue_locked(service, startup)?;
+                }
+                Err(reason) => {
+                    record.phase(Phase::ApplyBlocked, Some(reason));
+                    journal.write(record)?;
+                }
+            }
+        } else {
+            record.phase(Phase::Configured, None);
+            journal.write(record)?;
+        }
         Ok(())
     })
 }
@@ -720,9 +843,39 @@ pub fn interrupt(service: &NodeService, runtime: &str) {
     if record.runtime_id != runtime || record.phase.terminal() {
         return;
     }
+    if record.phase == Phase::RestartDraining
+        && crate::model_activation::draining(service, &record.id, runtime)
+    {
+        return;
+    }
     let _ = crate::model_manager::cancel(service, Some(&record.id));
     record.phase(Phase::Unknown, Some(Reason::RuntimeInterrupted));
     let _ = journal.write(&record);
+}
+
+pub(crate) fn activation_transition(
+    service: &NodeService,
+    scope: &crate::model_activation::Scope,
+    phase: Phase,
+    reason: Option<Reason>,
+    runtime: Option<&str>,
+) -> Result<()> {
+    let journal = Journal::new(service);
+    let mut record = journal
+        .read()?
+        .context("Retained activation evidence missing; no initialization")?;
+    if record.id != scope.id
+        || record.runtime_id != scope.origin_runtime
+        || record.saved != scope.saved
+        || record.activation.as_ref().map(|a| &a.models_sha256) != Some(&scope.models_sha256)
+    {
+        bail!("Activation scope changed")
+    }
+    if let Some(runtime) = runtime {
+        record.activation.as_mut().unwrap().replacement_runtime_id = Some(runtime.into());
+    }
+    record.phase(phase, reason);
+    journal.write(&record)
 }
 
 #[cfg(test)]

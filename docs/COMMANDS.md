@@ -13,9 +13,12 @@ load, repair, replace or certify a model. See [scope and validation](UNAVAILABLE
 
 ## Bootstrap preferences (unreleased after alpha.6)
 
+Optional [scoped activation](MODEL-ACTIVATION.md) adds --restart-after-setup and
+--manual-apply. Restart remains opt-in; unrelated pending settings block it.
+
 Explicit opt-in can now run [backend model setup](MODEL-SETUP-RUNNER.md) for an exact
 owner catalog binding. Older auto/prompt preferences remain inactive. No approved
-project default or automatic restart/readiness is implied.
+project default or model readiness is implied; restart needs the separate flag above.
 
     eefn model-bootstrap-policy configure --mode auto --model CATALOG_ID --enable-automation
     eefn model-bootstrap-policy configure --disable-automation
@@ -25,11 +28,13 @@ project default or automatic restart/readiness is implied.
     eefn model-bootstrap-policy configure --mode prompt --model CATALOG_ID
     eef node model-bootstrap-policy --node NODE_ID show
 
-These save preferences and an exact owner catalog binding only. The bootstrap
-runner and project-approved default are not available yet; auto does not install
-or select a model. Existing setups/opt-outs are preserved. No download, load,
-inference, permission change or restart follows. See [contract and next
-automation steps](MODEL-BOOTSTRAP-POLICY.md).
+The preference command saves an exact owner binding and explicit consent; a
+separate runtime-owned runner may then install/select that model, and optionally
+activate it with restart consent. Existing setups/opt-outs are preserved.
+Prompt waits for an explicit owner change to auto; project-default has no approved
+model yet. These controls do not grant workload permissions or prove inference
+quality/readiness. Inspect retained setup after an uncertain reply; do not replay
+it automatically. See [contract and remaining gates](MODEL-BOOTSTRAP-POLICY.md).
 
 ## Finite audio authoring (unreleased after alpha.6)
 

@@ -31,6 +31,13 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The opt-in [scoped setup-activation path](MODEL-ACTIVATION.md) passes both full
+feature modes (928 tests plus one ignored each) and fourteen native suites.
+It retains a one-shot private configuration for a model-only-scope runtime restart,
+refuses unrelated pending runtime changes, preserves later owner edits, and does
+not piggyback a pending application version. Loading, inference quality, approved
+defaults and stable-release acceptance remain separate gates.
+
 The opt-in [backend model-setup runner](MODEL-SETUP-RUNNER.md) now has both full
 feature modes passing 917 tests plus one ignored each and thirteen native suites.
 It uses the existing installer/receipts, rechecks policy/runtime/model identity

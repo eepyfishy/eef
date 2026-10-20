@@ -25,6 +25,8 @@ pub struct NodeService {
     pub restart: Arc<tokio::sync::Notify>,
     pub(crate) setup_changed: Arc<tokio::sync::Notify>,
     pub(crate) setup_supervisor: Arc<tokio::sync::Mutex<()>>,
+    pub model_activation_ready: Arc<tokio::sync::Notify>,
+    pub(crate) activation: Arc<std::sync::Mutex<crate::model_activation::ActivationState>>,
     pub submissions: Arc<crate::submission::SubmissionMailbox>,
     pub(crate) preview: Arc<crate::request_preview::PreviewRuntime>,
     pub(crate) model_runtime:
@@ -68,8 +70,16 @@ impl NodeService {
         &self,
         check: impl FnOnce(&Value) -> Result<T>,
     ) -> Result<T> {
+        self.serialize_configuration(|| check(&self.read_config()?))
+    }
+    /// Serialize runtime cleanup with configuration admission without requiring
+    /// readable saved settings. Cleanup must not repair or depend on that file.
+    pub(crate) fn serialize_configuration<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
         let _guard = self.config_lock.lock().expect("config lock");
-        check(&self.read_config()?)
+        operation()
     }
     pub(crate) fn guard_grant_configuration(
         &self,
@@ -109,6 +119,8 @@ impl NodeService {
             restart: Arc::new(tokio::sync::Notify::new()),
             setup_changed: Arc::new(tokio::sync::Notify::new()),
             setup_supervisor: Arc::new(tokio::sync::Mutex::new(())),
+            model_activation_ready: Arc::new(tokio::sync::Notify::new()),
+            activation: Arc::new(std::sync::Mutex::new(Default::default())),
             submissions: Arc::new(crate::submission::SubmissionMailbox::default()),
             preview: Arc::new(crate::request_preview::PreviewRuntime::default()),
             config_lock: Arc::new(std::sync::Mutex::new(())),
@@ -326,6 +338,7 @@ impl NodeService {
             "peer_transport":live["peer_transport"],"peer_advertisement":live["peer_transfer"],
             "registration":crate::registration::State::observe(&live,&self.node_id,self.submissions.state()),
             "node_alive":true,"coordinator_required_for_node":false,"coordinator_required_for_orchestration":true,
+            "model_activation":live["model_activation"],
             "startup_issues":startup_issues(&live),
             "name":config["name"],"hostname":crate::setup::hostname(),"coordinator_name":config["coordinator_name"],"metadata":live["metadata"],
             "connection":live["connection"],"input_channel":self.submissions.state(),"hardware":live["hardware"],"permissions":live["permissions"],"models":live["models"],

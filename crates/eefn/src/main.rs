@@ -1885,7 +1885,7 @@ async fn execute_model_bootstrap(
         "success":success,"mutation_requested":mutation,"sending_attempted":sending_mutation,
         "outcome_unknown":!success && sending_mutation,"command":requested,"result":exchange.ok(),
         "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
-        "note":"Inspect model-bootstrap-policy show after uncertainty; no retry, permission change, restart or workload was sent."}),
+        "note":"Inspect model-bootstrap-policy show and its retained setup after uncertainty. No client replay or fallback was sent; an explicitly enabled backend operation may already have started. Workload permissions are unchanged."}),
     )
 }
 
@@ -2906,8 +2906,18 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
     };
     let mut handoff = false;
     let shutdown_barrier: ModelShutdownBarrier = Arc::new(std::sync::Mutex::new(None));
+    let next_startup: Arc<std::sync::Mutex<Option<eefn::model_activation::StartupConfiguration>>> =
+        Arc::new(std::sync::Mutex::new(None));
     loop {
-        if let Ok(file) = load_file(&args.config) {
+        let startup = next_startup
+            .lock()
+            .unwrap()
+            .take()
+            .or_else(|| dashboard.capture_runtime_configuration().ok());
+        if let Some(file) = startup
+            .as_ref()
+            .and_then(|s| serde_json::from_value::<FileConfig>(s.value().clone()).ok())
+        {
             let next = file.dashboard.unwrap_or_default();
             if let Some(api) = &dashboard_task {
                 api.set_ui_enabled(!args.no_ui && next.ui_enabled);
@@ -2941,9 +2951,17 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
         }
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let signal = async {
-            tokio::select! {
-                _ = dashboard.restart.notified() => StopReason::Restart,
-                _ = tokio::signal::ctrl_c() => StopReason::Exit,
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = tokio::signal::ctrl_c() => {dashboard.cancel_model_activation();break StopReason::Exit},
+                    _ = dashboard.restart.notified() => {dashboard.cancel_model_activation();break StopReason::Restart},
+                    _ = dashboard.model_activation_ready.notified()=>match dashboard.claim_model_activation() {
+                        Ok(Some(configuration))=>{*next_startup.lock().unwrap()=Some(configuration);break StopReason::ModelActivation},
+                        Ok(None)=>{},
+                        Err(_)=>warn!("Model activation admission unconfirmed; current runtime retained"),
+                    }
+                }
             }
         };
         let (result, reason) = supervise_runtime(
@@ -2953,11 +2971,13 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                 dashboard.clone(),
                 stopped,
                 shutdown_barrier.clone(),
+                startup,
             ),
             signal,
             stop,
         )
         .await;
+        let mut model_only_restart = reason == Some(StopReason::ModelActivation);
         if reason == Some(StopReason::Exit) {
             if let Err(error) = result {
                 warn!(%error, "owned model shutdown unconfirmed");
@@ -2965,6 +2985,9 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
             break;
         }
         if result.is_err() || reason.is_none() {
+            dashboard.cancel_model_activation();
+            next_startup.lock().unwrap().take();
+            model_only_restart = false;
             if !interactive {
                 return result;
             }
@@ -2977,7 +3000,8 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
             // A subsequent explicit restart retries the same retained barrier.
             tokio::select! { _=dashboard.restart.notified()=>{}, _=tokio::signal::ctrl_c()=>break }
         }
-        if shutdown_barrier.lock().unwrap().is_none()
+        if !model_only_restart
+            && shutdown_barrier.lock().unwrap().is_none()
             && std::fs::read_to_string(install_dir.join("current.txt"))
                 .is_ok_and(|v| !v.trim().is_empty() && v.trim() != eefn::VERSION)
         {
@@ -3010,6 +3034,7 @@ type ModelShutdownBarrier = Arc<std::sync::Mutex<Option<Arc<ModelServer>>>>;
 enum StopReason {
     Restart,
     Exit,
+    ModelActivation,
 }
 
 async fn supervise_runtime(
@@ -3033,6 +3058,7 @@ async fn run_node(
     dashboard: Arc<NodeService>,
     mut stopped: tokio::sync::watch::Receiver<bool>,
     barrier: ModelShutdownBarrier,
+    startup: Option<eefn::model_activation::StartupConfiguration>,
 ) -> Result<()> {
     let previous = barrier.lock().unwrap().clone();
     if let Some(previous) = previous {
@@ -3044,7 +3070,11 @@ async fn run_node(
     if *stopped.borrow() {
         return Ok(());
     }
-    let mut file = load_file(&args.config)?;
+    let startup = match startup {
+        Some(s) => s,
+        None => dashboard.capture_runtime_configuration()?,
+    };
+    let mut file: FileConfig = serde_json::from_value(startup.value().clone())?;
     file.model_lifecycle.validate()?;
     merge_args(&mut file, &args);
     file.network.validate()?;
@@ -3264,10 +3294,16 @@ async fn run_node(
     };
     dashboard.live.lock().unwrap()["peer_transport"] = serde_json::json!({"requested":file.permissions.peer_transfers.enabled,
         "configured":peer_runtime.is_some(),"destination_address":file.peer_destination_address});
+    if *stopped.borrow() {
+        if let Some(server) = &model_server {
+            server.stop().await?;
+            *barrier.lock().unwrap() = None;
+        }
+        return Ok(());
+    }
     let engine = Arc::new(engine);
     let runtime_id = uuid::Uuid::new_v4().to_string();
-    {
-        let mut status = dashboard.live.lock().unwrap();
+    dashboard.adopt_runtime_configuration(&runtime_id, &startup, |status, pending| {
         status["hardware"] = hardware;
         status["runtime_id"] = serde_json::json!(runtime_id);
         status["peer_transfer"] = serde_json::Value::Null;
@@ -3276,7 +3312,11 @@ async fn run_node(
         status["network"] = serde_json::json!(file.network);
         status["name"] = serde_json::json!(file.name);
         status["permissions"] = serde_json::json!(file.permissions);
-        status["pending_restart"] = serde_json::json!(false);
+        status["pending_restart"] = serde_json::json!(pending);
+        status["setup_model_overrides"] = serde_json::json!(
+            !args.selected_models.is_empty()
+                || args.ollama_url.as_ref().is_some_and(|u| !u.is_empty())
+        );
         // Preserve command-line selections before async registration fills inventory.
         status["setup_existing_applied_models"] = serde_json::json!(
             !active_ollama_models.is_empty()
@@ -3291,7 +3331,7 @@ async fn run_node(
         status["capabilities"] = serde_json::json!(engine.capabilities());
         status["connection"] =
             serde_json::json!({"state":if file.connection_enabled {"waiting"} else {"paused"}});
-    }
+    })?;
     let _preview_runtime = dashboard.attach_preview_runtime_with_policy(
         &engine,
         runtime_id.clone(),
@@ -3590,6 +3630,36 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn bootstrap_restart_flags_are_explicit_conflicting_and_not_ordinary_restarts() {
+        use clap::Parser;
+        let args = super::Args::try_parse_from([
+            "eefn",
+            "model-bootstrap-policy",
+            "configure",
+            "--restart-after-setup",
+        ])
+        .unwrap();
+        let Some(super::Commands::ModelBootstrapPolicy {
+            command: eefn::model_bootstrap::Action::Configure(settings),
+        }) = args.command
+        else {
+            panic!("Wrong command")
+        };
+        assert!(settings.restart_after_setup);
+        assert!(!settings.enable_automation);
+        settings.validate().unwrap();
+        assert!(
+            super::Args::try_parse_from([
+                "eefn",
+                "model-bootstrap-policy",
+                "configure",
+                "--restart-after-setup",
+                "--manual-apply"
+            ])
+            .is_err()
+        );
+    }
+    #[test]
     fn bootstrap_policy_cli_preserves_explicit_modes_and_has_no_execution_options() {
         let base = [
             "eefn",
@@ -3817,6 +3887,7 @@ mod tests {
                 NodeService::new(PathBuf::new(), "size-test".into()),
                 tokio::sync::watch::channel(false).1,
                 Arc::new(std::sync::Mutex::new(None)),
+                None,
             )
         });
         for (name, size) in [
@@ -3850,7 +3921,11 @@ mod tests {
     use serde_json::{Value, json};
     #[tokio::test]
     async fn restart_supervisor_awaits_existing_cleanup_instead_of_dropping_runtime() {
-        for reason in [StopReason::Restart, StopReason::Exit] {
+        for reason in [
+            StopReason::Restart,
+            StopReason::Exit,
+            StopReason::ModelActivation,
+        ] {
             let (stop, mut stopped) = tokio::sync::watch::channel(false);
             let release = tokio::sync::Notify::new();
             let cleaning = std::sync::atomic::AtomicBool::new(false);

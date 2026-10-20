@@ -22,6 +22,22 @@ impl Drop for Fixture {
     }
 }
 impl Fixture {
+    fn bind_baseline(&self) {
+        let startup = self.service.capture_runtime_configuration().unwrap();
+        self.service
+            .adopt_runtime_configuration(&self.runtime, &startup, |live, pending| {
+                live["runtime_id"] = json!(self.runtime);
+                live["pending_restart"] = json!(pending);
+            })
+            .unwrap();
+    }
+    fn opt_in_restart(&self) {
+        let mut next = self.service.read_config().unwrap();
+        next["model_bootstrap"]["restart_after_setup"] = json!(true);
+        self.service
+            .inspect_grant_configuration(|_| self.service.save_bootstrap_config_locked(next))
+            .unwrap();
+    }
     async fn new(installed: bool) -> Self {
         use axum::{
             Json, Router,
@@ -415,6 +431,7 @@ async fn setup_interrupted_attempt_is_retained_unknown_and_not_replayed() {
         phase: Phase::Inspecting,
         reason: None,
         download_admitted: false,
+        activation: None,
         created_at_ms: now,
         updated_at_ms: now,
     };
@@ -496,4 +513,274 @@ async fn setup_journal_rejects_terminal_replay_and_supervisor_future_is_bounded(
     replay.id = uuid::Uuid::new_v4().to_string();
     assert!(journal.write(&replay).is_err());
     assert_eq!(std::fs::read(&journal.path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn activation_consumes_one_frozen_configuration_and_preserves_late_pending_edits() {
+    let f = Fixture::new(true).await;
+    f.bind_baseline();
+    f.opt_in_restart();
+    f.tick().await;
+    assert_eq!(f.record().phase, Phase::RestartRequested);
+    let configured = f.service.read_config().unwrap();
+    let startup = f.service.claim_model_activation().unwrap().unwrap();
+    assert_eq!(startup.value(), &configured);
+    assert_eq!(f.record().phase, Phase::RestartDraining);
+    interrupt(&f.service, &f.runtime);
+    assert_eq!(
+        f.record().phase,
+        Phase::RestartDraining,
+        "expected drain must not become an interrupted setup"
+    );
+    let mut edited = configured.clone();
+    edited["name"] = json!("Later owner name");
+    edited["future"]["pending"] = json!(true);
+    f.service.save_config(edited.clone()).unwrap();
+    let bytes = std::fs::read(&f.service.config_path).unwrap();
+    let replacement = uuid::Uuid::new_v4().to_string();
+    f.service
+        .adopt_runtime_configuration(&replacement, &startup, |live, pending| {
+            live["runtime_id"] = json!(replacement);
+            live["name"] = startup.value()["name"].clone();
+            live["pending_restart"] = json!(pending);
+        })
+        .unwrap();
+    assert_eq!(f.record().phase, Phase::RuntimeConfigured);
+    assert_eq!(
+        f.record()
+            .activation
+            .unwrap()
+            .replacement_runtime_id
+            .as_deref(),
+        Some(replacement.as_str())
+    );
+    assert_eq!(std::fs::read(&f.service.config_path).unwrap(), bytes);
+    assert_eq!(f.service.read_config().unwrap(), edited);
+    assert_eq!(f.service.live.lock().unwrap()["pending_restart"], true);
+    assert_ne!(f.service.live.lock().unwrap()["name"], "Later owner name");
+    assert!(f.service.claim_model_activation().unwrap().is_none());
+    let next = uuid::Uuid::new_v4().to_string();
+    assert!(
+        f.service
+            .adopt_runtime_configuration(&next, &startup, |_, _| panic!(
+                "consumed startup must never publish"
+            ))
+            .is_err()
+    );
+    assert_eq!(f.service.live.lock().unwrap()["runtime_id"], replacement);
+    assert!(!f.status().readiness_verified);
+}
+
+#[tokio::test]
+async fn activation_does_not_admit_when_unrelated_settings_are_pending() {
+    let f = Fixture::new(true).await;
+    f.bind_baseline();
+    f.opt_in_restart();
+    let mut next = f.service.read_config().unwrap();
+    next["name"] = json!("Owner pending name");
+    f.service.save_config(next).unwrap();
+    f.tick().await;
+    assert_eq!(f.record().phase, Phase::ApplyBlocked);
+    assert_eq!(f.record().reason, Some(Reason::PendingSettings));
+    assert!(f.service.claim_model_activation().unwrap().is_none());
+    assert!(f.record().activation.is_none());
+    assert_eq!(f.service.live.lock().unwrap()["runtime_id"], f.runtime);
+    assert!(f.status().restart_required);
+    assert_eq!(
+        f.service.read_config().unwrap()["models"]["ollama"]["selected"][0]["model_id"],
+        "fixture:latest"
+    );
+}
+
+#[tokio::test]
+async fn activation_final_admission_refuses_settings_policy_model_runtime_or_override_drift() {
+    for case in [
+        "name", "opaque", "policy", "model", "runtime", "override", "applied", "catalog",
+    ] {
+        let f = Fixture::new(true).await;
+        f.bind_baseline();
+        f.opt_in_restart();
+        f.tick().await;
+        let mut next = f.service.read_config().unwrap();
+        match case {
+            "name" => next["name"] = json!("Late before admission"),
+            "opaque" => next["future"]["owner_change"] = json!(true),
+            "policy" => next["model_bootstrap"]["automation"] = json!(false),
+            "model" => next["models"]["ollama"]["base_url"] = json!("http://127.0.0.1:1"),
+            "catalog" => next["model_catalog"][0]["name"] = json!("Changed pinned entry"),
+            "runtime" => {
+                f.service.live.lock().unwrap()["runtime_id"] =
+                    json!(uuid::Uuid::new_v4().to_string())
+            }
+            "override" => f.service.live.lock().unwrap()["setup_model_overrides"] = json!(true),
+            "applied" => {
+                f.service.live.lock().unwrap()["setup_existing_applied_models"] = json!(true)
+            }
+            _ => unreachable!(),
+        }
+        f.service.save_config(next).unwrap();
+        let bytes = std::fs::read(&f.service.config_path).unwrap();
+        assert!(
+            f.service.claim_model_activation().unwrap().is_none(),
+            "{case}"
+        );
+        assert_eq!(f.record().phase, Phase::ApplyBlocked);
+        assert_eq!(f.record().reason, Some(Reason::StateChanged));
+        assert_eq!(std::fs::read(&f.service.config_path).unwrap(), bytes);
+        assert!(f.service.claim_model_activation().unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn activation_cancel_or_shutdown_uncertainty_consumes_queued_and_draining_tokens() {
+    for draining in [false, true] {
+        let f = Fixture::new(true).await;
+        f.bind_baseline();
+        f.opt_in_restart();
+        f.tick().await;
+        let startup = if draining {
+            f.service.claim_model_activation().unwrap()
+        } else {
+            None
+        };
+        f.service.cancel_model_activation();
+        assert_eq!(f.record().phase, Phase::Unknown);
+        assert!(f.service.claim_model_activation().unwrap().is_none());
+        if let Some(startup) = startup {
+            assert!(
+                f.service
+                    .adopt_runtime_configuration(
+                        &uuid::Uuid::new_v4().to_string(),
+                        &startup,
+                        |_, _| panic!("cancelled scope")
+                    )
+                    .is_err()
+            );
+        }
+        let old = f.record().id;
+        f.tick().await;
+        assert_eq!(f.record().id, old);
+    }
+}
+
+#[tokio::test]
+async fn activation_requires_a_known_applied_baseline_without_model_cli_overrides() {
+    for known in [false, true] {
+        let f = Fixture::new(true).await;
+        if known {
+            f.bind_baseline();
+            f.service.live.lock().unwrap()["setup_model_overrides"] = json!(true);
+        }
+        f.opt_in_restart();
+        f.tick().await;
+        assert_eq!(f.record().phase, Phase::ApplyBlocked);
+        assert_eq!(f.record().reason, Some(Reason::ActivationUnavailable));
+        assert!(f.service.claim_model_activation().unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn activation_live_management_consent_is_not_an_unrelated_pending_runtime_setting() {
+    let f = Fixture::new(true).await;
+    f.bind_baseline();
+    f.opt_in_restart();
+    let mut next = f.service.read_config().unwrap();
+    next["management"] = json!({"allow_remote":true});
+    f.service.save_config(next).unwrap();
+    f.tick().await;
+    assert_eq!(f.record().phase, Phase::RestartRequested);
+    assert!(f.service.claim_model_activation().unwrap().is_some());
+}
+
+#[tokio::test]
+async fn activation_live_catalog_additions_do_not_require_a_runtime_restart() {
+    let f = Fixture::new(true).await;
+    f.bind_baseline();
+    f.opt_in_restart();
+    let mut next = f.service.read_config().unwrap();
+    let mut extra = next["model_catalog"][0].clone();
+    extra["id"] = json!("another-owner-entry");
+    next["model_catalog"].as_array_mut().unwrap().push(extra);
+    f.service.save_config(next).unwrap();
+    f.tick().await;
+    assert_eq!(f.record().phase, Phase::RestartRequested);
+    assert!(f.service.claim_model_activation().unwrap().is_some());
+}
+
+#[tokio::test]
+async fn activation_cleanup_removes_tokens_when_config_is_damaged_without_repairing_it() {
+    for draining in [false, true] {
+        let f = Fixture::new(true).await;
+        f.bind_baseline();
+        f.opt_in_restart();
+        f.tick().await;
+        let startup = if draining {
+            f.service.claim_model_activation().unwrap()
+        } else {
+            None
+        };
+        let original = std::fs::read(&f.service.config_path).unwrap();
+        let damaged = b"{broken JSON; owner data must not be repaired by cleanup";
+        std::fs::write(&f.service.config_path, damaged).unwrap();
+        f.service.cancel_model_activation();
+        assert_eq!(
+            f.record().phase,
+            Phase::Unknown,
+            "cancellation must not depend on reading saved configuration"
+        );
+        assert_eq!(std::fs::read(&f.service.config_path).unwrap(), damaged);
+        std::fs::write(&f.service.config_path, original).unwrap();
+        assert!(f.service.claim_model_activation().unwrap().is_none());
+        if let Some(startup) = startup {
+            assert!(
+                f.service
+                    .adopt_runtime_configuration(
+                        &uuid::Uuid::new_v4().to_string(),
+                        &startup,
+                        |_, _| panic!(
+                            "damaged configuration must not preserve cancelled authority"
+                        )
+                    )
+                    .is_err()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn activation_cleanup_consumes_tokens_even_when_optional_evidence_is_unwritable() {
+    for draining in [false, true] {
+        let f = Fixture::new(true).await;
+        f.bind_baseline();
+        f.opt_in_restart();
+        f.tick().await;
+        let startup = if draining {
+            f.service.claim_model_activation().unwrap()
+        } else {
+            None
+        };
+        let config = std::fs::read(&f.service.config_path).unwrap();
+        let path = Journal::new(&f.service).path;
+        let damaged = b"not a sqlite database; cancellation must not repair evidence";
+        std::fs::write(&path, damaged).unwrap();
+        f.service.cancel_model_activation();
+        assert_eq!(std::fs::read(&path).unwrap(), damaged);
+        assert_eq!(std::fs::read(&f.service.config_path).unwrap(), config);
+        assert_eq!(
+            f.service.live.lock().unwrap()["model_activation"]["state"],
+            "unknown"
+        );
+        assert!(f.service.claim_model_activation().unwrap().is_none());
+        if let Some(startup) = startup {
+            assert!(
+                f.service
+                    .adopt_runtime_configuration(
+                        &uuid::Uuid::new_v4().to_string(),
+                        &startup,
+                        |_, _| panic!("unavailable evidence must not preserve cancelled authority")
+                    )
+                    .is_err()
+            );
+        }
+    }
 }

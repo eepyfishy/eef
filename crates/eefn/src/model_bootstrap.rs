@@ -117,6 +117,9 @@ pub struct Policy {
     /// Old auto/prompt preferences did not authorize downloads. Omission stays disabled.
     #[serde(skip_serializing_if = "is_false")]
     pub automation: bool,
+    /// Separate opt-in: older automated setup never authorized a runtime restart.
+    #[serde(skip_serializing_if = "is_false")]
+    pub restart_after_setup: bool,
 }
 impl Default for Policy {
     fn default() -> Self {
@@ -125,6 +128,7 @@ impl Default for Policy {
             mode: Mode::Preserve,
             catalog: None,
             automation: false,
+            restart_after_setup: false,
         }
     }
 }
@@ -251,6 +255,8 @@ pub enum Command {
         target: Target,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         automation: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        restart_after_setup: Option<bool>,
     },
 }
 impl Command {
@@ -260,10 +266,15 @@ impl Command {
             mode,
             target,
             automation,
+            restart_after_setup,
         } = self
         {
             previous.validate()?;
-            if mode.is_none() && *target == Target::Keep && automation.is_none() {
+            if mode.is_none()
+                && *target == Target::Keep
+                && automation.is_none()
+                && restart_after_setup.is_none()
+            {
                 bail!("Choose a bootstrap preference; use show to inspect")
             }
             if let Target::Catalog { model_id } = target {
@@ -306,6 +317,11 @@ pub struct Settings {
     pub enable_automation: bool,
     #[arg(long, conflicts_with = "enable_automation")]
     pub disable_automation: bool,
+    /// Restart this runtime after setup only when unrelated settings are already applied.
+    #[arg(long, conflicts_with = "manual_apply")]
+    pub restart_after_setup: bool,
+    #[arg(long, conflicts_with = "restart_after_setup")]
+    pub manual_apply: bool,
 }
 impl Settings {
     pub fn validate(&self) -> Result<()> {
@@ -315,11 +331,16 @@ impl Settings {
         if self.enable_automation && self.disable_automation {
             bail!("Choose one automation preference")
         }
+        if self.restart_after_setup && self.manual_apply {
+            bail!("Choose automatic restart or manual application")
+        }
         if self.mode.is_none()
             && self.model.is_none()
             && !self.project_default
             && !self.enable_automation
             && !self.disable_automation
+            && !self.restart_after_setup
+            && !self.manual_apply
         {
             bail!("Choose a bootstrap preference; use show to inspect")
         }
@@ -346,6 +367,13 @@ impl Settings {
             automation: if self.enable_automation {
                 Some(true)
             } else if self.disable_automation {
+                Some(false)
+            } else {
+                None
+            },
+            restart_after_setup: if self.restart_after_setup {
+                Some(true)
+            } else if self.manual_apply {
                 Some(false)
             } else {
                 None
@@ -480,12 +508,15 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
             mode,
             target,
             automation,
+            restart_after_setup,
         } => {
             let changed = r.saved.policy != previous.policy;
             r.changed == changed
                 && previous.revision.checked_add(u64::from(changed)) == Some(r.saved.revision)
                 && r.saved.policy.mode == mode.unwrap_or(previous.policy.mode)
                 && r.saved.policy.automation == automation.unwrap_or(previous.policy.automation)
+                && r.saved.policy.restart_after_setup
+                    == restart_after_setup.unwrap_or(previous.policy.restart_after_setup)
                 && match target {
                     Target::Keep => r.saved.policy.catalog == previous.policy.catalog,
                     Target::ProjectDefault => r.saved.policy.catalog.is_none(),
@@ -521,6 +552,7 @@ impl crate::NodeService {
                     mode,
                     target,
                     automation,
+                    restart_after_setup,
                 } = &request.command
                 {
                     if remote && config.pointer("/management/allow_remote") != Some(&json!(true)) {
@@ -537,6 +569,9 @@ impl crate::NodeService {
                     }
                     if let Some(automation) = automation {
                         policy.automation = *automation;
+                    }
+                    if let Some(restart) = restart_after_setup {
+                        policy.restart_after_setup = *restart;
                     }
                     match target {
                         Target::Keep => {}
@@ -633,7 +668,7 @@ pub fn render(value: &Value) -> Result<String> {
         bail!("Unconfirmed bootstrap preferences report")
     }
     Ok(format!(
-        "Node {} model bootstrap\nSaved mode: {:?}\nCatalog binding: {}\nState: {:?}\n{}\n{}\n",
+        "Node {} model bootstrap\nSaved mode: {:?}\nCatalog binding: {}\nState: {:?}\nRestart after setup: {}\n{}\n{}\n",
         r.node_id,
         r.saved.policy.mode,
         r.saved
@@ -643,6 +678,7 @@ pub fn render(value: &Value) -> Result<String> {
             .map(|p| p.model_id.as_str())
             .unwrap_or("project default (not approved)"),
         r.state,
+        r.saved.policy.restart_after_setup,
         r.setup
             .map(|s| format!(
                 "Setup: {:?}; attempt: {}; restart pending: {} (not readiness)",

@@ -58,6 +58,53 @@ struct Fixture {
     _engine: std::sync::Arc<crate::NodeEngine>,
     guard: Option<crate::request_preview::PreviewGuard>,
 }
+
+#[test]
+fn bootstrap_restart_consent_is_separate_and_stale_generic_restore_cannot_reenable_it() {
+    let f = Fixture::new();
+    let mut request = f.configure(
+        Some(Mode::Auto),
+        Target::Catalog {
+            model_id: "fixture".into(),
+        },
+    );
+    if let Command::Configure { automation, .. } = &mut request.command {
+        *automation = Some(true);
+    }
+    f.service.model_bootstrap_policy(request, false).unwrap();
+    assert!(
+        f.show()["saved"]["policy"]
+            .get("restart_after_setup")
+            .is_none()
+    );
+    let mut request = f.configure(None, Target::Keep);
+    if let Command::Configure {
+        restart_after_setup,
+        ..
+    } = &mut request.command
+    {
+        *restart_after_setup = Some(true);
+    }
+    let report = f
+        .service
+        .model_bootstrap_policy(request.clone(), false)
+        .unwrap();
+    assert!(confirmed(&report, &request));
+    let stale = f.service.read_config().unwrap();
+    assert_eq!(stale["model_bootstrap"]["restart_after_setup"], true);
+    let mut request = f.configure(None, Target::Keep);
+    if let Command::Configure {
+        restart_after_setup,
+        ..
+    } = &mut request.command
+    {
+        *restart_after_setup = Some(false);
+    }
+    f.service.model_bootstrap_policy(request, false).unwrap();
+    let bytes = f.bytes();
+    assert!(f.service.save_config(stale).is_err());
+    assert_eq!(f.bytes(), bytes);
+}
 fn entry() -> Value {
     json!({"id":"fixture","modality":"text","url":"https://example.invalid/model.gguf?token=PRIVATE_SOURCE_TOKEN",
         "sha256":"a".repeat(64),"bytes":1234,"license":"Apache-2.0","source_page":"https://example.invalid/source?token=PRIVATE_PAGE_TOKEN"})
@@ -105,6 +152,7 @@ impl Fixture {
             mode,
             target,
             automation: None,
+            restart_after_setup: None,
         })
     }
     fn bytes(&self) -> Vec<u8> {
