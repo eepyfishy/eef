@@ -187,6 +187,7 @@ mod tests {
             previous: eefn::model_bootstrap::Saved::new(Default::default(), 0).unwrap(),
             mode: Some(eefn::model_bootstrap::Mode::Auto),
             target: eefn::model_bootstrap::Target::Keep,
+            automation: None,
         };
         assert!(request.validate().is_err());
         request.expected_runtime_id = Some(uuid::Uuid::new_v4().to_string());

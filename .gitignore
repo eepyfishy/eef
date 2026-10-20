@@ -6,6 +6,8 @@
 /.gh-auth/
 /.validation/
 *.db
+*.bootstrap.sqlite3
+*.bootstrap.sqlite3-journal
 *.log
 config.json
 .env

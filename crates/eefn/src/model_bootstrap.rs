@@ -1,9 +1,15 @@
-//! Bootstrap preferences and exact owner-catalog bindings, not a setup runner.
+//! Owner bootstrap preferences, exact catalog bindings and explicit automation consent.
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const NOTE: &str = "Bootstrap preferences only. Automatic setup and a project-approved default are not available in this build. No download, probe, model selection/load, permission change, restart, workload or retry was requested. Catalog metadata is not license review, runtime compatibility or model-quality approval.";
+const LEGACY_NOTE: &str = "Bootstrap preferences only. Automatic setup and a project-approved default are not available in this build. No download, probe, model selection/load, permission change, restart, workload or retry was requested. Catalog metadata is not license review, runtime compatibility or model-quality approval.";
+const NOTE: &str = "Setup automation is disabled for this policy; auto/prompt preferences alone do not authorize it. A project-approved default is not available. Enable automation explicitly for an exact owner catalog binding to permit backend setup. This policy reply is not installation, selection, readiness or restart completion; workload permissions are unchanged.";
+const AUTOMATION_NOTE: &str = "Setup automation opt-in recorded. Preserve/off/managed do no setup; prompt awaits an explicit owner change to auto. Auto permits backend setup for the exact owner catalog binding. Inspect retained setup status and models download-status for its attempt ID; this policy reply is not download, selection, readiness or restart completion. No project-approved default, license review, runtime compatibility or model-quality approval is implied. Workload permissions are unchanged; uncertain attempts are not replayed.";
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -108,6 +114,9 @@ pub struct Policy {
     pub schema_version: u32,
     pub mode: Mode,
     pub catalog: Option<CatalogPin>,
+    /// Old auto/prompt preferences did not authorize downloads. Omission stays disabled.
+    #[serde(skip_serializing_if = "is_false")]
+    pub automation: bool,
 }
 impl Default for Policy {
     fn default() -> Self {
@@ -115,6 +124,7 @@ impl Default for Policy {
             schema_version: 1,
             mode: Mode::Preserve,
             catalog: None,
+            automation: false,
         }
     }
 }
@@ -128,7 +138,7 @@ impl Policy {
         }
         Ok(())
     }
-    fn from_config(config: &Value) -> Result<Self> {
+    pub(crate) fn from_config(config: &Value) -> Result<Self> {
         let policy: Self =
             serde_json::from_value(config.get("model_bootstrap").cloned().unwrap_or(json!({})))?;
         policy.validate()?;
@@ -172,7 +182,7 @@ impl Saved {
 }
 
 /// Central save hook: old clients cannot erase opt-outs or forge/reset CAS state.
-pub(crate) fn preserve_revision(old: &Value, next: &mut Value) -> Result<()> {
+pub(crate) fn preserve_revision(old: &Value, next: &mut Value, authorized: bool) -> Result<()> {
     if next.get("model_bootstrap").is_none() {
         if let Some(policy) = old.get("model_bootstrap") {
             next["model_bootstrap"] = policy.clone();
@@ -196,6 +206,15 @@ pub(crate) fn preserve_revision(old: &Value, next: &mut Value) -> Result<()> {
         }
     };
     let incoming = Policy::from_config(next)?;
+    if !authorized
+        && incoming.automation
+        && incoming.mode == Mode::Auto
+        && incoming != previous.policy
+    {
+        bail!(
+            "Use model-bootstrap-policy configure with current runtime and policy version to authorize automatic setup; a generic save cannot enable or retarget it"
+        )
+    }
     let revision = if incoming == previous.policy {
         previous.revision
     } else {
@@ -230,6 +249,8 @@ pub enum Command {
         previous: Saved,
         mode: Option<Mode>,
         target: Target,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        automation: Option<bool>,
     },
 }
 impl Command {
@@ -238,10 +259,11 @@ impl Command {
             previous,
             mode,
             target,
+            automation,
         } = self
         {
             previous.validate()?;
-            if mode.is_none() && *target == Target::Keep {
+            if mode.is_none() && *target == Target::Keep && automation.is_none() {
                 bail!("Choose a bootstrap preference; use show to inspect")
             }
             if let Target::Catalog { model_id } = target {
@@ -279,13 +301,26 @@ pub struct Settings {
     /// Clear the owner catalog binding; does not approve or install a default.
     #[arg(long, conflicts_with = "model")]
     pub project_default: bool,
+    /// Explicitly authorize backend setup; old auto preferences remain inactive.
+    #[arg(long, conflicts_with = "disable_automation")]
+    pub enable_automation: bool,
+    #[arg(long, conflicts_with = "enable_automation")]
+    pub disable_automation: bool,
 }
 impl Settings {
     pub fn validate(&self) -> Result<()> {
         if self.project_default && self.model.is_some() {
             bail!("Choose a catalog binding or project default, not both")
         }
-        if self.mode.is_none() && self.model.is_none() && !self.project_default {
+        if self.enable_automation && self.disable_automation {
+            bail!("Choose one automation preference")
+        }
+        if self.mode.is_none()
+            && self.model.is_none()
+            && !self.project_default
+            && !self.enable_automation
+            && !self.disable_automation
+        {
             bail!("Choose a bootstrap preference; use show to inspect")
         }
         if let Some(id) = &self.model {
@@ -308,6 +343,13 @@ impl Settings {
             previous,
             mode: self.mode,
             target,
+            automation: if self.enable_automation {
+                Some(true)
+            } else if self.disable_automation {
+                Some(false)
+            } else {
+                None
+            },
         };
         command.validate()?;
         Ok(command)
@@ -338,6 +380,7 @@ pub enum State {
     NoApprovedDefault,
     CatalogChanged,
     AutomationUnavailable,
+    AutomationEnabled,
 }
 fn state(policy: &Policy, binding: Binding, selections: usize, interpreters: usize) -> State {
     match policy.mode {
@@ -350,6 +393,7 @@ fn state(policy: &Policy, binding: Binding, selections: usize, interpreters: usi
         _ => match binding {
             Binding::ProjectDefaultUnavailable => State::NoApprovedDefault,
             Binding::ChangedOrUnavailable => State::CatalogChanged,
+            Binding::Matched if policy.automation => State::AutomationEnabled,
             Binding::Matched => State::AutomationUnavailable,
         },
     }
@@ -380,6 +424,8 @@ struct Report {
     restart_requested: bool,
     automatically_retried: bool,
     note: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    setup: Option<crate::model_setup::Status>,
 }
 pub fn confirmed(value: &Value, request: &Request) -> bool {
     let Ok(r) = serde_json::from_value::<Report>(value.clone()) else {
@@ -387,6 +433,10 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
     };
     if request.validate().is_err()
         || r.saved.validate().is_err()
+        || r.setup
+            .as_ref()
+            .is_some_and(|s| s.validate(&r.node_id, &r.saved).is_err())
+        || (r.saved.policy.automation && r.setup.is_none())
         || r.schema_version != 1
         || r.report_type != "node_model_bootstrap_policy"
         || !r.success
@@ -403,7 +453,7 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
                 r.interpreter_count,
             )
         || (r.saved.policy.catalog.is_none() != (r.binding == Binding::ProjectDefaultUnavailable))
-        || r.automatic_setup_available
+        || r.automatic_setup_available != r.saved.policy.automation
         || r.project_default_approved
         || r.license_reviewed
         || r.runtime_compatibility_verified
@@ -413,7 +463,13 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
         || r.execution_authorized
         || r.restart_requested
         || r.automatically_retried
-        || r.note != NOTE
+        || !(r.note
+            == if r.saved.policy.automation {
+                AUTOMATION_NOTE
+            } else {
+                NOTE
+            }
+            || (!r.saved.policy.automation && r.setup.is_none() && r.note == LEGACY_NOTE))
     {
         return false;
     }
@@ -423,11 +479,13 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
             previous,
             mode,
             target,
+            automation,
         } => {
             let changed = r.saved.policy != previous.policy;
             r.changed == changed
                 && previous.revision.checked_add(u64::from(changed)) == Some(r.saved.revision)
                 && r.saved.policy.mode == mode.unwrap_or(previous.policy.mode)
+                && r.saved.policy.automation == automation.unwrap_or(previous.policy.automation)
                 && match target {
                     Target::Keep => r.saved.policy.catalog == previous.policy.catalog,
                     Target::ProjectDefault => r.saved.policy.catalog.is_none(),
@@ -462,6 +520,7 @@ impl crate::NodeService {
                     previous,
                     mode,
                     target,
+                    automation,
                 } = &request.command
                 {
                     if remote && config.pointer("/management/allow_remote") != Some(&json!(true)) {
@@ -476,6 +535,9 @@ impl crate::NodeService {
                     if let Some(mode) = mode {
                         policy.mode = *mode;
                     }
+                    if let Some(automation) = automation {
+                        policy.automation = *automation;
+                    }
                     match target {
                         Target::Keep => {}
                         Target::ProjectDefault => policy.catalog = None,
@@ -488,7 +550,7 @@ impl crate::NodeService {
                     if changed {
                         let mut next = config.clone();
                         next["model_bootstrap"] = json!(policy);
-                        self.save_config_locked(next)?;
+                        self.save_bootstrap_config_locked(next)?;
                         saved = Saved::from_config(&self.read_config()?)?;
                     }
                 }
@@ -527,12 +589,18 @@ impl crate::NodeService {
                     command: request.command.clone(),
                     success: true,
                     state: state(&saved.policy, binding, selections.len(), interpreter_count),
+                    setup: Some(crate::model_setup::status(self, config, &saved, &live)),
+                    automatic_setup_available: saved.policy.automation,
+                    note: if saved.policy.automation {
+                        AUTOMATION_NOTE.into()
+                    } else {
+                        NOTE.into()
+                    },
                     saved,
                     binding,
                     selection_count: selections.len(),
                     interpreter_count,
                     changed,
-                    automatic_setup_available: false,
                     project_default_approved: false,
                     license_reviewed: false,
                     runtime_compatibility_verified: false,
@@ -542,7 +610,6 @@ impl crate::NodeService {
                     execution_authorized: false,
                     restart_requested: false,
                     automatically_retried: false,
-                    note: NOTE.into(),
                 });
                 if !confirmed(&report, &request) {
                     bail!("Bootstrap preferences reply unconfirmed; inspect saved state")
@@ -566,7 +633,7 @@ pub fn render(value: &Value) -> Result<String> {
         bail!("Unconfirmed bootstrap preferences report")
     }
     Ok(format!(
-        "Node {} model bootstrap\nSaved mode: {:?}\nCatalog binding: {}\nState: {:?}\n{}\n",
+        "Node {} model bootstrap\nSaved mode: {:?}\nCatalog binding: {}\nState: {:?}\n{}\n{}\n",
         r.node_id,
         r.saved.policy.mode,
         r.saved
@@ -576,7 +643,18 @@ pub fn render(value: &Value) -> Result<String> {
             .map(|p| p.model_id.as_str())
             .unwrap_or("project default (not approved)"),
         r.state,
-        NOTE
+        r.setup
+            .map(|s| format!(
+                "Setup: {:?}; attempt: {}; restart pending: {} (not readiness)",
+                s.state,
+                s.attempt
+                    .as_ref()
+                    .map(|a| format!("{} {:?} {:?}", a.id, a.phase, a.reason))
+                    .unwrap_or_else(|| "none".into()),
+                s.restart_required
+            ))
+            .unwrap_or_else(|| "Setup status unavailable on this node version".into()),
+        r.note
     ))
 }
 

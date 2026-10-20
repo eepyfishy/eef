@@ -1,10 +1,10 @@
 # Model bootstrap preferences (unreleased after alpha.6)
 
-This is the policy/control foundation for automatic setup, **not an implemented
-bootstrap runner or an approved default model**. Saving auto or prompt does not
-install, select, load, infer with or restart anything in this build. Normal
-first-run automatic setup remains unfinished. Existing manual installation and
-interpreter-assignment commands continue to work independently.
+These node-owned preferences now feed an opt-in [backend setup runner](MODEL-SETUP-RUNNER.md).
+An approved project default and complete first-run automatic setup remain
+unfinished. Earlier inactive auto/prompt preferences stay inactive on upgrade:
+automation requires a new explicit opt-in and an exact owner catalog binding.
+Manual installation and interpreter-assignment commands remain separate.
 
 ## Commands and interfaces
 
@@ -15,31 +15,36 @@ Run these through an already-running node; no port numbers or JSON editing:
     eefn model-bootstrap-policy configure --mode managed
     eefn model-bootstrap-policy configure --mode prompt --model CATALOG_ID
     eefn model-bootstrap-policy configure --mode auto --project-default
+    eefn model-bootstrap-policy configure --mode auto --model CATALOG_ID --enable-automation
+    eefn model-bootstrap-policy configure --disable-automation
     eef node model-bootstrap-policy --node NODE_ID show
     eef node model-bootstrap-policy --node NODE_ID configure --mode off
 
 Add --json for structured reports. A catalog model and --project-default conflict;
 omitting both preserves the existing binding. Omitting --mode preserves the
 existing mode. Empty configuration commands fail before contacting the service.
-Plain output explains that automatic setup is unavailable. CLI and future UI
-clients share the node-owned service; neither drives an automation loop.
+Plain output includes retained setup state and pending restart, not readiness.
+CLI and future UI clients share the node-owned service; neither drives the loop.
 
 The desired modes are preserve, off, managed, prompt and auto. A missing saved
 policy is preserve, not implicit download consent. This stage does not alter
 fresh-installer defaults or upgrade existing installations into automatic setup.
 Off records an opt-out; managed records external model management. Neither
 disables core commands or prevents a separate owner-requested manual install.
-Prompt/auto record future workflow preferences only; they are not active setup
-policies yet. No command cancels an existing manual download or applies unrelated
-pending settings.
+Without --enable-automation, prompt/auto remain inactive preferences. With it,
+prompt awaits an explicit owner change to auto; auto permits one setup attempt
+per policy epoch for its exact catalog binding. Disabling requests cancellation
+only of its own exact admitted transfer, never a different manual transfer.
+No command applies unrelated pending settings or restarts the node automatically.
 
 Local-owner APIs use POST /api/commands/model-bootstrap-policy. The EEF owner
 adapter uses POST /api/commands/node/model-bootstrap-policy and existing
 node.configure control framing. Remote inspection is read-only. Remote writes
 require the current node owner's existing remote-management consent, checked
 again under the configuration lock; they cannot enable that consent themselves.
-Unsupported, lost or altered replies cause no legacy configuration fallback,
-retry, download or restart. An offline CLI command never launches a node runtime.
+Unsupported, lost or altered replies cause no client fallback, replay or restart;
+an enabled backend attempt may already exist after a lost policy-save reply.
+Inspect show and its installer receipt. An offline CLI never launches a runtime.
 
 ## Owner catalog binding, not default endorsement
 
@@ -68,9 +73,12 @@ it does not select the first catalog entry, choose a model or authorize executio
 Saved selections and valid text-interpreter roles are observed separately. An
 existing custom setup is reported, not replaced or automatically assigned a new
 role. Interpreter_selected describes saved metadata, not applied availability,
-successful inference or semantic quality. Automatic-setup/default-approval,
-license-review, runtime-verification, download/selection/inference/execution,
-restart and retry flags remain explicitly false.
+successful inference or semantic quality. Automatic-setup availability follows
+the explicit opt-in. Default approval, license review and runtime verification
+remain false. The policy reply's download/selection/inference/execution/restart/
+retry flags describe the preference command, not completion or absence of
+asynchronous backend effects. Retained setup and installer receipts describe
+the separate attempt. No flag establishes quality or readiness.
 
 ## Atomicity, compatibility and uncertainty
 
@@ -93,28 +101,26 @@ errors or promise every arbitrary malformed node configuration can run.
 Configuration commands are not a permanent execution/idempotency ledger. A lost
 save reply can leave a changed policy. Inspect show before deciding on a new
 explicit command; the adapters retain the exact pre-send request and do not
-replay it or interpret uncertainty as rollback. Policy saves leave model
-configuration, other preferences, permissions, registration and update policy
-untouched, and do not request an application restart.
+replay it or interpret uncertainty as rollback. The atomic policy save leaves
+model configuration, other preferences, permissions, registration and update
+policy untouched and does not restart the node. An enabled backend may later
+install/configure its pinned target. Generic saves cannot enable or retarget an
+automatic epoch, including stale enabled snapshot restoration; use the typed
+current-runtime/version command.
 
-## Remaining automatic-setup work
+## Backend runner and remaining automatic-setup work
 
-The backend runner must reuse existing installation preflight, exact download
-receipts, bounded live progress/cancellation and before/during-transfer disk
-checks. Admission must recheck the current bootstrap version/binding and model
-setup after asynchronous provider inspection, not merely trust a past policy
-read. Preserve existing opt-outs/custom roles, prefer a suitable existing Ollama
-setup without a second provider, and keep GGUF/llama.cpp as the CPU fallback.
-Do not confuse provider-reported identity with a verified local artifact.
-Policy changes should wake a backend-owned supervisor that re-reads durable
-state; a dashboard timer must not own the loop. The subsequent
+The [runner contract](MODEL-SETUP-RUNNER.md) covers existing installation preflight,
+exact receipts, progress/cancellation, disk checks, async admission fences,
+preserved selections/opt-outs, Ollama preference, verified CPU cache selection
+and durable no-replay lifecycle. Provider metadata is not a GGUF or Ollama
+manifest checksum. Configuration saves wake its backend supervisor; no dashboard
+timer owns it. The earlier
 [unavailable-model control fix](UNAVAILABLE-MODEL-CONTROLS.md) separates retained
 references from introduced artifacts so missing files need not block unrelated
-owner saves; this is not general model-health or setup-runner completion.
+owner saves; this is not general model-health acceptance.
 
-Retain durable setup lifecycle/unknown outcomes, refuse replay after uncertain
-admission, and bind post-install selection/role changes to unchanged model setup
-and verified installed bytes. Automatic application must not restart into
+Automatic application must not restart into
 unrelated pending settings without the owner's chosen apply/restart policy.
 Offline/skip/managed behavior must leave deterministic node controls usable.
 
@@ -124,7 +130,7 @@ runtime/CPU/resource/interpretation requirements. The existing failed real-model
 quality runs do not authorize a default. Full onboarding, physical two-PC and
 installer/signing/Defender/stable-release acceptance remain open.
 
-## Verification
+## Policy-foundation verification (earlier checkpoint)
 
 Both locked/offline workspace/all-target feature modes pass 901 tests plus one
 ignored profiler each. Fifteen new regressions cover node policy/catalog/version

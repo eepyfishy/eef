@@ -67,7 +67,7 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Inspect/save bootstrap preferences; automatic setup is not active yet.
+    /// Inspect bootstrap preferences or explicitly enable owner-model setup automation.
     ModelBootstrapPolicy {
         #[command(subcommand)]
         command: eefn::model_bootstrap::Action,
@@ -3277,6 +3277,16 @@ async fn run_node(
         status["name"] = serde_json::json!(file.name);
         status["permissions"] = serde_json::json!(file.permissions);
         status["pending_restart"] = serde_json::json!(false);
+        // Preserve command-line selections before async registration fills inventory.
+        status["setup_existing_applied_models"] = serde_json::json!(
+            !active_ollama_models.is_empty()
+                || (use_llamacpp
+                    && file
+                        .models
+                        .as_ref()
+                        .and_then(|m| m.llamacpp.as_ref())
+                        .is_some_and(|m| !m.slots.is_empty()))
+        );
         status["models"] = serde_json::json!([]);
         status["capabilities"] = serde_json::json!(engine.capabilities());
         status["connection"] =
@@ -3404,7 +3414,9 @@ async fn run_node(
         result = model_startup => result,
         result = run => result,
         result = model_runtime.run()=>result,
+        result = Box::pin(eefn::model_setup::run(dashboard.clone(),runtime_id.clone()))=>result,
     };
+    eefn::model_setup::interrupt(&dashboard, &runtime_id);
     model_runtime.begin_shutdown();
     if let Some(server) = &model_server {
         server

@@ -23,6 +23,8 @@ pub struct NodeService {
     pub(crate) node_id: String,
     pub live: Arc<std::sync::Mutex<Value>>,
     pub restart: Arc<tokio::sync::Notify>,
+    pub(crate) setup_changed: Arc<tokio::sync::Notify>,
+    pub(crate) setup_supervisor: Arc<tokio::sync::Mutex<()>>,
     pub submissions: Arc<crate::submission::SubmissionMailbox>,
     pub(crate) preview: Arc<crate::request_preview::PreviewRuntime>,
     pub(crate) model_runtime:
@@ -105,6 +107,8 @@ impl NodeService {
                 json!({"connection":{"state":"starting"},"pending_restart":false,"download":recovered.unwrap_or_else(||json!({"state":"idle"}))}),
             )),
             restart: Arc::new(tokio::sync::Notify::new()),
+            setup_changed: Arc::new(tokio::sync::Notify::new()),
+            setup_supervisor: Arc::new(tokio::sync::Mutex::new(())),
             submissions: Arc::new(crate::submission::SubmissionMailbox::default()),
             preview: Arc::new(crate::request_preview::PreviewRuntime::default()),
             config_lock: Arc::new(std::sync::Mutex::new(())),
@@ -141,14 +145,21 @@ impl NodeService {
         self.save_config_locked(value)
     }
 
-    pub(crate) fn save_config_locked(&self, mut value: Value) -> Result<()> {
+    pub(crate) fn save_config_locked(&self, value: Value) -> Result<()> {
+        self.save_config_inner(value, false)
+    }
+    /// Only the runtime/CAS-checked bootstrap command may enable a new auto epoch.
+    pub(crate) fn save_bootstrap_config_locked(&self, value: Value) -> Result<()> {
+        self.save_config_inner(value, true)
+    }
+    fn save_config_inner(&self, mut value: Value, bootstrap_authorized: bool) -> Result<()> {
         if !value.is_object() {
             bail!("node configuration must be a JSON object")
         }
         let old = self.read_config()?;
         // Backend-owned version survives generic saves/restore as well as the
         // typed policy command. Content rollback must not revive an old CAS.
-        crate::model_bootstrap::preserve_revision(&old, &mut value)?;
+        crate::model_bootstrap::preserve_revision(&old, &mut value, bootstrap_authorized)?;
         let previous_policy =
             crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(&old)?;
         let incoming_policy =
@@ -218,6 +229,7 @@ impl NodeService {
             std::fs::copy(&next, &self.config_path)?;
             std::fs::remove_file(&next)
         })?;
+        self.setup_changed.notify_one();
         Ok(())
     }
 
@@ -910,8 +922,21 @@ impl NodeService {
         remote: bool,
         progress: Value,
     ) -> Result<()> {
+        self.begin_model_download_checked(snapshot, remote, progress, None)
+    }
+
+    pub(crate) fn begin_model_download_checked(
+        &self,
+        snapshot: &Value,
+        remote: bool,
+        progress: Value,
+        bootstrap: Option<&crate::model_setup::Fence>,
+    ) -> Result<()> {
         let _guard = self.config_lock.lock().expect("config lock");
         let current = self.read_config()?;
+        if let Some(fence) = bootstrap {
+            fence.check(self, &current)?;
+        }
         if remote {
             require_remote_authority(&current)?;
         }

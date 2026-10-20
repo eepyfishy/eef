@@ -122,6 +122,9 @@ pub async fn inspect(state: &NodeService, request: Value) -> Result<Value> {
         .filter(|id| !id.is_empty() && id.len() < 200)
         .context("Choose an installed model")?;
     let config = state.read_config()?;
+    inspect_config(&config, id).await
+}
+pub(crate) async fn inspect_config(config: &Value, id: &str) -> Result<Value> {
     let installed = ollama_models(&config).await?;
     if !installed["models"]
         .as_array()
@@ -164,11 +167,18 @@ fn normalize_capabilities(id: &str, details: &Value) -> Value {
     json!({"id":id,"capabilities_known":reported.is_some(),"capabilities":capabilities,"modality":if vision {Some("vlm")} else if completion {Some("text")} else {None}})
 }
 pub async fn install(state: Arc<NodeService>, request: Value) -> Result<()> {
-    install_authorized(state, request, false, uuid::Uuid::new_v4().to_string()).await
+    install_authorized(
+        state,
+        request,
+        false,
+        uuid::Uuid::new_v4().to_string(),
+        None,
+    )
+    .await
 }
 
 pub(crate) async fn install_remote(state: Arc<NodeService>, request: Value) -> Result<()> {
-    install_authorized(state, request, true, uuid::Uuid::new_v4().to_string()).await
+    install_authorized(state, request, true, uuid::Uuid::new_v4().to_string(), None).await
 }
 
 pub(crate) async fn install_identified(
@@ -176,7 +186,23 @@ pub(crate) async fn install_identified(
     model: String,
     operation_id: String,
 ) -> Result<()> {
-    install_authorized(state, json!({"id":model}), false, operation_id).await
+    install_authorized(state, json!({"id":model}), false, operation_id, None).await
+}
+
+pub(crate) async fn install_bootstrap(
+    state: Arc<NodeService>,
+    fence: crate::model_setup::Fence,
+    operation_id: String,
+) -> Result<()> {
+    let model = fence
+        .saved
+        .policy
+        .catalog
+        .as_ref()
+        .context("Exact owner catalog binding required")?
+        .model_id
+        .clone();
+    install_authorized(state, json!({"id":model}), false, operation_id, Some(fence)).await
 }
 
 async fn resolve_install(
@@ -334,6 +360,7 @@ async fn install_authorized(
     request: Value,
     remote: bool,
     operation_id: String,
+    bootstrap: Option<crate::model_setup::Fence>,
 ) -> Result<()> {
     let config = if remote {
         state.with_remote_authority(|config| Ok(config.clone()))?
@@ -343,6 +370,9 @@ async fn install_authorized(
     let selected = request["id"]
         .as_str()
         .context("Choose a model to install")?;
+    if let Some(fence) = &bootstrap {
+        state.inspect_grant_configuration(|current| fence.check(&state, current))?;
+    }
     {
         let recovered = state
             .download_receipts
@@ -357,6 +387,12 @@ async fn install_authorized(
         }
     }
     let (backend, entry, available) = resolve_install(&config, selected).await?;
+    if bootstrap
+        .as_ref()
+        .is_some_and(|f| f.backend.name() != backend)
+    {
+        bail!("Setup provider changed during inspection; no fallback or retry")
+    }
     let plan = plan_snapshot(&state, backend, &entry, available)?;
     if plan["can_request"] != true {
         bail!(
@@ -367,7 +403,12 @@ async fn install_authorized(
     let definition_sha256 = crate::grants::definition_digest(
         &json!({"backend":backend,"entry":entry,"models":config.get("models")}),
     )?;
-    state.begin_model_download(&config, remote, json!({"id":operation_id,"model_id":selected,"backend":backend,"definition_sha256":definition_sha256,"state":"downloading","phase":"Starting","name":entry["name"],"completed":0,"total":if backend=="ollama" {Value::Null} else {entry["bytes"].clone()},"cancel_requested":false}))?;
+    let progress = json!({"id":operation_id,"model_id":selected,"backend":backend,"definition_sha256":definition_sha256,"state":"downloading","phase":"Starting","name":entry["name"],"completed":0,"total":if backend=="ollama" {Value::Null} else {entry["bytes"].clone()},"cancel_requested":false});
+    if let Some(fence) = bootstrap.as_ref() {
+        state.begin_model_download_checked(&config, remote, progress, Some(fence))?;
+    } else {
+        state.begin_model_download(&config, remote, progress)?;
+    }
     tokio::spawn(async move {
         let transfer = async {
             if backend == "ollama" {

@@ -3,6 +3,31 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: opt-in backend model setup
+
+The runtime-owned setup runner now has explicit automation consent, one bounded
+durable latest-attempt lifecycle, exact async/admission/selection fences, existing
+Ollama reuse, one identified installer request and verified CPU cache selection.
+Generic settings cannot activate/retarget auto or restore a stale enabled policy.
+Old preferences, existing selections and workload permissions are preserved.
+Configured is not applied/ready: there is no automatic restart or inference.
+See [contract and verification boundaries](MODEL-SETUP-RUNNER.md).
+
+Thirteen added Rust regressions pass. Both final locked/offline workspace/all-target
+feature modes pass 917 tests plus one ignored profiler each, including 597 node
+tests. Final headless apps/examples build. Public model-setup-nCcErg validates
+local/pinned remote controls, consent, progress/revocation, abrupt fixture-node
+exit/unknown/no replay, existing Ollama reuse, verified synthetic CPU cache,
+applied command-line choices, no automatic restart and reviewed core work.
+Twelve existing native suites also pass against that build; full logs, result
+identities and scope are linked in the contract above. No real-model quality or
+physical two-PC acceptance is implied. All four evaluated native hashes match;
+source boundary, format, JS syntax and diff checks pass; fixture apps/helpers
+are terminal. Approved
+defaults, automatic application, first-run dependencies, fresh physical two-PC
+and stable-release gates remain open. No installed/remote node, visual UI,
+version, installer or update policy changed.
+
 ## Unreleased: core owner controls survive unavailable model artifacts
 
 Unchanged saved GGUF/projector references no longer require available files on

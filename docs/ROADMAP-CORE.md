@@ -31,6 +31,16 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The opt-in [backend model-setup runner](MODEL-SETUP-RUNNER.md) now has both full
+feature modes passing 917 tests plus one ignored each and thirteen native suites.
+It uses the existing installer/receipts, rechecks policy/runtime/model identity
+around asynchronous work, preserves existing selections, prefers the configured
+Ollama service in auto mode, and can configure verified CPU cache artifacts.
+Interrupted attempts remain unknown rather than replaying. Old inactive
+preferences are not download consent. Automatic application, an approved default,
+physical-device and release acceptance remain unfinished; no UI controller is
+introduced.
+
 The [unavailable-model control fix](UNAVAILABLE-MODEL-CONTROLS.md) removes artifact
 health as a prerequisite for unrelated owner saves: retained model/projector
 references can remain unavailable while permission revocation and other core

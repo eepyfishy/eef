@@ -1,4 +1,56 @@
 use super::*;
+
+#[test]
+fn bootstrap_legacy_policy_digest_and_disabled_omission_are_unchanged() {
+    let saved = Saved::new(Policy::default(), 0).unwrap();
+    assert_eq!(
+        saved.digest,
+        crate::grants::definition_digest(
+            &json!({"policy":{"schema_version":1,"mode":"preserve","catalog":null},"revision":0})
+        )
+        .unwrap()
+    );
+    assert!(
+        serde_json::to_value(saved.policy)
+            .unwrap()
+            .get("automation")
+            .is_none()
+    );
+}
+
+#[test]
+fn bootstrap_automation_requires_exact_owner_command_and_cannot_be_stale_restored() {
+    let f = Fixture::new();
+    let mut request = f.configure(
+        Some(Mode::Auto),
+        Target::Catalog {
+            model_id: "fixture".into(),
+        },
+    );
+    if let Command::Configure { automation, .. } = &mut request.command {
+        *automation = Some(true);
+    }
+    let report = f
+        .service
+        .model_bootstrap_policy(request.clone(), false)
+        .unwrap();
+    assert!(confirmed(&report, &request));
+    assert_eq!(report["automatic_setup_available"], true);
+    assert_eq!(report["setup"]["state"], "waiting");
+    let stale = f.service.read_config().unwrap();
+    let mut disable = f.configure(None, Target::Keep);
+    if let Command::Configure { automation, .. } = &mut disable.command {
+        *automation = Some(false);
+    }
+    f.service.model_bootstrap_policy(disable, false).unwrap();
+    let bytes = f.bytes();
+    assert!(f.service.save_config(stale).is_err());
+    assert_eq!(f.bytes(), bytes);
+    let mut unrelated = f.service.read_config().unwrap();
+    unrelated["future"]["keep"] = json!("still owner controlled");
+    f.service.save_config(unrelated).unwrap();
+    assert_eq!(f.show()["saved"]["policy"].get("automation"), None);
+}
 struct Fixture {
     _dir: tempfile::TempDir,
     service: std::sync::Arc<crate::NodeService>,
@@ -52,6 +104,7 @@ impl Fixture {
             previous: serde_json::from_value(self.show()["saved"].clone()).unwrap(),
             mode,
             target,
+            automation: None,
         })
     }
     fn bytes(&self) -> Vec<u8> {

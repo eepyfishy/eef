@@ -44,6 +44,7 @@ pub mod model_metadata;
 mod model_response;
 pub mod model_selection;
 pub mod model_server;
+pub mod model_setup;
 pub mod network;
 pub mod peer;
 pub mod permission_commands;

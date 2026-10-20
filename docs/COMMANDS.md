@@ -13,6 +13,13 @@ load, repair, replace or certify a model. See [scope and validation](UNAVAILABLE
 
 ## Bootstrap preferences (unreleased after alpha.6)
 
+Explicit opt-in can now run [backend model setup](MODEL-SETUP-RUNNER.md) for an exact
+owner catalog binding. Older auto/prompt preferences remain inactive. No approved
+project default or automatic restart/readiness is implied.
+
+    eefn model-bootstrap-policy configure --mode auto --model CATALOG_ID --enable-automation
+    eefn model-bootstrap-policy configure --disable-automation
+
     eefn model-bootstrap-policy show
     eefn model-bootstrap-policy configure --mode off
     eefn model-bootstrap-policy configure --mode prompt --model CATALOG_ID
