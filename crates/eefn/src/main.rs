@@ -1014,7 +1014,7 @@ async fn execute_abandonment_command(
 async fn execute_request_receipt_command(
     args: &Args,
     command: eefn::request_receipt::ReceiptCommand,
-    result_query: bool,
+    query: eefn::request_receipt::QueryKind,
 ) -> Result<serde_json::Value> {
     use serde_json::json;
     command.validate()?;
@@ -1031,27 +1031,23 @@ async fn execute_request_receipt_command(
         local.enabled,
     )?;
     let request_id = uuid::Uuid::new_v4().to_string();
-    let path = if result_query { "result" } else { "receipt" };
-    let report_type = if result_query {
-        "request_result"
-    } else {
-        "request_receipt"
-    };
-    let error_code = if result_query {
-        "result_unavailable"
-    } else {
-        "receipt_unavailable"
-    };
+    let path = query.path();
+    let report_type = query.report_type();
+    let error_code = query.error_code();
     let exchange = async {
         let response = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build()?
             .post(format!("http://{address}/api/commands/requests/{path}")).timeout(Duration::from_secs(25))
             .json(&json!({"schema_version":1,"expected_node_id":file.node_id,"request_id":request_id,"command":command})).send().await?;
         let ok = response.status().is_success();
         let value = eefn::model_manager::bounded_json(response).await?;
-        if !ok || !(if result_query {eefn::request_result::confirmed_node(&value,&command,&file.node_id,&request_id)}
-            else {eefn::request_receipt::confirmed_node(&value, &command, &file.node_id, &request_id)}) { bail!("Unconfirmed evidence inspection") }
+        if !ok || !query.confirmed_node(&value,&command,&file.node_id,&request_id) { bail!("Unconfirmed evidence inspection") }
         Ok::<_,anyhow::Error>(value)
     }.await;
+    if query == eefn::request_receipt::QueryKind::Stop {
+        return Ok(exchange.unwrap_or_else(|_| {
+            eefn::request_stop_receipt::unavailable(&file.node_id, &request_id, &command)
+        }));
+    }
     Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":report_type,"node_id":file.node_id,"request_id":request_id,
         "id":command.id,"grant_id":command.grant_id,"success":false,"execution_requested":false,"automatically_retried":false,"reconciled":false,
         "error_code":error_code,"note":"Inspection unconfirmed; no fallback, job change or recovery performed. Missing evidence does not prove no effects."})))
@@ -1957,7 +1953,8 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
         let service = NodeService::new(args.config.clone(), node_id.clone());
         let id = match action {
             eefn::grants::GrantAction::Receipt { id }
-            | eefn::grants::GrantAction::Result { id } => id,
+            | eefn::grants::GrantAction::Result { id }
+            | eefn::grants::GrantAction::StopReceipt { id } => id,
         };
         let request = eefn::grants::ReceiptRequest {
             schema_version: 1,
@@ -1967,6 +1964,7 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
         return match action {
             eefn::grants::GrantAction::Receipt { .. } => service.grant_receipt(request),
             eefn::grants::GrantAction::Result { .. } => service.grant_result(request),
+            eefn::grants::GrantAction::StopReceipt { .. } => service.local_stop_receipt(request),
         };
     }
     if let Commands::Connection { command } = command {
@@ -2180,16 +2178,24 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 .await
             }
             eefn::request_preview::RequestAction::Receipt { id, grant_id }
-            | eefn::request_preview::RequestAction::Result { id, grant_id } => {
-                let result_query =
-                    matches!(command, eefn::request_preview::RequestAction::Result { .. });
+            | eefn::request_preview::RequestAction::Result { id, grant_id }
+            | eefn::request_preview::RequestAction::StopReceipt { id, grant_id } => {
+                let query = match command {
+                    eefn::request_preview::RequestAction::Result { .. } => {
+                        eefn::request_receipt::QueryKind::Result
+                    }
+                    eefn::request_preview::RequestAction::StopReceipt { .. } => {
+                        eefn::request_receipt::QueryKind::Stop
+                    }
+                    _ => eefn::request_receipt::QueryKind::Receipt,
+                };
                 execute_request_receipt_command(
                     args,
                     eefn::request_receipt::ReceiptCommand {
                         id: id.clone(),
                         grant_id: grant_id.clone(),
                     },
-                    result_query,
+                    query,
                 )
                 .await
             }
@@ -2649,6 +2655,22 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                             "Permission outcome was not confirmed. Inspect `eefn permissions show` before deciding what to do. No automatic retry, restart or workload was sent."
                         );
                     }
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::StopReceipt { .. }
+                    }
+                ) {
+                    print!("{}", eefn::request_stop_receipt::render(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Grants {
+                        command: eefn::grants::GrantAction::StopReceipt { .. }
+                    }
+                ) {
+                    let inspection: eefn::grants::stop::inspection::Inspection =
+                        serde_json::from_value(value.clone())?;
+                    print!("{}", eefn::grants::stop::inspection::render(&inspection)?);
                 } else if let Commands::Jobs {
                     command: eefn::job_commands::JobCommand::Stop { id },
                 } = command
@@ -3451,6 +3473,29 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stop_inspection_cli_requires_exact_ids_and_has_no_mutation_options() {
+        for base in [
+            vec![
+                "eefn",
+                "requests",
+                "stop-receipt",
+                "job",
+                "--grant-id",
+                "grant",
+            ],
+            vec!["eefn", "grants", "stop-receipt", "--id", "grant"],
+        ] {
+            Args::try_parse_from(&base).unwrap();
+            for flag in ["--execute", "--retry", "--restart", "--force", "--stop"] {
+                let mut bad = base.clone();
+                bad.push(flag);
+                assert!(Args::try_parse_from(bad).is_err(), "{flag}");
+            }
+        }
+        assert!(Args::try_parse_from(["eefn", "requests", "stop-receipt", "job"]).is_err());
+        assert!(Args::try_parse_from(["eefn", "grants", "stop-receipt"]).is_err());
+    }
     #[test]
     fn python_policy_cli_has_bounded_limits_and_no_workload_authority() {
         let args = Args::try_parse_from([

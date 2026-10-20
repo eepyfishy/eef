@@ -93,6 +93,7 @@ impl SubmissionMailbox {
                 | "requests.draft_resolve"
                 | "requests.execute"
                 | "requests.receipt"
+                | "requests.stop_receipt"
                 | "requests.result"
                 | "requests.recover_result"
                 | "requests.abandon"

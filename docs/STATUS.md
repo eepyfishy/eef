@@ -3,6 +3,52 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: read-only retained stop inspection
+
+New origin-node and coordinator-owner requests stop-receipt commands inspect the
+original executor's durable intent without another stop, execution, replay,
+reconciliation or permission change. Executor-local grants stop-receipt reads an
+existing journal offline without initialization/repair. Current pinned TLS must
+authenticate the original issuer/node; the original historical session remains
+in the evidence even after reconnect. A separate grant_stop_read advertisement
+prevents unsupported-node fallback. Live notification history is not fabricated.
+See [commands, evidence semantics and limits](STOP-INSPECTION.md).
+
+Eleven focused inspection/CLI tests pass: six journal reader cases, three report
+and offline-service cases, and two command parsers. They exercise unchanged
+journal bytes and watcher state, missing/future/corrupt/oversized evidence, exact
+scope/origin/runtime/correlation, reopen, explicit optional fields, refusal of
+mutation flags and absence of file creation. The first focused build failed
+inside rustc with an allocation failure; the subsequent one-job build and tests
+passed. Two additional regressions cover bounded connection/retry future frames
+and fixed-code peer-refusal diagnostics that never echo arbitrary payloads.
+
+Native verification exposed a main-thread stack overflow (0xc00000fd) in finite
+audio after adding the optional handler. Separating that boxed handler and
+heap-owning endpoint sessions fixes the exercised path without enlarging OS
+stacks, changing permissions/deadlines or relaxing assertions. Temporary raw
+diagnostics were removed before final verification. Public local-pipelines-UTIKFN
+then passes all prior synthetic pipeline/audio cases, including exact paired
+stop. Public process-lifetime-TX7mne passes origin/owner/local stop inspection,
+wrong-origin refusal, original-session evidence after reconnect, unchanged plan
+and journal bytes, and offline inspection with the executor runtime absent,
+alongside all nine existing lifetime cases. These are isolated logical nodes,
+not physical two-PC or real microphone/camera/speaker acceptance.
+
+Existing python-policy-zu5yVa, python-bridge-IJhd5z,
+permission-commands-2DuR28, node-commands-fg458E,
+node-credentials-Hbju03 and model-downloads-gUrt9d also pass. Both final
+locked/offline workspace/all-target feature modes pass **886 tests plus one
+ignored each**: EEF 267 plus one ignored profiler, owner CLI 20, installer 6,
+EEFN 569 and node CLI 24. Logs are retained under
+.validation/stop-inspection-workspace-default-final.log and
+.validation/stop-inspection-workspace-headless-final.log. Final headless
+apps/examples build and all four evaluated native binary hashes match. Source
+boundary, format, JS syntax and diff checks pass; fixture apps/helpers are
+terminal. No installed/remote node, UI source, model, version, installer or
+update policy changed. Bootstrap, continuous work, stronger stop/resource and
+physical/release acceptance remain open. Stable v0.4.0 remains incomplete.
+
 ## Unreleased: command-driven exact grant stop requests
 
 Existing origin jobs stop and coordinator-owner control now save retained stop

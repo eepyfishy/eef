@@ -77,6 +77,11 @@ impl GrantAdvertisement {
 }
 #[derive(Debug, clap::Subcommand)]
 pub enum GrantAction {
+    /// Read retained stop intent locally; never send another stop or replay work.
+    StopReceipt {
+        #[arg(long)]
+        id: String,
+    },
     /// Inspect a consumed receipt locally; no connection or replay.
     Receipt {
         #[arg(long)]

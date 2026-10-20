@@ -23,6 +23,8 @@ use crate::session_output::send as write_session_frame;
 
 #[path = "client_peer.rs"]
 mod peer_delivery;
+#[path = "client_stop_inspection.rs"]
+mod stop_inspection;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SelectedModel {
@@ -217,6 +219,10 @@ impl NodeClient {
 
     pub fn with_status(mut self, status: Arc<std::sync::Mutex<Value>>) -> Self {
         self.status = status;
+        self.status.lock().expect("status")["grant_stop_read"] =
+            json!(crate::grants::stop::inspection::Advertisement::new(
+                self.grant_ledger.is_some() && self.tls_config.is_some()
+            ));
         self.status.lock().expect("status")["grant_stop"] =
             json!(crate::grants::stop::Advertisement::new(
                 self.grant_ledger.is_some() && self.tls_config.is_some()
@@ -327,7 +333,9 @@ impl NodeClient {
         let mut last = None;
         for endpoint in &self.config.endpoints {
             self.connection_status("checking", &endpoint.address, None, 0.0);
-            match self.serve_endpoint(endpoint).await {
+            // Keep the session's large protocol state out of caller/main-thread
+            // future frames as optional control handlers grow.
+            match Box::pin(self.serve_endpoint(endpoint)).await {
                 Ok(()) => return Ok(()),
                 Err(error) => {
                     self.connection_status(
@@ -378,6 +386,9 @@ impl NodeClient {
             "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE,
             "retained_results":self.grant_ledger.is_some() && self.tls_config.is_some()});
         message["grant_stop"] = json!(crate::grants::stop::Advertisement::new(
+            self.grant_ledger.is_some() && self.tls_config.is_some()
+        ));
+        message["grant_stop_read"] = json!(crate::grants::stop::inspection::Advertisement::new(
             self.grant_ledger.is_some() && self.tls_config.is_some()
         ));
         message
@@ -717,6 +728,17 @@ impl NodeClient {
                     };
                     let _ = reply.send(result);
                 }
+                continue;
+            }
+            if message["type"] == "inspect_grant_stop" {
+                Box::pin(self.dispatch_stop_inspection(
+                    message,
+                    &writer,
+                    &output_write_failed,
+                    &mut tasks,
+                    grant_issuer.as_deref(),
+                ))
+                .await?;
                 continue;
             }
             if message["type"] == "stop_grant" {
@@ -1195,6 +1217,13 @@ fn advertised_capabilities(configured: &[String], models: &[Value]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_future_frames_stay_bounded_without_growing_thread_stacks() {
+        let client = probe_client("127.0.0.1:1".into());
+        assert!(std::mem::size_of_val(&client.connect_once()) <= 4096);
+        assert!(std::mem::size_of_val(&client.run()) <= 8192);
+    }
 
     #[test]
     fn telemetry_refresh_excludes_process_inventory_and_preserves_specs() {

@@ -21,6 +21,18 @@ Plain stop output acknowledges intent, not physical completion. The shared backe
 contacts the exact issued grant(s) without permission/restart/work fallback.
 See [admission races, uncertainty and remaining stop scope](GRANT-STOP.md).
 
+## Read-only stop evidence (unreleased after alpha.6)
+
+    eefn requests stop-receipt JOB_ID --grant-id GRANT_UUID
+    eef requests stop-receipt JOB_ID --grant-id GRANT_UUID
+    eefn grants stop-receipt --id GRANT_UUID
+
+The origin node or local EEF owner can inspect the exact executor's retained
+stop intent, including after reconnect with the same pinned issuer. Executor-local
+inspection also works offline. No new stop, execution, reconciliation, repair or
+retry is requested. Missing evidence is not proof no stop/work was accepted;
+retained intent is not physical termination. See [contract](STOP-INSPECTION.md).
+
 ## Python bridge budgets (unreleased after alpha.6)
 
     eefn python show

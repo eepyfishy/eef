@@ -3,6 +3,8 @@
 use super::*;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::watch;
+#[path = "grant_stop_read.rs"]
+pub mod inspection;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -195,6 +197,15 @@ fn initialize(db: &Connection) -> Result<()> {
 fn read(db: &Connection, id: &str) -> Result<Option<Report>> {
     if !available(db)? {
         return Ok(None);
+    }
+    let invalid:i64=db.query_row("SELECT count(*) FROM execution_stop_requests WHERE grant_id=?1 AND receipt_preexisted NOT IN (0,1)",[id],|r|r.get(0))?;
+    if invalid != 0 {
+        bail!("Noncanonical stop evidence flag")
+    }
+    // Validate cardinality/byte bounds before materializing corrupt journal text.
+    let (count,size):(i64,Option<i64>)=db.query_row("SELECT count(*),max(length(CAST(grant_id AS BLOB))+length(CAST(grant_digest AS BLOB))+length(CAST(issuer_id AS BLOB))+length(CAST(session_id AS BLOB))+length(CAST(node_id AS BLOB))+length(CAST(job_id AS BLOB))+length(CAST(task_id AS BLOB))) FROM execution_stop_requests WHERE grant_id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?)))?;
+    if count > 1 || size.is_some_and(|n| !(1..=4096).contains(&n)) {
+        bail!("Damaged or oversized stop evidence")
     }
     Ok(db.query_row("SELECT grant_id,grant_digest,issuer_id,session_id,node_id,job_id,task_id,attempt,recorded_ms,receipt_preexisted FROM execution_stop_requests WHERE grant_id=?1", [id], |r| Ok(Report {
         schema_version:1,report_type:"grant_stop_receipt".into(),grant_id:r.get(0)?,grant_sha256:r.get(1)?,issuer_id:r.get(2)?,session_id:r.get(3)?,executor_node:r.get(4)?,job_id:r.get(5)?,task_id:r.get(6)?,attempt:r.get(7)?,recorded_at_ms:u64::try_from(r.get::<_,i64>(8)?).map_err(|_|rusqlite::Error::InvalidQuery)?,receipt_preexisted:r.get(9)?,reused:true,cancellation_signalled:false,persisted:true,stop_requested:true,execution_stopped:false,external_effects_stopped:false,execution_authorized:false,automatically_retried:false

@@ -385,6 +385,12 @@ pub enum PlanningAction {
         #[arg(long)]
         operation_id: Option<String>,
     },
+    /// Inspect retained stop intent for an issued attempt; never signal, replay or reconcile.
+    StopReceipt {
+        id: String,
+        #[arg(long)]
+        grant_id: String,
+    },
     /// Inspect one issued attempt's current authenticated executor receipt; never replay or reconcile.
     Receipt {
         id: String,

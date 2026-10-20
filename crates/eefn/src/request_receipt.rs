@@ -78,15 +78,7 @@ pub(crate) fn read_consumed(
     if issuer.is_some_and(|s| !digest(s)) {
         bail!("Invalid receipt issuer")
     }
-    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    let owner: String = db.query_row(
-        "SELECT node_id FROM execution_receipt_owner WHERE owner='node'",
-        [],
-        |r| r.get(0),
-    )?;
-    if !matches!(version, 1 | 2) || owner != node {
-        bail!("Receipt journal version/owner changed")
-    }
+    validate_owner(db, node)?;
     let (progress, join) = crate::pipeline_progress::projection(db)?;
     let sql = format!(
         "SELECT issuer_id,execution_receipts.grant_digest,job_id,task_id,attempt,state,accepted_ms,updated_ms,{progress} FROM execution_receipts{join} WHERE execution_receipts.grant_id=?1 AND (?2 IS NULL OR issuer_id=?2)"
@@ -133,6 +125,76 @@ pub(crate) fn read_consumed(
     value.validate()?;
     Ok(value)
 }
+pub(crate) fn validate_owner(db: &rusqlite::Connection, node: &str) -> Result<()> {
+    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    let owner: String = db.query_row(
+        "SELECT node_id FROM execution_receipt_owner WHERE owner='node'",
+        [],
+        |r| r.get(0),
+    )?;
+    if !matches!(version, 1 | 2) || owner != node {
+        bail!("Receipt journal version/owner changed")
+    }
+    Ok(())
+}
+
+/// Adapter selection only; every path remains a distinct read-only service.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QueryKind {
+    Receipt,
+    Result,
+    Stop,
+}
+impl QueryKind {
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Receipt => "receipt",
+            Self::Result => "result",
+            Self::Stop => "stop-receipt",
+        }
+    }
+    pub fn report_type(self) -> &'static str {
+        match self {
+            Self::Receipt => "request_receipt",
+            Self::Result => "request_result",
+            Self::Stop => "request_stop_receipt",
+        }
+    }
+    pub fn error_code(self) -> &'static str {
+        match self {
+            Self::Receipt => "receipt_unavailable",
+            Self::Result => "result_unavailable",
+            Self::Stop => "stop_receipt_unavailable",
+        }
+    }
+    pub fn confirmed(
+        self,
+        value: &Value,
+        cmd: &ReceiptCommand,
+        origin: Option<&str>,
+        runtime: Option<&str>,
+    ) -> bool {
+        match self {
+            Self::Receipt => confirmed(value, cmd, origin, runtime),
+            Self::Result => crate::request_result::confirmed(value, cmd, origin, runtime),
+            Self::Stop => crate::request_stop_receipt::confirmed(value, cmd, origin, runtime),
+        }
+    }
+    pub fn confirmed_node(
+        self,
+        value: &Value,
+        cmd: &ReceiptCommand,
+        node: &str,
+        request: &str,
+    ) -> bool {
+        match self {
+            Self::Receipt => confirmed_node(value, cmd, node, request),
+            Self::Result => crate::request_result::confirmed_node(value, cmd, node, request),
+            Self::Stop => crate::request_stop_receipt::confirmed_node(value, cmd, node, request),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WireRequest {

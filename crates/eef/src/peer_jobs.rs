@@ -280,6 +280,51 @@ struct ReadyObserver {
     journal: crate::request_execution::AttemptJournal,
     ready: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
+
+/// Diagnostic hints only. Never echo node payloads, transport diagnostics,
+/// credentials or arbitrary error strings into owner-visible logs.
+fn early_destination_reason(
+    result: &Result<serde_json::Value>,
+    grant: &ExecutionGrant,
+) -> &'static str {
+    match result {
+        Ok(value) => {
+            if let Ok(report) = serde_json::from_value::<GrantReport>(value["grant"].clone()) {
+                if report.confirms(grant) {
+                    return match report.error_code.as_deref() {
+                        Some("grant_identity_changed") => "grant_identity_changed",
+                        Some("node_grant_capacity_full") => "node_grant_capacity_full",
+                        Some("invalid_grant_scope") => "invalid_grant_scope",
+                        Some("local_policy_denied_or_changed") => "local_policy_denied_or_changed",
+                        Some("invalid_peer_definition") => "invalid_peer_definition",
+                        Some("peer_producer_or_route_changed") => "peer_producer_or_route_changed",
+                        Some("grant_lease_unavailable") => "grant_lease_unavailable",
+                        Some("grant_journal_unavailable") => "grant_journal_unavailable",
+                        _ => "destination_report_unconfirmed_readiness",
+                    };
+                }
+            }
+            match value["error_type"].as_str() {
+                Some("GrantDenied") => "destination_envelope_denied",
+                Some("NodeBusy") => "destination_busy",
+                _ => "destination_reply_unconfirmed",
+            }
+        }
+        Err(error) => match error.to_string().as_str() {
+            "Peer scope is no longer current" => "peer_scope_expired",
+            "Peer delivery grant differs" => "peer_delivery_scope_changed",
+            "Issuer grant clock or expiry invalid" => "issuer_clock_or_expiry_invalid",
+            "Issued monotonic lease already expired" => "issuer_lease_expired",
+            "Grant issuer/session changed before dispatch" => "grant_session_changed",
+            "Peer registration unavailable" => "peer_registration_unavailable",
+            "Peer content support changed before dispatch" => "peer_content_support_changed",
+            "Peer generation or route changed before dispatch" => {
+                "peer_generation_or_route_changed"
+            }
+            _ => "destination_transport_unconfirmed",
+        },
+    }
+}
 impl GrantObserver for ReadyObserver {
     fn record(&self, report: &GrantReport) -> Result<()> {
         self.journal.record(report)?;
@@ -474,7 +519,9 @@ impl crate::request_execution::Driver {
         tokio::select! {
             biased;
             _=tokio::time::sleep_until(deadline.into())=>bail!("Peer ready deadline expired; no source dispatch"),
-            result=&mut destination=>{let _=result;bail!("Destination ended before durable readiness; no source dispatch")},
+            result=&mut destination=>{
+                bail!("Destination ended before durable readiness; no source dispatch ({})",early_destination_reason(&result,&grants[1]))
+            },
             ack=accepted=>ack.context("Destination readiness unavailable")?,
         }
         let current = self.engine.store.get(id)?;

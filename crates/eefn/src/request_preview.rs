@@ -111,6 +111,12 @@ pub enum RequestAction {
         #[arg(long)]
         grant_id: String,
     },
+    /// Read retained stop intent through EEF; never stop, replay or reconcile.
+    StopReceipt {
+        id: String,
+        #[arg(long)]
+        grant_id: String,
+    },
     /// Explicitly read retained executor output through EEF; never replay or reconcile.
     Result {
         id: String,

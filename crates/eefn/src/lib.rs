@@ -68,6 +68,7 @@ pub mod request_recovery;
 pub mod request_resolution;
 pub mod request_response;
 pub mod request_result;
+pub mod request_stop_receipt;
 pub mod request_submission;
 pub mod server;
 pub mod service;

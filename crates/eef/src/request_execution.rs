@@ -947,6 +947,58 @@ impl crate::Runtime {
         }
         self.execute_reviewed(request.command, None).await
     }
+    pub async fn request_stop_receipt_command(
+        &self,
+        request: ReceiptInspectionRequest,
+    ) -> Result<Value> {
+        if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
+            bail!("Stop inspection schema/runtime changed")
+        }
+        self.inspect_request_stop_receipt(request.command, None)
+            .await
+    }
+    pub(crate) async fn inspect_request_stop_receipt(
+        &self,
+        command: eefn::request_stop_receipt::Command,
+        origin: Option<&str>,
+    ) -> Result<Value> {
+        let plan = self.engine.store.get(&command.id)?;
+        let attempt = receipt_attempt(&plan, &command, origin)?;
+        let inspection = self.node_server.inspect_grant_stop(&attempt.grant).await?;
+        let coordinator_attempt_state = serde_json::to_value(attempt.state)?
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let report = json!(eefn::request_stop_receipt::CoordinatorReport {
+            schema_version: 1,
+            report_type: "coordinator_request_stop_receipt".into(),
+            success: true,
+            runtime_id: self.instance_id.clone(),
+            id: plan.plan_id,
+            revision: plan.revision,
+            request_context: plan
+                .goal
+                .request_context
+                .context("Request context missing")?,
+            coordinator_attempt_state,
+            inspection,
+            read_only: true,
+            execution_requested: false,
+            stop_requested: false,
+            automatically_retried: false,
+            reconciled: false,
+            note: eefn::request_stop_receipt::note()
+        });
+        if !eefn::request_stop_receipt::confirmed(
+            &report,
+            &command,
+            origin,
+            Some(&self.instance_id),
+        ) {
+            bail!("Stop inspection failed confirmation")
+        }
+        Ok(report)
+    }
     pub async fn request_result_command(&self, request: ReceiptInspectionRequest) -> Result<Value> {
         if request.schema_version != 1 || request.expected_runtime_id != self.instance_id {
             bail!("Result query schema/runtime changed")

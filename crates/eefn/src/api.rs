@@ -164,6 +164,10 @@ impl NodeService {
             )
             .route("/api/commands/requests/result", post(request_result))
             .route(
+                "/api/commands/requests/stop-receipt",
+                post(request_stop_receipt).layer(axum::extract::DefaultBodyLimit::max(8192)),
+            )
+            .route(
                 "/api/commands/requests/recover-result",
                 post(request_recovery),
             )
@@ -338,6 +342,12 @@ async fn grant_result(
     Json(request): Json<crate::grants::ReceiptRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.grant_result(request)?))
+}
+async fn request_stop_receipt(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_stop_receipt::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.request_stop_receipt(request).await?))
 }
 async fn request_result(
     State(state): State<Arc<NodeService>>,

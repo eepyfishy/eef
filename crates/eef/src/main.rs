@@ -205,6 +205,25 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+
+    #[test]
+    fn stop_inspection_cli_requires_exact_ids_and_has_no_mutation_options() {
+        let base = vec![
+            "eef",
+            "requests",
+            "stop-receipt",
+            "job",
+            "--grant-id",
+            "grant",
+        ];
+        Args::try_parse_from(&base).unwrap();
+        for flag in ["--execute", "--retry", "--restart", "--force", "--stop"] {
+            let mut bad = base.clone();
+            bad.push(flag);
+            assert!(Args::try_parse_from(bad).is_err(), "{flag}");
+        }
+        assert!(Args::try_parse_from(["eef", "requests", "stop-receipt", "job"]).is_err());
+    }
     #[test]
     fn remote_python_policy_cli_preserves_explicit_budgets_without_execution_flags() {
         let args = Args::try_parse_from([
@@ -1309,12 +1328,18 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     "note":"Inspect the request and reuse only this exact receipt. No replay, continuation, renewal or fallback."})));
             }
             if let eef::request_planning::PlanningAction::Receipt { id, grant_id }
-            | eef::request_planning::PlanningAction::Result { id, grant_id } = command
+            | eef::request_planning::PlanningAction::Result { id, grant_id }
+            | eef::request_planning::PlanningAction::StopReceipt { id, grant_id } = command
             {
-                let result_query = matches!(
-                    command,
-                    eef::request_planning::PlanningAction::Result { .. }
-                );
+                let query = match command {
+                    eef::request_planning::PlanningAction::Result { .. } => {
+                        eefn::request_receipt::QueryKind::Result
+                    }
+                    eef::request_planning::PlanningAction::StopReceipt { .. } => {
+                        eefn::request_receipt::QueryKind::Stop
+                    }
+                    _ => eefn::request_receipt::QueryKind::Receipt,
+                };
                 let command = eefn::request_receipt::ReceiptCommand {
                     id: id.clone(),
                     grant_id: grant_id.clone(),
@@ -1324,14 +1349,10 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     command_response(client.get(format!("{base}/api/diagnostics")).send().await?)
                         .await?;
                 let runtime = state["runtime_id"].as_str().context("Missing runtime ID")?;
-                let path = if result_query { "result" } else { "receipt" };
+                let path = query.path();
                 let result = command_response(client.post(format!("{base}/api/commands/requests/{path}"))
                     .json(&json!({"schema_version":1,"expected_runtime_id":runtime,"command":command})).send().await?).await?;
-                if !(if result_query {
-                    eefn::request_result::confirmed(&result, &command, None, Some(runtime))
-                } else {
-                    eefn::request_receipt::confirmed(&result, &command, None, Some(runtime))
-                }) {
+                if !query.confirmed(&result, &command, None, Some(runtime)) {
                     bail!("Unconfirmed receipt inspection; no fallback or recovery")
                 }
                 return Ok(result);
@@ -1371,6 +1392,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 eef::request_planning::PlanningAction::Abandon { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Receipt { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Result { .. } => unreachable!(),
+                eef::request_planning::PlanningAction::StopReceipt { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Execute { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Inspect { id } => {
                     eef::request_planning::PlanningCommand::Inspect { id: id.clone() }

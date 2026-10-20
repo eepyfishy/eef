@@ -24,9 +24,9 @@ function start(exe,args,input,extra={}) {
  child.logs=()=>({out,err});child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r({code,out,err}));});children.push(child);
  if(input!==undefined){child.stdin.on('error',()=>{});child.stdin.end(input);}return child;
 }
-async function cli(name,config,args,input) {
+async function cli(name,config,args,input,expectedCode=0) {
  const child=start(join(bin,name+'.exe'),['--config',config,'--json',...args],input),timer=setTimeout(()=>child.kill(),30000);
- try{const r=await child.result;assert.equal(r.code,0,'CLI failed; private evidence '+scratch);return JSON.parse(r.out);}finally{clearTimeout(timer);}
+ try{const r=await child.result;assert.equal(r.code,expectedCode,'CLI failed; private evidence '+scratch);return JSON.parse(r.out);}finally{clearTimeout(timer);}
 }
 const owner=args=>cli('eef',coordinatorConfig,args),local=(node,args,input)=>cli('eefn',node.config,args,input);
 async function json(url,body,method) {const r=await fetch(url,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(10000)});const v=await r.json();assert(r.ok,'HTTP failed; private '+scratch);return v;}
@@ -47,7 +47,7 @@ try {
   Object.assign(value,{node_id:id,name:'Native process fixture '+label,connection_enabled:false,auto_local:false,local_pairing:false,endpoints:[],psk:'',heartbeat_seconds:0.5,
    dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:apiPort},update:{policy:'off'},models:{provider:'llamacpp',ollama:{base_url:`http://127.0.0.1:${tags.address().port}`,selected:[]},llamacpp:{slots:[]}}});
   if(label==='executor')Object.assign(value.permissions.process,{enabled:true,allowed_executables:[helper],max_seconds:30,max_output_bytes:65536});
-  await writeFile(config,JSON.stringify(value));start(join(bin,'eefn.exe'),['--config',config,'--no-ui']);const node={id,config,url:`http://127.0.0.1:${apiPort}`};nodes.push(node);
+  await writeFile(config,JSON.stringify(value));const nodeProcess=start(join(bin,'eefn.exe'),['--config',config,'--no-ui']);const node={id,config,process:nodeProcess,url:`http://127.0.0.1:${apiPort}`};nodes.push(node);
   await until(async()=>{try{return (await json(node.url+'/api/diagnostics')).connection_state==='paused';}catch{return false;}},'paused node');
   const invitation=await owner(['credentials','provision','--node',id,'--address',`127.0.0.1:${gateway}`]);await local(node,['connection','pair-stdin'],JSON.stringify(invitation));
  }
@@ -60,7 +60,7 @@ try {
  await owner(['discovery','grant','--requester',origin.id,'--target',executor.id]);
  runtime=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);
  await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==runtime&&(await json(eef+'/api/diagnostics')).registered_node_count===2,'apply directional discovery');
- const outcomes=[];
+ const outcomes=[];let retainedStop;
  for(const scenario of [{label:'complete',mode:'complete',seconds:20,grantMs:8000},{label:'nonzero-exit',mode:'fail',seconds:20,grantMs:8000},{label:'process-timeout',mode:'loop',seconds:2,grantMs:8000},{label:'grant-deadline',mode:'loop',seconds:20,grantMs:3000},{label:'origin-stop',mode:'loop',seconds:20,grantMs:10000},{label:'coordinator-stop',mode:'loop',seconds:20,grantMs:10000},{label:'permission-revoked',mode:'loop',seconds:20,grantMs:10000},{label:'node-restart',mode:'loop',seconds:20,grantMs:10000},{label:'coordinator-restart',mode:'loop',seconds:20,grantMs:10000}]) {
   phase='scenario-'+scenario.label;
   const dir=join(scratch,scenario.label);await mkdir(dir);
@@ -117,6 +117,45 @@ try {
   assert.equal(saved.execution.attempts[0].grant.executor_node,executor.id);
   assert.equal(saved.execution.attempts[0].grant.request_context.origin_node,origin.id);
   assert.deepEqual(saved.execution.attempts[0].grant.params,{program:helper,args:[scenario.mode,dir],timeout_seconds:scenario.seconds});
+  // These public read commands must not issue another stop, reconcile the
+  // coordinator plan, replay work or rewrite the executor's receipt journal.
+  const retainedGrant=saved.execution.attempts[0].grant;
+  async function inspectStopEvidence() {
+   const planBefore=await review.inspect(plan.id),journal=executor.config+'.grant-receipts.sqlite3',before=await readFile(journal);
+   const args=['requests','stop-receipt',plan.id,'--grant-id',retainedGrant.grant_id];
+   const source=await local(origin,args),owned=await owner(args),offline=await local(executor,['grants','stop-receipt','--id',retainedGrant.grant_id]);
+   assert.equal(source.success,true);assert.equal(owned.success,true);
+   const inspection=source.result.inspection;
+   assert.deepEqual(owned.inspection,inspection);
+   if(inspection.evidence)assert.deepEqual(offline,inspection);
+   else {
+    assert.equal(offline.scope,null,'missing local evidence cannot manufacture the historical scope');
+    assert.deepEqual({...offline,scope:inspection.scope},inspection);
+   }
+   assert.equal(inspection.availability,scenario.label.endsWith('-stop')?'retained':'missing');
+   assert.equal(inspection.scope.session_id,retainedGrant.session_id);
+   for(const value of [source,source.result,owned,inspection,offline]) {
+    assert.equal(value.read_only,true);assert.equal(value.execution_requested,false);
+    assert.equal(value.stop_requested,false);assert.equal(value.automatically_retried,false);assert.equal(value.reconciled,false);
+   }
+   if(inspection.evidence) {
+    assert.equal(inspection.evidence.stop_requested,true);assert.equal(inspection.evidence.execution_stopped,false);
+    assert.equal(inspection.evidence.external_effects_stopped,false);
+    assert.equal(Object.hasOwn(inspection.evidence,'cancellation_signalled'),false,'historical reads cannot invent notification history');
+   }
+   const wrongOrigin=await cli('eefn',executor.config,args,undefined,1);assert.equal(wrongOrigin.success,false);
+   assert.equal(wrongOrigin.error_code,'stop_receipt_unavailable');
+   assert.deepEqual(await review.inspect(plan.id),planBefore,'inspection cannot reconcile or revise tracking');
+   assert.deepEqual(await readFile(journal),before,'inspection cannot write, repair or signal through the journal');
+  }
+  await inspectStopEvidence();
+  if(scenario.label==='origin-stop') {
+   const before=(await json(executor.url+'/api/diagnostics')).runtime_id;await local(executor,['restart']);
+   await until(async()=>(await json(executor.url+'/api/diagnostics')).runtime_id!==before&&(await json(eef+'/api/diagnostics')).registered_node_count===2,'read original stop evidence after executor reconnect');
+   await inspectStopEvidence();
+   retainedStop=retainedGrant;
+   outcomes.push({stop_inspection_after_reconnect:true,original_session_preserved:true,no_journal_or_tracking_writes:true});
+  }
   const reused=await review.start(command);assert.equal(reused.automatically_retried,false);assert.equal((await review.inspect(plan.id)).execution.attempts.length,1);
   assert.equal(await readFile(join(dir,'pids.json'),'utf8'),identities,'receipt inspection cannot replace native identities');
   outcomes.push({scenario:scenario.label,root_and_child_exit_observed:true,creation_verified_held_handles:true,observed_after_ms:proof.observed_after_ms,grant_state:report.state,grant_success:report.success,job_status:terminal.status,error_code:report.error_code,exit_code:report.data?.exit_code??null,one_attempt:true,no_replay:true});
@@ -127,6 +166,15 @@ try {
   }
  }
  assert.equal((await json(origin.url+'/api/config')).config.permissions.process.enabled,false,'origin permission never widened');
+ // Read the retained record in a fresh CLI process with the executor runtime
+ // genuinely absent. No dashboard, coordinator connection or runtime startup.
+ assert(retainedStop);executor.process.kill();await executor.process.result;
+ const offlineJournal=executor.config+'.grant-receipts.sqlite3',offlineBefore=await readFile(offlineJournal);
+ const offline=await local(executor,['grants','stop-receipt','--id',retainedStop.grant_id]);
+ assert.equal(offline.availability,'retained');assert.equal(offline.scope.session_id,retainedStop.session_id);
+ assert.equal(offline.read_only,true);assert.equal(offline.stop_requested,false);
+ assert.deepEqual(await readFile(offlineJournal),offlineBefore);
+ outcomes.push({offline_executor_runtime_absent:true,retained_intent_read:true,no_journal_write:true});
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,typed_file_free_process_authoring:true,source_receipt_reuse_no_execution:true,no_models:true,no_ui_controller:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,separate_origin_and_executor:true,outcomes},null,2));
  phase='passed';
  console.log('Public process lifetime validation passed: '+scratch);

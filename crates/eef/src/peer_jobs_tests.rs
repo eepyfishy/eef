@@ -1,4 +1,54 @@
 use super::*;
+
+#[test]
+fn early_peer_refusal_diagnostics_are_fixed_hints_not_payloads_or_readiness_proof() {
+    let f = Fixture::new(4 * 1024 * 1024);
+    let (grants, _) = f.prepare();
+    let g = grants[1].clone();
+    let denied = GrantReport::new(
+        &g,
+        ReceiptState::Rejected,
+        serde_json::Value::Null,
+        Some("local_policy_denied_or_changed"),
+    );
+    assert_eq!(
+        early_destination_reason(&Ok(json!({"grant":denied})), &g),
+        "local_policy_denied_or_changed"
+    );
+    let private = GrantReport::new(
+        &g,
+        ReceiptState::Rejected,
+        serde_json::Value::Null,
+        Some("PRIVATE_DIAGNOSTIC_MUST_NOT_ECHO"),
+    );
+    assert_eq!(
+        early_destination_reason(&Ok(json!({"grant":private})), &g),
+        "destination_report_unconfirmed_readiness"
+    );
+    assert_eq!(
+        early_destination_reason(
+            &Err(anyhow::anyhow!(
+                "Peer generation or route changed before dispatch"
+            )),
+            &g
+        ),
+        "peer_generation_or_route_changed"
+    );
+    assert_eq!(
+        early_destination_reason(
+            &Err(anyhow::anyhow!("PRIVATE_TRANSPORT_DETAIL_MUST_NOT_ECHO")),
+            &g
+        ),
+        "destination_transport_unconfirmed"
+    );
+    assert_eq!(
+        early_destination_reason(
+            &Ok(json!({"error_type":"PRIVATE_REPLY_MUST_NOT_ECHO","data":"secret"})),
+            &g
+        ),
+        "destination_reply_unconfirmed"
+    );
+}
 use crate::{
     event::EventBus,
     jobs::JobStore,

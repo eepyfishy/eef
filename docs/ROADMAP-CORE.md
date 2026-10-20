@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The subsequent [stop inspection commands](STOP-INSPECTION.md) separate historical
+evidence from mutating cancellation. They read the original executor's retained
+intent after reconnect with the same pinned issuer, without signalling work,
+reconciling coordinator tracking or inventing physical-stop proof. Offline
+executor inspection does not initialize or repair journals. This is an
+uncertainty/diagnostic increment, not continuous-workload or release completion.
+Both full feature modes pass 886 tests plus one ignored each and eight public
+native suites pass. A finite-audio main-thread stack regression exposed during
+verification was fixed by bounding the connection future frames; no OS stack,
+permission or deadline increase was used. Physical/release gates remain open.
+
 Existing jobs stop now has an [exact grant stop path](GRANT-STOP.md): durable
 owner/origin intent, backend wakeup, one saved send attempt per scope, concurrent
 peer targeting, node pre-admission consumption and accepted-grant cancellation.

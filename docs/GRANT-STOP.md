@@ -76,6 +76,11 @@ by restart. Inspect jobs and original grant receipt/result evidence. Missing or
 deleted history is not proof that a stop/work request was never accepted, and a
 different unreplicated coordinator database cannot supply global history.
 
+The subsequent [read-only stop inspection commands](STOP-INSPECTION.md) inspect
+retained intent without retransmitting a stop or changing coordinator tracking.
+Historical inspection can use a new session for the same pinned issuer and node;
+mutating stop still requires the original session. No query proves termination.
+
 This command currently targets actively tracked work. An already-interrupted
 unknown job remains an inspection/recovery case, not permission to resume work
 or stop a replacement session. Restart never silently rearms a saved delivery.

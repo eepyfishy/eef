@@ -840,6 +840,17 @@ impl Runtime {
                     )),
                 }
             }
+            "requests.stop_receipt" => {
+                match serde_json::from_value::<eefn::request_stop_receipt::Command>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(command) => {
+                        self.inspect_request_stop_receipt(command, Some(context.origin_node()))
+                            .await
+                    }
+                    Err(_) => Err(anyhow::anyhow!("Invalid stop inspection command")),
+                }
+            }
             "requests.receipt" => {
                 match serde_json::from_value::<eefn::request_receipt::ReceiptCommand>(
                     message["payload"].clone(),
