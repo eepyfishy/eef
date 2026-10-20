@@ -1007,3 +1007,18 @@ release-completion claim follows this tool-only change.
 No installed/physical node, UI, model default, shared-service setting, release or
 stable update feed changed. Default model quality, automatic setup, physical
 two-PC and remaining v0.4.0 acceptance gates remain open.
+
+## Description-only prompt trial (2026-10-20; rejected)
+
+Removing filled answer illustrations did not solve the current CPU interpreter's
+semantic quality gap. A fresh original-v1 production baseline matches 14/20;
+the description-only candidate matches 4/20 and loses one required question,
+despite both structurally accepting 20/20 and the candidate eliminating literal
+instruction-goal copies. It fails the predeclared early gate. Generalization and
+shared-Ollama candidate runs are not needed to reject it.
+
+The production prompt is restored byte-for-byte; a new run again matches 14/20
+with identical prompt/messages/schema reference hashes and evaluation context.
+Generation-reference, frozen-rubric and public preview checks pass. No default,
+model selection, installed node or release changes. See [exact criteria, evidence
+and build/reference limitations](experiments/interpreter-description-only.md).

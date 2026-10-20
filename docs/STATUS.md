@@ -3,6 +3,30 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Interpreter experiment: description-only prompt rejected
+
+Fresh CPU original-v1 runs interpreter-quality-KmZw8R and the restored
+interpreter-quality-P3W8pL both accept 20/20 proposals but match only 14/20 labels,
+reproducing the recorded baseline with the existing verified 2B artifact/runtime.
+The description-only candidate removes filled answer illustrations without
+changing the generation schema or frozen cases. Candidate qCAAG3 accepts 20/20
+but matches only 4/20 and loses a required destructive-request clarification.
+Fewer unnecessary questions (six to three) and literal instruction-goal copies
+(twelve to zero) do not compensate. It is rejected at the predeclared CPU gate;
+generalization/shared-Ollama candidate runs are not performed.
+
+Production source is restored byte-for-byte with unchanged limits and model
+policy. Original/restored prompt/messages/schema hashes and evaluation context
+match. Rebuilt Windows executables receive fresh PE timestamps; old binary
+hashes are not reused as proof of new artifacts. Reference-capture-wzl3Ow,
+frozen rubric and request-preview-ZUvdrX tests pass; source boundary, format and
+diff checks pass. No full workspace rerun is claimed for this documentation-only
+checkpoint. Fixture nodes/model processes are terminal. No installed/physical
+node, model default/selection, shared provider, UI, version, installer or update
+policy changed. See [criteria, results and limitations](experiments/interpreter-description-only.md).
+Reliable/default interpretation, automatic bootstrap and stable-release gates
+remain open; structural acceptance alone is not model quality.
+
 ## Unreleased: read-only retained stop inspection
 
 New origin-node and coordinator-owner requests stop-receipt commands inspect the
