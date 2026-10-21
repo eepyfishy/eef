@@ -1802,13 +1802,40 @@ impl NodeEngine {
 
     async fn node_update(&self, action: &str, params: Value) -> Result<Value> {
         if action == "status" {
-            let selected = updater::installed_version(&self.install_dir)?;
-            return Ok(
-                json!({"schema_version":1,"report_type":"update_status","success":true,
-                "current_version":crate::VERSION,"installed_version":selected,
-                "bundle_selection":selected.as_deref().map(|v| crate::bundle_selection::read(&self.install_dir, v)).transpose()?.flatten(),
-                "restart_required":updater::restart_required(&self.install_dir, crate::VERSION, "eefn")?}),
-            );
+            let id = match params.get("operation_id") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(id)) => Some(id.as_str()),
+                _ => bail!("repair operation_id must be a UUID string"),
+            };
+            if let Some(id) = id {
+                crate::package_repair::validate_operation_id(id)?;
+            }
+            let receipts = crate::package_repair::receipt_status(&self.install_dir, "eefn", id);
+            let mut report = json!({"schema_version":1,"report_type":"update_status","success":true,
+                "current_version":crate::VERSION,"installed_version":null,"bundle_selection":null,
+                "restart_required":null,"selection_error":false,"repair_receipts":receipts});
+            let selection = (|| -> Result<()> {
+                let selected = updater::installed_version(&self.install_dir)?;
+                report["installed_version"] = json!(selected);
+                report["bundle_selection"] = json!(
+                    selected
+                        .as_deref()
+                        .map(|v| crate::bundle_selection::read(&self.install_dir, v))
+                        .transpose()?
+                        .flatten()
+                );
+                report["restart_required"] = json!(updater::restart_required(
+                    &self.install_dir,
+                    crate::VERSION,
+                    "eefn"
+                )?);
+                Ok(())
+            })();
+            if selection.is_err() {
+                report["success"] = json!(false);
+                report["selection_error"] = json!(true);
+            }
+            return Ok(report);
         }
         if matches!(action, "apply" | "apply_explicit" | "repair_explicit")
             && !self.policy.remote_updates
@@ -2381,7 +2408,17 @@ mod tests {
         assert_eq!(status["installed_version"], "99.0.0-alpha.1");
         assert_eq!(status["restart_required"], true);
         std::fs::write(dir.path().join("current.txt"), "../invalid").unwrap();
-        assert!(engine.node_update("status", json!({})).await.is_err());
+        let damaged = engine.node_update("status", json!({})).await.unwrap();
+        assert_eq!(damaged["success"], false);
+        assert_eq!(damaged["selection_error"], true);
+        assert_eq!(damaged["restart_required"], Value::Null);
+        assert_eq!(damaged["repair_receipts"]["available"], true);
+        assert!(
+            engine
+                .node_update("status", json!({"operation_id":17}))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

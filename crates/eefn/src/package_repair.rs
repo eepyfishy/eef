@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::bundle_selection::{self, BundleSelection};
-use crate::updater::{self, UpdateApplied, UpdateManifest};
+#[cfg(test)]
+use crate::updater::UpdateManifest;
+use crate::updater::{self, UpdateApplied};
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct RepairArgs {
@@ -43,6 +45,9 @@ pub struct RepairArgs {
     /// Inspect package selection without a running service or configuration file.
     #[arg(long, conflicts_with = "allow_prerelease")]
     pub status: bool,
+    /// Stable identity for admission or read-only receipt lookup; never replayed.
+    #[arg(long, conflicts_with = "rollback")]
+    pub operation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -62,9 +67,7 @@ impl RepairRequest {
         if self.schema_version != 1 {
             bail!("unsupported package repair schema")
         }
-        if uuid::Uuid::parse_str(&self.request_id)?.to_string() != self.request_id {
-            bail!("repair request ID must be a canonical UUID")
-        }
+        crate::repair_receipts::validate_id(&self.request_id)?;
         updater::validate_artifact(
             &self.version,
             &self.url,
@@ -92,18 +95,16 @@ impl From<&updater::ExplicitUpdate> for RepairRequest {
 pub async fn execute_local(args: &RepairArgs, program: &str) -> Result<serde_json::Value> {
     let executable = std::env::current_exe()?;
     let install = updater::installation_root(&executable)?;
+    if let Some(id) = &args.operation_id {
+        crate::repair_receipts::validate_id(id)?;
+    }
     if args.status {
-        let selected = updater::installed_version(&install)?;
-        let generation = selected
-            .as_deref()
-            .map(|version| bundle_selection::read(&install, version))
-            .transpose()?
-            .flatten();
-        return Ok(
-            serde_json::json!({"schema_version":1,"report_type":"package_status","success":true,
-            "current_version":crate::VERSION,"installed_version":selected,"bundle_selection":generation,
-            "restart_required":updater::restart_required(&install, crate::VERSION, program)?,
-            "note":"Read-only package selection. A selected package is not proof that its dependencies work. No download, repair or restart was requested."}),
+        return inspect(
+            &install,
+            crate::VERSION,
+            program,
+            &executable,
+            args.operation_id.as_deref(),
         );
     }
     if args.rollback {
@@ -116,14 +117,17 @@ pub async fn execute_local(args: &RepairArgs, program: &str) -> Result<serde_jso
     }
     let request = RepairRequest {
         schema_version: 1,
-        request_id: uuid::Uuid::new_v4().to_string(),
+        request_id: args
+            .operation_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         version: crate::VERSION.into(),
         url: args.url.clone().context("repair requires --url")?,
         sha256: args.sha256.clone().context("repair requires --sha256")?,
         size_bytes: args.size_bytes.context("repair requires --size-bytes")?,
         allow_prerelease: args.allow_prerelease,
     };
-    let applied = apply_for(
+    let result = apply_for(
         &request,
         &install,
         crate::VERSION,
@@ -132,12 +136,196 @@ pub async fn execute_local(args: &RepairArgs, program: &str) -> Result<serde_jso
         Duration::from_secs(120),
         || Ok(()),
     )
-    .await?;
-    Ok(
-        serde_json::json!({"schema_version":1,"report_type":"explicit_repair","success":true,
-        "request_id":request.request_id,"applied":applied,"automatic_policy_changed":false,
-        "note":"Verified package selected. Restart the application explicitly; ordinary restart also applies other pending settings. Old files were preserved. No automatic retry or restart."}),
-    )
+    .await;
+    let receipts = receipt_status(&install, program, Some(&request.request_id));
+    let attempt = receipts["attempts"]
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned();
+    match result {
+        Ok(applied) => Ok(
+            serde_json::json!({"schema_version":1,"report_type":"explicit_repair","success":true,
+            "request_id":request.request_id,"applied":applied,"attempt":attempt,"repair_receipts":receipts,
+            "outcome_unknown":false,"automatic_policy_changed":false,
+            "note":"Verified package selected, not health checked. Restart explicitly; ordinary restart also applies all other pending settings. No automatic retry or restart."}),
+        ),
+        Err(_) => Ok(
+            serde_json::json!({"schema_version":1,"report_type":"explicit_repair","success":false,
+            "request_id":request.request_id,"attempt":attempt,"repair_receipts":receipts,
+            "outcome_unknown":receipts["available"]!=true || attempt.as_ref().is_some_and(|a|
+                a["outcome_unresolved"]==true || a["selection_outcome_unknown"]==true ||
+                (a["package_may_be_staged"]==true && a["receipt"]["outcome"]!="selected")),
+            "automatic_policy_changed":false,"error_code":"repair_not_confirmed",
+            "error":"Repair not confirmed. Inspect repair --status with this operation ID. Never assume an error means no files were staged or selected; no automatic retry or restart."}),
+        ),
+    }
+}
+
+pub(crate) fn receipt_status(
+    install: &Path,
+    program: &str,
+    operation_id: Option<&str>,
+) -> serde_json::Value {
+    crate::repair_receipts::status(install, program, operation_id).unwrap_or_else(|_|serde_json::json!({
+        "schema_version":1,"available":false,"operation_id":operation_id,"attempts":null,
+        "error_code":"repair_receipts_unavailable",
+        "note":"Repair evidence is unavailable or damaged; retained without reset, replay or overwrite."}))
+}
+
+pub fn validate_operation_id(id: &str) -> Result<()> {
+    crate::repair_receipts::validate_id(id)
+}
+
+/// Offline selection and evidence only. It deliberately does not claim that a
+/// root bootstrap is the background service or that a service needs restart.
+pub fn inspect(
+    install: &Path,
+    current_version: &str,
+    program: &str,
+    running_executable: &Path,
+    operation_id: Option<&str>,
+) -> Result<serde_json::Value> {
+    if let Some(id) = operation_id {
+        crate::repair_receipts::validate_id(id)?;
+    }
+    updater::validate_program(program)?;
+    let receipts = receipt_status(install, program, operation_id);
+    let mut report = serde_json::json!({"schema_version":2,"report_type":"package_status","success":true,
+        "scope":"invoked_executable","invoked_version":current_version,"running_service_inspected":false,
+        "application_restart_required":null,"handoff_required_for_invoked_executable":null,
+        "installed_version":null,"bundle_selection":null,"selection_error":false,
+        "repair_receipts":receipts,"issues":[],
+        "note":"Read-only package evidence. Handoff compares this executable, not a background runtime. Selected is not running or healthy. No download, recovery, replay, repair or restart."});
+    let selection = (|| -> Result<_> {
+        let version = updater::installed_version(install)?;
+        report["installed_version"] = serde_json::json!(version);
+        let generation = version
+            .as_deref()
+            .map(|v| bundle_selection::read(install, v))
+            .transpose()?
+            .flatten();
+        report["bundle_selection"] = serde_json::json!(generation);
+        let pending = bundle_selection::pending_executable(
+            install,
+            current_version,
+            program,
+            running_executable,
+        )?
+        .is_some();
+        Ok((version, generation, pending))
+    })();
+    let mut issues = Vec::new();
+    match selection {
+        Ok((version, generation, pending)) => {
+            report["installed_version"] = serde_json::json!(version);
+            report["bundle_selection"] = serde_json::json!(generation);
+            report["handoff_required_for_invoked_executable"] = serde_json::json!(pending);
+        }
+        Err(_) => {
+            report["selection_error"] = serde_json::json!(true);
+            issues.push("package_selection_unavailable");
+        }
+    }
+    if report["repair_receipts"]["available"] != true {
+        issues.push("repair_receipts_unavailable");
+    }
+    report["success"] = serde_json::json!(issues.is_empty());
+    report["issues"] = serde_json::json!(issues);
+    Ok(report)
+}
+
+pub fn render(report: &serde_json::Value) -> Result<String> {
+    use std::fmt::Write;
+    let mut text = String::new();
+    match report["report_type"].as_str() {
+        Some("package_status") => {
+            writeln!(
+                text,
+                "Selected package: {}",
+                report["installed_version"]
+                    .as_str()
+                    .unwrap_or("none or unavailable")
+            )?;
+            writeln!(
+                text,
+                "Handoff pending for this executable: {}",
+                match report["handoff_required_for_invoked_executable"].as_bool() {
+                    Some(true) => "yes",
+                    Some(false) => "no",
+                    None => "unknown",
+                }
+            )?;
+            writeln!(text, "Running service health: not inspected.")?;
+            if let Some(attempts) = report["repair_receipts"]["attempts"].as_array() {
+                if attempts.is_empty() {
+                    writeln!(text, "No matching repair receipt.")?;
+                }
+                for attempt in attempts {
+                    writeln!(
+                        text,
+                        "Retained repair {}: {} / {}{}",
+                        attempt["receipt"]["request_id"]
+                            .as_str()
+                            .unwrap_or("unknown"),
+                        attempt["receipt"]["step"].as_str().unwrap_or("unknown"),
+                        attempt["receipt"]["outcome"].as_str().unwrap_or("unknown"),
+                        if attempt["interrupted"] == true {
+                            " (interrupted; never resumed)"
+                        } else {
+                            ""
+                        }
+                    )?;
+                    writeln!(
+                        text,
+                        "  Selected now: {}. Recorded outcome is historical, not runtime health.",
+                        match attempt["selected_now"].as_bool() {
+                            Some(true) => "yes",
+                            Some(false) => "no",
+                            None => "unknown",
+                        }
+                    )?;
+                    if attempt["selection_outcome_unknown"] == true {
+                        writeln!(
+                            text,
+                            "  Selection outcome is uncertain; inspect the retained bundle before a new operation."
+                        )?;
+                    }
+                }
+            } else {
+                writeln!(text, "Repair receipts unavailable; retained without reset.")?;
+            }
+            if report["selection_error"] == true {
+                writeln!(
+                    text,
+                    "Package selection needs attention; receipt evidence above is still independent."
+                )?;
+            }
+            writeln!(text, "Read-only. No automatic retry, repair or restart.")?;
+        }
+        Some("explicit_repair") => {
+            let id = report["request_id"]
+                .as_str()
+                .context("missing repair operation ID")?;
+            writeln!(text, "Repair operation: {id}")?;
+            writeln!(
+                text,
+                "{}",
+                if report["success"] == true {
+                    "Package selected, not health checked. Restart explicitly; all other pending settings also apply."
+                } else {
+                    "Repair not confirmed. An error does not prove that no files were staged or selected."
+                }
+            )?;
+            writeln!(text, "Inspect: repair --status --operation-id {id}")?;
+            writeln!(text, "No automatic retry or restart.")?;
+        }
+        Some("package_rollback") => writeln!(
+            text,
+            "Previous bundle selected, not started. Restart explicitly; all pending settings also apply. No files were deleted."
+        )?,
+        _ => bail!("unknown package report type"),
+    }
+    Ok(text)
 }
 
 pub async fn apply_for<G>(
@@ -157,15 +345,8 @@ pub async fn apply_for<G>(
     if !cfg!(windows) {
         bail!("verified package repair currently supports Windows distribution packages only")
     }
-    let manifest = UpdateManifest {
-        version: request.version.clone(),
-        url: request.url.clone(),
-        sha256: request.sha256.clone(),
-        size_bytes: Some(request.size_bytes),
-    };
-    install_verified(
-        &manifest,
-        &request.request_id,
+    install_request(
+        request,
         install,
         current_version,
         running_executable,
@@ -178,9 +359,8 @@ pub async fn apply_for<G>(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn install_verified<G>(
-    manifest: &UpdateManifest,
-    request_id: &str,
+async fn install_request<G>(
+    request: &RepairRequest,
     install: &Path,
     current_version: &str,
     running_executable: &Path,
@@ -190,13 +370,13 @@ async fn install_verified<G>(
     authorize: impl Fn() -> Result<G>,
 ) -> Result<UpdateApplied> {
     updater::validate_program(program)?;
-    if manifest.version != current_version {
+    if request.version != current_version {
         bail!("repair must match the running version exactly")
     }
     let install = install.canonicalize()?;
     let previous_slot =
         bundle_selection::running_slot(&install, current_version, running_executable)?;
-    let slot = bundle_selection::repair_slot(current_version, request_id)?;
+    let slot = bundle_selection::repair_slot(current_version, &request.request_id)?;
     let lock = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -222,14 +402,21 @@ async fn install_verified<G>(
     if destination.exists() {
         bail!("repair request already staged; inspect selection before retrying")
     }
-    let size = manifest
-        .size_bytes
-        .context("repair requires exact package size")?;
-    let bytes =
-        updater::fetch_with_policy(&manifest.url, timeout, usize::try_from(size)?, https_only)
-            .await?;
+    let mut attempt = crate::repair_receipts::Attempt::begin(
+        &install,
+        program,
+        request,
+        &updater::sha256_file(running_executable)?,
+        &previous_slot,
+    )?;
+    let result = async {
+    use crate::repair_receipts::Step;
+    attempt.step(Step::Downloading)?;
+    let size = request.size_bytes;
+    let bytes = updater::fetch_with_policy(&request.url, timeout, usize::try_from(size)?, https_only).await?;
+    attempt.step(Step::Verifying)?;
     if bytes.len() as u64 != size
-        || !hex::encode(Sha256::digest(&bytes)).eq_ignore_ascii_case(&manifest.sha256)
+        || !hex::encode(Sha256::digest(&bytes)).eq_ignore_ascii_case(&request.sha256)
     {
         bail!("repair package size or SHA-256 mismatch")
     }
@@ -256,7 +443,9 @@ async fn install_verified<G>(
     verify_inventory(bundle, program)?;
     let _authorization_guard = authorize()?;
     // Nothing in the running bundle, config or model storage is overwritten.
+    attempt.step(Step::Staging)?;
     fs::rename(bundle, &destination)?;
+    attempt.step(Step::Staged)?;
     let selection = BundleSelection {
         schema_version: 1,
         version: current_version.into(),
@@ -265,6 +454,7 @@ async fn install_verified<G>(
     };
     // On a flat first install, publish the generation before current.txt. If the
     // second write fails the old flat program still runs; the orphan is retained.
+    attempt.step(Step::Selecting)?;
     bundle_selection::write(&install, &selection)?;
     if selected.is_none() {
         crate::atomic_file::write(
@@ -272,12 +462,55 @@ async fn install_verified<G>(
             format!("{current_version}\n").as_bytes(),
         )?;
     }
+    attempt.step(Step::Selected)?;
     Ok(UpdateApplied {
         new_version: current_version.into(),
         previous_version: selected,
         restart: true,
-        install_dir: install,
+        install_dir: install.clone(),
     })
+    }.await;
+    if result.is_err() {
+        let _ = attempt.failed();
+    }
+    result
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn install_verified<G>(
+    manifest: &UpdateManifest,
+    request_id: &str,
+    install: &Path,
+    current_version: &str,
+    running_executable: &Path,
+    program: &str,
+    timeout: Duration,
+    https_only: bool,
+    authorize: impl Fn() -> Result<G>,
+) -> Result<UpdateApplied> {
+    let request = RepairRequest {
+        schema_version: 1,
+        request_id: request_id.into(),
+        version: manifest.version.clone(),
+        url: manifest.url.clone(),
+        sha256: manifest.sha256.clone(),
+        size_bytes: manifest
+            .size_bytes
+            .context("repair requires exact package size")?,
+        allow_prerelease: manifest.version.contains('-'),
+    };
+    install_request(
+        &request,
+        install,
+        current_version,
+        running_executable,
+        program,
+        timeout,
+        https_only,
+        authorize,
+    )
+    .await
 }
 
 fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
@@ -568,6 +801,10 @@ mod tests {
                 .unwrap();
                 assert!(applied.restart);
                 assert_eq!(applied.new_version, VERSION);
+                let receipt =
+                    crate::repair_receipts::status(root, program, Some(&request)).unwrap();
+                assert_eq!(receipt["attempts"][0]["receipt"]["outcome"], "selected");
+                assert_eq!(receipt["attempts"][0]["selected_now"], true);
                 let selection = bundle_selection::read(root, VERSION).unwrap().unwrap();
                 assert_eq!(selection.previous_slot.as_deref(), Some(old_slot.as_str()));
                 let selected =
@@ -602,6 +839,9 @@ mod tests {
                     .contains("pending")
                 );
                 assert_eq!(updater::rollback_for(root, program).unwrap(), VERSION);
+                let after = crate::repair_receipts::status(root, program, Some(&request)).unwrap();
+                assert_eq!(after["attempts"][0]["receipt"]["outcome"], "selected");
+                assert_eq!(after["attempts"][0]["selected_now"], false);
                 assert!(
                     bundle_selection::pending_executable(root, VERSION, program, &executable)
                         .unwrap()
@@ -693,6 +933,71 @@ mod tests {
                 "owned staging cleaned on failure"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn package_repair_failed_verification_is_durable_and_cannot_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let (executable, mut manifest) = fixture(root, "eefn", true, "valid");
+        manifest.sha256 = "0".repeat(64);
+        let id = uuid::Uuid::new_v4().to_string();
+        assert!(
+            install_verified(
+                &manifest,
+                &id,
+                root,
+                VERSION,
+                &executable,
+                "eefn",
+                Duration::from_secs(1),
+                false,
+                || Ok(())
+            )
+            .await
+            .is_err()
+        );
+        let report = crate::repair_receipts::status(root, "eefn", Some(&id)).unwrap();
+        assert_eq!(report["attempts"][0]["receipt"]["outcome"], "failed");
+        assert_eq!(report["attempts"][0]["receipt"]["step"], "verifying");
+        assert_eq!(report["attempts"][0]["selection_outcome_unknown"], false);
+        manifest.url = root.join("must-not-be-read.zip").to_string_lossy().into();
+        assert!(
+            install_verified(
+                &manifest,
+                &id,
+                root,
+                VERSION,
+                &executable,
+                "eefn",
+                Duration::from_secs(1),
+                false,
+                || Ok(())
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("already admitted")
+        );
+        fs::write(root.join("current.txt"), "../invalid").unwrap();
+        let status = inspect(root, VERSION, "eefn", &executable, Some(&id)).unwrap();
+        assert_eq!(status["success"], false);
+        assert_eq!(status["selection_error"], true);
+        assert_eq!(status["repair_receipts"]["available"], true);
+        assert_eq!(
+            status["application_restart_required"],
+            serde_json::Value::Null
+        );
+        assert_eq!(status["running_service_inspected"], false);
+        assert!(
+            render(&status)
+                .unwrap()
+                .contains("Running service health: not inspected")
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("current.txt")).unwrap(),
+            "../invalid"
+        );
     }
 
     #[tokio::test]

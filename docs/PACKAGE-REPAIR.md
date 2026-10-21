@@ -1,5 +1,11 @@
 # Explicit Windows package repair
 
+The subsequent [durable receipt/inspection contract](REPAIR-RECEIPTS.md) adds
+admission-before-download, non-replayable operation IDs and offline status
+schema 2. Its verification is tracked separately in `STATUS.md`; the evidence
+below retains this original checkpoint's boundaries, not acceptance of later
+work.
+
 The backend can stage an explicitly selected **same-build** EEF or EEFN package
 without replacing loaded files. This is a repair primitive, not an automatic
 dependency-repair controller, application upgrade, model installer or readiness
@@ -153,10 +159,11 @@ not the earlier `native-final`, `native-accepted` or `native-all-accepted` logs.
 ## Remaining setup-controller work
 
 Automatic repair still needs a trusted current-build artifact source and consent
-policy, durable user-visible local operation/uncertainty receipts, bounded
-progress/cancellation and retention controls, runtime-aware status, and
-post-restart dependency health verification. Local failed selection publication
-must not be interpreted as proof that no files were staged. No automatic replay
+policy, bounded progress/cancellation and retention controls, runtime-aware
+status, and post-restart dependency health verification. The subsequent
+[receipt contract](REPAIR-RECEIPTS.md) supplies bounded local operation and
+uncertainty evidence, not an automatic repair controller. Local failed selection
+publication must not be interpreted as proof that no files were staged. No automatic replay
 or orphan cleanup is implemented here.
 
 No antivirus exclusions or bypasses are added. Exact hashes do not prove a file

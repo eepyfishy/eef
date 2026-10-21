@@ -136,6 +136,9 @@ enum NodeCommand {
     UpdateStatus {
         #[arg(long)]
         node: String,
+        /// Inspect one retained repair operation without replay or recovery.
+        #[arg(long)]
+        operation_id: Option<String>,
     },
     /// Install one exact owner-approved release; never changes automatic-update policy.
     Update {
@@ -155,6 +158,9 @@ enum NodeCommand {
         /// Restore this exact running build in a separate bundle, not a newer version.
         #[arg(long)]
         repair: bool,
+        /// Stable identity for this repair only; an admitted ID is never replayed.
+        #[arg(long, requires = "repair")]
+        operation_id: Option<String>,
     },
     /// Inspect or edit a connected node's model selections with its owner's approval.
     Models {
@@ -1666,13 +1672,16 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             response
         }
         Command::Node {
-            command: NodeCommand::UpdateStatus { node },
+            command: NodeCommand::UpdateStatus { node, operation_id },
         } => {
             eefn::network::validate_node_id(node)?;
+            if let Some(id) = operation_id {
+                eefn::package_repair::validate_operation_id(id)?;
+            }
             client
                 .post(format!("{base}/api/node/{node}/invoke"))
                 .json(
-                    &json!({"capability":"node.update","action":"status","params":{},"timeout":10}),
+                    &json!({"capability":"node.update","action":"status","params":{"operation_id":operation_id},"timeout":10}),
                 )
                 .send()
                 .await?
@@ -1687,12 +1696,15 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     size_bytes,
                     allow_prerelease,
                     repair,
+                    operation_id,
                 },
         } => {
             let request = eefn::updater::ExplicitUpdate {
                 schema_version: 1,
                 expected_node_id: node.clone(),
-                request_id: uuid::Uuid::new_v4().to_string(),
+                request_id: operation_id
+                    .clone()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                 version: version.clone(),
                 url: url.clone(),
                 sha256: sha256.clone(),
@@ -1700,6 +1712,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 allow_prerelease: *allow_prerelease,
             };
             request.validate()?;
+            if *repair {
+                eefn::package_repair::RepairRequest::from(&request).validate()?;
+            }
             let action = if *repair {
                 "repair_explicit"
             } else {
@@ -2043,7 +2058,9 @@ async fn main() -> Result<()> {
                         "Private request/plan report: may contain user text, task inputs and target bindings; do not publish it in reports or issues."
                     );
                 }
-                if !args.json
+                if !args.json && matches!(command, Command::Repair { .. }) {
+                    print!("{}", eefn::package_repair::render(&value)?);
+                } else if !args.json
                     && matches!(
                         command,
                         Command::Node {

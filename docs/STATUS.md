@@ -3,6 +3,32 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: durable repair receipts and truthful offline status
+
+Repair admission now precedes artifact I/O and persists bounded operation IDs,
+phase/outcome evidence and per-operation OS leases. Interrupted attempts are
+observed without rewriting or resuming them; admitted IDs cannot be replayed.
+Changed/damaged/future/oversized or ambiguously missing journals block admission
+without reset. Offline package status schema 2 explicitly describes the invoked
+executable, not a live service's restart/health state. Receipt inspection remains
+available independently of damaged package selection, including remote status.
+See [contract, evidence and remaining acceptance](REPAIR-RECEIPTS.md).
+
+Both locked/offline workspace/all-target feature modes pass 990 tests plus one
+ignored each, including nine new regressions. Workspace/all-target type-checking,
+final headless apps/examples build, and nineteen native suites pass. The native
+tests exercise real-process interruption/read-only inspection/no-replay for both
+roles and approved remote repair failure/receipt inspection. Thirteen frozen
+product/harness source files and seven app/helper hashes remain unchanged; all
+nineteen public result files report passed and owned fixtures are terminal.
+Format, affected JavaScript syntax, backend/browser source boundary and diff
+checks pass. The CI workflow stays local at the owner's request, excluded from
+backend publication; no OAuth permission was expanded and no CI run is claimed.
+No installed/remote node, visual UI, model default, version, release package,
+Defender setting or automatic-update feed/policy changed. Automatic repair,
+runtime dependency health, model quality/defaults, physical two-PC, packaged
+HTTPS repair and installer/signing/Defender/stable-release gates remain open.
+
 ## Unreleased: explicit same-build package repair
 
 EEF/EEFN now expose backend-owned Windows repair, offline selection status and

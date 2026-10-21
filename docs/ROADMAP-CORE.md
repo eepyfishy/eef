@@ -31,6 +31,15 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+[Durable repair receipts](REPAIR-RECEIPTS.md) add bounded admission-before-I/O,
+non-replayable operation IDs and OS-lease-based interruption observations to
+local/approved remote repair. Offline status describes the invoked executable,
+not an uninspected service's restart or health state; damaged selectors do not
+hide available receipts. Both full feature modes pass 990 tests plus one ignored
+each, and nineteen native suites pass against unchanged apps/helpers. CI remains
+a local draft at the owner's request. This closes a repair evidence gap, not
+automatic repair, runtime-health, physical or release acceptance.
+
 [Explicit package repair](PACKAGE-REPAIR.md) stages verified same-build Windows
 bundles without overwriting loaded files, settings or models. Offline
 status/rollback and approved remote node repair are command/backend-owned;

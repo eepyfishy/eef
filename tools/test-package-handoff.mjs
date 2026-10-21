@@ -47,7 +47,8 @@ try {
   const saved=await readFile(config),selector=join(install,'versions',version+'.bundle.json');
   await writeFile(selector,JSON.stringify({schema_version:1,version,slot,previous_slot:'$root'}));
   const pending=await launch(rootExe,['--config',join(install,'absent-config.json'),'--json','repair','--status']).result;
-  assert.equal(pending.code,0,pending.out+pending.err);assert.equal(JSON.parse(pending.out).restart_required,true);
+  assert.equal(pending.code,0,pending.out+pending.err);assert.equal(JSON.parse(pending.out).handoff_required_for_invoked_executable,true);
+  assert.equal(JSON.parse(pending.out).application_restart_required,null,'offline bootstrap is not a live-service health check');
   const supersede=await fetch(url+'/api/update/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal:AbortSignal.timeout(10000)});
   assert.equal(supersede.ok,false);assert.match(await supersede.text(),/repair is pending/,'ordinary update must not supersede an uninspected repair');
   assert.equal(JSON.parse(await readFile(selector,'utf8')).slot,slot);
@@ -64,7 +65,7 @@ try {
   await until(async()=>{await json(url+'/api/diagnostics');return await hasPath(rootExe)&&!(await hasPath(selectedExe));},role+' rollback handoff');
   assert.deepEqual(await readFile(config),saved,'rollback must preserve owner config');
   const settled=await launch(rootExe,['--config',join(install,'absent-config.json'),'--json','repair','--status']).result;
-  assert.equal(settled.code,0,settled.out+settled.err);assert.equal(JSON.parse(settled.out).restart_required,false);
+  assert.equal(settled.code,0,settled.out+settled.err);assert.equal(JSON.parse(settled.out).handoff_required_for_invoked_executable,false);
   const noConsent=await launch(rootExe,['--json','repair','--url','https://example.invalid/never','--sha256','a'.repeat(64),'--size-bytes','1']).result;
   assert.equal(noConsent.code,1,'prerelease repair needs explicit consent');
   assert.equal(JSON.parse(await readFile(selector,'utf8')).slot,'$root');

@@ -1,6 +1,6 @@
 // Isolated command/transport regression. No release downloads or personal installs.
 import assert from 'node:assert/strict';
-import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
+import {mkdtemp, readFile, writeFile, mkdir, link, unlink} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
@@ -8,9 +8,12 @@ import {randomUUID, randomBytes} from 'node:crypto';
 const root=resolve(import.meta.dirname,'..'), scratch=await mkdtemp(join(root,'.validation/explicit-updates-'));
 const version=(await readFile(join(root,'Cargo.toml'),'utf8')).match(/^version\s*=\s*"([^"]+)"/m)[1];
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug')), children=[];
+const nodeInstall=join(scratch,'node-app'),nodeExe=join(nodeInstall,'eefn.exe');let nodeLinked=false;
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
+for(const key of Object.keys(env))if(['HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY'].includes(key.toUpperCase()))delete env[key];
+env.NO_PROXY='127.0.0.1,localhost';
 function launch(name,args,extra={}) {
- const child=spawn(join(bin,name+'.exe'),args,{cwd:root,env:{...env,...extra},windowsHide:true,stdio:['ignore','pipe','pipe']});
+ const child=spawn(name==='eefn'?nodeExe:join(bin,name+'.exe'),args,{cwd:root,env:{...env,...extra},windowsHide:true,stdio:['ignore','pipe','pipe']});
  let out='',err='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>err+=b);
  child.result=new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>resolve({code,out,err}));});children.push(child);return child;
 }
@@ -30,6 +33,7 @@ const proxy=createServer(async(req,res)=>{
 });
 async function cli(config,args,success){const c=launch('eef',['--config',config,'--json','node',...args]);const timer=setTimeout(()=>c.kill(),20000);try{const r=await c.result;assert.equal(r.code,success?0:1,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}}
 try {
+ await mkdir(nodeInstall);await link(join(bin,'eefn.exe'),nodeExe);nodeLinked=true;
  const [eefPort,nodePort,gateway,proxyPort]=await Promise.all([port(),port(),port(),port()]);
  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replaceAll('host: 0.0.0.0','host: 127.0.0.1').replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
  await writeFile(eefConfig,yaml);await writeFile(proxyConfig,yaml.replace(`port: ${eefPort}`,`port: ${proxyPort}`));
@@ -49,6 +53,13 @@ try {
  const wrong=await invoke({...request,expected_node_id:'other-node'});assert.equal(wrong.success,false);assert.match(wrong.error,/different node/);
  const noConsent=await invoke({...request,allow_prerelease:false});assert.equal(noConsent.success,false);assert.match(noConsent.error,/allow_prerelease/);
  const wrongRepair=await invoke({...request,expected_node_id:'other-node'},'repair_explicit');assert.equal(wrongRepair.success,false);assert.match(wrongRepair.error,/different node/);
+ const repairId=randomUUID(),closedPort=await port();
+ const failedRepair={...request,request_id:repairId,version,url:`https://127.0.0.1:${closedPort}/never`};
+ const failedRemote=await invoke(failedRepair,'repair_explicit');assert.equal(failedRemote.success,false);
+ const retained=await cli(eefConfig,['update-status','--node',id,'--operation-id',repairId],true);
+ assert.equal(retained.data.repair_receipts.available,true);assert.equal(retained.data.repair_receipts.attempts.length,1);
+ assert.equal(retained.data.repair_receipts.attempts[0].receipt.request_id,repairId);assert.equal(retained.data.repair_receipts.attempts[0].receipt.outcome,'failed');
+ const replayed=await invoke(failedRepair,'repair_explicit');assert.equal(replayed.success,false);assert.match(replayed.error,/already admitted/);
  // Revocation is enforced without restart, despite the applied runtime grant.
  config.permissions.remote_updates=false;const saved=JSON.stringify(config);await writeFile(nodeConfig,saved);
  const revoked=await invoke(request);assert.equal(revoked.success,false);assert.match(revoked.error,/not allowed/);
@@ -61,9 +72,10 @@ try {
  for(const next of ['drop','old','mismatch']){mode=next;const before=requests.length;const result=await cli(proxyConfig,args,false);assert.equal(result.outcome_unknown,true);assert.equal(requests.length,before+1);}
  const before=requests.length;await cli(proxyConfig,args.slice(0,-1),false);assert.equal(requests.length,before,'no consent must fail before sending');
  const repairArgs=[...args,'--repair'];repairArgs[repairArgs.indexOf('--version')+1]=version;
+ const pinnedId=randomUUID();repairArgs.push('--operation-id',pinnedId);
  mode='success';const repairBefore=requests.length,repair=await cli(proxyConfig,repairArgs,true);
- assert.equal(repair.report_type,'remote_explicit_repair');assert.equal(repair.outcome_unknown,false);assert.equal(requests.length,repairBefore+1);assert.equal(requests.at(-1).action,'repair_explicit');
+ assert.equal(repair.report_type,'remote_explicit_repair');assert.equal(repair.outcome_unknown,false);assert.equal(requests.length,repairBefore+1);assert.equal(requests.at(-1).action,'repair_explicit');assert.equal(requests.at(-1).params.request_id,pinnedId);
  for(const next of ['drop','old','mismatch']){mode=next;const count=requests.length;const result=await cli(proxyConfig,repairArgs,false);assert.equal(result.outcome_unknown,true);assert.equal(requests.length,count+1,'repair must not automatically retry or fall back');}
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,real_download:false,real_install:false,permission_revocation:true,exact_target:true,explicit_consent:true,no_replay:true,old_node_no_fallback:true,config_unchanged:true},null,2));
  console.log('Explicit update command checks passed: '+scratch);
-} finally {proxy.closeAllConnections();proxy.close();for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));}
+} finally {proxy.closeAllConnections();proxy.close();for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));if(nodeLinked)await unlink(nodeExe);}

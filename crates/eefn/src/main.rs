@@ -2727,6 +2727,8 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
             Ok(value) => {
                 if args.json {
                     println!("{}", serde_json::to_string(&value)?);
+                } else if matches!(command, Commands::Repair { .. }) {
+                    print!("{}", eefn::package_repair::render(&value)?);
                 } else if matches!(
                     command,
                     Commands::Setup {
