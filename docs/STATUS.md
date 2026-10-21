@@ -3,6 +3,21 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Quality evidence: decision-first screen rejected
+
+An opt-in, direct-backend CPU screen tested reducing interpretation to semantic
+decisions before prose generation. The corrected forty-case run accepts all
+decisions structurally but matches 12/20 and 11/20 and misses eleven required
+clarifications. It fails the predeclared bar; no production method, prompt/schema,
+validator, budget, model/default or bootstrap change is integrated. An initial
+request-control mismatch and false completion after deliberate runtime retirement
+are preserved separately, not promoted to acceptance. The evaluator adds strict
+metadata/lifetime/no-replay checks and read-only retained-evidence regrading.
+See [exact scope, defects and evidence](experiments/interpreter-decision-first.md).
+This is evidence against a candidate, not improved deployability or full model
+quality. The prior full Rust/native checkpoint below remains the product baseline.
+CI stays local; no installed node, release, UI, trust/Defender or feed changed.
+
 ## Unreleased: opt-in missing-package-file maintenance
 
 Local EEF/EEFN `repair-setup` commands and service supervisors now consume a

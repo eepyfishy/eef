@@ -12,6 +12,13 @@ was rejected on both backends; its gains on clear inputs lost required questions
 Production interpreter, expectations and scorer are restored unchanged. Neither
 evaluated model is approved.
 
+The later [decision-first feasibility screen](experiments/interpreter-decision-first.md)
+also fails its predeclared bar: reduced direct-backend decisions match 12/20 and
+11/20 while missing eleven required clarifications. No production change is
+integrated. Its initial noncomparable/interrupted harness result is separately
+retained; the corrected forty-case run and metadata/lifetime regressions do not
+approve a default or replace full public-node quality acceptance.
+
 ## Rejected balanced illustrations (2026-10-18)
 
 The [experiment and criteria fixed before inference](experiments/interpreter-balanced-illustrations.md)

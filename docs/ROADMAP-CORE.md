@@ -31,6 +31,12 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The [decision-first interpreter feasibility screen](experiments/interpreter-decision-first.md)
+fails the semantic bar despite forty valid reduced decisions: 12/20 and 11/20
+labels, with eleven required clarifications missed. No production integration or
+default approval is made. This evidence rules out that candidate, not the full
+model-quality/bootstrap requirement; the previous product checkpoint is unchanged.
+
 [Missing-package-file maintenance](PACKAGE-SETUP.md) adds default-off
 local commands and a lightweight service supervisor support prompt approval or
 distinctly consented one-attempt auto repair, pinned to the exact managed build
