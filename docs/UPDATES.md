@@ -13,7 +13,8 @@ rechecks the downloaded manifest and rejects prereleases before downloading the
 artifact or creating an installation directory. Installing an alpha does not
 subscribe that machine to alpha updates. Stable feeds remain on stable releases.
 
-Prereleases require an explicitly chosen installer. A version-pinned test
+Prereleases require an explicitly chosen installer or owner-pinned explicit
+command, never an automatic feed subscription. A version-pinned test
 manifest may be used only for an owner-supervised migration from an older node
 without this guard, with automatic checks disabled throughout and its original
 stable feed restored before launching the new build. It is never a default feed.
@@ -34,6 +35,11 @@ into `versions/<version>`, and
 root executable hands off to the selected version. `previous.txt` supports
 rollback.
 
+Explicit same-build Windows [package repair](PACKAGE-REPAIR.md) uses immutable
+repair generations and slot-aware restart/rollback without changing feeds or
+owner settings. Local `repair --status` and `repair --rollback` work without the
+dashboard or a running service. Automatic dependency repair remains future work.
+
 Policies:
 
 - `off` — do not check.
@@ -51,6 +57,8 @@ running work by forcing a restart. EEFN also supports
 `--check-update`, `--rollback`, and the permission-controlled `node.update`
 capability.
 
-Release signing beyond HTTPS plus manifest/artifact SHA-256 is not implemented
-yet. Projects with a stronger threat model should publish signed manifests and
-verify them before enabling `auto`.
+The updater verifies HTTPS/pinned artifact SHA-256, not an Authenticode publisher
+or a signed manifest. Packaging tools support optional owner-supplied signing
+credentials; this development checkpoint creates no newly signed artifacts and
+does not close signing/Defender acceptance. Signed-manifest/publisher enforcement
+remains outstanding.

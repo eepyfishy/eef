@@ -3,6 +3,8 @@
 //! Windows cannot replace a running executable. Updates therefore install into
 //! `versions/<version>/` and atomically switch `current.txt`; the next launch
 //! uses the new version and the previous directory remains available for rollback.
+//! Same-version repair generations are selected by bundle_selection, not by
+//! overwriting a semantic version directory.
 
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -52,7 +54,11 @@ pub struct UpdateApplied {
 
 /// Read a bounded, validated installed selector; corruption is not "no update".
 pub fn installed_version(install_dir: &Path) -> Result<Option<String>> {
-    let file = match File::open(install_dir.join("current.txt")) {
+    read_version_selector(&install_dir.join("current.txt"))
+}
+
+fn read_version_selector(path: &Path) -> Result<Option<String>> {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
@@ -94,19 +100,35 @@ impl ExplicitUpdate {
         if uuid::Uuid::parse_str(&self.request_id)?.to_string() != self.request_id {
             bail!("update request_id must be a canonical UUID")
         }
-        validate_version(&self.version)?;
-        if self.version.contains('-') && !self.allow_prerelease {
-            bail!("explicit prerelease update requires allow_prerelease")
-        }
-        validate_https_artifact(&self.url)?;
-        if self.sha256.len() != 64 || !self.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
-            bail!("explicit update requires an exact SHA-256")
-        }
-        if self.size_bytes == 0 || self.size_bytes > MAX_UPDATE_BYTES as u64 {
-            bail!("explicit update size must be positive and at most 512 MiB")
-        }
-        Ok(())
+        validate_artifact(
+            &self.version,
+            &self.url,
+            &self.sha256,
+            self.size_bytes,
+            self.allow_prerelease,
+        )
     }
+}
+
+pub(crate) fn validate_artifact(
+    version: &str,
+    url: &str,
+    sha256: &str,
+    size: u64,
+    allow_prerelease: bool,
+) -> Result<()> {
+    validate_version(version)?;
+    if version.contains('-') && !allow_prerelease {
+        bail!("explicit prerelease selection requires allow_prerelease")
+    }
+    validate_https_artifact(url)?;
+    if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("explicit selection requires an exact SHA-256")
+    }
+    if size == 0 || size > MAX_UPDATE_BYTES as u64 {
+        bail!("explicit selection size must be positive and at most 512 MiB")
+    }
+    Ok(())
 }
 
 fn validate_https_artifact(url: &str) -> Result<()> {
@@ -283,6 +305,19 @@ async fn install_manifest<G>(
         .open(install.join(".update.lock"))?;
     fs2::FileExt::try_lock_exclusive(&lock).context("another update is in progress")?;
     let selected = installed_version(&install)?;
+    if let Some(version) = selected.as_deref() {
+        if crate::bundle_selection::read(&install, version)?.is_some()
+            && crate::bundle_selection::pending_executable(
+                &install,
+                current_version.unwrap_or(crate::VERSION),
+                program,
+                &std::env::current_exe()?,
+            )?
+            .is_some()
+        {
+            bail!("an installed repair is pending; restart and inspect before updating again")
+        }
+    }
     if let Some(current) = current_version {
         if selected
             .as_deref()
@@ -294,7 +329,8 @@ async fn install_manifest<G>(
     let versions = install.join("versions");
     fs::create_dir_all(&versions)?;
     let destination = versions.join(&manifest.version);
-    if destination.exists() {
+    if destination.exists() || crate::bundle_selection::read(&install, &manifest.version)?.is_some()
+    {
         bail!("this update version is already present; existing installed files were preserved")
     }
     if let Some(selected) = selected.as_deref() {
@@ -348,16 +384,11 @@ async fn install_manifest<G>(
 
     let current_path = install.join("current.txt");
     let previous = selected;
-    let next_path = install.join("current.txt.next");
-    fs::write(&next_path, format!("{}\n", manifest.version))?;
-    fs::rename(&next_path, &current_path).or_else(|_| {
-        fs::copy(&next_path, &current_path)?;
-        fs::remove_file(&next_path)
-    })?;
-    fs::write(
-        install.join("previous.txt"),
-        previous.clone().unwrap_or_default(),
+    crate::atomic_file::write(
+        &install.join("previous.txt"),
+        previous.clone().unwrap_or_default().as_bytes(),
     )?;
+    crate::atomic_file::write(&current_path, format!("{}\n", manifest.version).as_bytes())?;
     Ok(UpdateApplied {
         new_version: manifest.version.clone(),
         previous_version: previous,
@@ -373,18 +404,36 @@ pub fn rollback(install_dir: impl AsRef<Path>) -> Result<String> {
 pub fn rollback_for(install_dir: impl AsRef<Path>, program: &str) -> Result<String> {
     validate_program(program)?;
     let install = install_dir.as_ref().canonicalize()?;
-    let previous = fs::read_to_string(install.join("previous.txt"))?
-        .trim()
-        .to_owned();
-    if previous.is_empty() {
-        bail!("no previous version is available")
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(install.join(".update.lock"))?;
+    fs2::FileExt::try_lock_exclusive(&lock).context("another update is in progress")?;
+    if let Some(version) = installed_version(&install)? {
+        if let Some(mut selection) = crate::bundle_selection::read(&install, &version)? {
+            if let Some(previous) = selection.previous_slot.take() {
+                let target = crate::bundle_selection::directory(&install, &version, &previous)?;
+                if !contains_binary(&target, program) {
+                    bail!("previous repair bundle is incomplete")
+                }
+                selection.slot = previous;
+                crate::bundle_selection::write(&install, &selection)?;
+                return Ok(version);
+            }
+        }
     }
-    validate_version(&previous)?;
-    let target = install.join("versions").join(&previous);
+    let previous = read_version_selector(&install.join("previous.txt"))?
+        .context("no previous version is available")?;
+    let target = crate::bundle_selection::selected_directory(&install, &previous)?;
     if !target.is_dir() || !contains_binary(&target, program) {
         bail!("previous version is incomplete")
     }
-    fs::write(install.join("current.txt"), format!("{previous}\n"))?;
+    crate::atomic_file::write(
+        &install.join("current.txt"),
+        format!("{previous}\n").as_bytes(),
+    )?;
     Ok(previous)
 }
 
@@ -413,26 +462,37 @@ pub fn handoff_if_selected(
     current_version: &str,
     program: &str,
 ) -> Result<bool> {
-    validate_program(program)?;
-    let install = install_dir.as_ref();
-    let selected = match fs::read_to_string(install.join("current.txt")) {
-        Ok(value) => value.trim().to_owned(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error.into()),
-    };
-    if selected.is_empty() || selected == current_version {
+    let Some(executable) = crate::bundle_selection::pending_executable(
+        install_dir.as_ref(),
+        current_version,
+        program,
+        &std::env::current_exe()?,
+    )?
+    else {
         return Ok(false);
-    }
-    validate_version(&selected)?;
-    let version_dir = install.join("versions").join(&selected);
-    let executable = find_binary(&version_dir, program)
-        .with_context(|| format!("selected {program} version '{selected}' is incomplete"))?;
+    };
     std::process::Command::new(executable)
         .args(std::env::args_os().skip(1))
         .current_dir(std::env::current_dir()?)
         .spawn()
         .context("launch selected update")?;
     Ok(true)
+}
+
+pub fn restart_required(install: &Path, current_version: &str, program: &str) -> Result<bool> {
+    if let Some(version) = installed_version(install)? {
+        if version != current_version {
+            crate::bundle_selection::read(install, &version)?;
+            return Ok(true);
+        }
+    }
+    Ok(crate::bundle_selection::pending_executable(
+        install,
+        current_version,
+        program,
+        &std::env::current_exe()?,
+    )?
+    .is_some())
 }
 
 pub fn sha256_file(path: impl AsRef<Path>) -> Result<String> {
@@ -494,7 +554,7 @@ fn version_parts(version: &str) -> Vec<u64> {
         .collect()
 }
 
-fn validate_version(version: &str) -> Result<()> {
+pub(crate) fn validate_version(version: &str) -> Result<()> {
     let base = version.split('-').next().unwrap_or("");
     let parts: Vec<_> = base.split('.').collect();
     if parts.len() != 3
@@ -511,18 +571,74 @@ fn validate_version(version: &str) -> Result<()> {
     Ok(())
 }
 
-fn extract_zip(bytes: &[u8], destination: &Path) -> Result<()> {
+pub(crate) fn extract_zip(bytes: &[u8], destination: &Path) -> Result<()> {
     let cursor = io::Cursor::new(update_payload(bytes)?);
     let mut archive = zip::ZipArchive::new(cursor)?;
+    if archive.len() > 20000 {
+        bail!("update archive contains too many entries")
+    }
     let mut required = 0u64;
+    let mut paths = std::collections::BTreeSet::new();
     for index in 0..archive.len() {
         let entry = archive.by_index(index)?;
-        entry
+        let path = entry
             .enclosed_name()
             .context("unsafe path in update archive")?;
+        let mut names = Vec::new();
+        for component in path.components() {
+            let std::path::Component::Normal(name) = component else {
+                bail!("unsafe update path component")
+            };
+            let name = name.to_str().context("non-UTF-8 update path")?;
+            let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+            if name.ends_with(['.', ' '])
+                || matches!(
+                    stem.as_str(),
+                    "CON"
+                        | "PRN"
+                        | "AUX"
+                        | "NUL"
+                        | "COM1"
+                        | "COM2"
+                        | "COM3"
+                        | "COM4"
+                        | "COM5"
+                        | "COM6"
+                        | "COM7"
+                        | "COM8"
+                        | "COM9"
+                        | "LPT1"
+                        | "LPT2"
+                        | "LPT3"
+                        | "LPT4"
+                        | "LPT5"
+                        | "LPT6"
+                        | "LPT7"
+                        | "LPT8"
+                        | "LPT9"
+                )
+            {
+                bail!("unsafe Windows update path component")
+            }
+            names.push(name);
+        }
+        let name = names.join("/");
+        if name.is_empty()
+            || name.contains(':')
+            || name.len() > 4096
+            || !paths.insert(name.to_ascii_lowercase())
+            || entry
+                .unix_mode()
+                .is_some_and(|mode| mode & 0o170000 == 0o120000)
+        {
+            bail!("unsafe or duplicate path in update archive")
+        }
         required = required
             .checked_add(entry.size())
             .context("update archive size overflow")?;
+        if required > 2 * 1024 * 1024 * 1024 {
+            bail!("update archive expands beyond 2 GiB")
+        }
     }
     if fs2::available_space(destination)? < required {
         bail!(
@@ -564,7 +680,7 @@ fn update_payload(bytes: &[u8]) -> Result<&[u8]> {
     Ok(&bytes[usize::try_from(range.start)?..usize::try_from(range.end)?])
 }
 
-fn validate_program(program: &str) -> Result<()> {
+pub(crate) fn validate_program(program: &str) -> Result<()> {
     if program.is_empty()
         || !program
             .chars()
@@ -575,7 +691,7 @@ fn validate_program(program: &str) -> Result<()> {
     Ok(())
 }
 
-fn find_binary(root: &Path, program: &str) -> Option<PathBuf> {
+pub(crate) fn find_binary(root: &Path, program: &str) -> Option<PathBuf> {
     let names = [format!("{program}.exe"), program.to_owned()];
     for name in &names {
         let candidate = root.join(name);
@@ -606,7 +722,7 @@ async fn fetch(url: &str, timeout: Duration, limit: usize) -> Result<Vec<u8>> {
     fetch_with_policy(url, timeout, limit, false).await
 }
 
-async fn fetch_with_policy(
+pub(crate) async fn fetch_with_policy(
     url: &str,
     timeout: Duration,
     limit: usize,

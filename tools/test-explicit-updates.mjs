@@ -6,6 +6,7 @@ import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 import {randomUUID, randomBytes} from 'node:crypto';
 const root=resolve(import.meta.dirname,'..'), scratch=await mkdtemp(join(root,'.validation/explicit-updates-'));
+const version=(await readFile(join(root,'Cargo.toml'),'utf8')).match(/^version\s*=\s*"([^"]+)"/m)[1];
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug')), children=[];
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 function launch(name,args,extra={}) {
@@ -23,14 +24,14 @@ const proxy=createServer(async(req,res)=>{
  const body=JSON.parse(raw);requests.push(body);
  if(mode==='drop'){res.destroy();return;}
  if(mode==='old'){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({success:false,error:'unknown node.update action'}));return;}
- const data={schema_version:1,report_type:'explicit_update',success:true,node_id:body.params.expected_node_id,request_id:body.params.request_id,applied:{new_version:body.params.version}};
+ const data={schema_version:1,report_type:body.action==='repair_explicit'?'explicit_repair':'explicit_update',success:true,node_id:body.params.expected_node_id,request_id:body.params.request_id,applied:{new_version:body.params.version}};
  if(mode==='mismatch')data.request_id=randomUUID();
  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({success:true,data}));
 });
 async function cli(config,args,success){const c=launch('eef',['--config',config,'--json','node',...args]);const timer=setTimeout(()=>c.kill(),20000);try{const r=await c.result;assert.equal(r.code,success?0:1,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}}
 try {
  const [eefPort,nodePort,gateway,proxyPort]=await Promise.all([port(),port(),port(),port()]);
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
+ const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replaceAll('host: 0.0.0.0','host: 127.0.0.1').replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
  await writeFile(eefConfig,yaml);await writeFile(proxyConfig,yaml.replace(`port: ${eefPort}`,`port: ${proxyPort}`));
  await new Promise(r=>proxy.listen(proxyPort,'127.0.0.1',r));
  const secret=randomBytes(24).toString('hex'), config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
@@ -44,12 +45,14 @@ try {
  assert.equal(status.data.report_type,'update_status');assert.equal(status.data.restart_required,false);
  const args=['update','--node',id,'--version','99.0.0-alpha.1','--url','https://example.invalid/never-downloaded','--sha256','a'.repeat(64),'--size-bytes','123','--allow-prerelease'];
  const request={schema_version:1,expected_node_id:id,request_id:randomUUID(),version:'99.0.0-alpha.1',url:'https://example.invalid/never-downloaded',sha256:'a'.repeat(64),size_bytes:123,allow_prerelease:true};
- const invoke=params=>json(eef+`/api/node/${id}/invoke`,{capability:'node.update',action:'apply_explicit',params,timeout:10});
+ const invoke=(params,action='apply_explicit')=>json(eef+`/api/node/${id}/invoke`,{capability:'node.update',action,params,timeout:10});
  const wrong=await invoke({...request,expected_node_id:'other-node'});assert.equal(wrong.success,false);assert.match(wrong.error,/different node/);
  const noConsent=await invoke({...request,allow_prerelease:false});assert.equal(noConsent.success,false);assert.match(noConsent.error,/allow_prerelease/);
+ const wrongRepair=await invoke({...request,expected_node_id:'other-node'},'repair_explicit');assert.equal(wrongRepair.success,false);assert.match(wrongRepair.error,/different node/);
  // Revocation is enforced without restart, despite the applied runtime grant.
  config.permissions.remote_updates=false;const saved=JSON.stringify(config);await writeFile(nodeConfig,saved);
  const revoked=await invoke(request);assert.equal(revoked.success,false);assert.match(revoked.error,/not allowed/);
+ const revokedRepair=await invoke({...request,version},'repair_explicit');assert.equal(revokedRepair.success,false);assert.match(revokedRepair.error,/not allowed/);
  assert.equal((await cli(eefConfig,args,false)).outcome_unknown,true);
  assert.equal(await readFile(nodeConfig,'utf8'),saved);
  // Mock only the coordinator response to check exact confirmation / no replay.
@@ -57,6 +60,10 @@ try {
  assert.equal(requests[0].action,'apply_explicit');assert.equal(requests[0].params.allow_prerelease,true);
  for(const next of ['drop','old','mismatch']){mode=next;const before=requests.length;const result=await cli(proxyConfig,args,false);assert.equal(result.outcome_unknown,true);assert.equal(requests.length,before+1);}
  const before=requests.length;await cli(proxyConfig,args.slice(0,-1),false);assert.equal(requests.length,before,'no consent must fail before sending');
+ const repairArgs=[...args,'--repair'];repairArgs[repairArgs.indexOf('--version')+1]=version;
+ mode='success';const repairBefore=requests.length,repair=await cli(proxyConfig,repairArgs,true);
+ assert.equal(repair.report_type,'remote_explicit_repair');assert.equal(repair.outcome_unknown,false);assert.equal(requests.length,repairBefore+1);assert.equal(requests.at(-1).action,'repair_explicit');
+ for(const next of ['drop','old','mismatch']){mode=next;const count=requests.length;const result=await cli(proxyConfig,repairArgs,false);assert.equal(result.outcome_unknown,true);assert.equal(requests.length,count+1,'repair must not automatically retry or fall back');}
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,real_download:false,real_install:false,permission_revocation:true,exact_target:true,explicit_consent:true,no_replay:true,old_node_no_fallback:true,config_unchanged:true},null,2));
  console.log('Explicit update command checks passed: '+scratch);
 } finally {proxy.closeAllConnections();proxy.close();for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));}

@@ -72,7 +72,22 @@ impl UpdateService {
     }
 
     pub async fn state(&self) -> UpdateState {
-        self.state.read().await.clone()
+        let mut state = self.state.read().await.clone();
+        // Offline repair/rollback can select a bundle without this service.
+        match eefn::updater::installed_version(&self.install_dir).and_then(|selected| {
+            let restart =
+                eefn::updater::restart_required(&self.install_dir, crate::VERSION, "eef")?;
+            Ok((selected, restart))
+        }) {
+            Ok((selected, restart)) => {
+                state.installed_version = selected;
+                state.restart_required = restart;
+            }
+            Err(error) => {
+                state.last_error = Some(format!("Package selection needs attention: {error}"))
+            }
+        }
+        state
     }
 
     pub async fn check(&self) -> Result<eefn::updater::UpdateCheck> {

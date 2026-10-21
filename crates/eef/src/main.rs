@@ -31,6 +31,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Restore this exact application package; preserve settings and restart separately.
+    Repair {
+        #[command(flatten)]
+        artifact: eefn::package_repair::RepairArgs,
+    },
     /// Enable/inspect/stop bounded automatic fixed-input work as the local owner.
     AutomationSchedules {
         #[command(subcommand)]
@@ -147,6 +152,9 @@ enum NodeCommand {
         /// Explicit consent for this alpha/beta/RC artifact only.
         #[arg(long)]
         allow_prerelease: bool,
+        /// Restore this exact running build in a separate bundle, not a newer version.
+        #[arg(long)]
+        repair: bool,
     },
     /// Inspect or edit a connected node's model selections with its owner's approval.
     Models {
@@ -1293,6 +1301,9 @@ async fn remote_permissions_cli(
 
 async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value> {
     use serde_json::json;
+    if let Command::Repair { artifact } = command {
+        return eefn::package_repair::execute_local(artifact, "eef").await;
+    }
     let config = eef::config::Config::load(Some(&args.config))?;
     let host: std::net::IpAddr = config
         .string("web.host", "127.0.0.1")
@@ -1309,6 +1320,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
+        Command::Repair { .. } => unreachable!("local package repair returned above"),
         Command::AutomationSchedules { command } => {
             command.validate()?;
             let mut value = owner_automation_exchange(
@@ -1674,6 +1686,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     sha256,
                     size_bytes,
                     allow_prerelease,
+                    repair,
                 },
         } => {
             let request = eefn::updater::ExplicitUpdate {
@@ -1687,7 +1700,17 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 allow_prerelease: *allow_prerelease,
             };
             request.validate()?;
-            let mut report = json!({"schema_version":1,"report_type":"remote_explicit_update",
+            let action = if *repair {
+                "repair_explicit"
+            } else {
+                "apply_explicit"
+            };
+            let report_type = if *repair {
+                "explicit_repair"
+            } else {
+                "explicit_update"
+            };
+            let mut report = json!({"schema_version":1,"report_type":if *repair {"remote_explicit_repair"} else {"remote_explicit_update"},
                 "node_id":node,"request_id":request.request_id,"success":false,
                 "outcome_unknown":true,"automatic_policy_changed":false,
                 "note":"No automatic retry. Inspect node update status before retrying; restart is a separate command."});
@@ -1695,13 +1718,13 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             let exchange = async {
                 let response = client.post(format!("{base}/api/node/{node}/invoke"))
                     .timeout(std::time::Duration::from_secs(140))
-                    .json(&json!({"capability":"node.update","action":"apply_explicit","params":request,"timeout":130}))
+                    .json(&json!({"capability":"node.update","action":action,"params":request,"timeout":130}))
                     .send().await?;
                 eefn::model_manager::bounded_json(response).await
             }.await;
             if let Ok(value) = exchange {
                 if value["success"] == true
-                    && value["data"]["report_type"] == "explicit_update"
+                    && value["data"]["report_type"] == report_type
                     && value["data"]["schema_version"] == 1
                     && value["data"]["success"] == true
                     && value["data"]["node_id"] == *node
@@ -1987,10 +2010,14 @@ async fn main() -> Result<()> {
         .init();
     let executable = std::env::current_exe()?;
     let install_root = eefn::updater::installation_root(&executable)?;
-    if eefn::updater::handoff_if_selected(&install_root, eef::VERSION, "eef")? {
+    let parsed = Args::try_parse();
+    let repair = parsed
+        .as_ref()
+        .is_ok_and(|args| matches!(args.command, Some(Command::Repair { .. })));
+    if !repair && eefn::updater::handoff_if_selected(&install_root, eef::VERSION, "eef")? {
         return Ok(());
     }
-    let mut args = Args::parse();
+    let mut args = parsed.unwrap_or_else(|error| error.exit());
     if args.config == PathBuf::from("config/default_identity.yaml")
         && install_root.join(&args.config).is_file()
     {
@@ -2224,9 +2251,7 @@ async fn main() -> Result<()> {
         if !restart_requested.load(std::sync::atomic::Ordering::Relaxed) {
             break;
         }
-        if std::fs::read_to_string(install_root.join("current.txt"))
-            .is_ok_and(|v| !v.trim().is_empty() && v.trim() != eef::VERSION)
-        {
+        if eefn::updater::restart_required(&install_root, eef::VERSION, "eef")? {
             handoff = true;
             break;
         }

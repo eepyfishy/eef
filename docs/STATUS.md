@@ -3,6 +3,28 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: explicit same-build package repair
+
+EEF/EEFN now expose backend-owned Windows repair, offline selection status and
+rollback commands, plus a distinct approved remote node repair action. Exact
+size/SHA-256, product/version, running executable hash and a complete bounded file
+inventory precede immutable generation selection; loaded files, owner settings
+and model storage are not overwritten. Atomic slot-aware handoff handles
+same-version restarts/rollback without looping. Ordinary updates cannot supersede
+a pending repair; scoped model activation still skips application handoff.
+The original native fixture reproduces the old ignored same-version selection.
+Ten added regressions pass in both locked/offline workspace/all-target modes:
+981 tests plus one ignored each. Final headless apps/examples build; eighteen
+native suites pass, including real-process handoff/rollback for both roles and
+remote consent/exact-reply/no-replay cases. All ten frozen product/harness source
+and six native artifact hashes match; owned processes are terminal. See
+[contract, fixture corrections and evidence](PACKAGE-REPAIR.md).
+Offline package status describes the invoked executable, not a live-service
+health check. Automatic repair/receipts, approved defaults/model quality, physical
+two-PC, packaged HTTPS repair and installer/signing/Defender/stable gates remain.
+No installed/remote node, visual UI, model default, version, release package or
+automatic-update feed/policy changed.
+
 ## Unreleased: selected-bundle component resolution
 
 A versioned executable could inspect old installation-root plugins or choose the

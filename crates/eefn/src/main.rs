@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Restore this exact application package; preserve settings and restart separately.
+    Repair {
+        #[command(flatten)]
+        artifact: eefn::package_repair::RepairArgs,
+    },
     /// Inspect bootstrap preferences or explicitly enable owner-model setup automation.
     ModelBootstrapPolicy {
         #[command(subcommand)]
@@ -1986,6 +1991,9 @@ async fn execute_python_policy(
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Repair { artifact } = command {
+        return eefn::package_repair::execute_local(artifact, "eefn").await;
+    }
     if let Commands::ModelBootstrapPolicy { command } = command {
         return Box::pin(execute_model_bootstrap(args, command)).await;
     }
@@ -2690,13 +2698,22 @@ fn main() -> Result<()> {
         .init();
     let executable = std::env::current_exe()?;
     let install_dir = eefn::updater::installation_root(&executable)?;
+    let parsed = Args::try_parse();
+    if parsed
+        .as_ref()
+        .is_ok_and(|args| matches!(args.command, Some(Commands::Repair { .. })))
+    {
+        // Repair/rollback must remain available when the selected package cannot start.
+        return run(parsed.unwrap(), install_dir);
+    }
     if eefn::updater::handoff_if_selected(&install_dir, eefn::VERSION, "eefn")? {
         return Ok(());
     }
     // Clap builds the whole command tree synchronously. Keep it outside the
     // async poll frame and Tokio block_on stack (Windows main reserves 1 MiB).
-    // Handoff remains before parsing, so the selected version owns its syntax.
-    let args = Args::parse();
+    // Only local repair bypasses handoff. Normal parse errors are deferred so
+    // the selected application, not the old root bootstrap, owns its syntax.
+    let args = parsed.unwrap_or_else(|error| error.exit());
     run(args, install_dir)
 }
 
@@ -3004,8 +3021,7 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
         }
         if !model_only_restart
             && shutdown_barrier.lock().unwrap().is_none()
-            && std::fs::read_to_string(install_dir.join("current.txt"))
-                .is_ok_and(|v| !v.trim().is_empty() && v.trim() != eefn::VERSION)
+            && eefn::updater::restart_required(&install_dir, eefn::VERSION, "eefn")?
         {
             handoff = true;
             break;

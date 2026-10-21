@@ -1806,13 +1806,16 @@ impl NodeEngine {
             return Ok(
                 json!({"schema_version":1,"report_type":"update_status","success":true,
                 "current_version":crate::VERSION,"installed_version":selected,
-                "restart_required":selected.as_deref().is_some_and(|v| v != crate::VERSION)}),
+                "bundle_selection":selected.as_deref().map(|v| crate::bundle_selection::read(&self.install_dir, v)).transpose()?.flatten(),
+                "restart_required":updater::restart_required(&self.install_dir, crate::VERSION, "eefn")?}),
             );
         }
-        if matches!(action, "apply" | "apply_explicit") && !self.policy.remote_updates {
+        if matches!(action, "apply" | "apply_explicit" | "repair_explicit")
+            && !self.policy.remote_updates
+        {
             bail!("remote updates are not allowed; approve updates in the local node app")
         }
-        if action == "apply_explicit" {
+        if matches!(action, "apply_explicit" | "repair_explicit") {
             let request: updater::ExplicitUpdate = serde_json::from_value(params)?;
             request.validate()?;
             let service = self
@@ -1822,22 +1825,37 @@ impl NodeEngine {
             if request.expected_node_id != service.node_id {
                 bail!("explicit update targets a different node")
             }
-            let applied = updater::apply_explicit_for(
-                &request,
-                &self.install_dir,
-                crate::VERSION,
-                Duration::from_secs(120),
-                "eefn",
-                || service.require_remote_update_permission(),
-            )
-            .await?;
+            let applied = if action == "repair_explicit" {
+                crate::package_repair::apply_for(
+                    &crate::package_repair::RepairRequest::from(&request),
+                    &self.install_dir,
+                    crate::VERSION,
+                    &std::env::current_exe()?,
+                    "eefn",
+                    Duration::from_secs(120),
+                    || service.require_remote_update_permission(),
+                )
+                .await?
+            } else {
+                updater::apply_explicit_for(
+                    &request,
+                    &self.install_dir,
+                    crate::VERSION,
+                    Duration::from_secs(120),
+                    "eefn",
+                    || service.require_remote_update_permission(),
+                )
+                .await?
+            };
             let mut live = service.live.lock().unwrap();
             live["pending_restart"] = json!(true);
             live["update"]["installed_version"] = json!(applied.new_version);
             live["update"]["restart_required"] = json!(true);
-            return Ok(json!({"schema_version":1,"report_type":"explicit_update",
+            return Ok(
+                json!({"schema_version":1,"report_type":if action == "repair_explicit" {"explicit_repair"} else {"explicit_update"},
                 "success":true,"node_id":service.node_id,"request_id":request.request_id,
-                "applied":applied,"automatic_policy_changed":false}));
+                "applied":applied,"automatic_policy_changed":false}),
+            );
         }
         let manifest = self
             .update_manifest
@@ -2364,6 +2382,60 @@ mod tests {
         assert_eq!(status["restart_required"], true);
         std::fs::write(dir.path().join("current.txt"), "../invalid").unwrap();
         assert!(engine.node_update("status", json!({})).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn explicit_repair_checks_applied_current_grants_and_exact_target_before_io() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        let service = crate::NodeService::new(path.clone(), "fixture-node".into());
+        let mut engine = NodeEngine::new(false, vec![], dir.path().into())
+            .unwrap()
+            .with_service(service);
+        let mut request = json!({"schema_version":1,"expected_node_id":"fixture-node",
+            "request_id":uuid::Uuid::new_v4().to_string(),"version":crate::VERSION,
+            "url":"https://example.invalid/never-downloaded","sha256":"a".repeat(64),
+            "size_bytes":100,"allow_prerelease":true});
+        assert!(
+            engine
+                .node_update("repair_explicit", request.clone())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("not allowed")
+        );
+        engine.policy.remote_updates = true;
+        request["expected_node_id"] = json!("other-node");
+        assert!(
+            engine
+                .node_update("repair_explicit", request.clone())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("different node")
+        );
+        request["expected_node_id"] = json!("fixture-node");
+        std::fs::write(&path, br#"{"permissions":{"remote_updates":false}}"#).unwrap();
+        assert!(
+            engine
+                .node_update("repair_explicit", request.clone())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("not allowed")
+        );
+        std::fs::write(&path, "broken configuration").unwrap();
+        assert!(
+            engine
+                .node_update("repair_explicit", request)
+                .await
+                .is_err()
+        );
+        assert!(!dir.path().join("versions").exists());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "broken configuration"
+        );
     }
 
     #[tokio::test]

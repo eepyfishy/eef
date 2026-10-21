@@ -31,6 +31,15 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+[Explicit package repair](PACKAGE-REPAIR.md) stages verified same-build Windows
+bundles without overwriting loaded files, settings or models. Offline
+status/rollback and approved remote node repair are command/backend-owned;
+ordinary restart selects the physical generation, while model-only activation
+does not. Both full feature modes pass 981 tests plus one ignored each, and
+eighteen native suites pass. This is not an automatic repair controller,
+live-service health certificate, packaged HTTPS/physical two-PC test or stable
+release acceptance; those gates and the model/default work remain open.
+
 [Selected-bundle resolution](BUNDLED-COMPONENTS.md) passes both full feature modes
 (971 tests plus one ignored each) and sixteen native suites after a fixture
 reproduced loading an old root plugin beside a newer executable.
