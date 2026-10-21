@@ -516,12 +516,40 @@ pub async fn execute(
     executable: &Path,
     program: &str,
 ) -> Result<Value> {
-    execute_with_fetch(args, install, executable, program, |url| async move {
-        updater::fetch_with_policy(&url, Duration::from_secs(20), MAX_MANIFEST, true).await
-    })
+    execute_for(
+        args,
+        install,
+        executable,
+        program,
+        crate::VERSION,
+        || Ok(()),
+    )
     .await
 }
 
+pub(crate) async fn execute_for<G>(
+    args: &package_repair::RepairArgs,
+    install: &Path,
+    executable: &Path,
+    program: &str,
+    version: &str,
+    authorize: impl Fn() -> Result<G>,
+) -> Result<Value> {
+    execute_inner(
+        args,
+        install,
+        executable,
+        program,
+        version,
+        |url| async move {
+            updater::fetch_with_policy(&url, Duration::from_secs(20), MAX_MANIFEST, true).await
+        },
+        authorize,
+    )
+    .await
+}
+
+#[cfg(test)]
 async fn execute_with_fetch<F, T>(
     args: &package_repair::RepairArgs,
     install: &Path,
@@ -533,7 +561,34 @@ where
     F: FnOnce(String) -> T,
     T: std::future::Future<Output = Result<Vec<u8>>>,
 {
+    execute_inner(
+        args,
+        install,
+        executable,
+        program,
+        crate::VERSION,
+        fetch,
+        || Ok(()),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_inner<F, T, G>(
+    args: &package_repair::RepairArgs,
+    install: &Path,
+    executable: &Path,
+    program: &str,
+    version: &str,
+    fetch: F,
+    authorize: impl Fn() -> Result<G>,
+) -> Result<Value>
+where
+    F: FnOnce(String) -> T,
+    T: std::future::Future<Output = Result<Vec<u8>>>,
+{
     let prepared = async {
+        drop(authorize().context(Refusal("repair_source_authority_unavailable"))?);
         if args.check == args.approve.is_some()
             || args.status
             || args.rollback
@@ -544,12 +599,12 @@ where
         {
             bail!(Refusal("repair_source_arguments"))
         }
-        let source = selected_source(args, executable, program, crate::VERSION)?;
+        let source = selected_source(args, executable, program, version)?;
         let url = source.url.as_str();
         source_url(url).context(Refusal("repair_source_requires_https"))?;
-        running(install, executable, program, crate::VERSION)
+        running(install, executable, program, version)
             .context(Refusal("repair_source_build_unavailable"))?;
-        if crate::VERSION.contains('-') && !args.allow_prerelease {
+        if version.contains('-') && !args.allow_prerelease {
             bail!(Refusal("repair_source_prerelease_consent_required"))
         }
         let plan = if let Some(id) = &args.approve {
@@ -558,7 +613,7 @@ where
                 install,
                 executable,
                 program,
-                crate::VERSION,
+                version,
                 &plan,
                 args.allow_prerelease,
             )
@@ -586,13 +641,14 @@ where
         let bytes = fetch(url.to_owned())
             .await
             .context(Refusal("repair_source_fetch_failed"))?;
-        source.ensure_current(executable, program, crate::VERSION)?;
+        drop(authorize().context(Refusal("repair_source_authority_unavailable"))?);
+        source.ensure_current(executable, program, version)?;
         if let Some(plan) = plan {
             let request = resolve(
                 install,
                 executable,
                 program,
-                crate::VERSION,
+                version,
                 &plan,
                 url,
                 &bytes,
@@ -605,7 +661,7 @@ where
                 install,
                 executable,
                 program,
-                crate::VERSION,
+                version,
                 url,
                 &bytes,
                 args.allow_prerelease,
@@ -622,20 +678,22 @@ where
             let result = package_repair::apply_for(
                 &request,
                 install,
-                crate::VERSION,
+                version,
                 executable,
                 program,
                 Duration::from_secs(120),
                 || {
-                    source.ensure_current(executable, program, crate::VERSION)?;
+                    let guard = authorize()?;
+                    source.ensure_current(executable, program, version)?;
                     validate_plan(
                         install,
                         executable,
                         program,
-                        crate::VERSION,
+                        version,
                         &plan,
                         args.allow_prerelease,
-                    )
+                    )?;
+                    Ok(guard)
                 },
             )
             .await;

@@ -51,6 +51,7 @@ pub mod model_server;
 pub mod model_setup;
 pub mod network;
 pub mod package_repair;
+pub mod package_setup;
 pub mod peer;
 pub mod permission_commands;
 pub mod pipeline;

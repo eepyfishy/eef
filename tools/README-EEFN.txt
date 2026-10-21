@@ -48,3 +48,15 @@ explicitly; older binaries may need an upgrade for command support.
 For a prerelease, add --allow-prerelease to check/approve only; this never opts
 automatic updates into alphas. Review the publisher before approval. Repair is
 not a health certificate or a reason to bypass an antivirus detection.
+
+Missing-file maintenance (unreleased; off by default):
+  eefn repair-setup show
+  eefn repair-setup configure --mode prompt
+  eefn repair-setup run
+  eefn repair-setup approve --operation-id ATTEMPT_UUID
+  eefn repair-setup configure --mode off
+Requires a managed bundle and reviewed public HTTPS source (packaged hint or
+--manifest). One attempt per saved policy identity; interrupted work never
+resumes automatically. Auto mode additionally needs --allow-automatic-repair.
+All prerelease runner activity is blocked. No automatic upgrade/restart/model
+setup is granted. Missing-file presence and selection are not runtime health.

@@ -3,6 +3,30 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: opt-in missing-package-file maintenance
+
+Local EEF/EEFN `repair-setup` commands and service supervisors now consume a
+separate default-off, exact-build public-source policy. Prompt retains a proposal
+for owner approval; auto requires distinct consent and allows one attempt per
+explicit policy identity. All prerelease automation is blocked. Durable attempt
+intent includes the original policy snapshot; per-attempt OS leases, bounded
+history, no-replay and revocation/publication guards preserve uncertainty.
+This detects missing stock files, not present-but-corrupt dependencies or runtime
+health, and grants no restart, model, version-upgrade or remote-policy authority.
+Both final locked/offline workspace/all-target feature modes pass 1,029 tests
+plus one ignored each, including twenty-one new regressions. Headless apps/examples
+build and all twenty-two native suites pass; twenty-four source/helper and eight
+app/helper hashes remain unchanged, all public results report passed, and observed
+app/helper fixture processes are terminal. Format, script syntax, backend/browser
+source boundary and diff checks pass. Native stable-context tests use a non-shipped
+adapter and non-handshaking HTTPS gates, not real stable publisher/package repair
+or physical acceptance. See [scope, commands and evidence](PACKAGE-SETUP.md).
+General progress/cancel/retention, post-restart dependency health, remote policy
+management, approved model/default and physical/installer/signing/Defender/stable
+gates remain open.
+No installed/remote node, UI, model, version, release, Defender setting or update
+feed changed. CI remains local and unpublished; no GitHub scope was expanded.
+
 ## Unreleased: packaged public repair sources
 
 Optional role/version-specific public hints now resolve from the invoked managed

@@ -72,6 +72,11 @@ enum Commands {
         #[command(flatten)]
         artifact: eefn::package_repair::RepairArgs,
     },
+    /// Opt into bounded missing-bundled-file maintenance; no model or restart authority.
+    RepairSetup {
+        #[command(subcommand)]
+        command: eefn::package_setup::Action,
+    },
     /// Inspect bootstrap preferences or explicitly enable owner-model setup automation.
     ModelBootstrapPolicy {
         #[command(subcommand)]
@@ -1991,6 +1996,13 @@ async fn execute_python_policy(
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::RepairSetup { command } = command {
+        return eefn::package_setup::execute(
+            &eefn::package_setup::Context::current("eefn")?,
+            command,
+        )
+        .await;
+    }
     if let Commands::Repair { artifact } = command {
         return eefn::package_repair::execute_local(artifact, "eefn").await;
     }
@@ -2699,10 +2711,12 @@ fn main() -> Result<()> {
     let executable = std::env::current_exe()?;
     let install_dir = eefn::updater::installation_root(&executable)?;
     let parsed = Args::try_parse();
-    if parsed
-        .as_ref()
-        .is_ok_and(|args| matches!(args.command, Some(Commands::Repair { .. })))
-    {
+    if parsed.as_ref().is_ok_and(|args| {
+        matches!(
+            args.command,
+            Some(Commands::Repair { .. } | Commands::RepairSetup { .. })
+        )
+    }) {
         // Repair/rollback must remain available when the selected package cannot start.
         return run(parsed.unwrap(), install_dir);
     }
@@ -2729,6 +2743,8 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     println!("{}", serde_json::to_string(&value)?);
                 } else if matches!(command, Commands::Repair { .. }) {
                     print!("{}", eefn::package_repair::render(&value)?);
+                } else if matches!(command, Commands::RepairSetup { .. }) {
+                    print!("{}", eefn::package_setup::render(&value));
                 } else if matches!(
                     command,
                     Commands::Setup {
@@ -3080,6 +3096,7 @@ async fn run_node(
     barrier: ModelShutdownBarrier,
     startup: Option<eefn::model_activation::StartupConfiguration>,
 ) -> Result<()> {
+    let _repair_setup = eefn::package_setup::spawn_until("eefn", stopped.clone());
     let previous = barrier.lock().unwrap().clone();
     if let Some(previous) = previous {
         previous.stop().await.context(

@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+[Missing-package-file maintenance](PACKAGE-SETUP.md) adds default-off
+local commands and a lightweight service supervisor support prompt approval or
+distinctly consented one-attempt auto repair, pinned to the exact managed build
+and public source. Original policy intent and per-attempt leases survive opt-out
+or interruption; prerelease automation is blocked. This is not dependency health,
+automatic restart/model setup, remote policy management or stable acceptance.
+Both full feature modes pass 1,029 tests plus one ignored each; headless apps/
+examples build and twenty-two native suites pass against unchanged source and
+app/helper hashes. Stable-context fixtures are not real stable publisher/package
+repair or physical release acceptance. CI stays local and unpublished.
+
 [Packaged public source lookup](PACKAGED-REPAIR-SOURCES.md) lets publisher-enabled
 bundles use `repair --check` / `repair --approve UUID` without owner URLs, hashes
 or JSON. Current-bundle-only hints expose the public publisher for review, never

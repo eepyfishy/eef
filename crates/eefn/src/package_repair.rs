@@ -716,27 +716,7 @@ fn verify_inventory(bundle: &Path, program: &str) -> Result<()> {
             bail!("repair inventory verification failed")
         }
     }
-    let mut required = vec![
-        format!("{program}.exe"),
-        "bundle.json".into(),
-        "python/python.exe".into(),
-    ];
-    if program == "eefn" {
-        required.push("tools/llama-server.exe".into());
-        for name in [
-            "tts",
-            "system_clock",
-            "screen_capture",
-            "microphone",
-            "keyboard",
-            "input_control",
-            "camera",
-            "audio_output",
-        ] {
-            required.push(format!("python/plugins/{name}.py"));
-        }
-    }
-    for required in required {
+    for required in required_bundle_files(program)? {
         if !paths.contains(&required) {
             bail!("repair inventory is missing a required bundled component")
         }
@@ -770,6 +750,33 @@ fn verify_inventory(bundle: &Path, program: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub(crate) fn required_bundle_files(program: &str) -> Result<Vec<String>> {
+    if !matches!(program, "eef" | "eefn") {
+        bail!("unsupported repair product")
+    }
+    let mut files = vec![
+        format!("{program}.exe"),
+        "bundle.json".into(),
+        "python/python.exe".into(),
+    ];
+    if program == "eefn" {
+        files.push("tools/llama-server.exe".into());
+        for name in [
+            "tts",
+            "system_clock",
+            "screen_capture",
+            "microphone",
+            "keyboard",
+            "input_control",
+            "camera",
+            "audio_output",
+        ] {
+            files.push(format!("python/plugins/{name}.py"));
+        }
+    }
+    Ok(files)
 }
 
 #[cfg(test)]

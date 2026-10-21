@@ -36,6 +36,11 @@ enum Command {
         #[command(flatten)]
         artifact: eefn::package_repair::RepairArgs,
     },
+    /// Opt into bounded missing-bundled-file maintenance; never models or restarts.
+    RepairSetup {
+        #[command(subcommand)]
+        command: eefn::package_setup::Action,
+    },
     /// Enable/inspect/stop bounded automatic fixed-input work as the local owner.
     AutomationSchedules {
         #[command(subcommand)]
@@ -1307,6 +1312,13 @@ async fn remote_permissions_cli(
 
 async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value> {
     use serde_json::json;
+    if let Command::RepairSetup { command } = command {
+        return eefn::package_setup::execute(
+            &eefn::package_setup::Context::current("eef")?,
+            command,
+        )
+        .await;
+    }
     if let Command::Repair { artifact } = command {
         return eefn::package_repair::execute_local(artifact, "eef").await;
     }
@@ -1326,7 +1338,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
-        Command::Repair { .. } => unreachable!("local package repair returned above"),
+        Command::Repair { .. } | Command::RepairSetup { .. } => {
+            unreachable!("local package repair returned above")
+        }
         Command::AutomationSchedules { command } => {
             command.validate()?;
             let mut value = owner_automation_exchange(
@@ -2026,9 +2040,12 @@ async fn main() -> Result<()> {
     let executable = std::env::current_exe()?;
     let install_root = eefn::updater::installation_root(&executable)?;
     let parsed = Args::try_parse();
-    let repair = parsed
-        .as_ref()
-        .is_ok_and(|args| matches!(args.command, Some(Command::Repair { .. })));
+    let repair = parsed.as_ref().is_ok_and(|args| {
+        matches!(
+            args.command,
+            Some(Command::Repair { .. } | Command::RepairSetup { .. })
+        )
+    });
     if !repair && eefn::updater::handoff_if_selected(&install_root, eef::VERSION, "eef")? {
         return Ok(());
     }
@@ -2060,6 +2077,8 @@ async fn main() -> Result<()> {
                 }
                 if !args.json && matches!(command, Command::Repair { .. }) {
                     print!("{}", eefn::package_repair::render(&value)?);
+                } else if !args.json && matches!(command, Command::RepairSetup { .. }) {
+                    print!("{}", eefn::package_setup::render(&value));
                 } else if !args.json
                     && matches!(
                         command,
@@ -2192,6 +2211,8 @@ async fn main() -> Result<()> {
             .port
             .unwrap_or_else(|| u16::try_from(config.u64("web.port", 51334)).unwrap_or(51334));
         let runtime = eef::Runtime::initialize(config, &args.database, !args.no_brain).await?;
+        let (repair_stop, repair_stopped) = tokio::sync::watch::channel(false);
+        let _repair_setup = eefn::package_setup::spawn_until("eef", repair_stopped);
         let listener = tokio::net::TcpListener::bind((host.as_str(), port))
             .await
             .with_context(|| format!("bind EEF API {host}:{port}"))?;
@@ -2258,6 +2279,7 @@ async fn main() -> Result<()> {
             .into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(async move {
             tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=restart.notified()=>{requested.store(true,std::sync::atomic::Ordering::Relaxed);} }
+            let _ = repair_stop.send(true);
             // Stop runners before graceful HTTP draining; an in-flight job must
             // not keep a requested restart waiting for its entire timeout.
             shutdown_runtime.shutdown().await;

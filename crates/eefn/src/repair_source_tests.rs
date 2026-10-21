@@ -856,3 +856,88 @@ fn repair_hint_guard_detects_changed_removed_or_invalid_final_publication_source
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn repair_source_external_authority_is_checked_before_and_after_descriptor_io() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (root, exe, bytes) = fixture("eefn");
+    let request = args(&["--check", "--manifest", SOURCE, "--allow-prerelease"]);
+    let allowed = AtomicBool::new(false);
+    let refused = execute_inner(
+        &request,
+        root.path(),
+        &exe,
+        "eefn",
+        crate::VERSION,
+        |_| async { panic!("denied authority must not fetch") },
+        || {
+            if !allowed.load(Ordering::SeqCst) {
+                bail!("revoked fixture authority")
+            }
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(refused["error_code"], "repair_source_authority_unavailable");
+    assert!(!store_path(root.path()).exists());
+    allowed.store(true, Ordering::SeqCst);
+    let refused = execute_inner(
+        &request,
+        root.path(),
+        &exe,
+        "eefn",
+        crate::VERSION,
+        |_| async {
+            allowed.store(false, Ordering::SeqCst);
+            Ok(bytes)
+        },
+        || {
+            if !allowed.load(Ordering::SeqCst) {
+                bail!("revoked fixture authority")
+            }
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(refused["error_code"], "repair_source_authority_unavailable");
+    assert!(!store_path(root.path()).exists());
+}
+
+#[tokio::test]
+async fn repair_source_releases_initial_authority_guard_during_network_wait() {
+    use fs2::FileExt;
+    let (root, exe, bytes) = fixture("eefn");
+    let path = root.path().join("fixture-authority.lock");
+    std::fs::write(&path, b"").unwrap();
+    let request = args(&["--check", "--manifest", SOURCE, "--allow-prerelease"]);
+    let report = execute_inner(
+        &request,
+        root.path(),
+        &exe,
+        "eefn",
+        crate::VERSION,
+        |_| async {
+            let writer = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .unwrap();
+            writer.try_lock_exclusive().unwrap();
+            drop(writer);
+            Ok(bytes)
+        },
+        || {
+            let reader = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)?;
+            FileExt::try_lock_shared(&reader)?;
+            Ok(reader)
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(report["success"], true);
+}

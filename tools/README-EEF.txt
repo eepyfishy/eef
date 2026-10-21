@@ -41,3 +41,15 @@ older binaries may need an upgrade for command support. Prerelease check/approve
 requires --allow-prerelease for that operation only, not an auto-update opt-in.
 Review the publisher before approval; repair does not prove runtime health or
 justify bypassing an antivirus detection.
+
+Missing-file maintenance (unreleased; off by default):
+  eef repair-setup show
+  eef repair-setup configure --mode prompt
+  eef repair-setup run
+  eef repair-setup approve --operation-id ATTEMPT_UUID
+  eef repair-setup configure --mode off
+Requires a managed bundle and reviewed public HTTPS source (packaged hint or
+--manifest). One attempt per saved policy identity; interrupted work never
+resumes automatically. Auto mode additionally needs --allow-automatic-repair.
+All prerelease runner activity is blocked. No automatic upgrade/restart/model
+setup is granted. Missing-file presence and selection are not runtime health.
