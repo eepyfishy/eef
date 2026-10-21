@@ -31,6 +31,16 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+[Packaged public source lookup](PACKAGED-REPAIR-SOURCES.md) lets publisher-enabled
+bundles use `repair --check` / `repair --approve UUID` without owner URLs, hashes
+or JSON. Current-bundle-only hints expose the public publisher for review, never
+borrow old/pending sources, and are fenced across metadata and final publication
+checks. Optional paired publisher templates add inventoried hints and final-hash
+descriptor sidecars without hardcoding a repository or granting automatic repair.
+Both full modes pass 1,008 tests plus one ignored each; twenty-one native suites
+pass with unchanged app/helper hashes. Full packaging/HTTPS, physical, signature/
+Defender, model/default and automatic-controller/health gates remain open.
+
 [Exact-build source proposals](REPAIR-SOURCES.md) remove manual package SHA/size
 entry from local EEF/EEFN repair: check an owner-selected HTTPS descriptor, then
 approve the retained source/build/slot-bound UUID. No source/token is retained,

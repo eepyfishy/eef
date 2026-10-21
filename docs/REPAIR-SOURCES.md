@@ -3,7 +3,13 @@
 The command backend can check an owner-selected publisher descriptor and retain
 an exact-build proposal before approval. This removes manual package SHA/size
 entry from this local flow. It is not an automatic setup/repair controller,
-default source, publisher signature check or stable-release acceptance.
+hardcoded publisher default, signature check or stable-release acceptance.
+
+The subsequent [packaged public hint flow](PACKAGED-REPAIR-SOURCES.md) can supply
+an optional publisher source for `repair --check` / `repair --approve UUID`.
+That explicitly public URL is shown for owner review; explicit/private URL
+inputs remain hidden and no raw URLs enter proposal/receipt stores. The original
+checkpoint and evidence below retain their own boundaries.
 
 ```text
 eefn repair --check --manifest HTTPS_DESCRIPTOR
@@ -75,7 +81,9 @@ restart follows. Publication is not a running-runtime or dependency-health claim
 They contain digests, build/slot, size, consent and timestamps, **not source or
 artifact URLs, query tokens, owner configuration or model data**. Digests are
 bindings, not encryption or a defense against an attacker controlling the same
-owner's files. Public errors/guidance never copy raw transport errors/URLs.
+owner's files. Raw transport errors and explicit/private URLs never enter public
+failures. The subsequent packaged-hint flow may show its declared public source
+for owner review; operation stores still contain no raw URLs.
 
 Publication shares the existing update lock, synchronized same-directory atomic
 replacement and a prior-bytes fence. First creation refuses overwrite. Damaged,

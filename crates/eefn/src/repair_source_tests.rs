@@ -38,6 +38,11 @@ fn plan(root: &Path, executable: &Path, role: &str, bytes: &[u8]) -> Plan {
 fn repair_source_cli_requires_check_or_exact_approval_without_raw_artifact_options() {
     assert!(args(&["--check", "--manifest", SOURCE]).check);
     let id = uuid::Uuid::new_v4().to_string();
+    assert!(args(&["--check"]).check);
+    assert_eq!(
+        args(&["--approve", &id]).approve.as_deref(),
+        Some(id.as_str())
+    );
     assert_eq!(
         args(&["--approve", &id, "--manifest", SOURCE])
             .approve
@@ -46,8 +51,6 @@ fn repair_source_cli_requires_check_or_exact_approval_without_raw_artifact_optio
     );
     for input in [
         vec!["--manifest", SOURCE],
-        vec!["--check"],
-        vec!["--approve", &id],
         vec!["--check", "--approve", &id, "--manifest", SOURCE],
         vec!["--status", "--manifest", SOURCE],
         vec!["--rollback", "--check", "--manifest", SOURCE],
@@ -629,4 +632,227 @@ async fn repair_source_backend_approval_uses_original_operation_and_existing_rep
         );
     }
     assert_eq!(find(root.path(), &saved.id).unwrap(), saved);
+}
+
+fn write_hint(bundle: &Path, role: &str, url: &str) -> PathBuf {
+    let path = bundle.join(format!("{role}.repair-source.json"));
+    fs::write(
+        &path,
+        serde_json::to_vec(&json!({"schema_version":1,"program":role,
+        "version":crate::VERSION,"manifest_url":url}))
+        .unwrap(),
+    )
+    .unwrap();
+    path
+}
+
+#[test]
+fn repair_hint_only_uses_the_running_managed_bundle_and_product() {
+    let (root, executable, _) = fixture("eefn");
+    let old = "https://publisher.invalid/old-public.json";
+    write_hint(root.path(), "eefn", old);
+    assert!(
+        packaged_source(&executable, "eefn", crate::VERSION).is_err(),
+        "unmarked development roots do not supply implicit trust hints"
+    );
+    fs::write(root.path().join("bundle.json"), b"managed marker").unwrap();
+    assert_eq!(
+        packaged_source(&executable, "eefn", crate::VERSION)
+            .unwrap()
+            .url,
+        old
+    );
+    assert_eq!(
+        hint_status(&executable, "eef", crate::VERSION)["state"],
+        "not_configured"
+    );
+    let bundle = root.path().join("versions").join(crate::VERSION);
+    fs::create_dir_all(&bundle).unwrap();
+    let versioned = bundle.join("eefn.exe");
+    fs::copy(&executable, &versioned).unwrap();
+    assert_eq!(
+        hint_status(&versioned, "eefn", crate::VERSION)["state"],
+        "not_configured"
+    );
+    let current = "https://publisher.invalid/current-public.json";
+    write_hint(&bundle, "eefn", current);
+    assert_eq!(
+        packaged_source(&versioned, "eefn", crate::VERSION)
+            .unwrap()
+            .url,
+        current
+    );
+    fs::write(root.path().join("current.txt"), "99.0.0").unwrap();
+    assert_eq!(
+        hint_status(&versioned, "eefn", crate::VERSION)["publisher_source"],
+        current,
+        "pending selection must not choose a different hint"
+    );
+    assert_eq!(
+        hint_status(&versioned, "eefn", crate::VERSION)["authority_granted"],
+        false
+    );
+}
+
+#[test]
+fn repair_hint_rejects_mismatches_secrets_damage_and_bounds_without_reset() {
+    let (root, executable, _) = fixture("eefn");
+    fs::write(root.path().join("bundle.json"), b"managed marker").unwrap();
+    let path = write_hint(root.path(), "eefn", "https://publisher.invalid/public.json");
+    let base: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for (field, value) in [
+        ("schema_version", json!(2)),
+        ("program", json!("eef")),
+        ("version", json!("99.0.0")),
+        ("unknown", json!(true)),
+        ("manifest_url", json!("http://publisher.invalid/file")),
+        (
+            "manifest_url",
+            json!("https://private-user:PRIVATE_SECRET@publisher.invalid/file"),
+        ),
+        (
+            "manifest_url",
+            json!("https://publisher.invalid/file?PRIVATE_SECRET"),
+        ),
+        (
+            "manifest_url",
+            json!("https://publisher.invalid/file#PRIVATE_SECRET"),
+        ),
+    ] {
+        let mut changed = base.clone();
+        changed[field] = value;
+        let bytes = serde_json::to_vec(&changed).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let status = hint_status(&executable, "eefn", crate::VERSION);
+        assert_eq!(status["state"], "unavailable");
+        assert_eq!(status["publisher_source"], Value::Null);
+        assert!(!status.to_string().contains("PRIVATE_SECRET"));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+    for bytes in [b"not JSON".to_vec(), vec![b' '; MAX_HINT + 1]] {
+        fs::write(&path, &bytes).unwrap();
+        assert!(packaged_source(&executable, "eefn", crate::VERSION).is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(packaged_source(&executable, "eefn", crate::VERSION).is_err());
+    assert!(path.is_dir());
+}
+
+#[test]
+fn repair_hint_is_optional_status_and_does_not_block_explicit_private_sources() {
+    let (root, executable, _) = fixture("eefn");
+    fs::write(root.path().join("bundle.json"), b"managed marker").unwrap();
+    let path = root.path().join("eefn.repair-source.json");
+    fs::write(&path, b"damaged public hint").unwrap();
+    let checked =
+        package_repair::inspect(root.path(), crate::VERSION, "eefn", &executable, None).unwrap();
+    assert_eq!(checked["success"], true);
+    assert_eq!(checked["repair_source_hint"]["state"], "unavailable");
+    let explicit = args(&["--check", "--manifest", SOURCE, "--allow-prerelease"]);
+    let source = selected_source(&explicit, &executable, "eefn", crate::VERSION).unwrap();
+    assert_eq!(source.url, SOURCE);
+    assert_eq!(source.summary()["source_kind"], "explicit");
+    assert_eq!(source.summary()["publisher_source"], Value::Null);
+    source
+        .ensure_current(&executable, "eefn", crate::VERSION)
+        .unwrap();
+    assert_eq!(fs::read(path).unwrap(), b"damaged public hint");
+}
+
+#[tokio::test]
+async fn repair_hint_backend_check_displays_public_source_but_never_retains_it_in_plan() {
+    for role in ["eef", "eefn"] {
+        let (root, executable, bytes) = fixture(role);
+        fs::write(root.path().join("bundle.json"), b"managed marker").unwrap();
+        let public = "https://publisher.invalid/immutable-build/public.json";
+        let path = write_hint(root.path(), role, public);
+        let before = fs::read(&path).unwrap();
+        let check = args(&["--check", "--allow-prerelease"]);
+        let report = execute_with_fetch(&check, root.path(), &executable, role, |url| async move {
+            assert_eq!(url, public);
+            Ok(bytes)
+        })
+        .await
+        .unwrap();
+        assert_eq!(report["success"], true);
+        assert_eq!(report["source"]["publisher_source"], public);
+        let text = package_repair::render(&report).unwrap();
+        assert!(text.contains(public));
+        assert!(text.contains("repair --approve"));
+        assert!(!text.contains("repair --manifest"));
+        let retained = fs::read(store_path(root.path())).unwrap();
+        assert!(!String::from_utf8(retained).unwrap().contains("https://"));
+        assert_eq!(fs::read(path).unwrap(), before);
+        assert!(!root.path().join(".package-repairs.json").exists());
+    }
+}
+
+#[tokio::test]
+async fn repair_hint_changes_before_or_during_approval_do_not_start_an_artifact_attempt() {
+    let (root, executable, bytes) = fixture("eefn");
+    fs::write(root.path().join("bundle.json"), b"managed marker").unwrap();
+    let public = "https://publisher.invalid/public.json";
+    let path = write_hint(root.path(), "eefn", public);
+    let report = propose(
+        root.path(),
+        &executable,
+        "eefn",
+        crate::VERSION,
+        public,
+        &bytes,
+        true,
+    )
+    .unwrap();
+    let id = report["plan"]["id"].as_str().unwrap();
+    let approval = args(&["--approve", id, "--allow-prerelease"]);
+    write_hint(root.path(), "eefn", "https://other.invalid/public.json");
+    let refused = execute_with_fetch(&approval, root.path(), &executable, "eefn", |_| async {
+        panic!("changed source must not fetch metadata")
+    })
+    .await
+    .unwrap();
+    assert_eq!(refused["error_code"], "repair_source_url_changed");
+    write_hint(root.path(), "eefn", public);
+    let refused = execute_with_fetch(&approval, root.path(), &executable, "eefn", |_| async {
+        let mut changed = fs::read(&path).unwrap();
+        changed.push(b' ');
+        fs::write(&path, changed).unwrap();
+        Ok(bytes.clone())
+    })
+    .await
+    .unwrap();
+    assert_eq!(refused["error_code"], "repair_source_hint_changed");
+    assert!(!root.path().join(".package-repairs.json").exists());
+}
+
+#[test]
+fn repair_hint_guard_detects_changed_removed_or_invalid_final_publication_source() {
+    let (root, executable, _) = fixture("eefn");
+    fs::write(root.path().join("bundle.json"), b"managed marker").unwrap();
+    let public = "https://publisher.invalid/public.json";
+    let path = write_hint(root.path(), "eefn", public);
+    let source = packaged_source(&executable, "eefn", crate::VERSION).unwrap();
+    source
+        .ensure_current(&executable, "eefn", crate::VERSION)
+        .unwrap();
+    write_hint(root.path(), "eefn", "https://other.invalid/public.json");
+    assert!(
+        source
+            .ensure_current(&executable, "eefn", crate::VERSION)
+            .is_err()
+    );
+    fs::remove_file(&path).unwrap();
+    assert!(
+        source
+            .ensure_current(&executable, "eefn", crate::VERSION)
+            .is_err()
+    );
+    fs::write(path, b"damaged").unwrap();
+    assert!(
+        source
+            .ensure_current(&executable, "eefn", crate::VERSION)
+            .is_err()
+    );
 }

@@ -1,6 +1,7 @@
 //! Owner-selected HTTPS source proposals. Checking is not repair authority;
 //! approval binds exact source bytes, current build/slot and one operation ID.
-//! No source/artifact URL is retained or included in public reports.
+//! No URL is retained in operation stores. A packaged public source can be
+//! displayed for owner review; explicit/private URLs are never echoed.
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -17,11 +18,125 @@ use crate::{bundle_selection, package_repair, updater};
 const MAX_PLANS: usize = 128;
 const MAX_STORE: usize = 256 * 1024;
 const MAX_MANIFEST: usize = 16 * 1024;
+const MAX_HINT: usize = 8 * 1024;
 const LIFETIME_MS: u64 = 24 * 60 * 60 * 1000;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 struct Refusal(&'static str);
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceHint {
+    schema_version: u32,
+    program: String,
+    version: String,
+    manifest_url: String,
+}
+
+struct SelectedSource {
+    url: String,
+    hint_sha256: Option<String>,
+}
+
+impl SelectedSource {
+    fn summary(&self) -> Value {
+        json!({"schema_version":1,"source_kind":if self.hint_sha256.is_some() {"packaged_hint"} else {"explicit"},
+            "publisher_source":self.hint_sha256.as_ref().map(|_|self.url.as_str()),
+            "publisher_signature_verified":false,"authority_granted":false})
+    }
+
+    fn ensure_current(&self, executable: &Path, program: &str, version: &str) -> Result<()> {
+        if self.hint_sha256.is_some() {
+            let current = packaged_source(executable, program, version)
+                .context(Refusal("repair_source_hint_changed"))?;
+            if current.url != self.url || current.hint_sha256 != self.hint_sha256 {
+                bail!(Refusal("repair_source_hint_changed"))
+            }
+        }
+        Ok(())
+    }
+}
+
+fn packaged_source(executable: &Path, program: &str, version: &str) -> Result<SelectedSource> {
+    let layout = crate::runtime_layout::RuntimeLayout::from_executable(executable)
+        .context(Refusal("repair_source_build_unavailable"))?;
+    let path = layout
+        .repair_source_hint(program)?
+        .context(Refusal("repair_source_unconfigured"))?;
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            bail!(Refusal("repair_source_unconfigured"))
+        }
+        Err(_) => bail!(Refusal("repair_source_hint_unavailable")),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX_HINT as u64
+    {
+        bail!(Refusal("repair_source_hint_invalid"))
+    }
+    let mut bytes = Vec::new();
+    File::open(path)
+        .context(Refusal("repair_source_hint_unavailable"))?
+        .take(MAX_HINT as u64 + 1)
+        .read_to_end(&mut bytes)
+        .context(Refusal("repair_source_hint_unavailable"))?;
+    if bytes.len() > MAX_HINT {
+        bail!(Refusal("repair_source_hint_invalid"))
+    }
+    let hint: SourceHint =
+        serde_json::from_slice(&bytes).context(Refusal("repair_source_hint_invalid"))?;
+    if hint.schema_version != 1 || hint.program != program || hint.version != version {
+        bail!(Refusal("repair_source_hint_invalid"))
+    }
+    source_url(&hint.manifest_url).context(Refusal("repair_source_hint_invalid"))?;
+    let parsed =
+        reqwest::Url::parse(&hint.manifest_url).context(Refusal("repair_source_hint_invalid"))?;
+    // This file is distributed as public package metadata, not a credential
+    // store. Private/presigned descriptor links remain explicit per-call input.
+    if parsed.query().is_some() {
+        bail!(Refusal("repair_source_hint_invalid"))
+    }
+    Ok(SelectedSource {
+        url: hint.manifest_url,
+        hint_sha256: Some(digest(&bytes)),
+    })
+}
+
+fn selected_source(
+    args: &package_repair::RepairArgs,
+    executable: &Path,
+    program: &str,
+    version: &str,
+) -> Result<SelectedSource> {
+    match &args.manifest {
+        Some(url) => Ok(SelectedSource {
+            url: url.clone(),
+            hint_sha256: None,
+        }),
+        None => packaged_source(executable, program, version),
+    }
+}
+
+pub(crate) fn hint_status(executable: &Path, program: &str, version: &str) -> Value {
+    match packaged_source(executable, program, version) {
+        Ok(source) => {
+            let mut value = source.summary();
+            value["state"] = json!("configured");
+            value["network_inspected"] = json!(false);
+            value
+        }
+        Err(error) => {
+            let code = error
+                .downcast_ref::<Refusal>()
+                .map(|e| e.0)
+                .unwrap_or("repair_source_hint_unavailable");
+            json!({"schema_version":1,"state":if code=="repair_source_unconfigured" {"not_configured"} else {"unavailable"},
+                "error_code":code,"publisher_source":null,"authority_granted":false,
+                "publisher_signature_verified":false,"network_inspected":false})
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -209,8 +324,7 @@ pub(crate) fn status(install: &Path, program: &str, id: Option<&str>) -> Value {
 }
 
 fn source_url(url: &str) -> Result<()> {
-    // Reuse exact artifact HTTPS, credential/fragment and input-length rules.
-    updater::validate_artifact("1.0.0", url, &"a".repeat(64), 1, false)
+    updater::validate_https_artifact(url)
 }
 
 fn running(
@@ -430,10 +544,8 @@ where
         {
             bail!(Refusal("repair_source_arguments"))
         }
-        let url = args
-            .manifest
-            .as_deref()
-            .context(Refusal("repair_source_arguments"))?;
+        let source = selected_source(args, executable, program, crate::VERSION)?;
+        let url = source.url.as_str();
         source_url(url).context(Refusal("repair_source_requires_https"))?;
         running(install, executable, program, crate::VERSION)
             .context(Refusal("repair_source_build_unavailable"))?;
@@ -474,6 +586,7 @@ where
         let bytes = fetch(url.to_owned())
             .await
             .context(Refusal("repair_source_fetch_failed"))?;
+        source.ensure_current(executable, program, crate::VERSION)?;
         if let Some(plan) = plan {
             let request = resolve(
                 install,
@@ -486,29 +599,26 @@ where
                 args.allow_prerelease,
             )
             .context(Refusal("repair_source_proposal_changed"))?;
-            Ok((None, Some((plan, request))))
+            Ok((None, Some((plan, request, source))))
         } else {
-            Ok::<_, anyhow::Error>((
-                Some(
-                    propose(
-                        install,
-                        executable,
-                        program,
-                        crate::VERSION,
-                        url,
-                        &bytes,
-                        args.allow_prerelease,
-                    )
-                    .context(Refusal("repair_source_descriptor_rejected"))?,
-                ),
-                None,
-            ))
+            let mut report = propose(
+                install,
+                executable,
+                program,
+                crate::VERSION,
+                url,
+                &bytes,
+                args.allow_prerelease,
+            )
+            .context(Refusal("repair_source_descriptor_rejected"))?;
+            report["source"] = source.summary();
+            Ok::<_, anyhow::Error>((Some(report), None))
         }
     }
     .await;
     match prepared {
         Ok((Some(report), _)) => Ok(report),
-        Ok((_, Some((plan, request)))) => {
+        Ok((_, Some((plan, request, source)))) => {
             let result = package_repair::apply_for(
                 &request,
                 install,
@@ -517,6 +627,7 @@ where
                 program,
                 Duration::from_secs(120),
                 || {
+                    source.ensure_current(executable, program, crate::VERSION)?;
                     validate_plan(
                         install,
                         executable,

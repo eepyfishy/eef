@@ -35,3 +35,16 @@ cancel-download commands. Downloads never select or load a model automatically.
 requests preview --text TEXT --json requires exactly one applied, owner-selected
 request_interpreter model. It returns a proposal only, never dispatches work,
 and is not a substitute for deterministic commands or authorization.
+
+Command-based repair (unreleased, publisher-enabled packages):
+  eefn repair --check
+  eefn repair --approve PROPOSAL_UUID
+  eefn repair --status
+Check displays the public publisher source and retains a proposal only; it does
+not download a package or restart. Approve selects one exact verified repair;
+restart separately. No URL, hash, port or JSON entry is needed when the publisher
+supplies a source hint. Hint-less builds with these commands can use --manifest
+explicitly; older binaries may need an upgrade for command support.
+For a prerelease, add --allow-prerelease to check/approve only; this never opts
+automatic updates into alphas. Review the publisher before approval. Repair is
+not a health certificate or a reason to bypass an antivirus detection.

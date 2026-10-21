@@ -131,7 +131,7 @@ pub(crate) fn validate_artifact(
     Ok(())
 }
 
-fn validate_https_artifact(url: &str) -> Result<()> {
+pub(crate) fn validate_https_artifact(url: &str) -> Result<()> {
     if url.len() > 4096 || url.chars().any(char::is_control) {
         bail!("invalid update URL")
     }

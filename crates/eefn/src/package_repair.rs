@@ -51,11 +51,11 @@ pub struct RepairArgs {
     /// HTTPS package descriptor supplied by a publisher you trust; not an update feed.
     #[arg(long, requires = "source_action", conflicts_with_all = ["rollback", "status"])]
     pub manifest: Option<String>,
-    /// Inspect a source and retain a bounded exact-build proposal; no artifact download.
-    #[arg(long, group = "source_action", requires = "manifest", conflicts_with_all = ["approve", "rollback", "status"])]
+    /// Inspect the packaged source (or --manifest) and retain a proposal; no artifact download.
+    #[arg(long, group = "source_action", conflicts_with_all = ["approve", "rollback", "status"])]
     pub check: bool,
     /// Approve one retained proposal from the same unchanged HTTPS source.
-    #[arg(long, group = "source_action", requires = "manifest", conflicts_with_all = ["check", "rollback", "status"])]
+    #[arg(long, group = "source_action", conflicts_with_all = ["check", "rollback", "status"])]
     pub approve: Option<String>,
 }
 
@@ -215,7 +215,8 @@ pub fn inspect(
         "scope":"invoked_executable","invoked_version":current_version,"running_service_inspected":false,
         "application_restart_required":null,"handoff_required_for_invoked_executable":null,
         "installed_version":null,"bundle_selection":null,"selection_error":false,
-        "repair_receipts":receipts,"repair_source_plans":crate::repair_sources::status(install, program, operation_id),"issues":[],
+        "repair_receipts":receipts,"repair_source_plans":crate::repair_sources::status(install, program, operation_id),
+        "repair_source_hint":crate::repair_sources::hint_status(running_executable, program, current_version),"issues":[],
         "note":"Read-only package evidence. Handoff compares this executable, not a background runtime. Selected is not running or healthy. No download, recovery, replay, repair or restart."});
     let selection = (|| -> Result<_> {
         let version = updater::installed_version(install)?;
@@ -345,6 +346,20 @@ pub fn render(report: &serde_json::Value) -> Result<String> {
                     "Repair source proposals unavailable; retained without reset."
                 )?;
             }
+            if let Some(source) = report["repair_source_hint"]["publisher_source"].as_str() {
+                writeln!(
+                    text,
+                    "Packaged public repair source: {source} (not a publisher-signature or health check)."
+                )?;
+            } else {
+                writeln!(
+                    text,
+                    "Packaged repair source: {}. An explicit --manifest source remains available.",
+                    report["repair_source_hint"]["state"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                )?;
+            }
             writeln!(text, "Read-only. No automatic retry, repair or restart.")?;
         }
         Some("explicit_repair") => {
@@ -366,6 +381,9 @@ pub fn render(report: &serde_json::Value) -> Result<String> {
         }
         Some("repair_source_plan") => {
             let plan = &report["plan"];
+            if let Some(source) = report["source"]["publisher_source"].as_str() {
+                writeln!(text, "Public publisher source: {source}")?;
+            }
             writeln!(
                 text,
                 "Repair proposal: {}",
@@ -384,7 +402,12 @@ pub fn render(report: &serde_json::Value) -> Result<String> {
             )?;
             writeln!(
                 text,
-                "If you trust this publisher, approve with: repair --manifest <same HTTPS source> --approve {}{}",
+                "If you trust this publisher, approve with: repair{} --approve {}{}",
+                if report["source"]["source_kind"] == "packaged_hint" {
+                    ""
+                } else {
+                    " --manifest <same HTTPS source>"
+                },
                 plan["id"].as_str().unwrap_or(""),
                 if plan["allow_prerelease"] == true {
                     " --allow-prerelease"
@@ -399,6 +422,15 @@ pub fn render(report: &serde_json::Value) -> Result<String> {
         }
         Some("repair_source_refused") => {
             let guidance = match report["error_code"].as_str() {
+                Some("repair_source_unconfigured") => {
+                    "This running package has no public repair source. Use a publisher package that supplies one, or choose --manifest HTTPS_SOURCE explicitly; no JSON editing is needed."
+                }
+                Some("repair_source_hint_invalid" | "repair_source_hint_unavailable") => {
+                    "The packaged public source is invalid or unavailable. It was not reset and no old-root source was used. Inspect repair --status or choose an explicit --manifest source."
+                }
+                Some("repair_source_hint_changed") => {
+                    "The packaged public source changed during this call. Inspect repair --status before checking a new source; a changed hint is not publication authority."
+                }
                 Some("repair_source_requires_https") => {
                     "Use an HTTPS source without embedded credentials or a fragment."
                 }
@@ -430,7 +462,7 @@ pub fn render(report: &serde_json::Value) -> Result<String> {
                     "The descriptor, exact build, repair evidence or proposal publication was not accepted. Check the publisher's exact-build descriptor and repair --status."
                 }
                 _ => {
-                    "Choose --check or --approve with --manifest, separately from raw artifact and recovery options."
+                    "Choose --check or --approve, optionally with --manifest, separately from raw artifact and recovery options."
                 }
             };
             writeln!(text, "{guidance}")?;

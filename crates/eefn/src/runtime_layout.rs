@@ -92,6 +92,17 @@ impl RuntimeLayout {
             .cloned()
             .or_else(|| self.managed.then(|| candidates[0].clone()))
     }
+
+    /// Public publisher metadata belongs to the running bundle, never a pending
+    /// selection, an old root or the current working directory. Not authority.
+    pub(crate) fn repair_source_hint(&self, program: &str) -> Result<Option<PathBuf>> {
+        if !matches!(program, "eef" | "eefn") {
+            bail!("Unsupported repair product")
+        }
+        Ok(self
+            .managed
+            .then(|| self.bundle.join(format!("{program}.repair-source.json"))))
+    }
 }
 
 pub fn config_path(config: &Path, value: &Path) -> PathBuf {

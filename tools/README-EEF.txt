@@ -28,3 +28,16 @@ Feed-based updates reject alpha/beta/RC builds, including automatic updates.
 Use --no-ui to run commands and services without the browser interface.
 eef node update supports one explicitly approved, version/hash/size-pinned
 artifact on alpha.5+ nodes, without changing their automatic-update policy.
+
+Local coordinator repair (unreleased, publisher-enabled packages):
+  eef repair --check
+  eef repair --approve PROPOSAL_UUID
+  eef repair --status
+Check displays the public publisher source and retains a proposal without a
+package download or restart. Approve selects one exact verified repair; restart
+separately. With a packaged source hint, no URL, hash, port or JSON entry is
+needed. Hint-less builds with these commands can use --manifest explicitly;
+older binaries may need an upgrade for command support. Prerelease check/approve
+requires --allow-prerelease for that operation only, not an auto-update opt-in.
+Review the publisher before approval; repair does not prove runtime health or
+justify bypassing an antivirus detection.

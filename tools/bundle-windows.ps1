@@ -11,7 +11,9 @@ param(
     [switch]$AllowPrerelease,
     [string]$SignToolPath,
     [string]$CertificateThumbprint,
-    [string]$TimestampUrl
+    [string]$TimestampUrl,
+    [string]$RepairSourceTemplate,
+    [string]$RepairArtifactTemplate
 )
 
 function New-SelfExtractingInstaller {
@@ -50,6 +52,19 @@ $versionMatch = Select-String -LiteralPath (Join-Path $workspace 'Cargo.toml') -
 if ($versionMatch.Count -ne 1) { throw 'Workspace must declare one semantic release version' }
 $version = $versionMatch.Matches[0].Groups[1].Value
 if ($version.Contains('-') -and -not $AllowPrerelease) { throw 'Use -AllowPrerelease explicitly to package an alpha, beta or release candidate' }
+$repairHintScript = Join-Path $PSScriptRoot 'new-repair-source-hint.ps1'
+$repairDescriptorScript = Join-Path $PSScriptRoot 'new-repair-source.ps1'
+if ([bool]$RepairSourceTemplate -ne [bool]$RepairArtifactTemplate) {
+    throw 'RepairSourceTemplate and RepairArtifactTemplate must be supplied together'
+}
+$repairArtifactUrls = @{}
+if ($RepairSourceTemplate) {
+    foreach ($product in @('eef','eefn')) {
+        # Validate publisher input before toolchain/runtime downloads or builds.
+        & $repairHintScript -Product $product -Version $version -ManifestTemplate $RepairSourceTemplate -ResolveOnly | Out-Null
+        $repairArtifactUrls[$product] = & $repairHintScript -Product $product -Version $version -ManifestTemplate $RepairArtifactTemplate -ResolveOnly
+    }
+}
 if (-not $BundleDir) { $BundleDir = "bundle\eef-windows-x86_64-v$version" }
 $validation = Join-Path $workspace ".validation\v$version"
 $scanScript = Join-Path $PSScriptRoot 'scan-windows.ps1'
@@ -90,6 +105,13 @@ if (-not ($release.TrimEnd('\') + '\').StartsWith($workspacePrefix, [StringCompa
 }
 $eefRelease = Join-Path $release "eef-installer.exe"
 $eefnRelease = Join-Path $release "eefn-installer.exe"
+if ($RepairSourceTemplate) {
+    foreach ($product in @('eef','eefn')) {
+        if (Test-Path -LiteralPath (Join-Path $release "$product-repair.json")) {
+            throw 'Repair metadata already exists. Choose a new ReleaseDir; existing metadata is never overwritten'
+        }
+    }
+}
 foreach ($installer in @($eefRelease, $eefnRelease)) {
     if (Test-Path -LiteralPath $installer) { throw "Release installer already exists: $installer" }
 }
@@ -270,6 +292,10 @@ try {
     Write-Utf8NoBom -Path (Join-Path $eefnPackage "bundle.json") -Content (([ordered]@{name="eefn";version=$version;architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded";llamacpp="b10621";models_included=$false}) | ConvertTo-Json)
 
     foreach ($package in @($eefPackage, $eefnPackage)) {
+        if ($RepairSourceTemplate) {
+            $product = if ($package -eq $eefPackage) { 'eef' } else { 'eefn' }
+            & $repairHintScript -Product $product -Version $version -ManifestTemplate $RepairSourceTemplate -Output (Join-Path $package "$product.repair-source.json")
+        }
         $provenance = [ordered]@{
             version=$version; source_commit=$sourceCommit; source_dirty=$sourceDirty
             rust_version=((& $rustup run stable-x86_64-pc-windows-gnullvm rustc --version) | Out-String).Trim()
@@ -303,6 +329,15 @@ try {
     }
     foreach ($installer in @($eefRelease, $eefnRelease)) {
         & $scanScript -Path $installer -ReportPath (Join-Path $validation ((Split-Path -Leaf $installer) + '.scan.json'))
+    }
+    if ($RepairSourceTemplate) {
+        foreach ($product in @('eef','eefn')) {
+            $package = if ($product -eq 'eef') { $eefPackage } else { $eefnPackage }
+            $artifact = if ($product -eq 'eef') { $eefRelease } else { $eefnRelease }
+            # Final artifact hashes follow signing/scanning. Publish these small
+            # sidecars at the hint URLs only after the entire build succeeds.
+            & $repairDescriptorScript -Product $product -Version $version -Executable (Join-Path $package "$product.exe") -Artifact $artifact -ArtifactUrl $repairArtifactUrls[$product] -Output (Join-Path $release "$product-repair.json")
+        }
     }
     Write-Host "Release installers created at $release"
     $freeBytes = (Get-PSDrive -Name $driveName).Free

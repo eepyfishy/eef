@@ -3,6 +3,32 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: packaged public repair sources
+
+Optional role/version-specific public hints now resolve from the invoked managed
+bundle for URL-free `repair --check` / `repair --approve UUID`. The owner sees the
+public publisher URL; private explicit overrides stay hidden. Hint validation is
+bounded/strict and independent of offline package status; old-root/pending hints
+are never borrowed. Hint changes across asynchronous work/final authorization
+block publication without new automatic authority, retries or restart. Paired
+publisher templates wire hints before inventory and exact descriptor sidecars
+after signing/scanning; helpers refuse overwriting existing metadata and invalid
+builder input fails before downloads/builds. See [contract and verification scope](PACKAGED-REPAIR-SOURCES.md).
+The all-target check and both final locked/offline workspace/all-target modes
+pass: 1,008 tests plus one ignored each, including six new cases. Headless
+apps/examples build and all twenty-one native suites pass. Twenty frozen source/
+helper and seven native artifact hashes match; all public results report passed
+and owned app/helper processes are terminal. Format, script syntax, backend/
+browser boundary and diff checks pass. Packaged readmes now describe URL-free
+repair, separate approval/restart and one-shot prerelease consent. Native helper
+round-trips and negative builder preflight pass; full-builder ordering is checked
+statically, not a successful fresh signed packaging/HTTPS/physical test. Automatic
+repair policy/controller, progress/cancellation/retention, post-restart health,
+approved model/default quality and physical/installer/signing/Defender/stable gates
+remain open.
+No installed/remote node, UI, model/default, version, release asset, TLS trust,
+Defender setting or auto-update policy changed. CI remains local and unpublished.
+
 ## Unreleased: exact-build repair source proposals
 
 Shared local EEF/EEFN source commands check an owner-selected HTTPS descriptor
