@@ -3,6 +3,24 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: selected-bundle component resolution
+
+A versioned executable could inspect old installation-root plugins or choose the
+old stock llama.cpp binary. A native before-fix fixture reproduces the plugin
+mismatch. A shared layout resolver now uses the actual running bundle, preserves
+explicit custom paths and config-relative Python, prevents implicit managed
+Python/plugin fallback, and ignores pending application selections. Setup's
+read-only renderer adds package/dependency repair guidance. Twelve focused cases
+pass; both locked/offline workspace/all-target feature modes pass 971 tests plus
+one ignored each. Final headless apps/examples build; bundled-components-OUkNoW
+passes eight native scenarios and fifteen existing native suites also pass.
+Frozen product source and all six evaluated app/helper hashes match; source
+boundary/format/JS/diff checks pass; fixture processes are terminal. See
+[contract, harness boundaries and evidence](BUNDLED-COMPONENTS.md).
+No installed/remote node, visual UI, model default, version, release installer or
+automatic-update policy changed. Automatic dependency repair, approved defaults,
+model quality, physical two-PC and installer/signing/Defender/stable gates remain.
+
 ## Unreleased: atomic settings and backup publication
 
 Six new pre-fix regressions expose fixed `.next` sibling clobbering and copy-over-

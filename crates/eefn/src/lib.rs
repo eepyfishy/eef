@@ -75,6 +75,7 @@ pub mod request_response;
 pub mod request_result;
 pub mod request_stop_receipt;
 pub mod request_submission;
+pub mod runtime_layout;
 pub mod server;
 pub mod service;
 mod session_output;

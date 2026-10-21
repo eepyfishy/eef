@@ -3077,6 +3077,8 @@ async fn run_node(
         None => dashboard.capture_runtime_configuration()?,
     };
     let mut file: FileConfig = serde_json::from_value(startup.value().clone())?;
+    let component_layout = eefn::runtime_layout::RuntimeLayout::current()?;
+    let development_root = std::env::current_dir().ok();
     file.model_lifecycle.validate()?;
     merge_args(&mut file, &args);
     file.network.validate()?;
@@ -3172,7 +3174,11 @@ async fn run_node(
             .and_then(|models| models.llamacpp.as_ref())
             .map(|config| {
                 ModelServer::new(
-                    resolve_binary(&args.config, &install_dir, &config.binary),
+                    component_layout.model_binary(
+                        &args.config,
+                        &config.binary,
+                        &default_llama_binary(),
+                    ),
                     config
                         .slots
                         .iter()
@@ -3235,7 +3241,9 @@ async fn run_node(
     ];
     dashboard.live.lock().unwrap()["python_bridge"] = serde_json::Value::Null;
     if !file.python_plugins.is_empty() || builtin_plugins.iter().any(|(enabled, _)| *enabled) {
-        let configured = PythonRuntime::discover(file.python.clone())
+        let executable =
+            python_for_startup(&args.config, file.python.clone(), args.python.is_some());
+        let configured = PythonRuntime::discover(executable)
             .map(|runtime| runtime.with_limits(file.python_bridge.clone()))
             .transpose();
         let runtime = match configured {
@@ -3247,7 +3255,8 @@ async fn run_node(
             info!(python = %runtime.executable().display(), "Python plugin runtime enabled");
             for (_, filename) in builtin_plugins.iter().filter(|(enabled, _)| *enabled) {
                 let load = async {
-                    let path = resolve_builtin_plugin(&install_dir, filename)?;
+                    let path =
+                        component_layout.builtin_plugin(filename, development_root.as_deref())?;
                     engine.add_python_plugin(runtime.clone(), path).await
                 }
                 .await;
@@ -3592,26 +3601,18 @@ fn resolve_relative(config: &Path, value: &Path) -> PathBuf {
         .join(value)
 }
 
-fn resolve_binary(config: &Path, install_dir: &Path, value: &Path) -> PathBuf {
-    let relative = resolve_relative(config, value);
-    if value.is_absolute() || relative.is_file() {
-        relative
-    } else {
-        install_dir.join(value)
-    }
-}
-
-fn resolve_builtin_plugin(install_dir: &Path, filename: &str) -> Result<PathBuf> {
-    let candidates = [
-        install_dir.join("python/plugins").join(filename),
-        std::env::current_dir()?
-            .join("python/plugins")
-            .join(filename),
-    ];
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .with_context(|| format!("enabled built-in plugin '{filename}' is missing"))
+fn python_for_startup(
+    config: &Path,
+    value: Option<PathBuf>,
+    command_line: bool,
+) -> Option<PathBuf> {
+    value.map(|value| {
+        if command_line {
+            value
+        } else {
+            eefn::runtime_layout::config_path(config, &value)
+        }
+    })
 }
 
 fn parse_selected_model(value: &str) -> Result<SelectedModel> {
@@ -3631,6 +3632,26 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bundled_components_python_file_paths_are_config_relative_but_cli_keeps_its_intent() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("node/config.json");
+        let relative = std::path::PathBuf::from("python/owner.exe");
+        assert_eq!(
+            super::python_for_startup(&config, Some(relative.clone()), false),
+            Some(dir.path().join("node").join(&relative))
+        );
+        assert_eq!(
+            super::python_for_startup(&config, Some(relative.clone()), true),
+            Some(relative)
+        );
+        let absolute = dir.path().join("explicit-python.exe");
+        assert_eq!(
+            super::python_for_startup(&config, Some(absolute.clone()), false),
+            Some(absolute)
+        );
+        assert!(super::python_for_startup(&config, None, false).is_none());
+    }
     #[test]
     fn prompt_approval_is_an_explicit_command_without_setup_or_restart_flags() {
         use clap::Parser;

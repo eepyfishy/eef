@@ -109,16 +109,31 @@ pub struct PythonRuntime {
 
 impl PythonRuntime {
     pub fn discover(explicit: Option<PathBuf>) -> Option<Self> {
+        Self::discover_in(
+            explicit,
+            std::env::var_os("EEF_PYTHON").map(PathBuf::from),
+            crate::runtime_layout::RuntimeLayout::current()
+                .ok()
+                .as_ref(),
+        )
+    }
+    fn discover_in(
+        explicit: Option<PathBuf>,
+        environment: Option<PathBuf>,
+        layout: Option<&crate::runtime_layout::RuntimeLayout>,
+    ) -> Option<Self> {
         let executable = explicit
-            .or_else(|| std::env::var_os("EEF_PYTHON").map(PathBuf::from))
-            .or_else(bundled_python)
-            .unwrap_or_else(|| {
-                PathBuf::from(if cfg!(windows) {
-                    "python.exe"
-                } else {
-                    "python3"
+            .or(environment)
+            .or_else(|| layout.and_then(|layout| layout.bundled_python()))
+            .or_else(|| {
+                layout.map(|_| {
+                    PathBuf::from(if cfg!(windows) {
+                        "python.exe"
+                    } else {
+                        "python3"
+                    })
                 })
-            });
+            })?;
         Some(Self {
             executable,
             limits: BridgeLimits::default(),
@@ -416,19 +431,6 @@ fn decode_reply(bytes: &[u8]) -> Result<Value> {
         .ok_or(BridgeFailure::Reply)?
         .remove("data")
         .unwrap_or(Value::Null))
-}
-
-fn bundled_python() -> Option<PathBuf> {
-    let root = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let candidates = if cfg!(windows) {
-        vec![root.join("python/python.exe")]
-    } else {
-        vec![
-            root.join("python/bin/python3"),
-            root.join("python/bin/python"),
-        ]
-    };
-    candidates.into_iter().find(|path| path.is_file())
 }
 
 #[cfg(test)]

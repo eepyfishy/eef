@@ -1,5 +1,57 @@
 //! Deterministic pipe bounds, not device/Python acceptance.
 use super::*;
+
+#[test]
+fn bundled_components_python_override_precedence_and_missing_managed_interpreter_are_explicit() {
+    let dir = tempfile::tempdir().unwrap();
+    let bundle = dir.path().join("versions/0.4.0-test");
+    std::fs::create_dir_all(&bundle).unwrap();
+    let exe = bundle.join("eefn.exe");
+    std::fs::write(&exe, b"fixture").unwrap();
+    let layout = crate::runtime_layout::RuntimeLayout::from_executable(&exe).unwrap();
+    let explicit = dir.path().join("owner-python.exe");
+    let environment = dir.path().join("environment-python.exe");
+    assert_eq!(
+        PythonRuntime::discover_in(
+            Some(explicit.clone()),
+            Some(environment.clone()),
+            Some(&layout)
+        )
+        .unwrap()
+        .executable(),
+        explicit
+    );
+    assert_eq!(
+        PythonRuntime::discover_in(None, Some(environment.clone()), Some(&layout))
+            .unwrap()
+            .executable(),
+        environment
+    );
+    let managed = PythonRuntime::discover_in(None, None, Some(&layout)).unwrap();
+    assert_eq!(managed.executable(), layout.bundled_python().unwrap());
+    assert!(!managed.executable().is_file());
+    assert!(PythonRuntime::discover_in(None, None, None).is_none());
+    assert_eq!(
+        PythonRuntime::discover_in(Some(explicit.clone()), None, None)
+            .unwrap()
+            .executable(),
+        explicit
+    );
+    let flat = dir.path().join("development/eefn.exe");
+    std::fs::create_dir_all(flat.parent().unwrap()).unwrap();
+    std::fs::write(&flat, b"fixture").unwrap();
+    let development = crate::runtime_layout::RuntimeLayout::from_executable(flat).unwrap();
+    assert_eq!(
+        PythonRuntime::discover_in(None, None, Some(&development))
+            .unwrap()
+            .executable(),
+        Path::new(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python3"
+        })
+    );
+}
 #[tokio::test]
 async fn oversized_request_is_refused_before_plugin_metadata_or_interpreter_spawn() {
     let dir = tempfile::tempdir().unwrap();

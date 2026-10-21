@@ -31,6 +31,13 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+[Selected-bundle resolution](BUNDLED-COMPONENTS.md) passes both full feature modes
+(971 tests plus one ignored each) and sixteen native suites after a fixture
+reproduced loading an old root plugin beside a newer executable.
+The backend keeps managed Python/plugins/stock llama.cpp with the running bundle,
+preserves owner overrides, and adds read-only setup guidance. This is not an
+automatic repair controller or default/model-quality/release acceptance.
+
 [Atomic settings publication](ATOMIC-SETTINGS.md) passes both full feature modes
 (959 tests plus one ignored each) and fifteen native suites, after regressions
 reproduced `.next` clobbering, rename-denial fallback and unsafe installer secret

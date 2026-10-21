@@ -413,6 +413,16 @@ pub fn render(value: &Value) -> Result<String> {
         Some(crate::registration::State::NotConnected)=>"Registration: no current connected session.\n",
         _=>"Registration: unknown on this runtime/build; not assumed accepted.\n",
     });
+    for issue in &report.startup_issues {
+        use crate::service::StartupIssue;
+        text.push_str(match issue {
+            StartupIssue::PythonRuntimeUnavailable => "Python did not initialize. Repair this node package if bundled Python is missing; otherwise inspect the explicit interpreter. Local core commands still work.\n",
+            StartupIssue::BuiltinPluginUnavailable => "An enabled built-in plugin did not initialize. Repair this node package if its bundled plugins or dependencies are missing.\n",
+            StartupIssue::CustomPluginUnavailable => "An owner-configured plugin did not initialize. Inspect its configured source and dependencies; no replacement plugin was selected.\n",
+            StartupIssue::LlamacppStartupFailed => "The selected local model runtime did not start. Inspect models show and model-lifecycle show; check the selected model and repair this node package if runtime files are missing.\n",
+            StartupIssue::PeerRuntimeUnavailable => "Peer transport did not initialize. Inspect the node's connection and peer configuration before retrying work.\n",
+        });
+    }
     for step in report.next_steps {
         text.push_str("Next: ");
         text.push_str(match step {
@@ -439,6 +449,27 @@ pub fn render(value: &Value) -> Result<String> {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn bundled_components_setup_guidance_is_actionable_without_readiness_or_private_paths() {
+        for issue in [
+            crate::service::StartupIssue::PythonRuntimeUnavailable,
+            crate::service::StartupIssue::BuiltinPluginUnavailable,
+            crate::service::StartupIssue::LlamacppStartupFailed,
+        ] {
+            let (_dir, core, request) = fixture();
+            core.record_startup_issue(issue);
+            let report = core.setup_check(request).unwrap();
+            let text = render(&report).unwrap();
+            assert!(
+                text.contains("repair this node package")
+                    || text.contains("Repair this node package")
+            );
+            assert!(!text.contains("PRIVATE"));
+            assert_eq!(report["changed"], false);
+            assert_eq!(report["restart_requested"], false);
+        }
+    }
 
     fn fixture() -> (tempfile::TempDir, Arc<crate::NodeService>, CheckRequest) {
         let dir = tempfile::tempdir().unwrap();
