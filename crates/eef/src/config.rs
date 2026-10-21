@@ -160,22 +160,11 @@ impl Config {
         let path = self
             .source()
             .context("no configuration path was supplied at startup")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        let bytes = serde_yml::to_string(value)?;
         if path.is_file() {
-            std::fs::copy(path, path.with_extension("yaml.bak"))?;
+            eefn::atomic_file::copy(path, &path.with_extension("yaml.bak"))?;
         }
-        let filename = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("config.yaml");
-        let next = path.with_file_name(format!("{filename}.next"));
-        std::fs::write(&next, serde_yml::to_string(value)?)?;
-        std::fs::rename(&next, path).or_else(|_| {
-            std::fs::copy(&next, path)?;
-            std::fs::remove_file(&next)
-        })?;
+        eefn::atomic_file::write(path, bytes.as_bytes())?;
         Ok(())
     }
 }
@@ -217,6 +206,40 @@ fn browser_preference_is_explicit_boolean_and_legacy_default_is_preserved() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn atomic_settings_coordinator_preserves_preexisting_next_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eef.yaml");
+        std::fs::write(&path, "identity:\n  name: Original\n").unwrap();
+        let config = super::Config::load(Some(&path)).unwrap();
+        let sibling = path.with_file_name("eef.yaml.next");
+        let unrelated = b"Existing sibling; not owned by this write";
+        std::fs::write(&sibling, unrelated).unwrap();
+        let mut value = config.as_value();
+        value["identity"]["name"] = serde_json::json!("New name");
+        config.save_for_restart(&value).unwrap();
+        assert_eq!(std::fs::read(sibling).unwrap(), unrelated);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_settings_coordinator_refuses_delete_locked_target_without_copy_overwrite() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eef.yaml");
+        std::fs::write(&path, "identity:\n  name: Original\n").unwrap();
+        let config = super::Config::load(Some(&path)).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let _guard = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        let mut value = config.as_value();
+        value["identity"]["name"] = serde_json::json!("Must not be published");
+        assert!(config.save_for_restart(&value).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
     use super::*;
 
     #[test]

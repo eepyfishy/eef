@@ -3,6 +3,24 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: atomic settings and backup publication
+
+Six new pre-fix regressions expose fixed `.next` sibling clobbering and copy-over-
+live-file fallback after native Windows rename denial in coordinator, first-run
+node and normal node saves. A shared same-directory synchronized staging/persist
+path replaces those writers and their backups. The installer secret-initialization
+path reproduces the same unsafe-write condition and now shares the helper without
+importing the node runtime. Existing valid installer secrets remain byte-identical.
+All twenty added focused executions pass; both locked/offline workspace/all-target
+feature modes pass 959 tests plus one ignored each. Final headless apps/examples
+build; the native Windows settings-storage-uvPNhG API fault cases and fourteen
+existing native suites pass. Frozen source and all five evaluated app/helper hashes
+match; boundary/format/JS/diff/ignore checks pass; fixture processes are terminal.
+See [contract and verification boundaries](ATOMIC-SETTINGS.md). This is not
+power-loss, real disk-exhaustion, physical two-PC or new packaged-installer
+acceptance. No installed/remote node, default model, visual UI, version, release
+installer package or automatic-update policy changed; stable-release gates remain.
+
 ## Unreleased: one-attempt prompt approval
 
 An explicit model-bootstrap-policy approve operation records one durable consent

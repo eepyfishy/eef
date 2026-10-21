@@ -13,16 +13,22 @@ async function* modules(dir,prefix=''){
   else if(entry.isFile()&&file.endsWith('.rs'))yield [file,join(dir,entry.name)];
  }
 }
+function checkSource(role,file,source){
+ assert(!/\b(?:crate|eefn)::(?:api|dashboard|web_ui)::/.test(source),`${role}/${file} imports an adapter`);
+ assert(!/\bNodeDashboard\b/.test(source),`${role}/${file} depends on dashboard state`);
+ assert(!/include_(?:str|bytes)!\([^\n]*dashboard\//.test(source),`${role}/${file} embeds browser assets`);
+}
 for(const role of ['eef','eefn']){
  const dir=join(root,'crates',role,'src');
  for await(const [file,path] of modules(dir)){
   if(adapters.has(file))continue;
   const source=await readFile(path,'utf8');
-  assert(!/\b(?:crate|eefn)::(?:api|dashboard|web_ui)::/.test(source),`${role}/${file} imports an adapter`);
-  assert(!/\bNodeDashboard\b/.test(source),`${role}/${file} depends on dashboard state`);
-  assert(!/include_(?:str|bytes)!\([^\n]*dashboard\//.test(source),`${role}/${file} embeds browser assets`);
+  checkSource(role,file,source);
  }
  const cargo=await readFile(join(root,'crates',role,'Cargo.toml'),'utf8');
  assert(cargo.includes('default = ["dashboard"]')&&cargo.includes('dashboard = []'),`${role} needs optional browser assets`);
+}
+for await(const [file,path] of modules(join(root,'shared'))){
+ checkSource('shared',file,await readFile(path,'utf8'));
 }
 console.log('Backend-to-browser dependency boundary passed (source check; compile/integration tests are separate)');

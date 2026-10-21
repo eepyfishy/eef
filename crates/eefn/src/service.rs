@@ -221,26 +221,14 @@ impl NodeService {
         }
         validate_config_shape(&value)?;
         validate_model_references(&value, &old, &self.config_path)?;
-        if let Some(parent) = self.config_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        let bytes = serde_json::to_vec_pretty(&value)?;
         if self.config_path.is_file() {
-            std::fs::copy(
+            crate::atomic_file::copy(
                 &self.config_path,
-                self.config_path.with_extension("json.bak"),
+                &self.config_path.with_extension("json.bak"),
             )?;
         }
-        let filename = self
-            .config_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("config.json");
-        let next = self.config_path.with_file_name(format!("{filename}.next"));
-        std::fs::write(&next, serde_json::to_vec_pretty(&value)?)?;
-        std::fs::rename(&next, &self.config_path).or_else(|_| {
-            std::fs::copy(&next, &self.config_path)?;
-            std::fs::remove_file(&next)
-        })?;
+        crate::atomic_file::write(&self.config_path, &bytes)?;
         self.setup_changed.notify_one();
         Ok(())
     }

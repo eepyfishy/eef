@@ -5,6 +5,8 @@
 
 pub mod api;
 mod artifact_transfer;
+#[path = "../../../shared/atomic_file.rs"]
+pub mod atomic_file;
 pub mod audio_submission;
 pub mod authentication;
 pub mod automation;
@@ -76,6 +78,8 @@ pub mod request_submission;
 pub mod server;
 pub mod service;
 mod session_output;
+#[cfg(test)]
+mod settings_storage_tests;
 pub mod setup;
 pub mod setup_check;
 pub mod startup;

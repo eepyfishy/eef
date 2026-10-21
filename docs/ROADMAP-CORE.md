@@ -31,6 +31,13 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+[Atomic settings publication](ATOMIC-SETTINGS.md) passes both full feature modes
+(959 tests plus one ignored each) and fifteen native suites, after regressions
+reproduced `.next` clobbering, rename-denial fallback and unsafe installer secret
+publication. A common helper removes settings/backup in-place overwrite fallback
+without adding the node runtime to the installer. This does not close outstanding
+dependency/model-quality, physical or release gates.
+
 The [one-attempt prompt approval path](PROMPT-MODEL-APPROVAL.md) passes both full
 feature modes (939 tests plus one ignored each) and fourteen native suites.
 It supplies explicit durable setup consent without a dashboard or permanent move

@@ -9,6 +9,8 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use zip::ZipArchive;
+#[path = "../../../shared/atomic_file.rs"]
+pub mod atomic_file;
 #[path = "../../../shared/installer_payload.rs"]
 mod installer_payload;
 #[cfg(windows)]
@@ -326,7 +328,7 @@ fn ensure_coordinator_secret(path: &Path) -> Result<()> {
             "psk".into(),
             Value::String(hex::encode(rand::random::<[u8; 32]>())),
         );
-    fs::write(path, serde_yml::to_string(&value)?)?;
+    atomic_file::write(path, serde_yml::to_string(&value)?.as_bytes())?;
     Ok(())
 }
 
@@ -527,6 +529,40 @@ fn show_error(message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_settings_installer_secret_creation_refuses_delete_locked_configuration() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eef.yaml");
+        let before =
+            b"identity:\n  name: Owner settings\nnode:\n  psk: ''\nfuture:\n  keep: true\n";
+        fs::write(&path, before).unwrap();
+        let guard = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&path)
+            .unwrap();
+        assert!(ensure_coordinator_secret(&path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        drop(guard);
+        ensure_coordinator_secret(&path).unwrap();
+        let saved: Value = serde_yml::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["identity"]["name"], "Owner settings");
+        assert_eq!(saved["future"]["keep"], true);
+        assert_eq!(saved["node"]["psk"].as_str().unwrap().len(), 64);
+    }
+
+    #[test]
+    fn atomic_settings_installer_preserves_existing_secret_without_rewriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eef.yaml");
+        let before = b"# Owner formatting and existing secret must survive\nnode:\n  psk: existing-fixture-secret\n";
+        fs::write(&path, before).unwrap();
+        ensure_coordinator_secret(&path).unwrap();
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
 
     #[test]
     fn config_preservation_is_product_specific() {

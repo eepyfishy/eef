@@ -47,26 +47,7 @@ pub async fn hardware() -> Value {
 }
 
 pub fn write_json(path: &Path, value: &Value) -> Result<()> {
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent)?;
-    }
-    let next = path.with_extension("json.next");
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    use std::io::Write;
-    let mut file = options.open(&next)?;
-    file.write_all(&serde_json::to_vec_pretty(value)?)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&next, path).or_else(|_| {
-        std::fs::copy(&next, path)?;
-        std::fs::remove_file(&next)
-    })?;
+    crate::atomic_file::write(path, &serde_json::to_vec_pretty(value)?)?;
     Ok(())
 }
 

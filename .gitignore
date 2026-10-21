@@ -9,6 +9,7 @@
 *.bootstrap.sqlite3
 *.bootstrap.sqlite3-journal
 *.log
+.eef-write-*
 config.json
 .env
 .update_staging/
