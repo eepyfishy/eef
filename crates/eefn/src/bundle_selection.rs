@@ -43,7 +43,7 @@ pub fn repair_slot(version: &str, request_id: &str) -> Result<String> {
     Ok(format!("{version}.repair-{request_id}"))
 }
 
-fn validate_slot(slot: &str, version: &str) -> Result<()> {
+pub(crate) fn validate_slot(slot: &str, version: &str) -> Result<()> {
     if slot == ROOT_SLOT || slot == version {
         return Ok(());
     }

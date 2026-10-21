@@ -5,6 +5,11 @@ increment adds durable admission/evidence to the same backend used by local EEF,
 local EEFN and approved remote node repair. No dashboard is needed to own the
 operation or inspect an interrupted attempt.
 
+The subsequent [exact-build source proposal flow](REPAIR-SOURCES.md) can produce
+these same operation IDs and artifact requests after separate owner approval.
+This receipt contract remains the admission/no-replay boundary; proposal metadata
+alone grants no artifact or restart authority.
+
 ## Owner interface
 
 ```text

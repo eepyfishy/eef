@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+[Exact-build source proposals](REPAIR-SOURCES.md) remove manual package SHA/size
+entry from local EEF/EEFN repair: check an owner-selected HTTPS descriptor, then
+approve the retained source/build/slot-bound UUID. No source/token is retained,
+no publisher is hardcoded, and existing admission/no-replay checks still own the
+artifact boundary. Offline inspection separates proposals from approval/history.
+Both full feature modes pass 1,002 tests plus one ignored each, and twenty native
+suites pass against unchanged apps/helpers after a Python fixture startup/deadline
+assumption was corrected with explicit post-start process-retirement evidence.
+These are source proposals, not automatic discovery/repair, remote source planning,
+publisher-signature, successful packaged HTTPS, physical or stable acceptance.
+
 [Durable repair receipts](REPAIR-RECEIPTS.md) add bounded admission-before-I/O,
 non-replayable operation IDs and OS-lease-based interruption observations to
 local/approved remote repair. Offline status describes the invoked executable,

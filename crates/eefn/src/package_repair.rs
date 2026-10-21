@@ -20,20 +20,20 @@ pub struct RepairArgs {
     /// Exact installer/ZIP for this running build. Never an automatic feed change.
     #[arg(
         long,
-        required_unless_present_any = ["rollback", "status"],
-        conflicts_with_all = ["rollback", "status"]
+        required_unless_present_any = ["rollback", "status", "check", "approve"],
+        conflicts_with_all = ["rollback", "status", "manifest", "check", "approve"]
     )]
     pub url: Option<String>,
     #[arg(
         long,
-        required_unless_present_any = ["rollback", "status"],
-        conflicts_with_all = ["rollback", "status"]
+        required_unless_present_any = ["rollback", "status", "check", "approve"],
+        conflicts_with_all = ["rollback", "status", "manifest", "check", "approve"]
     )]
     pub sha256: Option<String>,
     #[arg(
         long,
-        required_unless_present_any = ["rollback", "status"],
-        conflicts_with_all = ["rollback", "status"]
+        required_unless_present_any = ["rollback", "status", "check", "approve"],
+        conflicts_with_all = ["rollback", "status", "manifest", "check", "approve"]
     )]
     pub size_bytes: Option<u64>,
     /// Allow this explicitly selected prerelease package only.
@@ -46,8 +46,17 @@ pub struct RepairArgs {
     #[arg(long, conflicts_with = "allow_prerelease")]
     pub status: bool,
     /// Stable identity for admission or read-only receipt lookup; never replayed.
-    #[arg(long, conflicts_with = "rollback")]
+    #[arg(long, conflicts_with_all = ["rollback", "check", "approve"])]
     pub operation_id: Option<String>,
+    /// HTTPS package descriptor supplied by a publisher you trust; not an update feed.
+    #[arg(long, requires = "source_action", conflicts_with_all = ["rollback", "status"])]
+    pub manifest: Option<String>,
+    /// Inspect a source and retain a bounded exact-build proposal; no artifact download.
+    #[arg(long, group = "source_action", requires = "manifest", conflicts_with_all = ["approve", "rollback", "status"])]
+    pub check: bool,
+    /// Approve one retained proposal from the same unchanged HTTPS source.
+    #[arg(long, group = "source_action", requires = "manifest", conflicts_with_all = ["check", "rollback", "status"])]
+    pub approve: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -95,6 +104,9 @@ impl From<&updater::ExplicitUpdate> for RepairRequest {
 pub async fn execute_local(args: &RepairArgs, program: &str) -> Result<serde_json::Value> {
     let executable = std::env::current_exe()?;
     let install = updater::installation_root(&executable)?;
+    if args.check || args.approve.is_some() {
+        return crate::repair_sources::execute(args, &install, &executable, program).await;
+    }
     if let Some(id) = &args.operation_id {
         crate::repair_receipts::validate_id(id)?;
     }
@@ -137,27 +149,36 @@ pub async fn execute_local(args: &RepairArgs, program: &str) -> Result<serde_jso
         || Ok(()),
     )
     .await;
+    Ok(application_report(&request, &install, program, result))
+}
+
+pub(crate) fn application_report(
+    request: &RepairRequest,
+    install: &Path,
+    program: &str,
+    result: Result<UpdateApplied>,
+) -> serde_json::Value {
     let receipts = receipt_status(&install, program, Some(&request.request_id));
     let attempt = receipts["attempts"]
         .as_array()
         .and_then(|a| a.first())
         .cloned();
     match result {
-        Ok(applied) => Ok(
+        Ok(applied) => {
             serde_json::json!({"schema_version":1,"report_type":"explicit_repair","success":true,
             "request_id":request.request_id,"applied":applied,"attempt":attempt,"repair_receipts":receipts,
             "outcome_unknown":false,"automatic_policy_changed":false,
-            "note":"Verified package selected, not health checked. Restart explicitly; ordinary restart also applies all other pending settings. No automatic retry or restart."}),
-        ),
-        Err(_) => Ok(
+            "note":"Verified package selected, not health checked. Restart explicitly; ordinary restart also applies all other pending settings. No automatic retry or restart."})
+        }
+        Err(_) => {
             serde_json::json!({"schema_version":1,"report_type":"explicit_repair","success":false,
             "request_id":request.request_id,"attempt":attempt,"repair_receipts":receipts,
             "outcome_unknown":receipts["available"]!=true || attempt.as_ref().is_some_and(|a|
                 a["outcome_unresolved"]==true || a["selection_outcome_unknown"]==true ||
                 (a["package_may_be_staged"]==true && a["receipt"]["outcome"]!="selected")),
             "automatic_policy_changed":false,"error_code":"repair_not_confirmed",
-            "error":"Repair not confirmed. Inspect repair --status with this operation ID. Never assume an error means no files were staged or selected; no automatic retry or restart."}),
-        ),
+            "error":"Repair not confirmed. Inspect repair --status with this operation ID. Never assume an error means no files were staged or selected; no automatic retry or restart."})
+        }
     }
 }
 
@@ -194,7 +215,7 @@ pub fn inspect(
         "scope":"invoked_executable","invoked_version":current_version,"running_service_inspected":false,
         "application_restart_required":null,"handoff_required_for_invoked_executable":null,
         "installed_version":null,"bundle_selection":null,"selection_error":false,
-        "repair_receipts":receipts,"issues":[],
+        "repair_receipts":receipts,"repair_source_plans":crate::repair_sources::status(install, program, operation_id),"issues":[],
         "note":"Read-only package evidence. Handoff compares this executable, not a background runtime. Selected is not running or healthy. No download, recovery, replay, repair or restart."});
     let selection = (|| -> Result<_> {
         let version = updater::installed_version(install)?;
@@ -228,6 +249,9 @@ pub fn inspect(
     }
     if report["repair_receipts"]["available"] != true {
         issues.push("repair_receipts_unavailable");
+    }
+    if report["repair_source_plans"]["available"] != true {
+        issues.push("repair_source_plans_unavailable");
     }
     report["success"] = serde_json::json!(issues.is_empty());
     report["issues"] = serde_json::json!(issues);
@@ -300,6 +324,27 @@ pub fn render(report: &serde_json::Value) -> Result<String> {
                     "Package selection needs attention; receipt evidence above is still independent."
                 )?;
             }
+            if let Some(plans) = report["repair_source_plans"]["plans"].as_array() {
+                for plan in plans {
+                    writeln!(
+                        text,
+                        "Retained source proposal {}: {} {} ({}; no approval inferred).",
+                        plan["id"].as_str().unwrap_or("unknown"),
+                        plan["program"].as_str().unwrap_or("unknown"),
+                        plan["version"].as_str().unwrap_or("unknown"),
+                        if plan["within_approval_time_window"] == true {
+                            "24-hour window open"
+                        } else {
+                            "expired or clock changed"
+                        }
+                    )?;
+                }
+            } else if report["repair_source_plans"]["available"] == false {
+                writeln!(
+                    text,
+                    "Repair source proposals unavailable; retained without reset."
+                )?;
+            }
             writeln!(text, "Read-only. No automatic retry, repair or restart.")?;
         }
         Some("explicit_repair") => {
@@ -318,6 +363,85 @@ pub fn render(report: &serde_json::Value) -> Result<String> {
             )?;
             writeln!(text, "Inspect: repair --status --operation-id {id}")?;
             writeln!(text, "No automatic retry or restart.")?;
+        }
+        Some("repair_source_plan") => {
+            let plan = &report["plan"];
+            writeln!(
+                text,
+                "Repair proposal: {}",
+                plan["id"].as_str().context("missing repair proposal ID")?
+            )?;
+            writeln!(
+                text,
+                "Exact build: {} {}. Package: {} bytes.",
+                plan["program"].as_str().unwrap_or("unknown"),
+                plan["version"].as_str().unwrap_or("unknown"),
+                plan["artifact_bytes"]
+            )?;
+            writeln!(
+                text,
+                "Proposal retained for 24 hours. No package download, repair admission or restart."
+            )?;
+            writeln!(
+                text,
+                "If you trust this publisher, approve with: repair --manifest <same HTTPS source> --approve {}{}",
+                plan["id"].as_str().unwrap_or(""),
+                if plan["allow_prerelease"] == true {
+                    " --allow-prerelease"
+                } else {
+                    ""
+                }
+            )?;
+            writeln!(
+                text,
+                "The source and exact proposal must still match; HTTPS/hash checks are not a publisher signature or malware verdict."
+            )?;
+        }
+        Some("repair_source_refused") => {
+            let guidance = match report["error_code"].as_str() {
+                Some("repair_source_requires_https") => {
+                    "Use an HTTPS source without embedded credentials or a fragment."
+                }
+                Some("repair_source_prerelease_consent_required") => {
+                    "This build is a prerelease. Repeat with --allow-prerelease only for this explicitly selected repair."
+                }
+                Some("repair_source_build_unavailable") => {
+                    "The invoked build or package selection needs attention. Inspect repair --status; restart a pending package before checking a new source."
+                }
+                Some("repair_source_fetch_failed") => {
+                    "The HTTPS descriptor could not be read within 20 seconds / 16 KiB. Check its address, availability and TLS trust; TLS verification was not disabled."
+                }
+                Some("repair_source_proposal_unavailable") => {
+                    "That proposal is missing, invalid or unavailable. Check the source to retain a new proposal."
+                }
+                Some("repair_source_proposal_ineligible") => {
+                    "The proposal expired, changed, or no longer matches the running build, package slot or prerelease choice. Check the source again."
+                }
+                Some("repair_source_already_admitted_or_evidence_unavailable") => {
+                    "This operation was already admitted or its evidence is unavailable. Inspect repair --status with its operation ID; do not replay it or reset history."
+                }
+                Some("repair_source_url_changed" | "repair_source_proposal_changed") => {
+                    "The source or proposal changed. Use the exact original source or check it again; replacement metadata is not approved."
+                }
+                Some("repair_source_store_unavailable" | "repair_source_capacity_reached") => {
+                    "The bounded proposal store is damaged or full. It was retained without automatic reset, pruning or deletion."
+                }
+                Some("repair_source_descriptor_rejected") => {
+                    "The descriptor, exact build, repair evidence or proposal publication was not accepted. Check the publisher's exact-build descriptor and repair --status."
+                }
+                _ => {
+                    "Choose --check or --approve with --manifest, separately from raw artifact and recovery options."
+                }
+            };
+            writeln!(text, "{guidance}")?;
+            writeln!(
+                text,
+                "Repair source not approved. Check the source, exact running build, retained proposal and prerelease consent."
+            )?;
+            writeln!(
+                text,
+                "No artifact download or repair admission was started by this source check. Existing repair evidence was not reset."
+            )?;
         }
         Some("package_rollback") => writeln!(
             text,

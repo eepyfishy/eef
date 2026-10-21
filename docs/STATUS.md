@@ -3,6 +3,37 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: exact-build repair source proposals
+
+Shared local EEF/EEFN source commands check an owner-selected HTTPS descriptor
+and retain a bounded digest-only proposal before separate exact approval. The
+proposal binds source URL/bytes, current executable/version/slot and one future
+repair ID; source changes, expiry, changed build/consent, damaged evidence and
+admitted IDs refuse approval. Existing verified repair/admission remains the
+artifact boundary. Offline status exposes proposals independently of receipts
+and package selection; no raw source URL/token is retained or returned.
+The publisher metadata helper hashes supplied post-packaging inputs without
+upload, overwrite, executable launch, signing or feed changes. No hardcoded
+publisher/default, automatic repair controller, remote source-planning API or
+runtime-health claim is added. See [contract and verification boundary](REPAIR-SOURCES.md).
+
+Both final locked/offline workspace/all-target feature modes pass 1,002 tests
+plus one ignored each, including twelve new regressions. Headless apps/examples
+build and all twenty native suites pass; sixteen source/helper and seven native
+artifact hashes remain unchanged, all public results report passed, and owned
+app/helper processes are terminal. Format, script syntax, backend/browser source
+boundary and diff checks pass. An earlier Python fixture failure hid its original
+cause; retained diagnostics then exposed an invalid startup-marker assumption.
+The fixture now records private probes, separates startup-inclusive short
+deadlines from observed parent/child deadline retirement, and permits ordinary
+fixture startup without changing application defaults. Earlier failed/prefinal
+runs are not acceptance; see the source contract for scope and exact evidence.
+Automatic source discovery/repair, progress/cancellation/retention, runtime health,
+approved model/default quality and physical/installer/signing/Defender/stable
+gates remain open. Installed/remote nodes, UI, model/default, version, release
+assets and automatic-update policy are unchanged. CI stays local at the owner's
+request and is excluded from publication.
+
 ## Unreleased: durable repair receipts and truthful offline status
 
 Repair admission now precedes artifact I/O and persists bounded operation IDs,

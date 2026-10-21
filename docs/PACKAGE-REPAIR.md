@@ -6,6 +6,11 @@ schema 2. Its verification is tracked separately in `STATUS.md`; the evidence
 below retains this original checkpoint's boundaries, not acceptance of later
 work.
 
+The later [source proposal flow](REPAIR-SOURCES.md) lets an owner check a
+publisher's exact-build HTTPS descriptor and approve its retained UUID without
+manually entering artifact SHA/size. It is not an automatic repair source or
+controller; this document retains the original raw-artifact checkpoint below.
+
 The backend can stage an explicitly selected **same-build** EEF or EEFN package
 without replacing loaded files. This is a repair primitive, not an automatic
 dependency-repair controller, application upgrade, model installer or readiness

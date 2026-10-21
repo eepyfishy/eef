@@ -63,6 +63,7 @@ pub mod python_policy;
 pub mod registration;
 pub mod relay_setup;
 mod repair_receipts;
+pub mod repair_sources;
 pub mod request_abandon;
 pub mod request_drafts;
 pub mod request_execution;
