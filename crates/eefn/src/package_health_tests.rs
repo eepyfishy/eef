@@ -3,6 +3,33 @@ use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
 };
+
+#[test]
+fn doctor_executable_digest_matches_independent_sha256_across_stream_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bounded-executable");
+    for size in [0, 1, 63, 64, 65, 65_535, 65_536, 65_537, 131_105] {
+        let bytes = (0..size).map(|i| (i % 251) as u8).collect::<Vec<_>>();
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(
+            executable_digest(&path).unwrap(),
+            hex::encode(Sha256::digest(&bytes)),
+            "stream size {size}"
+        );
+        if !bytes.is_empty() {
+            let before = executable_digest(&path).unwrap();
+            let mut changed = bytes;
+            changed[0] ^= 1;
+            std::fs::write(&path, &changed).unwrap();
+            let after = executable_digest(&path).unwrap();
+            assert_ne!(before, after, "same-size changes must not borrow a hash");
+            assert_eq!(after, hex::encode(Sha256::digest(&changed)));
+        }
+    }
+    assert!(executable_digest(dir.path()).is_err());
+    assert!(executable_digest(&dir.path().join("absent")).is_err());
+}
+
 struct Fake {
     calls: AtomicUsize,
     behavior: u8,

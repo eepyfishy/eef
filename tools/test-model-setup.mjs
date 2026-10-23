@@ -6,7 +6,7 @@ import {join,resolve} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer as tcpServer} from 'node:net';
 import {createServer} from 'node:http';
-import {createHash,randomBytes} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {reviewedFixture} from './reviewed-fixture.mjs';
 const root=resolve(import.meta.dirname,'..'),bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const scratch=await mkdtemp(join(root,'.validation/model-setup-')),children=[],held=[];
@@ -69,6 +69,23 @@ try{
  await until(async()=>pulls===1&&(await show()).setup.attempt?.phase==='downloading','one backend-owned transfer');
  let report=await show(),first=report.setup.attempt.id;const stale=await saved();
  assert.equal(report.setup.attempt.backend,'ollama');assert.equal(report.setup.attempt.download_admitted,true);
+ const beforeSetupInspection=await readFile(config,'utf8');
+ const setupDuringDownload=await local(['setup']);
+ assert(!setupDuringDownload.next_steps.includes('choose_interpreter'),'setup must not ask for another interpreter while the approved model setup is retained');
+ assert(setupDuringDownload.next_steps.includes('inspect_model_setup'));
+ assert.equal(setupDuringDownload.model_setup.status.attempt.id,first);
+ assert.equal(setupDuringDownload.model_setup.status.attempt.phase,'downloading');
+ assert.equal(setupDuringDownload.model_setup.status.readiness_verified,false);
+ const remoteSetupDuringDownload=await owner(['node','setup','--node',id]);
+ assert.equal(remoteSetupDuringDownload.success,true);
+ assert.equal(remoteSetupDuringDownload.result.model_setup.status.attempt.id,first);
+ assert.equal(remoteSetupDuringDownload.result.model_setup.status.attempt.phase,'downloading');
+ const plainRemoteSetup=await start('eef',['--config',identity,'node','setup','--node',id]).result;
+ assert.equal(plainRemoteSetup.code,0);
+ assert(plainRemoteSetup.out.includes('Node-local commands below must run on the inspected node'));
+ assert(plainRemoteSetup.out.includes('download checkpoint'));
+ for(const field of ['changed','model_inference_requested','execution_authorized','restart_requested','automatically_retried'])assert.equal(remoteSetupDuringDownload[field],false);
+ assert.equal(await readFile(config,'utf8'),beforeSetupInspection,'local and remote setup inspections never choose or configure models');
  assert.equal((await remote(['show'])).result.setup.attempt.id,first);
  await until(async()=>(await local(['models','download-status','--id',first])).download.completed===2,'existing progress channel');
  await local(['model-bootstrap-policy','configure','--disable-automation']);
@@ -85,6 +102,8 @@ try{
  nodeProcess.kill();await nodeProcess.result;launch();
  await until(async()=>(await json(node+'/api/diagnostics')).runtime_id!==oldRuntime&&(await show()).setup.attempt?.phase==='unknown','durable unknown after interrupted runtime');
  report=await show();assert.equal(report.setup.attempt.id,second);assert.equal(report.setup.attempt.reason,'runtime_interrupted');assert.equal(pulls,2);await assertEmpty();
+ const uncertainSetup=await local(['setup']);assert.equal(uncertainSetup.model_setup.status.attempt.phase,'unknown');
+ assert(uncertainSetup.next_steps.includes('inspect_model_setup'));assert(!uncertainSetup.next_steps.includes('choose_interpreter'));
  await until(async()=>(await remote(['show'])).result.runtime_id===(await json(node+'/api/diagnostics')).runtime_id,'reconnected current pinned runtime');
  // A shared provider may finish despite client cancellation/death. That is
  // not permission to resume the old setup attempt or select its model.
@@ -116,6 +135,19 @@ try{
  assert.equal((await show()).setup.state,'awaiting_approval');
  const promptSaved=(await show()).saved,priorAttempt=(await show()).setup.attempt.id;
  await local(['permissions','deny','remote-management']);
+ const pendingSetup=await owner(['node','setup','--node',id]);
+ assert.equal(pendingSetup.success,true,'read-only setup inspection does not enable or require remote writes');
+ assert.equal(pendingSetup.result.model_setup.status.state,'awaiting_approval');
+ assert(pendingSetup.result.next_steps.includes('approve_model_setup'));
+ assert(!pendingSetup.result.next_steps.includes('choose_interpreter'));
+ const inspection={schema_version:1,node_id:id,expected_runtime_id:pendingSetup.result.runtime_id,request_id:randomUUID()};
+ const cross=await response(eef+'/api/commands/node/setup',inspection,'POST');assert.equal(cross.status,200);
+ assert.equal((await cross.json()).request_id,inspection.request_id);
+ const wrongRuntime=await json(eef+'/api/commands/node/setup',{...inspection,expected_runtime_id:randomUUID(),request_id:randomUUID()});
+ assert.equal(wrongRuntime.success,false);assert.equal(wrongRuntime.result,null);
+ const origin=await fetch(eef+'/api/commands/node/setup',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(inspection)});assert.equal(origin.status,403);
+ const malformed=await response(eef+'/api/commands/node/setup',{...inspection,unexpected:true},'POST');assert.equal(malformed.status,422);
+ const oversized=await response(eef+'/api/commands/node/setup',{...inspection,padding:'x'.repeat(8192)},'POST');assert.equal(oversized.status,413);
  const deniedApproval=await remote(['approve'],false);assert.equal(deniedApproval.success,false);
  assert.equal((await show()).setup.attempt.id,priorAttempt);assert.equal(pulls,2);
  await local(['permissions','allow','remote-management']);
@@ -153,7 +185,8 @@ try{
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,synthetic_provider_and_cache_only:true,real_weights_downloaded:false,inference_requested:false,
   legacy_preferences_inactive:true,local_and_pinned_remote_commands:true,remote_consent_required:true,generic_activation_and_stale_restore_rejected:true,exact_transfer_revocation:true,
   durable_unknown_after_process_exit:true,no_automatic_replay:true,existing_ollama_reused:true,verified_cpu_cache_configured:true,no_automatic_restart:true,applied_command_line_selection_preserved:true,core_reviewed_work:true,
-  explicit_prompt_approval:true,prompt_install_receipt_progress_and_completion:true,prompt_mode_and_policy_epoch_preserved:true,remote_prompt_approval_requires_current_consent:true,repeated_prompt_approval_refused:true},null,2));
+  explicit_prompt_approval:true,prompt_install_receipt_progress_and_completion:true,prompt_mode_and_policy_epoch_preserved:true,remote_prompt_approval_requires_current_consent:true,repeated_prompt_approval_refused:true,
+  shared_setup_download_and_unknown_guidance:true,coordinator_setup_inspection_without_remote_write_consent:true,setup_approval_guidance_without_approval_or_inference:true,setup_runtime_origin_and_body_fences:true},null,2));
  console.log('Model setup native validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}
 finally{for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));for(const finish of held)finish();provider.closeAllConnections();await new Promise(r=>provider.close(r));}

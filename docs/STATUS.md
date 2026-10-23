@@ -3,6 +3,38 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: shared setup/model guidance and EEF inspection
+
+The prior binary reproduces misleading interpreter-choice guidance while its
+approved model setup is already downloading. The node's existing setup check now
+reuses validated setup status to explain approval, retained progress, application
+and failed/unknown evidence without changing settings or running work. EEF adds
+`node setup --node NODE_ID` over the same authenticated backend. A single owned
+read slot keeps journal I/O off async controls and survives caller cancellation.
+The existing consent, runtime, bounded-capacity and no-replay boundaries remain.
+Both final workspace/all-target feature modes pass 1,058 tests plus one ignored
+each; fresh headless apps/helpers build. All twenty-five native suites complete
+sequentially, and every public result reports passed. All 294 source/resource
+and nine native artifact hashes remain unchanged; no matching fixture processes
+remain observed. This is local checkpoint acceptance, not a default-model,
+physical two-PC, MSI/signing/Defender or stable-release claim.
+See [scope and evidence](SETUP-MODEL-GUIDANCE.md).
+
+An earlier run stopped in package doctor: its one-second probe correctly
+reported `probe_deadline`, but the whole command exceeded the unchanged
+eight-second observation bound. The failed attempt is retained, not acceptance.
+An isolated timing/hash diagnostic identifies expensive debug SHA-256 processing;
+doctor now uses the existing native SHA-256 dependency, preserving full-content
+identity observations and all bounds. The accepted follow-up above is separate
+evidence; an earlier default-feature attempt that lost its process handle is not
+counted as passed. Neither the failed native run nor that interruption is erased.
+The owner-authorized [GitHub workflow](CI.md) is published independently through
+`c00e3d4`, excluding the backend checkpoint described above. All four matrix jobs and
+the twenty-three Windows native suites pass in
+[run 39958661651](https://github.com/eepyfishy/eef/actions/runs/39958661651).
+Separate GitHub verification is required for this backend checkpoint's revision.
+No installed/remote node, model/default, version, release or update feed changed.
+
 ## Unreleased: single-view timer observation
 
 Periodic scheduling now observes schedule/job state in one freshly validated

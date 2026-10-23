@@ -114,6 +114,11 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum NodeCommand {
+    /// Explain a connected node's setup and next steps; never run setup or work.
+    Setup {
+        #[arg(long)]
+        node: String,
+    },
     /// Inspect/save bootstrap preferences with current local node-owner consent.
     ModelBootstrapPolicy {
         #[arg(long)]
@@ -236,6 +241,19 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn node_setup_cli_requires_only_a_node_and_exposes_no_mutation_flags() {
+        let args = Args::try_parse_from(["eef", "node", "setup", "--node", "fixture"]).unwrap();
+        assert!(
+            matches!(args.command,Some(Command::Node{command:NodeCommand::Setup{node}}) if node=="fixture")
+        );
+        assert!(Args::try_parse_from(["eef", "node", "setup"]).is_err());
+        for flag in ["--approve", "--restart", "--install", "--enable-automation"] {
+            assert!(
+                Args::try_parse_from(["eef", "node", "setup", "--node", "fixture", flag]).is_err()
+            );
+        }
+    }
     #[test]
     fn bootstrap_policy_cli_requires_node_and_exposes_no_download_or_restart() {
         Args::try_parse_from([
@@ -1116,6 +1134,40 @@ async fn remote_relay_cli(
         "error_code":"relay_setup_unconfirmed","note":"Inspect this exact node with relay show. No automatic retry, permissions, restart or workload was sent."})))
 }
 
+async fn remote_setup_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let request = eef::node_setup::Request {
+        schema_version: 1,
+        node_id: node.into(),
+        expected_runtime_id: None,
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    request.validate()?;
+    let result = async {
+        let response = client
+            .post(format!("{base}/api/commands/node/setup"))
+            .json(&request)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Node setup inspection unavailable");
+        }
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_setup::confirmed(&value, &request) {
+            bail!("Node setup reply unconfirmed");
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(result.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"remote_node_setup","node_id":node,"request_id":request.request_id,"success":false,"result":null,
+        "changed":false,"model_inference_requested":false,"execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "error_code":"node_setup_unconfirmed","note":"Node setup observations are unavailable or unconfirmed. No client retry, legacy fallback, model setup, restart or workload was requested."})))
+}
+
 async fn remote_model_bootstrap_cli(
     client: &reqwest::Client,
     base: &str,
@@ -1843,6 +1895,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 .await?
         }
         Command::Node {
+            command: NodeCommand::Setup { node },
+        } => return remote_setup_cli(&client, &base, node).await,
+        Command::Node {
             command: NodeCommand::Models { node, command },
         } => {
             eefn::network::validate_node_id(node)?;
@@ -2091,6 +2146,27 @@ async fn main() -> Result<()> {
                     print!("{}", eefn::package_repair::render(&value)?);
                 } else if !args.json && matches!(command, Command::Doctor { .. }) {
                     print!("{}", eefn::package_health::render(&value));
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::Setup { .. }
+                        }
+                    )
+                {
+                    if value["success"] == true {
+                        println!(
+                            "Node-local commands below must run on the inspected node, not a different local node."
+                        );
+                        print!("{}", eefn::setup_check::render(&value["result"])?);
+                        println!(
+                            "From EEF, inspect the same model setup with: eef node model-bootstrap-policy --node NODE_ID show (replace NODE_ID with the node ID above; remote changes still require local consent)."
+                        );
+                    } else {
+                        eprintln!(
+                            "Node setup observations unconfirmed. No retry, model setup, restart or work was requested."
+                        );
+                    }
                 } else if !args.json && matches!(command, Command::RepairSetup { .. }) {
                     print!("{}", eefn::package_setup::render(&value));
                 } else if !args.json

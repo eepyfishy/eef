@@ -4,6 +4,17 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Shared setup/model guidance (unreleased after alpha.6)
+
+    eefn setup
+    eef node setup --node NODE_ID
+
+The same read-only backend now distinguishes retained model setup/approval and
+application needs from missing interpreter configuration. It never approves,
+downloads, loads, restarts or retries anything. Missing legacy status stays
+unknown; model readiness/quality and full onboarding are not implied.
+See [scope and validation](SETUP-MODEL-GUIDANCE.md).
+
 ## Controls with unavailable model files (unreleased after alpha.6)
 
 Permission and other owner settings saves no longer require every unchanged saved

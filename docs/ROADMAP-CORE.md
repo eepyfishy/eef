@@ -31,6 +31,17 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+[Shared setup/model guidance](SETUP-MODEL-GUIDANCE.md) is locally validated: the node
+and EEF observe the existing setup backend, so retained installation/approval
+state is not mistaken for a need to choose another interpreter. The check never
+drives setup, grants permissions, infers, restarts or retries work. Owned bounded
+read workers preserve responsive controls. Both full feature modes pass 1,058
+tests plus one ignored each; fresh apps/helpers and all twenty-five native suites
+pass with unchanged source/native hashes. The doctor hashing follow-up keeps
+all identity checks and timing bounds. The independently published CI baseline
+is green; it does not verify this subsequent backend checkpoint. Full onboarding/default/
+model quality and physical/release gates remain open.
+
 The timer's [single-view observation](AUTOMATION-SCHEDULES.md#single-view-timer-observation-2026-10-23)
 reduces duplicate read/lock work and distinguishes lock wait from validation in
 slow diagnostics. Both full Rust feature modes pass 1,045 tests plus one ignored

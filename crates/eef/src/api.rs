@@ -195,6 +195,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
         .route("/api/commands/node/restart", post(node_restart))
         .route("/api/commands/node/models", post(node_models))
         .route(
+            "/api/commands/node/setup",
+            post(node_setup).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/commands/node/model-bootstrap-policy",
             post(node_model_bootstrap).layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
@@ -438,6 +442,14 @@ async fn node_model_lifecycle(
 ) -> ApiResult<Value> {
     Ok(Json(
         crate::node_control::model_lifecycle(&runtime.node_server, request).await?,
+    ))
+}
+async fn node_setup(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::node_setup::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_setup::command(&runtime.node_server, request).await?,
     ))
 }
 async fn node_model_bootstrap(

@@ -148,7 +148,10 @@ fn executable_digest(path: &Path) -> Result<String> {
         bail!("executable observation bound")
     }
     let mut reader = file.take(EXECUTABLE_MAX + 1);
-    let mut sha = Sha256::new();
+    // Keep every full-content observation/fence, but use the project's existing
+    // native SHA-256 implementation. Large debug executables otherwise spend
+    // seconds in each unoptimized hashing pass before/after a bounded probe.
+    let mut sha = ring::digest::Context::new(&ring::digest::SHA256);
     let mut count = 0;
     let mut buffer = [0u8; 65536];
     loop {
@@ -162,7 +165,7 @@ fn executable_digest(path: &Path) -> Result<String> {
         }
         sha.update(&buffer[..n]);
     }
-    Ok(hex::encode(sha.finalize()))
+    Ok(hex::encode(sha.finish().as_ref()))
 }
 fn regular(path: &Path) -> Result<bool> {
     let m = std::fs::symlink_metadata(path)?;

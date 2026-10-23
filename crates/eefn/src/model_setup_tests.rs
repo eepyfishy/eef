@@ -131,6 +131,107 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn shared_setup_guidance_tracks_approval_retained_download_and_configuration_without_work() {
+    let f = Fixture::new(false).await;
+    f.prompt();
+    let engine = Arc::new(crate::NodeEngine::new(false, vec![], f.dir.path().into()).unwrap());
+    let _guard = f.service.attach_preview_runtime(&engine, f.runtime.clone());
+    let request = crate::setup_check::CheckRequest {
+        schema_version: 1,
+        expected_node_id: "node".into(),
+        expected_runtime_id: f.runtime.clone(),
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let initial = f.service.setup_check(request.clone()).unwrap();
+    assert!(crate::setup_check::confirmed(&initial, &request));
+    assert!(
+        initial["next_steps"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("approve_model_setup"))
+    );
+    assert!(
+        !initial["next_steps"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("choose_interpreter"))
+    );
+    assert!(!f.dir.path().join("node.bootstrap.sqlite3").exists());
+    assert_eq!(f.pulls.load(Ordering::SeqCst), 0);
+    let remote = f
+        .service
+        .remote("setup_check", json!(request))
+        .await
+        .unwrap();
+    assert!(crate::setup_check::confirmed(&remote, &request));
+    assert_eq!(f.pulls.load(Ordering::SeqCst), 0);
+    f.approve().unwrap();
+    f.hold_pull.store(true, Ordering::SeqCst);
+    let service = f.service.clone();
+    let runtime = f.runtime.clone();
+    let worker =
+        tokio::spawn(async move { tick(service.clone(), &runtime, &Journal::new(&service)).await });
+    wait_count(&f.pulls).await;
+    let config = std::fs::read(&f.service.config_path).unwrap();
+    let record = serde_json::to_value(f.record()).unwrap();
+    f.service.live.lock().unwrap()["pending_restart"] = json!(true);
+    let downloading = f.service.setup_check(request.clone()).unwrap();
+    assert_eq!(
+        downloading["model_setup"]["status"]["attempt"]["phase"],
+        "downloading"
+    );
+    assert!(
+        downloading["next_steps"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("inspect_model_setup"))
+    );
+    assert!(
+        !downloading["next_steps"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("choose_interpreter"))
+    );
+    assert!(
+        !downloading["next_steps"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("restart_for_saved_settings"))
+    );
+    assert!(
+        crate::setup_check::render(&downloading)
+            .unwrap()
+            .contains("not prove a live worker")
+    );
+    assert_eq!(std::fs::read(&f.service.config_path).unwrap(), config);
+    assert_eq!(serde_json::to_value(f.record()).unwrap(), record);
+    f.hold_pull.store(false, Ordering::SeqCst);
+    f.pull_gate.notify_waiters();
+    worker.await.unwrap().unwrap();
+    let configured = f.service.setup_check(request.clone()).unwrap();
+    assert_eq!(
+        configured["model_setup"]["status"]["attempt"]["phase"],
+        "configured"
+    );
+    assert_eq!(
+        configured["model_setup"]["status"]["readiness_verified"],
+        false
+    );
+    for flag in [
+        "changed",
+        "model_inference_requested",
+        "execution_authorized",
+        "restart_requested",
+        "automatically_retried",
+    ] {
+        assert_eq!(configured[flag], false);
+    }
+    let mut wrong = request.clone();
+    wrong.expected_node_id = "other".into();
+    assert!(f.service.remote("setup_check", json!(wrong)).await.is_err());
+}
+
+#[tokio::test]
 async fn prompt_approval_is_one_durable_attempt_not_a_policy_or_model_write() {
     let f = Fixture::new(true).await;
     f.prompt();

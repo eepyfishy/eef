@@ -3,6 +3,9 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+#[path = "setup_model_status.rs"]
+mod model_status;
+
 const NOTE: &str = "Read-only setup inspection, not successful inference or execution authorization. No permission, model, connection or update setting was changed; no download, load, restart, probe or workload was requested.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -100,6 +103,9 @@ pub enum NextStep {
     WaitForInputChannel,
     WaitForInputCapacity,
     WaitForRegistrationReceipt,
+    ApproveModelSetup,
+    InspectModelSetup,
+    ChooseModelSetup,
 }
 
 fn required_option<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
@@ -132,6 +138,8 @@ struct Report {
     saved_matches_applied: Option<bool>,
     #[serde(deserialize_with = "required_option")]
     pending_restart: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_setup: Option<model_status::Observation>,
     startup_issues: Vec<crate::service::StartupIssue>,
     next_steps: Vec<NextStep>,
     changed: bool,
@@ -178,7 +186,12 @@ impl Report {
         }
         match &self.applied_interpreter {
             InterpreterSelection::Missing {} => {
-                if matches!(self.saved_interpreter, InterpreterSelection::Missing {}) {
+                if matches!(self.saved_interpreter, InterpreterSelection::Missing {})
+                    && !self
+                        .model_setup
+                        .as_ref()
+                        .is_some_and(|s| s.defers_interpreter_choice())
+                {
                     steps.push(NextStep::ChooseInterpreter);
                 }
             }
@@ -193,11 +206,19 @@ impl Report {
         {
             steps.push(NextStep::ChooseOneInterpreter);
         }
-        if self.pending_restart == Some(true) || self.saved_matches_applied == Some(false) {
+        if (self.pending_restart == Some(true) || self.saved_matches_applied == Some(false))
+            && !self
+                .model_setup
+                .as_ref()
+                .is_some_and(|s| s.defers_restart(&self.runtime_id))
+        {
             steps.push(NextStep::RestartForSavedSettings);
         }
         if !self.startup_issues.is_empty() {
             steps.push(NextStep::InspectStartupIssues);
+        }
+        if let Some(step) = self.model_setup.as_ref().and_then(|s| s.next_step()) {
+            steps.push(step);
         }
         steps
     }
@@ -221,6 +242,10 @@ impl Report {
                         != Some(crate::submission::InputChannelState::Unavailable)))
             && self.saved_interpreter.valid()
             && self.applied_interpreter.valid()
+            && self
+                .model_setup
+                .as_ref()
+                .is_none_or(|s| s.valid(&self.node_id, self.pending_restart))
             && !matches!(
                 self.saved_interpreter,
                 InterpreterSelection::RuntimeUnavailable {}
@@ -242,6 +267,33 @@ pub fn confirmed(value: &Value, request: &CheckRequest) -> bool {
 }
 
 impl crate::NodeService {
+    /// One owned read across local/remote adapters. Cancellation cannot queue
+    /// additional workers or release the slot while its blocking read continues.
+    pub async fn setup_check_async(
+        self: &std::sync::Arc<Self>,
+        request: CheckRequest,
+    ) -> Result<Value> {
+        request.validate()?;
+        let service = self.clone();
+        self.inspect_setup(move || service.setup_check(request))
+            .await
+    }
+    async fn inspect_setup<T: Send + 'static>(
+        self: &std::sync::Arc<Self>,
+        read: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let owned = self
+            .setup_inspection
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| anyhow::anyhow!("Setup inspection busy; no queued read or retry"))?;
+        tokio::task::spawn_blocking(move || {
+            let _owned = owned;
+            read()
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("Setup inspection worker unavailable; no retry"))?
+    }
     pub fn setup_check(&self, request: CheckRequest) -> Result<Value> {
         request.validate()?;
         if request.expected_node_id != self.node_id {
@@ -329,6 +381,7 @@ impl crate::NodeService {
             applied_interpreter: applied,
             saved_matches_applied: matching,
             pending_restart: live["pending_restart"].as_bool(),
+            model_setup: Some(model_status::Observation::read(self, &config, &live)),
             startup_issues: live["startup_issues"]
                 .as_array()
                 .into_iter()
@@ -345,6 +398,9 @@ impl crate::NodeService {
             note: NOTE.into(),
         };
         report.next_steps = report.next_steps();
+        if self.live.lock().unwrap()["runtime_id"] != request.expected_runtime_id {
+            bail!("setup check runtime changed during observation")
+        }
         if !report.valid(&request) {
             bail!("setup observations are invalid")
         }
@@ -413,6 +469,10 @@ pub fn render(value: &Value) -> Result<String> {
         Some(crate::registration::State::NotConnected)=>"Registration: no current connected session.\n",
         _=>"Registration: unknown on this runtime/build; not assumed accepted.\n",
     });
+    match &report.model_setup {
+        Some(setup) => text.push_str(&setup.render(&report.runtime_id)),
+        None => text.push_str("Model setup automation: not reported by this build; not assumed disabled or running.\n"),
+    }
     for issue in &report.startup_issues {
         use crate::service::StartupIssue;
         text.push_str(match issue {
@@ -438,6 +498,9 @@ pub fn render(value: &Value) -> Result<String> {
             NextStep::WaitForInputChannel => "Wait for the node's input channel or inspect connection show; no input was sent or replayed",
             NextStep::WaitForInputCapacity => "Wait for capacity before a new explicit input decision; do not replay an uncertain request",
             NextStep::WaitForRegistrationReceipt=>"Wait for a current EEF registration receipt or inspect coordinator compatibility; no registration/work was replayed by this check",
+            NextStep::ApproveModelSetup => "Review the pinned model and explicitly approve one setup attempt: eefn model-bootstrap-policy show; eefn model-bootstrap-policy approve",
+            NextStep::InspectModelSetup => "Inspect model setup and its exact retained receipt before another choice or restart: eefn model-bootstrap-policy show. A checkpoint alone does not confirm a live worker or permit retry",
+            NextStep::ChooseModelSetup => "No project default is approved. Browse installed models or choose an explicit catalog model: eefn models installed; eefn model-bootstrap-policy configure --help",
         });
         text.push('\n');
     }
@@ -490,6 +553,120 @@ mod tests {
         };
         core.live.lock().unwrap()["runtime_id"] = json!(request.expected_runtime_id);
         (dir, core, request)
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_setup_waiter_keeps_its_single_read_owned_and_async_controls_available() {
+        let (_dir, core, request) = fixture();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let owner = core.clone();
+        let reader = tokio::spawn(async move {
+            owner
+                .inspect_setup(move || {
+                    started.send(()).unwrap();
+                    held.recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    Ok(())
+                })
+                .await
+        });
+        ready.await.unwrap();
+        // A current-thread runtime can still observe and cancel the waiter.
+        assert!(!reader.is_finished());
+        reader.abort();
+        assert!(reader.await.unwrap_err().is_cancelled());
+        assert!(core.setup_check_async(request.clone()).await.is_err());
+        assert!(core.setup_inspection.clone().try_lock_owned().is_err());
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if core.setup_inspection.clone().try_lock_owned().is_ok() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(confirmed(
+            &core.setup_check_async(request.clone()).await.unwrap(),
+            &request
+        ));
+        assert!(
+            !core
+                .config_path
+                .with_extension("bootstrap.sqlite3")
+                .exists()
+        );
+    }
+    #[test]
+    fn setup_model_status_is_read_only_legacy_compatible_and_safe_when_evidence_is_unavailable() {
+        let (dir, core, request) = fixture();
+        let runtime = engine(dir.path(), None);
+        let _guard = core.attach_preview_runtime(&runtime, request.expected_runtime_id.clone());
+        let original = std::fs::read(&core.config_path).unwrap();
+        let report = core.setup_check(request.clone()).unwrap();
+        assert!(confirmed(&report, &request));
+        assert_eq!(report["model_setup"]["status"]["state"], "disabled");
+        assert!(
+            !core
+                .config_path
+                .with_extension("bootstrap.sqlite3")
+                .exists()
+        );
+        let mut legacy = report.clone();
+        legacy.as_object_mut().unwrap().remove("model_setup");
+        assert!(confirmed(&legacy, &request));
+        assert!(
+            render(&legacy)
+                .unwrap()
+                .contains("not reported by this build")
+        );
+        for patch in [
+            json!({"availability":"future","PRIVATE":"not reported"}),
+            json!({"availability":"unavailable","extra":true}),
+        ] {
+            let mut corrupt = report.clone();
+            corrupt["model_setup"] = patch;
+            assert!(!confirmed(&corrupt, &request));
+            assert!(render(&corrupt).is_err());
+        }
+        let evidence = core.config_path.with_extension("bootstrap.sqlite3");
+        std::fs::write(&evidence, b"PRIVATE INVALID SQLITE").unwrap();
+        let corrupt = core.setup_check(request.clone()).unwrap();
+        assert!(confirmed(&corrupt, &request));
+        assert_eq!(
+            corrupt["model_setup"]["status"]["state"],
+            "evidence_unavailable"
+        );
+        assert!(
+            corrupt["next_steps"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("inspect_model_setup"))
+        );
+        assert!(
+            !corrupt["next_steps"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("choose_interpreter"))
+        );
+        assert!(!corrupt.to_string().contains("PRIVATE"));
+        assert_eq!(std::fs::read(&evidence).unwrap(), b"PRIVATE INVALID SQLITE");
+        assert_eq!(std::fs::read(&core.config_path).unwrap(), original);
+        let mut config = core.read_config().unwrap();
+        config["model_bootstrap"] = json!({"schema_version":99,"secret":"PRIVATE FUTURE POLICY"});
+        crate::setup::write_json(&core.config_path, &config).unwrap();
+        let saved = std::fs::read(&core.config_path).unwrap();
+        let unsupported = core.setup_check(request.clone()).unwrap();
+        assert!(confirmed(&unsupported, &request));
+        assert_eq!(
+            unsupported["model_setup"],
+            json!({"availability":"unavailable"})
+        );
+        assert!(!unsupported.to_string().contains("PRIVATE"));
+        assert_eq!(std::fs::read(&core.config_path).unwrap(), saved);
+        assert_eq!(std::fs::read(&evidence).unwrap(), b"PRIVATE INVALID SQLITE");
     }
     fn engine(dir: &std::path::Path, model: Option<&str>) -> Arc<crate::NodeEngine> {
         let mut engine = crate::NodeEngine::new(false, vec![], dir.into()).unwrap();

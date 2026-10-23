@@ -233,3 +233,43 @@ packaging/MSI/signing/Defender and stable-release acceptance remain unproven.
 
 CI remains local and unpublished. No installed/remote node, UI, model/default,
 version, release artifact or automatic-update policy is changed by this work.
+
+## Executable hashing timing follow-up (2026-10-23, locally validated)
+
+During the later setup-guidance acceptance run, the doctor suite stopped at its
+unchanged outer eight-second observation assertion. The one-second owned probe
+correctly reported `probe_deadline` with no readiness claim; this is not evidence
+that the whole command met its timing bound. The failed `package-doctor-PpSupu`
+fixture and `.validation/setup-guidance-native-failed-doctor.log` are retained.
+
+An isolated fresh timing diagnosis (`doctor-deadline-QzNbzj`) measured metadata at
+1,467 ms and the one-second deadline command at 7,084 ms, observing both owned
+helper processes retired. It is diagnosis, not a replay or acceptance of the
+failed run. A read-only full-file hash comparison of the same 66,974,720-byte
+application measured 1,152 ms using debug `sha2` and 58 ms using the existing
+`ring` dependency, with identical SHA-256 digests.
+
+Executable hashing now uses that existing native SHA-256 implementation. It
+still streams complete contents in 64-KiB chunks, retains the 512-MiB file bound
+and all before/after selection and content rechecks, and never substitutes a
+cache or metadata-only identity. A new independent digest regression covers
+empty, block/chunk-boundary and same-size changed files. The probe and harness
+deadlines are unchanged. Both fresh full feature modes now pass 1,058 tests plus
+one ignored each, including digest equivalence. Fresh headless apps/helpers build
+and all twenty-five native suites pass sequentially with unchanged 294 source/
+resource and nine native artifact hashes. The original eight-second observation
+bound passes unchanged in `package-doctor-QBP9jn`; all public results are checked.
+The earlier 1,057-test setup runs predate this change and their native failure
+remains retained.
+
+A fresh isolated end-to-end timing diagnosis (`doctor-deadline-j1DOv6`) now
+measures metadata at 80 ms and the same one-second deadline command at 1,203 ms,
+observing both helper processes retired. The deadline still reports unconfirmed,
+not passed or ready. These single-machine timing samples do not establish loaded
+or physical two-PC performance guarantees or successful inference.
+
+GitHub CI was subsequently authorized and published separately at `5ecb9be`;
+its corrected `c00e3d4` baseline is green in run `39958661651`. Its synthetic
+subset omits this stock-package runtime suite and does not include this subsequent
+hashing checkpoint. No installed/remote node, model/default, release,
+Defender setting or update policy changed.

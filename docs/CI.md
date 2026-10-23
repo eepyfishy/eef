@@ -77,3 +77,16 @@ edition/version before running, retains the module reset and exact Node-child
 preflight, and avoids returning to a PowerShell 7 parent that can initialize its
 own module search paths later. The remaining matrix steps continue using `pwsh`.
 Fresh native results are still required.
+
+## Accepted published baseline (2026-10-23)
+
+[Run 39958661651](https://github.com/eepyfishy/eef/actions/runs/39958661651) passes
+all four matrix jobs at `c00e3d4f7b5b5d779fe1ddf89f190b110589be01`. The Windows
+headless job executes all twenty-three native suites in their configured order
+and completes successfully, including the repair-descriptor fixture that failed
+in the previous runs. The entries above retain interim failures and incomplete
+fixes; they are not the current acceptance status. The read-only record is
+`.validation/ci-39958661651-acceptance.json`.
+
+This verifies that committed baseline, not the subsequent setup-guidance/
+doctor-hashing checkpoint, physical acceptance or stable-release readiness.

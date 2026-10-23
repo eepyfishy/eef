@@ -30,6 +30,9 @@ const proxy=createServer(async(req,res)=>{
    if(proxyMode==='legacy-input')delete value.input_channel;
    if(proxyMode==='legacy-registration')delete value.registration;
    if(proxyMode==='bad-registration')value.registration='PRIVATE-INVALID-REGISTRATION';
+   if(proxyMode==='model-ready')value.model_setup.status.readiness_verified=true;
+   if(proxyMode==='future-model-setup')value.model_setup={availability:'PRIVATE-INVALID-MODEL-SETUP'};
+   if(proxyMode==='legacy-model-setup')delete value.model_setup;
   }
   res.writeHead(response.status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));
  }catch{res.destroy();}
@@ -74,15 +77,19 @@ try{
  for(const patch of [{expected_node_id:'other'},{expected_runtime_id:randomUUID()},{unexpected:true}]){const r=await fetch(node+'/api/commands/setup/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...request,...patch})});assert.equal(r.status,patch.unexpected?422:400);}
  const cross=await fetch(node+'/api/commands/setup/check',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(request)});assert.equal(cross.status,403);
  const oversize=await fetch(node+'/api/commands/setup/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...request,padding:'x'.repeat(4096)})});assert.equal(oversize.status,413);
- for(const mode of ['corrupt','prose','drop','old','bad-registration']){
+ for(const mode of ['corrupt','prose','drop','old','bad-registration','model-ready','future-model-setup']){
   const marker=nodeConfig+'.api.json',original=await readFile(marker,'utf8'),endpoint=JSON.parse(original);endpoint.address=`127.0.0.1:${proxy.address().port}`;proxyMode=mode;const before=proxyCalls;
-  await writeFile(marker,JSON.stringify(endpoint));try{const failure=await cli(['setup'],true,false);assert.equal(failure.success,false);assert(!JSON.stringify(failure).includes('PRIVATE-MUST-NOT-ECHO'));assert(!JSON.stringify(failure).includes('PRIVATE-INVALID-REGISTRATION'));assert.equal(proxyCalls,before+1);}finally{await writeFile(marker,original);}
+  await writeFile(marker,JSON.stringify(endpoint));try{const failure=await cli(['setup'],true,false);assert.equal(failure.success,false);assert(!JSON.stringify(failure).includes('PRIVATE-MUST-NOT-ECHO'));assert(!JSON.stringify(failure).includes('PRIVATE-INVALID-REGISTRATION'));assert(!JSON.stringify(failure).includes('PRIVATE-INVALID-MODEL-SETUP'));assert.equal(proxyCalls,before+1);}finally{await writeFile(marker,original);}
  }
  {
   const marker=nodeConfig+'.api.json',original=await readFile(marker,'utf8'),endpoint=JSON.parse(original);endpoint.address=`127.0.0.1:${proxy.address().port}`;proxyMode='legacy-input';
   await writeFile(marker,JSON.stringify(endpoint));try{const legacy=await cli(['setup']);assert.equal(legacy.input_channel,undefined);assert((await cli(['setup'],false)).out.includes('Unknown on this node build; not assumed ready'));}finally{await writeFile(marker,original);}
  }
  assert.equal(modelCalls,0,'Inspection/setup controls never infer, load or download a model');
+ {
+  const marker=nodeConfig+'.api.json',original=await readFile(marker,'utf8'),endpoint=JSON.parse(original);endpoint.address=`127.0.0.1:${proxy.address().port}`;proxyMode='legacy-model-setup';
+  await writeFile(marker,JSON.stringify(endpoint));try{const legacy=await cli(['setup']);assert.equal(legacy.model_setup,undefined);assert((await cli(['setup'],false)).out.includes('not reported by this build'));}finally{await writeFile(marker,original);}
+ }
  {
   const marker=nodeConfig+'.api.json',original=await readFile(marker,'utf8'),endpoint=JSON.parse(original);endpoint.address=`127.0.0.1:${proxy.address().port}`;proxyMode='legacy-registration';
   await writeFile(marker,JSON.stringify(endpoint));try{const legacy=await cli(['setup']);assert.equal(legacy.registration,undefined);assert((await cli(['setup'],false)).out.includes('Registration: unknown'));}finally{await writeFile(marker,original);}

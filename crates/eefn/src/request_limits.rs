@@ -50,6 +50,7 @@ impl RequestBudget {
                 && matches!(
                     action,
                     "status"
+                        | "setup_check"
                         | "restart"
                         | "model_lifecycle_status"
                         | "model_lifecycle_cancel"
@@ -70,6 +71,22 @@ impl RequestBudget {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn setup_inspection_uses_bounded_control_capacity_not_work_or_setup_mutation_capacity() {
+        let budget = RequestBudget::new(&RequestLimits {
+            work: 1,
+            control: 1,
+        })
+        .unwrap();
+        let work = budget.admit("llm.infer", "run").unwrap();
+        let read = budget.admit("node.configure", "setup_check").unwrap();
+        assert!(budget.admit("node.configure", "setup_check").is_none());
+        assert!(budget.admit("node.configure", "bootstrap_policy").is_none());
+        drop(read);
+        assert!(budget.admit("node.configure", "bootstrap_policy").is_none());
+        assert!(budget.admit("node.configure", "setup_check").is_some());
+        drop(work);
+    }
     #[test]
     fn model_lifecycle_inspection_and_cancel_keep_bounded_control_capacity_not_load_unload() {
         let budget = RequestBudget::new(&RequestLimits {

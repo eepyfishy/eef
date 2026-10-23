@@ -25,6 +25,7 @@ pub struct NodeService {
     pub restart: Arc<tokio::sync::Notify>,
     pub(crate) setup_changed: Arc<tokio::sync::Notify>,
     pub(crate) setup_supervisor: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) setup_inspection: Arc<tokio::sync::Mutex<()>>,
     pub model_activation_ready: Arc<tokio::sync::Notify>,
     pub(crate) activation: Arc<std::sync::Mutex<crate::model_activation::ActivationState>>,
     pub submissions: Arc<crate::submission::SubmissionMailbox>,
@@ -119,6 +120,7 @@ impl NodeService {
             restart: Arc::new(tokio::sync::Notify::new()),
             setup_changed: Arc::new(tokio::sync::Notify::new()),
             setup_supervisor: Arc::new(tokio::sync::Mutex::new(())),
+            setup_inspection: Arc::new(tokio::sync::Mutex::new(())),
             model_activation_ready: Arc::new(tokio::sync::Notify::new()),
             activation: Arc::new(std::sync::Mutex::new(Default::default())),
             submissions: Arc::new(crate::submission::SubmissionMailbox::default()),
@@ -967,6 +969,11 @@ impl NodeService {
     }
 
     pub async fn remote(self: &Arc<Self>, action: &str, params: Value) -> Result<Value> {
+        if action == "setup_check" {
+            return self
+                .setup_check_async(serde_json::from_value(params)?)
+                .await;
+        }
         let mut config = self.read_config()?;
         let allowed = config
             .pointer("/management/allow_remote")

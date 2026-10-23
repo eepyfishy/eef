@@ -229,7 +229,7 @@ async fn setup_check(
     State(state): State<Arc<NodeService>>,
     Json(request): Json<crate::setup_check::CheckRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(state.setup_check(request)?))
+    Ok(Json(state.setup_check_async(request).await?))
 }
 async fn local_setup_plan(
     State(state): State<Arc<NodeService>>,
