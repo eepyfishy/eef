@@ -85,6 +85,11 @@ jobs:
       - name: Native Windows synthetic regressions (no installer or model download)
         if: matrix.os == 'windows-2025' && matrix.mode == 'headless'
         run: |
+          # Node fixtures launch Windows PowerShell. Do not pass pwsh's module
+          # search paths through Node into that different PowerShell edition.
+          Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
+          node -e "const r=require('node:child_process').spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-Command Get-FileHash -ErrorAction Stop | Out-Null'],{stdio:'inherit'});process.exit(r.status??1)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Path '.validation' -Force | Out-Null
           $env:EEF_TEST_PYTHON = (Get-Command python.exe -ErrorAction Stop).Source
           $scripts = @(

@@ -56,3 +56,14 @@ same model, either its original live PID or explicit observed root exit, and
 preserves the subsequent cleanup/exit-observation checks. No platform skip,
 production stop change, relaxed deadline or retry is introduced. Fresh CI results
 are required; the initial failed run is not a pass.
+
+The follow-up run (`39937079093`) passed all four Rust matrix legs. Windows native
+fixtures passed scheduling and package setup, then failed creating repair metadata
+because `Get-FileHash` could not be resolved by their `powershell.exe` child.
+The `pwsh -> Node -> Windows PowerShell` launch chain matches Microsoft's
+[documented inherited-module-path incompatibility](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath).
+The native step now removes only its inherited process-local `PSModulePath`, so
+Windows PowerShell rebuilds its own default module paths. A Node-to-PowerShell
+cmdlet preflight checks that exact launch path before any suites run. No modules
+are installed, global environment/security settings changed, tests omitted or
+failure/timeout conditions weakened. The corrected native result remains pending.
