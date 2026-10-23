@@ -751,14 +751,24 @@ mod advertisement_tests {
                 }
             }
             assert_eq!(server.snapshot().unwrap()[0]["state"], "unload_unconfirmed");
-            assert_eq!(
-                server.retired.lock().unwrap()[0]
-                    .1
-                    .child
-                    .id()
-                    .map(u64::from),
-                Some(initial)
-            );
+            {
+                let mut retired = server.retired.lock().unwrap();
+                assert_eq!(retired.len(), 1, "{mode}: retain the owned process record");
+                let (model, process) = &mut retired[0];
+                assert_eq!(model, "owned-model");
+                // Tokio clears id() once the root has been reaped. A late
+                // observation can reap that root before failing its deadline;
+                // the retained record/tree must still survive that failure.
+                if let Some(pid) = process.child.id() {
+                    assert_eq!(u64::from(pid), initial, "{mode}: same live root");
+                } else {
+                    assert!(
+                        process.child.try_wait().unwrap().is_some(),
+                        "{mode}: a missing PID requires observed root exit"
+                    );
+                }
+            }
+            assert!(!server.can_infer(Some("owned-model")));
             server.close();
             server.stop().await.unwrap();
             assert!(server.retired.lock().unwrap().is_empty());

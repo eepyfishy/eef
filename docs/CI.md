@@ -43,3 +43,16 @@ not a CI performance guarantee.
 CI setup does not change the application version or prerelease exclusion from
 automatic updates. Existing historical notes saying CI stayed local describe
 their checkpoints; this workflow supersedes that policy once published.
+
+## First-run finding (2026-10-23)
+
+The workflow was published at `5ecb9be`. Both Ubuntu legs of the first run
+(`39936260990`) exposed a platform-timing assumption in the group-stop ownership
+regression: after a late stop observation, Tokio may already have reaped the root
+and cleared `Child::id()`, although the owned record/tree remains retained and
+the model stays `unload_unconfirmed` and unroutable. The test had required the PID
+to remain present. The corrected assertion requires one retained record for the
+same model, either its original live PID or explicit observed root exit, and
+preserves the subsequent cleanup/exit-observation checks. No platform skip,
+production stop change, relaxed deadline or retry is introduced. Fresh CI results
+are required; the initial failed run is not a pass.
