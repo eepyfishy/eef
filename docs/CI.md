@@ -67,3 +67,13 @@ Windows PowerShell rebuilds its own default module paths. A Node-to-PowerShell
 cmdlet preflight checks that exact launch path before any suites run. No modules
 are installed, global environment/security settings changed, tests omitted or
 failure/timeout conditions weakened. The corrected native result remains pending.
+
+Run `39938587145` again passed every Rust matrix leg and the native cmdlet
+preflight, but the repair-descriptor fixture still could not resolve the cmdlet.
+Resetting only at step entry was therefore insufficient; it is not counted as a
+fix. The complete Windows native step now uses Windows PowerShell 5.1, matching
+the fixture helpers and the local native-validation host. It verifies that host
+edition/version before running, retains the module reset and exact Node-child
+preflight, and avoids returning to a PowerShell 7 parent that can initialize its
+own module search paths later. The remaining matrix steps continue using `pwsh`.
+Fresh native results are still required.

@@ -84,9 +84,11 @@ jobs:
           exit $LASTEXITCODE
       - name: Native Windows synthetic regressions (no installer or model download)
         if: matrix.os == 'windows-2025' && matrix.mode == 'headless'
+        shell: powershell
         run: |
-          # Node fixtures launch Windows PowerShell. Do not pass pwsh's module
-          # search paths through Node into that different PowerShell edition.
+          # Keep the host and the fixtures' powershell.exe children on the same
+          # edition; later module autoloading must not restore pwsh's paths.
+          if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5) { throw 'Native fixtures require Windows PowerShell 5.1' }
           Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
           node -e "const r=require('node:child_process').spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-Command Get-FileHash -ErrorAction Stop | Out-Null'],{stdio:'inherit'});process.exit(r.status??1)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
