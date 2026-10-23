@@ -1,0 +1,123 @@
+name: Core verification
+
+on:
+  push:
+    branches: [main, 'validation/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-verification-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EEF_CI_RUST: '1.98.1'
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  RUST_TEST_THREADS: '1'
+
+jobs:
+  core:
+    name: ${{ matrix.os }} / ${{ matrix.mode }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+        mode: [dashboard, headless]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      # Official actions/checkout v6, resolved from its upstream tag/commit.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      # Official actions, pinned to reviewed v6 commits; no dependency cache.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.20.0'
+          package-manager-cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        if: matrix.os == 'windows-2025' && matrix.mode == 'headless'
+        with:
+          python-version: '3.11.9'
+      - name: Select the pinned compiler
+        run: |
+          rustup toolchain install $env:EEF_CI_RUST --profile minimal --component rustfmt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default $env:EEF_CI_RUST
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --version
+          cargo --version
+          node --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node -e "if(Number(process.versions.node.split('.')[0])<22)process.exit(1)"
+          exit $LASTEXITCODE
+      - name: Fetch only the locked dependency graph
+        run: |
+          cargo fetch --locked
+          exit $LASTEXITCODE
+      - name: Formatting and backend ownership boundary
+        run: |
+          cargo fmt --all --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/test-backend-boundary.mjs
+          exit $LASTEXITCODE
+      - name: Workspace and all-target regression tests
+        run: |
+          $features = @()
+          if ('${{ matrix.mode }}' -eq 'headless') { $features += '--no-default-features' }
+          cargo test --workspace --all-targets @features --locked --offline --quiet -j2
+          exit $LASTEXITCODE
+      - name: Build Windows command services and isolated helpers
+        if: matrix.os == 'windows-2025' && matrix.mode == 'headless'
+        run: |
+          cargo build --workspace --bins --examples --no-default-features --locked --offline --quiet -j2
+          exit $LASTEXITCODE
+      - name: Native Windows synthetic regressions (no installer or model download)
+        if: matrix.os == 'windows-2025' && matrix.mode == 'headless'
+        run: |
+          $env:EEF_TEST_PYTHON = (Get-Command python.exe -ErrorAction Stop).Source
+          $scripts = @(
+            'test-automation-schedules.mjs',
+            'test-package-setup.mjs',
+            'test-repair-hints.mjs',
+            'test-repair-sources.mjs',
+            'test-repair-receipts.mjs',
+            'test-package-handoff.mjs',
+            'test-explicit-updates.mjs',
+            'test-bundled-components.mjs',
+            'test-settings-storage.mjs',
+            'test-setup-check.mjs',
+            'test-model-setup.mjs',
+            'test-model-activation.mjs',
+            'test-model-bootstrap.mjs',
+            'test-model-metadata.mjs',
+            'test-installed-selection.mjs',
+            'test-process-lifetime.mjs',
+            'test-local-pipelines.mjs',
+            'test-python-policy.mjs',
+            'test-python-bridge.mjs',
+            'test-permission-commands.mjs',
+            'test-node-commands.mjs',
+            'test-node-credentials.mjs',
+            'test-model-downloads.mjs'
+          )
+          foreach ($script in $scripts) {
+            Write-Output ('Running ' + $script)
+            node (Join-Path 'tools' $script)
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          # Package-doctor and unavailable-model suites additionally require
+          # existing verified package/llama.cpp runtimes. CI does not download
+          # them or claim those omitted suites, successful package repair, model quality,
+          # installer/Defender/signing or physical two-PC acceptance.
+          exit 0
