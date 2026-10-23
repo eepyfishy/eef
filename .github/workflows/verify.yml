@@ -85,6 +85,7 @@ jobs:
       - name: Native Windows synthetic regressions (no installer or model download)
         if: matrix.os == 'windows-2025' && matrix.mode == 'headless'
         run: |
+          New-Item -ItemType Directory -Path '.validation' -Force | Out-Null
           $env:EEF_TEST_PYTHON = (Get-Command python.exe -ErrorAction Stop).Source
           $scripts = @(
             'test-automation-schedules.mjs',
