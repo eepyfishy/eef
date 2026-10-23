@@ -216,7 +216,7 @@ impl TimerManager {
                 .store
                 .schedule_interrupt_now(id, "clock_discontinuity")?;
         }
-        let schedule = engine.store.schedule_get(id)?;
+        let (schedule, plan) = engine.store.schedule_timer_snapshot(id, launching)?;
         match schedule.state {
             State::Waiting if may_launch && !self.closing.load(Ordering::SeqCst) => {
                 return engine.claim_schedule_due(id, runtime, &schedule.issuer_id);
@@ -226,7 +226,6 @@ impl TimerManager {
                     .active_trigger
                     .as_deref()
                     .context("Missing active trigger")?;
-                let plan = engine.store.trigger_job(trigger)?;
                 match plan.as_ref().map(|p| p.status) {
                     Some(PlanStatus::Completed | PlanStatus::Cancelled) => {
                         engine

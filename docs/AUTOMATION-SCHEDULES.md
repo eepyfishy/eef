@@ -529,3 +529,69 @@ Evaluated headless binary SHA-256:
 eef.exe  0e5ef5e0de39ce08b2548a3781418a04a81af8c1d08f85254501d97281934787
 eefn.exe 5c5751288c87abf4ca20cee455a13ada0d98d6c806e801a8ec5dfb01ad8877e4
 ```
+
+## Single-view timer observation (2026-10-23)
+
+The timer now reads its current schedule and, only when needed, its associated
+job from one freshly validated view under one journal lock. Previously it read
+the schedule, released the lock, then independently revalidated history to find
+the job. This removes that duplicate outer history read and lock acquisition;
+it does not remove the job's own lineage/scope/retained-record checks.
+
+Launching work still does not expose partially admitted jobs to the timer.
+Non-running schedules do not cause periodic job inspection. Explicit owner
+inspection continues to validate the retained job, including when the schedule
+has stopped. Missing/unresolved work is not completion or permission to replace
+an occurrence. Later claim, settlement and grant writes retain their independent
+current-state, clock, authority and budget checks. There is no view cached across
+calls/writes, new automatic retry, expiry/lease extension or schema change.
+
+Slow snapshot warnings now distinguish `lock_wait_ms` from `validation_ms`, with
+the existing 500-ms diagnostic threshold. Logging happens after releasing the
+journal and includes no source, parameters, grant bodies or credentials.
+The optional ignored `profile_read_only_timer_journal` test also measures full
+retained-job validation and separate versus single-view timer observation on a
+supplied read-only isolated fixture. It does not open/recover a live runtime or
+issue work. Timings are local diagnostic samples, not acceptance thresholds.
+
+The motivating package-doctor regression run stopped at a 45-second recurring
+pipeline observation deadline. Its first occurrence completed; the second was
+accepted/running at fixture shutdown, with no proved final outcome. That failed
+attempt remains retained and is not replayed. A separately identified fresh
+fixture passed unchanged before this timer edit, so intermittent latency is not
+claimed fixed by this optimization. A read-only profile of the failed journal
+found 27 retained jobs taking approximately 0.2 seconds to validate on that run;
+this alone does not explain the earlier multi-second checkpoints.
+
+The new regression checks fresh state after writes, read-only behavior, current
+source validation, launch/stopped inspection boundaries and damaged claim refusal.
+An initial compile check incorrectly hid a point reader still used by trigger
+launch; that visibility was restored. An initial corrupt-job fixture erased its
+lookup context, exercising missing work rather than malformed matching work;
+the fixture now retains its context while corrupting the review. Both failed
+checks remain in separate logs. The corrected focused regression and opt-in
+read-only profile pass in
+`.validation/package-doctor-scheduler-single-view-final-focused.log`. The three
+single-view samples are 69,981 / 71,648 / 74,257 microseconds versus separate-read
+samples of 78,100 / 78,839 / 80,074 microseconds. This modest local difference
+does not explain or close the earlier intermittent multi-second stalls.
+Both corrected locked/offline workspace/all-target feature modes now pass 1,045
+tests plus one ignored each across fourteen target groups. Logs are
+`.validation/package-doctor-timer-default-final.log` and
+`.validation/package-doctor-timer-headless-final.log`. Headless apps/examples
+also build. All twenty-four fresh native suites now pass in one sequential run,
+including the unchanged scheduler and local-pipeline suites. Thirty-six
+source/helper and nine rebuilt native hashes remain unchanged; all twenty-four
+public fixture results report `passed: true`, and no matching fixture app/helper
+processes remain observed. Final native log:
+`.validation/package-doctor-timer-native-complete.log`; read-only inventory:
+`.validation/package-doctor-timer-acceptance.json`.
+
+Scheduler fixture `automation-schedules-GHpopG` still reports ten slow journal
+checkpoints, maximum 874 ms; pipeline fixture `local-pipelines-7a2mKn` passes the
+original recurring-work deadline and limits. These are local debug-build samples,
+not a load/latency guarantee or proof of the earlier stall's cause/fix. The
+retained pre-change timeout/unknown occurrence is not relabelled or replayed.
+Physical two-PC/media, full onboarding/model quality, package/signing/Defender
+and stable-release acceptance remain open. CI stays local; no installed node,
+UI, model, version, release artifact or update-feed policy changes follow.

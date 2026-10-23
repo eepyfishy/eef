@@ -416,10 +416,10 @@ pub fn render(value: &Value) -> Result<String> {
     for issue in &report.startup_issues {
         use crate::service::StartupIssue;
         text.push_str(match issue {
-            StartupIssue::PythonRuntimeUnavailable => "Python did not initialize. Repair this node package if bundled Python is missing; otherwise inspect the explicit interpreter. Local core commands still work.\n",
+            StartupIssue::PythonRuntimeUnavailable => "Python did not initialize. Explicitly run eefn doctor --probe for bundled-runtime checks; owner interpreter overrides need separate inspection. Repair this node package if bundled Python is missing. Local core commands still work.\n",
             StartupIssue::BuiltinPluginUnavailable => "An enabled built-in plugin did not initialize. Repair this node package if its bundled plugins or dependencies are missing.\n",
             StartupIssue::CustomPluginUnavailable => "An owner-configured plugin did not initialize. Inspect its configured source and dependencies; no replacement plugin was selected.\n",
-            StartupIssue::LlamacppStartupFailed => "The selected local model runtime did not start. Inspect models show and model-lifecycle show; check the selected model and repair this node package if runtime files are missing.\n",
+            StartupIssue::LlamacppStartupFailed => "The selected local model runtime did not start. Inspect models show and model-lifecycle show; explicitly run eefn doctor --probe for bundled runtime files, without loading a model. Check the selected model and repair this node package if runtime files are missing.\n",
             StartupIssue::PeerRuntimeUnavailable => "Peer transport did not initialize. Inspect the node's connection and peer configuration before retrying work.\n",
         });
     }

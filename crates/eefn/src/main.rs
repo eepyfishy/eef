@@ -67,6 +67,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Inspect this package; explicitly probe bundled runtimes without a running node.
+    Doctor {
+        #[command(flatten)]
+        options: eefn::package_health::Args,
+    },
     /// Restore this exact application package; preserve settings and restart separately.
     Repair {
         #[command(flatten)]
@@ -1996,6 +2001,13 @@ async fn execute_python_policy(
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Doctor { options } = command {
+        return eefn::package_health::execute(
+            &eefn::package_health::Context::current("eefn")?,
+            options,
+        )
+        .await;
+    }
     if let Commands::RepairSetup { command } = command {
         return eefn::package_setup::execute(
             &eefn::package_setup::Context::current("eefn")?,
@@ -2714,10 +2726,10 @@ fn main() -> Result<()> {
     if parsed.as_ref().is_ok_and(|args| {
         matches!(
             args.command,
-            Some(Commands::Repair { .. } | Commands::RepairSetup { .. })
+            Some(Commands::Repair { .. } | Commands::RepairSetup { .. } | Commands::Doctor { .. })
         )
     }) {
-        // Repair/rollback must remain available when the selected package cannot start.
+        // Offline inspection/repair must survive a selected package that cannot start.
         return run(parsed.unwrap(), install_dir);
     }
     if eefn::updater::handoff_if_selected(&install_dir, eefn::VERSION, "eefn")? {
@@ -2743,6 +2755,8 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     println!("{}", serde_json::to_string(&value)?);
                 } else if matches!(command, Commands::Repair { .. }) {
                     print!("{}", eefn::package_repair::render(&value)?);
+                } else if matches!(command, Commands::Doctor { .. }) {
+                    print!("{}", eefn::package_health::render(&value));
                 } else if matches!(command, Commands::RepairSetup { .. }) {
                     print!("{}", eefn::package_setup::render(&value));
                 } else if matches!(

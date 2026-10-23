@@ -3,6 +3,62 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: single-view timer observation
+
+Periodic scheduling now observes schedule/job state in one freshly validated
+journal read, avoiding a duplicate outer history read and a separate lock.
+Launch/stopped-job boundaries and later write-time authority checks remain intact;
+slow snapshot warnings separate lock wait from validation without logging bodies.
+Read-only profiling of the failed fixture does not establish the cause of its
+intermittent multi-second stalls. The corrected focused regression/profile and
+both full Rust feature modes pass (1,045 tests plus one ignored each); headless
+apps/examples build. All twenty-four fresh native suites pass sequentially,
+including scheduler and local-pipeline recurrence. Thirty-six source/helper and
+nine rebuilt native hashes remain unchanged; every public result reports passed,
+and no matching fixture processes remain observed. Slow scheduler checkpoints
+still occur (maximum 874 ms in this sample); no root-cause fix or loaded/physical
+timing guarantee is claimed. No limits, timing windows, permissions or release
+policy were widened. CI stays local; no installed/remote node or release changed.
+See [scope and retained failures](AUTOMATION-SCHEDULES.md#single-view-timer-observation-2026-10-23).
+
+## Unreleased: selected-package runtime doctor
+
+Local EEF/EEFN `doctor` commands now share backend-owned package inspection and
+explicit bounded runtime probes, independent of saved config or a dashboard.
+The library resolves valid selected generations directly, without launching the
+selected app; broken selection permits invoked metadata only and blocks runtime
+fallback. Python imports/llama.cpp version and optional node media imports remain
+distinct from live service, model inference, permissions or system readiness.
+Owned jobs, deadlines/output/commit limits, strict replies and identity/selection
+fences preserve failures without retry or private-output exposure.
+The final checkpoint above includes this doctor: both full feature modes pass
+1,045 tests plus one ignored each, and all twenty-four native suites pass in a
+single run, including stock runtime and bounded synthetic fault observations.
+This is not live-service/model-inference or stable-release acceptance.
+The following draft-validation history predates that final checkpoint:
+Initial checking passed for an earlier draft; an interrupted expanded check has
+no terminal acceptance evidence. A preliminary Windows path assertion failed and
+was corrected without relaxing target selection. The final headless all-target
+log completes with 1,043 passed plus one ignored across fourteen target groups;
+all thirty-two source/helper hashes match. Both pre-isolation feature modes then
+passed those totals and built, but native validation exposed host PATH supplying
+a missing Python DLL. Product probe CWD/PATH/environment is now isolated and
+credentials/overrides are not inherited. Both corrected locked/offline full
+feature modes pass 1,044 tests plus one ignored each. The rebuilt native run
+passes the doctor and fifteen following suites, then stops in the existing
+local-pipeline recurrence check: its first job completed, but the second remained
+accepted/running at the harness's 45-second observation deadline. Slow journal
+checkpoints also occur in earlier passing runs; their cause is not established.
+The failed attempt is retained, not replayed or counted as acceptance. Broader
+native acceptance remains open; no execution limit or success condition changed.
+The remaining six suites and a separate fresh pipeline fixture then pass against
+the same binaries, with the original deadline and limits. All twenty-three
+suites have individual passing results, but the sequential failure and unknown
+second occurrence remain retained; intermittent scheduler latency is still open.
+See [scope, commands and verification boundary](PACKAGE-DOCTOR.md).
+No installed/remote node, model/default, UI, version, release, Defender setting
+or automatic-update feed changed. CI stays local; full release gates remain open.
+
 ## Quality evidence: decision-first screen rejected
 
 An opt-in, direct-backend CPU screen tested reducing interpretation to semantic

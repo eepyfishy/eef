@@ -31,11 +31,29 @@ EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependenc
 
 ## Commands own behavior; UI is a client
 
+The timer's [single-view observation](AUTOMATION-SCHEDULES.md#single-view-timer-observation-2026-10-23)
+reduces duplicate read/lock work and distinguishes lock wait from validation in
+slow diagnostics. Both full Rust feature modes pass 1,045 tests plus one ignored
+each, and all twenty-four native suites pass sequentially. It does not prove the
+cause/fix of earlier intermittent stalls, relax execution bounds or close loaded/
+physical scheduler and full release acceptance.
+
+[Selected-package runtime diagnostics](PACKAGE-DOCTOR.md) are implemented, unreleased:
+default inspection and explicit local owner probes check stock executable/import
+behavior without running the selected app, changing config or depending on a
+dashboard. Broken selection blocks old-root runtime fallback. This is not live
+service/inference health, automatic recovery or complete onboarding acceptance;
+the final checkpoint above includes the doctor, both full feature modes and all
+twenty-four native suites. A prior sequential timeout and unknown occurrence
+remain retained, not replayed or erased by later passes. Latency investigation,
+physical and release gates remain open; successful package probes do not
+establish scheduler reliability.
+
 The [decision-first interpreter feasibility screen](experiments/interpreter-decision-first.md)
 fails the semantic bar despite forty valid reduced decisions: 12/20 and 11/20
 labels, with eleven required clarifications missed. No production integration or
 default approval is made. This evidence rules out that candidate, not the full
-model-quality/bootstrap requirement; the previous product checkpoint is unchanged.
+model-quality/bootstrap requirement; production interpreter/default behavior is unchanged.
 
 [Missing-package-file maintenance](PACKAGE-SETUP.md) adds default-off
 local commands and a lightweight service supervisor support prompt approval or
@@ -986,9 +1004,9 @@ failure wording was stale. Loaded/physical timing and full release gates remain.
 | 1 | Identity + advertised address | Local coordinator connection and different advertised address coexist; rename/address change preserves identity; command config/readback; old configs migrate. | Implemented in development; one-PC command tests passed; physical acceptance pending |
 | 2 | Coordinator advertisements + network view | Authenticated, bounded, fresh node listings and coordinator hints; authorized peer lookup; no automatic trust or claimed cluster election. | Scoped pull discovery, registration metadata and freshness implemented; owner grant/revoke and restart CLI added in development; no direct peer transport claim |
 | 3 | General `models[]` | Multiple multi-capability models per node/backend; normalized old selections; capability-based scheduling; unsupported metadata stays unknown. | Versioned metadata/inventory and node selection commands added in development; text/vision routing filters capabilities/state and explicit owner role constraints; route inspection available; automatic role-based planning and new executors remain planned |
-| 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight and command downloads; real CPU candidate benchmark added, but candidate not approved and automatic bootstrap not implemented |
+| 4 | Default lightweight LM | Configurable verified bootstrap; CPU inference; no manual model choice needed in normal setup; offline/disk/cancel failure leaves core usable. | In progress: verified artifact/preflight/downloads, owner-pinned backend setup automation, one-attempt prompt approval and separately consented scoped activation are implemented in development. No project default is approved; real-model semantic quality and complete default-driven first-run onboarding remain open |
 | 5 | Structured request interpreter | Versioned bounded schema; original text retained; invalid/time-limited model output rejected; explicit commands work without a model. | Partial in development: strict contract, origin-owned durable history, fresh cross-node vocabulary and source-bound method/questions. Normal input and explicit-target answers follow configurable bounded preparation/resolution policy, without approval/execution or implicit continuation. Offline preview stays local. Real-model quality, bootstrap and complete non-coder setup remain required |
-| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: origin-scoped compile/plan inspection, source-bound preparation/questions, immutable explicit inputs, separate owner approval/execution, exact grants and durable issuance/ACK/completion, replay protection, clock-independent leases, restart-to-unknown, explicit abandonment and retained-completion reconciliation without continuation. Public core and node ordinary RPC now fence legacy workloads; text creation uses reviewed compilation. Origin and executor may differ. Automatic triggers/heavy planning, complete client/regression migration, general continuation, stronger termination, physical acceptance and cluster fencing remain required |
+| 6 | Planning + execution authorization | Existing durable jobs persist plan/grant before dispatch; scope enforced by executor; observable acknowledgements; expiry/replay/ownership tests. | Partial in development: origin-scoped compile/plan inspection, source-bound preparation/questions, immutable explicit inputs, separate owner approval/execution, exact grants and durable issuance/ACK/completion, replay protection, clock-independent leases, restart-to-unknown, explicit abandonment and retained-completion reconciliation without continuation. Public core and node ordinary RPC now fence legacy workloads; text creation uses reviewed compilation. Origin and executor may differ. Bounded fixed-input automatic triggers reuse durable owner policies; general condition-driven/heavy planning, complete client/regression migration, general continuation, stronger termination, physical acceptance and cluster fencing remain required |
 | 7 | Local workload runtime | Authorized bounded pipelines execute locally with progress, pause/stop acknowledgement, resource limits and safe restart reconciliation. | Partial, unreleased: explicit reviewed finite graphs execute on one fixed node under one parent grant/deadline, local data bounds and atomic child-provider reservations; bounded recurrence reuses existing frozen policies and timers. Latest finite-stage observations use existing durable receipts without resume authority. One-shot ACK/completion, read-only recovery and retained-completion reconciliation preserve no replay. Continuous pipelines, acknowledged strong stop and physical resource budgets remain open |
 | 8 | Authorized peer data paths | Pair-specific authentication, scoped transfer limits and expiry; address knowledge alone cannot open a session. | Partial, unreleased: native mutual-TLS finite delivery, signed recipient-only material, bounded admission, fixed paired compilation/owner approval, atomic consumed grants, destination-ACK gating and joint outcomes in existing receipts/journal. Opt-in finite microphone/speaker integration, command-first relay setup and JSON-free authoring pass synthetic native fixtures. Continuous sessions, joint recovery, strong stop, aggregate quotas and physical acceptance remain open |
 | 9 | Continuous workloads + listening | Local camera/audio/sensor loops, event reporting and backpressure; repeat payloads stay local; listening-off leaves services working. | Planned |

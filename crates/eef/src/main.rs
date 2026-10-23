@@ -31,6 +31,11 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect this package; explicitly probe bundled runtimes without a service.
+    Doctor {
+        #[command(flatten)]
+        options: eefn::package_health::Args,
+    },
     /// Restore this exact application package; preserve settings and restart separately.
     Repair {
         #[command(flatten)]
@@ -1312,6 +1317,13 @@ async fn remote_permissions_cli(
 
 async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value> {
     use serde_json::json;
+    if let Command::Doctor { options } = command {
+        return eefn::package_health::execute(
+            &eefn::package_health::Context::current("eef")?,
+            options,
+        )
+        .await;
+    }
     if let Command::RepairSetup { command } = command {
         return eefn::package_setup::execute(
             &eefn::package_setup::Context::current("eef")?,
@@ -1338,7 +1350,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
-        Command::Repair { .. } | Command::RepairSetup { .. } => {
+        Command::Repair { .. } | Command::RepairSetup { .. } | Command::Doctor { .. } => {
             unreachable!("local package repair returned above")
         }
         Command::AutomationSchedules { command } => {
@@ -2043,7 +2055,7 @@ async fn main() -> Result<()> {
     let repair = parsed.as_ref().is_ok_and(|args| {
         matches!(
             args.command,
-            Some(Command::Repair { .. } | Command::RepairSetup { .. })
+            Some(Command::Repair { .. } | Command::RepairSetup { .. } | Command::Doctor { .. })
         )
     });
     if !repair && eefn::updater::handoff_if_selected(&install_root, eef::VERSION, "eef")? {
@@ -2077,6 +2089,8 @@ async fn main() -> Result<()> {
                 }
                 if !args.json && matches!(command, Command::Repair { .. }) {
                     print!("{}", eefn::package_repair::render(&value)?);
+                } else if !args.json && matches!(command, Command::Doctor { .. }) {
+                    print!("{}", eefn::package_health::render(&value));
                 } else if !args.json && matches!(command, Command::RepairSetup { .. }) {
                     print!("{}", eefn::package_setup::render(&value));
                 } else if !args.json

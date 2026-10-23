@@ -60,3 +60,14 @@ Requires a managed bundle and reviewed public HTTPS source (packaged hint or
 resumes automatically. Auto mode additionally needs --allow-automatic-repair.
 All prerelease runner activity is blocked. No automatic upgrade/restart/model
 setup is granted. Missing-file presence and selection are not runtime health.
+
+Bundled runtime diagnostics (unreleased; no running node/config required):
+  eefn doctor
+  eefn doctor --probe
+  eefn doctor --probe --media
+Inspection alone starts nothing. Explicit probes check selected-package Python
+and llama.cpp version; --media additionally imports stock media packages and may
+initialize libraries. It does not request capture/playback or choose a backend.
+Broken selection blocks old runtime fallback. No repair, model download, permission
+change or restart is requested. Passing probes are not live node, Ollama, model,
+hardware or antivirus clearance. Use repair --status for package selection.

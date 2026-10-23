@@ -928,24 +928,61 @@ impl JobStore {
     }
     /// One fully validated read under one journal lock, not execution authority.
     pub(crate) fn schedule_snapshot(&self, id: &str) -> Result<(Schedule, Option<Plan>)> {
+        self.read_schedule_snapshot(id, |_| true)
+    }
+    /// A timer observes one current view, without inspecting partial launch work
+    /// or loading jobs for stopped schedules. Admission/settlement still recheck
+    /// their own authority under the later write lock; this is never a cache.
+    pub(crate) fn schedule_timer_snapshot(
+        &self,
+        id: &str,
+        launching: bool,
+    ) -> Result<(Schedule, Option<Plan>)> {
+        self.read_schedule_snapshot(id, |s| s.state == State::InFlight && !launching)
+    }
+    fn read_schedule_snapshot(
+        &self,
+        id: &str,
+        include_job: impl FnOnce(&Schedule) -> bool,
+    ) -> Result<(Schedule, Option<Plan>)> {
         uuid(id)?;
+        let started = std::time::Instant::now();
         let connection = self.connection.lock().expect("job journal");
-        let mut history = validated_history(&connection)?;
-        let schedule = history.schedules.remove(id).context("Schedule missing")?;
-        let plan = schedule
-            .active_trigger
-            .as_deref()
-            .map(|id| {
-                let trigger = history
-                    .triggers
-                    .iter()
-                    .find(|t| t.id == id)
-                    .context("Trigger missing")?;
-                source_job(&connection, trigger)
-            })
-            .transpose()?
-            .flatten();
-        Ok((schedule, plan))
+        let acquired = std::time::Instant::now();
+        let result = (|| {
+            let mut history = validated_history(&connection)?;
+            let schedule = history.schedules.remove(id).context("Schedule missing")?;
+            let plan = if include_job(&schedule) {
+                schedule
+                    .active_trigger
+                    .as_deref()
+                    .map(|id| {
+                        let trigger = history
+                            .triggers
+                            .iter()
+                            .find(|t| t.id == id)
+                            .context("Trigger missing")?;
+                        source_job(&connection, trigger)
+                    })
+                    .transpose()?
+                    .flatten()
+            } else {
+                None
+            };
+            Ok((schedule, plan))
+        })();
+        // Release the journal before logging. No source, parameters, credentials
+        // or grant contents are emitted, including when validation fails.
+        drop(connection);
+        if started.elapsed() > std::time::Duration::from_millis(500) {
+            tracing::warn!(
+                schedule_id = %id,
+                lock_wait_ms = acquired.duration_since(started).as_millis(),
+                validation_ms = acquired.elapsed().as_millis(),
+                "Slow validated schedule snapshot"
+            );
+        }
+        result
     }
     pub(crate) fn trigger_get(&self, id: &str) -> Result<Trigger> {
         uuid(id)?;
@@ -1464,6 +1501,14 @@ mod tests {
         let PolicyCommand::Approve { definition, .. } = &policy.creation else {
             unreachable!()
         };
+        let job_ids = db
+            .prepare("SELECT job_id FROM durable_jobs ORDER BY job_id")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        println!("retained job count: {}", job_ids.len());
         for _ in 0..3 {
             measure("authorizations", &|| {
                 automation_authorizations::validate_all(&db)
@@ -1486,6 +1531,47 @@ mod tests {
             });
             measure("joint admission gates", &|| {
                 automation_occurrences::trigger_admission_state(&db, definition, policy)?;
+                Ok(())
+            });
+            measure("full retained job validation", &|| {
+                for id in &job_ids {
+                    read(&db, id)?;
+                }
+                Ok(())
+            });
+            measure("active trigger source validation", &|| {
+                let history = validated_history(&db)?;
+                for trigger in &history.triggers {
+                    source_job(&db, trigger)?;
+                }
+                Ok(())
+            });
+        }
+        let schedule_ids = validated_history(&db)
+            .unwrap()
+            .schedules
+            .into_keys()
+            .collect::<Vec<_>>();
+        let store = JobStore {
+            connection: Mutex::new(db),
+            _file_lock: None,
+            max_count: 0,
+            max_bytes: 0,
+        };
+        for _ in 0..3 {
+            measure("separate timer observation", &|| {
+                for id in &schedule_ids {
+                    let schedule = store.schedule_get(id)?;
+                    if schedule.state == State::InFlight {
+                        store.trigger_job(schedule.active_trigger.as_deref().unwrap())?;
+                    }
+                }
+                Ok(())
+            });
+            measure("single-view timer observation", &|| {
+                for id in &schedule_ids {
+                    store.schedule_timer_snapshot(id, false)?;
+                }
                 Ok(())
             });
         }
@@ -1627,6 +1713,98 @@ mod tests {
         assert!(
             store
                 .schedule_snapshot(&uuid::Uuid::new_v4().to_string())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn timer_snapshot_rechecks_state_and_keeps_launch_and_stopped_job_boundaries() {
+        let store = JobStore::in_memory().unwrap();
+        let (engine, source, policy, schedule) = fixture_with_validity(store.clone(), 60000);
+        let before = store.connection.lock().unwrap().total_changes();
+        let waiting = store.schedule_timer_snapshot(&schedule.id, false).unwrap();
+        assert_eq!(waiting.0, schedule);
+        assert!(waiting.1.is_none());
+        assert_eq!(store.connection.lock().unwrap().total_changes(), before);
+
+        let trigger = store
+            .schedule_claim_due(&schedule.id, &policy.runtime_id, &policy.issuer_id, || {
+                schedule.next_due_ms.unwrap()
+            })
+            .unwrap()
+            .unwrap();
+        assert!(
+            store
+                .schedule_timer_snapshot(&schedule.id, false)
+                .unwrap()
+                .1
+                .is_none()
+        );
+        let opened = opening(&engine, &source, &trigger).unwrap();
+        let job_id = opened["id"].as_str().unwrap();
+        let before = store.connection.lock().unwrap().total_changes();
+        let (current, job) = store.schedule_timer_snapshot(&schedule.id, false).unwrap();
+        assert_eq!(current.state, State::InFlight);
+        assert_eq!(job.unwrap().plan_id, job_id);
+        assert!(
+            store
+                .schedule_timer_snapshot(&schedule.id, true)
+                .unwrap()
+                .1
+                .is_none()
+        );
+        assert_eq!(store.connection.lock().unwrap().total_changes(), before);
+
+        store
+            .connection
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE durable_jobs SET plan_json=json_set(plan_json,'$.request_review',json('{}')) WHERE job_id=?1",
+                [job_id],
+            )
+            .unwrap();
+        let before = store.connection.lock().unwrap().total_changes();
+        assert!(store.schedule_timer_snapshot(&schedule.id, false).is_err());
+        assert!(
+            store
+                .schedule_timer_snapshot(&schedule.id, true)
+                .unwrap()
+                .1
+                .is_none()
+        );
+        assert_eq!(store.connection.lock().unwrap().total_changes(), before);
+
+        let interrupted = store
+            .schedule_interrupt_now(&schedule.id, "checkpoint_failed")
+            .unwrap();
+        let before = store.connection.lock().unwrap().total_changes();
+        let (current, job) = store.schedule_timer_snapshot(&schedule.id, false).unwrap();
+        assert_eq!(current, interrupted);
+        assert!(
+            job.is_none(),
+            "stopped work is not re-inspected by the periodic timer"
+        );
+        assert!(
+            store.schedule_snapshot(&schedule.id).is_err(),
+            "owner inspection still validates its retained job"
+        );
+        assert_eq!(store.connection.lock().unwrap().total_changes(), before);
+
+        store
+            .connection
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE automation_triggers SET request_id='damaged' WHERE trigger_id=?1",
+                [&trigger.id],
+            )
+            .unwrap();
+        assert!(store.schedule_timer_snapshot(&schedule.id, false).is_err());
+        assert!(store.schedule_timer_snapshot(&schedule.id, true).is_err());
+        assert!(
+            store
+                .schedule_timer_snapshot(&uuid::Uuid::new_v4().to_string(), false)
                 .is_err()
         );
     }

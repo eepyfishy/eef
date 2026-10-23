@@ -53,3 +53,11 @@ Requires a managed bundle and reviewed public HTTPS source (packaged hint or
 resumes automatically. Auto mode additionally needs --allow-automatic-repair.
 All prerelease runner activity is blocked. No automatic upgrade/restart/model
 setup is granted. Missing-file presence and selection are not runtime health.
+
+Bundled runtime diagnostics (unreleased; no running service/config required):
+  eef doctor
+  eef doctor --probe
+Inspection alone starts nothing. Explicit probes check selected-package Python
+core imports, not a local LM or live coordinator. Broken selection blocks old
+runtime fallback. No repair, model, permission change or restart is requested.
+A passing probe does not certify live service, inference or antivirus clearance.
