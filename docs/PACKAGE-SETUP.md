@@ -45,7 +45,9 @@ component paths and a reviewed **public HTTPS source** without credentials,
 query or fragment. Later discovery-hint changes cannot redirect that grant.
 Changing build/slot requires explicit reauthorization. Existing remote-update,
 filesystem, shell or model permissions do not grant repair-setup authority.
-This increment does not expose remote policy configuration or approval APIs.
+Remote policy inspection/configuration is added by the subsequent
+[node policy control](PACKAGE-POLICY-CONTROL.md) increment. It requires a separate
+default-off local consent; no remote runner or prompt-approval API is added.
 
 ## What it detects and does not detect
 

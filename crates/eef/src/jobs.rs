@@ -63,6 +63,37 @@ pub struct JobStore {
     _file_lock: Option<File>,
     max_count: usize,
     max_bytes: usize,
+    // Must remain after connection and file lock: field drop order releases
+    // both before announcing retirement. The receiver owns no journal/lease.
+    retired: RetirementSignal,
+}
+
+#[derive(Debug)]
+struct RetirementSignal(tokio::sync::watch::Sender<bool>);
+impl Drop for RetirementSignal {
+    fn drop(&mut self) {
+        self.0.send_replace(true);
+    }
+}
+pub struct JournalRetirement(tokio::sync::watch::Receiver<bool>);
+impl JournalRetirement {
+    /// Wait only for this exact store's owned resources, never retry OS locking
+    /// or infer release from shutdown intent, an idle runner or a runtime ID.
+    pub async fn wait(mut self, budget: Duration) -> Result<()> {
+        tokio::time::timeout(budget, async {
+            loop {
+                if *self.0.borrow_and_update() {
+                    return Ok(());
+                }
+                self.0
+                    .changed()
+                    .await
+                    .context("Journal retirement signal lost; release unconfirmed")?;
+            }
+        })
+        .await
+        .context("Prior job database ownership has not retired; no replacement or retry started")?
+    }
 }
 
 #[cfg(test)]
@@ -149,6 +180,9 @@ impl AttemptJournal {
 }
 
 impl JobStore {
+    pub fn retirement(&self) -> JournalRetirement {
+        JournalRetirement(self.retired.0.subscribe())
+    }
     pub fn open(path: &Path, max_count: usize, max_bytes: usize) -> Result<Arc<Self>> {
         let path = path
             .canonicalize()
@@ -201,6 +235,7 @@ impl JobStore {
             _file_lock: lock,
             max_count,
             max_bytes,
+            retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         });
         store.validate_automations()?;
         automation_schedules::interrupt_on_open(&store)?;
@@ -944,6 +979,41 @@ mod tests {
             "params":{"path":"fixture","content":"private output"},
             "request_context":{"request_id":"origin-request","origin_node":"owner","origin_area":["Home","Study"]}
         })).unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn retirement_waits_for_last_journal_owner_before_reopening_once() {
+        let (_dir, path) = disk();
+        let store = open(&path);
+        let held = store.clone();
+        let retired = store.retirement();
+        drop(store);
+        assert!(JobStore::open(&path, 500, 64 * 1024 * 1024).is_err());
+        let waiting = tokio::spawn(retired.wait(Duration::from_secs(3)));
+        tokio::task::yield_now().await;
+        assert!(
+            !waiting.is_finished(),
+            "shutdown intent cannot release a retained owner"
+        );
+        drop(held);
+        waiting.await.unwrap().unwrap();
+        let replacement = open(&path);
+        assert!(replacement.list().unwrap().is_empty());
+        assert!(
+            JobStore::open(&path, 500, 64 * 1024 * 1024).is_err(),
+            "replacement still has exclusive ownership"
+        );
+    }
+    #[tokio::test]
+    async fn retirement_timeout_never_unlocks_an_owned_database_or_retries_open() {
+        let (_dir, path) = disk();
+        let store = open(&path);
+        assert!(store.retirement().wait(Duration::ZERO).await.is_err());
+        assert!(JobStore::open(&path, 500, 64 * 1024 * 1024).is_err());
+        let retired = store.retirement();
+        drop(store);
+        retired.wait(Duration::from_secs(3)).await.unwrap();
+        assert!(JobStore::open(&path, 500, 64 * 1024 * 1024).is_ok());
     }
 
     #[test]

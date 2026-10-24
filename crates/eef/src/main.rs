@@ -114,6 +114,13 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum NodeCommand {
+    /// Manage a node's shared installation maintenance policy, not repair approval.
+    RepairSetup {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eefn::package_setup::policy::Action,
+    },
     /// Explain a connected node's setup and next steps; never run setup or work.
     Setup {
         #[arg(long)]
@@ -792,6 +799,46 @@ mod credential_cli_tests {
         }
     }
     #[test]
+    fn node_maintenance_cli_cannot_run_or_approve_remote_repairs() {
+        assert!(
+            Args::try_parse_from(["eef", "node", "repair-setup", "--node", "node", "show"]).is_ok()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "node",
+                "repair-setup",
+                "--node",
+                "node",
+                "configure",
+                "--mode",
+                "prompt"
+            ])
+            .is_ok()
+        );
+        assert!(Args::try_parse_from(["eef", "node", "repair-setup", "show"]).is_err());
+        for operation in ["run", "approve", "restart", "retry"] {
+            assert!(
+                Args::try_parse_from(["eef", "node", "repair-setup", "--node", "node", operation])
+                    .is_err()
+            );
+        }
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "node",
+                "repair-setup",
+                "--node",
+                "node",
+                "configure",
+                "--mode",
+                "auto",
+                "--allow-prerelease"
+            ])
+            .is_err()
+        );
+    }
+    #[test]
     fn recovery_requires_saved_revision_grant_and_operation_without_retry_or_evidence_flags() {
         let args = [
             "eef",
@@ -1166,6 +1213,75 @@ async fn remote_setup_cli(
     Ok(result.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"remote_node_setup","node_id":node,"request_id":request.request_id,"success":false,"result":null,
         "changed":false,"model_inference_requested":false,"execution_authorized":false,"restart_requested":false,"automatically_retried":false,
         "error_code":"node_setup_unconfirmed","note":"Node setup observations are unavailable or unconfirmed. No client retry, legacy fallback, model setup, restart or workload was requested."})))
+}
+
+async fn remote_package_policy_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eefn::package_setup::policy::Action,
+) -> Result<serde_json::Value> {
+    use eef::node_package_policy::Request;
+    use eefn::package_setup::policy::{Action, Command, Version};
+    use serde_json::json;
+    eefn::network::validate_remote_node_id(node)?;
+    // Validate all owner-supplied options before contacting either service.
+    action.command(Version {
+        revision: 0,
+        digest: "0".repeat(64),
+    })?;
+    let mutation = !matches!(action, Action::Show);
+    let mut sending = false;
+    let mut requested = serde_json::Value::Null;
+    let exchange = async {
+        let url = format!("{base}/api/commands/node/repair-setup-policy");
+        let mut request = Request {
+            schema_version: 1,
+            node_id: node.into(),
+            expected_runtime_id: None,
+            request_id: uuid::Uuid::new_v4().to_string(),
+            command: Command::Show,
+        };
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Package policy inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_package_policy::confirmed(&inspected, &request) {
+            bail!("Package policy inspection unconfirmed")
+        }
+        if !mutation {
+            return Ok::<_, anyhow::Error>(inspected);
+        }
+        request.expected_runtime_id = Some(
+            inspected["result"]["runtime_id"]
+                .as_str()
+                .context("Missing node runtime")?
+                .into(),
+        );
+        request.request_id = uuid::Uuid::new_v4().to_string();
+        request.command = action.command(serde_json::from_value(
+            inspected["result"]["version"].clone(),
+        )?)?;
+        request.validate()?;
+        requested = json!(request.command);
+        sending = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Package policy save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_package_policy::confirmed(&saved, &request) {
+            bail!("Package policy save unconfirmed")
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"remote_repair_setup_policy",
+        "node_id":node,"command":requested,"success":false,"mutation_requested":mutation,
+        "sending_attempted":sending,"outcome_unknown":sending,"result":null,"restart_requested":false,
+        "automatically_retried":false,"error_code":"package_policy_unconfirmed",
+        "note":"Inspect the exact node's repair-setup policy before any new save. An acknowledged policy may be evaluated by its supervisor; lost replies are not rollback. No client retry, alternate node, repair approval or legacy fallback was sent."})))
 }
 
 async fn remote_model_bootstrap_cli(
@@ -1915,6 +2031,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             command: NodeCommand::ModelBootstrapPolicy { node, command },
         } => return Box::pin(remote_model_bootstrap_cli(&client, &base, node, command)).await,
         Command::Node {
+            command: NodeCommand::RepairSetup { node, command },
+        } => return Box::pin(remote_package_policy_cli(&client, &base, node, command)).await,
+        Command::Node {
             command: NodeCommand::Relay { node, command },
         } => {
             return remote_relay_cli(&client, &base, node, command).await;
@@ -2175,6 +2294,21 @@ async fn main() -> Result<()> {
                     && matches!(
                         command,
                         Command::Node {
+                            command: NodeCommand::RepairSetup { .. }
+                        }
+                    )
+                {
+                    if value["success"] == true {
+                        print!("{}", eefn::package_setup::policy::render(&value["result"])?);
+                    } else {
+                        eprintln!(
+                            "Node maintenance policy unconfirmed. Inspect before a new save; no client retry or fallback was sent."
+                        );
+                    }
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
                             command: NodeCommand::ModelBootstrapPolicy { .. }
                         }
                     )
@@ -2379,6 +2513,7 @@ async fn main() -> Result<()> {
         .await;
         runtime.shutdown().await;
         result.context("EEF API server failed")?;
+        runtime.retire(std::time::Duration::from_secs(5)).await?;
         if !restart_requested.load(std::sync::atomic::Ordering::Relaxed) {
             break;
         }

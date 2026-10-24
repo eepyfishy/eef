@@ -203,6 +203,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(node_model_bootstrap).layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
         .route(
+            "/api/commands/node/repair-setup-policy",
+            post(node_package_policy).layer(axum::extract::DefaultBodyLimit::max(16384)),
+        )
+        .route(
             "/api/commands/node/python",
             post(node_python_policy).layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
@@ -458,6 +462,14 @@ async fn node_model_bootstrap(
 ) -> ApiResult<Value> {
     Ok(Json(
         crate::node_model_bootstrap::command(&runtime.node_server, request).await?,
+    ))
+}
+async fn node_package_policy(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::node_package_policy::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_package_policy::command(&runtime.node_server, request).await?,
     ))
 }
 async fn node_python_policy(

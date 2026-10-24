@@ -20,6 +20,9 @@ const POLICY_MAX: usize = 64 * 1024;
 const STATE_MAX: usize = 256 * 1024;
 const RECORD_MAX: usize = 128;
 
+#[path = "package_setup_policy.rs"]
+pub mod policy;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
@@ -264,7 +267,10 @@ fn load_policy(ctx: &Context) -> Result<(Policy, Option<Vec<u8>>)> {
     Ok((policy, bytes))
 }
 fn validate_policy(ctx: &Context, policy: &Policy) -> Result<()> {
-    if policy.schema_version != 1 || policy.program != ctx.program || policy.revision == 0 {
+    validate_policy_role(&ctx.program, policy)
+}
+fn validate_policy_role(program: &str, policy: &Policy) -> Result<()> {
+    if policy.schema_version != 1 || policy.program != program || policy.revision == 0 {
         bail!("unsupported package repair policy")
     }
     crate::package_repair::validate_operation_id(
@@ -498,6 +504,17 @@ fn configure(
     source: Option<&str>,
     expected: Option<u64>,
 ) -> Result<Value> {
+    configure_checked(ctx, mode, allow, source, expected, None)
+}
+
+fn configure_checked(
+    ctx: &Context,
+    mode: Mode,
+    allow: bool,
+    source: Option<&str>,
+    expected: Option<u64>,
+    expected_digest: Option<&str>,
+) -> Result<Value> {
     if (mode == Mode::Auto) != allow {
         bail!("auto mode requires its distinct explicit consent flag")
     }
@@ -513,6 +530,11 @@ fn configure(
     let (old, before) = load_policy(ctx)?;
     if expected.is_some_and(|r| r != old.revision) {
         bail!("stale repair policy revision")
+    }
+    if expected_digest
+        .is_some_and(|digest| policy::version(&old).map_or(true, |v| v.digest != digest))
+    {
+        bail!("stale repair policy digest")
     }
     let binding = if mode == Mode::Off {
         None

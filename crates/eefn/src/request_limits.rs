@@ -81,6 +81,7 @@ impl RequestBudget {
                     action,
                     "status"
                         | "setup_check"
+                        | "repair_setup_policy_status"
                         | "restart"
                         | "model_lifecycle_status"
                         | "model_lifecycle_cancel"
@@ -238,10 +239,44 @@ mod tests {
         let read = budget.admit("node.configure", "setup_check").unwrap();
         assert!(budget.admit("node.configure", "setup_check").is_none());
         assert!(budget.admit("node.configure", "bootstrap_policy").is_none());
+        assert!(
+            budget
+                .admit("node.configure", "repair_setup_policy")
+                .is_none()
+        );
         drop(read);
         assert!(budget.admit("node.configure", "bootstrap_policy").is_none());
         assert!(budget.admit("node.configure", "setup_check").is_some());
         drop(work);
+    }
+    #[test]
+    fn package_policy_inspection_uses_control_lane_but_policy_save_uses_work_lane() {
+        let budget = RequestBudget::new(&RequestLimits {
+            work: 1,
+            control: 1,
+        })
+        .unwrap();
+        let work = budget.admit("llm.infer", "run").unwrap();
+        let read = budget
+            .admit("node.configure", "repair_setup_policy_status")
+            .unwrap();
+        assert!(
+            budget
+                .admit("node.configure", "repair_setup_policy_status")
+                .is_none()
+        );
+        drop(read);
+        assert!(
+            budget
+                .admit("node.configure", "repair_setup_policy")
+                .is_none()
+        );
+        drop(work);
+        assert!(
+            budget
+                .admit("node.configure", "repair_setup_policy")
+                .is_some()
+        );
     }
     #[test]
     fn model_lifecycle_inspection_and_cancel_keep_bounded_control_capacity_not_load_unload() {

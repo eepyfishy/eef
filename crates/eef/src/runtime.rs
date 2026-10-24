@@ -1049,6 +1049,15 @@ impl Runtime {
         self.adapters.shutdown().await;
         self.bus.publish("runtime.stopped", json!({})).await;
     }
+    /// Consuming process-lifecycle boundary after HTTP draining. Shutdown closes
+    /// admission, but detached final drops may still own the old journal lease.
+    /// Do not initialize another runtime until that exact ownership has retired.
+    pub async fn retire(self: Arc<Self>, budget: Duration) -> Result<()> {
+        self.shutdown().await;
+        let journal = self.engine.store.retirement();
+        drop(self);
+        journal.wait(budget).await
+    }
 }
 
 pub(crate) fn validate_secret(psk: &str) -> Result<()> {
@@ -1109,6 +1118,41 @@ fn default_rules() -> Vec<ResponseRule> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn consumed_runtime_retirement_waits_for_independent_store_clones() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config.json");
+        let database = dir.path().join("memory.db");
+        std::fs::write(&config, serde_json::to_vec(&json!({
+            "node":{"psk":"","host":"127.0.0.1","port":0,"authentication":{"allow_legacy":false}},
+            "update":{"policy":"off"},"python":{"plugins":[]},"firmware":{"repository":dir.path().join("firmware")}
+        })).unwrap()).unwrap();
+        let runtime = Runtime::initialize(Config::load(Some(&config)).unwrap(), &database, false)
+            .await
+            .unwrap();
+        let held = runtime.engine.store.clone();
+        let weak = Arc::downgrade(&runtime);
+        let retire = tokio::spawn(runtime.retire(Duration::from_secs(3)));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while weak.upgrade().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !retire.is_finished(),
+            "runtime drop alone is not database retirement"
+        );
+        assert!(crate::jobs::JobStore::open(&database, 500, 64 * 1024 * 1024).is_err());
+        drop(held);
+        retire.await.unwrap().unwrap();
+        let replacement =
+            Runtime::initialize(Config::load(Some(&config)).unwrap(), &database, false)
+                .await
+                .unwrap();
+        replacement.retire(Duration::from_secs(3)).await.unwrap();
+    }
     use eefn::{
         NodeCrypto,
         protocol::{build_auth, read_message, write_message},

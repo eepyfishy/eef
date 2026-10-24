@@ -65,6 +65,20 @@ try{
  await cli('eefn',['connection','pair-stdin'],true,false,JSON.stringify(invitation));
  let runtime=(await json(`http://127.0.0.1:${web}/api/diagnostics`)).runtime_id;await owner(['restart']);
  await until(async()=>(await json(`http://127.0.0.1:${web}/api/diagnostics`)).runtime_id!==runtime,'apply independent credentials');
+ // Distinct owner requests, not recovery retries of the timed-out operation.
+ // Each replacement must retire its own database owner before initializing once.
+ const restartIds=new Set([runtime]);
+ for(let index=0;index<8;index++){
+  runtime=(await json(`http://127.0.0.1:${web}/api/diagnostics`)).runtime_id;
+  restartIds.add(runtime);await owner(['restart']);
+  await until(async()=>(await json(`http://127.0.0.1:${web}/api/diagnostics`)).runtime_id!==runtime,'distinct coordinator restart '+index);
+ }
+ restartIds.add((await json(`http://127.0.0.1:${web}/api/diagnostics`)).runtime_id);
+ assert.equal(restartIds.size,10,'each acknowledged restart has a distinct replacement runtime');
+ const competingConfig=join(scratch,'competing-eef.yaml');await writeFile(competingConfig,await readFile(eefConfig));
+ const competing=launch('eef',['--config',competingConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:randomBytes(24).toString('hex')});
+ const competingResult=await competing.result;
+ assert.equal(competingResult.code,1);assert(competingResult.err.includes('Another coordinator already owns this job database'),'active database ownership must still reject another coordinator');
  await cli('eefn',['connection','resume']);await until(async()=>(await json(`http://127.0.0.1:${web}/api/diagnostics`)).registered_node_count===1,'pinned node');
  assert.equal((await remote(['show'])).result.saved.policy.mode,'auto');
  const denied=await readFile(nodeConfig,'utf8');await remote(['configure','--mode','managed'],false);assert.equal(await readFile(nodeConfig,'utf8'),denied);
@@ -113,6 +127,7 @@ try{
  app.kill();await app.result;const stopped=await readFile(nodeConfig,'utf8');await local(['configure','--mode','off'],false);assert.equal(await readFile(nodeConfig,'utf8'),stopped);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,no_models_or_devices:true,bootstrap_runner_implemented:false,project_default_approved:false,
   local_and_remote_policy:true,owner_consent_and_revocation:true,immutable_catalog_binding:true,no_op_no_write:true,catalog_drift_and_explicit_repin:true,
+  distinct_coordinator_runtime_count:restartIds.size,active_database_competitor_refused:true,
   strict_origin_runtime_cas_body:true,lost_corrupt_unsupported_reply_no_retry:true,unsupported_inspection_before_any_write:true,restart_preserves_policy_without_download:true,opaque_policy_preserves_core_controls:true,offline_no_runtime_start:true},null,2));
  console.log('Bootstrap policy command validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}

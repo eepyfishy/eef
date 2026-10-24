@@ -23,6 +23,7 @@ pub mod model;
 pub mod model_inventory;
 pub mod node_control;
 pub mod node_model_bootstrap;
+pub mod node_package_policy;
 pub mod node_python_policy;
 pub mod node_relay;
 pub mod node_setup;

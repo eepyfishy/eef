@@ -26,6 +26,7 @@ pub struct NodeService {
     pub(crate) setup_changed: Arc<tokio::sync::Notify>,
     pub(crate) setup_supervisor: Arc<tokio::sync::Mutex<()>>,
     pub(crate) setup_inspection: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) package_policy_operation: Arc<tokio::sync::Mutex<()>>,
     pub model_activation_ready: Arc<tokio::sync::Notify>,
     pub(crate) activation: Arc<std::sync::Mutex<crate::model_activation::ActivationState>>,
     pub submissions: Arc<crate::submission::SubmissionMailbox>,
@@ -121,6 +122,7 @@ impl NodeService {
             setup_changed: Arc::new(tokio::sync::Notify::new()),
             setup_supervisor: Arc::new(tokio::sync::Mutex::new(())),
             setup_inspection: Arc::new(tokio::sync::Mutex::new(())),
+            package_policy_operation: Arc::new(tokio::sync::Mutex::new(())),
             model_activation_ready: Arc::new(tokio::sync::Notify::new()),
             activation: Arc::new(std::sync::Mutex::new(Default::default())),
             submissions: Arc::new(crate::submission::SubmissionMailbox::default()),
@@ -969,6 +971,15 @@ impl NodeService {
     }
 
     pub async fn remote(self: &Arc<Self>, action: &str, params: Value) -> Result<Value> {
+        if matches!(action, "repair_setup_policy" | "repair_setup_policy_status") {
+            let request: crate::package_setup::policy::Request = serde_json::from_value(params)?;
+            if action == "repair_setup_policy_status"
+                && !matches!(request.command, crate::package_setup::policy::Command::Show)
+            {
+                bail!("Reserved package policy status action mismatch")
+            }
+            return self.repair_setup_policy(request, true).await;
+        }
         if action == "setup_check" {
             return self
                 .setup_check_async(serde_json::from_value(params)?)
@@ -1090,6 +1101,17 @@ impl NodeService {
 
 /// Structural/policy validation; commits separately validate introduced artifacts.
 fn validate_config_shape(value: &Value) -> Result<()> {
+    if value.get("management").is_some_and(|v| !v.is_object())
+        || ["allow_remote", "allow_remote_repair_setup_policy"]
+            .iter()
+            .any(|key| {
+                value
+                    .pointer(&format!("/management/{key}"))
+                    .is_some_and(|v| !v.is_boolean())
+            })
+    {
+        bail!("Management preferences require boolean local approval flags")
+    }
     crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(value)?;
     if let Some(policy) = value.get("input_workflow") {
         serde_json::from_value::<crate::request_input::InputPolicy>(policy.clone())?;
@@ -1774,6 +1796,25 @@ mod tests {
         assert_eq!(saved["node_id"], "stable");
         assert_eq!(saved["psk"], "private-network-secret");
         assert_eq!(saved["management"]["allow_remote"], true);
+        assert!(
+            saved
+                .pointer("/management/allow_remote_repair_setup_policy")
+                .is_none()
+        );
+        dashboard
+            .remote(
+                "save",
+                json!({"config":{"management":{"allow_remote_repair_setup_policy":true}}}),
+            )
+            .await
+            .unwrap();
+        assert!(
+            dashboard
+                .read_config()
+                .unwrap()
+                .pointer("/management/allow_remote_repair_setup_policy")
+                .is_none()
+        );
         let metadata = json!({"area":["Home","Study"],"resources":[{"id":"camera","capability":"camera.capture","parameters":{"device":1}}]});
         dashboard
             .remote("save", json!({"config":{"metadata":metadata}}))

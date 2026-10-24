@@ -106,8 +106,11 @@ The previous failed and partial runs remain separate evidence. This is not a
 claim that every historical capacity refusal had the same cause.
 
 The workflow now configures twenty-six hosted native suites, retaining the two
-local-only stock-runtime suites separately. Workflow lint passes; a fresh hosted
-run for the source checkpoint is still required. Local checkpoint acceptance is
+local-only stock-runtime suites separately. Workflow lint passes; published
+`730ad26` then passes all four hosted jobs and twenty-six native suites in
+[run 40069111052](https://github.com/eepyfishy/eef/actions/runs/40069111052).
+The separately isolated real CPU regression also passes against that source,
+without a model download/copy or personal shared-model change. Checkpoint acceptance is
 not publication of new installers, a real default/model-quality decision,
 physical multi-node acceptance, successful signing/Defender clearance or stable
 v0.4.0 acceptance.

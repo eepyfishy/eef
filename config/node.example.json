@@ -7,6 +7,7 @@
   "heartbeat_seconds": 3.0,
   "request_limits": { "work": 16, "control": 2 },
   "input_workflow": { "prepare_on_input": true, "resolve_on_answer": true },
+  "management": { "allow_remote": false, "allow_remote_repair_setup_policy": false },
   "allow_write": false,
   "allowed_roots": [],
   "python_plugins": [],

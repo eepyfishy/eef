@@ -276,3 +276,20 @@ verify automatic bootstrap-to-inference health, choose an automatic default,
 establish interpretation quality, measure physical memory release or prove
 physical two-PC behavior. The larger shared Ollama models are not selected or
 loaded/unloaded by this test, and no installed node or release/feed is updated.
+
+## Fresh CPU regression after reply-ownership publication (2026-10-24)
+
+Published source `730ad260933af9c60a2a3e39d3b39c7e7323841f` passes the unchanged
+isolated real-model harness (`real-model-5VkwJE`) using the existing verified
+1,280,835,840-byte Qwen3.5-2B artifact, without a download or copy. CPU-only
+two-thread inference uses pinned TLS and reviewed grants. Targeted unload/reload,
+historical receipt reuse without replay, runtime restart/stable identity,
+retained results, owner-applied idle unloading and grant-triggered on-demand
+startup pass. The model SHA-256 still matches after the run; no EEF/EEFN/
+llama-server fixture processes remain observed. Public whitelisted evidence is
+`.validation/730ad26-real-cpu-acceptance.json`; raw runner output remains private.
+
+This is operational regression evidence, not automatic setup-to-inference
+acceptance, interpreter semantic quality/default approval, physical memory/quota
+measurement or physical two-PC acceptance. No installed node, shared Ollama model,
+version, release asset or update-feed policy changed.

@@ -13,6 +13,14 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+[Remote installation maintenance policy](PACKAGE-POLICY-CONTROL.md) adds separate
+local consent without making the dashboard a controller or granting remote
+repair approval. The combined [coordinator retirement](COORDINATOR-RETIREMENT.md)
+increment passes both full Rust feature modes (1,089 tests plus one ignored each)
+and all twenty-nine native suites against unchanged source/artifact hashes.
+Runtime/revision/digest fences and alpha automation exclusion remain. Hosted CI,
+dependency health, interpreter quality and release gates remain separate.
+
 The [attempt-specific setup stop](MODEL-SETUP-STOP.md) adds an exact
 owner control without disabling saved automation, changing selection or retrying
 uncertainty. The combined [execution/reply ownership checkpoint](REPLY-OWNERSHIP.md)

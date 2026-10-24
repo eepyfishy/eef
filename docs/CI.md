@@ -10,16 +10,23 @@ backend-to-browser dependency boundary, and the locked workspace/all-target
 Rust regression suite. Rust is pinned to 1.98.1 and Node to 24.20.0.
 
 The Windows headless job additionally builds command services and example
-helpers, then runs 26 sequential native synthetic regression scripts. Python
+helpers, then selects 27 sequential native synthetic regression scripts. Python
 3.11.9 is selected explicitly for the Python fixtures. These tests use isolated
 fixture configuration, loopback services, and synthetic artifacts, not installed
 user nodes or downloaded language models. The workflow file is the authoritative
 list of included suites; future feature tests must be added explicitly.
 
 The execution/reply ownership increment adds blocked-output/reconnect,
-reviewed-request and input-workflow suites. This source checkpoint needs a fresh
-hosted run; the accepted historical runs below
-cover twenty-three native suites, not these additional three.
+reviewed-request and input-workflow suites. The accepted `730ad26` run below
+covers all twenty-six. Earlier accepted runs cover twenty-three native suites,
+not these additional three.
+
+The package-policy/retirement increment selects one additional native suite and
+extends model activation/bootstrap regressions. Its local acceptance passes
+1,089 tests plus one existing ignored profiler per feature mode and all
+twenty-nine native suites, including the two stock-runtime local-only suites.
+No published 27-suite acceptance is claimed until that revision's hosted run
+completes. The accepted 26-suite baseline below remains revision-specific.
 
 Each job fetches the locked dependency graph before offline builds/tests.
 Official checkout, Node setup, and Python setup actions are pinned by full
@@ -108,3 +115,16 @@ twenty-five native suites; the additional real CPU lifecycle/inference test is
 documented in [model lifecycle](MODEL-LIFECYCLE.md). None establishes approved
 interpreter quality, complete automatic onboarding, physical two-PC, installer/
 signing/Defender or stable-release acceptance.
+
+## Reply-ownership and setup-stop checkpoint (2026-10-24)
+
+[Run 40069111052](https://github.com/eepyfishy/eef/actions/runs/40069111052) passes
+all four matrix jobs and all twenty-six Windows native suites for
+`730ad260933af9c60a2a3e39d3b39c7e7323841f`. The successful terminal jobs and exact
+native dispatch order are checked in `.validation/730ad26-ci-acceptance.json`.
+Separate local acceptance passes 1,073 tests plus one ignored per feature mode
+and twenty-eight native suites, including the two stock-runtime tests not claimed
+by hosted CI. The isolated real CPU regression also passes at that source.
+Neither CI nor that operation test approves a default/interpreter's quality,
+complete automatic onboarding, physical two-PC, MSI/signing/Defender or stable
+release readiness. No version, installed node, release asset or feed changed.

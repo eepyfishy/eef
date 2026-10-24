@@ -37,7 +37,7 @@ pub(crate) struct ActivationState {
     active: Option<Scope>,
 }
 
-/// Ignore setup preferences/catalog and the known live-only management consent.
+/// Ignore setup preferences/catalog and the known live-only management consents.
 /// Everything else, including opaque future settings, remains part of the fence.
 fn projection(source: &Value, models: bool) -> Value {
     let mut value = source.clone();
@@ -50,12 +50,39 @@ fn projection(source: &Value, models: bool) -> Value {
         }
         if let Some(management) = map.get_mut("management").and_then(Value::as_object_mut) {
             management.remove("allow_remote");
+            management.remove("allow_remote_repair_setup_policy");
             if management.is_empty() {
                 map.remove("management");
             }
         }
     }
     value
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    #[test]
+    fn live_maintenance_consent_never_becomes_a_pending_model_activation_setting() {
+        let applied = json!({"models":{"provider":"auto"},"permissions":{},
+            "management":{"allow_remote":false,"allow_remote_repair_setup_policy":false}});
+        let mut current = applied.clone();
+        current["management"]["allow_remote"] = json!(true);
+        current["management"]["allow_remote_repair_setup_policy"] = json!(true);
+        for models in [false, true] {
+            assert_eq!(projection(&applied, models), projection(&current, models));
+        }
+        let absent = json!({"models":{"provider":"auto"},"permissions":{}});
+        assert_eq!(projection(&absent, true), projection(&current, true));
+        current["management"]["future_requires_restart"] = json!(true);
+        for models in [false, true] {
+            assert_ne!(projection(&applied, models), projection(&current, models));
+        }
+        // Actual model differences remain significant for adoption status.
+        current = applied.clone();
+        current["models"]["provider"] = json!("llamacpp");
+        assert_ne!(projection(&applied, true), projection(&current, true));
+    }
 }
 pub(crate) fn plan_locked(
     service: &NodeService,

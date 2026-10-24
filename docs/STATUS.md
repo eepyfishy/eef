@@ -3,6 +3,46 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: remote maintenance policy and coordinator retirement
+
+The command/backend increment adds EEF inspection/configuration of a node's
+shared installation maintenance policy, behind separate default-off local
+consent. Saves pin runtime, revision and digest; remote self-grants and remote
+repair run/approval are excluded. Prerelease automation remains blocked.
+Both locked/offline workspace/all-target feature modes pass 1,089 tests plus
+one existing ignored profiler each. Fresh headless apps/helpers build, and all
+twenty-nine native suites pass in one sequential run. All 299 evaluated source/
+resource/workflow and nine native artifact hashes match; no matching fixture
+processes remain observed. The read-only audit is
+`.validation/package-policy-acceptance.json`. See [the contract](PACKAGE-POLICY-CONTROL.md).
+
+The intermediate 1,086-test-per-mode source passed nineteen native suites before
+model-bootstrap restart failed on a still-owned job database. That failed run is
+retained, not accepted. The [retirement boundary](COORDINATOR-RETIREMENT.md) now
+waits for the exact old journal's connection/lock before replacement. The final
+native bootstrap fixture verifies ten distinct runtimes and competitor refusal;
+no lock bypass, failure replay or restart-observation deadline increase is used.
+Hosted verification of this checkpoint is pending. Model/default quality,
+automatic setup-to-inference health, physical two-PC, MSI/signing/Defender and
+stable-release gates remain open. No installed node, model/default, version,
+release asset, update feed or OS trust setting changed.
+
+## Verification: published reply-ownership checkpoint, real CPU follow-up
+
+Source `730ad26` is published to the project repository. Its isolated CPU
+regression (`real-model-5VkwJE`) passes inference, targeted unload/reload,
+restart/stable identity, retained results/no replay and on-demand idle cleanup,
+reusing the verified cached artifact without downloads/copies. Its digest remains
+unchanged and no matching fixture processes remain observed. This is not an
+approved default, interpretation quality, automatic onboarding, physical two-PC
+or stable-release claim. See [model lifecycle](MODEL-LIFECYCLE.md).
+[Hosted run 40069111052](https://github.com/eepyfishy/eef/actions/runs/40069111052)
+passes all four Windows/Linux feature-matrix jobs and twenty-six Windows native
+suites at that exact source SHA. Dispatch order is verified against the workflow
+in `.validation/730ad26-ci-acceptance.json`. The two local-only stock-runtime
+suites remain part of the separate twenty-eight-suite local acceptance, not a
+hosted claim. No installed node, version, installer or feed changed.
+
 ## Unreleased: execution/reply ownership and setup stop
 
 A deterministic encrypted-frame/flush-gate test reproduces a completed reply

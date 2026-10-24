@@ -80,6 +80,8 @@ try{
  const epoch=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==epoch,'apply fixture credentials');
  await success.local(['connection','resume']);await until(async()=>(await json(eef+'/api/diagnostics')).registered_node_count===1,'pinned registration');
  success.original=(await json(success.url+'/api/diagnostics')).runtime_id;await success.local(['permissions','allow','remote-management']);
+ await success.local(['permissions','allow','remote-repair-setup-policy']);
+ assert.equal((await json(success.url+'/api/status')).pending_restart,false,'live maintenance consent is not a pending application setting');
  // Isolated install only: a normal restart would consult this pending app
  // selection. Its target deliberately does not exist, so no new executable can
  // be launched by the negative control. Hard-linking avoids binary copies.
@@ -89,6 +91,7 @@ try{
  if(!response.success)assert.equal(response.outcome_unknown,true,'a lost restart-adjacent reply must remain uncertain, not replayed');
  await until(async()=>(await success.show()).setup.attempt?.phase==='runtime_configured','automatic pinned remote setup restart');
  const first=await assertBound(success);assert.equal((await json(success.url+'/api/status')).name,'Original success');
+ assert.equal((await success.saved()).management.allow_remote_repair_setup_policy,true);
  assert.equal(success.process.exitCode,null);assert.equal(await readFile(versionMarker,'utf8'),pendingVersion);
  await until(async()=>(await owner(['node','model-bootstrap-policy','--node',success.id,'show'])).result.runtime_id===(await json(success.url+'/api/diagnostics')).runtime_id,'replacement pinned session');
  assert.equal((await success.local(['models','show'])).report_type,'model_selections');
@@ -114,6 +117,20 @@ try{
  await assertBound(late);assert.equal((await late.local(['network','show'])).applied_name,'Original late');assert.equal((await json(late.url+'/api/status')).pending_restart,true);
  assert.equal(await readFile(late.config,'utf8'),lateBytes,'frozen configuration must never overwrite later saved data');
 
+ const liveConsent=await fixture('live-consent',{gate:true});await liveConsent.enable();
+ await until(async()=>liveConsent.state.held.length>0&&(await json(liveConsent.url+'/api/status')).model_activation?.state==='draining','scoped startup before live consent edit');
+ // The old executor binding has retired at this gate. Use the existing local
+ // owner settings backend; never bypass exact-runtime permission commands.
+ const liveSettings=await liveConsent.saved();liveSettings.management.allow_remote_repair_setup_policy=true;
+ await json(liveConsent.url+'/api/config',{config:liveSettings},'PUT');
+ const liveBytes=await readFile(liveConsent.config,'utf8');
+ liveConsent.state.gate=false;for(const finish of liveConsent.state.held.splice(0))finish();
+ await until(async()=>(await liveConsent.show()).setup.attempt?.phase==='runtime_configured','scoped startup after live consent edit');
+ await assertBound(liveConsent);
+ assert.equal((await json(liveConsent.url+'/api/status')).pending_restart,false,'late live-only consent does not falsely require another restart');
+ assert.equal((await liveConsent.saved()).management.allow_remote_repair_setup_policy,true);
+ assert.equal(await readFile(liveConsent.config,'utf8'),liveBytes,'scoped adoption preserves the later local consent save');
+
  const overrides=await fixture('override',{override:true});await overrides.enable();await until(async()=>(await overrides.show()).setup.attempt?.phase==='apply_blocked','model CLI override refusal');
  assert.equal((await overrides.show()).setup.attempt.reason,'activation_unavailable');assert.equal((await json(overrides.url+'/api/diagnostics')).runtime_id,overrides.original);
 
@@ -135,7 +152,8 @@ try{
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,synthetic_provider_only:true,real_model_inference:false,real_weights_downloaded:false,
   pinned_remote_automatic_restart:true,replacement_engine_binding:true,pending_settings_refused:true,late_settings_saved_not_applied:true,late_opt_out_preserved:true,
   explicit_restart_still_applies_pending:true,pending_app_version_not_applied_by_activation:true,explicit_restart_consults_pending_version:true,model_overrides_refused:true,interrupted_activation_unknown_no_replay:true,private_snapshot_not_reported:true,readiness_not_claimed:true,
-  prompt_approval_uses_separate_restart_consent:true,prompt_policy_unchanged_after_activation:true},null,2));
+  prompt_approval_uses_separate_restart_consent:true,prompt_policy_unchanged_after_activation:true,
+  live_maintenance_consent_before_activation_not_pending:true,late_live_maintenance_consent_preserved_without_pending_restart:true},null,2));
  console.log('Model activation native validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}
 finally{for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));for(const s of states.values())for(const finish of s.held)finish();provider.closeAllConnections();await new Promise(r=>provider.close(r));for(const path of [...ownedMarkers,...ownedLinks])await unlink(owned(path));}

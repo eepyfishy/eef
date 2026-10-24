@@ -112,6 +112,10 @@ impl NodeService {
                 post(model_bootstrap_policy).layer(axum::extract::DefaultBodyLimit::max(8192)),
             )
             .route(
+                "/api/commands/repair-setup-policy",
+                post(package_policy).layer(axum::extract::DefaultBodyLimit::max(16384)),
+            )
+            .route(
                 "/api/commands/python",
                 post(python_policy).layer(axum::extract::DefaultBodyLimit::max(8192)),
             )
@@ -282,6 +286,12 @@ async fn model_bootstrap_policy(
     Json(request): Json<crate::model_bootstrap::Request>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.model_bootstrap_policy(request, false)?))
+}
+async fn package_policy(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::package_setup::policy::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.repair_setup_policy(request, false).await?))
 }
 async fn relay_command(
     State(state): State<Arc<NodeService>>,

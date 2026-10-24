@@ -4,6 +4,19 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Node installation maintenance policy (unreleased after alpha.6)
+
+    eefn permissions allow remote-management
+    eefn permissions allow remote-repair-setup-policy
+    eef node repair-setup --node NODE_ID show
+    eef node repair-setup --node NODE_ID configure --mode prompt
+    eef node repair-setup --node NODE_ID configure --mode off
+
+The two permission commands run locally on the target node; EEF cannot enable
+the new consent switch itself. This is shared installation policy, not per-config
+repair approval. An active save creates a new one-attempt identity. Prerelease
+automation remains blocked. See [scope and uncertainty](PACKAGE-POLICY-CONTROL.md).
+
 ## Shared setup/model guidance (unreleased after alpha.6)
 
     eefn setup

@@ -25,9 +25,10 @@ pub enum Feature {
     PeerTransfers,
     RemoteUpdates,
     RemoteManagement,
+    RemoteRepairSetupPolicy,
 }
 impl Feature {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::FilesystemRead,
         Self::FilesystemWrite,
         Self::ProcessExecution,
@@ -44,6 +45,7 @@ impl Feature {
         Self::PeerTransfers,
         Self::RemoteUpdates,
         Self::RemoteManagement,
+        Self::RemoteRepairSetupPolicy,
     ];
     fn field(self) -> &'static str {
         match self {
@@ -63,6 +65,7 @@ impl Feature {
             Self::PeerTransfers => "/permissions/peer_transfers/enabled",
             Self::RemoteUpdates => "/permissions/remote_updates",
             Self::RemoteManagement => "/management/allow_remote",
+            Self::RemoteRepairSetupPolicy => "/management/allow_remote_repair_setup_policy",
         }
     }
     fn unrestricted(self) -> Option<&'static str> {
@@ -94,6 +97,7 @@ impl Feature {
             Self::PeerTransfers => "Approved peer transfers",
             Self::RemoteUpdates => "Remote updates",
             Self::RemoteManagement => "Management from EEF",
+            Self::RemoteRepairSetupPolicy => "Shared installation maintenance policy from EEF",
         }
     }
 }
@@ -189,12 +193,18 @@ fn valid_digest(digest: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 fn digest(config: &Value) -> Result<String> {
+    let mut snapshot = json!({
+        "permissions":config.get("permissions").cloned().unwrap_or(json!({})),
+        "remote_management":config.pointer("/management/allow_remote").and_then(Value::as_bool).unwrap_or(false),
+    });
+    // Absent/false retains the pre-extension digest. Explicit local consent is
+    // included, so stale permission saves cannot silently overwrite revocation.
+    if config.pointer(Feature::RemoteRepairSetupPolicy.field()) == Some(&json!(true)) {
+        snapshot["remote_repair_setup_policy"] = json!(true);
+    }
     Ok(format!(
         "{:x}",
-        Sha256::digest(serde_json::to_vec(&json!({
-            "permissions":config.get("permissions").cloned().unwrap_or(json!({})),
-            "remote_management":config.pointer("/management/allow_remote").and_then(Value::as_bool).unwrap_or(false),
-        }))?)
+        Sha256::digest(serde_json::to_vec(&snapshot)?)
     ))
 }
 fn mode(config: &Value, feature: Feature) -> Mode {
@@ -229,6 +239,15 @@ fn set_field(config: &mut Value, pointer: &str, enabled: bool) -> Result<()> {
 }
 fn apply(config: &mut Value, feature: Feature, enabled: bool) -> Result<bool> {
     let before = config.clone();
+    if !enabled
+        && config.pointer(feature.field()).is_none()
+        && matches!(
+            feature,
+            Feature::RemoteManagement | Feature::RemoteRepairSetupPolicy
+        )
+    {
+        return Ok(false);
+    }
     set_field(config, feature.field(), enabled)?;
     if let Some(token) = feature.unrestricted() {
         let permissions = config["permissions"]
@@ -292,8 +311,12 @@ pub fn confirmed(value: &Value, request: &PermissionRequest) -> bool {
         .iter()
         .find(|row| row.feature == Feature::RemoteManagement)
         .unwrap();
-    if management.saved != management.applied
-        || report.remote_management_allowed != (management.saved == Mode::FeatureWide)
+    if report.features.iter().any(|row| {
+        matches!(
+            row.feature,
+            Feature::RemoteManagement | Feature::RemoteRepairSetupPolicy
+        ) && row.saved != row.applied
+    }) || report.remote_management_allowed != (management.saved == Mode::FeatureWide)
         || report.features.iter().any(|row| row.saved != row.applied) && !report.restart_required
     {
         return false;
@@ -338,6 +361,9 @@ impl crate::NodeService {
                     || config
                         .pointer("/management/allow_remote")
                         .is_some_and(|value| !value.is_boolean())
+                    || config
+                        .pointer(Feature::RemoteRepairSetupPolicy.field())
+                        .is_some_and(|value| !value.is_boolean())
                 {
                     bail!("Management preferences must be an object with a boolean approval flag")
                 }
@@ -357,6 +383,17 @@ impl crate::NodeService {
                 }
                 let mut next = config.clone();
                 let mut changed = false;
+                if remote
+                    && matches!(
+                        request.command,
+                        PermissionCommand::Set {
+                            feature: Feature::RemoteRepairSetupPolicy,
+                            ..
+                        }
+                    )
+                {
+                    bail!("Package maintenance policy consent can only be changed locally")
+                }
                 if let PermissionCommand::Set {
                     feature,
                     enabled,
@@ -369,19 +406,24 @@ impl crate::NodeService {
                     changed = apply(&mut next, *feature, *enabled)?;
                     if changed {
                         self.save_config_locked(next.clone())?;
-                        if *feature != Feature::RemoteManagement {
+                        if !matches!(
+                            feature,
+                            Feature::RemoteManagement | Feature::RemoteRepairSetupPolicy
+                        ) {
                             live["pending_restart"] = json!(true);
                         }
                     }
                 }
                 let mut applied = json!({"permissions":engine.applied_permissions()});
-                set_field(
-                    &mut applied,
-                    Feature::RemoteManagement.field(),
-                    next.pointer(Feature::RemoteManagement.field())
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                )?;
+                for feature in [Feature::RemoteManagement, Feature::RemoteRepairSetupPolicy] {
+                    set_field(
+                        &mut applied,
+                        feature.field(),
+                        next.pointer(feature.field())
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                    )?;
+                }
                 let features = Feature::ALL
                     .into_iter()
                     .map(|feature| FeatureState {
@@ -649,6 +691,85 @@ mod tests {
             .is_err()
         );
         assert_eq!(core.read_config().unwrap(), before);
+    }
+    #[test]
+    fn package_policy_consent_is_local_only_live_and_included_in_permission_digest() {
+        let (_dir, core, _engine, _guard, request) = fixture();
+        let show = core.permission_command(request.clone(), false).unwrap();
+        let general = core
+            .permission_command(set(&request, &show, Feature::RemoteManagement, true), false)
+            .unwrap();
+        let before = core.read_config().unwrap();
+        assert!(
+            core.permission_command(
+                set(&request, &general, Feature::RemoteRepairSetupPolicy, true),
+                true
+            )
+            .is_err()
+        );
+        assert_eq!(core.read_config().unwrap(), before);
+        let allowed = core
+            .permission_command(
+                set(&request, &general, Feature::RemoteRepairSetupPolicy, true),
+                false,
+            )
+            .unwrap();
+        assert!(confirmed(
+            &allowed,
+            &set(&request, &general, Feature::RemoteRepairSetupPolicy, true)
+        ));
+        assert_ne!(allowed["saved_digest"], general["saved_digest"]);
+        assert_eq!(allowed["restart_required"], false);
+        let row = allowed["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["feature"] == "remote_repair_setup_policy")
+            .unwrap();
+        assert_eq!(row["saved"], "feature_wide");
+        assert_eq!(row["saved"], row["applied"]);
+        // Remote disable also cannot silently change the local consent switch.
+        assert!(
+            core.permission_command(
+                set(&request, &allowed, Feature::RemoteRepairSetupPolicy, false),
+                true
+            )
+            .is_err()
+        );
+        let denied = core
+            .permission_command(
+                set(&request, &allowed, Feature::RemoteRepairSetupPolicy, false),
+                false,
+            )
+            .unwrap();
+        assert_eq!(denied["saved_digest"], general["saved_digest"]);
+        assert!(
+            core.permission_command(set(&request, &allowed, Feature::Camera, true), false)
+                .is_err()
+        );
+        let mut absent = before.clone();
+        absent["management"]
+            .as_object_mut()
+            .unwrap()
+            .remove("allow_remote_repair_setup_policy");
+        let mut disabled = absent.clone();
+        disabled["management"]["allow_remote_repair_setup_policy"] = json!(false);
+        assert_eq!(digest(&absent).unwrap(), digest(&disabled).unwrap());
+        core.save_configuration(absent).unwrap();
+        let inspected = core.permission_command(request.clone(), false).unwrap();
+        let noop = core
+            .permission_command(
+                set(
+                    &request,
+                    &inspected,
+                    Feature::RemoteRepairSetupPolicy,
+                    false,
+                ),
+                false,
+            )
+            .unwrap();
+        assert_eq!(noop["changed"], false);
+        assert_eq!(noop["saved_digest"], inspected["saved_digest"]);
     }
     #[test]
     fn strict_wire_reports_and_configuration_failure_never_imply_side_effects_or_scope_widening() {

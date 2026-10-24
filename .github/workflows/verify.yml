@@ -97,6 +97,7 @@ jobs:
           $scripts = @(
             'test-automation-schedules.mjs',
             'test-package-setup.mjs',
+            'test-package-policy.mjs',
             'test-repair-hints.mjs',
             'test-repair-sources.mjs',
             'test-repair-receipts.mjs',
