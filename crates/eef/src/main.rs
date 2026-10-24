@@ -114,6 +114,13 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum NodeCommand {
+    /// Explicitly test one selected interpreter or inspect historical test evidence.
+    VerifyModel {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eef::model_verification::Action,
+    },
     /// Manage a node's shared installation maintenance policy, not repair approval.
     RepairSetup {
         #[arg(long)]
@@ -248,6 +255,71 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn model_check_cli_requires_explicit_consent_and_separates_inspection() {
+        assert!(
+            Args::try_parse_from(["eef", "node", "verify-model", "--node", "fixture", "start"])
+                .is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "node",
+                "verify-model",
+                "--node",
+                "fixture",
+                "start",
+                "--allow-inference"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "node",
+                "verify-model",
+                "--node",
+                "fixture",
+                "inspect"
+            ])
+            .is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "eef",
+                "node",
+                "verify-model",
+                "--node",
+                "fixture",
+                "inspect",
+                "--operation-id",
+                "fixture"
+            ])
+            .is_ok()
+        );
+        for flag in [
+            "--allow-inference",
+            "--restart",
+            "--prompt",
+            "--model",
+            "--approve",
+        ] {
+            assert!(
+                Args::try_parse_from([
+                    "eef",
+                    "node",
+                    "verify-model",
+                    "--node",
+                    "fixture",
+                    "inspect",
+                    "--operation-id",
+                    "fixture",
+                    flag
+                ])
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn node_setup_cli_requires_only_a_node_and_exposes_no_mutation_flags() {
         let args = Args::try_parse_from(["eef", "node", "setup", "--node", "fixture"]).unwrap();
@@ -1215,6 +1287,103 @@ async fn remote_setup_cli(
         "error_code":"node_setup_unconfirmed","note":"Node setup observations are unavailable or unconfirmed. No client retry, legacy fallback, model setup, restart or workload was requested."})))
 }
 
+async fn model_verification_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eef::model_verification::Action,
+) -> Result<serde_json::Value> {
+    use eef::model_verification::{Action, Command, Request};
+    use serde_json::json;
+    let operation = match action {
+        Action::Start { operation_id, .. } => operation_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        Action::Inspect { operation_id } => operation_id.clone(),
+    };
+    let source = eefn::model_verification::receipt_id(node, &operation, "source", None)?;
+    if matches!(
+        action,
+        Action::Start {
+            allow_inference: false,
+            ..
+        }
+    ) {
+        bail!("Explicit --allow-inference consent required")
+    }
+    let mut sending = false;
+    let exchange = async {
+        let response = client.get(format!("{base}/api/diagnostics")).send().await?;
+        if !response.status().is_success() {
+            bail!("Coordinator unavailable")
+        }
+        let diagnostic = eefn::model_manager::bounded_json(response).await?;
+        if diagnostic["schema_version"] != 1
+            || diagnostic["success"] != true
+            || diagnostic["report_type"] != "coordinator_diagnostics"
+        {
+            bail!("Coordinator observation unconfirmed")
+        }
+        let command = match action {
+            Action::Inspect { .. } => Command::Inspect,
+            Action::Start { .. } => {
+                let inspect = eef::node_setup::Request {
+                    schema_version: 1,
+                    node_id: node.into(),
+                    expected_runtime_id: None,
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                };
+                let response = client
+                    .post(format!("{base}/api/commands/node/setup"))
+                    .json(&inspect)
+                    .send()
+                    .await?;
+                if !response.status().is_success() {
+                    bail!("Node setup unavailable")
+                }
+                let observed = eefn::model_manager::bounded_json(response).await?;
+                Command::Start {
+                    definition: eef::model_verification::selected_definition(
+                        &observed, &inspect, &operation,
+                    )?,
+                    approve_inference: true,
+                }
+            }
+        };
+        let request = Request {
+            schema_version: 1,
+            expected_runtime_id: diagnostic["runtime_id"]
+                .as_str()
+                .context("Missing coordinator runtime")?
+                .into(),
+            node_id: node.into(),
+            operation_id: operation.clone(),
+            command,
+        };
+        request.validate()?;
+        sending = matches!(action, Action::Start { .. });
+        let response = client
+            .post(format!("{base}/api/commands/node/model-verification"))
+            .timeout(std::time::Duration::from_secs(45))
+            .json(&request)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Model check unconfirmed")
+        }
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !eef::model_verification::confirmed(&value, &request) {
+            bail!("Model-check reply unconfirmed")
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"model_verification_client_unconfirmed",
+        "node_id":node,"operation_id":operation,"source_operation_id":source,"success":false,
+        "sending_attempted":sending,"outcome_unknown":sending,"automatically_retried":false,
+        "note":"Inspect this exact operation ID. No client retry or automatic approval renewal was requested; an unconfirmed start may have issued work."})))
+}
+
 async fn remote_package_policy_cli(
     client: &reqwest::Client,
     base: &str,
@@ -2016,6 +2185,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             command: NodeCommand::Setup { node },
         } => return remote_setup_cli(&client, &base, node).await,
         Command::Node {
+            command: NodeCommand::VerifyModel { node, command },
+        } => return model_verification_cli(&client, &base, node, command).await,
+        Command::Node {
             command: NodeCommand::Models { node, command },
         } => {
             eefn::network::validate_node_id(node)?;
@@ -2263,7 +2435,31 @@ async fn main() -> Result<()> {
                         "Private request/plan report: may contain user text, task inputs and target bindings; do not publish it in reports or issues."
                     );
                 }
-                if !args.json && matches!(command, Command::Repair { .. }) {
+                if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::VerifyModel { .. }
+                        }
+                    )
+                {
+                    println!(
+                        "Node model check: {}",
+                        value["state"].as_str().unwrap_or("unconfirmed")
+                    );
+                    println!(
+                        "Node: {}\nOperation: {}\nSource receipt: {}",
+                        value["node_id"].as_str().unwrap_or("unknown"),
+                        value["operation_id"].as_str().unwrap_or("unknown"),
+                        value["source_operation_id"].as_str().unwrap_or("unknown")
+                    );
+                    println!(
+                        "Inspect without replay: eef node verify-model --node NODE_ID inspect --operation-id OPERATION_ID (use the values above)."
+                    );
+                    println!(
+                        "Returned text is historical evidence, not model quality or current setup health. An unconfirmed start may have issued work; do not allocate a new operation to retry it."
+                    );
+                } else if !args.json && matches!(command, Command::Repair { .. }) {
                     print!("{}", eefn::package_repair::render(&value)?);
                 } else if !args.json && matches!(command, Command::Doctor { .. }) {
                     print!("{}", eefn::package_health::render(&value));

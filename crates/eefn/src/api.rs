@@ -95,6 +95,10 @@ impl NodeService {
                 post(setup_check).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
             .route(
+                "/api/commands/setup/model-verification/prepare",
+                post(prepare_model_verification).layer(axum::extract::DefaultBodyLimit::max(4096)),
+            )
+            .route(
                 "/api/commands/setup/local",
                 post(local_setup_plan).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
@@ -234,6 +238,14 @@ async fn setup_check(
     Json(request): Json<crate::setup_check::CheckRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.setup_check_async(request).await?))
+}
+async fn prepare_model_verification(
+    State(state): State<Arc<NodeService>>,
+    Json(definition): Json<crate::model_verification::Definition>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        state.prepare_model_verification(definition, false).await?,
+    ))
 }
 async fn local_setup_plan(
     State(state): State<Arc<NodeService>>,

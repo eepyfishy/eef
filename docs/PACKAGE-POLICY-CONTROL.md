@@ -102,8 +102,15 @@ and coordinator retirement/restart controls. All **299 source/resource/workflow
 and nine native artifact hashes match**; no matching fixture processes remain
 observed. Evidence is `.validation/package-policy-{headless,default}-final.log`,
 `package-policy-validation.log`, the source/native hash inventories and the
-read-only `.validation/package-policy-acceptance.json` audit. Hosted CI for this
-source is pending, not claimed by local acceptance.
+read-only `.validation/package-policy-acceptance.json` audit.
+
+Published source `fd21f14` subsequently passes all four matrix jobs and all
+twenty-seven selected native suites in
+[hosted run 40076717528](https://github.com/eepyfishy/eef/actions/runs/40076717528).
+Exact native dispatch order is checked in `.validation/fd21f14-ci-acceptance.json`.
+Separate real CPU lifecycle/inference also passes without downloading/copying a
+model. These are revision-specific follow-ups, not stable-release, physical
+two-PC or approved model-quality acceptance.
 
 Earlier failures and incomplete scopes are retained below; they are not the
 final acceptance evidence.

@@ -4,6 +4,24 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+## Explicit interpreter check (unreleased after alpha.6)
+
+    eefn permissions allow remote-management
+    eef node verify-model --node NODE_ID start --allow-inference
+    eef node verify-model --node NODE_ID inspect --operation-id OPERATION_UUID
+
+The permission command runs locally on the target node. Start explicitly approves
+one fixed greeting test of its single selected/applied request interpreter using
+ordinary owner review and execution grants, not arbitrary model work. The backend
+owns that workflow; the CLI and dashboard do not drive an execution loop.
+You can supply `--operation-id OPERATION_UUID` to start as well, retaining the UUID
+before sending. Keep the returned operation ID and inspect it after uncertainty;
+do not allocate a new ID as an automatic retry. Retained exact starts never renew
+approval or dispatch. Inspection is read-only and remains useful after restarts;
+old evidence is not current health or model-quality approval. Local checkpoint
+validation passes; hosted and stable-release acceptance remain separate.
+See [the contract](MODEL-VERIFICATION.md).
+
 ## Node installation maintenance policy (unreleased after alpha.6)
 
     eefn permissions allow remote-management

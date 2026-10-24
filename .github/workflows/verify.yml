@@ -106,6 +106,7 @@ jobs:
             'test-bundled-components.mjs',
             'test-settings-storage.mjs',
             'test-setup-check.mjs',
+            'test-model-verification.mjs',
             'test-model-setup.mjs',
             'test-model-activation.mjs',
             'test-model-bootstrap.mjs',

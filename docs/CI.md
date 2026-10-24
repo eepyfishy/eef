@@ -1,5 +1,35 @@
 # GitHub core verification
 
+## Model-check addition (local, not hosted acceptance)
+
+The current workflow adds `test-model-verification.mjs`, bringing
+its selected native suite count to twenty-eight. That fixture covers explicit
+owner inference consent, immutable node-authored test input, lost-reply receipt
+inspection without replay, empty output, consent revocation and both restarts.
+Focused native and real CPU validation pass. Both full local feature modes pass
+1,099 tests plus one existing ignored profiler each against unchanged evaluated
+source hashes. Fresh headless app/helper build and all thirty native suites pass
+in one sequential run with all 302 evaluated source/resource/workflow and nine
+native artifact hashes unchanged. No matching fixture processes remain observed.
+The local record is `.validation/model-verification-acceptance.json`; hosted
+acceptance of this addition remains pending.
+The accepted source below still has twenty-seven selected suites; its green run
+does not cover these worktree changes. Real CPU testing remains separate.
+
+## Accepted maintenance/retirement checkpoint (2026-10-24)
+
+Published source `fd21f14721c11f62a730b8f5a06335b026a5ca3c` passes all four matrix
+jobs in [run 40076717528](https://github.com/eepyfishy/eef/actions/runs/40076717528).
+The completed Windows headless job log confirms all twenty-seven selected native
+suites in exact configured order. The read-only record is
+`.validation/fd21f14-ci-acceptance.json`. This supersedes the pending hosted status
+of that source, not the status of future worktree edits. Separate real CPU
+lifecycle/inference passes too. Neither result approves interpreter quality,
+project defaults, automatic onboarding, physical two-PC, MSI/signing/Defender or
+stable release readiness.
+
+## Workflow and earlier checkpoints
+
 The `Core verification` workflow runs on pushes to `main` and `validation/**`,
 pull requests targeting `main`, and manual dispatch. Each run checks out its
 triggering revision, not a developer's uncommitted worktree.
@@ -9,8 +39,8 @@ and with `--no-default-features`. All four jobs check formatting, the
 backend-to-browser dependency boundary, and the locked workspace/all-target
 Rust regression suite. Rust is pinned to 1.98.1 and Node to 24.20.0.
 
-The Windows headless job additionally builds command services and example
-helpers, then selects 27 sequential native synthetic regression scripts. Python
+The current Windows headless job additionally builds command services and example
+helpers, then selects 28 sequential native synthetic regression scripts. Python
 3.11.9 is selected explicitly for the Python fixtures. These tests use isolated
 fixture configuration, loopback services, and synthetic artifacts, not installed
 user nodes or downloaded language models. The workflow file is the authoritative

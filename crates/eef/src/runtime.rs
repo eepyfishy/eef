@@ -55,6 +55,7 @@ pub struct Runtime {
     node_state_reconciliation_count: AtomicU64,
     background: AsyncMutex<Vec<JoinHandle<()>>>,
     submissions: AsyncMutex<tokio::task::JoinSet<()>>,
+    pub(crate) model_verification: AsyncMutex<()>,
 }
 
 impl Runtime {
@@ -211,6 +212,7 @@ impl Runtime {
             background: AsyncMutex::new(Vec::new()),
             instance_id,
             submissions: AsyncMutex::new(tokio::task::JoinSet::new()),
+            model_verification: AsyncMutex::new(()),
         });
         runtime.start(start_brain).await?;
         Ok(runtime)

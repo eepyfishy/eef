@@ -58,7 +58,14 @@ twenty-nine native suites in one sequential run. `model-bootstrap-WH2CyR`
 repeats the ten-runtime/competitor checks in that run. All 299 source and nine
 native artifact hashes match in `.validation/package-policy-acceptance.json`;
 no matching fixture processes remain observed. Earlier failed and focused
-results remain distinct from this full acceptance. Hosted CI is pending.
+results remain distinct from this full acceptance.
+
+Published source `fd21f14` also passes all four matrix jobs and twenty-seven
+native suites in [hosted run 40076717528](https://github.com/eepyfishy/eef/actions/runs/40076717528).
+Its completed Windows job log is checked in
+`.validation/fd21f14-ci-acceptance.json`; separate real CPU lifecycle/inference
+also passes. These follow-ups close the hosted pending status of that source,
+not the remaining release gates below.
 
 This does not establish physical two-PC, package migration/repair,
 signing/Defender, model quality, quorum failover or stable v0.4.0 release acceptance.

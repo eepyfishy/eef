@@ -3,6 +3,64 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Locally accepted, unreleased: explicit model-check workflow
+
+Shared fixed-source authoring and node preparation use the existing review/
+compiler without granting approval themselves. The owner backend and typed
+`eef node verify-model` commands now require explicit inference consent and use
+ordinary approval/issuance; receipt reuse only observes retained history.
+Inspection distinguishes returned text from missing, failed and unknown evidence,
+without asserting quality or current health. Owner/fence/build/native local
+validation passes; hosted and stable-release acceptance remain separate. Focused native fixture
+`model-verification-lhIyiw` passes explicit owner inference, lost-reply receipt
+inspection/no replay, empty output, revocation and both restarts. Four node fence
+tests and CLI consent parsing pass. The pre-offline-correction headless mode
+passes 1,098 tests plus one ignored; its default compile was deliberately stopped
+after review found an unnecessary live-node dependency in historical reads.
+Final reports now prefer the coordinator journal with exact grant checks and
+labelled evidence provenance. Five corrected coordinator tests and native
+`model-verification-IHLHUN` pass disconnected history, restart and offline
+retained start without node contact/replay. Real CPU fixture `real-model-gMurOM`
+passes the explicit command, one-attempt history, model removal, lifecycle and
+on-demand regression using unchanged cached weights and evaluated hashes; no
+matching fixture processes remain observed. The read-only CPU record is
+`.validation/model-verification-real-cpu-acceptance.json`. The corrected full
+headless mode passes 1,099 tests plus one existing ignored profiler across all
+fourteen groups, with all 302 evaluated source/resource/workflow hashes unchanged.
+The default-feature mode also passes 1,099 tests plus one ignored across fourteen
+groups, with the same 302 evaluated hashes unchanged. Fresh headless apps/helpers
+build successfully; all thirty native suites pass in one sequential run. The
+read-only audit `.validation/model-verification-acceptance.json` confirms all
+302 source/resource/workflow and nine native artifact hashes; no matching
+fixture processes remain observed. Rebuilt apps and the CPU runtime still match
+the separate accepted CPU check's hashes. Hosted acceptance of this increment
+remains pending. The partial run
+and initial inventory assertion failure are retained, not accepted for the
+corrected source. No model quality/default, automatic onboarding, physical or
+stable-release claim is made.
+See [scope and remaining work](MODEL-VERIFICATION.md).
+This is development-checkpoint acceptance, not stable v0.4.0 release acceptance.
+
+## Verification: published maintenance/retirement checkpoint
+
+Source `fd21f14721c11f62a730b8f5a06335b026a5ca3c` is published to the project
+repository. [Hosted run 40076717528](https://github.com/eepyfishy/eef/actions/runs/40076717528)
+passes all four Windows/Linux feature-matrix jobs; its completed Windows headless
+log confirms all twenty-seven configured native suites in order. The read-only
+record is `.validation/fd21f14-ci-acceptance.json`. This closes the hosted pending
+status of that source, not a release gate for subsequent edits.
+
+The isolated `real-model-lfUyXv` CPU regression also passes at that source,
+reusing the catalog-verified Qwen3.5-2B cache without downloads or copies.
+Reviewed pinned-TLS inference, unload/reload, restart/stable identity, retained
+results/no replay, owner idle policy and on-demand load/cleanup pass. The cached
+artifact remains unchanged, source/native hashes still match, and no matching
+app/model fixture processes remain observed. Evidence is
+`.validation/fd21f14-real-cpu-acceptance.json`. This does not approve interpreter
+quality/defaults, automatic setup-to-inference health, physical two-PC,
+MSI/signing/Defender or stable v0.4.0. No installed node, model/default, version,
+release asset, feed or OS trust setting changed.
+
 ## Unreleased: remote maintenance policy and coordinator retirement
 
 The command/backend increment adds EEF inspection/configuration of a node's

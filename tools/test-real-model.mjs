@@ -74,7 +74,7 @@ try{
  assert.equal(hash.digest('hex'),entry.sha256,'existing artifacts must still pass exact verification');
  console.log('Verified test artifact: '+modelPath);
  // Public selection and tuning commands; no config JSON edits for these settings.
- await cli('eefn',configPath,['models','select-gguf','--model',entry.id,'--file',modelPath,'--port',String(modelPort),'--context','2048','--cpu-threads','4']);
+ await cli('eefn',configPath,['models','select-gguf','--model',entry.id,'--file',modelPath,'--port',String(modelPort),'--context','2048','--cpu-threads','4','--role','request_interpreter']);
  const beforeTuning=await readFile(configPath,'utf8'),beforeRuntime=(await json(node+'/api/diagnostics')).runtime_id;
  const deniedCpu=await json(eef+`/api/node/${initial.node_id}/invoke`,{capability:'node.configure',action:'model_command',params:{schema_version:1,expected_node_id:initial.node_id,command:{operation:'cpu_threads',model_id:entry.id,threads:2}},timeout:10});
  assert.equal(deniedCpu.data.error_code,'approval_required');assert.equal(await readFile(configPath,'utf8'),beforeTuning);
@@ -143,6 +143,24 @@ try{
   max_tokens:24,content,finish_reason:first.report.data.finish_reason,
   completion_complete:first.report.data.completion_complete,model_quality_accepted:false},null,2));
  console.log('Real CPU inference returned: '+content);
+ // The explicit model-check command must traverse the same real selected CPU
+ // adapter and durable grants; this is mechanical evidence, never quality approval.
+ await cli('eefn',configPath,['permissions','allow','remote-management']);
+ const verificationOperation=randomUUID(),verificationArgs=['node','verify-model','--node',initial.node_id];
+ const verificationStart=await cli('eef',eefConfig,[...verificationArgs,'start','--allow-inference','--operation-id',verificationOperation]);
+ assert.equal(verificationStart.execution_requested,true);
+ let verification;
+ await until(async()=>{verification=await cli('eef',eefConfig,[...verificationArgs,'inspect','--operation-id',verificationOperation]);return verification.state==='returned_text'&&verification.evidence_source==='coordinator_journal';},'explicit real CPU model verification');
+ assert.equal(verification.inference_returned_text,true);assert.equal(verification.model_quality_approved,false);assert.equal(verification.current_setup_verified,false);
+ const verificationMetadata=await reviewed.get(verification.job_id);
+ assert.equal(verificationMetadata.tasks[0].attempts,1);
+ const verificationReused=await cli('eef',eefConfig,[...verificationArgs,'start','--allow-inference','--operation-id',verificationOperation]);
+ assert.equal(verificationReused.historical,true);assert.equal(verificationReused.grant_id,verification.grant_id);assert.equal(verificationReused.execution_requested,false);
+ assert.deepEqual(await reviewed.get(verification.job_id),verificationMetadata);
+ await cli('eefn',configPath,['permissions','deny','remote-management']);
+ await writeFile(join(scratch,'model-verification-results.json'),JSON.stringify({passed:true,real_cpu_inference:true,physical_two_pc:false,
+  explicit_owner_workflow:true,normal_review_and_grants:true,one_attempt:true,historical_start_no_replay:true,
+  model_quality_approved:false,current_setup_verified:false,operation_id:verificationOperation,job_id:verification.job_id},null,2));
  // Real selected residency control, without copying/downloading model weights.
  const lifecycle=async(operation)=>(await cli('eefn',configPath,['model-lifecycle','show',...(operation?['--operation-id',operation]:[])])).result;
  const owned=await lifecycle(),resident=owned.models.find(m=>m.model_id===entry.id);assert(resident?.owned_pid);
@@ -201,7 +219,9 @@ try{
  assert.equal(auto.registered_models.find(m=>m.model_id===entry.id).cpu_threads,2,'reset is saved only until restart');
  await cli('eefn',configPath,['models','remove','--backend','llamacpp','--model',entry.id]);await cli('eefn',configPath,['restart','--wait-seconds','60']);
  await until(async()=>{const s=await json(node+'/api/status');return s.connection?.state==='connected'&&s.models.length===0;},'stop selected model');
- await reviewed.cleanup(first.id);await reviewed.cleanup(afterReload.id);await reviewed.cleanup(second.id);await reviewed.cleanup(demand.id);
+ const verificationWithoutModel=await cli('eef',eefConfig,[...verificationArgs,'inspect','--operation-id',verificationOperation]);
+ assert.equal(verificationWithoutModel.state,'returned_text');assert.equal(verificationWithoutModel.evidence_source,'coordinator_journal');assert.equal(verificationWithoutModel.grant_id,verification.grant_id);
+ await reviewed.cleanup(first.id);await reviewed.cleanup(afterReload.id);await reviewed.cleanup(second.id);await reviewed.cleanup(demand.id);await reviewed.cleanup(verification.job_id);
  await writeFile(join(scratch,'on-demand-results.json'),JSON.stringify({passed:true,real_cpu_inference:true,reused_verified_artifact:!!reused,physical_two_pc:false,
   on_demand_startup_left_model_unloaded:true,reviewed_request_loaded_selected_model:true,inference_and_idle_cleanup_without_node_restart:true,completed_work_not_replayed:true},null,2));
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,model:entry.id,bytes:entry.bytes,sha256:entry.sha256,real_cpu_inference:true,model_quality_accepted:false,reused_verified_artifact:!!reused,model_downloads:!reused,thinking_mode:thinkingMode,thinking_hint_saved_applied_checked:true,pinned_tls:true,reviewed_grants:true,reply:content,stable_identity:true,verified_restart_with_selected_model:true,retained_result_after_restart:true,completed_work_not_replayed:true,model_withdrawal:true,selection_by_owner_command:true,cpu_threads:2,saved_applied_threads_checked:true,remote_tuning_refusal_checked:true,explicit_cpu_launch_arguments_checked:process.platform==='win32',resource_quota_enforced:false,real_owned_model_unload_reload:true,lifecycle_without_node_restart:true,historical_unload_receipt_no_replay:true,inference_after_explicit_reload:true,model_artifact_not_deleted:true,physical_memory_release_measured:false,owner_policy_saved_not_applied:true,real_automatic_owned_idle_unload:true,idle_unload_without_node_restart:true},null,2));

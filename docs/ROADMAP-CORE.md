@@ -13,6 +13,18 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The in-development [explicit model check](MODEL-VERIFICATION.md) adds a typed
+owner command over node-authored fixed input, ordinary approval and durable
+execution grants. It does not give nodes coordinator-owner authority. Receipt
+reuse is history inspection, not approval renewal or inference replay. Returned
+text is mechanical evidence, not an approved default, interpretation quality or
+automatic first-run health. Final coordinator evidence must remain inspectable
+without a connected node. Both full feature modes pass 1,099 tests plus one
+existing ignored profiler each, and all thirty native suites and the separate
+cached real CPU regression pass against unchanged evaluated hashes. Hosted and
+stable-release acceptance remain separate. This
+increment does not close steps 4-5 or the broader physical/release gates below.
+
 [Remote installation maintenance policy](PACKAGE-POLICY-CONTROL.md) adds separate
 local consent without making the dashboard a controller or granting remote
 repair approval. The combined [coordinator retirement](COORDINATOR-RETIREMENT.md)

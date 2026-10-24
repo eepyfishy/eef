@@ -27,6 +27,7 @@ pub struct NodeService {
     pub(crate) setup_supervisor: Arc<tokio::sync::Mutex<()>>,
     pub(crate) setup_inspection: Arc<tokio::sync::Mutex<()>>,
     pub(crate) package_policy_operation: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) model_verification: Arc<tokio::sync::Mutex<()>>,
     pub model_activation_ready: Arc<tokio::sync::Notify>,
     pub(crate) activation: Arc<std::sync::Mutex<crate::model_activation::ActivationState>>,
     pub submissions: Arc<crate::submission::SubmissionMailbox>,
@@ -123,6 +124,7 @@ impl NodeService {
             setup_supervisor: Arc::new(tokio::sync::Mutex::new(())),
             setup_inspection: Arc::new(tokio::sync::Mutex::new(())),
             package_policy_operation: Arc::new(tokio::sync::Mutex::new(())),
+            model_verification: Arc::new(tokio::sync::Mutex::new(())),
             model_activation_ready: Arc::new(tokio::sync::Notify::new()),
             activation: Arc::new(std::sync::Mutex::new(Default::default())),
             submissions: Arc::new(crate::submission::SubmissionMailbox::default()),
@@ -971,6 +973,11 @@ impl NodeService {
     }
 
     pub async fn remote(self: &Arc<Self>, action: &str, params: Value) -> Result<Value> {
+        if action == "prepare_model_verification" {
+            return self
+                .prepare_model_verification(serde_json::from_value(params)?, true)
+                .await;
+        }
         if matches!(action, "repair_setup_policy" | "repair_setup_policy_status") {
             let request: crate::package_setup::policy::Request = serde_json::from_value(params)?;
             if action == "repair_setup_policy_status"

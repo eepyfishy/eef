@@ -49,6 +49,7 @@ mod model_response;
 pub mod model_selection;
 pub mod model_server;
 pub mod model_setup;
+pub mod model_verification;
 pub mod network;
 pub mod package_health;
 pub mod package_repair;

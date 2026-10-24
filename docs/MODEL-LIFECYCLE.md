@@ -10,6 +10,21 @@ Commands use the running node service; no dashboard, model inference, model
 download, selection change or node restart is required to control residency.
 EEF itself still requires no local model.
 
+## Published-source CPU follow-up (2026-10-24)
+
+Maintenance-policy/retirement source `fd21f14` passes the unchanged real CPU
+regression `real-model-lfUyXv`. It directly reuses the verified Qwen3.5-2B GGUF
+cache (1,280,835,840 bytes), without copying or downloading weights, with two
+CPU threads and explicitly saved/applied disabled thinking. Reviewed pinned-TLS
+inference, targeted unload/reload, historical no-replay, restart/stable identity,
+retained results, owner idle cleanup and on-demand inference/cleanup all pass.
+Final selection withdrawal and owned fixture cleanup complete; the cache digest
+and evaluated source/native hashes match. The whitelisted record is
+`.validation/fd21f14-real-cpu-acceptance.json`; raw test/process output remains
+private. This is not semantic/interpreter quality, an approved project default,
+automatic onboarding, physical two-PC, a RAM/VRAM quota or measured physical
+memory-release acceptance.
+
 ## Commands
 
 First inspect current state:
