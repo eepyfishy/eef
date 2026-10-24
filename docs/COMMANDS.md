@@ -14,6 +14,10 @@ The permission command runs locally on the target node. Start explicitly approve
 one fixed greeting test of its single selected/applied request interpreter using
 ordinary owner review and execution grants, not arbitrary model work. The backend
 owns that workflow; the CLI and dashboard do not drive an execution loop.
+EEF checks history before reading fresh setup, resolves the selected model itself,
+and returns typed readiness guidance without changing permissions or selection.
+Retained starts work offline and after model/runtime changes; fresh unconfirmed
+setup/permission reads cannot prepare a source or authorize inference.
 You can supply `--operation-id OPERATION_UUID` to start as well, retaining the UUID
 before sending. Keep the returned operation ID and inspect it after uncertainty;
 do not allocate a new ID as an automatic retry. Retained exact starts never renew

@@ -1,6 +1,18 @@
 # GitHub core verification
 
-## Model-check addition (local, not hosted acceptance)
+## Backend-selected start/readiness follow-up (locally accepted, hosted pending)
+
+Both full local feature modes pass 1,104 tests plus one existing ignored profiler
+each, all thirty native suites pass sequentially, and the independent cached
+real-CPU regression passes against unchanged evaluated hashes. The read-only
+records are `.validation/model-check-readiness-acceptance.json` and
+`.validation/model-check-readiness-real-cpu-acceptance.json`.
+The native model-check fixture now covers CLI/backend ownership, typed preflight
+refusals without a source, and retained selected starts offline and after model/
+runtime changes. Hosted acceptance of this subsequent follow-up is pending;
+the green revision-specific baseline below does not cover it.
+
+## Accepted explicit model-check checkpoint (2026-10-25)
 
 The current workflow adds `test-model-verification.mjs`, bringing
 its selected native suite count to twenty-eight. That fixture covers explicit
@@ -11,10 +23,14 @@ Focused native and real CPU validation pass. Both full local feature modes pass
 source hashes. Fresh headless app/helper build and all thirty native suites pass
 in one sequential run with all 302 evaluated source/resource/workflow and nine
 native artifact hashes unchanged. No matching fixture processes remain observed.
-The local record is `.validation/model-verification-acceptance.json`; hosted
-acceptance of this addition remains pending.
-The accepted source below still has twenty-seven selected suites; its green run
-does not cover these worktree changes. Real CPU testing remains separate.
+The local record is `.validation/model-verification-acceptance.json`. Published
+source `a6752ad9648ea6412c0daf6e57fa28cfbe970f42` passes all four matrix jobs in
+[run 40124073155](https://github.com/eepyfishy/eef/actions/runs/40124073155).
+The completed Windows headless log confirms all twenty-eight configured native
+suites in exact order; `.validation/a6752ad-ci-acceptance.json` records the
+read-only audit. This supersedes the pending hosted status of that checkpoint,
+not acceptance of the subsequent backend-selected start/readiness edits.
+Real CPU, physical and release acceptance remain separate.
 
 ## Accepted maintenance/retirement checkpoint (2026-10-24)
 

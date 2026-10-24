@@ -85,17 +85,20 @@ try{
  const checkUrl=eef+'/api/commands/node/model-verification',runtime=(await json(eef+'/api/diagnostics')).runtime_id;
  const request={schema_version:1,expected_runtime_id:runtime,node_id:id,operation_id:operation,command:{operation:'start',definition:{...definition,operation_id:operation},approve_inference:false}};
  assert.equal((await response(checkUrl,request)).status,400);
+ assert.equal((await response(checkUrl,{...request,command:{operation:'start_selected',approve_inference:false}})).status,400);
+ assert.equal((await response(checkUrl,{...request,command:{operation:'start_selected',approve_inference:true,model:'override'}})).status,422);
  assert.equal((await response(checkUrl,{...request,command:{operation:'inspect'}},'https://untrusted.example')).status,403);
  assert.equal((await response(checkUrl,{...request,padding:'x'.repeat(4096)})).status,413);
  // Lose only the owner's start reply after the backend accepted it. The client
  // must retain the exact receipt and never send a second start automatically.
- let dropped=0;
+ let dropped=0,clientSetupReads=0;
  proxy=createServer(async(req,res)=>{
   try{
+   if(req.url==='/api/commands/node/setup')clientSetupReads++;
    let body='';for await(const chunk of req)body+=chunk;
    const upstream=await fetch(eef+req.url,{method:req.method,headers:{'Content-Type':'application/json'},body:body||undefined,signal:AbortSignal.timeout(20000)});
    const payload=await upstream.text();
-   if(req.url==='/api/commands/node/model-verification'&&JSON.parse(body).command.operation==='start'){
+   if(req.url==='/api/commands/node/model-verification'&&JSON.parse(body).command.operation==='start_selected'){
     dropped++;req.socket.destroy();return;
    }
    res.writeHead(upstream.status,{'Content-Type':'application/json'});res.end(payload);
@@ -107,6 +110,7 @@ try{
  const uncertain=await cli('eef',[...owner,'start','--allow-inference','--operation-id',uncertainOperation],undefined,[1],proxyIdentity);
  assert.equal(uncertain.report_type,'model_verification_client_unconfirmed');assert.equal(uncertain.operation_id,uncertainOperation);
  assert.equal(uncertain.outcome_unknown,true);assert.equal(uncertain.automatically_retried,false);assert.equal(dropped,1);
+ assert.equal(clientSetupReads,0,'CLI must leave model selection and readiness reads in EEF');
  let recovered;
  await until(async()=>{recovered=await cli('eef',[...owner,'inspect','--operation-id',uncertainOperation],undefined,[0,1]);return recovered.state==='returned_text';},'lost owner reply inspected without replay');
  assert.equal(recovered.source_operation_id,uncertain.source_operation_id);assert.equal(generations,3);
@@ -120,16 +124,34 @@ try{
  await cli('eefn',['permissions','deny','remote-management']);
  const deniedOperation=randomUUID(),jobCount=(await json(eef+'/api/jobs')).jobs.length;
  const blocked=await cli('eef',[...owner,'start','--allow-inference','--operation-id',deniedOperation],undefined,[1]);
- assert.equal(blocked.state,'unconfirmed');assert.equal(blocked.owner_approval_requested,false);assert.equal(blocked.execution_requested,false);
+ assert.equal(blocked.state,'not_ready');assert.equal(blocked.readiness_issue,'management_consent_required');assert.equal(blocked.outcome_unknown,false);
+ assert.equal(blocked.source_preparation_requested,false);assert.equal(blocked.owner_approval_requested,false);assert.equal(blocked.execution_requested,false);
  assert.equal((await json(eef+'/api/jobs')).jobs.length,jobCount);assert.equal(generations,4);
  const stillReadable=await cli('eef',[...owner,'inspect','--operation-id',operation]);assert.equal(stillReadable.state,'returned_text');
  const nodeEpoch=(await json(node+'/api/diagnostics')).runtime_id;await cli('eefn',['restart']);await until(async()=>(await json(node+'/api/diagnostics')).runtime_id!==nodeEpoch,'node restart');
  await until(async()=>(await json(node+'/api/status')).connection.state==='connected','node reconnect after restart');
  const old=await cli('eef',[...owner,'inspect','--operation-id',operation]);assert.equal(old.state,'returned_text');assert.equal(old.definition.node_runtime_id,nodeEpoch);assert.equal(generations,4);
+ // Saved/applied mismatch is diagnosed by the backend without client-side setup.
+ await cli('eefn',['models','clear-interpreter']);
+ const pending=await cli('eef',[...owner,'start','--allow-inference','--operation-id',randomUUID()],undefined,[1]);
+ assert.equal(pending.state,'not_ready');assert.equal(pending.readiness_issue,'apply_saved_interpreter');assert.equal(pending.source_preparation_requested,false);
+ const changedEpoch=(await json(node+'/api/diagnostics')).runtime_id;await cli('eefn',['restart']);
+ await until(async()=>(await json(node+'/api/diagnostics')).runtime_id!==changedEpoch,'apply missing interpreter');
+ await until(async()=>(await json(node+'/api/status')).connection.state==='connected','reconnect without interpreter');
+ const missing=await cli('eef',[...owner,'start','--allow-inference','--operation-id',randomUUID()],undefined,[1]);
+ assert.equal(missing.state,'not_ready');assert.equal(missing.readiness_issue,'missing_interpreter');assert.equal(missing.execution_requested,false);
+ assert.equal((await json(eef+'/api/jobs')).jobs.length,jobCount);assert.equal(generations,4);
+ const changedReused=await cli('eef',[...owner,'start','--allow-inference','--operation-id',operation]);
+ assert.equal(changedReused.historical,true);assert.equal(changedReused.grant_id,old.grant_id);assert.equal(changedReused.definition.node_runtime_id,nodeEpoch);
  await cli('eefn',['connection','pause']);
  await until(async()=>(await json(eef+'/api/diagnostics')).registered_node_count===0,'node is disconnected before history inspection');
  const offline=await cli('eef',[...owner,'inspect','--operation-id',operation]);
  assert.equal(offline.state,'returned_text');assert.equal(offline.evidence_source,'coordinator_journal');assert.equal(offline.execution_requested,false);assert.equal(generations,4);
+ const offlineCliReused=await cli('eef',[...owner,'start','--allow-inference','--operation-id',operation]);
+ assert.equal(offlineCliReused.historical,true);assert.equal(offlineCliReused.grant_id,old.grant_id);assert.equal(offlineCliReused.source_preparation_requested,false);
+ const disconnected=await cli('eef',[...owner,'start','--allow-inference','--operation-id',randomUUID()],undefined,[1]);
+ assert.equal(disconnected.state,'unconfirmed');assert.equal(disconnected.readiness_issue,'setup_unconfirmed');assert.equal(disconnected.source_preparation_requested,false);
+ assert.equal(generations,4);assert.equal((await json(eef+'/api/jobs')).jobs.length,jobCount);
  const rootEpoch=(await json(eef+'/api/diagnostics')).runtime_id;await cli('eef',['restart']);await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==rootEpoch,'coordinator restart retains model test');
  const retained=await cli('eef',[...owner,'inspect','--operation-id',operation]);assert.equal(retained.state,'returned_text');assert.equal(retained.job_id,old.job_id);assert.equal(retained.grant_id,old.grant_id);assert.equal(generations,4);
  assert.equal(retained.evidence_source,'coordinator_journal');assert.equal((await json(eef+'/api/diagnostics')).registered_node_count,0);
@@ -144,6 +166,8 @@ try{
   lost_owner_reply_exact_receipt_no_client_retry:true,empty_output_not_verified:true,
   revoked_management_blocks_new_source_not_history_reads:true,
   disconnected_history_survives_coordinator_restart:true,offline_retained_start_never_contacts_node:true,
+  cli_retained_start_works_offline_and_after_model_change:true,backend_resolves_selected_model:true,
+  backend_readiness_diagnoses_missing_pending_and_local_management_consent:true,unconfirmed_setup_never_creates_source:true,
   automatic_inference_authority_added:false,automatic_setup_health_claimed:false,model_quality_approved:false},null,2));
  console.log('Model verification authoring validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}

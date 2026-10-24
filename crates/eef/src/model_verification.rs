@@ -58,6 +58,10 @@ pub fn selected_definition(
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Resolve the selected interpreter in the backend, after checking history.
+    StartSelected {
+        approve_inference: bool,
+    },
     Start {
         definition: Definition,
         approve_inference: bool,
@@ -80,6 +84,14 @@ impl Request {
         }
         eefn::automation_occurrence::uuid(&self.expected_runtime_id)?;
         receipt_id(&self.node_id, &self.operation_id, "source", None)?;
+        if matches!(
+            self.command,
+            Command::StartSelected {
+                approve_inference: false
+            }
+        ) {
+            bail!("Explicit inference consent required")
+        }
         if let Command::Start {
             definition,
             approve_inference,
@@ -100,6 +112,7 @@ impl Request {
 #[serde(rename_all = "snake_case")]
 pub enum State {
     NotFound,
+    NotReady,
     Incomplete,
     AwaitingApproval,
     Approved,
@@ -109,6 +122,196 @@ pub enum State {
     Failed,
     Unknown,
     Unconfirmed,
+}
+
+/// Fixed public guidance only: never copy arbitrary peer failure text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadinessIssue {
+    MissingInterpreter,
+    AmbiguousInterpreter,
+    ApplySavedInterpreter,
+    RuntimeUnavailable,
+    ExecutionTransportUnavailable,
+    ManagementConsentRequired,
+    SetupApprovalRequired,
+    NoApprovedDefault,
+    InspectModelSetup,
+    SetupUnconfirmed,
+    PermissionsUnconfirmed,
+}
+impl ReadinessIssue {
+    fn unconfirmed(self) -> bool {
+        matches!(self, Self::SetupUnconfirmed | Self::PermissionsUnconfirmed)
+    }
+    pub fn guidance(self) -> &'static str {
+        match self {
+            Self::MissingInterpreter => {
+                "Inspect node setup/model setup and select one request interpreter. No model was chosen or installed by this check."
+            }
+            Self::AmbiguousInterpreter => {
+                "Select exactly one request interpreter; this check will not choose the first candidate."
+            }
+            Self::ApplySavedInterpreter => {
+                "Inspect saved/applied node setup and apply the intended interpreter with an approved activation or restart. This check will not restart the node."
+            }
+            Self::RuntimeUnavailable => {
+                "Wait for the node runtime, then inspect its setup. No source, approval or inference was requested by this call."
+            }
+            Self::ExecutionTransportUnavailable => {
+                "Inspect node setup and establish a private paired connection with reviewed-work receipts before checking inference. No pairing or update was attempted."
+            }
+            Self::ManagementConsentRequired => {
+                "On this node, explicitly enable management from EEF with: eefn permissions allow remote-management. This check cannot grant that permission remotely."
+            }
+            Self::SetupApprovalRequired => {
+                "Inspect model setup and review its exact pending setup approval. Do not select a replacement interpreter just because setup has not applied one yet. This check does not approve or resume setup."
+            }
+            Self::NoApprovedDefault => {
+                "No project model default is approved. Inspect model setup and deliberately choose an installed or owner-selected catalog model; this check cannot approve a default or download one."
+            }
+            Self::InspectModelSetup => {
+                "Inspect the existing model-setup status and exact attempt/transfer receipts before changing selection or retrying. Retained checkpoints do not prove a live worker or successful inference. This check does not drive setup."
+            }
+            Self::SetupUnconfirmed => {
+                "Inspect the node connection, version and setup. This call did not prepare a source; inspect this operation ID before deciding whether to start again."
+            }
+            Self::PermissionsUnconfirmed => {
+                "Inspect this node's connection, version and permissions locally. An unconfirmed reply is not permission consent; inspect this operation ID before deciding whether to start again."
+            }
+        }
+    }
+}
+
+fn selected_readiness(
+    observed: &Value,
+    request: &crate::node_setup::Request,
+    operation: &str,
+) -> std::result::Result<Definition, ReadinessIssue> {
+    use eefn::setup_check::InterpreterSelection as Selection;
+    if !crate::node_setup::confirmed(observed, request) {
+        return Err(ReadinessIssue::SetupUnconfirmed);
+    }
+    let result = &observed["result"];
+    let saved: Selection = serde_json::from_value(result["saved_interpreter"].clone())
+        .map_err(|_| ReadinessIssue::SetupUnconfirmed)?;
+    let applied: Selection = serde_json::from_value(result["applied_interpreter"].clone())
+        .map_err(|_| ReadinessIssue::SetupUnconfirmed)?;
+    if matches!(applied, Selection::RuntimeUnavailable {}) {
+        return Err(ReadinessIssue::RuntimeUnavailable);
+    }
+    if matches!(saved, Selection::Ambiguous { .. })
+        || matches!(applied, Selection::Ambiguous { .. })
+    {
+        return Err(ReadinessIssue::AmbiguousInterpreter);
+    }
+    if result["saved_matches_applied"] != true || matches!(applied, Selection::Missing {}) {
+        // Reuse validated shared guidance. An absent interpreter may belong to
+        // an existing approval/setup attempt, not a request for another model.
+        let steps: Vec<eefn::setup_check::NextStep> =
+            serde_json::from_value(result["next_steps"].clone())
+                .map_err(|_| ReadinessIssue::SetupUnconfirmed)?;
+        for step in steps {
+            use eefn::setup_check::NextStep;
+            match step {
+                NextStep::ApproveModelSetup => return Err(ReadinessIssue::SetupApprovalRequired),
+                NextStep::ChooseModelSetup => return Err(ReadinessIssue::NoApprovedDefault),
+                NextStep::InspectModelSetup => return Err(ReadinessIssue::InspectModelSetup),
+                _ => {}
+            }
+        }
+    }
+    if result["saved_matches_applied"] != true {
+        return Err(ReadinessIssue::ApplySavedInterpreter);
+    }
+    if matches!(applied, Selection::Missing {}) {
+        return Err(ReadinessIssue::MissingInterpreter);
+    }
+    if result["execution_receipts_available"] != true {
+        return Err(ReadinessIssue::ExecutionTransportUnavailable);
+    }
+    selected_definition(observed, request, operation).map_err(|_| ReadinessIssue::SetupUnconfirmed)
+}
+
+#[async_trait::async_trait]
+trait ReadinessTransport: Sync {
+    async fn setup(&self, request: crate::node_setup::Request) -> Result<Value>;
+    async fn permissions(
+        &self,
+        request: &eefn::permission_commands::PermissionRequest,
+    ) -> Result<Value>;
+}
+#[async_trait::async_trait]
+impl ReadinessTransport for eefn::NodeServer {
+    async fn setup(&self, request: crate::node_setup::Request) -> Result<Value> {
+        crate::node_setup::command(self, request).await
+    }
+    async fn permissions(
+        &self,
+        request: &eefn::permission_commands::PermissionRequest,
+    ) -> Result<Value> {
+        self.invoke_remote(
+            &request.expected_node_id,
+            "node.configure",
+            "permission_status",
+            json!(request),
+            Duration::from_secs(10),
+        )
+        .await
+    }
+}
+async fn selected_on(
+    transport: &impl ReadinessTransport,
+    node: &str,
+    operation: &str,
+) -> std::result::Result<Definition, ReadinessIssue> {
+    let request = crate::node_setup::Request {
+        schema_version: 1,
+        node_id: node.into(),
+        expected_runtime_id: None,
+        request_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let observed = transport
+        .setup(request.clone())
+        .await
+        .map_err(|_| ReadinessIssue::SetupUnconfirmed)?;
+    let definition = selected_readiness(&observed, &request, operation)?;
+    let permissions = eefn::permission_commands::PermissionRequest {
+        schema_version: 1,
+        expected_node_id: node.into(),
+        expected_runtime_id: definition.node_runtime_id.clone(),
+        command: eefn::permission_commands::PermissionCommand::Show {},
+    };
+    let reply = transport
+        .permissions(&permissions)
+        .await
+        .map_err(|_| ReadinessIssue::PermissionsUnconfirmed)?;
+    if reply["success"] != true
+        || !eefn::permission_commands::confirmed(&reply["data"], &permissions)
+    {
+        return Err(ReadinessIssue::PermissionsUnconfirmed);
+    }
+    if reply["data"]["remote_management_allowed"] != true {
+        return Err(ReadinessIssue::ManagementConsentRequired);
+    }
+    Ok(definition)
+}
+
+/// Shared presentation of confirmed backend guidance; no client-owned decisions.
+pub fn render(value: &Value) -> String {
+    let mut text = format!(
+        "Node model check: {}\nNode: {}\nOperation: {}\nSource receipt: {}\n",
+        value["state"].as_str().unwrap_or("unconfirmed"),
+        value["node_id"].as_str().unwrap_or("unknown"),
+        value["operation_id"].as_str().unwrap_or("unknown"),
+        value["source_operation_id"].as_str().unwrap_or("unknown"),
+    );
+    if let Ok(issue) = serde_json::from_value::<ReadinessIssue>(value["readiness_issue"].clone()) {
+        text.push_str(issue.guidance());
+        text.push('\n');
+    }
+    text.push_str("Inspect without replay: eef node verify-model --node NODE_ID inspect --operation-id OPERATION_ID (use the values above).\nReturned text is historical evidence, not model quality or current setup health. An unconfirmed start may have issued work; do not allocate a new operation to retry it.\n");
+    text
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,6 +330,10 @@ struct Report {
     source_operation_id: String,
     success: bool,
     state: State,
+    // Only the new start_selected command emits this extension. Existing
+    // explicit-definition start/inspect replies keep their original wire shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    readiness_issue: Option<ReadinessIssue>,
     definition: Option<Definition>,
     job_id: Option<String>,
     grant_id: Option<String>,
@@ -159,6 +366,24 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
         && r.operation_id == request.operation_id
         && r.source_operation_id == source
         && r.success == success(r.state)
+        && (r.readiness_issue.is_none()
+            || matches!(request.command, Command::StartSelected { .. })
+                && !r.historical
+                && r.definition.is_none()
+                && r.job_id.is_none()
+                && r.grant_id.is_none()
+                && r.executor_session_id.is_none()
+                && r.evidence_source.is_none()
+                && !r.source_preparation_requested
+                && !r.owner_approval_requested
+                && !r.execution_requested
+                && r.state
+                    == if r.readiness_issue.unwrap().unconfirmed() {
+                        State::Unconfirmed
+                    } else {
+                        State::NotReady
+                    })
+        && (r.state != State::NotReady || r.readiness_issue.is_some())
         && r.inference_returned_text == (r.state == State::ReturnedText)
         && !r.model_quality_approved
         && !r.current_setup_verified
@@ -168,8 +393,10 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
         && r.definition.as_ref().is_none_or(|d| {
             d.validate().is_ok() && d.node_id == r.node_id && d.operation_id == r.operation_id
         })
-        && (matches!(r.state, State::NotFound | State::Unconfirmed)
-            || r.definition.is_some() && r.job_id.is_some())
+        && (matches!(
+            r.state,
+            State::NotFound | State::NotReady | State::Unconfirmed
+        ) || r.definition.is_some() && r.job_id.is_some())
         && (r.state != State::NotFound
             || r.definition.is_none()
                 && r.job_id.is_none()
@@ -188,6 +415,7 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
                 Command::Start { definition, .. } => {
                     r.definition.as_ref().is_none_or(|d| d == definition)
                 }
+                Command::StartSelected { .. } => true,
                 Command::Inspect => false,
             })
         && r.job_id
@@ -282,6 +510,314 @@ fn fixed_source(plan: &Plan) -> Result<Definition> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    struct Peer {
+        setup: Option<Value>,
+        permissions: Option<Value>,
+        calls: Mutex<Vec<Value>>,
+    }
+    #[async_trait::async_trait]
+    impl ReadinessTransport for Peer {
+        async fn setup(&self, request: crate::node_setup::Request) -> Result<Value> {
+            self.calls.lock().unwrap().push(json!(request));
+            let mut value = self.setup.clone().context("PRIVATE setup unavailable")?;
+            value["request_id"] = json!(request.request_id);
+            value["result"]["request_id"] = json!(request.request_id);
+            Ok(value)
+        }
+        async fn permissions(
+            &self,
+            request: &eefn::permission_commands::PermissionRequest,
+        ) -> Result<Value> {
+            self.calls.lock().unwrap().push(json!(request));
+            self.permissions
+                .clone()
+                .context("PRIVATE permissions unavailable")
+        }
+    }
+    fn peer(saved: &[&str], applied: Option<&[&str]>, allow: bool, receipts: bool) -> Peer {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("node.json");
+        let models: Vec<_> = saved.iter().map(|id| json!({"model_id":id,"modality":"text","selection":{"roles":["request_interpreter"]}})).collect();
+        std::fs::write(&path, serde_json::to_vec(&json!({"node_id":"node","permissions":{},"management":{"allow_remote":allow},"models":{"provider":"ollama","ollama":{"selected":models}}})).unwrap()).unwrap();
+        let core = eefn::NodeService::new(path, "node".into());
+        let runtime = uuid::Uuid::new_v4().to_string();
+        {
+            let mut live = core.live.lock().unwrap();
+            live["runtime_id"] = json!(runtime);
+            live["connection"] = json!({"state":"connected","transport":"pinned_tls13"});
+            live["execution_grants"] = json!({"schema_version":1,"available":receipts});
+        }
+        let mut engine = eefn::NodeEngine::new(false, vec![], dir.path().into()).unwrap();
+        if let Some(models) = applied {
+            engine = engine
+                .with_ollama(
+                    "http://127.0.0.1:1".into(),
+                    models.iter().map(|id| eefn::SelectedModel {
+                        model_id: (*id).into(),
+                        modality: "text".into(),
+                        hints: eefn::model_selection::ModelHints {
+                            roles: Some(vec!["request_interpreter".into()]),
+                            ..Default::default()
+                        },
+                    }),
+                )
+                .unwrap();
+        }
+        let engine = Arc::new(engine);
+        let _guard = applied.map(|_| core.attach_preview_runtime(&engine, runtime.clone()));
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let setup = core
+            .setup_check(eefn::setup_check::CheckRequest {
+                schema_version: 1,
+                expected_node_id: "node".into(),
+                expected_runtime_id: runtime.clone(),
+                request_id: request_id.clone(),
+            })
+            .unwrap();
+        let permissions = applied.map(|_| {
+            core.permission_command(
+                eefn::permission_commands::PermissionRequest {
+                    schema_version: 1,
+                    expected_node_id: "node".into(),
+                    expected_runtime_id: runtime.clone(),
+                    command: eefn::permission_commands::PermissionCommand::Show {},
+                },
+                false,
+            )
+            .unwrap()
+        });
+        Peer {
+            setup: Some(
+                json!({"schema_version":1,"report_type":"remote_node_setup","node_id":"node","request_id":request_id,"runtime_id":runtime,
+                "success":true,"inspection_requested":true,"result":setup,"changed":false,"model_inference_requested":false,
+                "execution_authorized":false,"restart_requested":false,"automatically_retried":false}),
+            ),
+            permissions: permissions.map(|data| json!({"success":true,"data":data})),
+            calls: Mutex::new(vec![]),
+        }
+    }
+    #[tokio::test]
+    async fn selected_start_reads_once_and_pins_permissions_to_observed_runtime() {
+        let peer = peer(&["chosen"], Some(&["chosen"]), true, true);
+        let operation = uuid::Uuid::new_v4().to_string();
+        let definition = selected_on(&peer, "node", &operation).await.unwrap();
+        assert_eq!(definition.model.model_id, "chosen");
+        assert_eq!(definition.operation_id, operation);
+        let calls = peer.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[1]["command"], json!({"operation":"show"}));
+        assert_eq!(calls[1]["expected_runtime_id"], definition.node_runtime_id);
+        assert!(calls[0]["expected_runtime_id"].is_null());
+    }
+    #[tokio::test]
+    async fn fresh_selection_explains_missing_ambiguous_pending_and_unavailable_without_mutation() {
+        for (saved, applied, receipts, issue) in [
+            (
+                vec![],
+                Some(vec![]),
+                true,
+                ReadinessIssue::MissingInterpreter,
+            ),
+            (
+                vec!["one", "two"],
+                Some(vec!["one", "two"]),
+                true,
+                ReadinessIssue::AmbiguousInterpreter,
+            ),
+            (
+                vec!["new"],
+                Some(vec!["old"]),
+                true,
+                ReadinessIssue::ApplySavedInterpreter,
+            ),
+            (vec!["one"], None, true, ReadinessIssue::RuntimeUnavailable),
+            (
+                vec!["one"],
+                Some(vec!["one"]),
+                false,
+                ReadinessIssue::ExecutionTransportUnavailable,
+            ),
+        ] {
+            let peer = peer(&saved, applied.as_deref(), false, receipts);
+            assert_eq!(
+                selected_on(&peer, "node", &uuid::Uuid::new_v4().to_string())
+                    .await
+                    .unwrap_err(),
+                issue
+            );
+            assert_eq!(
+                peer.calls.lock().unwrap().len(),
+                1,
+                "No permission/work request before confirmed selection"
+            );
+        }
+        let peer = peer(&["chosen"], Some(&["chosen"]), false, true);
+        assert_eq!(
+            selected_on(&peer, "node", &uuid::Uuid::new_v4().to_string())
+                .await
+                .unwrap_err(),
+            ReadinessIssue::ManagementConsentRequired
+        );
+        assert_eq!(peer.calls.lock().unwrap().len(), 2);
+    }
+    #[tokio::test]
+    async fn unconfirmed_reads_never_grant_consent_retry_or_choose_a_fallback() {
+        for mode in [
+            "lost-setup",
+            "unsupported-setup",
+            "wrong-setup-node",
+            "unknown-setup-field",
+            "lost-permission",
+            "wrong-permission-runtime",
+            "forged-consent",
+            "unknown-permission-field",
+        ] {
+            let mut peer = peer(&["chosen"], Some(&["chosen"]), false, true);
+            let setup_failure = match mode {
+                "lost-setup" => {
+                    peer.setup = None;
+                    true
+                }
+                "unsupported-setup" => {
+                    peer.setup.as_mut().unwrap()["schema_version"] = json!(99);
+                    true
+                }
+                "wrong-setup-node" => {
+                    peer.setup.as_mut().unwrap()["result"]["node_id"] = json!("other");
+                    true
+                }
+                "unknown-setup-field" => {
+                    peer.setup.as_mut().unwrap()["PRIVATE"] = json!("secret");
+                    true
+                }
+                "lost-permission" => {
+                    peer.permissions = None;
+                    false
+                }
+                "wrong-permission-runtime" => {
+                    peer.permissions.as_mut().unwrap()["data"]["runtime_id"] =
+                        json!(uuid::Uuid::new_v4().to_string());
+                    false
+                }
+                "forged-consent" => {
+                    peer.permissions.as_mut().unwrap()["data"]["remote_management_allowed"] =
+                        json!(true);
+                    false
+                }
+                _ => {
+                    peer.permissions.as_mut().unwrap()["data"]["PRIVATE"] = json!("secret");
+                    false
+                }
+            };
+            let issue = selected_on(&peer, "node", &uuid::Uuid::new_v4().to_string())
+                .await
+                .unwrap_err();
+            assert_eq!(
+                issue,
+                if setup_failure {
+                    ReadinessIssue::SetupUnconfirmed
+                } else {
+                    ReadinessIssue::PermissionsUnconfirmed
+                },
+                "{mode}"
+            );
+            assert_eq!(
+                peer.calls.lock().unwrap().len(),
+                if setup_failure { 1 } else { 2 },
+                "{mode}"
+            );
+            assert!(!issue.guidance().contains("PRIVATE"));
+        }
+    }
+    #[tokio::test]
+    async fn missing_interpreter_preserves_existing_setup_and_approval_guidance() {
+        for (state, step, issue) in [
+            (
+                eefn::model_setup::State::AwaitingApproval,
+                "approve_model_setup",
+                ReadinessIssue::SetupApprovalRequired,
+            ),
+            (
+                eefn::model_setup::State::Waiting,
+                "inspect_model_setup",
+                ReadinessIssue::InspectModelSetup,
+            ),
+            (
+                eefn::model_setup::State::NoApprovedDefault,
+                "choose_model_setup",
+                ReadinessIssue::NoApprovedDefault,
+            ),
+        ] {
+            let mut peer = peer(&[], Some(&[]), false, true);
+            let catalog = (state != eefn::model_setup::State::NoApprovedDefault).then(|| {
+                eefn::model_bootstrap::CatalogPin {
+                    schema_version: 1,
+                    model_id: "fixture".into(),
+                    definition_sha256: "a".repeat(64),
+                    artifact_sha256: "b".repeat(64),
+                    artifact_bytes: 32,
+                    source_uri_sha256: "c".repeat(64),
+                    source_page_sha256: "d".repeat(64),
+                    declared_license: "test-only".into(),
+                }
+            });
+            let mode = if state == eefn::model_setup::State::Waiting {
+                eefn::model_bootstrap::Mode::Auto
+            } else {
+                eefn::model_bootstrap::Mode::Prompt
+            };
+            let policy = eefn::model_bootstrap::Saved::new(
+                eefn::model_bootstrap::Policy {
+                    schema_version: 1,
+                    mode,
+                    automation: true,
+                    catalog,
+                    restart_after_setup: false,
+                },
+                0,
+            )
+            .unwrap();
+            let status = eefn::model_setup::Status {
+                schema_version: 1,
+                node_id: "node".into(),
+                policy_digest: policy.digest.clone(),
+                state,
+                attempt: None,
+                current_policy_attempt: false,
+                restart_required: false,
+                readiness_verified: false,
+                automatically_retried: false,
+            };
+            let result = &mut peer.setup.as_mut().unwrap()["result"];
+            result["model_setup"] =
+                json!({"availability":"observed","policy":policy,"status":status});
+            let steps = result["next_steps"].as_array_mut().unwrap();
+            steps.retain(|s| s != "choose_interpreter");
+            steps.push(json!(step));
+            assert_eq!(
+                selected_on(&peer, "node", &uuid::Uuid::new_v4().to_string())
+                    .await
+                    .unwrap_err(),
+                issue
+            );
+            assert_eq!(peer.calls.lock().unwrap().len(), 1);
+        }
+        let mut peer = peer(&[], Some(&[]), false, true);
+        let result = &mut peer.setup.as_mut().unwrap()["result"];
+        result["model_setup"] = json!({"availability":"unavailable"});
+        let steps = result["next_steps"].as_array_mut().unwrap();
+        steps.retain(|s| s != "choose_interpreter");
+        steps.push(json!("inspect_model_setup"));
+        assert_eq!(
+            selected_on(&peer, "node", &uuid::Uuid::new_v4().to_string())
+                .await
+                .unwrap_err(),
+            ReadinessIssue::InspectModelSetup
+        );
+        assert_eq!(peer.calls.lock().unwrap().len(), 1);
+    }
     fn request() -> Request {
         let node_id = "node".to_string();
         let operation_id = uuid::Uuid::new_v4().to_string();
@@ -318,6 +854,7 @@ mod tests {
             source_operation_id: definition.receipt("source", None).unwrap(),
             success: true,
             state: State::ReturnedText,
+            readiness_issue: None,
             definition: Some(definition.clone()),
             job_id: Some("a".repeat(32)),
             grant_id: Some(uuid::Uuid::new_v4().to_string()),
@@ -340,6 +877,15 @@ mod tests {
     fn only_explicit_exact_inference_intent_can_start() {
         let q = request();
         q.validate().unwrap();
+        let mut selected = q.clone();
+        selected.command = Command::StartSelected {
+            approve_inference: true,
+        };
+        selected.validate().unwrap();
+        selected.command = Command::StartSelected {
+            approve_inference: false,
+        };
+        assert!(selected.validate().is_err());
         for change in ["consent", "node", "operation", "runtime", "model"] {
             let mut bad = q.clone();
             if let Command::Start {
@@ -360,6 +906,69 @@ mod tests {
         let mut expanded = json!(q);
         expanded["command"]["prompt"] = json!("Run arbitrary work");
         assert!(serde_json::from_value::<Request>(expanded).is_err());
+    }
+    #[test]
+    fn readiness_reports_require_new_command_and_no_work_or_authority() {
+        let mut q = request();
+        let legacy = q.clone();
+        let mut value = report(&q);
+        assert!(
+            value.get("readiness_issue").is_none(),
+            "Old replies retain their wire shape"
+        );
+        q.command = Command::StartSelected {
+            approve_inference: true,
+        };
+        for field in [
+            "definition",
+            "job_id",
+            "grant_id",
+            "executor_session_id",
+            "evidence_source",
+        ] {
+            value[field] = Value::Null;
+        }
+        for field in [
+            "success",
+            "inference_returned_text",
+            "source_preparation_requested",
+            "owner_approval_requested",
+            "execution_requested",
+        ] {
+            value[field] = json!(false);
+        }
+        value["state"] = json!("not_ready");
+        value["readiness_issue"] = json!("management_consent_required");
+        assert!(confirmed(&value, &q));
+        assert!(render(&value).contains("eefn permissions allow remote-management"));
+        for (field, bad) in [
+            ("historical", json!(true)),
+            ("source_preparation_requested", json!(true)),
+            ("owner_approval_requested", json!(true)),
+            ("execution_requested", json!(true)),
+            ("success", json!(true)),
+            ("outcome_unknown", json!(true)),
+            ("job_id", json!("a".repeat(32))),
+            ("definition", report(&request())["definition"].clone()),
+            ("readiness_issue", json!("setup_unconfirmed")),
+            ("readiness_issue", Value::Null),
+            ("readiness_issue", json!("PRIVATE")),
+            ("next_step", json!("PRIVATE")),
+        ] {
+            let mut bad_report = value.clone();
+            bad_report[field] = bad;
+            assert!(!confirmed(&bad_report, &q), "{field}");
+        }
+        assert!(!confirmed(&value, &legacy));
+        q.command = Command::Inspect;
+        assert!(!confirmed(&value, &q));
+        q.command = Command::StartSelected {
+            approve_inference: true,
+        };
+        value["state"] = json!("unconfirmed");
+        value["outcome_unknown"] = json!(true);
+        value["readiness_issue"] = json!("setup_unconfirmed");
+        assert!(confirmed(&value, &q));
     }
     #[test]
     fn retained_source_must_keep_the_authenticated_origin_and_fixed_review() {
@@ -786,6 +1395,7 @@ impl crate::Runtime {
             )?,
             success: false,
             state: State::Unconfirmed,
+            readiness_issue: None,
             definition: None,
             job_id: None,
             grant_id: None,
@@ -809,8 +1419,10 @@ impl crate::Runtime {
                 self.observe_model_verification(&mut report).await
             }
             Command::Start { definition, .. } => {
-                self.start_model_verification(definition, &mut report).await
+                self.start_model_verification(Some(definition), &mut report)
+                    .await
             }
+            Command::StartSelected { .. } => self.start_model_verification(None, &mut report).await,
         };
         if result.is_err() {
             report.state = State::Unconfirmed;
@@ -829,7 +1441,7 @@ impl crate::Runtime {
     }
     async fn start_model_verification(
         &self,
-        definition: &Definition,
+        requested: Option<&Definition>,
         report: &mut Report,
     ) -> Result<()> {
         let _owned = self
@@ -837,14 +1449,38 @@ impl crate::Runtime {
             .try_lock()
             .map_err(|_| anyhow::anyhow!("Model-check workflow busy; no queue or retry"))?;
         if let Some(existing) =
-            self.model_verification_plan(&definition.node_id, &definition.operation_id)?
+            self.model_verification_plan(&report.node_id, &report.operation_id)?
         {
-            if fixed_source(&existing)? != *definition {
+            if let Some(definition) = requested
+                && fixed_source(&existing)? != *definition
+            {
                 bail!("Retained model-check intent conflicts")
             }
             report.historical = true;
             return self.observe_model_verification(report).await;
         }
+        // Resolve fresh intent only after checking retained history under the
+        // same workflow slot. Reads never grant management or choose a model.
+        let selected;
+        let definition = if let Some(definition) = requested {
+            definition
+        } else {
+            selected =
+                match selected_on(&self.node_server, &report.node_id, &report.operation_id).await {
+                    Ok(definition) => definition,
+                    Err(issue) => {
+                        report.readiness_issue = Some(issue);
+                        report.state = if issue.unconfirmed() {
+                            State::Unconfirmed
+                        } else {
+                            State::NotReady
+                        };
+                        report.outcome_unknown = issue.unconfirmed();
+                        return Ok(());
+                    }
+                };
+            &selected
+        };
         report.definition = Some(definition.clone());
         report.source_preparation_requested = true;
         let prepared = self

@@ -1326,29 +1326,9 @@ async fn model_verification_cli(
         }
         let command = match action {
             Action::Inspect { .. } => Command::Inspect,
-            Action::Start { .. } => {
-                let inspect = eef::node_setup::Request {
-                    schema_version: 1,
-                    node_id: node.into(),
-                    expected_runtime_id: None,
-                    request_id: uuid::Uuid::new_v4().to_string(),
-                };
-                let response = client
-                    .post(format!("{base}/api/commands/node/setup"))
-                    .json(&inspect)
-                    .send()
-                    .await?;
-                if !response.status().is_success() {
-                    bail!("Node setup unavailable")
-                }
-                let observed = eefn::model_manager::bounded_json(response).await?;
-                Command::Start {
-                    definition: eef::model_verification::selected_definition(
-                        &observed, &inspect, &operation,
-                    )?,
-                    approve_inference: true,
-                }
-            }
+            Action::Start { .. } => Command::StartSelected {
+                approve_inference: true,
+            },
         };
         let request = Request {
             schema_version: 1,
@@ -2443,22 +2423,7 @@ async fn main() -> Result<()> {
                         }
                     )
                 {
-                    println!(
-                        "Node model check: {}",
-                        value["state"].as_str().unwrap_or("unconfirmed")
-                    );
-                    println!(
-                        "Node: {}\nOperation: {}\nSource receipt: {}",
-                        value["node_id"].as_str().unwrap_or("unknown"),
-                        value["operation_id"].as_str().unwrap_or("unknown"),
-                        value["source_operation_id"].as_str().unwrap_or("unknown")
-                    );
-                    println!(
-                        "Inspect without replay: eef node verify-model --node NODE_ID inspect --operation-id OPERATION_ID (use the values above)."
-                    );
-                    println!(
-                        "Returned text is historical evidence, not model quality or current setup health. An unconfirmed start may have issued work; do not allocate a new operation to retry it."
-                    );
+                    print!("{}", eef::model_verification::render(&value));
                 } else if !args.json && matches!(command, Command::Repair { .. }) {
                     print!("{}", eefn::package_repair::render(&value)?);
                 } else if !args.json && matches!(command, Command::Doctor { .. }) {

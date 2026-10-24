@@ -13,6 +13,15 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The locally accepted backend-selected model-check follow-up has both full Rust
+modes passing 1,104 tests plus one ignored each, all thirty native suites and a
+separate cached real-CPU regression against unchanged evaluated hashes. CLI start submits
+one owner command; EEF reads retained history before resolving fresh node setup
+and consent. Typed readiness guidance does not choose a default, mutate setup,
+restart or automatically infer. Shared setup/approval guidance is preserved.
+This closes a client/backend ownership gap, not automatic onboarding, interpreter
+quality, physical or stable-release acceptance. Hosted acceptance remains separate.
+
 The in-development [explicit model check](MODEL-VERIFICATION.md) adds a typed
 owner command over node-authored fixed input, ordinary approval and durable
 execution grants. It does not give nodes coordinator-owner authority. Receipt
@@ -21,7 +30,9 @@ text is mechanical evidence, not an approved default, interpretation quality or
 automatic first-run health. Final coordinator evidence must remain inspectable
 without a connected node. Both full feature modes pass 1,099 tests plus one
 existing ignored profiler each, and all thirty native suites and the separate
-cached real CPU regression pass against unchanged evaluated hashes. Hosted and
+cached real CPU regression pass against unchanged evaluated hashes. Published
+`a6752ad` also passes all four hosted jobs and the twenty-eight configured native
+suites in exact order. Subsequent backend-selected/readiness edits and
 stable-release acceptance remain separate. This
 increment does not close steps 4-5 or the broader physical/release gates below.
 

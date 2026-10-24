@@ -62,13 +62,34 @@ eef node verify-model --node NODE_ID inspect --operation-id OPERATION_UUID
 ```
 
 Start also accepts `--operation-id` to retain a chosen UUID before sending. The
-client checks a confirmed read-only setup snapshot and requires saved/applied
-interpreter agreement. A lost reply returns that exact owner/source receipt
+client sends `start_selected` with explicit inference consent. EEF checks retained
+history first, then resolves a fresh operation using confirmed read-only setup
+and permission snapshots. It requires exactly one saved/applied interpreter and
+local management consent, pinning the permission read to the observed node
+runtime. No client-side setup controller, first-candidate fallback or remote
+self-grant is used. The explicit-definition `start` API remains available and
+keeps its original intent-conflict behavior and report shape.
+
+A fresh blocked `start_selected` returns `not_ready` and a typed
+`readiness_issue` for missing/ambiguous interpreter, saved/applied mismatch,
+unavailable runtime/receipt transport, or missing local management consent.
+Confirmed shared setup guidance takes precedence when the interpreter is absent
+or unapplied: pending setup approval, no approved default and retained/unavailable
+setup evidence are not treated as instructions to replace the interpreter.
+Unconfirmed setup/permission reads stay `unconfirmed`, never imply consent and
+never fall back or retry. No source, approval or execution is requested in those
+preflight outcomes. Fixed backend-owned guidance is shared with the CLI; arbitrary
+peer errors are not copied into it. The extension is emitted only for the new
+command, so existing explicit-definition start/inspect replies remain compatible.
+
+A lost reply returns that exact owner/source receipt
 with uncertainty, never a client retry. Backend inspection needs neither a live
 node nor its current model selection. Starting an already retained exact intent
 only inspects it, even if it is merely awaiting approval; it never resumes an
-uncertain earlier workflow into authority. Use inspect after a node runtime or
-selection changes. Existing job-history retention is the deduplication boundary,
+uncertain earlier workflow into authority. Retained selected starts also work
+after model/runtime changes and while the node is disconnected; they inspect
+the original definition without first reading its current setup or permissions.
+Existing job-history retention is the deduplication boundary,
 not a permanent promise after owner removal of history.
 
 `returned_text` requires a bounded nonempty result confirming the exact retained
@@ -85,6 +106,41 @@ evidence, not private model prose. They never approve model quality, current
 health, an interpreter default or automatic onboarding.
 
 ## Acceptance status and remaining scope
+
+The backend-selected start/readiness follow-up is locally accepted, unreleased.
+Both full Rust feature modes pass 1,104 tests plus one existing ignored profiler
+each across fourteen groups. Fresh headless apps/helpers and all thirty native
+suites pass sequentially. All 302 evaluated source/resource/workflow and nine
+native artifact hashes match; no matching native fixture processes remain
+observed. The read-only record is
+`.validation/model-check-readiness-acceptance.json`.
+
+Synthetic native `model-verification-milbhQ` additionally checks that the CLI
+does not read setup itself, confirmed missing/pending interpreter and management
+consent block without creating a source, unconfirmed/disconnected setup does not
+infer, and retained CLI starts work offline and after selection/runtime changes.
+Real CPU `real-model-crr4WA` passes the selected owner command through ordinary
+grants, one-attempt history/no replay, model removal, lifecycle and on-demand
+checks with unchanged catalog-verified cached weights and full-regression apps.
+The independent record is
+`.validation/model-check-readiness-real-cpu-acceptance.json`; no matching fixture
+app/model processes remain observed. No weights were downloaded or copied.
+Hosted acceptance of this new follow-up remains pending. Automatic inference
+authority, approved defaults/interpretation quality, first-run health, physical
+two-PC and stable-release gates remain separate requirements. The counts in the
+historical checkpoint below do not cover subsequent edits.
+Nine initial focused tests passed. The first full run was deliberately stopped
+during compilation after review found missing-interpreter guidance could
+contradict an existing setup/approval attempt. Its partial logs and source hashes
+are retained under `.validation/model-check-readiness-before-guidance-*`, not
+accepted for the corrected source. This was not an observation timeout or a
+test failure. The first corrected test build exposed a test-only use of a private
+policy constructor; the fixture now uses the existing public `Saved::new` API
+without widening runtime visibility. That compiler failure is retained in
+`.validation/model-check-readiness-guidance-focused.log`. All ten corrected
+coordinator tests pass, including preserved setup/approval/default guidance and
+unavailable setup evidence. Corrected full/native and real-CPU acceptance is
+recorded above, not inferred from the earlier partial/failed builds.
 
 - Local synthetic native, malformed/lost-reply, no-replay, real CPU and full
   regression acceptance pass. The focused native fixture `model-verification-lhIyiw`
@@ -106,7 +162,11 @@ health, an interpreter default or automatic onboarding.
   `.validation/model-verification-acceptance.json`: 302 source/resource/workflow
   and nine native artifact hashes match, and no matching fixture processes remain
   observed. Rebuilt apps and the CPU runtime match the separately accepted real
-  CPU check's hashes. Hosted acceptance remains separate and pending.
+  CPU check's hashes. Published source `a6752ad9648ea6412c0daf6e57fa28cfbe970f42`
+  also passes [hosted run 40124073155](https://github.com/eepyfishy/eef/actions/runs/40124073155):
+  all four matrix jobs and all twenty-eight configured native suites in exact
+  order, independently audited in `.validation/a6752ad-ci-acceptance.json`.
+  This does not accept the subsequent backend-selected/readiness follow-up.
   The first native
   run failed because its inventory assertion used
   raw registration fields instead of the normalized inventory contract; this

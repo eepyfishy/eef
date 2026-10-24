@@ -3,6 +3,34 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Locally accepted, unreleased: backend-selected check and readiness guidance
+
+`eef node verify-model ... start` now submits the new `start_selected` owner
+command, leaving model resolution and setup/permission reads in EEF. The backend
+checks retained history before contacting the node, so repeats can inspect the
+original operation offline or after selection/runtime changes. Fresh starts
+require a confirmed single saved/applied interpreter and current local management
+consent. Typed readiness guidance cannot choose a model, change permissions,
+restart or replay inference. Existing explicit-definition start/inspect reply
+shapes remain unchanged. All ten focused coordinator tests pass. Missing-model
+guidance preserves existing setup approval, unapproved-default and retained/
+unavailable-evidence guidance rather than suggesting a replacement interpreter.
+Both full Rust feature modes pass 1,104 tests plus one existing ignored profiler
+each, and all thirty native suites pass sequentially against unchanged hashes:
+302 source/resource/workflow files and nine native artifacts. The read-only
+record is `.validation/model-check-readiness-acceptance.json`; no matching native
+fixture processes remain observed. Real CPU fixture `real-model-crr4WA` also
+passes the selected owner command, ordinary grants, retained results/no replay,
+model removal, lifecycle and on-demand regression with unchanged cached weights
+and apps matching the full native run. Its independent record is
+`.validation/model-check-readiness-real-cpu-acceptance.json`; no matching fixture
+app/model processes remain observed. No weights were downloaded or copied.
+Partial pre-guidance compilation and the corrected fixture's private-constructor
+compiler failure remain recorded, not accepted. Hosted acceptance of this
+follow-up, approved defaults/interpretation quality, automatic onboarding,
+physical two-PC and stable-release gates remain separate and open.
+See [the command contract](MODEL-VERIFICATION.md).
+
 ## Locally accepted, unreleased: explicit model-check workflow
 
 Shared fixed-source authoring and node preparation use the existing review/
@@ -33,13 +61,22 @@ build successfully; all thirty native suites pass in one sequential run. The
 read-only audit `.validation/model-verification-acceptance.json` confirms all
 302 source/resource/workflow and nine native artifact hashes; no matching
 fixture processes remain observed. Rebuilt apps and the CPU runtime still match
-the separate accepted CPU check's hashes. Hosted acceptance of this increment
-remains pending. The partial run
+the separate accepted CPU check's hashes. Hosted acceptance of this exact
+published checkpoint is recorded below; subsequent edits remain separate. The partial run
 and initial inventory assertion failure are retained, not accepted for the
 corrected source. No model quality/default, automatic onboarding, physical or
 stable-release claim is made.
 See [scope and remaining work](MODEL-VERIFICATION.md).
 This is development-checkpoint acceptance, not stable v0.4.0 release acceptance.
+
+## Verification: published explicit model-check checkpoint
+
+Source `a6752ad9648ea6412c0daf6e57fa28cfbe970f42` passes all four matrix jobs in
+[hosted run 40124073155](https://github.com/eepyfishy/eef/actions/runs/40124073155).
+Its completed Windows headless log confirms all twenty-eight selected native
+suites in exact configured order. The read-only record is
+`.validation/a6752ad-ci-acceptance.json`. This is hosted acceptance of that source,
+not the later backend-selected/readiness follow-up or stable v0.4.0 acceptance.
 
 ## Verification: published maintenance/retirement checkpoint
 
