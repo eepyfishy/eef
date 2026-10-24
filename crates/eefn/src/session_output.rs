@@ -45,12 +45,54 @@ pub(crate) async fn send<W: AsyncWrite + Unpin>(
     send_with_budget(crypto, writer, failed, message, WRITE_BUDGET).await
 }
 
+/// Terminal reply only: execution ends, but bounded reply ownership survives
+/// encoding, queue wait, flush, failure and cancellation.
+pub(crate) async fn send_completed<W: AsyncWrite + Unpin>(
+    crypto: &NodeCrypto,
+    writer: &Mutex<W>,
+    failed: &watch::Sender<bool>,
+    message: &Value,
+    admission: crate::request_limits::Admission,
+) -> Result<()> {
+    send_reply(
+        crypto,
+        writer,
+        failed,
+        message,
+        Some(admission.into_reply()),
+    )
+    .await
+}
+
+/// An admitted terminal reply owns its reservation; unadmitted error replies
+/// use None only on the already bounded synchronous receive path.
+pub(crate) async fn send_reply<W: AsyncWrite + Unpin>(
+    crypto: &NodeCrypto,
+    writer: &Mutex<W>,
+    failed: &watch::Sender<bool>,
+    message: &Value,
+    reply: Option<crate::request_limits::ReplyPermit>,
+) -> Result<()> {
+    send_owned_with_budget(crypto, writer, failed, message, WRITE_BUDGET, reply).await
+}
+
 async fn send_with_budget<W: AsyncWrite + Unpin>(
     crypto: &NodeCrypto,
     writer: &Mutex<W>,
     failed: &watch::Sender<bool>,
     message: &Value,
     budget: Duration,
+) -> Result<()> {
+    send_owned_with_budget(crypto, writer, failed, message, budget, None).await
+}
+
+async fn send_owned_with_budget<W: AsyncWrite + Unpin>(
+    crypto: &NodeCrypto,
+    writer: &Mutex<W>,
+    failed: &watch::Sender<bool>,
+    message: &Value,
+    budget: Duration,
+    mut reply: Option<crate::request_limits::ReplyPermit>,
 ) -> Result<()> {
     if *failed.borrow() {
         bail!("framed session output is retired; no frame was sent")
@@ -66,6 +108,9 @@ async fn send_with_budget<W: AsyncWrite + Unpin>(
         let result = write_message(crypto, &mut *output, message).await;
         if result.is_ok() {
             guard.complete();
+            // Release successful output ownership before the next writer can
+            // take the lock. Do not leave completed reservations after handoff.
+            drop(reply.take());
         }
         result
     })
@@ -86,6 +131,181 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, BufReader};
+
+    struct GatedFlush {
+        output: tokio::io::DuplexStream,
+        release: tokio::sync::oneshot::Receiver<()>,
+    }
+    impl AsyncWrite for GatedFlush {
+        fn poll_write(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            bytes: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::pin::Pin::new(&mut self.output).poll_write(cx, bytes)
+        }
+        fn poll_flush(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if std::future::Future::poll(std::pin::Pin::new(&mut self.release), cx).is_pending() {
+                return std::task::Poll::Pending;
+            }
+            std::pin::Pin::new(&mut self.output).poll_flush(cx)
+        }
+        fn poll_shutdown(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::pin::Pin::new(&mut self.output).poll_shutdown(cx)
+        }
+    }
+
+    #[tokio::test]
+    async fn completed_reply_does_not_keep_execution_busy_after_peer_receives_it() {
+        let budget =
+            crate::request_limits::RequestBudget::new(&crate::request_limits::RequestLimits {
+                work: 1,
+                control: 1,
+            })
+            .unwrap();
+        let admission = budget.admit("node.configure", "model_command").unwrap();
+        let crypto = NodeCrypto::new("test-only").unwrap();
+        let (output, input) = tokio::io::duplex(4096);
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let writer = Arc::new(Mutex::new(GatedFlush {
+            output,
+            release: gate,
+        }));
+        let (failed, _) = watch::channel(false);
+        let response = json!({"type":"response","id":"first","success":true});
+        let task = tokio::spawn({
+            let crypto = crypto.clone();
+            let writer = writer.clone();
+            let response = response.clone();
+            async move { send_completed(&crypto, &writer, &failed, &response, admission).await }
+        });
+        let mut input = BufReader::new(input);
+        let received = tokio::time::timeout(
+            Duration::from_secs(1),
+            crate::protocol::read_message(&crypto, &mut input),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        assert_eq!(received, response);
+        assert!(
+            !task.is_finished(),
+            "the complete frame is visible while flush is pending"
+        );
+        let next = budget.admit("node.configure", "model_command");
+        release.send(()).unwrap();
+        task.await.unwrap().unwrap();
+        assert!(
+            next.is_some(),
+            "a completed reply must not make the peer's next sequential command falsely busy"
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_completed_replies_stay_bounded_and_cancel_without_starving_controls() {
+        let budget =
+            crate::request_limits::RequestBudget::new(&crate::request_limits::RequestLimits {
+                work: 1,
+                control: 1,
+            })
+            .unwrap();
+        let admission = budget.admit("node.configure", "model_command").unwrap();
+        let crypto = NodeCrypto::new("test-only").unwrap();
+        let (output, input) = tokio::io::duplex(4096);
+        let (_release, gate) = tokio::sync::oneshot::channel();
+        let writer = Arc::new(Mutex::new(GatedFlush {
+            output,
+            release: gate,
+        }));
+        let (failed, retired) = watch::channel(false);
+        let task = tokio::spawn({
+            let crypto = crypto.clone();
+            let writer = writer.clone();
+            async move {
+                send_completed(
+                    &crypto,
+                    &writer,
+                    &failed,
+                    &json!({"type":"response","id":"first"}),
+                    admission,
+                )
+                .await
+            }
+        });
+        let mut input = BufReader::new(input);
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            crate::protocol::read_message(&crypto, &mut input),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+        let second = budget.admit("node.configure", "model_command").unwrap();
+        assert!(
+            budget.admit("node.configure", "model_command").is_none(),
+            "execution cap remains one"
+        );
+        let second_reply = second.into_reply();
+        assert!(
+            budget.admit("node.configure", "model_command").is_none(),
+            "pending reply capacity is bounded before execution"
+        );
+        assert!(
+            budget.admit_receipt().is_some(),
+            "work replies do not consume reserved controls"
+        );
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(
+            *retired.borrow(),
+            "an unconfirmed flush retires framing before reply ownership is released"
+        );
+        assert!(budget.admit("node.configure", "model_command").is_some());
+        drop(second_reply);
+    }
+
+    #[tokio::test]
+    async fn completed_reply_io_failure_returns_capacity_but_retires_the_session() {
+        let budget =
+            crate::request_limits::RequestBudget::new(&crate::request_limits::RequestLimits {
+                work: 1,
+                control: 1,
+            })
+            .unwrap();
+        let admission = budget.admit("node.configure", "model_command").unwrap();
+        let crypto = NodeCrypto::new("test-only").unwrap();
+        let (output, input) = tokio::io::duplex(32);
+        drop(input);
+        let writer = Mutex::new(output);
+        let (failed, retired) = watch::channel(false);
+        assert!(
+            send_completed(
+                &crypto,
+                &writer,
+                &failed,
+                &json!({"type":"response"}),
+                admission
+            )
+            .await
+            .is_err()
+        );
+        assert!(*retired.borrow());
+        assert!(budget.admit("node.configure", "model_command").is_some());
+        assert!(budget.admit_receipt().is_some());
+        assert!(
+            send(&crypto, &writer, &failed, &json!({"later":true}))
+                .await
+                .is_err()
+        );
+    }
 
     #[tokio::test]
     async fn completed_frames_preserve_protocol_and_keep_session_writable() {

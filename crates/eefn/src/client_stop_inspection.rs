@@ -31,18 +31,19 @@ impl NodeClient {
             let writer = writer.clone();
             let failed = write_failed.clone();
             let node = self.config.node_id.clone();
+            let (execution, reply) = permit.into_parts();
             tasks.spawn(async move {
                 let result = tokio::task::spawn_blocking(move || {
                     let result = ledger.inspect_stop(&request.scope, &issuer, &node);
-                    (permit, result)
+                    (execution, result)
                 }).await;
                 let (held, response) = match result {
                     Ok((permit, Ok(report))) => (Some(permit), success_response(&request_id, json!(report))),
                     Ok((permit, Err(_))) => (Some(permit), json!({"type":"response","id":request_id,"success":false,"error_type":"StopInspectionUnavailable","error":"Retained stop inspection unconfirmed; no signal, execution or fallback."})),
                     Err(_) => (None, json!({"type":"response","id":request_id,"success":false,"error_type":"StopInspectionUnavailable","error":"Stop inspection callback unavailable; no mutation requested."})),
                 };
-                let _held = held;
-                let _ = write_session_frame(&crypto, &writer, &failed, &response).await;
+                drop(held);
+                let _ = write_reply_frame(&crypto, &writer, &failed, &response, Some(reply)).await;
             });
         } else {
             let response = json!({"type":"response","id":request_id,"success":false,"error_type":"StopInspectionDenied","error":"Read-only stop inspection requires the original pinned issuer, exact node and bounded control capacity."});

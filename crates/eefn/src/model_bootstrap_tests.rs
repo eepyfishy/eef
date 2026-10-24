@@ -60,6 +60,136 @@ struct Fixture {
 }
 
 #[test]
+fn setup_stop_command_is_exact_current_consented_and_reports_no_physical_stop() {
+    let f = Fixture::new();
+    let mut configure = f.configure(
+        Some(Mode::Prompt),
+        Target::Catalog {
+            model_id: "fixture".into(),
+        },
+    );
+    if let Command::Configure { automation, .. } = &mut configure.command {
+        *automation = Some(true);
+    }
+    f.service.model_bootstrap_policy(configure, false).unwrap();
+    let previous: Saved = serde_json::from_value(f.show()["saved"].clone()).unwrap();
+    let approved = f
+        .service
+        .model_bootstrap_policy(
+            f.request(Command::Approve {
+                previous: previous.clone(),
+            }),
+            false,
+        )
+        .unwrap();
+    let id = approved["setup"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let request = f.request(Command::Stop {
+        previous: previous.clone(),
+        attempt_id: id.clone(),
+    });
+    let before = f.bytes();
+    assert!(
+        f.service
+            .model_bootstrap_policy(request.clone(), true)
+            .is_err()
+    );
+    assert_eq!(f.show()["setup"]["attempt"]["phase"], "approved");
+    for field in ["node", "runtime", "epoch", "attempt"] {
+        let mut wrong = request.clone();
+        match field {
+            "node" => wrong.expected_node_id = "different-node".into(),
+            "runtime" => wrong.expected_runtime_id = uuid::Uuid::new_v4().to_string(),
+            "epoch" => {
+                wrong.command = Command::Stop {
+                    previous: Saved::new(previous.policy.clone(), previous.revision + 1).unwrap(),
+                    attempt_id: id.clone(),
+                }
+            }
+            "attempt" => {
+                wrong.command = Command::Stop {
+                    previous: previous.clone(),
+                    attempt_id: uuid::Uuid::new_v4().to_string(),
+                }
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            f.service.model_bootstrap_policy(wrong, false).is_err(),
+            "{field}"
+        );
+        assert_eq!(f.show()["setup"]["attempt"]["phase"], "approved");
+    }
+    assert_eq!(f.bytes(), before);
+    let mut config = f.service.read_config().unwrap();
+    config["management"]["allow_remote"] = json!(true);
+    f.service.save_config(config).unwrap();
+    let before = f.bytes();
+    let report = f
+        .service
+        .model_bootstrap_policy(request.clone(), true)
+        .unwrap();
+    assert!(confirmed(&report, &request));
+    assert_eq!(report["saved"], json!(previous));
+    assert_eq!(report["setup"]["attempt"]["reason"], "owner_stopped");
+    assert_eq!(
+        report["setup_stop"]["transfer_cancellation"],
+        "not_requested"
+    );
+    assert_eq!(report["setup_stop"]["physical_stop_verified"], false);
+    assert_eq!(f.bytes(), before);
+    assert!(
+        render(&report)
+            .unwrap()
+            .contains("shared-provider shutdown")
+    );
+    assert!(
+        f.service
+            .model_bootstrap_policy(request.clone(), true)
+            .is_err()
+    );
+    for (pointer, value) in [
+        ("/setup_stop/physical_stop_verified", json!(true)),
+        ("/setup_stop/configuration_rolled_back", json!(true)),
+        (
+            "/setup_stop/attempt_id",
+            json!(uuid::Uuid::new_v4().to_string()),
+        ),
+        (
+            "/setup_stop/transfer_cancellation",
+            json!("provider_stopped"),
+        ),
+        ("/setup/attempt/phase", json!("configured")),
+        ("/setup/attempt/reason", json!("state_changed")),
+        ("/changed", json!(false)),
+    ] {
+        let mut bad = report.clone();
+        *bad.pointer_mut(pointer).unwrap() = value;
+        assert!(!confirmed(&bad, &request), "{pointer}");
+        assert!(render(&bad).is_err(), "{pointer}");
+    }
+    let mut missing = report.clone();
+    missing.as_object_mut().unwrap().remove("setup_stop");
+    assert!(!confirmed(&missing, &request));
+    let show_request = f.request(Command::Show);
+    let mut unsolicited = f.show();
+    unsolicited["setup_stop"] = report["setup_stop"].clone();
+    assert!(!confirmed(&unsolicited, &show_request));
+    for id in ["", "not-a-uuid", "00000000-0000-0000-0000-000000000000"] {
+        assert!(
+            Command::Stop {
+                previous: previous.clone(),
+                attempt_id: id.into()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn prompt_approval_requires_current_remote_consent_and_retains_exact_unchanged_policy() {
     let f = Fixture::new();
     let mut configure = f.configure(

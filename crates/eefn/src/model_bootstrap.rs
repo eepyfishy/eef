@@ -253,6 +253,10 @@ pub enum Command {
     Approve {
         previous: Saved,
     },
+    Stop {
+        previous: Saved,
+        attempt_id: String,
+    },
     Configure {
         previous: Saved,
         mode: Option<Mode>,
@@ -265,6 +269,14 @@ pub enum Command {
 }
 impl Command {
     pub fn validate(&self) -> Result<()> {
+        if let Self::Stop {
+            previous,
+            attempt_id,
+        } = self
+        {
+            previous.validate()?;
+            crate::automation_occurrence::uuid(attempt_id)?;
+        }
         if let Self::Approve { previous } = self {
             previous.validate()?;
             if previous.policy.mode != Mode::Prompt
@@ -401,7 +413,21 @@ pub enum Action {
     Show,
     /// Approve one setup attempt for the current enabled prompt policy.
     Approve,
+    /// Stop one retained setup before configuration commit. Does not change policy.
+    Stop {
+        #[arg(long)]
+        attempt: String,
+    },
     Configure(Settings),
+}
+impl Action {
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Configure(settings) => settings.validate(),
+            Self::Stop { attempt } => crate::automation_occurrence::uuid(attempt),
+            Self::Show | Self::Approve => Ok(()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -469,6 +495,8 @@ struct Report {
     note: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     setup: Option<crate::model_setup::Status>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    setup_stop: Option<crate::model_setup::StopReceipt>,
 }
 pub fn confirmed(value: &Value, request: &Request) -> bool {
     let Ok(r) = serde_json::from_value::<Report>(value.clone()) else {
@@ -506,6 +534,7 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
         || r.execution_authorized
         || r.restart_requested
         || r.automatically_retried
+        || (matches!(request.command, Command::Stop { .. }) != r.setup_stop.is_some())
         || !(r.note
             == if r.saved.policy.automation {
                 AUTOMATION_NOTE
@@ -514,13 +543,38 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
             }
             || (!r.saved.policy.automation && r.setup.is_none() && r.note == LEGACY_NOTE)
             || (r.saved.policy.automation
-                && !matches!(request.command, Command::Approve { .. })
+                && !matches!(
+                    request.command,
+                    Command::Approve { .. } | Command::Stop { .. }
+                )
                 && r.note == LEGACY_AUTOMATION_NOTE))
     {
         return false;
     }
     match &request.command {
         Command::Show => !r.changed,
+        Command::Stop {
+            previous,
+            attempt_id,
+        } => {
+            r.changed
+                && r.saved == *previous
+                && r.setup_stop.as_ref().is_some_and(|stop| {
+                    stop.attempt_id == *attempt_id
+                        && !stop.physical_stop_verified
+                        && !stop.configuration_rolled_back
+                })
+                && r.setup.as_ref().is_some_and(|s| {
+                    s.current_policy_attempt
+                        && s.attempt.as_ref().is_some_and(|a| {
+                            a.id == *attempt_id
+                                && a.saved == *previous
+                                && a.runtime_id == request.expected_runtime_id
+                                && a.phase == crate::model_setup::Phase::Stopped
+                                && a.reason == Some(crate::model_setup::Reason::OwnerStopped)
+                        })
+                })
+        }
         Command::Approve { previous } => {
             r.changed
                 && r.saved == *previous
@@ -578,6 +632,26 @@ impl crate::NodeService {
                 drop(live);
                 let mut saved = Saved::from_config(config)?;
                 let mut changed = false;
+                let mut setup_stop = None;
+                if let Command::Stop {
+                    previous,
+                    attempt_id,
+                } = &request.command
+                {
+                    if remote && config.pointer("/management/allow_remote") != Some(&json!(true)) {
+                        bail!("Current local owner approval required for remote setup stop")
+                    }
+                    if *previous != saved {
+                        bail!("Bootstrap preferences changed; inspect before stopping")
+                    }
+                    setup_stop = Some(crate::model_setup::stop_locked(
+                        self,
+                        &saved,
+                        &request.expected_runtime_id,
+                        attempt_id,
+                    )?);
+                    changed = true;
+                }
                 if let Command::Approve { previous } = &request.command {
                     if remote && config.pointer("/management/allow_remote") != Some(&json!(true)) {
                         bail!("Current local owner approval required for remote bootstrap approval")
@@ -672,6 +746,7 @@ impl crate::NodeService {
                     success: true,
                     state: state(&saved.policy, binding, selections.len(), interpreter_count),
                     setup: Some(crate::model_setup::status(self, config, &saved, &live)),
+                    setup_stop,
                     automatic_setup_available: saved.policy.automation,
                     note: if saved.policy.automation {
                         AUTOMATION_NOTE.into()
@@ -714,7 +789,7 @@ pub fn render(value: &Value) -> Result<String> {
     ) {
         bail!("Unconfirmed bootstrap preferences report")
     }
-    Ok(format!(
+    let mut text = format!(
         "Node {} model bootstrap\nSaved mode: {:?}\nCatalog binding: {}\nState: {:?}\nRestart after setup: {}\n{}\n{}\n",
         r.node_id,
         r.saved.policy.mode,
@@ -738,7 +813,14 @@ pub fn render(value: &Value) -> Result<String> {
             ))
             .unwrap_or_else(|| "Setup status unavailable on this node version".into()),
         r.note
-    ))
+    );
+    if let Some(stop) = r.setup_stop {
+        text.push_str(&format!(
+            "Setup stop retained for {}. Transfer cancellation: {:?}. Selection/application from this attempt is fenced; shared-provider shutdown, rollback and removal of downloaded files are not confirmed. Inspect show before any new decision; this attempt is not retried.\n",
+            stop.attempt_id, stop.transfer_cancellation,
+        ));
+    }
+    Ok(text)
 }
 
 #[cfg(test)]

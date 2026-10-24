@@ -13,6 +13,14 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [attempt-specific setup stop](MODEL-SETUP-STOP.md) adds an exact
+owner control without disabling saved automation, changing selection or retrying
+uncertainty. The combined [execution/reply ownership checkpoint](REPLY-OWNERSHIP.md)
+passes both full Rust feature modes (1,073 tests plus one ignored each) and all
+twenty-eight native suites. It retains earlier capacity/stop-fixture failures and
+does not close automatic
+setup-to-inference health, approved default/model quality or release acceptance.
+
 EEF is the control plane: it validates requests, plans, authorizes, and observes
 work. EEFN is the node runtime: it interprets natural language when available,
 enforces permissions, executes authorized workloads, and reports results.
@@ -1463,6 +1471,11 @@ General owner configuration for non-text/vision models, role-based scheduling,
 default LM bootstrap, leases and lifecycle controllers are not yet implemented.
 
 ## Installation direction: MSI
+
+The [current packaging inspection and acceptance contract](MSI-PACKAGING.md)
+records existing .NET/Windows tools, config/secret initialization and updater
+selection migration requirements, and the WiX tooling terms requiring owner
+approval. No MSI tool was installed, agreement accepted or package produced.
 
 The owner requested MSI on 2026-09-11. Add separate EEF and EEFN MSI packages in
 a packaging increment, retaining current installers until replacements pass

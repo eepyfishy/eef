@@ -10,11 +10,16 @@ backend-to-browser dependency boundary, and the locked workspace/all-target
 Rust regression suite. Rust is pinned to 1.98.1 and Node to 24.20.0.
 
 The Windows headless job additionally builds command services and example
-helpers, then runs 23 sequential native synthetic regression scripts. Python
+helpers, then runs 26 sequential native synthetic regression scripts. Python
 3.11.9 is selected explicitly for the Python fixtures. These tests use isolated
 fixture configuration, loopback services, and synthetic artifacts, not installed
 user nodes or downloaded language models. The workflow file is the authoritative
 list of included suites; future feature tests must be added explicitly.
+
+The execution/reply ownership increment adds blocked-output/reconnect,
+reviewed-request and input-workflow suites. This source checkpoint needs a fresh
+hosted run; the accepted historical runs below
+cover twenty-three native suites, not these additional three.
 
 Each job fetches the locked dependency graph before offline builds/tests.
 Official checkout, Node setup, and Python setup actions are pinned by full
@@ -90,3 +95,16 @@ fixes; they are not the current acceptance status. The read-only record is
 
 This verifies that committed baseline, not the subsequent setup-guidance/
 doctor-hashing checkpoint, physical acceptance or stable-release readiness.
+
+## Subsequent backend checkpoint
+
+[Run 39961728033](https://github.com/eepyfishy/eef/actions/runs/39961728033) passes
+all four matrix jobs and twenty-three Windows native suites for the published
+setup-guidance/doctor-hashing source at
+`f4e4c665a44a679b461ec994de0d4c88c7523149`. The dispatch order and successful
+terminal jobs are checked in `.validation/f4e4c66-ci-acceptance.json`. Separate
+local verification passes 1,058 tests plus one ignored per feature mode and all
+twenty-five native suites; the additional real CPU lifecycle/inference test is
+documented in [model lifecycle](MODEL-LIFECYCLE.md). None establishes approved
+interpreter quality, complete automatic onboarding, physical two-PC, installer/
+signing/Defender or stable-release acceptance.

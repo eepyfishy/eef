@@ -1,4 +1,4 @@
-//! Bounds admitted network request futures, not external side effects or CPU/RAM.
+//! Bounds execution and separately owned replies, not external effects or CPU/RAM.
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -32,6 +32,31 @@ impl RequestLimits {
 pub(crate) struct RequestBudget {
     work: Arc<Semaphore>,
     control: Arc<Semaphore>,
+    work_replies: Arc<Semaphore>,
+    control_replies: Arc<Semaphore>,
+}
+
+#[must_use]
+pub(crate) struct Admission {
+    execution: OwnedSemaphorePermit,
+    reply: ReplyPermit,
+}
+#[must_use]
+pub(crate) struct ReplyPermit {
+    _permit: OwnedSemaphorePermit,
+}
+impl Admission {
+    /// Execution has ended; retain reply ownership through the terminal write.
+    pub fn into_reply(self) -> ReplyPermit {
+        let (execution, reply) = self.into_parts();
+        drop(execution);
+        reply
+    }
+    /// Blocking callbacks keep execution even when their waiter is cancelled.
+    /// The waiter retains reply ownership, including when a callback panics.
+    pub fn into_parts(self) -> (OwnedSemaphorePermit, ReplyPermit) {
+        (self.execution, self.reply)
+    }
 }
 
 impl RequestBudget {
@@ -40,10 +65,15 @@ impl RequestBudget {
         Ok(Self {
             work: Arc::new(Semaphore::new(limits.work)),
             control: Arc::new(Semaphore::new(limits.control)),
+            // One completed reply per class may still be flushing when its peer
+            // submits the next command. Do not borrow reserved control capacity
+            // for work replies or queue unadmitted requests.
+            work_replies: Arc::new(Semaphore::new(limits.work + 1)),
+            control_replies: Arc::new(Semaphore::new(limits.control + 1)),
         })
     }
 
-    pub fn admit(&self, capability: &str, action: &str) -> Option<OwnedSemaphorePermit> {
+    pub fn admit(&self, capability: &str, action: &str) -> Option<Admission> {
         // Scheduling allowance only; NodeEngine still performs all policy checks.
         let control = capability == "system.ping"
             || (capability == "node.configure"
@@ -58,12 +88,23 @@ impl RequestBudget {
                         | "permission_status"
                         | "python_policy_status"
                 ));
-        let pool = if control { &self.control } else { &self.work };
-        pool.clone().try_acquire_owned().ok()
+        self.admit_class(control)
     }
     /// Distinct authenticated read-only wire query, not an executable capability.
-    pub fn admit_receipt(&self) -> Option<OwnedSemaphorePermit> {
-        self.control.clone().try_acquire_owned().ok()
+    pub fn admit_receipt(&self) -> Option<Admission> {
+        self.admit_class(true)
+    }
+    fn admit_class(&self, control: bool) -> Option<Admission> {
+        let (execution, replies) = if control {
+            (&self.control, &self.control_replies)
+        } else {
+            (&self.work, &self.work_replies)
+        };
+        let execution = execution.clone().try_acquire_owned().ok()?;
+        let reply = ReplyPermit {
+            _permit: replies.clone().try_acquire_owned().ok()?,
+        };
+        Some(Admission { execution, reply })
     }
 }
 
@@ -71,6 +112,121 @@ impl RequestBudget {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn replies_are_bounded_per_class_and_cannot_borrow_reserved_control_capacity() {
+        for work in [1, 3] {
+            let budget = RequestBudget::new(&RequestLimits { work, control: 1 }).unwrap();
+            let mut replies = Vec::new();
+            for _ in 0..work + 1 {
+                replies.push(
+                    budget
+                        .admit("node.configure", "model_command")
+                        .unwrap()
+                        .into_reply(),
+                );
+            }
+            for _ in 0..8 {
+                assert!(
+                    budget.admit("node.configure", "model_command").is_none(),
+                    "bounded pending replies; failed admissions must not leak slots"
+                );
+            }
+            let first = budget.admit_receipt().unwrap().into_reply();
+            let second = budget.admit_receipt().unwrap().into_reply();
+            assert!(budget.admit_receipt().is_none());
+            drop(first);
+            assert!(
+                budget.admit_receipt().is_some(),
+                "control capacity recovers independently"
+            );
+            drop(second);
+            replies.pop();
+            let executing = (0..work)
+                .map(|_| budget.admit("llm.infer", "run"))
+                .collect::<Vec<_>>();
+            assert!(executing[0].is_some());
+            assert!(
+                executing.iter().skip(1).all(Option::is_none),
+                "remaining reply capacity is still bounded"
+            );
+            drop(executing);
+            drop(replies);
+            let running = (0..work)
+                .map(|_| budget.admit("llm.infer", "run").unwrap())
+                .collect::<Vec<_>>();
+            assert!(
+                budget.admit("llm.infer", "run").is_none(),
+                "execution limit is unchanged"
+            );
+            assert!(budget.admit_receipt().is_some());
+            drop(running);
+        }
+    }
+
+    #[tokio::test]
+    async fn blocking_callback_keeps_execution_after_waiter_cancellation() {
+        let budget = RequestBudget::new(&RequestLimits {
+            work: 1,
+            control: 1,
+        })
+        .unwrap();
+        let (execution, reply) = budget.admit_receipt().unwrap().into_parts();
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, gate) = std::sync::mpsc::channel();
+        let (finished, observed) = tokio::sync::oneshot::channel();
+        let waiter = tokio::spawn(async move {
+            let _reply = reply;
+            let _ = tokio::task::spawn_blocking(move || {
+                let _ = entered.send(());
+                let _ = gate.recv();
+                drop(execution);
+                let _ = finished.send(());
+            })
+            .await;
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), started)
+            .await
+            .unwrap()
+            .unwrap();
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        assert!(
+            budget.admit_receipt().is_none(),
+            "a detached blocking callback retains execution capacity"
+        );
+        assert!(budget.admit("llm.infer", "run").is_some());
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), observed)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(budget.admit_receipt().is_some());
+    }
+
+    #[tokio::test]
+    async fn failed_blocking_callback_returns_execution_but_keeps_its_error_reply_bounded() {
+        let budget = RequestBudget::new(&RequestLimits {
+            work: 1,
+            control: 1,
+        })
+        .unwrap();
+        let (execution, reply) = budget.admit_receipt().unwrap().into_parts();
+        let failed = tokio::task::spawn_blocking(move || {
+            let _execution = execution;
+            panic!("fixture callback failure; no external effects")
+        })
+        .await;
+        assert!(failed.unwrap_err().is_panic());
+        let second_reply = budget.admit_receipt().unwrap().into_reply();
+        assert!(
+            budget.admit_receipt().is_none(),
+            "panic replies still consume bounded reply capacity"
+        );
+        assert!(budget.admit("llm.infer", "run").is_some());
+        drop(second_reply);
+        assert!(budget.admit_receipt().is_some());
+        drop(reply);
+    }
     #[test]
     fn setup_inspection_uses_bounded_control_capacity_not_work_or_setup_mutation_capacity() {
         let budget = RequestBudget::new(&RequestLimits {

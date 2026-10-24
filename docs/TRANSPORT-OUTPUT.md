@@ -1,5 +1,10 @@
 # Bounded node session output (unreleased after alpha.6)
 
+A later [execution/reply ownership increment](REPLY-OWNERSHIP.md) addresses a
+reproduced completed-reply capacity mechanism with separately bounded reply
+ownership. Its combined validation is pending. The dated initial evidence below
+does not establish acceptance of that subsequent increment.
+
 The existing node-to-coordinator encrypted connection now has one shared output
 guard. This does not add a transport, retry a command, change authentication or
 replace the reviewed execution boundary.
@@ -41,7 +46,7 @@ authorized by a broken connection.
 
 The deadline is cooperative, not a hard real-time guarantee: synchronous encoding,
 configuration I/O and native/backend activity are not preempted by it. Request
-capacity and reserved controls are unchanged. This does not diagnose or fix the
+capacity and reserved controls were unchanged at the initial checkpoint. It did not diagnose or fix the
 intermittent `node_busy`/`not_started` reply recorded in the CPU settings checkpoint.
 
 ## Evidence (2026-10-11)

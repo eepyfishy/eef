@@ -3,6 +3,58 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unreleased: execution/reply ownership and setup stop
+
+A deterministic encrypted-frame/flush-gate test reproduces a completed reply
+retaining execution capacity after the peer reads it. Admission now reserves
+separate bounded reply ownership, releases execution only at terminal completion,
+and keeps reserved control output independent. Saved execution limits, framing,
+write deadlines and no-replay remain; blocking callbacks retain execution after
+waiter cancellation. Both final workspace/all-target feature modes pass 1,073
+tests plus one existing ignored profiler each; fresh headless apps/helpers build.
+All twenty-eight native suites pass in one sequential run, including strict
+one-slot model controls, stop/unknown evidence, blocked-output/reconnect, reviewed
+requests, input workflows and local/remote setup stop. All 295 source/resource/
+workflow and nine native artifact hashes match, and no matching fixture processes
+remain observed. Earlier capacity refusals and the outdated stop expectation's
+timeout remain retained, not retroactively accepted. Scope, ownership bounds and
+evidence are in [the contract](REPLY-OWNERSHIP.md). This is local checkpoint
+acceptance, not approved model quality/default, physical two-PC, MSI/signing/
+Defender or stable-release acceptance. Hosted CI remains a separate check; no
+installed/remote node, release, version or feed changed.
+
+## Interim: setup stop before combined reply-ownership correction
+
+Shared node/EEF commands can stop one current setup before configuration commit,
+without disabling saved automation. The durable stop precedes exact-transfer
+cancellation; admission/selection recheck it, and late work cannot overwrite it.
+Remote consent, exact runtime/policy/attempt scope and no-replay remain required.
+Physical provider shutdown/rollback are not claimed. Both full Rust feature modes
+pass 1,067 tests plus one ignored each; the changed local/remote setup fixture
+passes. Combined native validation stops after fifteen passes in model metadata;
+a fresh diagnostic observes a not-started capacity refusal on a sequential model
+mutation. No cause/fix or complete native acceptance is claimed. The remaining
+nine suites pass separately, yielding twenty-four passing suite results without
+erasing the failure. All 294 source/resource and nine native hashes match, and no
+matching fixture processes remain observed;
+see [scope and acceptance](MODEL-SETUP-STOP.md). MSI tooling remains pending the
+owner's decision; unrelated backend development continues. This stop checkpoint
+is not published; `f4e4c66` remains the published source baseline.
+
+## Verification: fresh real CPU workload at the setup-guidance checkpoint
+
+Published source `f4e4c66` passes the existing real-model regression in isolated
+one-PC processes (`real-model-ylrIWh`). It reuses the verified 1,280,835,840-byte
+Qwen3.5-2B artifact without a download/copy, uses CPU-only two-thread llama.cpp
+with thinking disabled, and performs actual generation through reviewed grants
+and pinned TLS. Targeted unload/reload, restart with stable node identity,
+retained results/no replay, owner-applied idle unloading and on-demand startup
+pass. The artifact's SHA-256 is unchanged and no matching test processes remain
+observed. Installed nodes, shared-provider model choices and update feeds are
+not changed. This is operational regression evidence, not interpreter quality,
+an approved default, automatic setup-to-inference verification or physical
+two-PC acceptance. See [model lifecycle](MODEL-LIFECYCLE.md).
+
 ## Unreleased: shared setup/model guidance and EEF inspection
 
 The prior binary reproduces misleading interpreter-choice guidance while its
@@ -32,7 +84,10 @@ The owner-authorized [GitHub workflow](CI.md) is published independently through
 `c00e3d4`, excluding the backend checkpoint described above. All four matrix jobs and
 the twenty-three Windows native suites pass in
 [run 39958661651](https://github.com/eepyfishy/eef/actions/runs/39958661651).
-Separate GitHub verification is required for this backend checkpoint's revision.
+The subsequent backend revision `f4e4c66` also passes all four matrix jobs and
+twenty-three Windows native suites in
+[run 39961728033](https://github.com/eepyfishy/eef/actions/runs/39961728033),
+separately from its twenty-five-suite local acceptance and real CPU regression.
 No installed/remote node, model/default, version, release or update feed changed.
 
 ## Unreleased: single-view timer observation

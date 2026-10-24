@@ -1178,9 +1178,7 @@ async fn remote_model_bootstrap_cli(
     use eefn::model_bootstrap::{Action, Command};
     use serde_json::json;
     eefn::network::validate_remote_node_id(node)?;
-    if let Action::Configure(settings) = action {
-        settings.validate()?;
-    }
+    action.validate()?;
     let mutation = !matches!(action, Action::Show);
     let mut sending_mutation = false;
     let mut requested = serde_json::Value::Null;
@@ -1214,6 +1212,10 @@ async fn remote_model_bootstrap_cli(
             Action::Show => unreachable!(),
             Action::Configure(settings) => settings.command(previous)?,
             Action::Approve => Command::Approve { previous },
+            Action::Stop { attempt } => Command::Stop {
+                previous,
+                attempt_id: attempt.clone(),
+            },
         };
         request.validate()?;
         requested = json!(request.command);

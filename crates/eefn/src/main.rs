@@ -1822,9 +1822,7 @@ async fn execute_model_bootstrap(
 ) -> Result<serde_json::Value> {
     use eefn::model_bootstrap::{Action, Command, Request};
     use serde_json::{Value, json};
-    if let Action::Configure(settings) = action {
-        settings.validate()?;
-    }
+    action.validate()?;
     if eefn::setup::instance_lock(&args.config)?.is_some() {
         bail!("Start this node first; Bootstrap preferences commands never launch a runtime")
     }
@@ -1881,6 +1879,10 @@ async fn execute_model_bootstrap(
             Action::Show => return Ok::<_, anyhow::Error>(inspected),
             Action::Configure(settings) => settings.command(previous)?,
             Action::Approve => Command::Approve { previous },
+            Action::Stop { attempt } => Command::Stop {
+                previous,
+                attempt_id: attempt.clone(),
+            },
         };
         request.validate()?;
         requested = json!(request.command);
@@ -3712,6 +3714,46 @@ mod tests {
                 command: eefn::model_bootstrap::Action::Approve,
             })
         ));
+    }
+    #[test]
+    fn setup_stop_requires_one_explicit_attempt_and_has_no_restart_or_revoke_flags() {
+        use clap::Parser;
+        let id = uuid::Uuid::new_v4().to_string();
+        let args = super::Args::try_parse_from([
+            "eefn",
+            "model-bootstrap-policy",
+            "stop",
+            "--attempt",
+            &id,
+        ])
+        .unwrap();
+        let Some(super::Commands::ModelBootstrapPolicy { command }) = args.command else {
+            panic!("wrong command")
+        };
+        command.validate().unwrap();
+        assert!(
+            matches!(command, eefn::model_bootstrap::Action::Stop { attempt } if attempt == id)
+        );
+        for args in [
+            vec!["eefn", "model-bootstrap-policy", "stop"],
+            vec![
+                "eefn",
+                "model-bootstrap-policy",
+                "stop",
+                "--attempt",
+                &id,
+                "--restart-after-setup",
+            ],
+        ] {
+            assert!(super::Args::try_parse_from(args).is_err());
+        }
+        assert!(
+            eefn::model_bootstrap::Action::Stop {
+                attempt: "invalid".into()
+            }
+            .validate()
+            .is_err()
+        );
     }
     #[test]
     fn bootstrap_restart_flags_are_explicit_conflicting_and_not_ordinary_restarts() {

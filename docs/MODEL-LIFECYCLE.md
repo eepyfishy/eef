@@ -252,3 +252,27 @@ automatic scheduling/refusal receipts `automation-schedules-Nj7kAS`, node input
 and answers `request-input-UP4teB`, and reviewed execution/recovery
 `request-review-WPdrnI`. These isolated fixtures are not physical-network,
 general interpreter-quality or stable-release acceptance.
+
+## Fresh published-checkpoint CPU regression (2026-10-23)
+
+Source `f4e4c665a44a679b461ec994de0d4c88c7523149` passes the unchanged
+`tools/test-real-model.mjs` regression in `real-model-ylrIWh`. It uses current
+headless applications and the existing verified llama.cpp build 10621, reusing
+the cached Qwen3.5-2B Q4_K_M artifact with SHA-256
+`aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223`.
+The artifact is not downloaded/copied and still matches its hash afterward.
+
+The public result files confirm real generation through reviewed grants and
+pinned TLS, CPU-only `-ngl 0`, two execution/batch threads and disabled thinking.
+They also confirm targeted unload/reload without node restart, historical
+unload receipt reuse without replay, inference after reload, a new runtime with
+stable node identity, completed results retained without replay, automatic idle
+unload under an explicitly applied owner policy, and grant-triggered on-demand
+loading followed by idle cleanup. Both the main and on-demand results pass;
+the process exits zero and no matching fixture processes remain observed.
+
+This uses manual owner selection and explicit runtime restarts. It does not
+verify automatic bootstrap-to-inference health, choose an automatic default,
+establish interpretation quality, measure physical memory release or prove
+physical two-PC behavior. The larger shared Ollama models are not selected or
+loaded/unloaded by this test, and no installed node or release/feed is updated.

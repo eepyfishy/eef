@@ -13,6 +13,8 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 #[derive(Clone)]
 pub(crate) struct Fence {
+    /// None is used only before a new approval is durably admitted.
+    pub attempt_id: Option<String>,
     pub saved: Saved,
     pub owner_approved: bool,
     pub backend: Backend,
@@ -48,6 +50,23 @@ impl Fence {
             .is_some_and(|v| !v.is_empty())
         {
             bail!("An applied model setup already exists")
+        }
+        if let Some(id) = &self.attempt_id {
+            let record = Journal::new(service)
+                .read()?
+                .context("Retained setup attempt unavailable")?;
+            if record.id != *id
+                || record.saved != self.saved
+                || record.runtime_id != self.runtime_id
+                || record.owner_approved != self.owner_approved
+                || record.models_sha256 != self.models_sha256
+                || !matches!(
+                    record.phase,
+                    Phase::Approved | Phase::Inspecting | Phase::Downloading | Phase::Verifying
+                )
+            {
+                bail!("Retained setup authority changed; no admission or selection")
+            }
         }
         Ok(())
     }
@@ -86,6 +105,7 @@ impl Phase {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reason {
+    OwnerStopped,
     Preflight,
     ProviderMetadata,
     TransferFailed,
@@ -180,6 +200,11 @@ impl Attempt {
         ) && !self.saved.policy.restart_after_setup
         {
             bail!("Automatic activation was not authorized")
+        }
+        if self.reason == Some(Reason::OwnerStopped)
+            && (self.phase != Phase::Stopped || self.activation.is_some())
+        {
+            bail!("Owner stop must precede configuration/application")
         }
         if matches!(
             self.phase,
@@ -587,6 +612,7 @@ async fn tick(service: Arc<NodeService>, runtime: &str, journal: &Journal) -> Re
     let retained = journal.read()?;
     if let Some(mut record) = retained.clone().filter(|r| r.phase == Phase::Approved) {
         let fence = Fence {
+            attempt_id: Some(record.id.clone()),
             saved: record.saved.clone(),
             owner_approved: record.owner_approved,
             backend: record.backend,
@@ -630,6 +656,7 @@ async fn tick(service: Arc<NodeService>, runtime: &str, journal: &Journal) -> Re
     if approved {
         let proceed = service.inspect_grant_configuration(|config| {
             let fence = Fence {
+                attempt_id: Some(record.id.clone()),
                 saved: record.saved.clone(),
                 owner_approved: record.owner_approved,
                 backend: record.backend,
@@ -661,8 +688,28 @@ async fn tick(service: Arc<NodeService>, runtime: &str, journal: &Journal) -> Re
     ))
     .await;
     if let Err(reason) = outcome {
+        settle_failure(&service, &mut record, journal, reason)?;
+    }
+    Ok(())
+}
+
+fn settle_failure(
+    service: &NodeService,
+    record: &mut Attempt,
+    journal: &Journal,
+    reason: Reason,
+) -> Result<()> {
+    service.inspect_grant_configuration(|_| {
+        // Serialize failure cleanup with stop, admission and commit. A concurrent
+        // owner stop must not be replaced or have cancellation retried (including
+        // an unknown outcome). Only a new owner decision can request that.
+        if journal.read()?.is_some_and(|r| {
+            r.id == record.id && r.phase == Phase::Stopped && r.reason == Some(Reason::OwnerStopped)
+        }) {
+            return Ok(());
+        }
         if record.download_admitted {
-            let _ = crate::model_manager::cancel(&service, Some(&record.id));
+            let _ = crate::model_manager::cancel(service, Some(&record.id));
         }
         let phase = if reason == Reason::ConfigurationUncertain
             || matches!(record.phase, Phase::Committing | Phase::Configured)
@@ -674,9 +721,8 @@ async fn tick(service: Arc<NodeService>, runtime: &str, journal: &Journal) -> Re
             Phase::Failed
         };
         record.phase(phase, Some(reason));
-        journal.write(&record)?;
-    }
-    Ok(())
+        journal.write(record)
+    })
 }
 
 fn new_attempt(
@@ -709,6 +755,73 @@ fn new_attempt(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferCancellation {
+    Requested,
+    NotRequested,
+    Unknown,
+}
+
+/// The durable stop fences setup, not the lifetime of a shared provider.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StopReceipt {
+    pub attempt_id: String,
+    pub transfer_cancellation: TransferCancellation,
+    pub physical_stop_verified: bool,
+    pub configuration_rolled_back: bool,
+}
+
+/// Caller holds the runtime binding and configuration mutex, also used by
+/// transfer admission and configuration commit. No policy or settings are saved.
+pub(crate) fn stop_locked(
+    service: &NodeService,
+    saved: &Saved,
+    runtime: &str,
+    attempt_id: &str,
+) -> Result<StopReceipt> {
+    crate::automation_occurrence::uuid(attempt_id)?;
+    let journal = Journal::new(service);
+    let mut record = journal
+        .read()?
+        .context("No retained setup attempt; nothing was stopped")?;
+    if record.id != attempt_id
+        || record.saved != *saved
+        || record.runtime_id != runtime
+        || !matches!(
+            record.phase,
+            Phase::Approved | Phase::Inspecting | Phase::Downloading | Phase::Verifying
+        )
+    {
+        bail!("Setup attempt changed or passed its stoppable phase; inspect retained evidence")
+    }
+    // Publication first: even a cancellation error cannot restore permission to
+    // select a model or schedule an application restart from this attempt.
+    record.phase(Phase::Stopped, Some(Reason::OwnerStopped));
+    journal.write(&record)?;
+    let exact_active = {
+        let live = service.live.lock().unwrap();
+        live["download"]["id"] == attempt_id && live["download"]["state"] == "downloading"
+    };
+    let transfer_cancellation = if exact_active {
+        match crate::model_manager::cancel(service, Some(attempt_id)) {
+            Ok(true) => TransferCancellation::Requested,
+            Ok(false) => TransferCancellation::NotRequested,
+            Err(_) => TransferCancellation::Unknown,
+        }
+    } else {
+        TransferCancellation::NotRequested
+    };
+    service.setup_changed.notify_one();
+    Ok(StopReceipt {
+        attempt_id: attempt_id.into(),
+        transfer_cancellation,
+        physical_stop_verified: false,
+        configuration_rolled_back: false,
+    })
+}
+
 /// Caller holds the runtime binding and configuration mutex. Consent does not
 /// change policy, probe providers, or dispatch an installation in this call.
 pub(crate) fn approve_locked(
@@ -722,6 +835,7 @@ pub(crate) fn approve_locked(
     }
     let record = new_attempt(service, config, saved.clone(), runtime, true)?;
     Fence {
+        attempt_id: None,
         saved: saved.clone(),
         owner_approved: true,
         backend: record.backend,
@@ -754,6 +868,7 @@ async fn perform(
         _ => return Err(Reason::Preflight),
     };
     let fence = Fence {
+        attempt_id: Some(record.id.clone()),
         saved: record.saved.clone(),
         owner_approved: record.owner_approved,
         backend: record.backend,

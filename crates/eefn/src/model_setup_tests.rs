@@ -22,6 +22,16 @@ impl Drop for Fixture {
     }
 }
 impl Fixture {
+    fn stop(&self, attempt_id: &str) -> Result<StopReceipt> {
+        self.service.inspect_grant_configuration(|config| {
+            stop_locked(
+                &self.service,
+                &Saved::from_config(config)?,
+                &self.runtime,
+                attempt_id,
+            )
+        })
+    }
     fn prompt(&self) {
         let mut config = self.service.read_config().unwrap();
         config["model_bootstrap"]["mode"] = json!("prompt");
@@ -128,6 +138,261 @@ impl Fixture {
         .await
         .unwrap();
     }
+}
+
+#[tokio::test]
+async fn owner_setup_stop_before_inspection_is_durable_without_policy_change_or_replay() {
+    let f = Fixture::new(false).await;
+    f.prompt();
+    f.approve().unwrap();
+    let record = f.record();
+    let before = std::fs::read(&f.service.config_path).unwrap();
+    let receipt = f.stop(&record.id).unwrap();
+    assert_eq!(
+        receipt.transfer_cancellation,
+        TransferCancellation::NotRequested
+    );
+    assert!(!receipt.physical_stop_verified);
+    assert!(!receipt.configuration_rolled_back);
+    assert_eq!(f.record().phase, Phase::Stopped);
+    assert_eq!(f.record().reason, Some(Reason::OwnerStopped));
+    assert!(
+        f.stop(&record.id).is_err(),
+        "no repeated cancellation dispatch"
+    );
+    assert!(
+        f.approve().is_err(),
+        "same policy cannot approve another attempt"
+    );
+    f.tick().await;
+    assert_eq!(f.tags_started.load(Ordering::SeqCst), 0);
+    assert_eq!(f.pulls.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read(&f.service.config_path).unwrap(), before);
+    let service = f.service.clone();
+    let runtime = uuid::Uuid::new_v4().to_string();
+    service.live.lock().unwrap()["runtime_id"] = json!(runtime);
+    tick(service.clone(), &runtime, &Journal::new(&service))
+        .await
+        .unwrap();
+    assert_eq!(f.record().phase, Phase::Stopped);
+    assert_eq!(f.record().reason, Some(Reason::OwnerStopped));
+    assert_eq!(f.tags_started.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn owner_setup_stop_during_provider_inspection_blocks_late_admission() {
+    let f = Fixture::new(false).await;
+    f.hold_tags.store(true, Ordering::SeqCst);
+    let service = f.service.clone();
+    let runtime = f.runtime.clone();
+    let task =
+        tokio::spawn(async move { tick(service.clone(), &runtime, &Journal::new(&service)).await });
+    wait_count(&f.tags_started).await;
+    let record = f.record();
+    let before = std::fs::read(&f.service.config_path).unwrap();
+    f.stop(&record.id).unwrap();
+    f.hold_tags.store(false, Ordering::SeqCst);
+    f.tags_gate.notify_waiters();
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(f.record().reason, Some(Reason::OwnerStopped));
+    assert_eq!(f.record().phase, Phase::Stopped);
+    assert_eq!(f.pulls.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read(&f.service.config_path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn owner_setup_stop_during_transfer_preserves_stop_after_provider_finishes() {
+    let f = Fixture::new(false).await;
+    f.opt_in_restart();
+    f.hold_pull.store(true, Ordering::SeqCst);
+    let service = f.service.clone();
+    let runtime = f.runtime.clone();
+    let task =
+        tokio::spawn(async move { tick(service.clone(), &runtime, &Journal::new(&service)).await });
+    wait_count(&f.pulls).await;
+    let record = f.record();
+    assert_eq!(record.phase, Phase::Downloading);
+    let before = std::fs::read(&f.service.config_path).unwrap();
+    let receipt = f.stop(&record.id).unwrap();
+    assert_eq!(
+        receipt.transfer_cancellation,
+        TransferCancellation::Requested
+    );
+    f.hold_pull.store(false, Ordering::SeqCst);
+    f.pull_gate.notify_waiters();
+    tokio::time::timeout(Duration::from_secs(5), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(f.record().phase, Phase::Stopped);
+    assert_eq!(f.record().reason, Some(Reason::OwnerStopped));
+    assert_eq!(std::fs::read(&f.service.config_path).unwrap(), before);
+    assert!(f.record().activation.is_none());
+    f.tick().await;
+    assert_eq!(f.pulls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn owner_setup_stop_fences_configuration_commit_and_leaves_other_transfer_untouched() {
+    let f = Fixture::new(true).await;
+    let snapshot = f.service.read_config().unwrap();
+    let mut record = new_attempt(
+        &f.service,
+        &snapshot,
+        Saved::from_config(&snapshot).unwrap(),
+        &f.runtime,
+        false,
+    )
+    .unwrap();
+    let journal = Journal::new(&f.service);
+    journal.write(&record).unwrap();
+    record.phase(Phase::Verifying, None);
+    journal.write(&record).unwrap();
+    let fence = Fence {
+        attempt_id: Some(record.id.clone()),
+        saved: record.saved.clone(),
+        owner_approved: false,
+        backend: Backend::Ollama,
+        runtime_id: f.runtime.clone(),
+        models_sha256: record.models_sha256.clone(),
+    };
+    let unrelated = json!({"id":uuid::Uuid::new_v4().to_string(),"state":"downloading","cancel_requested":false});
+    f.service.live.lock().unwrap()["download"] = unrelated.clone();
+    assert_eq!(
+        f.stop(&record.id).unwrap().transfer_cancellation,
+        TransferCancellation::NotRequested
+    );
+    assert!(
+        commit(
+            &f.service,
+            &fence,
+            &mut record,
+            &journal,
+            None,
+            Some("fixture:latest")
+        )
+        .is_err()
+    );
+    assert_eq!(f.service.read_config().unwrap(), snapshot);
+    assert_eq!(f.service.live.lock().unwrap()["download"], unrelated);
+    assert_eq!(f.record().reason, Some(Reason::OwnerStopped));
+    // A stale worker cannot overwrite or restart after the durable stop.
+    record.phase(Phase::Committing, None);
+    assert!(journal.write(&record).is_err());
+}
+
+#[tokio::test]
+async fn owner_setup_stop_refuses_wrong_scope_unavailable_evidence_and_late_phases() {
+    let f = Fixture::new(true).await;
+    assert!(f.stop(&uuid::Uuid::new_v4().to_string()).is_err());
+    assert!(!Journal::new(&f.service).path.exists());
+    let snapshot = f.service.read_config().unwrap();
+    let mut record = new_attempt(
+        &f.service,
+        &snapshot,
+        Saved::from_config(&snapshot).unwrap(),
+        &f.runtime,
+        false,
+    )
+    .unwrap();
+    let journal = Journal::new(&f.service);
+    journal.write(&record).unwrap();
+    assert!(f.stop(&uuid::Uuid::new_v4().to_string()).is_err());
+    assert!(
+        stop_locked(
+            &f.service,
+            &record.saved,
+            &uuid::Uuid::new_v4().to_string(),
+            &record.id
+        )
+        .is_err()
+    );
+    let changed = Saved::new(record.saved.policy.clone(), record.saved.revision + 1).unwrap();
+    assert!(stop_locked(&f.service, &changed, &f.runtime, &record.id).is_err());
+    record.phase(Phase::Verifying, None);
+    journal.write(&record).unwrap();
+    record.phase(Phase::Committing, None);
+    journal.write(&record).unwrap();
+    assert!(
+        f.stop(&record.id).is_err(),
+        "no rollback claim after commit intent"
+    );
+    assert_eq!(f.record().phase, Phase::Committing);
+    std::fs::write(&journal.path, b"unavailable evidence").unwrap();
+    assert!(f.stop(&record.id).is_err());
+    assert_eq!(
+        std::fs::read(&journal.path).unwrap(),
+        b"unavailable evidence"
+    );
+}
+
+#[tokio::test]
+async fn owner_setup_stop_survives_unavailable_transfer_cancellation_without_false_confirmation() {
+    let f = Fixture::new(false).await;
+    f.prompt();
+    f.approve().unwrap();
+    let mut record = f.record();
+    let before = std::fs::read(&f.service.config_path).unwrap();
+    let journal = Journal::new(&f.service);
+    record.phase(Phase::Inspecting, None);
+    journal.write(&record).unwrap();
+    record.backend = Backend::Ollama;
+    record.download_admitted = true;
+    record.phase(Phase::Downloading, None);
+    journal.write(&record).unwrap();
+    let progress = json!({"id":record.id,"model_id":"fixture","backend":"ollama","definition_sha256":"a".repeat(64),"state":"downloading"});
+    // Keep a real receipt owner, then inject temporary journal unavailability
+    // without starting provider I/O. Restoring it must not cause a hidden retry.
+    let kept = {
+        let mut receipts = f.service.download_receipts.lock().unwrap();
+        receipts
+            .begin(
+                &f.service.config_path,
+                "node",
+                &f.service.read_config().unwrap(),
+                &progress,
+            )
+            .unwrap();
+        std::mem::replace(
+            &mut *receipts,
+            crate::download_receipts::Journal::Unavailable,
+        )
+    };
+    f.service.live.lock().unwrap()["download"] = progress;
+    let receipt = f.stop(&record.id).unwrap();
+    assert_eq!(receipt.transfer_cancellation, TransferCancellation::Unknown);
+    assert!(!receipt.physical_stop_verified);
+    assert!(!receipt.configuration_rolled_back);
+    assert_eq!(f.record().phase, Phase::Stopped);
+    assert_eq!(f.record().reason, Some(Reason::OwnerStopped));
+    assert_ne!(
+        f.service.live.lock().unwrap()["download"]["cancel_requested"],
+        true
+    );
+    *f.service.download_receipts.lock().unwrap() = kept;
+    settle_failure(&f.service, &mut record, &journal, Reason::TransferFailed).unwrap();
+    assert!(
+        !f.service
+            .download_receipts
+            .lock()
+            .unwrap()
+            .get(&record.id)
+            .unwrap()
+            .unwrap()
+            .cancel_requested
+    );
+    assert_ne!(
+        f.service.live.lock().unwrap()["download"]["cancel_requested"],
+        true
+    );
+    f.tick().await;
+    assert_eq!(f.pulls.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read(&f.service.config_path).unwrap(), before);
 }
 
 #[tokio::test]
@@ -674,6 +939,7 @@ async fn setup_fence_refuses_revoked_policy_model_catalog_and_runtime_drift() {
         let f = Fixture::new(false).await;
         let before = f.service.read_config().unwrap();
         let fence = Fence {
+            attempt_id: None,
             owner_approved: false,
             saved: Saved::from_config(&before).unwrap(),
             backend: Backend::Ollama,

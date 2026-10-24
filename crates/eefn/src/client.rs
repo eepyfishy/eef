@@ -20,6 +20,8 @@ use crate::protocol::{
     write_message,
 };
 use crate::session_output::send as write_session_frame;
+use crate::session_output::send_completed as write_completed_frame;
+use crate::session_output::send_reply as write_reply_frame;
 
 #[path = "client_peer.rs"]
 mod peer_delivery;
@@ -765,20 +767,21 @@ impl NodeClient {
                     let writer = writer.clone();
                     let failed = output_write_failed.clone();
                     let node = self.config.node_id.clone();
+                    let (execution, reply) = permit.into_parts();
                     tasks.spawn(async move {
                         // The control permit remains owned by the blocking callback
                         // even if its network waiter/runtime is cancelled.
                         let result = tokio::task::spawn_blocking(move || {
                             let report = ledger.request_stop_scope(&request.scope, &issuer, &session, &node);
-                            (permit,report)
+                            (execution,report)
                         }).await;
                         let (held, response) = match result {
                             Ok((permit,Ok(report))) => (Some(permit),success_response(&request_id,json!(report))),
                             Ok((permit,Err(_))) => (Some(permit),json!({"type":"response","id":request_id,"success":false,"error_type":"GrantStopUnconfirmed","error":"Stop intent unconfirmed; inspect original work. No retry or new execution."})),
                             Err(_) => (None,json!({"type":"response","id":request_id,"success":false,"error_type":"GrantStopUnconfirmed","error":"Stop callback unavailable; effects remain unknown."})),
                         };
-                        let _held = held;
-                        let _ = write_session_frame(&crypto,&writer,&failed,&response).await;
+                        drop(held);
+                        let _ = write_reply_frame(&crypto,&writer,&failed,&response,Some(reply)).await;
                     });
                 } else {
                     let response = json!({"type":"response","id":request_id,"success":false,"error_type":"GrantStopDenied","error":"Stop requires a current pinned scope, journal and bounded control capacity."});
@@ -829,14 +832,15 @@ impl NodeClient {
                 let writer = writer.clone();
                 let crypto = self.crypto.clone();
                 let write_failed = output_write_failed.clone();
+                let (execution, reply) = permit.into_parts();
                 tasks.spawn(async move {
                     let read = tokio::task::spawn_blocking(move || {
                         let result = if let Some(digest)=digest {
                             ledger.result(&issuer,&query.grant_id,&digest)
                         } else {ledger.receipt(&issuer, &query.grant_id)};
-                        (result, permit)
+                        (result, execution)
                     }).await;
-                    let (result, _permit) = match read {
+                    let (result, held) = match read {
                         Ok((result, permit)) => (result, Some(permit)),
                         Err(_) => (Err(anyhow::anyhow!("Receipt reader unavailable")), None),
                     };
@@ -844,7 +848,8 @@ impl NodeClient {
                         Ok(data) => success_response(&request_id, data),
                         Err(_) => json!({"type":"response","id":request_id,"success":false,"error_type":"GrantReceiptUnavailable","error":"Consumed receipt unavailable; no execution, fallback or recovery performed"}),
                     };
-                    let _ = write_session_frame(&crypto,&writer,&write_failed,&response).await;
+                    drop(held);
+                    let _ = write_reply_frame(&crypto,&writer,&write_failed,&response,Some(reply)).await;
                 });
                 continue;
             }
@@ -907,6 +912,7 @@ impl NodeClient {
                 };
                 match prepared {
                     Err(error) => {
+                        let reply = admission.map(|permit| permit.into_reply());
                         let report = crate::grants::GrantReport::new(
                             &grant,
                             crate::grants::ReceiptState::Rejected,
@@ -914,9 +920,15 @@ impl NodeClient {
                             Some(crate::grants::denial_code(&error)),
                         );
                         let response = json!({"type":"response","id":request_id,"success":false,"grant":report});
-                        write_session_frame(&self.crypto, &writer, &output_write_failed, &response)
-                            .await
-                            .context("grant rejection write failed")?;
+                        write_reply_frame(
+                            &self.crypto,
+                            &writer,
+                            &output_write_failed,
+                            &response,
+                            reply,
+                        )
+                        .await
+                        .context("grant rejection write failed")?;
                     }
                     Ok(()) => {
                         let engine = self.engine.clone();
@@ -929,7 +941,6 @@ impl NodeClient {
                         let leases = lease_requests.clone();
                         let write_failed = output_write_failed.clone();
                         tasks.spawn(async move {
-                            let _permit=admission;
                             let lease = leases.request(&grant, &request_id, |query| {
                                 let writer=&writer;
                                 let crypto=&crypto;
@@ -967,7 +978,8 @@ impl NodeClient {
                             };
                             status.lock().expect("status")["last_grant"]=json!({"grant_id":report.grant_id,"state":report.state,"persisted":report.persisted,"success":report.success});
                             let response=json!({"type":"response","id":request_id,"success":report.success,"grant":report});
-                            let _ = write_session_frame(&crypto,&writer,&write_failed,&response).await;
+                            let reply=admission.map(|permit|permit.into_reply());
+                            let _ = write_reply_frame(&crypto,&writer,&write_failed,&response,reply).await;
                         });
                     }
                 }
@@ -1013,7 +1025,7 @@ impl NodeClient {
                     );
                 }
                 let response = json!({"type":"response","id":request_id,"success":false,
-                    "error":"Node request capacity is full; this request was not started",
+                    "error":"Node execution or reply capacity is full; this request was not started",
                     "error_type":"NodeBusy","not_started":true});
                 // A timed-out partial write ends this connection; never continue
                 // its framing or automatically replay the rejected operation.
@@ -1032,7 +1044,6 @@ impl NodeClient {
             let status = self.status.clone();
             let write_failed = output_write_failed.clone();
             tasks.spawn(async move {
-                let _permit = permit;
                 {
                     let mut s = status.lock().expect("status");
                     s["last_activity"] = json!(capability);
@@ -1044,7 +1055,8 @@ impl NodeClient {
                     Ok(data) => success_response(&request_id, data),
                     Err(error) => error_response(&request_id, error),
                 };
-                let _ = write_session_frame(&crypto, &writer, &write_failed, &response).await;
+                let _ =
+                    write_completed_frame(&crypto, &writer, &write_failed, &response, permit).await;
             });
         }
         drop(heartbeat);

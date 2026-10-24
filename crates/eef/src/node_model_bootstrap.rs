@@ -175,6 +175,35 @@ pub async fn command(server: &eefn::NodeServer, request: Request) -> Result<Valu
 mod tests {
     use super::*;
     #[test]
+    fn setup_stop_requires_exact_runtime_policy_and_attempt_without_legacy_fallback() {
+        let mut request = Request {
+            schema_version: 1,
+            node_id: "node".into(),
+            expected_runtime_id: None,
+            command: Command::Stop {
+                previous: eefn::model_bootstrap::Saved::new(Default::default(), 0).unwrap(),
+                attempt_id: uuid::Uuid::new_v4().to_string(),
+            },
+        };
+        assert!(request.validate().is_err());
+        request.expected_runtime_id = Some(uuid::Uuid::new_v4().to_string());
+        request.validate().unwrap();
+        assert!(!confirmed(&json!({"success":true}), &request));
+        if let Command::Stop { attempt_id, .. } = &mut request.command {
+            *attempt_id = "invalid".into();
+        }
+        assert!(request.validate().is_err());
+        if let Command::Stop {
+            attempt_id,
+            previous,
+        } = &mut request.command
+        {
+            *attempt_id = uuid::Uuid::new_v4().to_string();
+            previous.digest.clear();
+        }
+        assert!(request.validate().is_err());
+    }
+    #[test]
     fn prompt_approval_is_a_mutation_requiring_exact_runtime_and_explicit_prompt_consent() {
         let mut policy = eefn::model_bootstrap::Policy::default();
         policy.mode = eefn::model_bootstrap::Mode::Prompt;

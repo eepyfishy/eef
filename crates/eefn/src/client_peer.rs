@@ -107,17 +107,19 @@ impl NodeClient {
         let source_payload = match checked {
             Ok(payload) => payload,
             Err(error) => {
+                let reply = permit.map(|permit| permit.into_reply());
                 let report = GrantReport::new(
                     &grant,
                     ReceiptState::Rejected,
                     Value::Null,
                     Some(crate::grants::denial_code(&error)),
                 );
-                return write_session_frame(
+                return write_reply_frame(
                     &self.crypto,
                     writer,
                     write_failed,
                     &json!({"type":"response","id":id,"success":false,"grant":report}),
+                    reply,
                 )
                 .await;
             }
@@ -132,7 +134,6 @@ impl NodeClient {
         let write_failed = write_failed.clone();
         let status = self.status.clone();
         tasks.spawn(async move {
-            let _permit = permit;
             let lease = leases.request(&grant, &id, |query| {
                 let (crypto,writer,write_failed) = (&crypto,&writer,&write_failed);
                 async move { write_session_frame(crypto,writer,write_failed,&query).await }
@@ -159,9 +160,10 @@ impl NodeClient {
                 }}).await,
             };
             status.lock().expect("status")["last_grant"] = json!({"grant_id":report.grant_id,"state":report.state,"persisted":report.persisted,"success":report.success});
+            let reply=permit.map(|permit|permit.into_reply());
             // A pre-readiness bind failure is consumed Unknown, never Rejected.
-            let _ = write_session_frame(&crypto,&writer,&write_failed,
-                &json!({"type":"response","id":id,"success":report.success,"grant":report})).await;
+            let _ = write_reply_frame(&crypto,&writer,&write_failed,
+                &json!({"type":"response","id":id,"success":report.success,"grant":report}),reply).await;
         });
         Ok(())
     }

@@ -379,7 +379,7 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
         result["error_code"] = json!("node_busy");
         result["not_started"] = json!(true);
         result["note"] = json!(
-            "Node work capacity is full. Model inspection was rejected and no mutation was sent. No automatic retry."
+            "Node work execution or reply capacity is full. Model inspection was rejected and no mutation was sent. No automatic retry."
         );
         return Ok(result);
     }
@@ -410,7 +410,7 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
             result["error_code"] = json!("node_busy");
             result["not_started"] = json!(true);
             result["note"] = json!(
-                "Node rejected this model command before execution because its work capacity is full. No selection change was started and no automatic retry was sent."
+                "Node rejected this model command before execution because its work execution or reply capacity is full. No selection change was started and no automatic retry was sent."
             );
         }
         Ok(reply)

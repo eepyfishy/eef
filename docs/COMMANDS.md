@@ -34,6 +34,8 @@ project default or model readiness is implied; restart needs the separate flag a
     eefn model-bootstrap-policy configure --mode auto --model CATALOG_ID --enable-automation
     eefn model-bootstrap-policy configure --disable-automation
     eefn model-bootstrap-policy approve
+    eefn model-bootstrap-policy stop --attempt ATTEMPT_UUID
+    eef node model-bootstrap-policy --node NODE_ID stop --attempt ATTEMPT_UUID
 
     eefn model-bootstrap-policy show
     eefn model-bootstrap-policy configure --mode off
@@ -47,7 +49,10 @@ Prompt waits for [one explicit approval](PROMPT-MODEL-APPROVAL.md) without chang
 mode; project-default has no approved
 model yet. These controls do not grant workload permissions or prove inference
 quality/readiness. Inspect retained setup after an uncertain reply; do not replay
-it automatically. See [contract and remaining gates](MODEL-BOOTSTRAP-POLICY.md).
+it automatically. [Attempt-specific stop](MODEL-SETUP-STOP.md) preserves the saved
+preference and fences later selection/application; it does not prove physical
+provider shutdown or roll back committed settings.
+See [contract and remaining gates](MODEL-BOOTSTRAP-POLICY.md).
 
 ## Finite audio authoring (unreleased after alpha.6)
 
@@ -1831,7 +1836,12 @@ Model installs/updates and other management actions use the work allowance.
 The reserve is per wire request, not an unbounded workflow queue. Updated EEF/node
 restart checks and polling use status capacity throughout; legacy get/diagnostics
 compatibility and model controls use work capacity. A received reply may still
-occupy its request slot briefly.
+be flushing, but completed execution no longer retains its execution slot for
+that transport wait. Separate bounded reply ownership permits at most `work + 1`
+work replies and `control + 1` control replies (including still-executing requests).
+Both are reserved before execution; output pressure refuses new requests without
+retry or borrowing reserved controls. This does not raise execution limits or
+provide a byte/RAM quota. See [ownership and validation](REPLY-OWNERSHIP.md).
 
 Owner configuration saves (or already-approved remote configuration saves) validate
 the limits before writing. Apply changes by restarting the node. Status/diagnostics

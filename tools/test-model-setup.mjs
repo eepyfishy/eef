@@ -182,11 +182,59 @@ try{
  assert.deepEqual(JSON.parse(await readFile(cliConfig,'utf8')).models.ollama.selected,[]);
  try{await stat(join(scratch,'cli','node.bootstrap.sqlite3'));assert.fail('CLI choice must prevent setup evidence creation');}catch(error){if(error.code!=='ENOENT')throw error;}
  assert.equal(pulls,3);assert.equal(inferences,0);
+ // Stopping one attempt preserves preferences and fences late shared-provider
+ // completion. It is not a global cancel, rollback or provider shutdown claim.
+ await local(['model-bootstrap-policy','configure','--disable-automation']);
+ await local(['models','remove','--backend','ollama','--model','fixture:latest']);
+ installed=false;
+ await remote(['configure','--mode','auto','--model','fixture','--enable-automation']);
+ await until(async()=>pulls===4&&(await show()).setup.attempt?.phase==='downloading','local-stop attempt');
+ const localStopId=(await show()).setup.attempt.id;
+ await local(['model-bootstrap-policy','stop','--attempt',randomUUID()],false);
+ await local(['permissions','deny','remote-management']);
+ await remote(['stop','--attempt',localStopId],false);
+ assert.equal((await show()).setup.attempt.phase,'downloading','remote denial must not stop a local attempt');
+ const beforeStop=await readFile(config,'utf8'),beforeStopPolicy=(await show()).saved;
+ const stopped=await local(['model-bootstrap-policy','stop','--attempt',localStopId]);
+ assert.equal(stopped.success,true);assert.equal(stopped.result.changed,true);
+ assert.deepEqual(stopped.result.saved,beforeStopPolicy);
+ assert.equal(stopped.result.setup.attempt.phase,'stopped');
+ assert.equal(stopped.result.setup.attempt.reason,'owner_stopped');
+ assert.equal(stopped.result.setup_stop.attempt_id,localStopId);
+ assert.equal(stopped.result.setup_stop.transfer_cancellation,'requested');
+ assert.equal(stopped.result.setup_stop.physical_stop_verified,false);
+ assert.equal(stopped.result.setup_stop.configuration_rolled_back,false);
+ assert.equal(await readFile(config,'utf8'),beforeStop,'stopping does not toggle policy or save model choices');
+ await until(async()=>(await local(['models','download-status','--id',localStopId])).download.state==='cancelled','local exact transfer cancellation');
+ for(const finish of held.splice(0))finish();
+ await local(['model-bootstrap-policy','stop','--attempt',localStopId],false);
+ await local(['model-bootstrap-policy','configure','--mode','auto']);
+ assert.equal((await show()).setup.attempt.reason,'owner_stopped');
+ assert.equal(pulls,4);await assertEmpty();
+ // A new explicit epoch can be stopped through the same authenticated EEF
+ // adapter, but never without the target node's current management consent.
+ await local(['permissions','allow','remote-management']);
+ await remote(['configure','--disable-automation']);installed=false;
+ await remote(['configure','--enable-automation']);
+ await until(async()=>pulls===5&&(await show()).setup.attempt?.phase==='downloading','remote-stop attempt');
+ const remoteStopId=(await show()).setup.attempt.id,remoteBefore=await readFile(config,'utf8');
+ const remoteStopped=await remote(['stop','--attempt',remoteStopId]);
+ assert.equal(remoteStopped.success,true);assert.equal(remoteStopped.mutation_requested,true);
+ assert.equal(remoteStopped.result.setup_stop.attempt_id,remoteStopId);
+ assert.equal(remoteStopped.result.setup_stop.transfer_cancellation,'requested');
+ assert.equal(remoteStopped.result.setup_stop.physical_stop_verified,false);
+ assert.equal(remoteStopped.result.setup.attempt.reason,'owner_stopped');
+ await until(async()=>(await local(['models','download-status','--id',remoteStopId])).download.state==='cancelled','remote exact transfer cancellation');
+ for(const finish of held.splice(0))finish();
+ await remote(['stop','--attempt',remoteStopId],false);
+ assert.equal(await readFile(config,'utf8'),remoteBefore);await assertEmpty();
+ assert.equal(pulls,5);assert.equal(inferences,0);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,synthetic_provider_and_cache_only:true,real_weights_downloaded:false,inference_requested:false,
   legacy_preferences_inactive:true,local_and_pinned_remote_commands:true,remote_consent_required:true,generic_activation_and_stale_restore_rejected:true,exact_transfer_revocation:true,
   durable_unknown_after_process_exit:true,no_automatic_replay:true,existing_ollama_reused:true,verified_cpu_cache_configured:true,no_automatic_restart:true,applied_command_line_selection_preserved:true,core_reviewed_work:true,
   explicit_prompt_approval:true,prompt_install_receipt_progress_and_completion:true,prompt_mode_and_policy_epoch_preserved:true,remote_prompt_approval_requires_current_consent:true,repeated_prompt_approval_refused:true,
-  shared_setup_download_and_unknown_guidance:true,coordinator_setup_inspection_without_remote_write_consent:true,setup_approval_guidance_without_approval_or_inference:true,setup_runtime_origin_and_body_fences:true},null,2));
+  shared_setup_download_and_unknown_guidance:true,coordinator_setup_inspection_without_remote_write_consent:true,setup_approval_guidance_without_approval_or_inference:true,setup_runtime_origin_and_body_fences:true,
+  attempt_specific_local_and_remote_stop:true,stop_preserves_policy_and_configuration:true,stop_requires_current_remote_consent:true,late_provider_completion_does_not_select_or_replay:true,repeated_stop_refused:true},null,2));
  console.log('Model setup native validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}
 finally{for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));for(const finish of held)finish();provider.closeAllConnections();await new Promise(r=>provider.close(r));}
