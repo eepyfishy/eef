@@ -77,6 +77,8 @@ jobs:
           exit $LASTEXITCODE
       - name: Read-only MSI payload planning (synthetic)
         run: |
+          node tools/test-msi-version-policy.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/test-msi-payload-plan.mjs
           exit $LASTEXITCODE
       - name: Native development MSI authoring (synthetic; no installation)

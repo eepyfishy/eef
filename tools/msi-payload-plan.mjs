@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto';
 import {resolve,join,relative,sep,isAbsolute} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {parseArgs} from 'node:util';
+import {verifyVersionPair} from './msi-version-policy.mjs';
 const MAX_INVENTORY=4*1024*1024,MAX_FILES=20000,MAX_TOTAL=2*1024*1024*1024;
 function requireValue(value,code){if(!value)throw Error(code);}
 function digest(bytes){return createHash('sha256').update(bytes).digest('hex');}
@@ -69,8 +70,7 @@ export async function planPayload(bundle,{role,namespace,msiVersion,expectedVers
  requireValue(typeof bundle==='string'&&bundle.length>0,'bundle_required');
  requireValue(!/^[/\\]{2}/.test(bundle),'bundle_must_be_local');
  requireValue(['eef','eefn'].includes(role),'role_required');
- requireValue(typeof msiVersion==='string'&&/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(msiVersion),'explicit_three_field_msi_version_required');
- const numbers=msiVersion.split('.').map(Number);requireValue(numbers[0]<=255&&numbers[1]<=255&&numbers[2]<=65535,'msi_version_out_of_range');
+ const versionPolicy=verifyVersionPair(expectedVersion,msiVersion);
  // Namespace is explicit project metadata, never a host path, account or email.
  uuidV5(namespace,'validate');
  const requested=resolve(bundle);requireValue(!requested.startsWith('\\\\'),'bundle_must_be_local');requireValue((await lstat(requested)).isDirectory()&&!(await lstat(requested)).isSymbolicLink(),'bundle_root_invalid');
@@ -123,6 +123,7 @@ export async function planPayload(bundle,{role,namespace,msiVersion,expectedVers
  requireValue(new Set(components.map(row=>row.file_id)).size===components.length&&new Set(components.map(row=>row.component_code)).size===components.length&&new Set(directories.values()).size===directories.size,'component_identity_collision');
  return {schema_version:1,report_type:'msi_payload_plan',read_only:true,role,architecture:'x86_64-windows',
   source_version:manifest.version,explicit_msi_version:msiVersion,source_inventory_sha256:digest(inventoryBytes),
+  version_policy:versionPolicy.version_policy,version_policy_verified:true,source_is_prerelease:versionPolicy.source_is_prerelease,
   upgrade_code:uuidV5(namespace,identity+'upgrade'),product_code:uuidV5(namespace,identity+'product\0'+manifest.version+'\0'+msiVersion),
   package_code:null,files,selected_bytes:bytes,omissions,regenerated_inventory:regeneratedInventory,
   directories:[...directories].map(([path,id])=>({path,id,parent_id:path?directories.get(path.split('/').slice(0,-1).join('/')):null})),
@@ -136,7 +137,7 @@ export async function planPayload(bundle,{role,namespace,msiVersion,expectedVers
 }
 if(process.argv[1]&&pathToFileURL(resolve(process.argv[1])).href===import.meta.url){
  try{const {values}=parseArgs({options:{bundle:{type:'string'},role:{type:'string'},namespace:{type:'string'},'msi-version':{type:'string'},'expected-version':{type:'string'},help:{type:'boolean'}}});
-  if(values.help){console.log('Usage: node tools/msi-payload-plan.mjs --bundle PATH --role eef|eefn --namespace PROJECT_UUID --expected-version SEMVER --msi-version MAJOR.MINOR.BUILD\nRead-only experimental plan; no package, install, migration or version-ordering approval.');}
+  if(values.help){console.log('Usage: node tools/msi-payload-plan.mjs --bundle PATH --role eef|eefn --namespace PROJECT_UUID --expected-version SEMVER --msi-version MAJOR.MINOR.BUILD\nRead-only experimental plan; numeric version must match packed-patch-v1. No package, install, migration or release approval.');}
   else {
   requireValue(typeof values.bundle==='string','bundle_required');
   console.log(JSON.stringify(await planPayload(values.bundle,{role:values.role,namespace:values.namespace,msiVersion:values['msi-version'],expectedVersion:values['expected-version']}),null,2));

@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory=$true)][string]$BundleDir,
     [Parameter(Mandatory=$true)][ValidateSet('eef','eefn')][string]$Role,
     [Parameter(Mandatory=$true)][string]$ExpectedVersion,
-    [Parameter(Mandatory=$true)][string]$MsiVersion,
+    [string]$MsiVersion,
     [Parameter(Mandatory=$true)][guid]$ProjectNamespace,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
     [Parameter(Mandatory=$true)][switch]$DevelopmentOnly,
@@ -30,10 +30,17 @@ foreach($path in @($bundle,$output)){
 }
 if($output.StartsWith($bundle.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Output must be outside the source bundle'}
 $node=(Get-Command -Name $NodePath -CommandType Application -ErrorAction Stop).Source
+$versionArguments=@('--source-version',$ExpectedVersion)
+if($PSBoundParameters.ContainsKey('MsiVersion')){$versionArguments+=@('--msi-version',$MsiVersion)}
+$versionLines=& $node (Join-Path $PSScriptRoot 'msi-version-policy.mjs') @versionArguments
+if($LASTEXITCODE -ne 0){throw 'Version policy verification failed; no package was authored'}
+$versionPolicy=([string]::Join("`n",@($versionLines))) | ConvertFrom-Json
+if($versionPolicy.version_policy -cne 'packed-patch-v1' -or $versionPolicy.source_version -cne $ExpectedVersion -or $versionPolicy.automatic_update_authorized -or $versionPolicy.release_accepted){throw 'Unexpected version policy report'}
+$MsiVersion=$versionPolicy.product_version
 $planLines=& $node (Join-Path $PSScriptRoot 'msi-payload-plan.mjs') --bundle $bundle --role $Role --namespace $ProjectNamespace.ToString('D') --expected-version $ExpectedVersion --msi-version $MsiVersion
 if($LASTEXITCODE -ne 0){throw 'Payload planning failed; no package was authored'}
 $plan=([string]::Join("`n",@($planLines))) | ConvertFrom-Json
-if(-not $plan.read_only -or $plan.role -ne $Role -or $plan.source_version -ne $ExpectedVersion -or $plan.explicit_msi_version -ne $MsiVersion -or -not $plan.regenerated_inventory.requires_generation){throw 'Unexpected or incompatible planner report'}
+if(-not $plan.read_only -or $plan.role -ne $Role -or $plan.source_version -ne $ExpectedVersion -or $plan.explicit_msi_version -ne $MsiVersion -or $plan.version_policy -cne $versionPolicy.version_policy -or -not $plan.version_policy_verified -or -not $plan.regenerated_inventory.requires_generation){throw 'Unexpected or incompatible planner report'}
 if($plan.files.Count -lt 3 -or $plan.files.Count -gt 20000 -or @($plan.files | Where-Object {$_.bytes -gt [int]::MaxValue}).Count){throw 'Payload exceeds MSI table limits'}
 $system=[Environment]::GetFolderPath('System')
 $makecab=Join-Path $system 'makecab.exe';$expand=Join-Path $system 'expand.exe'
@@ -108,7 +115,7 @@ try{
     Import-Table 'Property' @('Property','Value') @('s72','l0') @('Property') @(
         @('ProductCode',$plan.product_code),@('UpgradeCode',$plan.upgrade_code),@('ProductName',($Role+' DEVELOPMENT ONLY - DO NOT DISTRIBUTE')),
         @('ProductVersion',$MsiVersion),@('Manufacturer',$Publisher),@('ProductLanguage','1033'),@('INSTALLLEVEL','1'),@('EEF_DEVELOPMENT_PACKAGE','1'),
-        @('EEF_ROLE',$Role),@('EEF_SOURCE_VERSION',$ExpectedVersion),@('EEF_PROJECT_NAMESPACE',$ProjectNamespace.ToString('D')))
+        @('EEF_ROLE',$Role),@('EEF_SOURCE_VERSION',$ExpectedVersion),@('EEF_PROJECT_NAMESPACE',$ProjectNamespace.ToString('D')),@('eef_msi_version_policy',$versionPolicy.version_policy))
     $directories=[Collections.Generic.List[object]]::new()
     $directories.Add(@('TARGETDIR','','SourceDir'));$directories.Add(@('LocalAppDataFolder','TARGETDIR','.'));$directories.Add(@('INSTALLDIR','LocalAppDataFolder',$installLeaf))
     foreach($directory in $plan.directories){if($directory.path){$directories.Add(@($directory.id,$directory.parent_id,($directory.path.Split('/')[-1])))}}
@@ -160,6 +167,7 @@ if(-not $KeepIntermediateFiles){
     Remove-Item -LiteralPath $cab -ErrorAction Stop;$retained=$false
 }
 $report=[ordered]@{schema_version=1;report_type='development_msi_authoring';authored=$true;development_only=$true;role=$Role;source_version=$ExpectedVersion;msi_version=$MsiVersion;
+    version_policy=$versionPolicy.version_policy;version_policy_verified=$true;source_is_prerelease=$versionPolicy.source_is_prerelease;
     product_code=$plan.product_code;upgrade_code=$plan.upgrade_code;package_code=$packageCode;install_directory_leaf=$installLeaf;files=$files.Count;
     source_inventory_sha256=$plan.source_inventory_sha256;regenerated_inventory_sha256=(Get-FileHash -LiteralPath $inventoryPath).Hash.ToLowerInvariant();cabinet_sha256=$cabHash.ToLowerInvariant();cabinet_bytes=$cabBytes;
     package=$package;package_bytes=(Get-Item -LiteralPath $package).Length;package_sha256=(Get-FileHash -LiteralPath $package).Hash.ToLowerInvariant();

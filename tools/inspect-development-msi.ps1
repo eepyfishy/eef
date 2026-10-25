@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$Package,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedSha256,
-    [switch]$Detailed
+    [switch]$Detailed,
+    [switch]$AllowLegacyExperimentalVersion
 )
 # Read-only structural inspection. No installation session, action execution,
 # app launch, signature trust, full ICE or dependency-health claim.
@@ -32,8 +33,24 @@ try{
     $database=$installer.OpenDatabase([string]$path,[int]0)
     $properties=@{};foreach($row in (Rows 'Property')){if($properties.ContainsKey($row[0])){throw 'Duplicate property'};$properties[$row[0]]=$row[1]}
     $allowed=@('ProductCode','UpgradeCode','ProductName','ProductVersion','Manufacturer','ProductLanguage','INSTALLLEVEL','EEF_DEVELOPMENT_PACKAGE','EEF_ROLE','EEF_SOURCE_VERSION','EEF_PROJECT_NAMESPACE')
-    if($properties.Count -ne $allowed.Count -or @($properties.Keys | Where-Object {$_ -notin $allowed}).Count -or $properties.EEF_DEVELOPMENT_PACKAGE -ne '1' -or $properties.EEF_ROLE -notin @('eef','eefn') -or $properties.ProductLanguage -ne '1033' -or $properties.INSTALLLEVEL -ne '1'){throw 'Not the supported development-only property contract'}
+    $hasVersionPolicy=@($properties.Keys | Where-Object {$_ -ceq 'eef_msi_version_policy'}).Count -eq 1
+    if($hasVersionPolicy){$allowed+='eef_msi_version_policy'}
+    if($properties.Count -ne $allowed.Count -or @($properties.Keys | Where-Object {$_ -cnotin $allowed}).Count -or $properties.EEF_DEVELOPMENT_PACKAGE -ne '1' -or $properties.EEF_ROLE -cnotin @('eef','eefn') -or $properties.ProductLanguage -ne '1033' -or $properties.INSTALLLEVEL -ne '1'){throw 'Not the supported development-only property contract'}
     if($properties.ProductName -cne ($properties.EEF_ROLE+' DEVELOPMENT ONLY - DO NOT DISTRIBUTE')){throw 'Unexpected development product display name'}
+    $versionPolicyVerified=$false;$versionPolicy='legacy-explicit-development'
+    if($hasVersionPolicy){
+        if($properties.eef_msi_version_policy -cne 'packed-patch-v1'){throw 'Unsupported MSI version policy'}
+        # Independent protocol implementation: no dependency on the Node author.
+        $source=$properties.EEF_SOURCE_VERSION
+        $sourceMatch=[regex]::Match($source,'\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(alpha|beta|rc)\.([1-9][0-9]*))?\z')
+        if($source.Length -gt 64 -or -not $sourceMatch.Success){throw 'Invalid source version for MSI policy'}
+        $parts=@();foreach($index in @(1,2,3)){[uint32]$value=0;if(-not [uint32]::TryParse($sourceMatch.Groups[$index].Value,[ref]$value) -or $value -gt 255){throw 'Source version exceeds MSI policy bounds'};$parts+=$value}
+        [uint32]$ordinal=255
+        if($sourceMatch.Groups[4].Success){[uint32]$sequence=0;if(-not [uint32]::TryParse($sourceMatch.Groups[5].Value,[ref]$sequence) -or $sequence -lt 1 -or $sequence -gt 63){throw 'Source prerelease exceeds MSI policy bounds'};$offset=switch -CaseSensitive ($sourceMatch.Groups[4].Value){'alpha'{0};'beta'{64};'rc'{128};default{throw 'Unsupported source channel'}};$ordinal=$offset+$sequence}
+        $expectedVersion=[string]::Format([Globalization.CultureInfo]::InvariantCulture,'{0}.{1}.{2}',$parts[0],$parts[1],($parts[2]*256+$ordinal))
+        if($properties.ProductVersion -cne $expectedVersion){throw 'MSI version does not match source policy'}
+        $versionPolicy='packed-patch-v1';$versionPolicyVerified=$true
+    }elseif(-not $AllowLegacyExperimentalVersion){throw 'Version policy marker is required; legacy diagnostics require explicit opt-in'}
     foreach($code in @($properties.ProductCode,$properties.UpgradeCode)){if($code -cnotmatch '^\{[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}\}$'){throw 'Invalid product identity'}}
     $namespace=[guid]::Parse($properties.EEF_PROJECT_NAMESPACE)
     $summary=Property $database 'SummaryInformation' @(0)
@@ -89,6 +106,7 @@ try{
     Method $view 'Close' | Out-Null;Release $stream;$stream=$null;Release $view;$view=$null
     if((Get-FileHash -LiteralPath $path).Hash -ne $hash){throw 'MSI changed during inspection'}
     $report=[ordered]@{schema_version=1;report_type='development_msi_inspection';success=$true;read_only=$true;role=$properties.EEF_ROLE;source_version=$properties.EEF_SOURCE_VERSION;msi_version=$properties.ProductVersion;project_namespace=$namespace.ToString('D');
+        version_policy=$versionPolicy;version_policy_verified=$versionPolicyVerified;legacy_version_policy_opt_in=([bool]$AllowLegacyExperimentalVersion -and -not $hasVersionPolicy);
         product_code=$properties.ProductCode;upgrade_code=$properties.UpgradeCode;package_code=$packageCode;package_sha256=$hash;install_directory_leaf=$leaf;file_count=$files.Count;component_count=$components.Count;registry_count=$registry.Count;payload_bytes=$total;cabinet_bytes=$cabinetBytes;cabinet_sha256=$cabHash;
         authored_default_is_per_user=$true;one_file_per_component=$true;development_guard_present=$true;custom_actions_present=$false;mutable_paths_authored=$false;source_component_identity_recomputed=$false;
         installation_attempted=$false;signature_trust_verified=$false;defender_clearance_verified=$false;full_ice_validation=$false;runtime_health_verified=$false;msi_release_accepted=$false;stable_release_accepted=$false}

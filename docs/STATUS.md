@@ -3,6 +3,31 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Locally verified, unreleased: MSI source-version encoding enforcement
+
+The [packed-patch-v1 policy](MSI-VERSION-POLICY.md) maps supported canonical source
+versions to three-field numeric MSI versions while preserving prerelease/stable
+and patch order. Out-of-range or noncanonical versions and arbitrary explicit
+numeric overrides fail before authoring. The author derives the numeric value
+when omitted; the inspector independently verifies the embedded relation in
+PowerShell. Missing markers require explicit legacy diagnostic consent and
+never acquire version-policy approval; unknown markers remain refused even with
+that diagnostic switch. Automatic updates still use canonical source versions
+and never select prereleases.
+
+Source-hash-locked local checks and independent read-only reconciliation pass:
+thirteen policy cases, all 48,640 supported patch/phase/sequence positions,
+thirty-five planner cases, both native role recipes, six native boundary
+packages and thirteen refused mutations per role. Both retained real recovery
+MSIs remain unchanged and inspect only as unverified legacy versions. No MSI is
+installed or payload launched by this increment. Application sources, models,
+update feeds and existing owner settings are unchanged. Hosted acceptance of
+this new source remains separate; actual upgrade/downgrade/migration, UI/startup,
+locked files, real rollback, default model, second-PC and signing/Defender gates
+remain open. The prior `75bf6a7` documentation-only checkpoint separately passes
+all four jobs and the exact thirty native suites in
+[run 40196510127](https://github.com/eepyfishy/eef/actions/runs/40196510127).
+
 ## Verified development checkpoint: current MSI two-role lifecycle
 
 Published `f9951af` passes all four hosted jobs, the exact thirty-suite Windows

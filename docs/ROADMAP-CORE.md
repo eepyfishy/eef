@@ -13,6 +13,18 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The locally verified [MSI version policy](MSI-VERSION-POLICY.md) now enforces
+source/numeric version consistency in planning and authoring, with an independent
+PowerShell inspector, explicit unverified legacy diagnostics and overflow refusal.
+Thirteen pure cases enumerate 48,640 ordinals; the thirty-five-case planner,
+six native policy boundaries and thirteen rejected recipes per role pass against
+unchanged evaluated packaging sources. Application code and prerelease update
+blocking are unchanged. This defines/verifies an encoding protocol, not an actual
+installed-product upgrade, migration, production-identity or release approval.
+Hosted verification of this new increment remains separate. The preceding
+documentation-only `75bf6a7` passes all four hosted jobs and thirty native suites
+in [run 40196510127](https://github.com/eepyfishy/eef/actions/runs/40196510127).
+
 The [development MSI lifecycle](MSI-PACKAGING.md#current-application-lifecycle-checkpoint-2026-10-25-development-only)
 now verifies current `f9951af` applications in separate standard-user per-user
 packages: standalone node startup, default registration, explicit private pairing,

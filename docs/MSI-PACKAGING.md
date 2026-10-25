@@ -4,6 +4,12 @@ MSI remains an in-development release requirement, not a replacement already
 available to users. The existing EXE installers and published artifacts stay
 unchanged until replacement packages pass acceptance.
 
+The current [version encoding contract](MSI-VERSION-POLICY.md) is
+`packed-patch-v1`. The planner/author enforce its source-to-numeric relation and
+the independent inspector verifies it separately. Earlier arbitrary numeric
+development examples below remain historical evidence, not production ordering.
+Encoding does not by itself implement upgrade/downgrade fences or migration.
+
 ## Initial inspection (2026-10-23)
 
 The machine already has .NET SDK 10.0.100, supported .NET runtimes, Windows
@@ -144,7 +150,7 @@ checks its tables, references, default per-user directories, current-user regist
 scope, media, sequences, development guard and cabinet hash.
 
 ```powershell
-.\tools\build-development-msi.ps1 -BundleDir PATH -Role eefn -ExpectedVersion SOURCE_VERSION -MsiVersion NUMERIC_VERSION -ProjectNamespace PROJECT_UUID -OutputDirectory NEW_DIRECTORY -DevelopmentOnly
+  .\tools\build-development-msi.ps1 -BundleDir PATH -Role eefn -ExpectedVersion SOURCE_VERSION -ProjectNamespace PROJECT_UUID -OutputDirectory NEW_DIRECTORY -DevelopmentOnly
 .\tools\inspect-development-msi.ps1 -Package PATH_TO_DEVELOPMENT_MSI -ExpectedSha256 EXPECTED_HASH
 node tools/test-msi-authoring.mjs
 ```
@@ -257,9 +263,11 @@ not approved production metadata. Published release installers are unchanged.
 - Migrate EXE installations and updater-selected generations deliberately. Backup
   prior selection for recovery, do not delete old versions as a side effect, and
   verify which application will actually launch after commit or rollback.
-- Define prerelease/stable MSI version ordering before producing distributable
-  packages. [Windows Installer compares only three ProductVersion fields](https://learn.microsoft.com/en-us/windows/win32/msi/productversion);
-  adding an alpha suffix/fourth field is not a safe upgrade-ordering scheme.
+- Enforce [packed-patch-v1](MSI-VERSION-POLICY.md) and verify actual installed-product
+  upgrade/downgrade fences before producing distributable packages.
+  [Windows Installer compares only three ProductVersion fields](https://learn.microsoft.com/en-us/windows/win32/msi/productversion);
+  adding an alpha suffix/fourth field is not a safe ordering scheme. The encoding
+  relation alone does not implement detection, removal, migration or recovery.
 - Locked files/running roles, rollback, failed initialization and requested restart
   need truthful errors and explicit behavior; no success claim from extraction.
 - Retain signing, SHA inventories and Defender investigation gates. MSI is neither

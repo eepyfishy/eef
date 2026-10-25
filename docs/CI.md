@@ -1,5 +1,16 @@
 # GitHub core verification
 
+## Current in-development MSI version-policy regression
+
+The [packed-patch-v1 contract](MSI-VERSION-POLICY.md) adds thirteen pure policy
+cases and 48,640 checked ordinals before the now thirty-five-case payload planner
+in every matrix job. Windows native authoring also verifies six independent
+inspector boundaries and thirteen refused recipes per role. The local
+source-hash-locked run and independent read-only audit pass; retained real
+experimental packages are diagnosed only through explicit legacy opt-in.
+Hosted verification of this new increment remains separate. No installation,
+application rebuild, model download or automatic-update change is part of it.
+
 ## Lowercase project naming
 
 Maintained documentation, comments, UI and installer messages use `eef` and
@@ -11,6 +22,12 @@ paths; environment-variable identifiers remain compatible. User-owned future
 drafts and historical generated artifacts are not rewritten.
 
 ## Accepted native authoring/naming checkpoint (2026-10-25)
+
+Its documentation-only follow-up `75bf6a7` also passes all four jobs and the exact
+thirty-suite native audit in
+[run 40196510127](https://github.com/eepyfishy/eef/actions/runs/40196510127).
+That commit changes no application/tool source; it records the controlled local
+lifecycle. Neither run accepts later version-policy edits.
 
 Published `f9951af` passes all four matrix jobs in
 [run 40194073272](https://github.com/eepyfishy/eef/actions/runs/40194073272).

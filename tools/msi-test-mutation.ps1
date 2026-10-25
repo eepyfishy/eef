@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Source,
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedSha256,
     [Parameter(Mandatory=$true)][string]$Output,
-    [Parameter(Mandatory=$true)][ValidateSet('machine-context','guard','registry','directory','custom-action','component-identity','ui-position')][string]$Mutation
+    [Parameter(Mandatory=$true)][ValidateSet('machine-context','guard','registry','directory','custom-action','component-identity','ui-position','version-policy','version-policy-missing','version-policy-unknown','source-policy-format','source-policy-bounds','source-policy-prerelease')][string]$Mutation
 )
 # Test data mutation ONLY. Copy one owned fixture then edit its MSI database.
 # No installation session, action execution, source replacement or deletion.
@@ -46,6 +46,12 @@ try{
             Statement ('UPDATE `Component` SET `ComponentId` = '''+$code+'''')
         }
         'ui-position' { Statement 'UPDATE `InstallUISequence` SET `Sequence` = 950 WHERE `Action` = ''CostFinalize''' }
+        'version-policy' { Statement 'UPDATE `Property` SET `Value` = ''1.2.770'' WHERE `Property` = ''ProductVersion''' }
+        'version-policy-missing' { Statement 'DELETE FROM `Property` WHERE `Property` = ''eef_msi_version_policy''' }
+        'version-policy-unknown' { Statement 'UPDATE `Property` SET `Value` = ''packed-patch-v2'' WHERE `Property` = ''eef_msi_version_policy''' }
+        'source-policy-format' { Statement 'UPDATE `Property` SET `Value` = ''0.4.0+build.1'' WHERE `Property` = ''EEF_SOURCE_VERSION''' }
+        'source-policy-bounds' { Statement 'UPDATE `Property` SET `Value` = ''0.4.256'' WHERE `Property` = ''EEF_SOURCE_VERSION''' }
+        'source-policy-prerelease' { Statement 'UPDATE `Property` SET `Value` = ''0.4.0-alpha.64'' WHERE `Property` = ''EEF_SOURCE_VERSION''' }
     }
     Method $database 'Commit' | Out-Null
 }finally{Release $row;Release $view;Release $database;Release $installer}

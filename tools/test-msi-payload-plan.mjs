@@ -9,7 +9,7 @@ const workspace=resolve(import.meta.dirname,'..');
 await mkdir(join(workspace,'.validation'),{recursive:true});
 const root=await mkdtemp(join(workspace,'.validation','msi-payload-plan-')),cases=[];
 const namespace='15cb0ac4-08b1-4a6e-a318-927804566590',version='1.2.3-alpha.1';
-const opts=role=>({role,namespace,msiVersion:'1.2.1',expectedVersion:version});
+const opts=role=>({role,namespace,msiVersion:'1.2.769',expectedVersion:version});
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 async function fixture(name,role='eefn',{junction=false}={}){
  const bundle=join(root,name);await mkdir(bundle);
@@ -35,6 +35,7 @@ await test('rfc9562-uuidv5-vector',async()=>assert.equal(uuidV5('6ba7b810-9dad-1
 await test('read-only-deterministic-and-owner-configuration-omitted',async()=>{
  const inventory=await readFile(join(one.bundle,'files.sha256.json'));first=await planPayload(one.bundle,opts('eefn'));second=await planPayload(two.bundle,opts('eefn'));
  assert.deepEqual(first,second);assert.equal(first.read_only,true);assert.equal(first.omissions.mutable_configuration,1);
+ assert.equal(first.version_policy,'packed-patch-v1');assert.equal(first.version_policy_verified,true);assert.equal(first.source_is_prerelease,true);
  assert.equal(first.files.some(row=>row.path==='config.json'),false);assert.equal(first.files.some(row=>row.path==='files.sha256.json'),false);
  assert.equal(first.requires_new_distribution_inventory,true);assert.equal(first.source_inventory_not_copied,true);
  assert.equal(first.regenerated_inventory.path,'files.sha256.json');assert.equal(first.regenerated_inventory.requires_generation,true);
@@ -63,7 +64,8 @@ await test('future-inventory-row-refused',()=>changed('future-row',async({bundle
 await test('model-weights-refused',()=>changed('weight',async({bundle,rows})=>{rows.push({path:'models/model.gguf',bytes:1,sha256:sha('x')});await writeFile(join(bundle,'files.sha256.json'),JSON.stringify(rows));},/model_weights_refused/));
 await test('selected-junction-refused',async()=>{const item=await fixture('junction','eefn',{junction:true});await assert.rejects(()=>planPayload(item.bundle,opts('eefn')),/payload_link_refused/);});
 await test('wrong-role-refused',async()=>assert.rejects(()=>planPayload(one.bundle,opts('eef')),/bundle_role_architecture_invalid/));
-await test('old-bundle-cannot-be-relabeled',async()=>assert.rejects(()=>planPayload(one.bundle,{...opts('eefn'),expectedVersion:'1.2.3'}),/source_version_must_match_explicitly/));
+await test('old-bundle-cannot-be-relabeled',async()=>assert.rejects(()=>planPayload(one.bundle,{...opts('eefn'),expectedVersion:'1.2.3',msiVersion:'1.2.1023'}),/source_version_must_match_explicitly/));
+await test('arbitrary-numeric-msi-version-refused',async()=>assert.rejects(()=>planPayload(one.bundle,{...opts('eefn'),msiVersion:'1.2.1'}),/msi_version_does_not_match_source/));
 await test('implicit-msi-version-refused',async()=>assert.rejects(()=>planPayload(one.bundle,{...opts('eefn'),msiVersion:undefined}),/explicit_three_field_msi_version_required/));
 await test('alpha-suffix-msi-version-refused',async()=>assert.rejects(()=>planPayload(one.bundle,{...opts('eefn'),msiVersion:'1.2.3-alpha.1'}),/explicit_three_field_msi_version_required/));
 await test('msi-version-limit-refused',async()=>assert.rejects(()=>planPayload(one.bundle,{...opts('eefn'),msiVersion:'1.2.65536'}),/msi_version_out_of_range/));
@@ -83,9 +85,9 @@ await test('generated-cache-omitted-only-with-verified-source',async()=>{
 await test('orphan-bytecode-cache-not-silently-dropped',()=>changed('orphan-cache',async({bundle,rows})=>{rows.push({path:'python/Lib/__pycache__/orphan.cpython-311.pyc',bytes:1,sha256:sha('x')});await writeFile(join(bundle,'files.sha256.json'),JSON.stringify(rows));},/generated_cache_source_missing/));
 await test('non-cache-content-not-silently-dropped',()=>changed('malformed-cache',async({bundle,rows})=>{rows.push({path:'python/Lib/__pycache__/unexpected.exe',bytes:1,sha256:sha('x')});await writeFile(join(bundle,'files.sha256.json'),JSON.stringify(rows));},/generated_cache_layout_unsupported/));
 await test('cli-help-is-explicit-about-scope',async()=>{const result=spawnSync(process.execPath,[join(import.meta.dirname,'msi-payload-plan.mjs'),'--help'],{encoding:'utf8',windowsHide:true,timeout:10000});assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/Read-only experimental plan/);});
-await test('cli-plan-matches-library',async()=>{const result=spawnSync(process.execPath,[join(import.meta.dirname,'msi-payload-plan.mjs'),'--bundle',one.bundle,'--role','eefn','--namespace',namespace,'--expected-version',version,'--msi-version','1.2.1'],{encoding:'utf8',windowsHide:true,timeout:10000});assert.equal(result.status,0,result.stderr);assert.deepEqual(JSON.parse(result.stdout),first);});
-await test('cli-file-errors-do-not-disclose-host-path',async()=>{const missing=join(root,'PRIVATE-missing-input');const result=spawnSync(process.execPath,[join(import.meta.dirname,'msi-payload-plan.mjs'),'--bundle',missing,'--role','eefn','--namespace',namespace,'--expected-version',version,'--msi-version','1.2.1'],{encoding:'utf8',windowsHide:true,timeout:10000});assert.equal(result.status,1);assert.equal(result.stderr.trim(),'payload_file_unavailable');assert(!result.stderr.includes(root));assert.equal(result.stdout,'');});
-assert.equal(cases.length,34,'Keep the independently audited case count explicit');
+await test('cli-plan-matches-library',async()=>{const result=spawnSync(process.execPath,[join(import.meta.dirname,'msi-payload-plan.mjs'),'--bundle',one.bundle,'--role','eefn','--namespace',namespace,'--expected-version',version,'--msi-version','1.2.769'],{encoding:'utf8',windowsHide:true,timeout:10000});assert.equal(result.status,0,result.stderr);assert.deepEqual(JSON.parse(result.stdout),first);});
+await test('cli-file-errors-do-not-disclose-host-path',async()=>{const missing=join(root,'PRIVATE-missing-input');const result=spawnSync(process.execPath,[join(import.meta.dirname,'msi-payload-plan.mjs'),'--bundle',missing,'--role','eefn','--namespace',namespace,'--expected-version',version,'--msi-version','1.2.769'],{encoding:'utf8',windowsHide:true,timeout:10000});assert.equal(result.status,1);assert.equal(result.stderr.trim(),'payload_file_unavailable');assert(!result.stderr.includes(root));assert.equal(result.stdout,'');});
+assert.equal(cases.length,35,'Keep the independently audited case count explicit');
 await writeFile(join(root,'results.json'),JSON.stringify({passed:true,cases,case_count:cases.length,read_only_payload_planning:true,owner_configuration_omitted_without_reading:true,deterministic_project_scoped_identities:true,files_copied:false,msi_authored:false,application_launched:false,real_installer_accepted:false,stable_release_accepted:false},null,2));
 console.log('MSI payload planning case count: '+cases.length);
 console.log('MSI payload planning checks passed: '+root);
