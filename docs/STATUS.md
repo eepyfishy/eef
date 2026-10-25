@@ -3,6 +3,36 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Locally verified, unreleased: native MSI major-upgrade recipe
+
+The [major-upgrade-v1 contract](MSI-UPGRADE-POLICY.md) adds role/namespace-scoped
+older-product removal inside the native transaction and detect-only newer-product
+refusal before transaction initialization. The only custom action is an exact
+MSI Type 19 error message, not executable code or a script. The independent
+inspector verifies both complete sequences, ranges/flags, secure properties and
+fixed message. Unknown policies fail closed; legacy read-only diagnostics need
+explicit consent and do not gain recipe or release approval.
+
+Non-installing authoring passes both roles, six version boundaries and 24 refused
+recipes per role. The separate opt-in standard-user synthetic lifecycle passes
+ten native operations: install both roles, upgrade each, refuse each downgrade,
+explicitly reinstall each same newer package and uninstall both. Independent
+read-only reconciliation verifies current-user registration, role isolation,
+payload/owner observations, removal of all owned files/component values and
+unchanged retained owner markers. No real application payload is launched and
+no user installation is touched. An early audit observation of an incomplete
+legacy readback is retained; only the read-only audit repeats after that original
+dependency exits, without replaying a native transaction.
+
+Application sources/binaries remain at the accepted `7df79a1` baseline, whose
+[run 40206970109](https://github.com/eepyfishy/eef/actions/runs/40206970109) passes
+all four jobs, the exact thirty Windows native suites, version policy, planner,
+native authoring and naming checks. That older run does not accept the new MSI
+recipe; fresh exact-revision hosted checks remain pending. Current-application
+upgrade/rollback, production/EXE/updater migration, locked files, setup UI/startup,
+approved model onboarding, second-PC and signing/Defender gates remain open.
+No release, installed user app, remote node, model default or update feed changes.
+
 ## Locally verified, unreleased: Windows live-reader publication
 
 The `fcd559f` [hosted run](https://github.com/eepyfishy/eef/actions/runs/40198635175)

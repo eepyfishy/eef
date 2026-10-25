@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Source,
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedSha256,
     [Parameter(Mandatory=$true)][string]$Output,
-    [Parameter(Mandatory=$true)][ValidateSet('machine-context','guard','registry','directory','custom-action','component-identity','ui-position','version-policy','version-policy-missing','version-policy-unknown','source-policy-format','source-policy-bounds','source-policy-prerelease')][string]$Mutation
+    [Parameter(Mandatory=$true)][ValidateSet('machine-context','guard','registry','directory','custom-action','component-identity','ui-position','version-policy','version-policy-missing','version-policy-unknown','source-policy-format','source-policy-bounds','source-policy-prerelease','upgrade-policy-missing','upgrade-policy-unknown','upgrade-code','upgrade-newer-range','upgrade-older-range','upgrade-detect-flags','upgrade-secure','upgrade-error-type','upgrade-error-condition','upgrade-remove-position','upgrade-rows')][string]$Mutation
 )
 # Test data mutation ONLY. Copy one owned fixture then edit its MSI database.
 # No installation session, action execution, source replacement or deletion.
@@ -21,6 +21,19 @@ function Method($object,[string]$name,[object[]]$arguments=@()){$object.GetType(
 function Property($object,[string]$name,[object[]]$arguments=@()){$object.GetType().InvokeMember($name,[Reflection.BindingFlags]::GetProperty,$null,$object,$arguments)}
 function Release($object){if($null -ne $object){[Runtime.InteropServices.Marshal]::FinalReleaseComObject($object) | Out-Null}}
 function Statement([string]$sql){$view=$null;try{$view=Method $database 'OpenView' @($sql);Method $view 'Execute' | Out-Null;Method $view 'Close' | Out-Null}finally{Release $view}}
+function Replace-Upgrade([string]$actionProperty,[int]$column,[string]$value){
+    # Range columns are MSI primary keys: replace a copied row, never UPDATE keys.
+    $query=$entry=$null
+    try{
+        $query=Method $database 'OpenView' @('SELECT * FROM `Upgrade` WHERE `ActionProperty` = '''+$actionProperty+'''');Method $query 'Execute' | Out-Null;$entry=Method $query 'Fetch'
+        if($null -eq $entry){throw 'Missing generated upgrade row'}
+        $cells=@();for($index=1;$index -le 7;$index++){$cells+=Property $entry 'StringData' @($index)}
+        $cells[$column]=$value
+    }finally{Release $entry;Release $query}
+    Statement ('DELETE FROM `Upgrade` WHERE `ActionProperty` = '''+$actionProperty+'''')
+    $values=@(foreach($cell in $cells){if($cell -ceq ''){'NULL'}else{"'"+([string]$cell).Replace("'","''")+"'"}})
+    Statement ('INSERT INTO `Upgrade` (`UpgradeCode`,`VersionMin`,`VersionMax`,`Language`,`Attributes`,`Remove`,`ActionProperty`) VALUES ('+($values -join ',')+')')
+}
 $installer=$database=$view=$row=$null
 try{
     $installer=New-Object -ComObject WindowsInstaller.Installer
@@ -37,7 +50,6 @@ try{
         'directory' { Statement 'UPDATE `Directory` SET `Directory_Parent` = ''TARGETDIR'' WHERE `Directory` = ''INSTALLDIR''' }
         'custom-action' {
             # Message-only error data, never scheduled; no executable/script.
-            Statement 'CREATE TABLE `CustomAction` (`Action` CHAR(72) NOT NULL, `Type` SHORT NOT NULL, `Source` CHAR(72), `Target` CHAR(255) PRIMARY KEY `Action`)'
             Statement 'INSERT INTO `CustomAction` (`Action`,`Type`,`Target`) VALUES (''UnsupportedTestAction'',19,''Synthetic test error; do not install.'')'
         }
         'component-identity' {
@@ -52,6 +64,17 @@ try{
         'source-policy-format' { Statement 'UPDATE `Property` SET `Value` = ''0.4.0+build.1'' WHERE `Property` = ''EEF_SOURCE_VERSION''' }
         'source-policy-bounds' { Statement 'UPDATE `Property` SET `Value` = ''0.4.256'' WHERE `Property` = ''EEF_SOURCE_VERSION''' }
         'source-policy-prerelease' { Statement 'UPDATE `Property` SET `Value` = ''0.4.0-alpha.64'' WHERE `Property` = ''EEF_SOURCE_VERSION''' }
+        'upgrade-policy-missing' { Statement 'DELETE FROM `Property` WHERE `Property` = ''eef_msi_upgrade_policy''' }
+        'upgrade-policy-unknown' { Statement 'UPDATE `Property` SET `Value` = ''major-upgrade-v2'' WHERE `Property` = ''eef_msi_upgrade_policy''' }
+        'upgrade-code' { Replace-Upgrade 'EEF_OLDER_PRODUCTS' 0 '{00000000-0000-0000-0000-000000000001}' }
+        'upgrade-newer-range' { Replace-Upgrade 'EEF_NEWER_PRODUCTS' 1 '1.2.768' }
+        'upgrade-older-range' { Replace-Upgrade 'EEF_OLDER_PRODUCTS' 2 '1.2.768' }
+        'upgrade-detect-flags' { Replace-Upgrade 'EEF_NEWER_PRODUCTS' 4 '0' }
+        'upgrade-secure' { Statement 'UPDATE `Property` SET `Value` = ''EEF_OLDER_PRODUCTS'' WHERE `Property` = ''SecureCustomProperties''' }
+        'upgrade-error-type' { Statement 'UPDATE `CustomAction` SET `Type` = 51 WHERE `Action` = ''eef_block_downgrade''' }
+        'upgrade-error-condition' { Statement 'UPDATE `InstallExecuteSequence` SET `Condition` = ''0'' WHERE `Action` = ''eef_block_downgrade''' }
+        'upgrade-remove-position' { Statement 'UPDATE `InstallExecuteSequence` SET `Sequence` = 1490 WHERE `Action` = ''RemoveExistingProducts''' }
+        'upgrade-rows' { Statement 'DELETE FROM `Upgrade`' }
     }
     Method $database 'Commit' | Out-Null
 }finally{Release $row;Release $view;Release $database;Release $installer}

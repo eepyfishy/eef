@@ -1,5 +1,23 @@
 # GitHub core verification
 
+## In-development MSI major-upgrade recipe
+
+The native authoring step now includes the [major-upgrade-v1](MSI-UPGRADE-POLICY.md)
+contract and 24 refused recipes per role, retaining all thirteen prior cases.
+Six native version boundaries, thirteen pure version-policy cases/48,640 ordinals
+and thirty-five planner cases remain. Hosted authoring does not install an MSI.
+The separate opt-in standard-user synthetic lifecycle and independent audit pass
+ten native operations locally, without executing an app payload; that is not an
+extra hosted test or production migration/rollback approval. Fresh exact-revision
+hosted verification of the new packaging source remains pending.
+
+The application baseline `7df79a1` separately passes all four matrix jobs and the
+exact thirty Windows native suites in
+[run 40206970109](https://github.com/eepyfishy/eef/actions/runs/40206970109), including
+the seven repair-readiness cases and original MSI version-policy checks. Its
+read-only audit is `.validation/atomic-reader-ci-acceptance.json`. The retained
+`fcd559f` failure below is historical, not the result of that accepted follow-up.
+
 ## Retained version-policy run failure and atomic-reader follow-up
 
 `fcd559f` [run 40198635175](https://github.com/eepyfishy/eef/actions/runs/40198635175)

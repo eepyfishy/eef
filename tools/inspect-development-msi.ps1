@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Package,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedSha256,
     [switch]$Detailed,
-    [switch]$AllowLegacyExperimentalVersion
+    [switch]$AllowLegacyExperimentalVersion,
+    [switch]$AllowLegacyExperimentalUpgrade
 )
 # Read-only structural inspection. No installation session, action execution,
 # app launch, signature trust, full ICE or dependency-health claim.
@@ -35,6 +36,9 @@ try{
     $allowed=@('ProductCode','UpgradeCode','ProductName','ProductVersion','Manufacturer','ProductLanguage','INSTALLLEVEL','EEF_DEVELOPMENT_PACKAGE','EEF_ROLE','EEF_SOURCE_VERSION','EEF_PROJECT_NAMESPACE')
     $hasVersionPolicy=@($properties.Keys | Where-Object {$_ -ceq 'eef_msi_version_policy'}).Count -eq 1
     if($hasVersionPolicy){$allowed+='eef_msi_version_policy'}
+    $hasUpgradePolicy=@($properties.Keys | Where-Object {$_ -ceq 'eef_msi_upgrade_policy'}).Count -eq 1
+    if($hasUpgradePolicy){$allowed+='eef_msi_upgrade_policy'}
+    if($properties.ContainsKey('SecureCustomProperties')){$allowed+='SecureCustomProperties'}
     if($properties.Count -ne $allowed.Count -or @($properties.Keys | Where-Object {$_ -cnotin $allowed}).Count -or $properties.EEF_DEVELOPMENT_PACKAGE -ne '1' -or $properties.EEF_ROLE -cnotin @('eef','eefn') -or $properties.ProductLanguage -ne '1033' -or $properties.INSTALLLEVEL -ne '1'){throw 'Not the supported development-only property contract'}
     if($properties.ProductName -cne ($properties.EEF_ROLE+' DEVELOPMENT ONLY - DO NOT DISTRIBUTE')){throw 'Unexpected development product display name'}
     $versionPolicyVerified=$false;$versionPolicy='legacy-explicit-development'
@@ -51,6 +55,13 @@ try{
         if($properties.ProductVersion -cne $expectedVersion){throw 'MSI version does not match source policy'}
         $versionPolicy='packed-patch-v1';$versionPolicyVerified=$true
     }elseif(-not $AllowLegacyExperimentalVersion){throw 'Version policy marker is required; legacy diagnostics require explicit opt-in'}
+    $upgradeRecipeVerified=$false;$upgradePolicy='legacy-explicit-development'
+    if($hasUpgradePolicy){
+        if($properties.eef_msi_upgrade_policy -cne 'major-upgrade-v1'){throw 'Unsupported MSI upgrade policy'}
+        if($properties.SecureCustomProperties -cne 'EEF_NEWER_PRODUCTS;EEF_OLDER_PRODUCTS'){throw 'Unsupported upgrade secure properties'}
+        $upgradePolicy='major-upgrade-v1'
+    }elseif(-not $AllowLegacyExperimentalUpgrade){throw 'Upgrade policy marker is required; legacy upgrade diagnostics require explicit opt-in'}
+    elseif($properties.ContainsKey('SecureCustomProperties')){throw 'Unsupported legacy upgrade properties'}
     foreach($code in @($properties.ProductCode,$properties.UpgradeCode)){if($code -cnotmatch '^\{[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}\}$'){throw 'Invalid product identity'}}
     $namespace=[guid]::Parse($properties.EEF_PROJECT_NAMESPACE)
     $summary=Property $database 'SummaryInformation' @(0)
@@ -58,8 +69,18 @@ try{
     if((Property $summary 'Property' @(7)) -ne 'x64;1033' -or (Property $summary 'Property' @(14)) -ne 500 -or (Property $summary 'Property' @(15)) -ne 10 -or $packageCode -notmatch '^\{[A-F0-9-]{36}\}$'){throw 'Package architecture/source/per-user summary mismatch'}
     $tables=@(Rows '_Tables' | ForEach-Object {$_[0]})
     $supportedTables=@('Property','Directory','Component','Feature','FeatureComponents','File','Media','Registry','LaunchCondition','InstallExecuteSequence','InstallUISequence','_Validation')
+    if($hasUpgradePolicy){$supportedTables+=@('Upgrade','CustomAction')}
     if(@($tables | Where-Object {$_ -notin $supportedTables}).Count){throw 'Unsupported MSI table in this development recipe'}
-    foreach($forbidden in @('CustomAction','ServiceInstall','ServiceControl','RemoveFile','RemoveRegistry','Shortcut','Environment','Upgrade')){if($forbidden -in $tables){throw ('Unsupported outward-action table '+$forbidden)}}
+    foreach($forbidden in @('ServiceInstall','ServiceControl','RemoveFile','RemoveRegistry','Shortcut','Environment')){if($forbidden -in $tables){throw ('Unsupported outward-action table '+$forbidden)}}
+    if($hasUpgradePolicy){
+        if('Upgrade' -notin $tables -or 'CustomAction' -notin $tables){throw 'Missing MSI upgrade recipe table'}
+        $upgrades=@(Rows 'Upgrade');if($upgrades.Count -ne 2){throw 'Unsupported MSI upgrade ranges'}
+        $ranges=@{};foreach($row in $upgrades){if($ranges.ContainsKey($row[6])){throw 'Duplicate upgrade action property'};$ranges[$row[6]]=$row}
+        $older=$ranges.EEF_OLDER_PRODUCTS;$newer=$ranges.EEF_NEWER_PRODUCTS
+        if($null -eq $older -or $null -eq $newer -or $older.Count -ne 7 -or $newer.Count -ne 7 -or $older[0] -cne $properties.UpgradeCode -or $newer[0] -cne $properties.UpgradeCode -or $older[1] -cne '0.0.0' -or $older[2] -cne $properties.ProductVersion -or $older[3] -cne '' -or $older[4] -cne '256' -or $older[5] -cne '' -or $older[6] -cne 'EEF_OLDER_PRODUCTS' -or $newer[1] -cne $properties.ProductVersion -or $newer[2] -cne '' -or $newer[3] -cne '' -or $newer[4] -cne '2' -or $newer[5] -cne '' -or $newer[6] -cne 'EEF_NEWER_PRODUCTS'){throw 'Unsupported MSI upgrade ranges'}
+        $custom=@(Rows 'CustomAction')
+        if($custom.Count -ne 1 -or $custom[0][0] -cne 'eef_block_downgrade' -or $custom[0][1] -cne '19' -or $custom[0][2] -cne '' -or $custom[0][3] -cne ('A newer version of '+$properties.EEF_ROLE+' is already installed. Downgrades are not supported.')){throw 'Unsupported MSI custom action; only the exact message-only downgrade guard is allowed'}
+    }
     $directories=@{};foreach($row in (Rows 'Directory')){if($directories.ContainsKey($row[0])){throw 'Duplicate directory identity'};$directories[$row[0]]=$row}
     $leaf='eef-Development-'+$properties.EEF_ROLE+'-'+$namespace.ToString('N')
     if($directories.TARGETDIR[1] -ne '' -or $directories.TARGETDIR[2] -ne 'SourceDir' -or $directories.LocalAppDataFolder[1] -ne 'TARGETDIR' -or $directories.LocalAppDataFolder[2] -ne '.' -or $directories.INSTALLDIR[1] -ne 'LocalAppDataFolder' -or $directories.INSTALLDIR[2] -ne $leaf){throw 'Unexpected authored default installation scope'}
@@ -94,12 +115,16 @@ try{
     $guard=@(Rows 'LaunchCondition');$media=@(Rows 'Media')
     if($guard.Count -ne 1 -or $guard[0][0] -ne 'Installed OR EEF_ALLOW_DEVELOPMENT_MSI = "1"' -or $media.Count -ne 1 -or $media[0][0] -ne '1' -or [int]$media[0][1] -ne $files.Count -or $media[0][3] -ne '#payload.cab'){throw 'Development guard or compressed-media mapping differs'}
     $expected=@('LaunchConditions','CostInitialize','FileCost','CostFinalize','InstallValidate','InstallInitialize','ProcessComponents','UnpublishFeatures','RemoveRegistryValues','RemoveFiles','RemoveFolders','CreateFolders','InstallFiles','WriteRegistryValues','RegisterUser','RegisterProduct','PublishFeatures','PublishProduct','InstallFinalize')
-    $sequenceRows=@(Rows 'InstallExecuteSequence');$actual=@($sequenceRows | Sort-Object {[int]$_[2]} | ForEach-Object {if($_[1] -ne ''){throw 'Unexpected action condition'};$_[0]})
+    if($hasUpgradePolicy){$expected=@('LaunchConditions','FindRelatedProducts','eef_block_downgrade','CostInitialize','FileCost','CostFinalize','InstallValidate','InstallInitialize','RemoveExistingProducts','ProcessComponents','UnpublishFeatures','RemoveRegistryValues','RemoveFiles','RemoveFolders','CreateFolders','InstallFiles','WriteRegistryValues','RegisterUser','RegisterProduct','PublishFeatures','PublishProduct','InstallFinalize')}
+    $sequenceRows=@(Rows 'InstallExecuteSequence');$actual=@($sequenceRows | Sort-Object {[int]$_[2]} | ForEach-Object {$condition=if($hasUpgradePolicy -and $_[0] -ceq 'eef_block_downgrade'){'NOT Installed AND EEF_NEWER_PRODUCTS'}else{''};if($_[1] -cne $condition){throw 'Unexpected action condition'};$_[0]})
     if(Compare-Object $expected $actual -SyncWindow 0){throw 'Unsupported execute sequence'}
     $expectedNumbers=@(100,800,900,1000,1400,1500,1600,1800,2600,3500,3600,3700,4000,5000,6000,6100,6300,6400,6600)
+    if($hasUpgradePolicy){$expectedNumbers=@(100,200,201,800,900,1000,1400,1500,1520,1600,1800,2600,3500,3600,3700,4000,5000,6000,6100,6300,6400,6600)}
     $ordered=@($sequenceRows | Sort-Object {[int]$_[2]});for($index=0;$index -lt $ordered.Count;$index++){if([int]$ordered[$index][2] -ne $expectedNumbers[$index]){throw 'Unexpected standard action position'}}
     $ui=@(Rows 'InstallUISequence' | Sort-Object {[int]$_[2]});$uiNames=@('LaunchConditions','CostInitialize','FileCost','CostFinalize','ExecuteAction');$uiNumbers=@(100,800,900,1000,1300)
-    if($ui.Count -ne $uiNames.Count){throw 'Unsupported UI sequence'};for($index=0;$index -lt $ui.Count;$index++){if($ui[$index][0] -ne $uiNames[$index] -or $ui[$index][1] -ne '' -or [int]$ui[$index][2] -ne $uiNumbers[$index]){throw 'Unexpected UI action or guard position'}}
+    if($hasUpgradePolicy){$uiNames=@('LaunchConditions','FindRelatedProducts','eef_block_downgrade','CostInitialize','FileCost','CostFinalize','ExecuteAction');$uiNumbers=@(100,200,201,800,900,1000,1300)}
+    if($ui.Count -ne $uiNames.Count){throw 'Unsupported UI sequence'};for($index=0;$index -lt $ui.Count;$index++){$condition=if($hasUpgradePolicy -and $uiNames[$index] -ceq 'eef_block_downgrade'){'NOT Installed AND EEF_NEWER_PRODUCTS'}else{''};if($ui[$index][0] -cne $uiNames[$index] -or $ui[$index][1] -cne $condition -or [int]$ui[$index][2] -ne $uiNumbers[$index]){throw 'Unexpected UI action or guard position'}}
+    $upgradeRecipeVerified=$hasUpgradePolicy
     $view=Method $database 'OpenView' @('SELECT `Data` FROM `_Streams` WHERE `Name` = ''payload.cab''');Method $view 'Execute' | Out-Null;$stream=Method $view 'Fetch';[int]$remaining=Property $stream 'DataSize' @(1);$cabinetBytes=$remaining
     if($remaining -lt 1){throw 'Empty embedded cabinet'}
     $sha=[Security.Cryptography.SHA256]::Create();try{while($remaining -gt 0){$size=[Math]::Min(65536,$remaining);$raw=Method $stream 'ReadStream' @(1,$size,1);$chunkBytes=[Text.Encoding]::GetEncoding(28591).GetBytes([string]$raw);if($chunkBytes.Length -ne $size){throw 'Short embedded cabinet read'};$null=$sha.TransformBlock($chunkBytes,0,$chunkBytes.Length,$chunkBytes,0);$remaining-=$chunkBytes.Length};$null=$sha.TransformFinalBlock([byte[]]@(),0,0);$cabHash=[BitConverter]::ToString($sha.Hash).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
@@ -107,8 +132,9 @@ try{
     if((Get-FileHash -LiteralPath $path).Hash -ne $hash){throw 'MSI changed during inspection'}
     $report=[ordered]@{schema_version=1;report_type='development_msi_inspection';success=$true;read_only=$true;role=$properties.EEF_ROLE;source_version=$properties.EEF_SOURCE_VERSION;msi_version=$properties.ProductVersion;project_namespace=$namespace.ToString('D');
         version_policy=$versionPolicy;version_policy_verified=$versionPolicyVerified;legacy_version_policy_opt_in=([bool]$AllowLegacyExperimentalVersion -and -not $hasVersionPolicy);
+        upgrade_policy=$upgradePolicy;upgrade_recipe_verified=$upgradeRecipeVerified;legacy_upgrade_policy_opt_in=([bool]$AllowLegacyExperimentalUpgrade -and -not $hasUpgradePolicy);installed_upgrade_verified=$false;
         product_code=$properties.ProductCode;upgrade_code=$properties.UpgradeCode;package_code=$packageCode;package_sha256=$hash;install_directory_leaf=$leaf;file_count=$files.Count;component_count=$components.Count;registry_count=$registry.Count;payload_bytes=$total;cabinet_bytes=$cabinetBytes;cabinet_sha256=$cabHash;
-        authored_default_is_per_user=$true;one_file_per_component=$true;development_guard_present=$true;custom_actions_present=$false;mutable_paths_authored=$false;source_component_identity_recomputed=$false;
+        authored_default_is_per_user=$true;one_file_per_component=$true;development_guard_present=$true;custom_actions_present=$hasUpgradePolicy;custom_executable_actions_present=$false;message_only_downgrade_guard=$hasUpgradePolicy;mutable_paths_authored=$false;source_component_identity_recomputed=$false;
         installation_attempted=$false;signature_trust_verified=$false;defender_clearance_verified=$false;full_ice_validation=$false;runtime_health_verified=$false;msi_release_accepted=$false;stable_release_accepted=$false}
     if($Detailed){$report['files']=$details}
     $report | ConvertTo-Json -Depth 6

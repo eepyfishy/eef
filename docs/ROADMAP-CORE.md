@@ -13,6 +13,20 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [native MSI upgrade recipe](MSI-UPGRADE-POLICY.md) now authors and independently
+inspects older-product removal and newer-product refusal scoped to role/namespace.
+Both roles pass non-installing authoring with six version boundaries and 24
+negative recipes per role. An explicit standard-user synthetic lifecycle and
+independent read-only audit pass ten native operations, including both upgrades,
+both pre-transaction downgrade refusals, same-package reinstall and owner-data-
+preserving uninstall. These tests execute no real app payload and do not close
+current-application upgrade/rollback, EXE/updater migration, locked files, normal
+setup UI/startup, approved model onboarding, second-PC or signing/Defender gates.
+Application source remains `7df79a1`, whose four-job/thirty-native hosted run
+[40206970109](https://github.com/eepyfishy/eef/actions/runs/40206970109) passes.
+Fresh hosted verification of the new packaging recipe remains separate and pending.
+There is no release, remote-node update, model/default or automatic-update change.
+
 The [Windows live-reader follow-up](ATOMIC-SETTINGS.md#windows-live-reader-follow-up-in-development)
 corrects both an imprecise repair-readiness observation and a separately
 reproduced atomic replacement collision with ordinary readers. Complete staging

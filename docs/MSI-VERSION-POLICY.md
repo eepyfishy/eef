@@ -75,9 +75,11 @@ The regression enumerates all 48,640 supported patch/phase/sequence positions
 for one major/minor pair, verifies unique increasing ordinals, checks major/minor
 boundaries and explicit vectors, and rejects malformed/overflowing inputs. Its
 13 cases run before the 35-case payload planner in every CI matrix job.
-Native authoring checks both roles, six independent inspector boundary packages
-and thirteen refused mutated recipes per role. The policy cases execute no payload
-or MSI installation. Real installed-version detection/removal is separate.
+Native authoring checks both roles and six independent inspector boundary packages.
+Its thirteen original refused recipes are retained; the separate
+[major-upgrade-v1 recipe](MSI-UPGRADE-POLICY.md) adds eleven more (24 total per
+role). The policy cases execute no payload or MSI installation. Native lifecycle
+testing of installed-version detection/removal is separate and explicitly opt-in.
 
 `version_policy_verified` proves this encoding relation only.
 `version_ordering_approved`, migration and release acceptance remain false until

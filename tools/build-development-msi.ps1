@@ -115,7 +115,8 @@ try{
     Import-Table 'Property' @('Property','Value') @('s72','l0') @('Property') @(
         @('ProductCode',$plan.product_code),@('UpgradeCode',$plan.upgrade_code),@('ProductName',($Role+' DEVELOPMENT ONLY - DO NOT DISTRIBUTE')),
         @('ProductVersion',$MsiVersion),@('Manufacturer',$Publisher),@('ProductLanguage','1033'),@('INSTALLLEVEL','1'),@('EEF_DEVELOPMENT_PACKAGE','1'),
-        @('EEF_ROLE',$Role),@('EEF_SOURCE_VERSION',$ExpectedVersion),@('EEF_PROJECT_NAMESPACE',$ProjectNamespace.ToString('D')),@('eef_msi_version_policy',$versionPolicy.version_policy))
+        @('EEF_ROLE',$Role),@('EEF_SOURCE_VERSION',$ExpectedVersion),@('EEF_PROJECT_NAMESPACE',$ProjectNamespace.ToString('D')),@('eef_msi_version_policy',$versionPolicy.version_policy),
+        @('eef_msi_upgrade_policy','major-upgrade-v1'),@('SecureCustomProperties','EEF_NEWER_PRODUCTS;EEF_OLDER_PRODUCTS'))
     $directories=[Collections.Generic.List[object]]::new()
     $directories.Add(@('TARGETDIR','','SourceDir'));$directories.Add(@('LocalAppDataFolder','TARGETDIR','.'));$directories.Add(@('INSTALLDIR','LocalAppDataFolder',$installLeaf))
     foreach($directory in $plan.directories){if($directory.path){$directories.Add(@($directory.id,$directory.parent_id,($directory.path.Split('/')[-1])))}}
@@ -136,9 +137,17 @@ try{
     Import-Table 'Media' @('DiskId','LastSequence','DiskPrompt','Cabinet','VolumeLabel','Source') @('i2','i4','L64','S255','S32','S72') @('DiskId') @(@('1',[string]$files.Count,'','#payload.cab','',''))
     Import-Table 'Registry' @('Registry','Root','Key','Name','Value','Component_') @('s72','i2','l255','L255','L0','s72') @('Registry') $registry.ToArray()
     Import-Table 'LaunchCondition' @('Condition','Description') @('s255','l255') @('Condition') @(@('Installed OR EEF_ALLOW_DEVELOPMENT_MSI = "1"','Development-only package. Not approved for installation or distribution.'))
-    $actions=@(@('LaunchConditions','','100'),@('CostInitialize','','800'),@('FileCost','','900'),@('CostFinalize','','1000'),@('InstallValidate','','1400'),@('InstallInitialize','','1500'),@('ProcessComponents','','1600'),@('UnpublishFeatures','','1800'),@('RemoveRegistryValues','','2600'),@('RemoveFiles','','3500'),@('RemoveFolders','','3600'),@('CreateFolders','','3700'),@('InstallFiles','','4000'),@('WriteRegistryValues','','5000'),@('RegisterUser','','6000'),@('RegisterProduct','','6100'),@('PublishFeatures','','6300'),@('PublishProduct','','6400'),@('InstallFinalize','','6600'))
+    # Detection remains role/namespace-scoped. Only older products enter removal;
+    # newer products are detect-only and stop before any installation transaction.
+    Import-Table 'Upgrade' @('UpgradeCode','VersionMin','VersionMax','Language','Attributes','Remove','ActionProperty') @('s38','S20','S20','S255','i4','S255','s72') @('UpgradeCode','VersionMin','VersionMax','Language','Attributes') @(
+        @($plan.upgrade_code,'0.0.0',$MsiVersion,'','256','','EEF_OLDER_PRODUCTS'),
+        @($plan.upgrade_code,$MsiVersion,'','','2','','EEF_NEWER_PRODUCTS'))
+    # MSI Type 19 displays an error only: no executable, DLL or script is embedded.
+    Import-Table 'CustomAction' @('Action','Type','Source','Target') @('s72','i2','S72','L0') @('Action') @(
+        @('eef_block_downgrade','19','',('A newer version of '+$Role+' is already installed. Downgrades are not supported.')))
+    $actions=@(@('LaunchConditions','','100'),@('FindRelatedProducts','','200'),@('eef_block_downgrade','NOT Installed AND EEF_NEWER_PRODUCTS','201'),@('CostInitialize','','800'),@('FileCost','','900'),@('CostFinalize','','1000'),@('InstallValidate','','1400'),@('InstallInitialize','','1500'),@('RemoveExistingProducts','','1520'),@('ProcessComponents','','1600'),@('UnpublishFeatures','','1800'),@('RemoveRegistryValues','','2600'),@('RemoveFiles','','3500'),@('RemoveFolders','','3600'),@('CreateFolders','','3700'),@('InstallFiles','','4000'),@('WriteRegistryValues','','5000'),@('RegisterUser','','6000'),@('RegisterProduct','','6100'),@('PublishFeatures','','6300'),@('PublishProduct','','6400'),@('InstallFinalize','','6600'))
     Import-Table 'InstallExecuteSequence' @('Action','Condition','Sequence') @('s72','S255','I2') @('Action') $actions
-    Import-Table 'InstallUISequence' @('Action','Condition','Sequence') @('s72','S255','I2') @('Action') @(@('LaunchConditions','','100'),@('CostInitialize','','800'),@('FileCost','','900'),@('CostFinalize','','1000'),@('ExecuteAction','','1300'))
+    Import-Table 'InstallUISequence' @('Action','Condition','Sequence') @('s72','S255','I2') @('Action') @(@('LaunchConditions','','100'),@('FindRelatedProducts','','200'),@('eef_block_downgrade','NOT Installed AND EEF_NEWER_PRODUCTS','201'),@('CostInitialize','','800'),@('FileCost','','900'),@('CostFinalize','','1000'),@('ExecuteAction','','1300'))
     $view=Method $database 'OpenView' @('INSERT INTO `_Streams` (`Name`, `Data`) VALUES (?, ?)')
     $record=Method $installer 'CreateRecord' @(2);Set-Property $record 'StringData' @(1,'payload.cab') | Out-Null;$record.SetStream([int]2,[string]$cab)
     Method $view 'Execute' @($record) | Out-Null;Method $view 'Close' | Out-Null;Release $record;$record=$null;Release $view;$view=$null
@@ -168,11 +177,12 @@ if(-not $KeepIntermediateFiles){
 }
 $report=[ordered]@{schema_version=1;report_type='development_msi_authoring';authored=$true;development_only=$true;role=$Role;source_version=$ExpectedVersion;msi_version=$MsiVersion;
     version_policy=$versionPolicy.version_policy;version_policy_verified=$true;source_is_prerelease=$versionPolicy.source_is_prerelease;
+    upgrade_policy='major-upgrade-v1';upgrade_recipe_authored=$true;installed_upgrade_verified=$false;downgrade_guard_authored=$true;
     product_code=$plan.product_code;upgrade_code=$plan.upgrade_code;package_code=$packageCode;install_directory_leaf=$installLeaf;files=$files.Count;
     source_inventory_sha256=$plan.source_inventory_sha256;regenerated_inventory_sha256=(Get-FileHash -LiteralPath $inventoryPath).Hash.ToLowerInvariant();cabinet_sha256=$cabHash.ToLowerInvariant();cabinet_bytes=$cabBytes;
     package=$package;package_bytes=(Get-Item -LiteralPath $package).Length;package_sha256=(Get-FileHash -LiteralPath $package).Hash.ToLowerInvariant();
     every_cabinet_file_verified=$true;embedded_cabinet_verified=$true;package_format_verified=$true;intermediate_copies_retained=$retained;
-    installation_attempted=$false;application_launched=$false;mutable_configuration_packaged=$false;models_downloaded=$false;custom_actions_authored=$false;
+    installation_attempted=$false;application_launched=$false;mutable_configuration_packaged=$false;models_downloaded=$false;custom_actions_authored=$true;custom_executable_actions_authored=$false;message_only_downgrade_guard=$true;
     startup_choices_implemented=$false;upgrade_migration_verified=$false;real_application_rollback_verified=$false;full_ice_validation=$false;signing_defender_verified=$false;
     version_ordering_approved=$false;msi_release_accepted=$false;stable_release_accepted=$false;created=(Get-Date -Format o)}
 $json=$report | ConvertTo-Json -Depth 5;[IO.File]::WriteAllText((Join-Path $output 'authoring-results.json'),$json,$utf8);Write-Output $json

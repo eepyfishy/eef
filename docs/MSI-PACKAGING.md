@@ -9,6 +9,11 @@ The current [version encoding contract](MSI-VERSION-POLICY.md) is
 the independent inspector verifies it separately. Earlier arbitrary numeric
 development examples below remain historical evidence, not production ordering.
 Encoding does not by itself implement upgrade/downgrade fences or migration.
+The separate [major-upgrade-v1 development recipe](MSI-UPGRADE-POLICY.md) now
+authors and independently inspects role-scoped installed-version detection,
+downgrade refusal and in-transaction older-product removal. Its guarded synthetic
+lifecycle test is opt-in and separate from non-installing authoring/CI. Real
+application migration/rollback and release acceptance remain open.
 
 ## Initial inspection (2026-10-23)
 
@@ -143,8 +148,9 @@ role bundle without rebuilding the application. It requires explicit development
 consent, source/MSI versions and a project namespace. It regenerates the inventory,
 compresses selected files with the installed Windows cabinet utilities, verifies
 every extracted file and the embedded cabinet in bounded readback chunks, and
-authors one file per stable component with scoped HKCU key paths. Only standard
-MSI actions are used. The separate
+authors one file per stable component with scoped HKCU key paths. The current
+upgrade recipe adds only the exact message-only Type 19 downgrade refusal to
+standard MSI actions; no custom executable or script is authored. The separate
 [inspector](../tools/inspect-development-msi.ps1) opens the database read-only and
 checks its tables, references, default per-user directories, current-user registry
 scope, media, sequences, development guard and cabinet hash.
@@ -163,14 +169,18 @@ No custom executable actions, services, startup entries, automatic launch or
 installation are performed by these tools. ASCII build paths are currently
 required; end-user installation/path encoding still needs acceptance.
 
-The synthetic Windows regression passes for both roles, with cabinet data larger
+The initial synthetic Windows regression passes for both roles, with cabinet data larger
 than one readback chunk, source preservation, regenerated inventory verification,
 existing-output refusal, missing-consent refusal and wrong-hash refusal. Seven
-mutated recipes per role are rejected: machine context, changed guard, HKLM
+mutated recipes per role were rejected: machine context, changed guard, HKLM
 registry, changed directory scope, custom action table, duplicate component GUIDs
 and altered UI action position. Mutations affect copies in generated test fixtures
 only and are never installed. The earlier inspector variable-type failure and
 primary-key mutation-helper failure remain retained as authoring failures.
+The current upgrade regression expands refusal coverage to 24 recipes per role;
+its separate standard-user synthetic lifecycle and independent read-only audit
+pass all ten native operations with owner markers retained. See
+[the exact scope and remaining gates](MSI-UPGRADE-POLICY.md#opt-in-lifecycle-regression).
 
 A separate read-only audit verifies development packages built from the accepted
 current `4ea7964` default-feature applications and verified cached runtimes:
