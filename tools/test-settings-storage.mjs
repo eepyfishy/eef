@@ -1,4 +1,5 @@
 // Real owner APIs with native Windows delete locks; no user files/models/devices.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,readdir} from 'node:fs/promises';
 import {join,resolve,sep} from 'node:path';
@@ -41,7 +42,7 @@ try{
  const value=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
  Object.assign(value,{node_id:'settings-storage-fixture',name:'Original node',auto_local:false,local_pairing:false,connection_enabled:false,endpoints:[],psk:'',dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:api},update:{policy:'off'},models:{provider:'ollama',ollama:{base_url:'http://127.0.0.1:1',selected:[]},llamacpp:{slots:[]}}});
  await writeFile(owned(config),JSON.stringify(value));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(owned(identity),yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(owned(identity),yaml);
  const sentinel=Buffer.from('Existing sibling belongs to its owner, not to the next save');
  for(const path of [config+'.next',identity+'.next'])await writeFile(owned(path),sentinel);
  start(join(bin,'eefn.exe'),['--config',config,'--no-ui']);

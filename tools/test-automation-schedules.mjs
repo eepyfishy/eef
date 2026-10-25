@@ -1,4 +1,5 @@
 // Real headless roles, native system.info, automatic fixed-delay scheduling.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // Two logical nodes on one PC; no model/semantic/physical two-PC acceptance.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -51,7 +52,7 @@ async function timerDiagnostics(){
 }
 try{
  await new Promise(r=>tags.listen(0,'127.0.0.1',r));const [api,gateway]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${api}`;
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
  await writeFile(configPath,yaml);launch('eef',configPath,['--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  await until(async()=>{try{return (await json(eef+'/api/diagnostics')).initialized;}catch{return false;}},'coordinator startup');
  for(const label of ['a','b']){

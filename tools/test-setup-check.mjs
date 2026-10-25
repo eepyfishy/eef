@@ -1,4 +1,5 @@
 // Read-only onboarding through a headless running node. Synthetic backend only;
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // no real model, download, personal configuration or physical two-PC claim.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -54,7 +55,7 @@ try{
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));config.node_id='setup-fixture';config.dashboard.port=api;config.update.policy='off';
  config.models.provider='ollama';config.models.ollama={base_url:`http://127.0.0.1:${fake.address().port}`,selected:[]};
  await writeFile(nodeConfig,JSON.stringify(config));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
  start('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:randomBytes(32).toString('hex')});
  const nodeProcess=start('eefn',['--config',nodeConfig,'--no-ui']);await until(async()=>(await json(node+'/api/status')).connection.state==='connected','legacy connected');
  let report=await check();assert.equal(report.connection,'connected');assert.equal(report.transport,'legacy_shared_key');assert.equal(report.saved_auth_mode,'legacy');assert.equal(report.execution_receipts_available,false);

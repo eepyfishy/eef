@@ -1,4 +1,5 @@
 // Two logical nodes on ONE PC: authenticated discovery, not physical mesh proof.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
@@ -32,7 +33,7 @@ try {
    network:{advertised_address:address,coordinator:{coordinator_id:'eef-'+id,address:address+':51335',state:'standby'}}});
   await writeFile(join(scratch,id+'.json'),JSON.stringify(c));
  }
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
  const config=join(scratch,'eef.yaml');await writeFile(config,yaml);
  launch('eef',['--config',config,'--database',join(scratch,'eef.db'),'--no-brain'],{EEF_NODE_PSK:secret});
  launch('eefn',['--config',join(scratch,'node-a.json'),'--no-ui']);

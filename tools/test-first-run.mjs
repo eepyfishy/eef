@@ -1,4 +1,5 @@
 // Integration + browser regression. Fixtures stay in .validation, never personal config.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
@@ -46,7 +47,7 @@ try{
  const id=waiting.node_id;assert.match(id,/^device-/);assert.notEqual(waiting.name,'Example node');
  assert.equal(pulls,0);assert.equal(waiting.models.length,0);assert.equal((await json(node+'/api/models')).backend,'ollama');
  const duplicate=launch('eefn',['--config',configPath]);await until(()=>duplicate.exitCode===0,'second launch reuses running device');
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
  const eefConfig=join(scratch,'eef.yaml');await writeFile(eefConfig,yaml);
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain'],{EEF_NODE_PSK:randomBytes(32).toString('hex')});
  await until(async()=>{const s=await json(node+'/api/status');return s.connection?.state==='connected';},'automatic local pairing');

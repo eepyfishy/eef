@@ -1,4 +1,5 @@
 // Real PowerShell command I/O/exit propagation, including selected-package handoff.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // Isolated services only: no browser, model, owner config or physical node.
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile,link,unlink,open} from 'node:fs/promises';
@@ -61,7 +62,7 @@ try {
   const api=await port(),config=join(install,role==="eef"?"owner config 'shell'.yaml":"node config 'shell'.json"),base=`http://127.0.0.1:${api}`;
   let gateway;
   if(role==='eef'){
-   gateway=await port();const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replaceAll('host: 0.0.0.0','host: 127.0.0.1').replace('policy: prompt','policy: off');await writeFile(config,yaml);
+   gateway=await port();const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replaceAll('host: 0.0.0.0','host: 127.0.0.1').replace('policy: prompt','policy: off');await writeFile(config,yaml);
   }else{
    const value=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
    Object.assign(value,{node_id:'shell-fixture',name:'Shell fixture',connection_enabled:false,auto_local:false,local_pairing:false,endpoints:[],psk:'',

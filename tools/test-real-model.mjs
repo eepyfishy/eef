@@ -1,4 +1,5 @@
 // Opt-in real CPU inference through reviewed public commands and pinned TLS.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // Reuse EEF_TEST_MODEL_FILE, verified against the chosen catalog entry, without
 // copying it. Downloads require EEF_TEST_ALLOW_MODEL_DOWNLOAD=1 explicitly.
 // Isolated config/processes only; never mutate a personal model or installed app.
@@ -32,7 +33,7 @@ try{
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
  config.dashboard.port=devicePort;config.update.policy='off';config.models.provider='llamacpp';config.models.llamacpp.binary=join(bundle,'tools','llama-server.exe');
  const configPath=join(scratch,'node.json');await writeFile(configPath,JSON.stringify(config));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
  const eefConfig=join(scratch,'eef.yaml');await writeFile(eefConfig,yaml);
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:randomBytes(32).toString('hex')});
  launch('eefn',['--config',configPath,'--no-ui']);

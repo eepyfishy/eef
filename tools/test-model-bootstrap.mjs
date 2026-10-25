@@ -1,4 +1,5 @@
 // Public policy commands, not a bootstrap worker or model-quality acceptance.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -49,7 +50,7 @@ try{
   model_catalog:[{id:'fixture',name:'Synthetic, not a model',modality:'text',license:'Apache-2.0',url:'https://example.invalid/fixture.gguf?token=PRIVATE_CATALOG_TOKEN',source_page:'https://example.invalid/license',sha256:'a'.repeat(64),bytes:1234}],
   models:{provider:'llamacpp',ollama:{base_url:'http://127.0.0.1:1',selected:[]},llamacpp:{slots:[]}}});
  await writeFile(nodeConfig,JSON.stringify(config));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
  const app=launch('eefn',['--config',nodeConfig,'--no-ui']);launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  await until(async()=>(await json(node+'/api/diagnostics')).runtime_id,'node startup');
  const before=await readFile(nodeConfig,'utf8'),initial=await show();noAutomation(initial);

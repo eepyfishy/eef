@@ -1,4 +1,5 @@
 // Native command-first bootstrap, with synthetic HTTP metadata/cache only.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // No real weights, inference, installer, installed-node or physical-device changes.
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile,stat} from 'node:fs/promises';
@@ -52,7 +53,7 @@ try{
   models:{provider:'auto',ollama:{base_url:`http://127.0.0.1:${provider.address().port}`,selected:[]},llamacpp:{binary:'tools/fixture-no-model-runtime.exe',slots:[]}},
   model_catalog:[{id:'fixture',modality:'text',ollama:'fixture:latest',url:'https://example.invalid/fixture.gguf',sha256:'a'.repeat(64),bytes:4,license:'test-only',source_page:'https://example.invalid/license'}]});
  await writeFile(config,JSON.stringify(value));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(identity,yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(identity,yaml);
  launch();start('eef',['--config',identity,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  await until(async()=>(await json(node+'/api/diagnostics')).runtime_id,'node core startup');
  await local(['model-bootstrap-policy','configure','--mode','auto','--model','fixture']);

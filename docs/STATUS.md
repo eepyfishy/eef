@@ -3,6 +3,30 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Locally verified: same-PC test listener isolation
+
+Thirty-six template-based same-PC fixtures now read an explicit loopback-only
+coordinator template through a shared helper. Production LAN defaults, the real
+no-config first-initialization test and the wildcard owner-API rejection test
+remain unchanged. Only the helper import and template-read expression change
+in each migrated fixture; every existing assertion is retained.
+
+Two newline cases, 31 refusal cases, 38 JavaScript syntax checks and 36 native
+cases pass locally. The native epoch covers 29 main suites and seven additional
+cases, with independent reconciliation of unchanged 327-source/eleven-artifact
+hashes and retirement of owned app/helper/compiler processes. The genuine
+first-initialization gate is not rerun unattended locally; CI still requires it.
+Four sampled app listeners are loopback-only, not a whole-epoch socket trace or
+proof of universal Windows dialog suppression. CPU and browser follow-ups are
+separate from this native checkpoint.
+
+Read-only inspection finds persistent rules already present for both debug
+executables. No firewall rule, notification, adapter category, startup elevation
+or security setting is changed. New installation paths can still need legitimate
+Windows approval; installer firewall integration and physical connectivity are
+not claimed complete. See [firewall scope and limitations](WINDOWS-FIREWALL.md).
+No deployment, release/feed change or model policy change.
+
 ## In development: durable intent before model-check preparation
 
 A controlled native test reproduces a repeated owner model-check start issuing

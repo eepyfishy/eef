@@ -1,4 +1,5 @@
 // Command-driven one-PC integration. No browser, AI model or personal config.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
@@ -46,7 +47,7 @@ try {
   const saved=JSON.parse(before);
   Object.assign(saved,{auto_local:false,local_pairing:false,endpoints:[`127.0.0.1:${nodePort}`],psk:secret,dashboard:{enabled:true,host:'127.0.0.1',port:apiPort},update:{policy:'off'},models:{provider:'llamacpp',llamacpp:{slots:[]}}});
   await writeFile(config,JSON.stringify(saved));
-  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
+  const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
   const eefConfig=join(scratch,'eef.yaml');await writeFile(eefConfig,yaml);
   launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain'],{EEF_NODE_PSK:secret});
   await until(async()=>(await json(eef+'/api/diagnostics')).initialized===true,'coordinator initialized before node start');

@@ -1,4 +1,5 @@
 // Isolated process acceptance: fake llama-server, no weights or real inference.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
@@ -42,7 +43,7 @@ try {
  config.models.llamacpp.slots[0].selection={roles:['request_interpreter']};
  const nodeConfig=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml');
  await writeFile(nodeConfig,JSON.stringify(config));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
  await writeFile(eefConfig,yaml);
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:secret});
  launch('eefn',['--config',nodeConfig,'--no-ui']);

@@ -1,4 +1,5 @@
 // Command-driven shared-Ollama lifecycle acceptance with a synthetic provider.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // No installed app, real model, shared service, dashboard or public peer touched.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -59,7 +60,7 @@ try{
  await writeFile(configPath,JSON.stringify(config));await local(['models','interpreter','--backend','ollama','--model','selected']);
  const initial=(await local(['model-lifecycle-policy','show'])).result;
  await local(['model-lifecycle-policy','set','--expected-digest',initial.saved_digest,'--ollama-context-tokens','4096','--ollama-keep-alive-seconds','60','--load-timeout-seconds','2']);
- await writeFile(eefConfig,(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
+ await writeFile(eefConfig,(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
  launch('eef',eefConfig,['--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:randomBytes(24).toString('hex')});launch('eefn',configPath,['--no-ui']);
  await until(async()=>!!(await json(eef+'/api/diagnostics')).initialized,'coordinator');await until(async()=>!!(await json(node+'/api/diagnostics')).runtime_id,'node');
  let status=await show();runtime=status.runtime_id;assert.equal(status.supported,false);assert.equal(status.ollama_preparation_supported,true);assert.deepEqual(status.models,[]);

@@ -1,4 +1,5 @@
 // Two logical headless nodes, pinned TLS, reviewed one-shot system-info grants
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // and a bounded transport gate. No models, personal apps, shell/device actions
 // or physical two-PC claims.
 import assert from 'node:assert/strict';
@@ -40,7 +41,7 @@ try {
   socket.pipe(upstream);upstream.pipe(socket);
  }));
  const secret=randomBytes(24).toString('hex');
- await writeFile(config,(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off'));
+ await writeFile(config,(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off'));
  launch('eef',['--config',config,'--database',join(scratch,'eef.db'),'--no-ui','--no-brain'],{EEF_NODE_PSK:secret});
  await until(async()=>(await coordinator(['diagnostics'])).initialized,'coordinator startup');
  const nodes=[];

@@ -1,4 +1,5 @@
 // Actual CLI/API private-input adapters, isolated one-PC processes. No models,
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // installed nodes, private invitation files, workload grants or UI dependency.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -33,7 +34,7 @@ let node,eef,invitation,credential,proxy,proxyMode='drop',forwarded=0,proxyError
 function noSecret(output){assert(!output.includes(invitation.code),'private code leaked');assert(!output.includes(credential),'private credential leaked');}
 try{
  const [apiPort,eefPort,gatewayPort]=await Promise.all([port(),port(),port()]);node=`http://127.0.0.1:${apiPort}`;eef=`http://127.0.0.1:${eefPort}`;
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
  await writeFile(eefConfig,yaml);
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  await until(async()=>(await json(eef+'/api/diagnostics')).initialized,'coordinator startup');

@@ -1,4 +1,5 @@
 // Native owner controls and reviewed core work with deleted model references.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // No model download/inference, HTTP egress or physical-device actions.
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile,unlink,stat} from 'node:fs/promises';
@@ -40,7 +41,7 @@ try{
  await writeFile(config,JSON.stringify(value));const retainedModels=structuredClone(value.models);
  // Delete only the two synthetic files just created in this isolated fixture.
  await unlink(weights);await unlink(projector);
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(identity,yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(identity,yaml);
  start('eefn',['--config',config,'--no-ui']);start('eef',['--config',identity,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  await until(async()=>(await json(node+'/api/diagnostics')).runtime_id,'core node startup with missing artifacts');
  assert.equal((await local(['model-lifecycle-policy','show'])).result.applied_policy.startup,'eager');await assertModelsUnloaded();

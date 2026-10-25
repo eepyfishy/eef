@@ -1,4 +1,5 @@
 // Native same-version handoff/rollback. Selectors are synthetic fixture input;
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // this does NOT exercise HTTPS repair download or certify packaged dependencies.
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile,link,unlink} from 'node:fs/promises';
@@ -40,7 +41,7 @@ try {
    Object.assign(value,{node_id:'repair-handoff-node',name:'Repair handoff fixture',auto_local:false,local_pairing:false,connection_enabled:false,endpoints:[],psk:'',dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:api},update:{policy:'off',manifest_url:feed},models:{provider:'ollama',ollama:{base_url:'http://127.0.0.1:1',selected:[]}}});
    await writeFile(config,JSON.stringify(value));
   }else{
-   const gateway=await port();const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replaceAll('host: 0.0.0.0','host: 127.0.0.1').replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off').replace(/manifest_url: [^\r\n]+/,'manifest_url: '+JSON.stringify(feed));await writeFile(config,yaml);
+   const gateway=await port();const yaml=(await readLoopbackCoordinatorTemplate()).replaceAll('host: 0.0.0.0','host: 127.0.0.1').replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off').replace(/manifest_url: [^\r\n]+/,'manifest_url: '+JSON.stringify(feed));await writeFile(config,yaml);
   }
   const args=['--config',config,'--no-ui',...(role==='eef'?['--database',join(install,'eef.db'),'--no-brain']:[])];
   launch(rootExe,args);await until(async()=>{await json(url+'/api/diagnostics');return hasPath(rootExe);},role+' initial runtime');

@@ -1,4 +1,5 @@
 // API-only node -> eef review, using fake inference and isolated local data.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // Review/preparation stay idle; separate owner-approved grant execution uses a fake backend.
 import assert from 'node:assert/strict';
 import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
@@ -103,7 +104,7 @@ try {
   const notRunningBytes=await readFile(configPath,'utf8');
   assert.equal((await cli(['--ask','Input before starting node'],false)).error_code,'node_not_running');
   assert.equal(await readFile(configPath,'utf8'),notRunningBytes);assert.equal(calls.length,0);
-  const yaml = (await readFile(join(root, 'config/default_identity.yaml'), 'utf8'))
+  const yaml = (await readLoopbackCoordinatorTemplate())
     .replace('port: 51334', `port: ${eefPort}`).replace('port: 51335', `port: ${gatewayPort}`).replace('policy: prompt', 'policy: off');
   await writeFile(eefConfig, yaml);
   launch('eef', ['--config', eefConfig, '--database', join(scratch, 'eef.db'), '--no-brain', '--no-ui'], {EEF_NODE_PSK: secret});

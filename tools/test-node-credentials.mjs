@@ -1,4 +1,5 @@
 // Public-command two-logical-node fixture, on one PC. No models or installed nodes.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
@@ -32,7 +33,7 @@ async function port(){const s=createServer();await new Promise(r=>s.listen(0,'12
 async function json(url,body,method){const r=await fetch(url,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(5000)});assert(r.ok,`${url}: HTTP ${r.status}`);return r.json();}
 try {
   const [webPort,gatewayPort]=await Promise.all([port(),port()]);const base=`http://127.0.0.1:${webPort}`;
-  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
+  const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
   await writeFile(eefConfig,yaml);
   coordinatorProcess=launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:secret});
   await until(async()=>(await json(base+'/api/diagnostics')).initialized,'coordinator startup');

@@ -1,4 +1,5 @@
 // Scoped model-setup restarts. Synthetic provider only; no real weights/inference.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile,link,unlink} from 'node:fs/promises';
 import {join,resolve,sep} from 'node:path';
@@ -72,7 +73,7 @@ async function assertBound(f){
 }
 try{
  await new Promise(r=>provider.listen(0,'127.0.0.1',r));const [web,gateway]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${web}`;
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(identity,yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(identity,yaml);
  start('eef',['--config',identity,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  await until(async()=>(await json(eef+'/api/diagnostics')).initialized,'coordinator startup');
  const success=await fixture('success',{isolatedInstall:true});

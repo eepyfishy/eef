@@ -1,4 +1,5 @@
 // Isolated one-PC protocol test with a fake Ollama HTTP backend. No real inference,
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // model downloads, personal configuration, or physical cross-node proof.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,mkdir,realpath} from 'node:fs/promises';
@@ -67,7 +68,7 @@ try{
  const nodeConnection=async(action,extra=[],success=true)=>{const child=launch('eefn',['--config',nodeConfig,'connection',action,...extra,'--json']);const timer=setTimeout(()=>child.kill(),25000);try{const result=await child.result;assert.equal(result.code,success?0:1,result.out+' '+result.err);return JSON.parse(result.out);}finally{clearTimeout(timer);}};
  const localRestart=async()=>{const child=launch('eefn',['--config',nodeConfig,'restart','--wait-seconds','60','--json']);const timer=setTimeout(()=>child.kill(),70000);try{const result=await child.result;assert.equal(result.code,0,result.out+' '+result.err);const reply=JSON.parse(result.out);assert.equal(reply.completed,true);assert.notEqual(reply.runtime_id,reply.previous_runtime_id);return reply;}finally{clearTimeout(timer);}};
  await writeFile(nodeConfig,JSON.stringify(config));
- let yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
+ let yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
  if(uiConfig)yaml=yaml.replace('ui_enabled: true','ui_enabled: false');
  await writeFile(eefConfig,yaml);
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain',...uiConfig?[]:['--no-ui']],{EEF_NODE_PSK:secret});

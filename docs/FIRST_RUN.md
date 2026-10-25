@@ -67,8 +67,9 @@ management cannot enable itself. Local file pickers and startup remain local.
 In eef, open Network and create a connection code. Keep it private: it contains
 your network credential. On the second PC, install the node app, paste the
 code into Network, and save. The PCs must be reachable on your private network;
-Windows Firewall may ask for approval. Do not disable the firewall. If names
-cannot be resolved, the connection details support a reachable LAN address.
+Windows Firewall may ask for approval. Do not disable the firewall. Repeated
+prompts and development test copies are covered in [firewall notes](WINDOWS-FIREWALL.md).
+If names cannot be resolved, the connection details support a reachable LAN address.
 
 Multiple eef connections can have priorities under Network's connection
 details. These control the order of reconnect attempts, not a shared election

@@ -1,4 +1,5 @@
 // Public reviewed-command acceptance, Windows only, no journal/permission bypass.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,mkdir,stat} from 'node:fs/promises';
 import {writeFileSync} from 'node:fs';
@@ -37,7 +38,7 @@ async function exists(path){try{await stat(path);return true;}catch{return false
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 try {
  await new Promise(r=>tags.listen(0,'127.0.0.1',r));const [api,gateway]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${api}`;
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
  await writeFile(coordinatorConfig,yaml);start(join(bin,'eef.exe'),['--config',coordinatorConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  phase='coordinator-starting';console.log('Checking isolated coordinator startup');
  await until(async()=>{try{return (await json(eef+'/api/diagnostics')).initialized;}catch{return false;}},'coordinator startup');

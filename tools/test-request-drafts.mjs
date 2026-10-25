@@ -1,4 +1,5 @@
 // Two logical nodes on one PC; real pinned TLS and durable journal, no model.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
@@ -41,7 +42,7 @@ const gateServer=createHTTPServer((req,res)=>{gateRequests++;gatedResponses.add(
 try {
   await new Promise(r=>gateServer.listen(0,'127.0.0.1',r));
   const [web,gateway]=await Promise.all([port(),port()]),base=`http://127.0.0.1:${web}`;
-  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
+  const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
   await writeFile(eefConfig,yaml);
   eefProcess=launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:coordinatorSecret});
   await until(async()=>(await json(base+'/api/diagnostics')).initialized,'coordinator startup');

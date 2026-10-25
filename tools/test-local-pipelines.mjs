@@ -1,4 +1,5 @@
 // Public command-driven finite dataflow through two separately authenticated
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // logical nodes on one PC. No actual LM/media, downloads, UI or physical-network proof.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,mkdir,stat,unlink} from 'node:fs/promises';
@@ -98,7 +99,7 @@ def handle(action,params):
  }
  checkpoint('coordinator-start');
  await mkdir(work);await new Promise(r=>fake.listen(0,'127.0.0.1',r));const [api,gateway]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${api}`;
- await writeFile(eefConfig,(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
+ await writeFile(eefConfig,(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
  launch('eef',eefConfig,['--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  await until(async()=>!!(await json(eef+'/api/diagnostics')).initialized,'coordinator');
  for(const role of ['origin','executor']) {

@@ -1,4 +1,5 @@
 // Public-command input workflow acceptance; isolated data, fake inference,
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // explicit owner TLS pairing. No UI controller, raw RPC or workload execution.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -98,7 +99,7 @@ try {
  const stoppedResponse=await nodeCli(['requests','respond',absentJob,'--revision','1','--text','Keep this answer','--operation-id',absentResponse],false);
  assert.equal(stoppedResponse.error_code,'node_not_running');assert.equal(stoppedResponse.command.operation_id,absentResponse);assert.equal(await readFile(configPath,'utf8'),before);assert.equal(calls.length,0);
  const offline=await nodeCli(['requests','workflow','show']);assert.equal(offline.saved_policy.prepare_on_input,true);assert.equal(offline.applied_policy,null);
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${webPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
  await writeFile(eefConfig,yaml);
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:secret}).diagnosticRole='coordinator';
  launch('eefn',['--config',configPath,'--no-ui']).diagnosticRole='node';

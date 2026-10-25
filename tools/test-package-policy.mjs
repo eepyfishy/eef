@@ -1,4 +1,5 @@
 // Command-first remote policy control against production alpha apps. Isolated
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // hardlinked managed node bundle; no model, installer, artifact or external I/O.
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,link,unlink,readFile,writeFile,access} from 'node:fs/promises';
@@ -63,7 +64,7 @@ try {
   dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:api},update:{policy:'off'},
   request_limits:{work:1,control:2},models:{provider:'llamacpp',ollama:{base_url:'http://127.0.0.1:1',selected:[]},llamacpp:{binary:'tools/not-installed.exe',slots:[]}},custom:{preserve:true}});
  await writeFile(config,JSON.stringify(initial));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(identity,yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(identity,yaml);
  const proxyIdentity=join(scratch,'proxy-eef.yaml');await writeFile(proxyIdentity,yaml.replace(`port: ${web}`,`port: ${proxy.address().port}`));
  launch(nodeExe,['--config',config,'--no-ui']);launch(join(bin,'eef.exe'),['--config',identity,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(32).toString('hex')});
  await until(async()=>(await json(node+'/api/diagnostics')).runtime_id,'node runtime');

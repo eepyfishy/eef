@@ -1,4 +1,5 @@
 // Public-command two-logical-node fixture, not physical two-PC acceptance.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // Durable definitions and owner-approval records only: no occurrence admission,
 // timers, job execution, models or UI controller.
 import assert from 'node:assert/strict';
@@ -43,7 +44,7 @@ function policyArgs(command){return ['automation-policies','approve','--definiti
   '--max-reserved-execution-ms',String(command.max_reserved_execution_ms),'--max-reserved-result-bytes',String(command.max_reserved_result_bytes)];}
 try{
   await new Promise(r=>tags.listen(0,'127.0.0.1',r));const [eefPort,gatewayPort]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${eefPort}`;
-  const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
+  const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
   await writeFile(eefConfig,yaml);launch('eef',eefConfig,['--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
   await until(async()=>(await json(eef+'/api/diagnostics')).initialized,'coordinator startup');
   for(const label of ['a','b']){

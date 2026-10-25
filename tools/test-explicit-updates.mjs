@@ -1,4 +1,5 @@
 // Isolated command/transport regression. No release downloads or personal installs.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp, readFile, writeFile, mkdir, link, unlink} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
@@ -35,7 +36,7 @@ async function cli(config,args,success){const c=launch('eef',['--config',config,
 try {
  await mkdir(nodeInstall);await link(join(bin,'eefn.exe'),nodeExe);nodeLinked=true;
  const [eefPort,nodePort,gateway,proxyPort]=await Promise.all([port(),port(),port(),port()]);
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replaceAll('host: 0.0.0.0','host: 127.0.0.1').replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
+ const yaml=(await readLoopbackCoordinatorTemplate()).replaceAll('host: 0.0.0.0','host: 127.0.0.1').replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');
  await writeFile(eefConfig,yaml);await writeFile(proxyConfig,yaml.replace(`port: ${eefPort}`,`port: ${proxyPort}`));
  await new Promise(r=>proxy.listen(proxyPort,'127.0.0.1',r));
  const secret=randomBytes(24).toString('hex'), config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));

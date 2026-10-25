@@ -1,4 +1,5 @@
 // Public native node/coordinator commands; synthetic plugin, no device/model work.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,stat} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -43,7 +44,7 @@ try{
  await writeFile(plugin,`from pathlib import Path\nCAPABILITY='fixture.budget'\nACTIONS=['run']\nwith Path(__file__).with_name('plugin-imports').open('ab') as f: f.write(b'I')\ndef invoke(action,params): return {'synthetic': True}\n`);
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));config.node_id=id;config.dashboard.port=api;config.update.policy='off';config.models.provider='llamacpp';config.models.ollama.base_url='http://127.0.0.1:1';config.custom={preserve:true};config.python_plugins=[plugin];
  await writeFile(nodeConfig,JSON.stringify(config));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:randomBytes(32).toString('hex')});
  launch('eefn',['--config',nodeConfig,'--no-ui','--python',python]);
  await until(async()=>(await json(node+'/api/status')).connection.state==='connected','connected');

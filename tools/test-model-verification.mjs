@@ -1,4 +1,5 @@
 // Fixed model-test authoring through the node, then ordinary explicit owner
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // approval/grants. Fake provider only; no weights, actual device or UI controller.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -43,7 +44,7 @@ try{
   dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:api},update:{policy:'off'},
   models:{provider:'ollama',ollama:{base_url:`http://127.0.0.1:${provider.address().port}`,selected:[{model_id:'fixture',modality:'text',selection:{roles:['request_interpreter']}}]},llamacpp:{slots:[]}}});
  await writeFile(config,JSON.stringify(value));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(identity,yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(identity,yaml);
  launch('eefn',['--config',config,'--no-ui']);launch('eef',['--config',identity,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(32).toString('hex')});
  await until(async()=>(await json(node+'/api/diagnostics')).runtime_id,'node');await until(async()=>(await json(eef+'/api/diagnostics')).initialized,'coordinator');
  const invite=await cli('eef',['credentials','provision','--node',id,'--address',`127.0.0.1:${gateway}`]);await cli('eefn',['connection','pair-stdin'],JSON.stringify(invite));

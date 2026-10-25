@@ -1,4 +1,5 @@
 // Headless command/service acceptance. Synthetic backend, not model quality.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,stat,unlink} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -37,7 +38,7 @@ try {
  const offline=await local(['model-lifecycle-policy','set','--expected-digest',initial.saved_digest,'--startup','manual','--idle-unload-seconds','3','--queue-capacity','2','--receipt-capacity','8','--load-timeout-seconds','5','--termination-wait-seconds','2']);
  assert.equal(offline.result.changed,true);assert.equal(offline.result.applied_policy,null);assert.equal(offline.restart_requested,false);
  assert.equal(await stat(pidFile).then(()=>true,()=>false),false,'offline policy cannot start a model');
- await writeFile(eefConfig,(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
+ await writeFile(eefConfig,(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
  start('eef',eefConfig,['--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});start('eefn',nodeConfig,['--no-ui']);
  await until(async()=>!!(await json(eef+'/api/diagnostics')).initialized,'coordinator');await until(async()=>!!(await json(node+'/api/diagnostics')).runtime_id,'node');
  assert.equal(slot(await show()).state,'unloaded');assert.equal(await stat(pidFile).then(()=>true,()=>false),false,'manual startup cannot start a model');

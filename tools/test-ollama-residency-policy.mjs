@@ -1,4 +1,5 @@
 // Command-owned shared Ollama request policy. Synthetic HTTP backend only:
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // no actual service/model ownership, downloads, memory release or two-PC proof.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -54,7 +55,7 @@ try{
  assert.equal(pinned.result.saved_policy.ollama_keep_alive_seconds,-1);assert.equal(paths.length,0,'offline settings cannot contact the backend');
  const inherited=await local(['model-lifecycle-policy','set','--expected-digest',pinned.result.saved_digest,'--ollama-keep-alive-default']);
  assert.equal(inherited.result.saved_policy.ollama_keep_alive_seconds,null);assert.equal(paths.length,0);
- await writeFile(eefConfig,(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${apiEef}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
+ await writeFile(eefConfig,(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${apiEef}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
  launch('eef',eefConfig,['--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  launch('eefn',nodeConfig,['--no-ui']);
  await until(async()=>!!(await json(eef+'/api/diagnostics')).initialized,'coordinator');await until(async()=>!!(await json(node+'/api/diagnostics')).runtime_id,'node');

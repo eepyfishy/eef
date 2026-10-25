@@ -1,4 +1,5 @@
 // Backend-only selected GGUF control; synthetic model server, not model quality.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile,unlink} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -66,7 +67,7 @@ try {
  Object.assign(config,{node_id:id,name:'Model lifecycle fixture',connection_enabled:false,auto_local:false,local_pairing:false,endpoints:[],psk:'',heartbeat_seconds:0.5,request_limits:{work:1,control:2},management:{allow_remote:false},
   dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:api},update:{policy:'off'},models:{provider:'llamacpp',ollama:{selected:[],base_url:'http://127.0.0.1:1'},llamacpp:{binary:join(bin,'examples/model_startup_fixture.exe'),slots:[{model_id:'a',port:aPort,model_path:aFile},{model_id:'b',port:bPort,model_path:bFile}]}}});
  await writeFile(nodeConfig,JSON.stringify(config));
- await writeFile(eefConfig,(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
+ await writeFile(eefConfig,(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off'));
  start('eef',eefConfig,['--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});start('eefn',nodeConfig,['--no-ui']);
  await until(async()=>!!(await json(eef+'/api/diagnostics')).initialized,'coordinator');await until(async()=>!!(await json(node+'/api/diagnostics')).runtime_id,'node');
  const invitation=await owner(['credentials','provision','--node',id,'--address',`127.0.0.1:${gateway}`]);await local(['connection','pair-stdin'],true,JSON.stringify(invitation));

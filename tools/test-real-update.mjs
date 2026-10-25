@@ -1,4 +1,5 @@
 // Opt-in real HTTPS artifact update in a disposable installation, never personal config.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // bootstrap-node must already contain the explicit-update fix and be older than target.
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,copyFile,readFile,writeFile} from 'node:fs/promises';
@@ -25,7 +26,7 @@ try {
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
  Object.assign(config,{node_id:id,name:'Real update fixture',psk:secret,auto_local:false,local_pairing:false,endpoints:[`127.0.0.1:${gateway}`],heartbeat_seconds:0.5,dashboard:{enabled:true,host:'127.0.0.1',port:apiPort},management:{allow_remote:true},update:{policy:'auto',check_interval_seconds:300,manifest_url:'https://raw.githubusercontent.com/eepyfishy/eef/main/update/eefn.json'},models:{provider:'ollama',ollama:{base_url:'http://127.0.0.1:1',selected:[]}}});
  config.permissions.remote_updates=true;await writeFile(nodeConfig,JSON.stringify(config));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
  launch(join(bin,'eef.exe'),['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:secret});
  launch(join(installation,'eefn.exe'),['--config',nodeConfig,'--no-ui'],{},installation);
  await until(async()=>(await json(node+'/api/diagnostics')).connection_state==='connected','bootstrap connection');

@@ -1,4 +1,5 @@
 // Isolated real-process regression for gateway shutdown vs durable job interruption.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 // Uses a held loopback HTTP response, not a shell command or personal installation.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -26,7 +27,7 @@ try {
  Object.assign(config,{node_id:id,name:'Shutdown fixture',auto_local:false,local_pairing:false,psk:secret,endpoints:[`127.0.0.1:${gateway}`],heartbeat_seconds:0.5,dashboard:{enabled:true,host:'127.0.0.1',port:nodePort},update:{policy:'off'},models:{provider:'llamacpp',llamacpp:{slots:[]}}});
  Object.assign(config.permissions.http,{enabled:true,allowed_hosts:['127.0.0.1'],allow_private_networks:true});
  const nodeConfig=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml');await writeFile(nodeConfig,JSON.stringify(config));
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('host: 0.0.0.0','host: 127.0.0.1').replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gateway}`).replace('host: 0.0.0.0','host: 127.0.0.1').replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:secret});launch('eefn',['--config',nodeConfig,'--no-ui']);
  const providerReady=async()=>{const snapshot=await json(eef+'/api/capabilities');return snapshot.providers.some(p=>p.node_id===id&&p.capability==='http.request'&&p.healthy);};
  await until(async()=>(await json(node+'/api/diagnostics')).connection_state==='connected','fixture registration');

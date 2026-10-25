@@ -1,4 +1,5 @@
 // Public owner commands and the existing node grant driver. Not physical acceptance.
+import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -36,7 +37,7 @@ function archiveCommand(record,plan){return {operation:'archive',reservation:rec
 function archiveArgs(c){return ['automation-occurrences','archive','--reservation',c.reservation,'--reservation-sha256',c.reservation_sha256,'--job',c.job,'--revision',String(c.revision),'--operation-id',c.operation_id];}
 try{
  await new Promise(r=>tags.listen(0,'127.0.0.1',r));const [eefPort,gatewayPort]=await Promise.all([port(),port()]);eef=`http://127.0.0.1:${eefPort}`;
- const yaml=(await readFile(join(root,'config/default_identity.yaml'),'utf8')).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
+ const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${gatewayPort}`).replace('policy: prompt','policy: off');
  await writeFile(configPath,yaml);launch('eef',configPath,['--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],undefined,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  await until(async()=>(await json(eef+'/api/diagnostics')).initialized,'coordinator startup');
  for(const label of ['a','b']){
