@@ -17,8 +17,9 @@ widen the concrete input under the verification marker.
 Source, approval and execution receipt domains are separate custom UUIDs.
 Runtime changes do not silently allocate a new source under the same owner
 operation: the changed definition conflicts with retained original intent.
-Receipts are correlation, not authentication or grants. Existing job-history
-retention remains the deduplication boundary.
+Receipts are correlation, not authentication or grants. Node-side source
+deduplication still depends on retained job history. The coordinator now also
+retains the pre-preparation intent described below; it never grants inference.
 
 The running node's ordinary authenticated submission path stamps origin/area
 and uses the existing durable review/compiler. There is no invented origin,
@@ -68,7 +69,10 @@ and permission snapshots. It requires exactly one saved/applied interpreter and
 local management consent, pinning the permission read to the observed node
 runtime. No client-side setup controller, first-candidate fallback or remote
 self-grant is used. The explicit-definition `start` API remains available and
-keeps its original intent-conflict behavior and report shape.
+keeps its original intent-conflict behavior. New retained intents add the optional
+`intent_retained` report field; older replies without it remain readable by the
+new client. A strict older client may reject the extension as unconfirmed and
+must be updated with its coordinator, not taught to ignore arbitrary fields.
 
 A fresh blocked `start_selected` returns `not_ready` and a typed
 `readiness_issue` for missing/ambiguous interpreter, saved/applied mismatch,
@@ -79,8 +83,9 @@ setup evidence are not treated as instructions to replace the interpreter.
 Unconfirmed setup/permission reads stay `unconfirmed`, never imply consent and
 never fall back or retry. No source, approval or execution is requested in those
 preflight outcomes. Fixed backend-owned guidance is shared with the CLI; arbitrary
-peer errors are not copied into it. The extension is emitted only for the new
-command, so existing explicit-definition start/inspect replies remain compatible.
+peer errors are not copied into it. Readiness guidance is emitted only for the
+selected-start command; the separate intent extension can also occur on explicit
+starts and inspection of newly retained intents.
 
 A lost reply returns that exact owner/source receipt
 with uncertainty, never a client retry. Backend inspection needs neither a live
@@ -89,8 +94,59 @@ only inspects it, even if it is merely awaiting approval; it never resumes an
 uncertain earlier workflow into authority. Retained selected starts also work
 after model/runtime changes and while the node is disconnected; they inspect
 the original definition without first reading its current setup or permissions.
-Existing job-history retention is the deduplication boundary,
-not a permanent promise after owner removal of history.
+Legacy source history alone remains bounded by owner job-history retention.
+New coordinator intent records are retained independently: removing a finished
+job does not restore permission to start that same operation again.
+
+## Pre-preparation intent follow-up (in development)
+
+A controlled regression with the preceding application binaries reproduces an
+unconfirmed model-check start with no saved source. After local management
+consent changes, the same operation ID prepares a new source, approves it and
+requests execution. The original fixture and failure remain retained; this is
+an unsuccessful-preparation/reuse test, not a simulated power failure or proof
+of every lost-reply path.
+
+The new backend commits one immutable intent in the existing coordinator job
+database **before** its first remote preparation request. It binds the exact
+node, operation, requested node runtime and backend/model, with bounded metadata
+and no prompt, endpoint, credentials or model prose. A failed or uncertain commit
+does not admit the remote request. A retained intent cannot be replaced, resumed
+or automatically retried. Concurrent start ownership uses the existing workflow
+slot and journal lock; no second controller or browser dependency is introduced.
+
+Inspection and reuse check intent history before current node setup/permissions.
+If a plan exists, its source must match the retained definition. If no plan is
+confirmed, `unknown`, `outcome_unknown:true` and `intent_retained:true` distinguish
+that history from `not_found`; no job/grant/execution evidence is invented.
+Restart, permission/model changes and removal of a finished source cannot make
+the recorded operation fresh. This deliberately provides no resume command.
+Readiness-only failures before intent admission still create no intent or source.
+
+Each intent is at most 4 KiB and consumes the existing `jobs.max_count` and
+`jobs.max_bytes` budgets, including admission checks for jobs and automation
+records. Storage usage exposes `model_verification_intent_count` and
+`model_verification_intent_bytes`. There is no silent pruning/reset to reclaim
+operation IDs; raising storage limits is an explicit owner setting. Existing
+databases gain an additive table; old source records are not rewritten or
+promoted into new authority. Damaged/future/conflicting intent records fail
+closed and remain retained.
+
+Eighteen focused tests pass, including immutable/reopened/concurrent intent,
+malformed/future records, count/byte quotas, failed writes and strict unknown
+report validation. The fresh native authoring fixture also passes all previous
+assertions plus failed-preparation reuse, retained intent after coordinator
+restart and no renewed start after finished-job removal. Both full workspace
+modes pass 1,146 tests plus one existing ignored profiler across fourteen groups.
+Thirty main native suites, two cached-runtime suites and the distinct node-output
+prefix-close case pass in order, with 325 source and eleven final artifact hashes
+unchanged. Independent reconciliation checks the final fixture's database in
+read-only immutable mode and confirms all owned app/helper/compiler processes
+retired. The earlier authoring epoch remains separately audited. Real-CPU and
+browser follow-ups remain separate; no overall release acceptance is implied.
+This is an explicit-check reliability prerequisite, not automatic inference
+consent, an automatic setup-health worker, model-quality/default approval or
+stable-release acceptance.
 
 `returned_text` requires a bounded nonempty result confirming the exact retained
 grant and executor session. Definitive final reports already held by the eef

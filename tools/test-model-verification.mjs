@@ -67,7 +67,22 @@ try{
  const review=reviewedFixture(eef,node,id),approved=await review.approve(plan,{max_execution_ms:30000,max_result_bytes:4096});assert.equal(generations,0);
  await review.start(approved);const report=await review.result(plan.id);assert.equal(report.state,'completed');assert.equal(report.success,true);assert.equal(report.data.content,'Hello from the selected model.');assert.equal(generations,1);
  const historical=await json(endpoint,definition);assert.equal(historical.success,true);assert.equal(historical.source.creation_reused,true);assert.equal(historical.source.plan.id,plan.id);assert.equal(generations,1,'preparation reuse cannot replay inference');
+ // A failed preparation may leave no source in the coordinator journal. The
+ // intent must nevertheless survive: later consent cannot replay that start.
+ const preparationIntent={...definition,operation_id:randomUUID()},checkEndpoint=eef+'/api/commands/node/model-verification';
+ const preparationRequest={schema_version:1,expected_runtime_id:(await json(eef+'/api/diagnostics')).runtime_id,node_id:id,operation_id:preparationIntent.operation_id,
+  command:{operation:'start',definition:preparationIntent,approve_inference:true}};
+ const refusedPreparation=await json(checkEndpoint,preparationRequest);
+ assert.equal(refusedPreparation.state,'unconfirmed');assert.equal(refusedPreparation.source_preparation_requested,true);
+ const beforeConsentJobs=(await json(eef+'/api/jobs')).jobs.length;
  await cli('eefn',['permissions','allow','remote-management']);
+ const repeatedPreparation=await json(checkEndpoint,{...preparationRequest,command:{operation:'start_selected',approve_inference:true}});
+ await writeFile(join(scratch,'preparation-intent-observation.json'),JSON.stringify({first:refusedPreparation,repeated:repeatedPreparation},null,2));
+ assert.equal(repeatedPreparation.source_preparation_requested,false,'Retained intent cannot resend preparation after a failed reply without a saved source');
+ assert.equal(repeatedPreparation.historical,true);assert.equal(repeatedPreparation.state,'unknown');assert.equal(repeatedPreparation.intent_retained,true);
+ assert.equal(repeatedPreparation.outcome_unknown,true);assert.equal(repeatedPreparation.owner_approval_requested,false);assert.equal(repeatedPreparation.execution_requested,false);
+ assert.equal(repeatedPreparation.job_id,null);assert.deepEqual(repeatedPreparation.definition,preparationIntent);
+ assert.equal((await json(eef+'/api/jobs')).jobs.length,beforeConsentJobs);assert.equal(generations,1);
  const remoteDefinition={...definition,operation_id:randomUUID()};const remote=await json(eef+`/api/node/${id}/invoke`,{capability:'node.configure',action:'prepare_model_verification',params:remoteDefinition,timeout:10});
  assert.equal(remote.success,true);assert.equal(remote.data.success,true);assert.equal(remote.data.source.plan.status,'awaiting_approval');assert.equal(generations,1);
  // Typed owner adapter calls one backend workflow, not a CLI-owned controller.
@@ -154,10 +169,20 @@ try{
  assert.equal(generations,4);assert.equal((await json(eef+'/api/jobs')).jobs.length,jobCount);
  const rootEpoch=(await json(eef+'/api/diagnostics')).runtime_id;await cli('eef',['restart']);await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==rootEpoch,'coordinator restart retains model test');
  const retained=await cli('eef',[...owner,'inspect','--operation-id',operation]);assert.equal(retained.state,'returned_text');assert.equal(retained.job_id,old.job_id);assert.equal(retained.grant_id,old.grant_id);assert.equal(generations,4);
+ const retainedPreparation=await cli('eef',[...owner,'inspect','--operation-id',preparationIntent.operation_id],undefined,[1]);
+ assert.equal(retainedPreparation.state,'unknown');assert.equal(retainedPreparation.intent_retained,true);assert.deepEqual(retainedPreparation.definition,preparationIntent);
+ const retiredPreparation=await cli('eef',[...owner,'start','--allow-inference','--operation-id',preparationIntent.operation_id],undefined,[1]);
+ assert.equal(retiredPreparation.historical,true);assert.equal(retiredPreparation.state,'unknown');assert.equal(retiredPreparation.source_preparation_requested,false);assert.equal(generations,4);
  assert.equal(retained.evidence_source,'coordinator_journal');assert.equal((await json(eef+'/api/diagnostics')).registered_node_count,0);
  const offlineReused=await json(checkUrl,{schema_version:1,expected_runtime_id:retained.coordinator_runtime_id,node_id:id,operation_id:operation,
   command:{operation:'start',definition:started.definition,approve_inference:true}});
  assert.equal(offlineReused.historical,true);assert.equal(offlineReused.source_preparation_requested,false);assert.equal(offlineReused.execution_requested,false);assert.equal(offlineReused.grant_id,retained.grant_id);assert.equal(generations,4);
+ const removed=await fetch(eef+'/api/jobs/'+encodeURIComponent(old.job_id),{method:'DELETE',signal:AbortSignal.timeout(10000)});
+ assert(removed.ok);assert.equal((await removed.json()).removed,true);
+ const removedHistory=await cli('eef',[...owner,'start','--allow-inference','--operation-id',operation],undefined,[1]);
+ assert.equal(removedHistory.state,'unknown');assert.equal(removedHistory.intent_retained,true);assert.equal(removedHistory.historical,true);
+ assert.equal(removedHistory.job_id,null);assert.deepEqual(removedHistory.definition,started.definition);
+ assert.equal(removedHistory.source_preparation_requested,false);assert.equal(removedHistory.owner_approval_requested,false);assert.equal(removedHistory.execution_requested,false);assert.equal(generations,4);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,real_models:false,
   exact_node_runtime_model_role:true,source_receipt_separate_from_owner_intent:true,local_source_without_remote_consent:true,
   remote_source_requires_local_consent:true,source_does_not_infer_or_change_settings:true,existing_owner_approval_and_grants_required:true,
@@ -167,6 +192,9 @@ try{
   revoked_management_blocks_new_source_not_history_reads:true,
   disconnected_history_survives_coordinator_restart:true,offline_retained_start_never_contacts_node:true,
   cli_retained_start_works_offline_and_after_model_change:true,backend_resolves_selected_model:true,
+  preparation_intent_retained_before_remote_request:true,failed_preparation_no_job_no_restart_replay:true,
+  preparation_intent_survives_coordinator_restart:true,
+  finished_job_removal_does_not_renew_model_check_intent:true,
   backend_readiness_diagnoses_missing_pending_and_local_management_consent:true,unconfirmed_setup_never_creates_source:true,
   automatic_inference_authority_added:false,automatic_setup_health_claimed:false,model_quality_approved:false},null,2));
  console.log('Model verification authoring validation passed: '+scratch);

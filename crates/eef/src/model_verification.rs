@@ -330,11 +330,14 @@ struct Report {
     source_operation_id: String,
     success: bool,
     state: State,
-    // Only the new start_selected command emits this extension. Existing
-    // explicit-definition start/inspect replies keep their original wire shape.
+    // Only start_selected emits readiness guidance. Legacy replies without it
+    // still parse; durable intent has its own optional extension below.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     readiness_issue: Option<ReadinessIssue>,
     definition: Option<Definition>,
+    /// Immutable pre-preparation record; never approval or replay authority.
+    #[serde(default, skip_serializing_if = "is_false")]
+    intent_retained: bool,
     job_id: Option<String>,
     grant_id: Option<String>,
     executor_session_id: Option<String>,
@@ -350,6 +353,9 @@ struct Report {
     restart_requested: bool,
     automatically_retried: bool,
     note: String,
+}
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 pub fn confirmed(value: &Value, request: &Request) -> bool {
     let Ok(r) = serde_json::from_value::<Report>(value.clone()) else {
@@ -396,7 +402,9 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
         && (matches!(
             r.state,
             State::NotFound | State::NotReady | State::Unconfirmed
-        ) || r.definition.is_some() && r.job_id.is_some())
+        ) || r.definition.is_some()
+            && (r.job_id.is_some() || r.state == State::Unknown && r.intent_retained))
+        && (!r.intent_retained || r.definition.is_some() && r.readiness_issue.is_none())
         && (r.state != State::NotFound
             || r.definition.is_none()
                 && r.job_id.is_none()
@@ -856,6 +864,7 @@ mod tests {
             state: State::ReturnedText,
             readiness_issue: None,
             definition: Some(definition.clone()),
+            intent_retained: false,
             job_id: Some("a".repeat(32)),
             grant_id: Some(uuid::Uuid::new_v4().to_string()),
             executor_session_id: Some(uuid::Uuid::new_v4().to_string()),
@@ -906,6 +915,52 @@ mod tests {
         let mut expanded = json!(q);
         expanded["command"]["prompt"] = json!("Run arbitrary work");
         assert!(serde_json::from_value::<Request>(expanded).is_err());
+    }
+    #[test]
+    fn intent_only_history_is_unknown_without_inventing_job_or_execution_evidence() {
+        let mut q = request();
+        let mut value = report(&q);
+        for field in [
+            "job_id",
+            "grant_id",
+            "executor_session_id",
+            "evidence_source",
+        ] {
+            value[field] = Value::Null;
+        }
+        for field in [
+            "success",
+            "inference_returned_text",
+            "source_preparation_requested",
+            "owner_approval_requested",
+            "execution_requested",
+        ] {
+            value[field] = json!(false);
+        }
+        value["state"] = json!("unknown");
+        value["intent_retained"] = json!(true);
+        value["outcome_unknown"] = json!(true);
+        value["historical"] = json!(true);
+        assert!(confirmed(&value, &q));
+        q.command = Command::Inspect;
+        assert!(confirmed(&value, &q));
+        for (field, changed) in [
+            ("intent_retained", json!(false)),
+            ("definition", Value::Null),
+            ("state", json!("not_found")),
+            ("state", json!("returned_text")),
+            ("grant_id", json!(uuid::Uuid::new_v4().to_string())),
+            ("evidence_source", json!("coordinator_journal")),
+            ("source_preparation_requested", json!(true)),
+            ("owner_approval_requested", json!(true)),
+            ("execution_requested", json!(true)),
+            ("outcome_unknown", json!(false)),
+            ("current_setup_verified", json!(true)),
+        ] {
+            let mut bad = value.clone();
+            bad[field] = changed;
+            assert!(!confirmed(&bad, &q), "{field}");
+        }
     }
     #[test]
     fn readiness_reports_require_new_command_and_no_work_or_authority() {
@@ -1303,13 +1358,33 @@ impl crate::Runtime {
         Ok(plan)
     }
     async fn observe_model_verification(&self, report: &mut Report) -> Result<()> {
+        let intent = self
+            .engine
+            .store
+            .model_verification_intent(&report.node_id, &report.operation_id)?;
+        if let Some(definition) = &intent {
+            report.intent_retained = true;
+            report.definition = Some(definition.clone());
+        }
         let Some(plan) = self.model_verification_plan(&report.node_id, &report.operation_id)?
         else {
-            report.state = State::NotFound;
+            report.state = if intent.is_some() {
+                State::Unknown
+            } else {
+                State::NotFound
+            };
             report.success = false;
+            report.outcome_unknown = intent.is_some();
             return Ok(());
         };
-        report.definition = Some(fixed_source(&plan)?);
+        let definition = fixed_source(&plan)?;
+        if intent
+            .as_ref()
+            .is_some_and(|retained| *retained != definition)
+        {
+            bail!("Retained model-check source conflicts with pre-preparation intent")
+        }
+        report.definition = Some(definition);
         report.job_id = Some(plan.plan_id.clone());
         report.state = match plan.status {
             PlanStatus::Review => State::Incomplete,
@@ -1397,6 +1472,7 @@ impl crate::Runtime {
             state: State::Unconfirmed,
             readiness_issue: None,
             definition: None,
+            intent_retained: false,
             job_id: None,
             grant_id: None,
             executor_session_id: None,
@@ -1448,6 +1524,17 @@ impl crate::Runtime {
             .model_verification
             .try_lock()
             .map_err(|_| anyhow::anyhow!("Model-check workflow busy; no queue or retry"))?;
+        if let Some(intent) = self
+            .engine
+            .store
+            .model_verification_intent(&report.node_id, &report.operation_id)?
+        {
+            if requested.is_some_and(|definition| *definition != intent) {
+                bail!("Retained model-check intent conflicts")
+            }
+            report.historical = true;
+            return self.observe_model_verification(report).await;
+        }
         if let Some(existing) =
             self.model_verification_plan(&report.node_id, &report.operation_id)?
         {
@@ -1482,6 +1569,15 @@ impl crate::Runtime {
             &selected
         };
         report.definition = Some(definition.clone());
+        if !self
+            .engine
+            .store
+            .reserve_model_verification_intent(definition, &self.instance_id)?
+        {
+            report.historical = true;
+            return self.observe_model_verification(report).await;
+        }
+        report.intent_retained = true;
         report.source_preparation_requested = true;
         let prepared = self
             .node_server

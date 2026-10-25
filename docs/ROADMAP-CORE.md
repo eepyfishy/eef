@@ -13,6 +13,20 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [pre-preparation model-check intent follow-up](MODEL-VERIFICATION.md#pre-preparation-intent-follow-up-in-development)
+addresses a reproduced gap where an unconfirmed preparation with no saved source
+could be retried into authority under the same owner operation. Immutable intent
+is now committed before that request, under shared storage quotas; reuse is
+inspection only even after restart or finished-job removal. Eighteen focused
+tests, both full 1,146-test Rust modes and thirty-three native cases pass against
+frozen sources/artifacts, with independent read-only reconciliation. Real-CPU
+and browser follow-ups remain separate.
+This is an explicit-check reliability prerequisite, not automatic health consent
+or completion of model/default/physical/release requirements. The preceding
+`8509ecd` separately passes all four hosted jobs and thirty main Windows suites
+plus one distinct connection-order case in
+[run 40225259104](https://github.com/eepyfishy/eef/actions/runs/40225259104).
+
 A fresh read-only physical-node checkpoint on 2026-10-26 observes the same stable
 node registering and confirms management consent, no selected models and installed
 `0.4.0-alpha.6`. The isolated diagnostic coordinator is subsequently retired;

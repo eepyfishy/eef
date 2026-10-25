@@ -99,8 +99,10 @@ impl JobStore {
                 .checked_add(usize::try_from(definitions)?)
                 .and_then(|n| n.checked_add(usize::try_from(other).ok()?))
                 .context("Authorization size overflow")?;
+            let intent_bytes = model_verification_intents::bytes(connection)?;
             let used = used
                 .checked_add(automation_occurrences::bytes(connection)?)
+                .and_then(|n| n.checked_add(intent_bytes))
                 .context("Authorization size overflow")?;
             if cost > 8 * 1024 * 1024 || cost > self.max_bytes.saturating_sub(used) {
                 bail!("Job/definition/authorization storage is full; no policy saved");

@@ -3,6 +3,32 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: durable intent before model-check preparation
+
+A controlled native test reproduces a repeated owner model-check start issuing
+preparation, approval and execution after an earlier unconfirmed preparation
+left no source. The [backend follow-up](MODEL-VERIFICATION.md#pre-preparation-intent-follow-up-in-development)
+commits an immutable, quota-accounted intent before remote preparation. Exact
+reuse only inspects retained history; missing source remains unknown, not a new
+start. Restart, changed consent and finished-job removal do not renew authority.
+
+All eighteen focused tests and a fresh native fixture pass, preserving original
+assertions and adding failed-preparation/restart/removal coverage. Both full Rust
+modes pass 1,146 tests plus one existing ignored profiler across fourteen groups.
+Thirty main native suites, two cached-runtime suites and one distinct connection-
+order case pass against unchanged 325-source/eleven-artifact hashes. Independent
+read-only reconciliation confirms the final intent database and zero remaining
+owned app/helper/compiler processes. Real-CPU/browser follow-ups remain separate.
+It adds no automatic inference consent or setup-health worker and does not close
+the remaining model, physical, MSI or release gates. No deployment is made.
+
+The preceding fixture revision `8509ecd` passes all four hosted jobs, thirty
+ordered Windows native suites plus the distinct pre-registration-close case in
+[run 40225259104](https://github.com/eepyfishy/eef/actions/runs/40225259104).
+Its audit verifies fifteen pure fixture-state cases, planner/version boundaries
+and expanded non-installing MSI refusal checks. That exact-revision acceptance
+does not cover this subsequent backend change or clear actual MSI rollback.
+
 ## Read-only physical-node checkpoint: 2026-10-26
 
 A fresh isolated coordinator using the unchanged, locally accepted `7df79a1`
