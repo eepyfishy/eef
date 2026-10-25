@@ -3,6 +3,32 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Unresolved, unreleased: post-write MSI upgrade rollback
+
+The new [separately guarded probe](MSI-ROLLBACK-VALIDATION.md) deliberately fails
+after native file/registry operations execute. It restores old payload hashes and
+owner markers but exposes inconsistent product registration: old eef is advertised
+rather than fully installed and the failed candidate remains registered. A fresh
+process confirms this alongside native access-denied rollback records. The test
+halts, retains exact source/logs and does not downgrade its assertions. Explicit
+normal uninstalls subsequently remove only those known synthetic products and
+preserve owner markers, but five generated payload/inventory files and five
+component-marker values remain. This is partial registration cleanup, not complete
+uninstall/recovery acceptance; the stranded artifacts and failure evidence remain.
+
+Non-installing probe comparison/refusal coverage and a normal-lifecycle regression
+pass separately: eight probe refusals per role, six version boundaries and 24
+ordinary refusals; ten normal native operations with all ten durable native-exit
+receipts and owner-preserving uninstall. Independent read-only reconciliation
+passes without approving failed rollback. The helper retains native exit before
+fallible observation.
+Application sources, models, owner settings, security policy and remote nodes are
+unchanged; this is not release/rollback acceptance. The preceding packaging
+`eb3f4ef` separately passes all four jobs and thirty Windows native suites in
+[run 40219615827](https://github.com/eepyfishy/eef/actions/runs/40219615827). That run
+does not cover this later probe or clear real-application migration/rollback,
+locked-file, approved-model, second-PC, installer UI/startup or Defender gates.
+
 ## Locally verified, unreleased: native MSI major-upgrade recipe
 
 The [major-upgrade-v1 contract](MSI-UPGRADE-POLICY.md) adds role/namespace-scoped

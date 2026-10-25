@@ -1,5 +1,21 @@
 # GitHub core verification
 
+## In-development rollback probe: read-only checks are not recovery approval
+
+The Windows authoring test adds exact synthetic rollback-probe construction and
+eight refusal cases per role without installation or payload execution. Its
+dedicated inspector checks unchanged source/payload bytes and exact allowed
+differences; the ordinary inspector refuses those deliberate-failure variants.
+The separate opt-in standard-user post-write test exposes a registration recovery
+failure, documented in [rollback validation](MSI-ROLLBACK-VALIDATION.md); that is
+an open gate, not a passing hosted test. Fresh CI of these new sources is separate.
+
+Published `eb3f4ef` passes all four matrix jobs and the exact thirty native suites
+in [run 40219615827](https://github.com/eepyfishy/eef/actions/runs/40219615827), including
+six version boundaries and 24 rejected ordinary authoring recipes per role.
+Its acceptance record is `.validation/msi-major-upgrade-ci-acceptance.json`.
+It does not verify the later probe, failed-upgrade recovery or stable readiness.
+
 ## In-development MSI major-upgrade recipe
 
 The native authoring step now includes the [major-upgrade-v1](MSI-UPGRADE-POLICY.md)

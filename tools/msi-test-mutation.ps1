@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory=$true)][string]$Source,
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ExpectedSha256,
     [Parameter(Mandatory=$true)][string]$Output,
-    [Parameter(Mandatory=$true)][ValidateSet('machine-context','guard','registry','directory','custom-action','component-identity','ui-position','version-policy','version-policy-missing','version-policy-unknown','source-policy-format','source-policy-bounds','source-policy-prerelease','upgrade-policy-missing','upgrade-policy-unknown','upgrade-code','upgrade-newer-range','upgrade-older-range','upgrade-detect-flags','upgrade-secure','upgrade-error-type','upgrade-error-condition','upgrade-remove-position','upgrade-rows')][string]$Mutation
+    [Parameter(Mandatory=$true)][ValidateSet('machine-context','guard','registry','directory','custom-action','component-identity','ui-position','version-policy','version-policy-missing','version-policy-unknown','source-policy-format','source-policy-bounds','source-policy-prerelease','upgrade-policy-missing','upgrade-policy-unknown','upgrade-code','upgrade-newer-range','upgrade-older-range','upgrade-detect-flags','upgrade-secure','upgrade-error-type','upgrade-error-condition','upgrade-remove-position','upgrade-rows','rollback-execute-position','rollback-failure-condition','rollback-failure-type','rollback-file-size','rollback-package-code','rollback-guard')][string]$Mutation
 )
 # Test data mutation ONLY. Copy one owned fixture then edit its MSI database.
 # No installation session, action execution, source replacement or deletion.
@@ -75,6 +75,18 @@ try{
         'upgrade-error-condition' { Statement 'UPDATE `InstallExecuteSequence` SET `Condition` = ''0'' WHERE `Action` = ''eef_block_downgrade''' }
         'upgrade-remove-position' { Statement 'UPDATE `InstallExecuteSequence` SET `Sequence` = 1490 WHERE `Action` = ''RemoveExistingProducts''' }
         'upgrade-rows' { Statement 'DELETE FROM `Upgrade`' }
+        'rollback-execute-position' { Statement 'UPDATE `InstallExecuteSequence` SET `Sequence` = 6401 WHERE `Action` = ''InstallExecute''' }
+        'rollback-failure-condition' { Statement 'UPDATE `InstallExecuteSequence` SET `Condition` = ''0'' WHERE `Action` = ''eef_fail_upgrade_probe''' }
+        'rollback-failure-type' { Statement 'UPDATE `CustomAction` SET `Type` = 51 WHERE `Action` = ''eef_fail_upgrade_probe''' }
+        'rollback-file-size' { Statement 'UPDATE `File` SET `FileSize` = 99999' }
+        'rollback-package-code' {
+            $summary=Property $database 'SummaryInformation' @(20)
+            try{$summary.GetType().InvokeMember('Property',[Reflection.BindingFlags]::SetProperty,$null,$summary,@(9,'{00000000-0000-0000-0000-000000000000}')) | Out-Null;Method $summary 'Persist' | Out-Null}finally{Release $summary}
+        }
+        'rollback-guard' {
+            Statement 'DELETE FROM `LaunchCondition`'
+            Statement 'INSERT INTO `LaunchCondition` (`Condition`,`Description`) VALUES (''0'',''Synthetic negative rollback fixture; do not install.'')'
+        }
     }
     Method $database 'Commit' | Out-Null
 }finally{Release $row;Release $view;Release $database;Release $installer}

@@ -73,14 +73,40 @@ try{
   reports.push({...report,output});cases.push({role,authoring_passed:true,source_unchanged:true,regenerated_inventory_verified:true,larger_than_stream_chunk:true,existing_output_preserved:true});
  }
  assert.notEqual(reports[0].product_code,reports[1].product_code);assert.notEqual(reports[0].upgrade_code,reports[1].upgrade_code);assert.notEqual(reports[0].install_directory_leaf,reports[1].install_directory_leaf);
+ // Construct and inspect an intentional-failure variant without installing it.
+ // Native rollback acceptance is a separate standard-user, explicitly opted-in test.
+ await writeFile(join(scratch,'rollback-probe-intent.json'),JSON.stringify({payload_kind:'synthetic-non-executable-only',namespace,sources:reports},null,2));
+ const rollbackChecks=[];
+ for(const report of reports){
+  const probePath=join(report.output,report.role+'-synthetic-rollback.msi'),probeTool=join(root,'tools/msi-upgrade-rollback-fixture.ps1');
+  const probeArgs=['-FixtureRoot',scratch,'-Source',report.package,'-SourceSha256',report.package_sha256,'-Package',probePath];
+  const made=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',probeTool,'-Action','create',...probeArgs],{cwd:root,encoding:'utf8',windowsHide:true,timeout:120000,maxBuffer:2*1024*1024});
+  await writeFile(join(report.output,'rollback-probe-authoring.log'),(made.stdout||'')+'\n'+(made.stderr||''));assert.equal(made.status,0,'Synthetic rollback authoring/readback failed: '+scratch);const probe=JSON.parse(made.stdout);assert.equal(probe.synthetic_only,true);assert.equal(probe.synthetic_rollback_recipe_verified,true);assert.equal(probe.ordinary_recipe_verified,false);assert.equal(probe.installation_attempted,false);assert.equal(probe.payload_launched,false);assert.notEqual(probe.package_code,report.package_code);assert.equal(probe.cabinet_sha256,report.cabinet_sha256);
+  const refused=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',join(root,'tools/inspect-development-msi.ps1'),'-Package',probePath],{cwd:root,encoding:'utf8',windowsHide:true,timeout:30000});assert.notEqual(refused.status,0);assert.equal(refused.stdout,'');assert.match(refused.stderr,/Not the supported development-only property contract/);await writeFile(join(report.output,'rollback-probe-ordinary-refusal.log'),refused.stderr||'');
+  const reasons={'rollback-execute-position':/Unexpected rollback probe table difference: InstallExecuteSequence/,'rollback-failure-condition':/Unexpected rollback probe table difference: InstallExecuteSequence/,'rollback-failure-type':/Unexpected rollback probe table difference: CustomAction/,'rollback-file-size':/Unexpected rollback probe table difference: File/,'rollback-package-code':/Rollback probe requires its own package code/,'rollback-guard':/Unexpected rollback probe table difference: LaunchCondition/};
+  const rejected=[];
+  for(const [mutation,reason] of Object.entries(reasons)){
+   const changedDirectory=join(report.output,'inspection-negative',mutation);await mkdir(changedDirectory);const changedPath=join(changedDirectory,report.role+'-synthetic-rollback.msi');
+   const changed=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',join(root,'tools/msi-test-mutation.ps1'),'-FixtureRoot',scratch,'-Source',probePath,'-ExpectedSha256',probe.package_sha256,'-Output',changedPath,'-Mutation',mutation],{cwd:root,encoding:'utf8',windowsHide:true,timeout:30000});assert.equal(changed.status,0,'Rollback mutation failed: '+mutation);
+   const inspected=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',probeTool,'-Action','inspect','-FixtureRoot',scratch,'-Source',report.package,'-SourceSha256',report.package_sha256,'-Package',changedPath],{cwd:root,encoding:'utf8',windowsHide:true,timeout:30000});
+   // Output names are part of the exact probe contract. Mutations use the same
+   // leaf in their own directory, retaining the original immutable probe.
+   await writeFile(join(report.output,'inspection-negative',mutation+'-rollback-refusal.log'),(inspected.stdout||'')+'\n'+(inspected.stderr||''));assert.notEqual(inspected.status,0);assert.equal(inspected.stdout,'');assert.match(inspected.stderr,reason);rejected.push(mutation);
+  }
+  for(const [label,sourceHash,packageHash,reason] of [['source-hash','0'.repeat(64),probe.package_sha256,/Canonical source changed/],['package-hash',report.package_sha256,'0'.repeat(64),/Rollback probe digest differs/]]){
+   const checked=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-File',probeTool,'-Action','inspect','-FixtureRoot',scratch,'-Source',report.package,'-SourceSha256',sourceHash,'-Package',probePath,'-ExpectedSha256',packageHash],{cwd:root,encoding:'utf8',windowsHide:true,timeout:30000});assert.notEqual(checked.status,0);assert.equal(checked.stdout,'');assert.match(checked.stderr,reason);await writeFile(join(report.output,'inspection-negative','rollback-'+label+'-refusal.log'),checked.stderr||'');rejected.push(label);
+  }
+  assert.equal(rejected.length,8);assert.equal(sha(await readFile(probePath)),probe.package_sha256);assert.equal(sha(await readFile(report.package)),report.package_sha256);rollbackChecks.push({role:report.role,probe,ordinary_inspector_refused:true,rejected,installation_attempted:false});
+ }
  const boundaries=[];
  for(const [sourceVersion,msiVersion] of [['0.4.0-alpha.63','0.4.63'],['0.4.0-beta.1','0.4.65'],['0.4.0-rc.63','0.4.191'],['0.4.0','0.4.255'],['0.4.1-alpha.1','0.4.257'],['255.255.255','255.255.65535']]){
   const input=await fixture('eef',sourceVersion,'boundary-'+boundaries.length),output=join(scratch,'boundary-output-'+boundaries.length);
   const authored=run(input.bundle,'eef',output,{sourceVersion,msiVersion:null});await writeFile(join(scratch,'boundary-'+boundaries.length+'-stdout.json'),authored.stdout||'');await writeFile(join(scratch,'boundary-'+boundaries.length+'-stderr.log'),authored.stderr||'');assert.equal(authored.status,0,'Boundary authoring failed; inspect '+scratch);const report=JSON.parse(authored.stdout);assert.equal(report.msi_version,msiVersion);assert.equal(report.version_policy_verified,true);assert.equal(report.installation_attempted,false);
   const readback=spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(root,'tools/inspect-development-msi.ps1'),'-Package',report.package,'-ExpectedSha256',report.package_sha256],{cwd:root,encoding:'utf8',windowsHide:true,timeout:30000});await writeFile(join(scratch,'boundary-'+boundaries.length+'-inspection.json'),readback.stdout||'');await writeFile(join(scratch,'boundary-'+boundaries.length+'-inspection-stderr.log'),readback.stderr||'');assert.equal(readback.status,0,'Independent policy boundary failed; inspect '+scratch);const inspected=JSON.parse(readback.stdout);assert.equal(inspected.msi_version,msiVersion);assert.equal(inspected.source_version,sourceVersion);assert.equal(inspected.version_policy_verified,true);assert.equal(inspected.legacy_version_policy_opt_in,false);boundaries.push({sourceVersion,msiVersion,passed:true});
  }
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,cases,reports,namespace,independent_database_readback_verified:true,version_policy_boundaries:boundaries,version_policy_negative_recipes_per_role:13,upgrade_negative_recipes_per_role:11,total_negative_recipes_per_role:24,msi_installed:false,payload_launched:false,stable_release_accepted:false},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,cases,reports,namespace,independent_database_readback_verified:true,version_policy_boundaries:boundaries,version_policy_negative_recipes_per_role:13,upgrade_negative_recipes_per_role:11,total_negative_recipes_per_role:24,rollback_probe_checks:rollbackChecks,rollback_probe_negative_recipes_per_role:8,msi_installed:false,payload_launched:false,stable_release_accepted:false},null,2));
  assert.equal(boundaries.length,6);console.log('MSI version policy native boundaries checked: '+boundaries.length);
  console.log('MSI authoring rejected recipes per role: 24');
+ console.log('Synthetic MSI rollback probe rejected recipes per role: 8');
  console.log('Development MSI authoring checks passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'failure.json'),JSON.stringify({message:String(error)},null,2));throw error;}

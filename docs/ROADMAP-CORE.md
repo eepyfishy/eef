@@ -13,6 +13,17 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [post-write MSI rollback probe](MSI-ROLLBACK-VALIDATION.md) now exposes a
+registration recovery failure despite restored payload/owner hashes. Exact
+source/logs and fresh API observations are retained; no permission/security
+workaround or success reinterpretation is used. Generated products are cleaned
+through separate normal uninstalls, not an automatic action replay. Failed-upgrade
+recovery remains a release blocker, alongside real application/migration/locked-
+file, onboarding/quality, second-PC and other gates below. The preceding `eb3f4ef`
+passes its four-job/thirty-native hosted run
+[40219615827](https://github.com/eepyfishy/eef/actions/runs/40219615827), which is
+ordinary-path evidence, not verification of the new failed-upgrade scenario.
+
 The [native MSI upgrade recipe](MSI-UPGRADE-POLICY.md) now authors and independently
 inspects older-product removal and newer-product refusal scoped to role/namespace.
 Both roles pass non-installing authoring with six version boundaries and 24

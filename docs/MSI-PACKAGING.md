@@ -3,6 +3,9 @@
 MSI remains an in-development release requirement, not a replacement already
 available to users. The existing EXE installers and published artifacts stay
 unchanged until replacement packages pass acceptance.
+The [failed-upgrade probe](MSI-ROLLBACK-VALIDATION.md) now exposes an unresolved
+registration rollback failure after actual writes on the standard-user host;
+file restoration alone is not accepted. No production MSI is released.
 
 The current [version encoding contract](MSI-VERSION-POLICY.md) is
 `packed-patch-v1`. The planner/author enforce its source-to-numeric relation and

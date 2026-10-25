@@ -61,6 +61,11 @@ approval and release flags false. A valid table is not an observed installation.
 
 ## Opt-in lifecycle regression
 
+The separate [failed-upgrade rollback gate](MSI-ROLLBACK-VALIDATION.md) is currently
+unresolved: a real synthetic post-write failure restores files but not exact
+product registration on the tested standard-user host. The successful ordinary
+lifecycle below must not be used to claim that failure path is safe.
+
 ```powershell
 node tools/test-msi-authoring.mjs
 $env:EEF_TEST_ALLOW_MSI_INSTALL = '1'

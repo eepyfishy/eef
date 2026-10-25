@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)][string]$FixtureRoot,
-    [Parameter(Mandatory=$true)][ValidateSet('inspect','install','reinstall','uninstall')][string]$Action,
+    [Parameter(Mandatory=$true)][ValidateSet('inspect','install','reinstall','uninstall','rollback-probe')][string]$Action,
     [string]$Package,
     [ValidatePattern('^[a-z0-9-]{1,64}$')][string]$Operation,
     [switch]$AllowSyntheticInstall
@@ -57,13 +57,19 @@ if($Action -ceq 'inspect'){$before | ConvertTo-Json -Depth 8;exit 0}
 if(-not $AllowSyntheticInstall -or $env:EEF_TEST_ALLOW_MSI_INSTALL -cne '1' -or -not $Operation){throw 'Explicit synthetic installation consent and unique operation are required'}
 $path=(Resolve-Path -LiteralPath $Package).Path
 if(-not $path.StartsWith($fixture.TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase) -or ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Package outside generated fixture'}
-$entry=@($manifest.packages | Where-Object {$_.package -ceq $path})
+$candidates=if($Action -ceq 'rollback-probe'){$manifest.rollback_probes}else{$manifest.packages}
+$entry=@($candidates | Where-Object {$_.package -ceq $path})
 if($entry.Count -ne 1){throw 'Package not listed uniquely in fixture manifest'}
 $entry=$entry[0]
 if((Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -cne $entry.package_sha256){throw 'Package changed before native operation'}
-$readback=& (Join-Path $PSScriptRoot 'inspect-development-msi.ps1') -Package $path -ExpectedSha256 $entry.package_sha256
+if($Action -ceq 'rollback-probe'){
+    $canonical=@($manifest.packages | Where-Object {$_.package -ceq $entry.source_package -and $_.package_sha256 -ceq $entry.source_package_sha256 -and $_.product_code -ceq $entry.product_code})
+    if($manifest.rollback_probes.Count -ne 2 -or $canonical.Count -ne 1 -or @($before.products | Where-Object {$_.product_code -ceq $entry.product_code -and $_.registered}).Count -or @($before.products | Where-Object {$_.role -ceq $entry.role -and $_.registered -and $_.product_code -cne $entry.product_code}).Count -ne 1){throw 'Rollback probe requires its exact canonical candidate and one installed older role'}
+    $readback=& (Join-Path $PSScriptRoot 'msi-upgrade-rollback-fixture.ps1') -Action inspect -FixtureRoot $fixture -Source $entry.source_package -SourceSha256 $entry.source_package_sha256 -Package $path -ExpectedSha256 $entry.package_sha256
+}else{$readback=& (Join-Path $PSScriptRoot 'inspect-development-msi.ps1') -Package $path -ExpectedSha256 $entry.package_sha256}
 $inspection=([string]::Join("`n",@($readback))) | ConvertFrom-Json
-if(-not $inspection.success -or -not $inspection.upgrade_recipe_verified -or -not $inspection.version_policy_verified -or $inspection.project_namespace -cne $namespace.ToString('D') -or $inspection.product_code -cne $entry.product_code -or $inspection.upgrade_code -cne $entry.upgrade_code -or $inspection.role -cne $entry.role){throw 'Package is not the exact inspected fixture'}
+$validRecipe=if($Action -ceq 'rollback-probe'){$inspection.synthetic_only -and $inspection.synthetic_rollback_recipe_verified -and $inspection.exact_differences_verified -and -not $inspection.ordinary_recipe_verified}else{$inspection.upgrade_recipe_verified}
+if(-not $inspection.success -or -not $validRecipe -or -not $inspection.version_policy_verified -or $inspection.project_namespace -cne $namespace.ToString('D') -or $inspection.product_code -cne $entry.product_code -or $inspection.upgrade_code -cne $entry.upgrade_code -or $inspection.role -cne $entry.role){throw 'Package is not the exact inspected fixture'}
 $local=[IO.Path]::GetFullPath([Environment]::GetFolderPath('LocalApplicationData')).TrimEnd('\')
 $target=Join-Path $local ('eef-Development-'+$entry.role+'-'+$namespace.ToString('N'))
 if(Test-Path -LiteralPath $target){if(((Get-Item -LiteralPath $target).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Fixture installation redirected'}}
@@ -75,11 +81,13 @@ if(Test-Path -LiteralPath $log){throw 'Existing operation log; observe prior sta
 Create-Receipt (Join-Path $fixture ($Operation+'-intent.json')) ([ordered]@{action=$Action;package_sha256=$entry.package_sha256;product_code=$entry.product_code;before=$before;created=(Get-Date -Format o)})
 $options=if($Action -ceq 'uninstall'){@('/x',('"'+$path+'"'))}else{@('/i',('"'+$path+'"'),'EEF_ALLOW_DEVELOPMENT_MSI=1')}
 if($Action -ceq 'reinstall'){$options+=@('REINSTALL=ALL','REINSTALLMODE=amus')}
+if($Action -ceq 'rollback-probe'){$options+=@('EEF_ALLOW_SYNTHETIC_ROLLBACK=1','EEF_FAIL_SYNTHETIC_UPGRADE=1')}
 $arguments=@($options)+@('/qn','/norestart','REBOOT=ReallySuppress','/l*vx',('"'+$log+'"'))
 $process=Start-Process -FilePath $msiexec -ArgumentList $arguments -WindowStyle Hidden -PassThru
 Create-Receipt (Join-Path $fixture ($Operation+'-process.json')) ([ordered]@{pid=$process.Id;started=$process.StartTime.ToString('o');product_code=$entry.product_code})
 if(-not $process.WaitForExit(180000)){throw 'Native operation still active; observe recorded process, do not kill or replay'}
 $process.Refresh();$exitCode=$process.ExitCode
+Create-Receipt (Join-Path $fixture ($Operation+'-native-exit.json')) ([ordered]@{completed=$true;native_exit=$exitCode;product_code=$entry.product_code;package_sha256=$entry.package_sha256;observed_at=(Get-Date -Format o)})
 $result=[ordered]@{completed=$true;action=$Action;operation=$Operation;product_code=$entry.product_code;package_sha256=$entry.package_sha256;native_exit=$exitCode;before=$before;after=(Observe);run_as_requested=$false;restart_requested=$false;completed_at=(Get-Date -Format o)}
 Create-Receipt (Join-Path $fixture ($Operation+'-exit.json')) $result
 $result | ConvertTo-Json -Depth 8
