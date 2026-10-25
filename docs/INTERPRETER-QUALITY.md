@@ -1,5 +1,12 @@
 # Production interpreter quality evaluation (unreleased)
 
+The subsequent [Granite 4.0 1B screen](MODEL-CANDIDATE-EVALUATION.md#granite-40-1b-candidate-2026-10-25-not-default-approved)
+also fails default candidacy: all forty proposals pass schema validation, but
+labels match only 11/20 and 6/20; all fifteen clear inputs receive unnecessary
+questions and twenty-five goals copy the example. Its fixed plan, one verified
+download and mechanical lifecycle evidence do not approve semantic quality or
+change production prompt/default behavior.
+
 This evaluation invokes the real running node's `requests preview` command,
 production prompt, selected backend and strict Rust validator. It is separate
 from execution acceptance and the older small classifier benchmark. An accepted

@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Locally verified, unreleased: optional Granite choice; default quality rejected
+
+One optional manual catalog entry pins the publisher's Granite 4.0 1B GGUF;
+there is no default, prompt, schema, validator or permission change. Explicit
+download/verification and isolated CPU lifecycle pass. Both fixed production
+quality suites finish, but match only 11/20 and 6/20 labels, ask unnecessary
+questions on every clear case and copy twenty-five example goals. Default
+candidacy is rejected. Both full Rust modes pass 1,107 tests plus one existing
+ignored profiler each; eight catalog/model-focused native suites pass against
+unchanged source/artifact hashes. The nine final artifacts match those actually
+used by lifecycle and quality evaluation, and no matching fixture processes
+remain observed. The 304-file evaluated source/resource/workflow set differs
+from the preceding shell checkpoint only in catalog data, not Rust code.
+Read-only records are `.validation/granite-candidate-acceptance.json` and
+`.validation/granite-catalog-regression-acceptance.json`. This does not claim all
+thirty-one native suites for the new catalog change. Hosted, semantic/default,
+automatic onboarding, physical-workload and stable-release gates remain separate.
+See [the measured scope](MODEL-CANDIDATE-EVALUATION.md#granite-40-1b-candidate-2026-10-25-not-default-approved).
+
 ## Locally verified, unreleased: Windows shell I/O and selected-command completion
 
 The real-node preflight exposed missing output/exit observations from direct
@@ -25,9 +44,13 @@ selected owner check with ordinary grants, retained results/no replay, removal,
 unload/reload, restart, idle and on-demand regressions using unchanged cached
 weights and matching apps. No weights were downloaded/copied, and no matching
 processes remain observed. Its record is
-`.validation/windows-console-real-cpu-acceptance.json`. Hosted, default/model
-quality, automatic onboarding, physical workload and full release acceptance
-remain separate and open.
+`.validation/windows-console-real-cpu-acceptance.json`. Published source
+`6aa2adec510462f555cd34a1ec1f3ec71b96c64b` also passes all four hosted jobs and
+the exact twenty-nine-suite native dispatch in
+[run 40145011857](https://github.com/eepyfishy/eef/actions/runs/40145011857);
+`.validation/windows-console-ci-acceptance.json` records the independent audit.
+This does not accept subsequent catalog edits. Default/model quality, automatic
+onboarding, physical workload and full release acceptance remain separate/open.
 See [scope and verification](WINDOWS-COMMAND-ENTRYPOINTS.md).
 
 ## Verified: published model-check CI and physical legacy control

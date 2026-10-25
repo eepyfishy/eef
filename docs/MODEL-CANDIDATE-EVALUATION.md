@@ -1,5 +1,58 @@
 # Lightweight interpreter candidate evaluation
 
+## Granite 4.0 1B candidate (2026-10-25; not default-approved)
+
+The optional manual `granite4-1b` catalog entry pins IBM's Q4_K_M artifact as
+described in the [plan fixed before inference](experiments/interpreter-granite-1b.md).
+It does not change the first catalog entry, default/bootstrap selection, prompt,
+generation schema, validator, sampling or permission boundaries. Its separate
+Ollama alias is not the same quantization/size/hash or evaluated backend.
+
+Exactly one 1,023,645,440-byte download through public plan/install/status
+commands passes size and SHA verification in `real-model-Op0zzj`. The ordinary
+owner check, pinned TLS/grants, two-CPU-thread launch, retained completion without
+replay, stable identity/restart, withdrawal, unload/reload, idle cleanup and
+on-demand regression pass. No installed node, model copy or additional runtime
+download was involved. The single artifact remains in its ignored fixture cache.
+No matching candidate app/model processes remain observed; about 5.9 GB remains
+free after the download. This is isolated one-PC mechanical evidence only.
+
+The unchanged production quality suites complete using that cache:
+
+| Suite | Accepted | Label matches | Unnecessary questions | Required questions lost | Exact example-goal copies |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original v1 | 20/20 | 11/20 | 7 | 0 | 12 |
+| Generalization v1 | 20/20 | 6/20 | 8 | 0 | 13 |
+
+Fixtures are `interpreter-quality-8oW45V` and `interpreter-quality-GDm0jZ`.
+The read-only record `.validation/granite-candidate-acceptance.json` checks
+304 source/resource/workflow hashes, nine native artifacts, the unchanged
+predeclaration, artifact bytes/hash, fixed prompt/schema/case fingerprints and
+independently recomputed grades. Thinking is explicitly disabled as a hint;
+temperature-zero policy, 4,096 context and the 512-token output cap are unchanged.
+No inference timeout override or post-result sampling search is used.
+
+Review of all forty goal/question pairs confirms every proposal asks a question,
+including clear greetings and explicit system requests. Thirty-four questions
+copy the generic illustrative question exactly; merely retaining a question does
+not establish a useful clarification. Some goals paraphrase the request, but
+twenty-five copy the example goal. Schema acceptance therefore does not indicate
+faithful interpretation. **Rejected as a default candidate under this screen.**
+The optional manual catalog choice remains unapproved, not an automatic setup
+choice or a claim about general model ability. Independent semantic/default,
+automatic onboarding, physical-network and full stable-release gates remain open.
+Both locked/offline full Rust feature modes pass 1,107 tests plus one existing
+ignored profiler each across fourteen groups. Fresh headless apps/helpers and
+eight focused native suites pass: metadata, downloads, bootstrap, setup, setup
+guidance, activation, installed selection and owner model verification. All 304
+evaluated source/resource/workflow hashes and nine final artifact hashes match;
+the actual lifecycle/quality binaries match those final artifacts. No matching
+fixture app/model processes remain observed. The read-only record is
+`.validation/granite-catalog-regression-acceptance.json`. Only catalog data differs
+from the preceding evaluated shell source; no Rust implementation changed. This
+is eight focused suites, not a claim that all thirty-one were rerun for the data
+change. Hosted acceptance of the catalog follow-up remains separate/pending.
+
 ## Optional 2B text candidate (unreleased)
 
 An optional `qwen3.5-2b` catalog entry pins Unsloth's text-language Q4_K_M GGUF

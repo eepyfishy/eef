@@ -13,6 +13,16 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The optional [Granite 1B candidate screen](MODEL-CANDIDATE-EVALUATION.md#granite-40-1b-candidate-2026-10-25-not-default-approved)
+rejects default candidacy despite verified download and real CPU lifecycle:
+fixed production suites match only 11/20 and 6/20 labels, question all clear
+inputs and copy twenty-five example goals. The optional manual catalog choice
+does not change any default, prompt, schema, validator or permission. Both full
+Rust modes (1,107 plus one ignored each) and eight focused native suites pass
+against unchanged hashes and the actual evaluated apps. Hosted follow-up remains
+separate. Approved semantic quality, automatic bootstrap and release gates remain
+open; adding a model option is not a replacement for those requirements.
+
 The [Windows command-entrypoint follow-up](WINDOWS-COMMAND-ENTRYPOINTS.md) is
 locally verified after the real-node preflight exposed missing PowerShell I/O/
 exit observations. Console commands retain their receipts and selected child
@@ -23,8 +33,11 @@ remote node still needs upgrade/private pairing before current reviewed-workload
 acceptance. None of this closes full onboarding/model quality or release gates.
 The shell correction passes both full modes (1,107 tests plus one ignored each),
 all thirty-one native suites and an independent cached real-CPU regression with
-unchanged evaluated source/artifact hashes. Hosted acceptance of that new source
-remains separate; legacy one-shot flags are commands, never service launches.
+unchanged evaluated source/artifact hashes. Published `6aa2ade` also passes all
+four hosted jobs and the exact twenty-nine-suite native dispatch in
+[run 40145011857](https://github.com/eepyfishy/eef/actions/runs/40145011857).
+That does not accept later catalog/source edits. Legacy one-shot flags are
+commands, never service launches.
 
 The locally accepted backend-selected model-check follow-up has both full Rust
 modes passing 1,104 tests plus one ignored each, all thirty native suites and a

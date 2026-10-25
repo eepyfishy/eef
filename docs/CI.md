@@ -1,11 +1,27 @@
 # GitHub core verification
 
-## Windows shell follow-up (locally verified; hosted pending)
+## Optional Granite catalog follow-up (local only; hosted pending)
+
+The catalog-only change passes both full local Rust modes (1,107 tests plus one
+existing ignored profiler each), eight focused model/native suites and the real
+CPU lifecycle workflow with unchanged evaluated hashes. Both frozen quality
+suites finish but reject default candidacy: 11/20 and 6/20 label matches, all
+fifteen clear inputs questioned, twenty-five copied example goals. No default,
+prompt/schema/validator or permission change follows. This does not claim all
+thirty-one native suites for the data change or hosted acceptance from the
+preceding shell revision. Workflow configuration remains twenty-nine suites.
+
+## Accepted Windows shell checkpoint (2026-10-25)
 
 The new Windows PowerShell native suite exercises ordinary command I/O/status
 and selected-package command handoff. Configured Windows native suites increase
 to twenty-nine; the previously accepted hosted revision below ran twenty-eight.
-No hosted acceptance of these new edits is claimed.
+Published `6aa2adec510462f555cd34a1ec1f3ec71b96c64b` passes all four jobs in
+[run 40145011857](https://github.com/eepyfishy/eef/actions/runs/40145011857).
+Its completed Windows headless log confirms all twenty-nine configured native
+suites in exact order; `.validation/windows-console-ci-acceptance.json` records
+the independent pinned-revision audit. This accepts that source, not subsequent
+catalog/experimental edits or a release.
 Both full local modes pass 1,107 tests plus one existing ignored profiler each,
 all thirty-one native suites pass against unchanged evaluated hashes, and the
 independent cached real-CPU regression passes. Its twenty-four shell cases cover

@@ -63,7 +63,12 @@ source/app/runtime hashes match, cached weights are unchanged, no model was
 downloaded or copied, and no matching app/model process remains observed. See
 `.validation/windows-console-real-cpu-acceptance.json`. These are mechanical
 regressions, not default-model quality or automatic first-run acceptance.
-Hosted acceptance of this source remains separate and pending.
+Published source `6aa2adec510462f555cd34a1ec1f3ec71b96c64b` passes all four jobs in
+[hosted run 40145011857](https://github.com/eepyfishy/eef/actions/runs/40145011857).
+The completed Windows headless log confirms all twenty-nine selected native
+suites in exact order, independently audited in
+`.validation/windows-console-ci-acceptance.json`. This is source verification,
+not acceptance of subsequent catalog edits or an installed/released package.
 
 `tools/test-windows-shell.mjs` runs real Windows PowerShell against both roles,
 with root and synthetic same-version selected-package paths. It checks console
