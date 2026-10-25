@@ -32,6 +32,33 @@ impl RuntimeLayout {
             managed,
         })
     }
+    /// Mutable default settings belong to the installation, including first run
+    /// when they do not exist yet. An explicit non-default path stays explicit.
+    pub fn configuration(&self, requested: &Path, default: &Path) -> PathBuf {
+        let installed = self.installation.join(default);
+        if requested == default && (self.managed || installed.is_file()) {
+            installed
+        } else {
+            requested.to_path_buf()
+        }
+    }
+
+    /// Relocate only an implicit data default for this managed default config.
+    /// Explicit repository paths and external/development configurations retain
+    /// their existing interpretation; no files are migrated or copied here.
+    pub fn default_data_directory(
+        &self,
+        config: &Path,
+        default_config: &Path,
+        relative: &Path,
+    ) -> PathBuf {
+        if self.managed && config == self.installation.join(default_config) {
+            self.installation.join(relative)
+        } else {
+            relative.to_path_buf()
+        }
+    }
+
     pub fn model_binary(&self, config: &Path, value: &Path, bundled_default: &Path) -> PathBuf {
         if value.is_absolute() {
             return value.to_path_buf();

@@ -44,6 +44,73 @@ fn binary() -> &'static Path {
 }
 
 #[test]
+fn managed_default_configuration_stays_in_installation_before_first_creation() {
+    for (versioned, marked) in [(false, true), (true, false), (true, true)] {
+        let f = fixture(versioned, marked);
+        for default in [
+            Path::new("config.json"),
+            Path::new("config/default_identity.yaml"),
+        ] {
+            assert_eq!(
+                f.layout.configuration(default, default),
+                f.install.join(default)
+            );
+            assert!(!f.install.join(default).exists());
+        }
+        let custom = Path::new("owner/custom.yaml");
+        assert_eq!(
+            f.layout.configuration(custom, Path::new("config.json")),
+            custom
+        );
+    }
+}
+
+#[test]
+fn unmanaged_configuration_keeps_development_lookup_and_explicit_paths() {
+    let f = fixture(false, false);
+    let default = Path::new("config.json");
+    assert_eq!(f.layout.configuration(default, default), default);
+    file(&f.install.join(default));
+    assert_eq!(
+        f.layout.configuration(default, default),
+        f.install.join(default)
+    );
+    let explicit = f._dir.path().join("owner.json");
+    assert_eq!(f.layout.configuration(&explicit, default), explicit);
+}
+
+#[test]
+fn implicit_managed_data_default_follows_installation_without_migrating_external_configs() {
+    let default = Path::new("config/default_identity.yaml");
+    let relative = Path::new("data/firmware");
+    for (versioned, marked) in [(false, true), (true, false), (false, false)] {
+        let f = fixture(versioned, marked);
+        let config = f.install.join(default);
+        file(&config);
+        let config = config.canonicalize().unwrap();
+        assert_eq!(
+            f.layout.default_data_directory(&config, default, relative),
+            if versioned || marked {
+                f.install.join(relative)
+            } else {
+                relative.to_path_buf()
+            }
+        );
+        let external = f._dir.path().join("owner/custom.yaml");
+        assert_eq!(
+            f.layout
+                .default_data_directory(&external, default, relative),
+            relative
+        );
+        assert_eq!(
+            f.layout
+                .default_data_directory(Path::new(""), default, relative),
+            relative
+        );
+    }
+}
+
+#[test]
 fn bundled_components_flat_package_keeps_its_own_files() {
     let f = fixture(false, true);
     let py = python(&f.bundle);

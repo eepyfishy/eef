@@ -17,6 +17,8 @@ pub mod client;
 pub mod connection_commands;
 pub mod console;
 pub mod context;
+#[path = "../../../shared/coordinator_config.rs"]
+pub mod coordinator_config;
 pub mod credential_pairing;
 pub mod crypto;
 pub mod dashboard;

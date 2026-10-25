@@ -71,6 +71,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/test-backend-boundary.mjs
           exit $LASTEXITCODE
+      - name: Read-only MSI payload planning (synthetic)
+        run: |
+          node tools/test-msi-payload-plan.mjs
+          exit $LASTEXITCODE
       - name: Workspace and all-target regression tests
         run: |
           $features = @()
@@ -95,6 +99,7 @@ jobs:
           New-Item -ItemType Directory -Path '.validation' -Force | Out-Null
           $env:EEF_TEST_PYTHON = (Get-Command python.exe -ErrorAction Stop).Source
           $scripts = @(
+            'test-coordinator-initialization.mjs',
             'test-automation-schedules.mjs',
             'test-package-setup.mjs',
             'test-package-policy.mjs',

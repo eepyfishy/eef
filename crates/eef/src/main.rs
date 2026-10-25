@@ -30,6 +30,8 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Initialize missing coordinator settings offline; preserve existing credentials.
+    Initialize,
     /// Inspect this package; explicitly probe bundled runtimes without a service.
     Doctor {
         #[command(flatten)]
@@ -1635,6 +1637,9 @@ async fn remote_permissions_cli(
 
 async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value> {
     use serde_json::json;
+    if matches!(command, Command::Initialize) {
+        return eef::initialization::command(&args.config);
+    }
     if let Command::Doctor { options } = command {
         return eefn::package_health::execute(
             &eefn::package_health::Context::current("eef")?,
@@ -1668,7 +1673,10 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
         .timeout(std::time::Duration::from_secs(25))
         .build()?;
     let response = match command {
-        Command::Repair { .. } | Command::RepairSetup { .. } | Command::Doctor { .. } => {
+        Command::Initialize
+        | Command::Repair { .. }
+        | Command::RepairSetup { .. }
+        | Command::Doctor { .. } => {
             unreachable!("local package repair returned above")
         }
         Command::AutomationSchedules { command } => {
@@ -2386,7 +2394,12 @@ async fn main() -> Result<()> {
     let repair = parsed.as_ref().is_ok_and(|args| {
         matches!(
             args.command,
-            Some(Command::Repair { .. } | Command::RepairSetup { .. } | Command::Doctor { .. })
+            Some(
+                Command::Initialize
+                    | Command::Repair { .. }
+                    | Command::RepairSetup { .. }
+                    | Command::Doctor { .. }
+            )
         )
     });
     if !repair {
@@ -2401,11 +2414,10 @@ async fn main() -> Result<()> {
         }
     }
     let mut args = parsed.unwrap_or_else(|error| error.exit());
-    if args.config == PathBuf::from("config/default_identity.yaml")
-        && install_root.join(&args.config).is_file()
-    {
-        args.config = install_root.join(&args.config);
-    }
+    args.config = eefn::runtime_layout::RuntimeLayout::from_executable(&executable)?.configuration(
+        &args.config,
+        std::path::Path::new("config/default_identity.yaml"),
+    );
     if let Some(command) = &args.command {
         match run_command(&args, command).await {
             Ok(value) => {
@@ -2590,6 +2602,9 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     };
+    // Service startup owns first creation; commands other than initialize remain
+    // read-only with respect to a missing configuration. Existing bytes win.
+    eefn::coordinator_config::initialize(&args.config)?;
     let mut open_dashboard = args.open_dashboard && !args.no_ui && cfg!(feature = "dashboard");
     if let Some(parent) = args
         .database

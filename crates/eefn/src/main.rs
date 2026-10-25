@@ -2766,9 +2766,8 @@ fn main() -> Result<()> {
 
 #[tokio::main]
 async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
-    if args.config == PathBuf::from("config.json") && install_dir.join("config.json").is_file() {
-        args.config = install_dir.join("config.json");
-    }
+    args.config = eefn::runtime_layout::RuntimeLayout::current()?
+        .configuration(&args.config, Path::new("config.json"));
     if let Some(command) = &args.command {
         match execute_command(&args, command).await {
             Ok(value) => {

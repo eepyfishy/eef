@@ -83,5 +83,5 @@ console-attachment probe observes no retained service console. Fixtures use hard
 links rather than copying payloads; cleanup is
 confined to their owned paths/processes. The suite does not establish a signed
 package, visual startup/installer behavior, real model quality or physical
-workload acceptance. It adds a selected Windows CI suite; hosted acceptance of
-the new source remains separate.
+workload acceptance. Its selected Windows CI suite passes at the published
+revision above; later source changes require their own acceptance.

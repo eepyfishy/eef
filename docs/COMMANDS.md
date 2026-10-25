@@ -7,8 +7,26 @@ Older v0.4.0a installers do not contain them.
 The unreleased [Windows command-entrypoint follow-up](WINDOWS-COMMAND-ENTRYPOINTS.md)
 uses normal console I/O/waiting for `eef.exe` and `eefn.exe`, including selected
 package command exit codes. Background service launch/console ownership remains
-separate. Existing published installers are unchanged; full acceptance of the
-new follow-up is still pending.
+separate. Its local and published-source regressions pass; existing published
+installers are unchanged and stable-release acceptance remains separate.
+
+## Coordinator first initialization (unreleased after alpha.6)
+
+    eef initialize
+    eef --config ABSOLUTE_CONFIGURATION_PATH --json initialize
+
+This local offline owner command creates missing coordinator settings and a
+distinct generated legacy secret. It requires that coordinator to be stopped;
+existing files, formatting and credentials are preserved, even when invalid.
+It does not start networking, enroll a node, choose/download a model, enable a
+feature or request a restart. Its secret-free report is configuration evidence,
+not runtime health. A broken updater selection is not executed or changed.
+
+Ordinary service startup also creates a missing coordinator configuration.
+For managed installations, both roles place missing default mutable settings
+under the persistent installation directory, not the caller's unrelated working
+directory or selected version. This does not migrate existing installations or
+provide full automatic onboarding. See [the contract](FIRST-RUN-INITIALIZATION.md).
 
 ## Explicit interpreter check (unreleased after alpha.6)
 

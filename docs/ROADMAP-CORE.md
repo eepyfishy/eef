@@ -13,14 +13,28 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [backend first-run increment](FIRST-RUN-INITIALIZATION.md) creates missing
+coordinator settings independently of a dashboard or installer custom action and
+anchors both roles' managed default settings to their persistent installation.
+Existing owner bytes and credentials are preserved. Corrected full Rust modes
+(1,132 plus one ignored each), all thirty-two native suites, cached real-CPU and
+the unchanged browser regression pass after a native package-setup timeout exposed
+costly repeated debug-build file hashing. No test deadline or authorization check
+is relaxed. The standalone read-only MSI planner has thirty-four separate local
+cases and its own CI step; new hosted acceptance remains pending. This is not
+complete private/model onboarding or MSI release acceptance.
+
 The optional [Granite 1B candidate screen](MODEL-CANDIDATE-EVALUATION.md#granite-40-1b-candidate-2026-10-25-not-default-approved)
 rejects default candidacy despite verified download and real CPU lifecycle:
 fixed production suites match only 11/20 and 6/20 labels, question all clear
 inputs and copy twenty-five example goals. The optional manual catalog choice
 does not change any default, prompt, schema, validator or permission. Both full
 Rust modes (1,107 plus one ignored each) and eight focused native suites pass
-against unchanged hashes and the actual evaluated apps. Hosted follow-up remains
-separate. Approved semantic quality, automatic bootstrap and release gates remain
+against unchanged hashes and the actual evaluated apps. Published `c1668d8`
+also passes all four hosted jobs and the exact twenty-nine-suite native dispatch
+in [run 40146881809](https://github.com/eepyfishy/eef/actions/runs/40146881809).
+That does not verify later first-run edits. Approved semantic quality,
+automatic bootstrap and release gates remain
 open; adding a model option is not a replacement for those requirements.
 
 The [Windows command-entrypoint follow-up](WINDOWS-COMMAND-ENTRYPOINTS.md) is
@@ -1531,13 +1545,18 @@ default LM bootstrap, leases and lifecycle controllers are not yet implemented.
 
 The [current packaging inspection and acceptance contract](MSI-PACKAGING.md)
 records existing .NET/Windows tools, config/secret initialization and updater
-selection migration requirements, and the WiX tooling terms requiring owner
-approval. No MSI tool was installed, agreement accepted or package produced.
+selection migration requirements, and the potential WiX tooling terms requiring
+owner approval. A separate native Windows Installer API/MakeCab probe now passes
+text-only package authoring and controlled per-user install/repair/uninstall,
+plus a separate post-write failure/rollback test, all preserving generated owner
+data. No additional tooling or tooling
+agreement was needed. No real EEF MSI package or release is accepted.
 
 The owner requested MSI on 2026-09-11. Add separate EEF and EEFN MSI packages in
 a packaging increment, retaining current installers until replacements pass
 acceptance. Reuse verified payloads and inventories rather than a second build
-of the application. MSI tooling has not been installed; no MSI was built here.
+of the application. The synthetic probe is not distributable and does not prove
+real payloads, migration, upgrades, rollback or two-role application behavior.
 
 Acceptance: per-user dedicated-directory setup where supported, explicit startup
 choice, stable product/upgrade identity, repair/uninstall, preserved config/models/

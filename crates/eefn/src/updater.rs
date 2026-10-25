@@ -532,7 +532,10 @@ pub fn restart_required(install: &Path, current_version: &str, program: &str) ->
 
 pub fn sha256_file(path: impl AsRef<Path>) -> Result<String> {
     let mut file = File::open(path)?;
-    let mut hash = Sha256::new();
+    // Repeated build fences hash complete executables. Use the existing ring
+    // implementation here so those checks do not spend seconds in unoptimized
+    // debug SHA compression. Never cache a digest or omit a fresh file read.
+    let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
     let mut buffer = [0_u8; 256 * 1024];
     loop {
         let count = file.read(&mut buffer)?;
@@ -541,7 +544,7 @@ pub fn sha256_file(path: impl AsRef<Path>) -> Result<String> {
         }
         hash.update(&buffer[..count]);
     }
-    Ok(hex::encode(hash.finalize()))
+    Ok(hex::encode(hash.finish().as_ref()))
 }
 
 pub fn is_newer(latest: &str, current: &str) -> bool {
@@ -826,6 +829,49 @@ pub(crate) async fn fetch_with_policy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streamed_file_sha256_matches_known_vectors_and_block_boundaries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("payload.bin");
+        for (bytes, expected) in [
+            (
+                b"".as_slice(),
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ),
+            (
+                b"abc".as_slice(),
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            ),
+        ] {
+            fs::write(&path, bytes).unwrap();
+            assert_eq!(sha256_file(&path).unwrap(), expected);
+        }
+        for length in [55, 56, 63, 64, 65, 262_143, 262_144, 262_145, 524_289] {
+            let bytes: Vec<u8> = (0..length).map(|index| (index % 251) as u8).collect();
+            fs::write(&path, &bytes).unwrap();
+            assert_eq!(
+                sha256_file(&path).unwrap(),
+                hex::encode(Sha256::digest(&bytes))
+            );
+        }
+    }
+
+    #[test]
+    fn streamed_file_sha256_rechecks_content_and_preserves_read_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("payload.bin");
+        fs::write(&path, b"abc").unwrap();
+        let before = sha256_file(&path).unwrap();
+        fs::write(&path, b"abd").unwrap();
+        assert_ne!(sha256_file(&path).unwrap(), before);
+        assert_eq!(
+            sha256_file(&path).unwrap(),
+            hex::encode(Sha256::digest(b"abd"))
+        );
+        assert!(sha256_file(dir.path().join("missing.bin")).is_err());
+        assert!(sha256_file(dir.path()).is_err());
+    }
 
     #[tokio::test]
     async fn paused_feeds_have_no_artifact_and_fail_closed_for_old_and_new_installers() {

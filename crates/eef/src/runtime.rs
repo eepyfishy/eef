@@ -143,11 +143,10 @@ impl Runtime {
             node_name: "esp-01".into(),
             psk: psk.clone(),
         };
-        let firmware = FirmwareService::open(
-            PathBuf::from(config.string("firmware.repository", "data/firmware")),
-            node_server.clone(),
-            firmware_defaults,
-        )?;
+        let firmware_repository =
+            firmware_repository(&config, &eefn::runtime_layout::RuntimeLayout::current()?);
+        let firmware =
+            FirmwareService::open(firmware_repository, node_server.clone(), firmware_defaults)?;
         let assistant =
             ResponseEngine::new(bus.clone(), world.clone(), llm.clone(), dispatcher.clone());
         for rule in default_rules() {
@@ -1069,6 +1068,19 @@ pub(crate) fn validate_secret(psk: &str) -> Result<()> {
     Ok(())
 }
 
+fn firmware_repository(config: &Config, layout: &eefn::runtime_layout::RuntimeLayout) -> PathBuf {
+    let path = PathBuf::from(config.string("firmware.repository", "data/firmware"));
+    if path == Path::new("data/firmware") {
+        layout.default_data_directory(
+            config.source().unwrap_or_else(|| Path::new("")),
+            Path::new("config/default_identity.yaml"),
+            &path,
+        )
+    } else {
+        path
+    }
+}
+
 pub(crate) fn model_tiers(config: &Config) -> BTreeMap<String, Vec<String>> {
     config
         .object("models.tiers")
@@ -1119,6 +1131,36 @@ fn default_rules() -> Vec<ResponseRule> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn managed_stock_firmware_setting_uses_installation_but_custom_paths_are_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("installation");
+        std::fs::create_dir_all(root.join("config")).unwrap();
+        let executable = root.join("eef.exe");
+        std::fs::write(&executable, b"fixture, never execute").unwrap();
+        std::fs::write(root.join("bundle.json"), b"{}").unwrap();
+        let layout = eefn::runtime_layout::RuntimeLayout::from_executable(executable).unwrap();
+        let path = root.join("config/default_identity.yaml");
+        std::fs::write(&path, b"{}").unwrap();
+        let config = crate::config::Config::load(Some(&path)).unwrap();
+        assert_eq!(
+            super::firmware_repository(&config, &layout),
+            root.canonicalize().unwrap().join("data/firmware")
+        );
+        std::fs::write(&path, b"firmware:\n  repository: owner/firmware\n").unwrap();
+        let custom = crate::config::Config::load(Some(&path)).unwrap();
+        assert_eq!(
+            super::firmware_repository(&custom, &layout),
+            std::path::Path::new("owner/firmware")
+        );
+        let external = dir.path().join("owner.yaml");
+        std::fs::write(&external, b"{}").unwrap();
+        let custom = crate::config::Config::load(Some(&external)).unwrap();
+        assert_eq!(
+            super::firmware_repository(&custom, &layout),
+            std::path::Path::new("data/firmware")
+        );
+    }
     use super::*;
     #[tokio::test]
     async fn consumed_runtime_retirement_waits_for_independent_store_clones() {

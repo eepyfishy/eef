@@ -39,6 +39,36 @@ pub fn copy(source: &Path, destination: &Path) -> io::Result<()> {
     replace_with(destination, |file| io::copy(&mut source, file).map(|_| ()))
 }
 
+/// Publish a complete new file, never replacing a concurrently created target.
+pub fn create(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    create_with(path, |file| file.write_all(bytes))
+}
+
+fn create_with(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    if path.file_name().is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Expected a destination file",
+        ));
+    }
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let mut pending = tempfile::Builder::new()
+        .prefix(".eef-write-")
+        .tempfile_in(parent)?;
+    write(pending.as_file_mut())?;
+    pending.as_file().sync_all()?;
+    drop(
+        pending
+            .persist_noclobber(path)
+            .map_err(|failure| failure.error)?,
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,6 +84,89 @@ mod tests {
                     .starts_with(".eef-write-")
             })
             .collect()
+    }
+
+    #[test]
+    fn atomic_creation_never_replaces_existing_owner_bytes_or_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nested/settings.json");
+        create(&target, b"complete owner settings").unwrap();
+        assert!(create(&target, b"replacement").is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"complete owner settings");
+        assert!(create(target.parent().unwrap(), b"not a directory").is_err());
+        assert!(staging_files(target.parent().unwrap()).is_empty());
+    }
+
+    #[test]
+    fn atomic_creation_has_exactly_one_winner_for_the_same_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let mut handles = Vec::new();
+        for bytes in [
+            b"first complete settings".to_vec(),
+            b"second complete settings".to_vec(),
+        ] {
+            let barrier = barrier.clone();
+            let path = path.clone();
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                let result = create(&path, &bytes);
+                (bytes, result)
+            }));
+        }
+        barrier.wait();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|(_, r)| r.is_ok()).count(), 1);
+        let winner = results.iter().find(|(_, r)| r.is_ok()).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), winner.0);
+        assert!(staging_files(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn atomic_creation_partial_write_failure_never_publishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new-settings");
+        let failure = create_with(&path, |file| {
+            file.write_all(b"partial settings")?;
+            Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "injected disk failure",
+            ))
+        });
+        assert!(failure.is_err());
+        assert!(!path.exists());
+        assert!(staging_files(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn atomic_creation_preserves_owner_file_created_during_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings");
+        let other = path.clone();
+        let (ready, staged) = std::sync::mpsc::channel();
+        let (release, resume) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            create_with(&other, |file| {
+                file.write_all(b"losing staged settings")?;
+                ready.send(()).unwrap();
+                resume
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                Ok(())
+            })
+        });
+        staged
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        write(&path, b"concurrently published owner settings").unwrap();
+        release.send(()).unwrap();
+        assert!(worker.join().unwrap().is_err());
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            b"concurrently published owner settings"
+        );
+        assert!(staging_files(dir.path()).is_empty());
     }
 
     #[test]

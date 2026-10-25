@@ -4,11 +4,11 @@ MSI remains an unimplemented release requirement, not a replacement already
 available to users. The existing EXE installers and published artifacts stay
 unchanged until replacement packages pass acceptance.
 
-## Current inspection (2026-10-23)
+## Initial inspection (2026-10-23)
 
 The machine already has .NET SDK 10.0.100, supported .NET runtimes, Windows
-Installer and MakeCab. No WiX tool is installed and no MSI has been built or
-installed. About 7.08 GiB was free at inspection. Reuse verified payloads rather
+Installer and MakeCab. At that inspection no WiX tool was installed and no MSI
+had been built or installed. About 7.08 GiB was free. Reuse verified payloads rather
 than downloading another Python/llama.cpp runtime or rebuilding the application.
 
 The existing installer does more than extract files:
@@ -41,6 +41,94 @@ decision. Windows Installer APIs are an alternative authoring route but need
 their own maintainability and complete validation assessment.
 
 This tooling decision does not block unrelated command/backend development.
+
+## Native feasibility (2026-10-25; synthetic only)
+
+A development-only Windows Installer API/MakeCab probe now authors a complete
+compressed package with one 37-byte text file and one isolated HKCU component
+key. Independent read-only checks verify the table relationships, payload/CAB
+hashes, summary architecture, per-user directory, standard action sequence and
+absence of custom executables, services, startup entries or removal globs.
+The package has a distinct synthetic product identity and an explicit guard
+against accidental installation. No WiX tooling, additional download or tooling
+agreement was needed for this probe.
+
+The controlled lifecycle test installed that exact package in its unique
+per-user test directory, verified the current user's unmanaged installation
+context, moved only the hash-checked synthetic payload to retained evidence,
+and repaired the missing file. Uninstall removed the package-owned file and
+registry key and unregistered the product. A generated unowned text marker
+survived both repair and uninstall. All three native actions returned zero.
+No elevation was requested and no security policy was changed.
+
+A second distinct text-only package tests rollback after actual pending-script
+execution. Its complete standard sequence includes
+[`InstallExecute`](https://learn.microsoft.com/en-us/windows/win32/msi/installexecute-action)
+before a deliberately failing
+[message-only Type 19 action](https://learn.microsoft.com/en-us/windows/win32/msi/custom-action-type-19).
+There is no custom executable or script. Independent package readback verifies
+the original scope/payload, all twenty-one sequence rows, separate package
+identity and explicit two-flag installation guard before the controlled test.
+Native logs confirm file/registry operations and successful pending-script
+execution before the expected error, then rollback removal operations and the
+expected installer exit code 1603. Independent current-state reads confirm the
+product is unregistered, owned payload and user key are absent, and the generated
+owner-data marker remains intact. The intended native failure is a passing
+rollback test, not a successful application installation.
+
+This establishes feasibility, not an EEF installer. The probe contains no EEF,
+EEFN, Python or llama.cpp payload and is not distributable. It does not establish
+full ICE validation, upgrade/version ordering, real application rollback, locked files, EXE or
+updater migration, two-role coexistence, startup choices, first-run application
+health, signing or Defender clearance. Those gates below remain open. Existing
+published installers are unchanged.
+
+The [backend first-run increment](FIRST-RUN-INITIALIZATION.md) separately moves
+missing configuration creation into the applications, with existing owner bytes
+preserved. It removes reliance on an installer custom action for that creation;
+it does not supply an MSI migration or repair transaction.
+
+## Experimental read-only payload planning
+
+The standalone [planner](../tools/msi-payload-plan.mjs) checks inventory-backed file/byte hashes, safe paths,
+case aliases, selected links, explicit source/MSI versions and project-scoped role
+identities before any CAB or MSI authoring. Mutable configuration is omitted
+without reading it. Recognized CPython `__pycache__` entries are omitted only when
+their matching source files are included and independently hash-verified;
+orphan bytecode and other content in a cache directory are not silently dropped.
+The transformed distribution needs a new inventory, not the original file list
+that still names mutable configuration and generated caches.
+
+Thirty-four isolated [test cases](../tools/test-msi-payload-plan.mjs) pass, including the RFC UUIDv5 vector, role/fork identity
+separation, same-size corruption, path aliases, junction refusal and old-version
+relabelling refusal, local-path-only enforcement and secret-free CLI errors.
+Independent read-only checks also verify an existing
+`0.4.0-alpha.5` cache: 53 EEF files / 34,773,699 bytes and 2,286 EEFN files /
+273,958,002 bytes, excluding one configuration per role and 134 source-backed
+node Python caches. The earlier filename/cache refusals remain recorded.
+No cache contents or inventories were changed, copied or repackaged. Those old
+payloads are not the current application source and were not relabelled as such.
+
+```text
+node tools/msi-payload-plan.mjs --help
+node tools/msi-payload-plan.mjs --bundle PATH --role eefn --namespace PROJECT_UUID --expected-version PACKAGE_SEMVER --msi-version MAJOR.MINOR.BUILD
+node tools/test-msi-payload-plan.mjs
+```
+
+All identity/version inputs are explicit. A project controls its stable namespace;
+do not derive it from an account or host path, regenerate it per build, or reuse
+another project's identity for a fork. The test namespace and numeric versions
+are synthetic, not approved production metadata. Plans are JSON; failures return
+nonzero with a bounded error code, not an absolute source path. No payloads,
+mutable settings, inventories or installer registrations are changed.
+
+This is experimental planning evidence, not an MSI builder or installer. It
+does not approve a permanent product namespace, release-version ordering, a new
+package identity, publisher trust, migration or current first-run compatibility.
+The standalone public tool and its synthetic CI step are separate from the
+accepted application-source checkpoint. Hosted follow-up and actual MSI authoring
+remain required; application initialization compatibility is explicitly unverified
+for the old cached payloads used here.
 
 ## Package contract
 

@@ -51,7 +51,12 @@ fixture app/model processes remain observed. The read-only record is
 `.validation/granite-catalog-regression-acceptance.json`. Only catalog data differs
 from the preceding evaluated shell source; no Rust implementation changed. This
 is eight focused suites, not a claim that all thirty-one were rerun for the data
-change. Hosted acceptance of the catalog follow-up remains separate/pending.
+change. Published `c1668d8219e0c3dffa39fed1084e8e7ca963c448` also passes all four
+hosted jobs and all twenty-nine configured Windows native suites in exact order
+in [run 40146881809](https://github.com/eepyfishy/eef/actions/runs/40146881809).
+The independent record is `.validation/granite-catalog-ci-acceptance.json`.
+This accepts that catalog/source revision, not later first-run changes or model
+quality, automatic onboarding, installed packages or stable-release readiness.
 
 ## Optional 2B text candidate (unreleased)
 

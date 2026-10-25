@@ -7,10 +7,13 @@ use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
-use serde_json::{Value, json};
+#[cfg(test)]
+use serde_json::Value;
 use zip::ZipArchive;
 #[path = "../../../shared/atomic_file.rs"]
 pub mod atomic_file;
+#[path = "../../../shared/coordinator_config.rs"]
+mod coordinator_config;
 #[path = "../../../shared/installer_payload.rs"]
 mod installer_payload;
 #[cfg(windows)]
@@ -310,26 +313,8 @@ fn select_manual_install(destination: &Path) -> Result<()> {
 }
 
 fn ensure_coordinator_secret(path: &Path) -> Result<()> {
-    let mut value: Value = serde_yml::from_slice(&fs::read(path)?)?;
-    let current = value
-        .pointer("/node/psk")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if current.len() >= 12 && !current.contains("CHANGE_ME") {
-        return Ok(());
-    }
-    let object = value
-        .as_object_mut()
-        .context("EEF config is not a mapping")?;
-    let node = object.entry("node").or_insert_with(|| json!({}));
-    node.as_object_mut()
-        .context("node config is not a mapping")?
-        .insert(
-            "psk".into(),
-            Value::String(hex::encode(rand::random::<[u8; 32]>())),
-        );
-    atomic_file::write(path, serde_yml::to_string(&value)?.as_bytes())?;
-    Ok(())
+    coordinator_config::initialize(path)?;
+    coordinator_config::ensure_secret_file(path)
 }
 
 fn set_startup(install_dir: &Path, product: &Product, enabled: bool) -> Result<()> {

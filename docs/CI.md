@@ -1,6 +1,24 @@
 # GitHub core verification
 
-## Optional Granite catalog follow-up (local only; hosted pending)
+## First-run and read-only MSI planning checkpoint (local verified; hosted pending)
+
+The application increment passes both full local Rust modes (1,132 tests plus one
+existing ignored profiler each), all thirty-two native Windows suites, a separate
+cached real-CPU owner workflow and the unchanged default-feature browser regression.
+Each app epoch has independent source/artifact/process evidence. The original
+package-setup timeout is retained; the full corrected run uses the unchanged
+deadline after a streamed-hashing correction, not a timeout relaxation.
+
+Windows headless CI now selects thirty native suites by adding managed first-run
+initialization. Package-doctor and unavailable-model controls still require the
+existing verified package/runtime and remain local-only. The separate read-only
+MSI payload planner has thirty-four local synthetic cases and an explicit test
+step in every matrix job; it launches no payload, installs no MSI and downloads
+no model. Actionlint and local standalone tests pass. Hosted acceptance of this
+combined source is pending, not inherited from the older catalog run below.
+No version, release asset, stable feed or installed node changed.
+
+## Accepted optional Granite catalog follow-up (2026-10-25)
 
 The catalog-only change passes both full local Rust modes (1,107 tests plus one
 existing ignored profiler each), eight focused model/native suites and the real
@@ -9,7 +27,13 @@ suites finish but reject default candidacy: 11/20 and 6/20 label matches, all
 fifteen clear inputs questioned, twenty-five copied example goals. No default,
 prompt/schema/validator or permission change follows. This does not claim all
 thirty-one native suites for the data change or hosted acceptance from the
-preceding shell revision. Workflow configuration remains twenty-nine suites.
+preceding shell revision. Its own published revision
+`c1668d8219e0c3dffa39fed1084e8e7ca963c448` passes all four hosted jobs and the
+exact twenty-nine-suite Windows native dispatch in
+[run 40146881809](https://github.com/eepyfishy/eef/actions/runs/40146881809).
+The independent read-only record is `.validation/granite-catalog-ci-acceptance.json`.
+Later first-run edits require their own acceptance; no release or model-quality
+approval follows.
 
 ## Accepted Windows shell checkpoint (2026-10-25)
 
