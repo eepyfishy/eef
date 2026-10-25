@@ -1,6 +1,6 @@
 # Selecting models on a node
 
-The EEF distribution contains no model and never downloads one. Model choice
+The eef distribution contains no model and never downloads one. Model choice
 belongs to the owner of each node.
 
 The subsequent unreleased [selected GGUF lifecycle commands](MODEL-LIFECYCLE.md)
@@ -55,7 +55,7 @@ to that node's JSON configuration:
 
 An empty or missing `selected` array advertises no Ollama models and does not
 even query Ollama. A selected model is advertised only if it is present in
-Ollama's installed-model list. EEFN rejects requests for an unselected model or
+Ollama's installed-model list. eefn rejects requests for an unselected model or
 for the wrong modality.
 
 llama.cpp slots are also opt-in:
@@ -79,7 +79,7 @@ llama.cpp slots are also opt-in:
 }
 ```
 
-EEF receives these advertisements over the authenticated node link. It ranks
+eef receives these advertisements over the authenticated node link. It ranks
 eligible providers by capability, modality, load, latency, hardware,
 constraints, and health; it does not contain a default model name.
 
@@ -102,7 +102,7 @@ GGUF entry. Planning does not download, reserve space or prove model compatibili
 See also the [CPU candidate evaluation](MODEL-CANDIDATE-EVALUATION.md). It does
 not select a default or enable automatic interpretation/bootstrap.
 
-If the configured llama.cpp group fails startup, EEFN stops any partially
+If the configured llama.cpp group fails startup, eefn stops any partially
 started children it owns, marks that group unavailable for execution and
 continues its deterministic node connection. Saved model selections and backend
 preference are retained; there is no silent switch to another model/provider.

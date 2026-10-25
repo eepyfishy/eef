@@ -2,7 +2,7 @@
 
 The existing node setup check now explains the model-setup backend's retained
 state instead of asking for another interpreter while an approved setup exists.
-EEF can inspect the same backend over its existing authenticated node channel:
+eef can inspect the same backend over its existing authenticated node channel:
 
 ```
 eefn setup
@@ -47,7 +47,7 @@ additional inspections fail busy rather than accumulating workers. The read uses
 the existing bounded read-only journal access and never creates a missing sidecar.
 Runtime identity is checked again after collecting the observations.
 
-The EEF command/API optionally resolves the node runtime once, then sends one
+The eef command/API optionally resolves the node runtime once, then sends one
 typed setup inspection with the original node/runtime/correlation identities.
 An explicit expected runtime is never replaced. Lost, mismatched, corrupt or
 unsupported replies do not trigger another inspection, legacy get, setup action
@@ -74,7 +74,7 @@ run passed 84 filtered tests, but predates the final restart-deferral and explic
 remote-runtime regressions. Fresh headless apps/helpers built. The changed native
 model-setup (`model-setup-7HbYxP`) and setup-check (`setup-check-9TsXqa`) fixtures
 then passed, covering:
-local/EEF guidance during a retained download, approval and unknown states,
+local/eef guidance during a retained download, approval and unknown states,
 inspection with remote writes disabled, runtime/origin/body fences, legacy/malformed
 metadata, no inference and no configuration changes. The broader sequential run
 stopped in package doctor (`package-doctor-PpSupu`): its one-second probe returned

@@ -211,7 +211,7 @@ try{
  await local(['model-bootstrap-policy','configure','--mode','auto']);
  assert.equal((await show()).setup.attempt.reason,'owner_stopped');
  assert.equal(pulls,4);await assertEmpty();
- // A new explicit epoch can be stopped through the same authenticated EEF
+ // A new explicit epoch can be stopped through the same authenticated eef
  // adapter, but never without the target node's current management consent.
  await local(['permissions','allow','remote-management']);
  await remote(['configure','--disable-automation']);installed=false;

@@ -73,7 +73,7 @@ impl NodeService {
     ) -> Result<ApiServer> {
         let listener = tokio::net::TcpListener::bind((host, port))
             .await
-            .with_context(|| format!("bind EEFN command API {host}:{port}"))?;
+            .with_context(|| format!("bind eefn command API {host}:{port}"))?;
         let actual_port = listener.local_addr()?.port();
         if let Err(error) =
             crate::local_commands::publish(&self.config_path, &self.node_id, listener.local_addr()?)
@@ -212,7 +212,7 @@ impl NodeService {
             .route("/api/update/apply", post(update_apply))
             .layer(axum::middleware::from_fn(crate::setup::local_ui_guard))
             .with_state(self.clone());
-        info!(host, port = actual_port, "EEFN command API listening");
+        info!(host, port = actual_port, "eefn command API listening");
         Ok(ApiServer {
             ui_enabled,
             task: tokio::spawn(async move {
@@ -222,7 +222,7 @@ impl NodeService {
                 )
                 .await
                 {
-                    warn!(%error, "EEFN command API stopped");
+                    warn!(%error, "eefn command API stopped");
                 }
             }),
         })
@@ -681,7 +681,7 @@ async fn update_apply(State(state): State<Arc<NodeService>>) -> Result<Json<Valu
 }
 
 async fn startup_get() -> Result<Json<Value>, ApiError> {
-    Ok(Json(json!(crate::startup_status("EEF Node")?)))
+    Ok(Json(json!(crate::startup_status("eef Node")?)))
 }
 
 async fn startup_set(

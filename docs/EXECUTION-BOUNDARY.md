@@ -1,6 +1,6 @@
 # Reviewed workload boundary (unreleased after alpha.6)
 
-The application and public EEF core constructors now require reviewed grants for
+The application and public eef core constructors now require reviewed grants for
 workloads. This is a deliberate compatibility change, not a configuration toggle.
 Published alpha.6 installers have not been replaced or updated by this increment.
 Both roles need a new, versioned release before physical network acceptance.
@@ -39,9 +39,9 @@ This increment must not be described as a finished non-coder automation workflow
 Raw `jobs.create` (including owner/node `POST /api/jobs`), legacy plan admission,
 legacy resume, ordinary dispatcher execution and coordinator model chat cannot
 execute or create new workload records through the shipping constructors.
-EEF raw message submissions and coordinator `/api/chat` are rejected before the
+eef raw message submissions and coordinator `/api/chat` are rejected before the
 legacy Brain handles input. Users submit input through a real running node;
-EEF does not fabricate a coordinator-node origin.
+eef does not fabricate a coordinator-node origin.
 
 This also fences workload-bearing legacy response rules and local adapters.
 Non-workload core state/configuration remains available. Automatic rules need

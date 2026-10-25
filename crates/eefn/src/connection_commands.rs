@@ -13,11 +13,11 @@ pub enum ConnectionCommand {
         #[arg(long)]
         control: Option<usize>,
     },
-    /// Disable the outgoing EEF connection; local command services remain available.
+    /// Disable the outgoing eef connection; local command services remain available.
     Pause {},
     /// Enable connections using existing owner-configured endpoints and trust.
     Resume {},
-    /// Explicitly switch to automatic same-user local EEF pairing.
+    /// Explicitly switch to automatic same-user local eef pairing.
     PairLocal {},
     /// Apply a PRIVATE exact-node invitation file; never changes feature permissions.
     Pair {

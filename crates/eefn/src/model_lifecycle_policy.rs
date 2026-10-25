@@ -163,7 +163,7 @@ pub enum PolicyCommand {
         #[arg(long, conflicts_with = "ollama_keep_alive_seconds")]
         #[serde(default)]
         ollama_keep_alive_default: bool,
-        /// Save Ollama num_ctx for EEF-owned requests; restart this node to apply.
+        /// Save Ollama num_ctx for eef-owned requests; restart this node to apply.
         #[arg(long, conflicts_with = "ollama_context_default", value_parser=clap::value_parser!(u32).range(512..=1_048_576))]
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ollama_context_tokens: Option<u32>,

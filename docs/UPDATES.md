@@ -1,7 +1,7 @@
 # Updates
 
-EEF and EEFN share the same verified, versioned updater. Official packages use
-this repository's separate EEF and EEFN manifests by default. The URL and
+eef and eefn share the same verified, versioned updater. Official packages use
+this repository's separate eef and eefn manifests by default. The URL and
 policy are ordinary configuration values: forks and self-hosting users can
 replace the feed or disable it from the dashboard.
 
@@ -27,7 +27,7 @@ stable feed restored before launching the new build. It is never a default feed.
 }
 ```
 
-The distribution may be a ZIP or an official self-extracting EEF installer; its
+The distribution may be a ZIP or an official self-extracting eef installer; its
 payload must contain the executable being updated. Downloads are rejected if
 the SHA-256 does not match. Files are extracted with traversal-safe ZIP paths
 into `versions/<version>`, and
@@ -48,12 +48,12 @@ Policies:
 - `auto` — download and install a verified update, then report that a restart
   is required.
 
-EEF reports update events and exposes `/api/update/status`, `/check`, and
+eef reports update events and exposes `/api/update/status`, `/check`, and
 `/apply`. Both 0.3.2 dashboards offer Check for updates, Install update, and
-Restart now; EEFN exposes `/api/update/check` and `/api/update/apply` too.
+Restart now; eefn exposes `/api/update/check` and `/api/update/apply` too.
 Restart hands off to the selected installed version, without needing a user
 to find and terminate a process. Automatic updates install but do not interrupt
-running work by forcing a restart. EEFN also supports
+running work by forcing a restart. eefn also supports
 `--check-update`, `--rollback`, and the permission-controlled `node.update`
 capability.
 

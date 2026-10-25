@@ -12,7 +12,7 @@ Both apps must be running updated builds with their local command/API services.
 No browser or model is required. Find the existing stable node ID with
 `eefn network show --json`. Do not change it to match an invitation.
 
-On the coordinator, explicitly provision that exact ID and its reachable EEF
+On the coordinator, explicitly provision that exact ID and its reachable eef
 endpoint (not the node's advertised address):
 
 ```powershell
@@ -62,7 +62,7 @@ applied session is still accepted until coordinator restart.
 
 `changed: false` means no save. `restart_required` compares the whole saved and
 applied authentication policies; an exported invitation may need a previously
-pending explicit EEF restart before it can connect. Export does not confirm that
+pending explicit eef restart before it can connect. Export does not confirm that
 the requested endpoint is reachable, the node possesses this invitation, or
 registration is complete. The address is validated without probing and can be
 changed in the exported invitation without editing the coordinator policy.
@@ -212,7 +212,7 @@ Revocation retains an exact-ID tombstone, blocking shared-key impersonation as
 well as its previous credential. Re-provisioning requires `--rotate`, not an
 implicit overwrite. Apply a rotation with coordinator restart followed by node
 pairing as above. **Saved changes are not immediate revocation**: old sessions
-and applied keys stay usable until EEF restart. A restart does not prove external
+and applied keys stay usable until eef restart. A restart does not prove external
 side effects stopped. No job or remote mutation is automatically replayed.
 
 ## Contract and trust boundary
@@ -223,7 +223,7 @@ side effects stopped. No job or remote mutation is automatically replayed.
   unknown fields and malformed policy fail closed. Missing policy preserves
   legacy compatibility; it does not claim untrusted nodes are isolated.
 - Signed/selected remote IDs are exact byte strings: leading/trailing whitespace,
-  control characters, the `*` wildcard and EEF's internal `local` executor alias
+  control characters, the `*` wildcard and eef's internal `local` executor alias
   are rejected before credential lookup, authentication receipts or registration.
   No trimming, case folding, automatic rename or identity replacement occurs.
   Display names and coordinator advertisement IDs use separate namespaces;
@@ -250,7 +250,7 @@ side effects stopped. No job or remote mutation is automatically replayed.
   verified leaf must additionally match its exact bytes. System public roots,
   trust-on-first-use, silent certificate replacement, TLS 1.2, early data,
   resumption and session tickets are disabled for this path. The fixed protocol
-  server-name and ALPN identify EEF's protocol, not a deployment-specific host.
+  server-name and ALPN identify eef's protocol, not a deployment-specific host.
   Handshake/probe deadlines and bounded existing frames still apply. Certificate
   verification failure means inspect pairing/clock; never bypass verification.
 - Existing AES-GCM/HKDF/HMAC frames run **inside** TLS and exact-node HMAC proof
@@ -284,7 +284,7 @@ and does not resolve installer Defender detections.
 
 Final source passes `cargo test --workspace --all-targets --locked --offline`
 both with default features and with `--no-default-features`: **682 passed and one
-ignored in each configuration** (EEF library 241, EEF CLI 17, installer 6, node
+ignored in each configuration** (eef library 241, eef CLI 17, installer 6, node
 library 405, node CLI 13). Fresh default executables/examples build, formatting,
 diff checks, fixture JavaScript syntax and the backend/browser dependency source
 check also pass. The source check is not a runtime/UI acceptance claim.

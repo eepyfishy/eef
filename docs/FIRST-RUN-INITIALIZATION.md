@@ -106,8 +106,11 @@ audits; rebuilding the browser apps does not replace the earlier headless proof.
 
 The subsequent standalone MSI payload planner has thirty-four separate local
 synthetic cases; its CI step is an explicitly separate workflow extension.
-No Rust application source changes follow those accepted app epochs. New hosted
-source acceptance and broader release acceptance remain separate. Full automatic onboarding,
+No Rust application source changes follow those accepted app epochs. Published
+`4ea7964` passes all four jobs in
+[run 40176167808](https://github.com/eepyfishy/eef/actions/runs/40176167808), with
+thirty native suites and the separate planner step verified. Subsequent MSI
+authoring work and broader release acceptance remain separate. Full automatic onboarding,
 approved interpreter/default quality, physical two-PC and stable v0.4.0 gates
 remain open.
 

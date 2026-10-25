@@ -162,7 +162,7 @@ impl ReadinessIssue {
                 "Inspect node setup and establish a private paired connection with reviewed-work receipts before checking inference. No pairing or update was attempted."
             }
             Self::ManagementConsentRequired => {
-                "On this node, explicitly enable management from EEF with: eefn permissions allow remote-management. This check cannot grant that permission remotely."
+                "On this node, explicitly enable management from eef with: eefn permissions allow remote-management. This check cannot grant that permission remotely."
             }
             Self::SetupApprovalRequired => {
                 "Inspect model setup and review its exact pending setup approval. Do not select a replacement interpreter just because setup has not applied one yet. This check does not approve or resume setup."

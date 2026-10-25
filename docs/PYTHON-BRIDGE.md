@@ -24,7 +24,7 @@ only these budgets. Show does not probe Python, import a plugin or access a devi
 Remote writes require current local management consent, rechecked under the
 existing configuration lock; read-only status cannot be used as a write action.
 
-The node service, local-owner API and EEF adapter share the same typed command.
+The node service, local-owner API and eef adapter share the same typed command.
 Exact runtime identity and a digest of normalized saved limits fence mutations.
 An old digest is not authority to replay a save after settings changed. Runtime
 retirement is held out of the synchronous save. Unsupported, dropped or altered
@@ -141,7 +141,7 @@ fails; do not infer success, missing hardware or malware from the generic error.
 
 The command-first ceiling checkpoint passes 855 workspace/all-target tests plus
 one ignored each, with and without dashboard features. The public command
-fixture uses native EEF/EEFN and a synthetic plugin, checking explicit owner
+fixture uses native eef/eefn and a synthetic plugin, checking explicit owner
 consent/revocation, unchanged imports/runtime during configuration, separate
 restart application, exact saved-policy fences, older endpoint refusal and
 single-send dropped/corrupted replies. A separate real-interpreter fixture

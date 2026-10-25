@@ -1,4 +1,4 @@
-EEF native Windows bundle
+eef native Windows bundle
 
 1. Open PowerShell in this directory.
 2. Set a node transport secret:

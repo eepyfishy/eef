@@ -293,7 +293,7 @@ async fn invite(
         .unwrap_or_else(|| format!("{}:{}", eefn::setup::hostname(), runtime.node_server.port()));
     eefn::network::validate_address(&address, true)?;
     let value =
-        json!({"name":format!("EEF on {}",eefn::setup::hostname()),"address":address,"psk":secret});
+        json!({"name":format!("eef on {}",eefn::setup::hostname()),"address":address,"psk":secret});
     Ok(Json(
         json!({"code":base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&value).unwrap())}),
     ))
@@ -574,7 +574,7 @@ async fn config_save(
 }
 
 async fn startup_get() -> ApiResult<Value> {
-    Ok(Json(json!(eefn::startup_status("EEF Coordinator")?)))
+    Ok(Json(json!(eefn::startup_status("eef Coordinator")?)))
 }
 
 async fn startup_set(
@@ -588,9 +588,9 @@ async fn startup_set(
     let config = runtime
         .config
         .source()
-        .context("EEF was not started with a configuration path")?;
+        .context("eef was not started with a configuration path")?;
     Ok(Json(json!(eefn::set_startup(
-        "EEF Coordinator",
+        "eef Coordinator",
         &executable,
         &["--config".into(), config.display().to_string()],
         request.enabled,

@@ -73,7 +73,7 @@ publisher declarations, not legal advice or independent reproduction of the
 quantization. Future redistribution still requires applicable license/notices.
 
 This is **not an automatic default**, bootstrap approval, bundled weight or role
-assignment. It is text-only in EEF's catalog: no vision projector is included and
+assignment. It is text-only in eef's catalog: no vision projector is included and
 no VLM/media capability is claimed. The pre-existing catalog order/default
 behavior remains unchanged. Configured/custom catalogs remain supported.
 
@@ -140,7 +140,7 @@ prompt removed copied sample goals but regressed both scores and clarification
 handling; it was rejected and the prior prompt restored. See the
 [retained rejected experiment](INTERPRETER-QUALITY.md#rejected-prompt-experiment-field-descriptions-instead-of-sample-answers).
 The smaller subsequent [application-context increment](INTERPRETER-QUALITY.md#application-context-increment-unreleased-no-default-approval)
-keeps the original clarification/authority instructions and adds EEF/origin
+keeps the original clarification/authority instructions and adds eef/origin
 semantics. Label totals remain 14/20 and 12/20; copied sample goals decrease to
 12 and 13 cases, with mixed individual intent changes. It remains insufficient
 for automatic default approval.
@@ -167,7 +167,7 @@ Future distribution must retain applicable license/notices and record changes.
 catalog ID. It verifies size/hash before launching a hidden loopback-only CPU
 server, sends only fixed synthetic prompts, bounds response bytes/time and
 stops its owned process afterwards. It never downloads or selects models, calls
-EEF, runs generated actions, changes installed nodes, or sends personal prompts.
+eef, runs generated actions, changes installed nodes, or sends personal prompts.
 
 ```powershell
 node tools/benchmark-node-model.mjs --model PATH_TO_GGUF --runtime PATH_TO_LLAMA_SERVER --catalog-id qwen2.5-small --profile baseline

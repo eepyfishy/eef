@@ -40,7 +40,7 @@ pub enum LifecycleCommand {
         #[arg(long)]
         operation_id: String,
     },
-    /// Unload only when no EEF-owned inference pin is active; no forced stop.
+    /// Unload only when no eef-owned inference pin is active; no forced stop.
     Unload {
         #[arg(long)]
         model: String,

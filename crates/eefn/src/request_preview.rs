@@ -78,7 +78,7 @@ pub enum RequestAction {
     },
     /// Inspect this origin's retained concrete plan without contacting an executor.
     Plan { id: String },
-    /// Ask EEF to compile a reviewed request; separate owner approval is required.
+    /// Ask eef to compile a reviewed request; separate owner approval is required.
     Compile {
         id: String,
         #[arg(long)]
@@ -105,25 +105,25 @@ pub enum RequestAction {
         #[arg(long)]
         operation_id: Option<String>,
     },
-    /// Inspect a retained request's executor receipt through EEF; never replay or reconcile.
+    /// Inspect a retained request's executor receipt through eef; never replay or reconcile.
     Receipt {
         id: String,
         #[arg(long)]
         grant_id: String,
     },
-    /// Read retained stop intent through EEF; never stop, replay or reconcile.
+    /// Read retained stop intent through eef; never stop, replay or reconcile.
     StopReceipt {
         id: String,
         #[arg(long)]
         grant_id: String,
     },
-    /// Explicitly read retained executor output through EEF; never replay or reconcile.
+    /// Explicitly read retained executor output through eef; never replay or reconcile.
     Result {
         id: String,
         #[arg(long)]
         grant_id: String,
     },
-    /// Ask EEF to execute one exact owner-approved request from this running node.
+    /// Ask eef to execute one exact owner-approved request from this running node.
     Execute {
         id: String,
         #[arg(long)]
@@ -180,7 +180,7 @@ pub enum RequestAction {
         #[arg(long)]
         text: String,
     },
-    /// Interpret locally and send a proposal to EEF for review; never execute it.
+    /// Interpret locally and send a proposal to eef for review; never execute it.
     Review {
         #[command(flatten)]
         inference: crate::inference_budget::InferenceOptions,
@@ -228,7 +228,7 @@ pub fn read_proposal(path: &std::path::Path) -> anyhow::Result<SuppliedProposal>
     if value.schema_version != 1 {
         anyhow::bail!("unsupported supplied proposal version")
     }
-    // Local file shape validation only. Trusted runtime/EEF contexts independently
+    // Local file shape validation only. Trusted runtime/eef contexts independently
     // check membership; a file cannot grant its own capabilities or authority.
     crate::interpretation::validate(
         &value.original_text,
@@ -281,7 +281,7 @@ pub fn confirmed_review(data: &Value, node_id: &str, request_id: &str, text: &st
         return false;
     };
     // This client-side context only checks bounded shape and internal consistency.
-    // EEF separately checked fresh owner-disclosed network names. No grant.
+    // eef separately checked fresh owner-disclosed network names. No grant.
     let Ok(validated) =
         crate::interpretation::validate(text, &proposal, &reviewed.proposal.suggested_capabilities)
     else {
@@ -651,7 +651,7 @@ impl NodeService {
             let proposal =
                 serde_json::to_vec(&request.proposal).map_err(|_| "invalid_supplied_proposal")?;
             // Shape only here: the origin need not implement the suggested
-            // feature. EEF independently checks its fresh disclosed vocabulary.
+            // feature. eef independently checks its fresh disclosed vocabulary.
             let validated = crate::interpretation::validate(
                 &request.text,
                 &proposal,
@@ -708,9 +708,9 @@ impl NodeService {
                 report["error_code"] = json!("runtime_changed");
                 report["outcome_unknown"] = json!(true);
                 report["note"] = json!(if persist {
-                    "Node runtime changed while awaiting save. EEF may have persisted the draft; inspect jobs.find with this receipt. No execution or automatic replay was requested."
+                    "Node runtime changed while awaiting save. eef may have persisted the draft; inspect jobs.find with this receipt. No execution or automatic replay was requested."
                 } else {
-                    "Node runtime changed while awaiting review. EEF may have reviewed the proposal; no execution was requested and no automatic replay was sent."
+                    "Node runtime changed while awaiting review. eef may have reviewed the proposal; no execution was requested and no automatic replay was sent."
                 });
                 return report;
             }
@@ -767,7 +767,7 @@ impl NodeService {
                 report["error_code"] = json!("review_unconfirmed");
                 report["outcome_unknown"] = json!(true);
                 report["note"] = json!(
-                    "No confirmed review reply. EEF may have reviewed the proposal; no execution was requested and no automatic replay was sent."
+                    "No confirmed review reply. eef may have reviewed the proposal; no execution was requested and no automatic replay was sent."
                 );
             }
         }
@@ -937,7 +937,7 @@ impl NodeService {
             Ok(value) => json!({"success":true,"result":value}),
             Err(code) => json!({"success":false,"error_code":code,
             "error":if code.starts_with("coordinator_context_") {
-                "EEF interpretation context unavailable or unconfirmed. Check connection and coordinator discovery policy. No model inference, job or execution was requested; no local fallback or automatic retry."
+                "eef interpretation context unavailable or unconfirmed. Check connection and coordinator discovery policy. No model inference, job or execution was requested; no local fallback or automatic retry."
             } else {
                 "Preview unavailable or rejected. No job was submitted and no action was authorized; inspect model selection/status before retrying."
             }}),

@@ -135,9 +135,9 @@ pub fn run(options: Options) -> Result<()> {
             32,
         );
         let description = if manifest.name == "eef" {
-            "EEF connects your devices and puts their AI models to work.\r\nInstall the EEF device app on this PC too if you want this PC to help."
+            "eef connects your devices and puts their AI models to work.\r\nInstall the eef device app on this PC too if you want this PC to help."
         } else {
-            "Let this PC help your EEF network. You choose its permissions and models.\r\nIf EEF runs on this PC, the device app connects automatically."
+            "Let this PC help your eef network. You choose its permissions and models.\r\nIf eef runs on this PC, the device app connects automatically."
         };
         control(window, "STATIC", description, 0, 202, 28, 65, 610, 54);
         control(
@@ -377,7 +377,7 @@ unsafe extern "system" fn window_proc(
                                 text(
                                     window,
                                     STATUS,
-                                    "You’re ready. Open the app to see connection status, choose permissions, and add models. Find it later in Start → EEF.",
+                                    "You’re ready. Open the app to see connection status, choose permissions, and add models. Find it later in Start → eef.",
                                 );
                                 text(window, INSTALL, "Open app");
                                 text(window, CLOSE, "Finish");

@@ -87,7 +87,7 @@ try {
   let r=await fetch(api+'/api/commands/network',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schema_version:1,expected_node_id:'wrong',command:{operation:'show'}})});assert.equal(r.status,400);
   r=await fetch(api+'/api/commands/network',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({schema_version:1,expected_node_id:id,command:{operation:'show'}})});assert.equal(r.status,403);
   assert((await fetch(api+'/api/restart',{method:'POST'})).ok);
-  await until(async()=>{const nodes=(await json(eef+'/api/status')).world.devices;return nodes.some(n=>n.node_id===id&&n.name==='Renamed node'&&n.network?.advertised_address==='26.4.5.6'&&n.network?.coordinator?.state==='standby');},'new advertisement reaches EEF');
+  await until(async()=>{const nodes=(await json(eef+'/api/status')).world.devices;return nodes.some(n=>n.node_id===id&&n.name==='Renamed node'&&n.network?.advertised_address==='26.4.5.6'&&n.network?.coordinator?.state==='standby');},'new advertisement reaches eef');
   const after=JSON.parse(await readFile(config,'utf8'));assert.equal(after.psk,secret);assert.deepEqual(after.permissions,saved.permissions);assert.equal(after.node_id,id);
   await command(['set','--clear-address','--clear-coordinator']);
   const cleared=await command(['show']);assert.equal(cleared.network.advertised_address,null);assert.equal(cleared.network.coordinator,null);

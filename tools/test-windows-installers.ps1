@@ -29,7 +29,7 @@ try {
         $configRelative = if ($name -eq 'eef') { 'config\default_identity.yaml' } else { 'config.json' }
         $config = Join-Path $destination $configRelative
         $before = (Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash
-        $startupName = if ($name -eq 'eef') { 'EEF Coordinator.cmd' } else { 'EEF Node.cmd' }
+        $startupName = if ($name -eq 'eef') { 'eef Coordinator.cmd' } else { 'eef Node.cmd' }
         $startup = Join-Path $env:APPDATA ('Microsoft\Windows\Start Menu\Programs\Startup\' + $startupName)
         if (-not (Test-Path -LiteralPath $startup)) { throw 'Opt-in startup entry was not created' }
         # Simulate a previous in-app update before a manual installer upgrade.
@@ -53,7 +53,7 @@ try {
         if ($unexpected) { throw 'Quiet installer unexpectedly launched the application' }
         $inventory = Get-Content -Raw -LiteralPath (Join-Path $destination 'files.sha256.json') | ConvertFrom-Json
         foreach ($entry in $inventory) {
-            if ($entry.path -eq 'config/default_identity.yaml') { continue } # fresh EEF secret
+            if ($entry.path -eq 'config/default_identity.yaml') { continue } # fresh eef secret
             $path = [IO.Path]::GetFullPath((Join-Path $destination $entry.path))
             if (-not $path.StartsWith($destination+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Inventory path escaped test installation' }
             if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) { throw "Installed file hash mismatch: $($entry.path)" }

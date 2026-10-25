@@ -12,14 +12,14 @@ const RESPONSE_BUDGET: usize = 512 * 1024;
 pub enum DiscoveryCommand {
     /// Show saved and currently applied disclosure policy (no secrets).
     Show,
-    /// Allow one requester to inspect one target, after EEF restart.
+    /// Allow one requester to inspect one target, after eef restart.
     Grant {
         #[arg(long)]
         requester: String,
         #[arg(long)]
         target: String,
     },
-    /// Remove one disclosure grant, after EEF restart. Self visibility remains.
+    /// Remove one disclosure grant, after eef restart. Self visibility remains.
     Revoke {
         #[arg(long)]
         requester: String,
@@ -67,7 +67,7 @@ pub fn command(
         Ok((json!({"schema_version":1,"success":true,"changed":changed,
             "saved_policy":saved,"applied_policy":applied,"restart_required":saved != *applied,
             "direct_access_authorized":false,
-            "note":"Directional disclosure only. Saved grants and revocations apply after EEF restart; self visibility remains."}), changed))
+            "note":"Directional disclosure only. Saved grants and revocations apply after eef restart; self visibility remains."}), changed))
     })
 }
 

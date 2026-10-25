@@ -1,6 +1,6 @@
-# EEF v0.3.1
+# eef v0.3.1
 
-Windows installer maintenance release following the v0.3.0 EEFN Defender
+Windows installer maintenance release following the v0.3.0 eefn Defender
 detection. Both new installers passed local Defender scans with definitions
 `1.459.63.0` and real-time protection enabled. The original v0.3.0 detection
 remains unresolved; no Microsoft false-positive verdict has been received.
@@ -11,7 +11,7 @@ Changes:
 - Hash-locked Python runtime dependencies, pinned vendor checksums, and
   component/runtime/final-installer scan gates.
 - Embedded dependency provenance and per-file SHA-256 inventories.
-- EEFN ships the llama.cpp server and libraries without the extra upstream
+- eefn ships the llama.cpp server and libraries without the extra upstream
   executable tools. Neither product ships or downloads a model.
 - Installer version metadata and an explicit launch choice. Quiet installs
   do not launch without `--launch`; quiet upgrades preserve startup choices.

@@ -111,7 +111,7 @@ pub fn render(value: &Value) -> Result<String> {
         bail!("local setup plan unconfirmed")
     }
     let state = match report.state {
-        State::NotFound => "No local coordinator advertisement. Start EEF on this PC.",
+        State::NotFound => "No local coordinator advertisement. Start eef on this PC.",
         State::Unavailable => {
             "The advertised coordinator owner API is unavailable. No fallback was used."
         }

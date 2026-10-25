@@ -31,7 +31,7 @@ pub struct ResolveRequest {
     pub inference_timeout_seconds: Option<u64>,
 }
 
-/// The origin reports its interpreter selection. EEF verifies source identity,
+/// The origin reports its interpreter selection. eef verifies source identity,
 /// not semantic correctness or that a remote model really performed inference.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

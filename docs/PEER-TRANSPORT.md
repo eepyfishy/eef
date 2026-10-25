@@ -27,7 +27,7 @@ materials are saved atomically. Destination readiness must be durably observed
 before dispatching the source. Both nodes consume their existing grants before
 effects; repeated execution or reconnect never replays them.
 
-Owner setup now has [typed local/EEF commands](RELAY-SETUP.md), including missing
+Owner setup now has [typed local/eef commands](RELAY-SETUP.md), including missing
 resource declarations and OS-selected receiver ports; complete non-coder media
 acceptance is not claimed. The underlying configuration still needs
 `permissions.peer_transfers.enabled` and an available
@@ -287,8 +287,8 @@ It does not move peer payloads, consume real executor journals or substitute for
 native public-command or physical two-PC acceptance.
 
 Both final locked/offline workspace/all-target modes pass **808 tests plus one
-ignored each**: EEF 254 plus one ignored opt-in profiler, owner CLI 17, installer
-6, EEFN 511 and node CLI 20. Fresh headless binaries/examples build. Existing
+ignored each**: eef 254 plus one ignored opt-in profiler, owner CLI 17, installer
+6, eefn 511 and node CLI 20. Fresh headless binaries/examples build. Existing
 public `local-pipelines-BVbdaV`, `model-downloads-OAapCW`,
 `node-credentials-KuhF7n` and `request-drafts-zsRVWd` pass command, private
 credential, history, restart and no-replay regressions. Browser initialization,
@@ -384,15 +384,15 @@ tests, not physical two-PC or live audio/video acceptance.
 
 The transport-foundation checkpoint passed **789 tests plus one ignored each**
 in both locked/offline workspace/all-target modes, including no-dashboard:
-EEF 247 plus one ignored opt-in profiler,
-owner CLI 17, installer 6, EEFN 501 and node CLI 18. The EEFN suite includes 21
+eef 247 plus one ignored opt-in profiler,
+owner CLI 17, installer 6, eefn 501 and node CLI 18. The eefn suite includes 21
 new peer tests. The backend/browser source guard now checks nested runtime
 modules as well as top-level services; it passes without a UI dependency.
 
 Fresh headless binaries/examples build. Public `local-pipelines-TX38Bw` and
 `model-downloads-MB5qua` pass the existing command chains, including durable
 progress/install history, permission loss, restart and no-replay cases. Both
-fixtures are terminal with no matching fixture EEF/EEFN/native-helper process
+fixtures are terminal with no matching fixture eef/eefn/native-helper process
 left. Browser smoke also passes initialization, copying/selection stability and
 truthful installation status; no browser source was changed. These regressions
 show the existing services remain usable, not that a public peer path exists.
@@ -423,8 +423,8 @@ before parsing. A regression constructs representative command trees on a
 Fresh-binary public pairing/command regressions below pass after this fix.
 
 Both final locked/offline workspace/all-target modes pass **801 tests plus one
-ignored each**: EEF 247 plus one ignored opt-in profiler, owner CLI 17, installer
-6, EEFN 511 and node CLI 20. Fresh headless binaries/examples build. Public
+ignored each**: eef 247 plus one ignored opt-in profiler, owner CLI 17, installer
+6, eefn 511 and node CLI 20. Fresh headless binaries/examples build. Public
 `local-pipelines-c8jcbY`, `model-downloads-1dj8ED` and
 `node-credentials-m62kSj` pass existing pipeline/progress/permission/restart,
 installation history/no-replay, independent credential/pinning/rotation/revocation

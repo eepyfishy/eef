@@ -12,11 +12,11 @@ param(
 $ErrorActionPreference = "Stop"
 if ($EnableStartup -and $DisableStartup) { throw "Choose either EnableStartup or DisableStartup" }
 $source = [IO.Path]::GetFullPath($PSScriptRoot)
-$defaultDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'EEF'
+$defaultDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'eef'
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     if ($NonInteractive) { $InstallDir = $defaultDir }
     else {
-        $answer = Read-Host "Install EEF in its own directory [$defaultDir]"
+        $answer = Read-Host "Install eef in its own directory [$defaultDir]"
         $InstallDir = if ([string]::IsNullOrWhiteSpace($answer)) { $defaultDir } else { $answer }
     }
 }
@@ -49,9 +49,9 @@ foreach ($item in Get-ChildItem -LiteralPath $source -Force) {
 }
 $startup = $EnableStartup
 if (-not $EnableStartup -and -not $DisableStartup -and -not $NonInteractive) {
-    $startup = (Read-Host 'Start EEF automatically when you sign in? [y/N]') -match '^(y|yes)$'
+    $startup = (Read-Host 'Start eef automatically when you sign in? [y/N]') -match '^(y|yes)$'
 }
-$startupPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\EEF Coordinator.cmd'
+$startupPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\eef Coordinator.cmd'
 if ($startup) {
     New-Item -ItemType Directory -Path (Split-Path -Parent $startupPath) -Force | Out-Null
     $line = '@start "" /min "{0}" --config "{1}"' -f (Join-Path $destination 'eef.exe'), (Join-Path $destination 'config\default_identity.yaml')
@@ -59,7 +59,7 @@ if ($startup) {
 } elseif ($DisableStartup -and (Test-Path -LiteralPath $startupPath)) {
     Remove-Item -LiteralPath $startupPath
 }
-Write-Host "EEF installed in $destination"
+Write-Host "eef installed in $destination"
 Write-Host "Set EEF_NODE_PSK to the network secret, then open http://127.0.0.1:51334/"
 if ($StartNow) {
     Start-Process -FilePath (Join-Path $destination 'eef.exe') -ArgumentList @('--config', (Join-Path $destination 'config\default_identity.yaml')) -WorkingDirectory $destination -WindowStyle Hidden

@@ -1,6 +1,6 @@
 # Read-only node setup check (unreleased)
 
-Subsequent [registration receipts](REGISTRATION-RECEIPTS.md) distinguish EEF's
+Subsequent [registration receipts](REGISTRATION-RECEIPTS.md) distinguish eef's
 nonce/runtime/session-bound acceptance from a local registration write. Setup,
 status and diagnostics expose that observation without inference or mutation;
 older peers/reports remain unknown, never assumed accepted or work-ready.
@@ -70,7 +70,7 @@ installed-artifact verification, acceptable model quality or successful inferenc
 ## Next steps, compatibility and privacy
 
 Ordered next-step codes are derived in the backend and validated by the adapter:
-resume a paused connection, check EEF, private pairing, inspect receipt transport,
+resume a paused connection, check eef, private pairing, inspect receipt transport,
 choose one interpreter, apply saved settings explicitly, wait for runtime startup
 or inspect bounded startup issues. An already-saved private pairing awaiting
 restart asks for applying settings,

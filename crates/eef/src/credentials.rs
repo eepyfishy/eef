@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CredentialCommand {
     Show,
-    /// Create a PRIVATE pairing code for one exact node; applies after EEF restart.
+    /// Create a PRIVATE pairing code for one exact node; applies after eef restart.
     Provision {
         #[arg(long)]
         node: String,
@@ -26,12 +26,12 @@ pub enum CredentialCommand {
         #[arg(long)]
         address: String,
     },
-    /// Revoke the exact identity, including shared-key fallback, after EEF restart.
+    /// Revoke the exact identity, including shared-key fallback, after eef restart.
     Revoke {
         #[arg(long)]
         node: String,
     },
-    /// Explicitly allow/deny legacy shared-key nodes after EEF restart.
+    /// Explicitly allow/deny legacy shared-key nodes after eef restart.
     Legacy {
         #[arg(long, action = clap::ArgAction::Set, required = true)]
         allow: bool,
@@ -46,7 +46,7 @@ pub struct CredentialRequest {
     pub command: CredentialCommand,
 }
 
-const CREDENTIAL_NOTE: &str = "Credential changes apply after explicit EEF restart. Existing sessions are not revoked until restart. Pairing never grants node feature permissions; no automatic replay was sent.";
+const CREDENTIAL_NOTE: &str = "Credential changes apply after explicit eef restart. Existing sessions are not revoked until restart. Pairing never grants node feature permissions; no automatic replay was sent.";
 
 /// Validate a private export before an adapter prints or pipes it. Inspection
 /// summaries cannot authorize work; never echo additional fields or server prose.

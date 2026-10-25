@@ -31,7 +31,7 @@ does not change existing requests. Restart explicitly to apply it. Interpreter
 selection remains owner-controlled: exactly one selected local model must have
 the `request_interpreter` role. Installing a model alone is insufficient.
 
-For a new receipt the node first asks EEF for origin-scoped retained history.
+For a new receipt the node first asks eef for origin-scoped retained history.
 An unavailable, malformed, truncated or ambiguous lookup cannot license a new
 opening. A confirmed empty lookup permits one interpretation and durable save.
 
@@ -39,7 +39,7 @@ opening. A confirmed empty lookup permits one interpretation and durable save.
   saved a source-bound concrete-input question. No answer is guessed.
 - `review_only`: preparation is disabled, or the retained proposal is not an
   eligible one-shot request. Continuous/unknown work is not auto-compiled.
-- `awaiting_approval`: one preparation call proposed a valid method and EEF
+- `awaiting_approval`: one preparation call proposed a valid method and eef
   confirmed its compilation using current disclosed resources/providers. Tasks
   remain pending. Separate owner approval and exact execution are still required.
 - `historical_snapshot`: the input receipt already belongs to a retained request.

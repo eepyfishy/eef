@@ -94,7 +94,7 @@ eef node models --node ACTUAL_NODE_ID clear-interpreter --json
 ```
 
 Remote changes require the node owner's existing local management approval.
-EEF inspects support/approval; the node rechecks current approval under its
+eef inspects support/approval; the node rechecks current approval under its
 configuration lock at application time. These commands cannot enable approval.
 Use a separate approved node restart to apply changes. Offline local commands
 hold the existing instance lock and save only for the next node start.

@@ -344,7 +344,7 @@ message-sequence hashes remain in the ignored fixture reports; no rejected binar
 model weights, user data or private report is published as a release artifact.
 
 Restored-source default and dashboard-free workspace/all-target suites each
-pass **631 tests**: EEF library 237 plus one ignored opt-in profiler, owner CLI
+pass **631 tests**: eef library 237 plus one ignored opt-in profiler, owner CLI
 16, installer 6, node library 361 and node CLI 11. Fresh default binaries/examples,
 formatting/diff, JS syntax, the unchanged semantic rubric and backend/browser
 source boundary pass. Public `request-preview-vxTurt` and
@@ -415,7 +415,7 @@ this candidate pass. Further method/model work, held-out multilingual review,
 friendly verified bootstrap and physical CPU/memory acceptance remain required.
 
 Fresh workspace/all-target suites pass **638 tests** in both default-feature and
-dashboard-free modes (EEF 237 plus one ignored opt-in profiler, owner CLI 16,
+dashboard-free modes (eef 237 plus one ignored opt-in profiler, owner CLI 16,
 installer 6, node library 367, node CLI 12). Fresh default binaries/examples,
 format/diff, JS syntax, fixed-rubric checks and backend/browser source guard pass.
 Public `request-preview-Hh1NRT` and `request-review-dgaZ97` pass with chain exit 0.
@@ -504,11 +504,11 @@ This narrows the missing-text/template hypothesis for the reference, not the
 complete actual-wire or model-quality investigation. A separate controlled
 sampling investigation is justified next: the [pinned publisher card](https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/2fc06364715b967f1860aea9cf38778875588b17/README.md)
 describes non-greedy text sampling settings and cautions about this small model's
-thinking loops. EEF's present interpreter explicitly uses temperature zero.
+thinking loops. eef's present interpreter explicitly uses temperature zero.
 Those differences are hypotheses, not proof of the observed failures or a reason
 to change defaults, enlarge bounds, bypass validation or hardcode model names.
 
-Fresh workspace/all-target suites pass **639 tests** in each feature mode (EEF
+Fresh workspace/all-target suites pass **639 tests** in each feature mode (eef
 237 plus one ignored profiler, owner CLI 16, installer 6, node library 368,
 node CLI 12). Default production binaries/examples, formatting/diff, JS syntax,
 frozen case-set scorer checks and backend/browser source guard pass. With those
@@ -569,7 +569,7 @@ method evaluation, independent review and physical/bootstrap acceptance remain
 required before selecting an automatic default or declaring stable 0.4.0.
 
 Fresh default-feature and dashboard-free workspace/all-target suites each pass
-**648 tests** (EEF 237 plus one ignored profiler, owner CLI 16, installer 6,
+**648 tests** (eef 237 plus one ignored profiler, owner CLI 16, installer 6,
 node library 376, node CLI 13). Fresh default binaries/examples, format/diff,
 JS syntax, frozen scorer and backend/browser source guard pass. Public
 `request-preview-PpY1bW` and `request-review-4YfzHv` pass; chain exit is 0.
@@ -650,7 +650,7 @@ not an assertion of binary reproducibility. The rejected prompt is not shipped.
 ## Application-context increment (unreleased; no default approval)
 
 A smaller follow-up retains the original example, field definitions and
-ambiguity/authority instructions. It appends factual application context: an EEF
+ambiguity/authority instructions. It appends factual application context: an eef
 node is a user-owned endpoint device, "this node" means the request's origin,
 interpretation does not require knowing the requested answer/current state, and
 unresolved references or unavailable inputs must not be invented. Original text
@@ -685,7 +685,7 @@ The existing case-list hashes are unchanged. Process peak working set is not tot
 application RAM, physical memory release or an enforced resource quota.
 
 Both locked/offline workspace/all-target suites pass **701 tests plus one ignored
-each**, with default features and without dashboard features (EEF 243, owner CLI
+each**, with default features and without dashboard features (eef 243, owner CLI
 17, installer 6, node library 420, node CLI 15). Fresh binaries/examples build.
 Public preview regression `request-preview-W0Iv0h`, frozen scorer, source dependency
 boundary, format and diff checks pass. The new unit checks shared context wording,
@@ -876,7 +876,7 @@ No model copies/downloads, coordinator, workload, installed app or physical node
 was involved; no release or update feed changed.
 
 Final locked/offline workspace/all-target suites pass **715 tests plus one ignored
-each**, with default features and without dashboard features (EEF 244, owner CLI
+each**, with default features and without dashboard features (eef 244, owner CLI
 17, installer 6, node library 433, node CLI 15). Fresh binaries/examples build;
 their node/helper hashes still match the evaluated artifacts above. Public
 `request-preview-Ece8DH` passes forwarding both alternatives and rejecting

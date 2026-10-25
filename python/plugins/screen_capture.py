@@ -1,4 +1,4 @@
-"""Optional Windows screen adapter. Enable it explicitly in the EEF config."""
+"""Optional Windows screen adapter. Enable it explicitly in the eef config."""
 
 import base64
 import io

@@ -1,4 +1,4 @@
-# EEF 0.4.0a — opt-in Windows alpha
+# eef 0.4.0a — opt-in Windows alpha
 
 User-facing release/tag: **v0.4.0a**. Internal Rust/bundle version:
 **0.4.0-alpha.1**. This intentionally ships the essential working slice before
@@ -13,15 +13,15 @@ Download the two Windows x86-64 installers from this prerelease:
 
 Install both on your first PC and launch both from the Start menu. Use the node
 dashboard for input, permissions, models and job history. Same-account local
-pairing requires no JSON or port entry. A second PC can run EEFN alone and join
-using a private connection code from EEF's Network page. EEF needs a connected
-node; nodes do not each require a local EEF process.
+pairing requires no JSON or port entry. A second PC can run eefn alone and join
+using a private connection code from eef's Network page. eef needs a connected
+node; nodes do not each require a local eef process.
 
 No model is included or downloaded at installation. Choose an existing Ollama
 model, request a model download, or select an existing GGUF file in Models.
 Settings changes apply after restart; optional startup remains per-user.
 
-Stop the old apps before upgrading and back up their configuration and EEF
+Stop the old apps before upgrading and back up their configuration and eef
 database. Install into the existing dedicated app folders, not Downloads.
 The installers preserve configuration, but this alpha has additive database
 changes: rollback to an old application is not a tested database downgrade.
@@ -35,7 +35,7 @@ Stable update feeds remain on v0.3.2; installing the alpha is an explicit choice
 ## Included
 
 - Compact node-first dashboard; background refresh preserves selection/focus.
-- Local pairing, stable node IDs/hostnames, EEF reachability checks, persistent
+- Local pairing, stable node IDs/hostnames, eef reachability checks, persistent
   connection Stop/Resume, restart buttons and owner-approved remote configuration.
 - Feature-wide permission switches with legacy scoped grants retained unless
   deliberately changed. No administrator/UAC bypass.

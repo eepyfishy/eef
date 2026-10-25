@@ -120,7 +120,7 @@ bytes unchanged. Invalid receipt policy leaves status/config/model controls
 usable and issues no pull; a corrected policy permits explicit full revalidation
 while still refusing the old ID. Original exact cancellation, lost reply,
 preflight, backend storage, no selection change and no legacy fallback cases pass.
-No matching fixture EEFN process remains after cleanup.
+No matching fixture eefn process remains after cleanup.
 
 The existing browser regression passes against real dashboard source and mocked
 services, including copy/selection stability. Its additional cases verify missing
@@ -132,8 +132,8 @@ controller. No installed node, release, model download/default or update feed
 changed; automatic bootstrap and full stable acceptance remain open.
 
 Both final locked/offline workspace/all-target modes pass **768 tests plus one
-ignored each**: EEF 247 plus one ignored opt-in profiler, owner CLI 17, installer
-6, EEFN 480, node CLI 18. Fresh headless binaries/examples build; formatting,
+ignored each**: eef 247 plus one ignored opt-in profiler, owner CLI 17, installer
+6, eefn 480, node CLI 18. Fresh headless binaries/examples build; formatting,
 diff, JavaScript syntax and the backend/browser source guard pass. Final-binary
 `model-downloads-AtDkU5` repeats the complete public install/replacement/recovery
 chain successfully. The earlier `QpAF1W` pass preceded the additional service
@@ -143,7 +143,7 @@ validation.
 Final-binary `local-pipelines-LmJsgu` also passes finite/native execution,
 durable pipeline progress, permission loss, recurrence and restart/no-replay
 regressions. Both public fixture chains finished with no matching fixture
-EEF/EEFN/native-helper processes remaining.
+eef/eefn/native-helper processes remaining.
 
 Evaluated final headless binary SHA-256:
 

@@ -258,7 +258,7 @@ impl NodeService {
         }
         Ok(
             json!({"config":config,"path":self.config_path.display().to_string(),
-            "note":"Changes apply after EEFN restarts"}),
+            "note":"Changes apply after eefn restarts"}),
         )
     }
 
@@ -506,7 +506,7 @@ impl NodeService {
     }
 
     pub fn startup_status(&self) -> Result<crate::StartupStatus> {
-        crate::startup_status("EEF Node")
+        crate::startup_status("eef Node")
     }
 
     pub fn set_startup(&self, enabled: bool) -> Result<crate::StartupStatus> {
@@ -514,7 +514,7 @@ impl NodeService {
         let stable = crate::updater::installation_root(&current)?.join("eefn.exe");
         let executable = if stable.is_file() { stable } else { current };
         crate::set_startup(
-            "EEF Node",
+            "eef Node",
             &executable,
             &["--config".into(), self.config_path.display().to_string()],
             enabled,
@@ -564,7 +564,7 @@ impl NodeService {
             request.command,
             crate::network::NetworkCommand::Peers { .. }
         ) {
-            bail!("peer inspection requires the running node's EEF connection")
+            bail!("peer inspection requires the running node's eef connection")
         }
         let _guard = self.config_lock.lock().expect("config lock");
         let mut config = self.read_config()?;
@@ -682,7 +682,7 @@ impl NodeService {
     fn model_approval_required(&self) -> Value {
         json!({"schema_version":1,"success":false,"node_id":self.node_id,
             "error_code":"approval_required","changed":false,
-            "note":"Enable management from EEF locally on this node before changing model selections."})
+            "note":"Enable management from eef locally on this node before changing model selections."})
     }
 
     fn model_command_checked(
@@ -1188,7 +1188,7 @@ fn validate_config_shape(value: &Value) -> Result<()> {
         let endpoints: Vec<crate::CoordinatorEndpoint> = serde_json::from_value(endpoints.clone())?;
         for endpoint in endpoints {
             if endpoint.address.trim().is_empty() {
-                bail!("Enter an EEF address or choose automatic connection")
+                bail!("Enter an eef address or choose automatic connection")
             }
         }
     }

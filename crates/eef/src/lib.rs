@@ -1,4 +1,4 @@
-//! Native EEF coordinator.
+//! Native eef coordinator.
 
 pub mod adapters;
 pub mod api;

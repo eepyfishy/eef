@@ -1,22 +1,22 @@
-EEFN node for Windows
+eefn node for Windows
 
 v0.4.0a6 backend alpha. See TWO_PC_TEST.md. Use eefn.exe network diagnose
 --json for a minimal local report, or network show/set/peers for network commands.
 No reports upload automatically. Pairing codes and raw config must stay private.
 
-This directory was created by eefn-installer.exe. Open EEF Node from Start >
-EEF. Do not move the app into Downloads. Startup is optional in Settings.
+This directory was created by eefn-installer.exe. Open eef Node from Start >
+eef. Do not move the app into Downloads. Startup is optional in Settings.
 
-Launch EEF on this PC and the node connects automatically under your Windows
+Launch eef on this PC and the node connects automatically under your Windows
 account. Home shows the real connection state. Use Permissions to choose what
 to share, Models to install and select a model, and Apply and restart to make
-saved settings active. EEFN remains a node without a connected
-EEF, although coordinated network work requires at least one EEF.
+saved settings active. eefn remains a node without a connected
+eef, although coordinated network work requires at least one eef.
 
 No AI model is included or downloaded during setup. Provider mode auto uses an existing
 Ollama service first and otherwise uses the bundled llama.cpp server with an
 owner-selected GGUF file. Downloads only begin when you request them in Models.
-Network accepts a private connection code from another PC's EEF. Remote settings
+Network accepts a private connection code from another PC's eef. Remote settings
 requests need local approval unless you explicitly allow management in Settings.
 
 Use Home to ask your network and Jobs to review saved planned actions. Stop does

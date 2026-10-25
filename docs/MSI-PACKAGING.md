@@ -1,6 +1,6 @@
 # MSI packaging: requirements and current blockers
 
-MSI remains an unimplemented release requirement, not a replacement already
+MSI remains an in-development release requirement, not a replacement already
 available to users. The existing EXE installers and published artifacts stay
 unchanged until replacement packages pass acceptance.
 
@@ -21,7 +21,7 @@ The existing installer does more than extract files:
   equivalent migration, a new root could hand off to an older updater-selected
   application after an apparently successful MSI upgrade.
 - `tools/bundle-windows.ps1` already produces separate role payloads, provenance
-  and file inventories. Both roles bundle Python. EEF requires no local LM or
+  and file inventories. Both roles bundle Python. eef requires no local LM or
   llama.cpp; the node payload includes llama.cpp but no model weights.
   Signing/scan hooks and final artifact descriptor ordering must be preserved.
 
@@ -76,8 +76,8 @@ product is unregistered, owned payload and user key are absent, and the generate
 owner-data marker remains intact. The intended native failure is a passing
 rollback test, not a successful application installation.
 
-This establishes feasibility, not an EEF installer. The probe contains no EEF,
-EEFN, Python or llama.cpp payload and is not distributable. It does not establish
+This establishes feasibility, not an eef installer. The probe contains no eef,
+eefn, Python or llama.cpp payload and is not distributable. It does not establish
 full ICE validation, upgrade/version ordering, real application rollback, locked files, EXE or
 updater migration, two-role coexistence, startup choices, first-run application
 health, signing or Defender clearance. Those gates below remain open. Existing
@@ -103,7 +103,7 @@ Thirty-four isolated [test cases](../tools/test-msi-payload-plan.mjs) pass, incl
 separation, same-size corruption, path aliases, junction refusal and old-version
 relabelling refusal, local-path-only enforcement and secret-free CLI errors.
 Independent read-only checks also verify an existing
-`0.4.0-alpha.5` cache: 53 EEF files / 34,773,699 bytes and 2,286 EEFN files /
+`0.4.0-alpha.5` cache: 53 eef files / 34,773,699 bytes and 2,286 eefn files /
 273,958,002 bytes, excluding one configuration per role and 134 source-backed
 node Python caches. The earlier filename/cache refusals remain recorded.
 No cache contents or inventories were changed, copied or repackaged. Those old
@@ -130,9 +130,64 @@ accepted application-source checkpoint. Hosted follow-up and actual MSI authorin
 remain required; application initialization compatibility is explicitly unverified
 for the old cached payloads used here.
 
+## Development-only native authoring
+
+The [development author](../tools/build-development-msi.ps1) now reuses a verified
+role bundle without rebuilding the application. It requires explicit development
+consent, source/MSI versions and a project namespace. It regenerates the inventory,
+compresses selected files with the installed Windows cabinet utilities, verifies
+every extracted file and the embedded cabinet in bounded readback chunks, and
+authors one file per stable component with scoped HKCU key paths. Only standard
+MSI actions are used. The separate
+[inspector](../tools/inspect-development-msi.ps1) opens the database read-only and
+checks its tables, references, default per-user directories, current-user registry
+scope, media, sequences, development guard and cabinet hash.
+
+```powershell
+.\tools\build-development-msi.ps1 -BundleDir PATH -Role eefn -ExpectedVersion SOURCE_VERSION -MsiVersion NUMERIC_VERSION -ProjectNamespace PROJECT_UUID -OutputDirectory NEW_DIRECTORY -DevelopmentOnly
+.\tools\inspect-development-msi.ps1 -Package PATH_TO_DEVELOPMENT_MSI -ExpectedSha256 EXPECTED_HASH
+node tools/test-msi-authoring.mjs
+```
+
+These are not release installers. The package name and directory identify a
+development build, and the authored launch condition rejects ordinary installation
+without an explicit development property. That guard prevents accidental use; it
+is not publisher authentication or protection against an owner changing a package.
+No custom executable actions, services, startup entries, automatic launch or
+installation are performed by these tools. ASCII build paths are currently
+required; end-user installation/path encoding still needs acceptance.
+
+The synthetic Windows regression passes for both roles, with cabinet data larger
+than one readback chunk, source preservation, regenerated inventory verification,
+existing-output refusal, missing-consent refusal and wrong-hash refusal. Seven
+mutated recipes per role are rejected: machine context, changed guard, HKLM
+registry, changed directory scope, custom action table, duplicate component GUIDs
+and altered UI action position. Mutations affect copies in generated test fixtures
+only and are never installed. The earlier inspector variable-type failure and
+primary-key mutation-helper failure remain retained as authoring failures.
+
+A separate read-only audit verifies development packages built from the accepted
+current `4ea7964` default-feature applications and verified cached runtimes:
+54 files / 92,694,522 payload bytes for eef and 2,287 files / 332,015,564 bytes for
+eefn. The resulting MSI files are 27,652,096 and 118,575,104 bytes respectively.
+Current Python host/plugin assets and README files replace old application assets;
+runtime provenance remains separate from application provenance. No application
+build or model download was performed. Runtime files were hard-linked into owned
+staging, not copied. Hash-verified verification copies and intermediate cabinets
+were removed after success and can be regenerated; original bundles and final MSIs
+remain. These packages have not been installed or launched, signed, submitted for
+Defender clearance or distributed. Their temporary namespace and numeric version
+are not approved production identities/version ordering.
+
+The synthetic authoring CI step is Windows-only and performs no installation.
+Hosted acceptance of this new authoring increment remains separate from the
+accepted `4ea7964` run. Fresh-install application health, two-role installation,
+startup choices, repair/uninstall, migration, rollback and release gates below
+remain required.
+
 ## Package contract
 
-- Two independent per-user packages, EEF and EEFN, can coexist on one PC. Keep
+- Two independent per-user packages, eef and eefn, can coexist on one PC. Keep
   distinct stable upgrade/product identities and an explicit version policy.
   Build identity belongs to project metadata, never a contributor's account.
 - Install into dedicated writable per-user directories. Preserve the existing

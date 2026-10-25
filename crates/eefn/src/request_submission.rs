@@ -1,4 +1,4 @@
-//! Caller-supplied concrete requests use EEF review/compilation, never inference.
+//! Caller-supplied concrete requests use eef review/compilation, never inference.
 use crate::{
     interpretation::{Complexity, Intent, Proposal, Workload},
     request_planning::{PlanInput, PlanningCommand, PlanningView},

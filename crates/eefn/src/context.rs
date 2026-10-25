@@ -42,7 +42,7 @@ pub struct Resource {
     pub area: AreaPath,
     #[serde(default = "yes")]
     pub available: bool,
-    /// Owner-configured adapter bindings, never advertised to other nodes/EEF.
+    /// Owner-configured adapter bindings, never advertised to other nodes/eef.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub parameters: Map<String, Value>,
     #[serde(default)]

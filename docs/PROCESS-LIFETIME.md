@@ -218,10 +218,10 @@ approval to establish no execution. [Options and scope](EXPLICIT-REQUESTS.md).
 
 The fixture additionally exposed a real status bug: `process-lifetime-SWGvia`
 observed native exit 17 with `data.success:false`, but the grant marked success
-and EEF marked the job completed. That failed run is not acceptance evidence.
+and eef marked the job completed. That failed run is not acceptance evidence.
 The node now uses the existing completed-but-unsuccessful report shape with
 `process_exit_unsuccessful`, retaining bounded exit/stdout/stderr evidence and
-`success:false`. EEF's existing unsuccessful-task path records `failed`, not
+`success:false`. eef's existing unsuccessful-task path records `failed`, not
 completed, and does not replay the command. Other capability payloads' unrelated
 `success` fields are not reinterpreted. No schema or permission is widened.
 Matched-grant confirmation also rejects a contradictory native report claiming

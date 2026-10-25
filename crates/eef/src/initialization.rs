@@ -43,7 +43,7 @@ fn initialize_with_external(path: &Path, external: Option<&str>) -> Result<Value
         "existing_authentication_changed":false,"permissions_changed":false,"models_changed":false,
         "model_download_started":false,"network_started":false,"enrollment_requested":false,
         "restart_requested":false,"runtime_verified":false,
-        "note":if valid {"Saved coordinator settings are initialized. Start EEF normally. No network, enrollment, feature grant, model download or restart was requested; runtime health is not verified."}
+        "note":if valid {"Saved coordinator settings are initialized. Start eef normally. No network, enrollment, feature grant, model download or restart was requested; runtime health is not verified."}
             else {"Existing legacy credentials are not configured for startup. Existing settings were preserved; initialization does not rotate or repair them. Explicit owner configuration is required."}}),
     )
 }

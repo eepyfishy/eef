@@ -1,7 +1,7 @@
-# Native EEF defaults. Secrets are deliberately not stored here.
+# Native eef defaults. Secrets are deliberately not stored here.
 identity:
-  name: EEF
-  creator: EEF contributors
+  name: eef
+  creator: eef contributors
   version: 0.4.0-alpha.3
   description: A continuously running, local-first, distributed personal AI agent.
 

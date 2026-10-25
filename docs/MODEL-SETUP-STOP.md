@@ -15,7 +15,7 @@ eef node model-bootstrap-policy --node NODE_ID stop --attempt ATTEMPT_UUID
 ```
 
 Use the exact attempt ID reported by `show`. Local commands target the running
-node; EEF forwards the same typed command through the existing authenticated
+node; eef forwards the same typed command through the existing authenticated
 channel. Both adapters inspect once and bind the mutation to the inspected node,
 runtime and saved policy. There is no automatic retry, legacy fallback, model
 inference, permission grant or application restart. Remote stop requires the
@@ -71,7 +71,7 @@ An earlier full headless run passed 1,066 tests plus one ignored before that
 fault regression. A later interim headless run completed before cleanup ordering
 was corrected, but its validation guard refused changed source; it is not final
 acceptance. Its log and old hashes remain under `.validation/setup-stop-*-before-cleanup*`.
-The corrected public fixture `model-setup-08ucWg` passes local and pinned-TLS EEF
+The corrected public fixture `model-setup-08ucWg` passes local and pinned-TLS eef
 commands, policy/config preservation, consent denial, late-provider fencing and
 repeated-stop refusal, using synthetic provider metadata rather than model weights.
 

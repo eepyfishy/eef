@@ -50,7 +50,7 @@ try {
  const inventoryPage=await coordinator(['models','list','--limit','1']);assert.deepEqual(inventoryPage.nodes.map(n=>n.node_id),['node-a']);assert.equal(inventoryPage.next_after,'node-a');
  const inventoryNext=await coordinator(['models','list','--limit','1','--after',inventoryPage.next_after]);assert.deepEqual(inventoryNext.nodes.map(n=>n.node_id),['node-b']);assert.equal(inventoryNext.next_after,null);
  const denied=await peers('node-a',['--node','node-b'],false);const absent=await peers('node-a',['--node','missing-node'],false);assert.equal(denied.error,absent.error);
- // Owner-configured disclosure is applied only after an actual EEF restart.
+ // Owner-configured disclosure is applied only after an actual eef restart.
  async function policy(grants,freshness_seconds=30){const saved=(await json(eef+'/api/config')).config;saved.discovery={grants,freshness_seconds};await json(eef+'/api/config',{config:saved},'PUT');}
  async function restart(){const old=(await json(eef+'/api/status')).runtime_id;const child=launch('eef',['--config',config,'restart','--json']);const r=await child.result;assert.equal(r.code,0,r.err);const requested=JSON.parse(r.out);assert.equal(requested.restart_requested,true);assert.equal(requested.runtime_id,old);await until(async()=>(await json(eef+'/api/status')).runtime_id!==old&&await connected(),'verified restart with both nodes');}
  const original=await discovery(['show']);assert.deepEqual(original.saved_policy,original.applied_policy);assert.equal(original.restart_required,false);

@@ -42,7 +42,7 @@ try{
  await writeFile(configPath,JSON.stringify(config));await mkdir(join(scratch,'Documents'));
  await writeFile(join(scratch,'Documents','fixture.txt'),'Resource binding fixture');
  launch('eefn',['--config',configPath]);
- const waiting=await until(async()=>{const s=await json(node+'/api/status');return s.connection?.state==='waiting'&&s;},'device starts without EEF');
+ const waiting=await until(async()=>{const s=await json(node+'/api/status');return s.connection?.state==='waiting'&&s;},'device starts without eef');
  const id=waiting.node_id;assert.match(id,/^device-/);assert.notEqual(waiting.name,'Example node');
  assert.equal(pulls,0);assert.equal(waiting.models.length,0);assert.equal((await json(node+'/api/models')).backend,'ollama');
  const duplicate=launch('eefn',['--config',configPath]);await until(()=>duplicate.exitCode===0,'second launch reuses running device');
@@ -182,7 +182,7 @@ try{
  await page.getByRole('link',{name:'Models',exact:true}).click();await page.getByRole('button',{name:'Install model',exact:true}).click();
  await until(async()=> (await json(node+'/api/status')).download.state==='installed','model installation progress');
  await page.locator('#refreshModels').click();await page.getByRole('button',{name:'Use model',exact:true}).click();await page.locator('#saveRestart').click();
- await until(async()=>{const s=await json(eef+'/api/status');return s.models?.some(m=>m.model_id==='test-model:tiny');},'selected model advertised to EEF');
+ await until(async()=>{const s=await json(eef+'/api/status');return s.models?.some(m=>m.model_id==='test-model:tiny');},'selected model advertised to eef');
  assert.equal(pulls,1);stallPull=true;await json(node+'/api/models/install',{id:'test-model'});await json(node+'/api/models/cancel',{});
  await until(async()=> (await json(node+'/api/status')).download.state==='cancelled','stalled model download cancellation',5000);
  assert.equal((await json(node+'/api/models')).storage.scope,'ollama');
@@ -218,8 +218,8 @@ try{
  assert(drafts.some(p=>p.request_review.original_text===browserText));
  assert(drafts.every(p=>p.goal.request_context.origin_node===id&&p.execution===undefined));
  assert.equal(interpretations,4);assert.equal((await json(eef+'/api/status')).world.devices.filter(n=>n.connected).length,1);
- const coordinator=await context.newPage();coordinator.on('pageerror',e=>{throw e;});await coordinator.goto(eef+'/#devices');await coordinator.getByRole('button',{name:'Configure node'}).click();await coordinator.locator('#remoteBanner').waitFor({state:'visible'});await coordinator.getByRole('link',{name:'Settings',exact:true}).click();await coordinator.locator('[data-field=name]').fill('Named from EEF UI');await coordinator.locator('[data-field="metadata.area"]').fill('Home / Remote study');await coordinator.locator('[data-resource-field="name"]').last().fill('Remotely named camera');await coordinator.locator('#saveRestart').click();
- await until(async()=>{const s=await json(eef+'/api/status');return s.world?.devices?.some(n=>n.node_id===id&&n.name==='Named from EEF UI'&&n.connected);},'configuration from EEF UI');
+ const coordinator=await context.newPage();coordinator.on('pageerror',e=>{throw e;});await coordinator.goto(eef+'/#devices');await coordinator.getByRole('button',{name:'Configure node'}).click();await coordinator.locator('#remoteBanner').waitFor({state:'visible'});await coordinator.getByRole('link',{name:'Settings',exact:true}).click();await coordinator.locator('[data-field=name]').fill('Named from eef UI');await coordinator.locator('[data-field="metadata.area"]').fill('Home / Remote study');await coordinator.locator('[data-resource-field="name"]').last().fill('Remotely named camera');await coordinator.locator('#saveRestart').click();
+ await until(async()=>{const s=await json(eef+'/api/status');return s.world?.devices?.some(n=>n.node_id===id&&n.name==='Named from eef UI'&&n.connected);},'configuration from eef UI');
  assert.deepEqual((await json(node+'/api/status')).metadata.area,['Home','Remote study']);
  assert.equal((await json(node+'/api/config')).config.metadata.resources[1].name,'Remotely named camera');
  const remoteResource=(await manage('status')).metadata;
@@ -230,7 +230,7 @@ try{
  await coordinator.goto(eef+'/#home');await coordinator.screenshot({path:join(scratch,'eef-home.png'),fullPage:true});
  await page.setViewportSize({width:390,height:844});await page.screenshot({path:join(scratch,'device-mobile.png'),fullPage:true});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  const oldRuntime=(await json(eef+'/api/status')).runtime_id;assert(oldRuntime);
- await json(eef+'/api/restart',{});await until(async()=>{const s=await json(eef+'/api/status');return s.runtime_id!==oldRuntime&&s.world?.devices?.some(n=>n.node_id===id&&n.connected)&&(await json(node+'/api/status')).connection?.state==='connected';},'new EEF instance and node reconnect');
+ await json(eef+'/api/restart',{});await until(async()=>{const s=await json(eef+'/api/status');return s.runtime_id!==oldRuntime&&s.world?.devices?.some(n=>n.node_id===id&&n.connected)&&(await json(node+'/api/status')).connection?.state==='connected';},'new eef instance and node reconnect');
  const retained=await reviewed.inspect(routed.id);
  assert.equal(retained.goal.request_context.origin_area.at(-1),'Study');
  assert.equal(retained.request_review.original_text,source.request_review.original_text);

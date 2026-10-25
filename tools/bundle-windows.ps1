@@ -233,7 +233,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $workspace "licenses\llama.cpp-LICENSE") -Destination (Join-Path $llamaTools "LICENSE-llama.cpp")
 
     $manifest = [ordered]@{
-        name = "EEF"
+        name = "eef"
         version = $version
         architecture = "x86_64-windows"
         core_runtime = "rust"
@@ -267,23 +267,23 @@ try {
     if (Test-Path -LiteralPath $eefSitePackages) {
         $resolvedSitePackages = (Resolve-Path -LiteralPath $eefSitePackages).Path
         if (-not $resolvedSitePackages.StartsWith((Resolve-Path -LiteralPath $eefPackage).Path + '\', [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Unsafe EEF package site-packages path"
+            throw "Unsafe eef package site-packages path"
         }
         Remove-Item -LiteralPath $resolvedSitePackages -Recurse
     }
 
     Copy-Item -LiteralPath (Join-Path $bundle "eef.exe") -Destination $eefPackage
-    Copy-Item -LiteralPath (Join-Path $workspace "tools\README-EEF.txt") -Destination (Join-Path $eefPackage "README.txt")
+    Copy-Item -LiteralPath (Join-Path $workspace "tools\README-coordinator.txt") -Destination (Join-Path $eefPackage "README.txt")
     New-Item -ItemType Directory -Path (Join-Path $eefPackage "config") | Out-Null
     Copy-Item -LiteralPath (Join-Path $workspace "config\default_identity.yaml") -Destination (Join-Path $eefPackage "config")
     Write-Utf8NoBom -Path (Join-Path $eefPackage "bundle.json") -Content (([ordered]@{name="eef";version=$version;architecture="x86_64-windows";runtime="rust";python="3.11.9-embedded"}) | ConvertTo-Json)
 
     Copy-Item -LiteralPath (Join-Path $bundle "eefn.exe") -Destination $eefnPackage
-    Copy-Item -LiteralPath (Join-Path $workspace "tools\README-EEFN.txt") -Destination (Join-Path $eefnPackage "README.txt")
+    Copy-Item -LiteralPath (Join-Path $workspace "tools\README-node.txt") -Destination (Join-Path $eefnPackage "README.txt")
     Copy-Item -LiteralPath (Join-Path $workspace "config\node.example.json") -Destination (Join-Path $eefnPackage "config.json")
     $nodeTools = Join-Path $eefnPackage 'tools'
     New-Item -ItemType Directory -Path $nodeTools | Out-Null
-    # Only the inference server and its libraries are used by EEFN. Do not ship
+    # Only the inference server and its libraries are used by eefn. Do not ship
     # unrelated upstream benchmark, conversion, training, or command-line tools.
     Get-ChildItem -LiteralPath $llamaTools -File | Where-Object { $_.Name -eq 'llama-server.exe' -or $_.Extension -eq '.dll' -or $_.Name -like 'LICENSE*' } | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $nodeTools

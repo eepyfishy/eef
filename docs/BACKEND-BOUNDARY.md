@@ -31,7 +31,7 @@ Saved UI preferences are `dashboard.ui_enabled` (node) and `web.ui_enabled`
 (coordinator). They never enable a disabled HTTP listener. Legacy node
 `dashboard.enabled` retains its historical listener meaning for compatibility.
 After a requested node runtime restart, the HTTP adapter updates its browser
-route gate without closing/rebinding the command listener. EEF applies its
+route gate without closing/rebinding the command listener. eef applies its
 preference during its existing graceful coordinator restart. Disabling the UI
 does not revoke execution permissions or cancel already-authorized work.
 

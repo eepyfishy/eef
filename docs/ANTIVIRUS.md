@@ -60,9 +60,9 @@ through [Microsoft's submission portal](https://www.microsoft.com/en-us/wdsi/fil
 
 ## Investigation and maintenance changes
 
-- The original EEF coordinator installer, Rust source, and Python adapter
+- The original eef coordinator installer, Rust source, and Python adapter
   source passed explicit local Defender scans with definitions `1.459.63.0`.
-  This does not clear the original EEFN installer or identify the exact trigger.
+  This does not clear the original eefn installer or identify the exact trigger.
 - Compiler, CPython, and llama.cpp downloads retain pinned SHA-256 verification.
 - Windows Python runtime dependencies now have a complete version/hash lock,
   including transitive packages, checked against PyPI distribution metadata.
@@ -76,7 +76,7 @@ through [Microsoft's submission portal](https://www.microsoft.com/en-us/wdsi/fil
 - Each installer contains `provenance.json` with dependency origins and
   `files.sha256.json` with per-file sizes and hashes. These aid inspection;
   they are not a substitute for a publisher signature.
-- EEFN packages only the llama.cpp server and its runtime libraries/licenses,
+- eefn packages only the llama.cpp server and its runtime libraries/licenses,
   rather than unrelated upstream tools.
 - The installer identifies itself in Windows file properties and asks before
   launching the installed program. Quiet installs do not launch unless
@@ -110,7 +110,7 @@ CPython and llama.cpp archives, and the unpacked runtime also passed.
 All 31 Rust tests passed. Isolated installer tests passed for both products:
 quiet install without launching, opt-in startup, startup preservation on
 upgrade, explicit startup removal, config preservation, and installed file
-hash verification. Installed EEF/EEFN reported 0.3.1; bundled Python media
+hash verification. Installed eef/eefn reported 0.3.1; bundled Python media
 imports and the minimal llama.cpp server's version check passed. No models
 or coordinator endpoints were preselected in the fresh node configuration.
 

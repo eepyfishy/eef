@@ -1,4 +1,4 @@
-//! Isolated acceptance helper, never part of installed EEF/EEFN bundles.
+//! Isolated acceptance helper, never part of installed eef/eefn bundles.
 //! Creates only its own finite child, or observes held handles without killing.
 #[cfg(windows)]
 fn main() -> anyhow::Result<()> {

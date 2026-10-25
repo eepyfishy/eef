@@ -1,8 +1,8 @@
 # Durable repair admission and inspection
 
 Repair is still explicit, not an automatic dependency-repair controller. This
-increment adds durable admission/evidence to the same backend used by local EEF,
-local EEFN and approved remote node repair. No dashboard is needed to own the
+increment adds durable admission/evidence to the same backend used by local eef,
+local eefn and approved remote node repair. No dashboard is needed to own the
 operation or inspect an interrupted attempt.
 
 The subsequent [exact-build source proposal flow](REPAIR-SOURCES.md) can produce

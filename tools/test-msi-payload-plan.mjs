@@ -37,6 +37,9 @@ await test('read-only-deterministic-and-owner-configuration-omitted',async()=>{
  assert.deepEqual(first,second);assert.equal(first.read_only,true);assert.equal(first.omissions.mutable_configuration,1);
  assert.equal(first.files.some(row=>row.path==='config.json'),false);assert.equal(first.files.some(row=>row.path==='files.sha256.json'),false);
  assert.equal(first.requires_new_distribution_inventory,true);assert.equal(first.source_inventory_not_copied,true);
+ assert.equal(first.regenerated_inventory.path,'files.sha256.json');assert.equal(first.regenerated_inventory.requires_generation,true);
+ assert.equal(first.regenerated_inventory.directory_id,'INSTALLDIR');
+ assert(!first.files.some(row=>row.component_code===first.regenerated_inventory.component_code||row.file_id===first.regenerated_inventory.file_id));
  assert((await lstat(join(one.bundle,'config.json'))).isDirectory());assert.equal(await readFile(join(one.bundle,'config.json','PRIVATE-owner.txt'),'utf8'),'NEVER_PACKAGE_THIS_OWNER_SENTINEL');
  assert.deepEqual(await readFile(join(one.bundle,'files.sha256.json')),inventory);
  const output=JSON.stringify(first);assert(!output.includes(root));assert(!output.includes('NEVER_PACKAGE_THIS_OWNER_SENTINEL'));assert(!output.includes('1'.repeat(64)));
@@ -47,7 +50,7 @@ await test('read-only-deterministic-and-owner-configuration-omitted',async()=>{
  for(const key of ['package_authored','publisher_trust_verified','disk_preflight_complete','application_launch_verified','backend_initialization_compatibility_verified','version_ordering_approved','upgrade_migration_verified','signing_or_defender_verified','real_installer_accepted','stable_release_accepted'])assert.equal(first[key],false,key);
 });
 await test('separate-role-identities',async()=>{const item=await fixture('coordinator','eef'),plan=await planPayload(item.bundle,opts('eef'));assert.notEqual(plan.upgrade_code,first.upgrade_code);assert.notEqual(plan.product_code,first.product_code);assert(!plan.files.some(row=>row.path==='tools/llama-server.exe'));});
-await test('fork-namespace-changes-identities',async()=>{const other=await planPayload(one.bundle,{...opts('eefn'),namespace:'9f676f62-fca6-4bdd-a651-339c98824c6f'});assert.notEqual(other.upgrade_code,first.upgrade_code);assert.notEqual(other.files[0].component_code,first.files[0].component_code);});
+await test('fork-namespace-changes-identities',async()=>{const other=await planPayload(one.bundle,{...opts('eefn'),namespace:'9f676f62-fca6-4bdd-a651-339c98824c6f'});assert.notEqual(other.upgrade_code,first.upgrade_code);assert.notEqual(other.files[0].component_code,first.files[0].component_code);assert.notEqual(other.regenerated_inventory.component_code,first.regenerated_inventory.component_code);});
 await test('renaming-root-does-not-change-identities',async()=>assert.deepEqual(first.files,second.files));
 await test('full-file-hash-change-refused',()=>changed('hash-change',async({bundle})=>writeFile(join(bundle,'eefn.exe'),'different but same file owner'),/payload_size_mismatch|payload_digest_mismatch/));
 await test('same-size-byte-change-refused',()=>changed('same-size',async({bundle,values})=>writeFile(join(bundle,'eefn.exe'),'X'.repeat(values['eefn.exe'].length)),/payload_digest_mismatch/));

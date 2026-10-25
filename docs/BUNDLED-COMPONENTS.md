@@ -85,8 +85,8 @@ Twelve focused regressions pass in .validation/bundled-components-focused-final.
 including pending-version isolation, explicit override/config-relative behavior,
 managed/development/malformed-marker handling, leaf-only built-in names and
 read-only setup guidance. Both locked/offline workspace/all-target feature modes
-pass **971 tests plus one ignored profiler each**: EEF 271, owner CLI 21, installer
-14, EEFN 637 and node CLI 28. Final logs/build:
+pass **971 tests plus one ignored profiler each**: eef 271, owner CLI 21, installer
+14, eefn 637 and node CLI 28. Final logs/build:
 
 - .validation/bundled-components-workspace-default-final.log
 - .validation/bundled-components-workspace-headless-final.log

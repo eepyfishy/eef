@@ -43,7 +43,7 @@ owner-selected local `request_interpreter` is still required for inference.
 
 ## Durable source and receipts
 
-EEF writes an optional `source` checkpoint with every new clarification answer,
+eef writes an optional `source` checkpoint with every new clarification answer,
 including source revision, full pre-answer draft digest, proposal count and answer
 count. The answer already retains its exact question, proposal index, text, receipt
 and timestamp. Source evidence is computed inside the existing atomic revision

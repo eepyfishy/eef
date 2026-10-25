@@ -118,7 +118,7 @@ acceptance remain in scope. Stable 0.4.0 is not claimed.
 ## Evidence (2026-10-12)
 
 Twelve added tests bring both final workspace/all-target feature modes to **489**:
-EEF library 197, owner CLI 11, installer 6, EEFN library 269, node CLI 6.
+eef library 197, owner CLI 11, installer 6, eefn library 269, node CLI 6.
 Eleven journal tests cover one claim under sixteen concurrent callers, no source
 mutation or automatic job creation, insertion/count/byte/final-clock rollback,
 missed/backward/changed authority, uncertain unadmitted claims, immutable stop/
@@ -181,7 +181,7 @@ not close marked missing sources or uncertain/partially issued work, and it
 neither replays claims nor refunds reserved budgets.
 
 Ten added journal tests bring final workspace/all-target suites to **499** in
-both feature modes (EEF library 207, owner CLI 11, installer 6, EEFN library 269,
+both feature modes (eef library 207, owner CLI 11, installer 6, eefn library 269,
 node CLI 6). They cover late stop/admission/compilation, policy revocation,
 origin substitution, retained partial cancellation and missing-history refusal,
 one-shot concurrent launch, rollback, preexisting/stopped launch refusal,

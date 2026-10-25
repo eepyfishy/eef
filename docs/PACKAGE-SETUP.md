@@ -1,6 +1,6 @@
 # Opt-in missing-package-file maintenance
 
-Unreleased backend increment. Both EEF and EEFN expose the same local owner
+Unreleased backend increment. Both eef and eefn expose the same local owner
 commands; no dashboard or running service is required. The installed service
 also evaluates its role's saved policy every 30 seconds while running.
 

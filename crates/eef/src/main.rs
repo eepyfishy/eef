@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use tracing::info;
 
 #[derive(Debug, Parser)]
-#[command(name = "eef", version, about = "EEF native coordinator")]
+#[command(name = "eef", version, about = "eef native coordinator")]
 struct Args {
     #[command(subcommand)]
     command: Option<Command>,
@@ -94,7 +94,7 @@ enum Command {
     },
     /// Request coordinator restart. Use diagnostics to verify completion.
     Restart,
-    /// Manage exact, directional peer-discovery grants as the local EEF owner.
+    /// Manage exact, directional peer-discovery grants as the local eef owner.
     Discovery {
         #[command(subcommand)]
         command: eef::discovery::DiscoveryCommand,
@@ -2465,7 +2465,7 @@ async fn main() -> Result<()> {
                         );
                         print!("{}", eefn::setup_check::render(&value["result"])?);
                         println!(
-                            "From EEF, inspect the same model setup with: eef node model-bootstrap-policy --node NODE_ID show (replace NODE_ID with the node ID above; remote changes still require local consent)."
+                            "From eef, inspect the same model setup with: eef node model-bootstrap-policy --node NODE_ID show (replace NODE_ID with the node ID above; remote changes still require local consent)."
                         );
                     } else {
                         eprintln!(
@@ -2628,8 +2628,8 @@ async fn main() -> Result<()> {
         let _repair_setup = eefn::package_setup::spawn_until("eef", repair_stopped);
         let listener = tokio::net::TcpListener::bind((host.as_str(), port))
             .await
-            .with_context(|| format!("bind EEF API {host}:{port}"))?;
-        info!(%host, %port, node_port = runtime.node_server.port(), "EEF API listening");
+            .with_context(|| format!("bind eef API {host}:{port}"))?;
+        info!(%host, %port, node_port = runtime.node_server.port(), "eef API listening");
         // Separate secret-free owner discovery from legacy shared-key pairing.
         // A stale advertisement is harmless: clients must confirm its runtime
         // through the owner API before using any observed credential state.
@@ -2681,7 +2681,7 @@ async fn main() -> Result<()> {
         eefn::setup::publish_local(
             runtime.node_server.port(),
             port,
-            &format!("EEF on {}", eefn::setup::hostname()),
+            &format!("eef on {}", eefn::setup::hostname()),
             &local_secret,
         )?;
         let restart_requested = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2699,7 +2699,7 @@ async fn main() -> Result<()> {
         })
         .await;
         runtime.shutdown().await;
-        result.context("EEF API server failed")?;
+        result.context("eef API server failed")?;
         runtime.retire(std::time::Duration::from_secs(5)).await?;
         if !restart_requested.load(std::sync::atomic::Ordering::Relaxed) {
             break;

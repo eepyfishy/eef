@@ -1,4 +1,4 @@
-# EEF
+# eef
 
 **0.4.0a6 alpha** (`0.4.0-alpha.6` internally) is an opt-in two-PC testing release, not
 the complete v0.4.0 roadmap. See [alpha release notes](docs/RELEASE-0.4.0a6.md) for
@@ -23,7 +23,7 @@ The builds are unsigned. Both v0.3.2 installers have unresolved Defender reports
 on a second PC; see [the investigation](docs/ANTIVIRUS.md). A passing local scan
 is not a Microsoft false-positive verdict. Do not bypass antivirus detections.
 
-Native Rust implementation of the EEF coordinator and EEFN node, with bundled
+Native Rust implementation of the eef coordinator and eefn node, with bundled
 CPython for optional plugins. The transport, crypto, routing, memory, task
 engine, model routing, dashboard/API, firmware generation, and updates are
 implemented in Rust. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the
@@ -48,7 +48,7 @@ choose a local GGUF file as described in
 Ollama when reachable and otherwise uses llama.cpp.
 
 Double-click an installer. The graphical setup lets you choose a dedicated
-folder (default `%LOCALAPPDATA%\EEF` or `%LOCALAPPDATA%\EEFN`), opt into startup,
+folder (default `%LOCALAPPDATA%\eef` or `%LOCALAPPDATA%\eefn`), opt into startup,
 and choose whether to open the app when installation finishes. `--install-dir` supports
 another dedicated location. The
 installer refuses to use its download directory and preserves existing config
@@ -57,9 +57,9 @@ show a SmartScreen warning. Do not bypass an antivirus detection.
 
 For a first installation, follow [the getting-started guide](docs/FIRST_RUN.md).
 Install and launch **both apps on the same PC**: the node app automatically
-finds local EEF under your Windows account. No connection code, JSON, or port
+finds local eef under your Windows account. No connection code, JSON, or port
 number is needed. Nodes keep their identity when renamed or restarted.
-EEF's Nodes page can request configuration changes; the node owner must
+eef's Nodes page can request configuration changes; the node owner must
 approve them locally or explicitly allow remote management.
 
 For development, start the coordinator from PowerShell:
@@ -73,10 +73,10 @@ The accessible coordinator dashboard is at `http://127.0.0.1:51334/`; the node
 dashboard is at `http://127.0.0.1:51336/`. Both expose the full corresponding
 configuration and an optional startup toggle.
 
-EEF is not a node and remains `waiting_for_node` until at least one EEFN is
-connected. EEFN remains a node without EEF, but network orchestration requires
-at least one EEF. With multiple coordinators, configure endpoint priorities on
-nodes; the highest-priority reachable EEF is attempted first.
+eef is not a node and remains `waiting_for_node` until at least one eefn is
+connected. eefn remains a node without eef, but network orchestration requires
+at least one eef. With multiple coordinators, configure endpoint priorities on
+nodes; the highest-priority reachable eef is attempted first.
 
 Sensitive node capabilities remain disabled until the node owner explicitly
 enables them. The implemented capability catalog and request shapes are in
@@ -106,4 +106,4 @@ repository's feed, and forks can replace or disable it in the dashboard.
 
 ## License
 
-EEF is MIT licensed. Bundled third-party runtimes retain their own notices.
+eef is MIT licensed. Bundled third-party runtimes retain their own notices.

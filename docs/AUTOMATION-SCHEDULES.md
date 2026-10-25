@@ -5,7 +5,7 @@ runtime timer task and guarded owner commands. Fixed-input one-shot templates
 can now create fresh ordinary requests, compile them, reserve declared authority
 and execute through the existing reviewed grant driver. This is not general
 semantic automation, a second runner, continuous media or stable 0.4.0.
-Nothing activates merely by saving a definition/policy or starting EEF.
+Nothing activates merely by saving a definition/policy or starting eef.
 
 ## Owned periodic journal worker (subsequent increment)
 
@@ -37,7 +37,7 @@ real journal lock leaves the single-thread async executor available; shutdown
 drains the owned checkpoint and refuses extra/later workers; a cancelled waiter
 retains its queued callback until closing skips it with zero journal changes.
 Default and dashboard-free workspace/all-target suites each pass **612 tests**
-(EEF library 234 plus one ignored opt-in profiler, owner CLI 16, installer 6,
+(eef library 234 plus one ignored opt-in profiler, owner CLI 16, installer 6,
 node library 345 and node CLI 11).
 
 The fresh default build and unchanged ordinary scheduling fixture
@@ -117,7 +117,7 @@ did not run. This is not a passing timing gate or proof that reuse solved the
 settlement delay.
 
 Final default and dashboard-free workspace/all-target suites each pass **615
-tests**: EEF library 237 plus one ignored opt-in profiler, owner CLI 16,
+tests**: eef library 237 plus one ignored opt-in profiler, owner CLI 16,
 installer 6, node library 345 and node CLI 11. The snapshot regression also
 checks the exact partially admitted job and immutable trigger origin, rejects
 substituting the original template job, observes a subsequent cancellation and
@@ -218,7 +218,7 @@ admission, existing durable issuance/ACK/completion and explicit recovery remain
 the execution boundary. Run/duration/result consumption is permanent, and new
 schedule IDs cannot reset a policy's exhausted budget.
 
-Defaults (configurable backend settings, applied on explicit EEF restart):
+Defaults (configurable backend settings, applied on explicit eef restart):
 
 - `automations.poll_ms`: 200; allowed 50–1000.
 - `automations.max_active`: 8; allowed 1–32.
@@ -260,7 +260,7 @@ model download, installed-node update or release/feed replacement occurs here.
 ## Evidence and remaining acceptance (2026-10-12)
 
 Five added tests bring final workspace/all-target suites to **504** in both
-feature modes: EEF library 211, owner CLI 12, installer 6, EEFN library 269,
+feature modes: eef library 211, owner CLI 12, installer 6, eefn library 269,
 node CLI 6. They cover strict correlated enable/summary contracts, private/extra
 field refusal, no hidden retry/permission widening, mandatory CLI receipts and
 stop revision, bounded configuration and conservative clock/gap detection.
@@ -323,7 +323,7 @@ Lifecycle headroom allows resolution under a lowered logical quota; it is not
 physical disk reservation. General partial/issued-work recovery remains open.
 
 Eight added tests bring final workspace/all-target suites to **512** in both
-feature modes: EEF library 218, owner CLI 13, installer 6, EEFN library 269,
+feature modes: eef library 218, owner CLI 13, installer 6, eefn library 269,
 node CLI 6. They cover concurrent exact resolution, missing/marked/partial refusal,
 stale references and transactional rollback, restart/lowered-quota/stop receipt
 preservation, corrupted proof/history, correlated passive reports, mandatory CLI
@@ -406,8 +406,8 @@ one-second timer gate is fixed. No timing window, run budget, expiry, no-catch-u
 or no-unsafe-replay condition was relaxed.
 
 Final workspace/all-target suites pass **604 tests** in both feature modes:
-EEF library 230 (plus one ignored opt-in profiler), owner CLI 16, installer 6,
-EEFN library 341, node CLI 11. Passing units do not clear the failed public
+eef library 230 (plus one ignored opt-in profiler), owner CLI 16, installer 6,
+eefn library 341, node CLI 11. Passing units do not clear the failed public
 scheduling gate or complete the full bootstrap/media/resource/peer/cluster/
 physical/signing and stable 0.4.0 requirements.
 
@@ -443,8 +443,8 @@ timings differ from earlier samples; these numbers do not prove a hardware/load
 guarantee or isolate every contributor to the previous latency.
 
 Final workspace/all-target suites pass **605 tests** in both feature modes:
-EEF library 231 plus one ignored opt-in profiler, owner CLI 16, installer 6,
-EEFN library 341, node CLI 11. Fresh default binaries/examples, formatting/diff
+eef library 231 plus one ignored opt-in profiler, owner CLI 16, installer 6,
+eefn library 341, node CLI 11. Fresh default binaries/examples, formatting/diff
 and the backend/browser source guard pass.
 
 Unchanged public ordinary scheduling passes `automation-schedules-g6UcnO` and
@@ -504,8 +504,8 @@ repeated validation cost, not proof of the complete cause/fix for all earlier
 contention/native-exit failures. Loaded and physical acceptance remain open.
 
 Final locked/offline workspace/all-target suites pass **758 tests plus one
-ignored each**, including no-dashboard: EEF 247 plus ignored opt-in profiler,
-owner CLI 17, installer 6, EEFN 470, node CLI 18. Fresh headless binaries/examples,
+ignored each**, including no-dashboard: eef 247 plus ignored opt-in profiler,
+owner CLI 17, installer 6, eefn 470, node CLI 18. Fresh headless binaries/examples,
 formatting/diff, JS syntax and the backend/browser source guard pass.
 
 Fresh final-binary `automation-schedules-mc895D` passes the unchanged ordinary
@@ -518,7 +518,7 @@ validation phases still run; no window or permission was increased.
 
 Final-binary `local-pipelines-6ldaE8` also passes finite dataflow, durable
 progress, permission loss, native failure, recurrence and restart/no-replay
-regressions. Both harnesses completed with no matching fixture EEF/EEFN/native
+regressions. Both harnesses completed with no matching fixture eef/eefn/native
 helper processes remaining. No installed/physical node, UI, model, release/feed,
 signing or shared-service changes follow. Full stable 0.4.0 acceptance remains
 incomplete.

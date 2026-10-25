@@ -1391,7 +1391,7 @@ impl NodeEngine {
     }
 
     /// Produce only a bounded untrusted method/clarification candidate. Callers
-    /// still need runtime invalidation, fresh context and atomic EEF checkpointing.
+    /// still need runtime invalidation, fresh context and atomic eef checkpointing.
     pub async fn prepare_method_candidate(
         &self,
         job: &str,

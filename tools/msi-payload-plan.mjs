@@ -112,16 +112,19 @@ export async function planPayload(bundle,{role,namespace,msiVersion,expectedVers
  const identity=role+'\0x86_64-windows\0';
  const directories=new Map([['','INSTALLDIR']]);
  for(const file of selected){const parts=file.path.split('/');parts.pop();for(let index=1;index<=parts.length;index++){const path=parts.slice(0,index).join('/');directories.set(path,'D_'+digest(identity+path.toLowerCase()).slice(0,24));}}
- const files=selected.map(row=>{
-  const parts=row.path.split('/'),name=parts.pop(),directory=parts.join('/');
-  const id=digest(identity+row.path.toLowerCase()).slice(0,24);
-  return {...row,file_id:'F_'+id,component_id:'C_'+id,component_code:uuidV5(namespace,identity+'component\0'+row.path.toLowerCase()),directory_id:directories.get(directory),filename:name};
- });
- requireValue(new Set(files.map(row=>row.file_id)).size===files.length&&new Set(files.map(row=>row.component_code)).size===files.length&&new Set(directories.values()).size===directories.size,'component_identity_collision');
+ const identify=path=>{
+  const parts=path.split('/'),name=parts.pop(),directory=parts.join('/');
+  const id=digest(identity+path.toLowerCase()).slice(0,24);
+  return {file_id:'F_'+id,component_id:'C_'+id,component_code:uuidV5(namespace,identity+'component\0'+path.toLowerCase()),directory_id:directories.get(directory),filename:name};
+ };
+ const files=selected.map(row=>({...row,...identify(row.path)}));
+ const regeneratedInventory={path:'files.sha256.json',...identify('files.sha256.json'),requires_generation:true};
+ const components=[...files,regeneratedInventory];
+ requireValue(new Set(components.map(row=>row.file_id)).size===components.length&&new Set(components.map(row=>row.component_code)).size===components.length&&new Set(directories.values()).size===directories.size,'component_identity_collision');
  return {schema_version:1,report_type:'msi_payload_plan',read_only:true,role,architecture:'x86_64-windows',
   source_version:manifest.version,explicit_msi_version:msiVersion,source_inventory_sha256:digest(inventoryBytes),
   upgrade_code:uuidV5(namespace,identity+'upgrade'),product_code:uuidV5(namespace,identity+'product\0'+manifest.version+'\0'+msiVersion),
-  package_code:null,files,selected_bytes:bytes,omissions,
+  package_code:null,files,selected_bytes:bytes,omissions,regenerated_inventory:regeneratedInventory,
   directories:[...directories].map(([path,id])=>({path,id,parent_id:path?directories.get(path.split('/').slice(0,-1).join('/')):null})),
   requires_new_distribution_inventory:true,source_inventory_not_copied:true,mutable_paths_not_read:true,
   generated_python_caches_not_owned:true,omitted_caches_have_verified_source:true,

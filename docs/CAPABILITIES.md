@@ -1,4 +1,4 @@
-# EEFN capability catalog
+# eefn capability catalog
 
 ## v0.4 development permission changes
 
@@ -19,9 +19,9 @@ checking/installing through a remote request can use only the owner-configured
 feed, not a requester-supplied replacement. The catalog below describes legacy
 scoped restrictions where a full feature grant has not been made.
 
-An EEFN node advertises only capabilities that are available and permitted by
+An eefn node advertises only capabilities that are available and permitted by
 its current configuration. Except for basic status and updates, permissions are
-default-deny. Changes made in the node dashboard apply after EEFN restarts.
+default-deny. Changes made in the node dashboard apply after eefn restarts.
 
 ## Core capabilities
 

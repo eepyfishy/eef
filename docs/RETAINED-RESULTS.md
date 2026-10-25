@@ -11,14 +11,14 @@ eefn grants result --id GRANT_UUID --json
 ```
 
 The input-node command uses its running connection and discovered local API.
-EEF permits only that immutable origin or its local owner, selects the retained
+eef permits only that immutable origin or its local owner, selects the retained
 issuance and queries its exact executor. Local `grants result` works offline,
 starts no runtime/model/listener and creates no file. No command retries work or
 falls back to ordinary RPC, another executor or local adapters.
 
 Remote `grant_result` is a distinct reserved-control query. It requires independent
 credentials/pinned TLS, the current issuer equal to the original issuer, exact
-executor and complete issuance digest. EEF checks the full original grant,
+executor and complete issuance digest. eef checks the full original grant,
 including old session, job/task/attempt, plan, result limit and scope digest.
 Session replacement permits inspection but never revives an old lease. Executors
 advertise `retained_results`; missing/false advertisements deny without fallback.
@@ -27,7 +27,7 @@ Availability is `retained_final_report` (inspect terminal state/success/error),
 `no_final_checkpoint` (consumed but potentially running/interrupted/uncertain), or
 `legacy_metadata_only` (no saved output/success evidence). Migration never invents
 results. Responses set `execution_requested`, `automatically_retried`, `reconciled`
-to false. EEF state/revision remains an unchanged snapshot even when node evidence
+to false. eef state/revision remains an unchanged snapshot even when node evidence
 reports completion. Separate explicit journal reconciliation is available through
 [recover-result](RESULT-RECOVERY.md); this read command still never reconciles.
 Automatic recovery and safe remaining-step continuation are still open. Completion is
@@ -74,7 +74,7 @@ Guarded API contracts, with no extra retry/authority fields:
   `expected_node_id`, `grant_id`.
 - Origin node `POST /api/commands/requests/result`: `schema_version:1`,
   `expected_node_id`, `request_id`, `command:{id,grant_id}`.
-- EEF owner `POST /api/commands/requests/result`: `schema_version:1`,
+- eef owner `POST /api/commands/requests/result`: `schema_version:1`,
   `expected_runtime_id`, `command:{id,grant_id}`.
 
 Existing local-owner/cross-site guards apply. Other origins, changed issuers/scopes

@@ -427,7 +427,7 @@ try{
   // the normal work budget; a reply may still occupy the final work permit.
   await nodeConnection('limits',['--work','16']);await localRestart();
   await until(async()=>(await inventory()).nodes[0]?.models.length===2,'reconnect with default work capacity');
-  // Lose the local HTTP reply after EEF has accepted the creation. The CLI must
+  // Lose the local HTTP reply after eef has accepted the creation. The CLI must
   // retain its pre-send receipt and never replay; restore only our fixture marker.
   const marker=nodeConfig+'.api.json',originalMarker=await readFile(marker,'utf8');
   let forwarded=0,forwardError=null,accepted=null,replyMode='drop';

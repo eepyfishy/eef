@@ -20,7 +20,7 @@ Install the `stable-x86_64-pc-windows-gnullvm` Rust toolchain and `rustfmt` firs
 The script uses the installed toolchain without silently upgrading it. It
 downloads LLVM-MinGW 22.1.8 into the ignored `.tooling` directory
 when needed, validates its SHA-256, runs `cargo test --workspace --all-targets`,
-builds EEF, EEFN, and the shared installer stub, then deletes Cargo output by
+builds eef, eefn, and the shared installer stub, then deletes Cargo output by
 default. It obtains
 CPython 3.11.9 from python.org and verifies the SHA-256 published in Python's
 Windows release manifest. Rust dependency resolution uses `--locked`; Python
@@ -57,12 +57,12 @@ monitor free space on constrained machines. Installers and model downloads
 check their payload's required space. The bundler removes a partial output
 after failure and refuses to overwrite an
 existing output directory. The release directory contains exactly two
-self-extracting installers: one for EEF and one for EEFN. A combined ignored
+self-extracting installers: one for eef and one for eefn. A combined ignored
 staging bundle is removed by default; use `-KeepBundle` for local diagnostics.
 
 ## First-run browser regression (0.3.2)
 
-`tools/test-first-run.mjs` launches isolated EEF and EEFN processes, with random
+`tools/test-first-run.mjs` launches isolated eef and eefn processes, with random
 ports and temporary configuration/discovery/startup directories. It tests
 stable identity, same-account pairing, local approval before remote changes,
 both restart paths, browser forms, and a narrow-screen layout. A mock Ollama
@@ -83,7 +83,7 @@ For an **explicit real-model download test**, retain the unpacked bundle and
 run `node tools/test-real-model.mjs bundle/eef-windows-x86_64-v0.3.2`.
 This downloads the catalog's approximately 491 MB starter model into a unique
 ignored validation directory, selects it, waits for the bundled CPU runtime,
-and invokes inference through EEF. It does not use personal model storage.
+and invokes inference through eef. It does not use personal model storage.
 Remove that exact generated test directory afterward if space is limited.
 
 ## Historical validation performed for 0.3.1
@@ -95,7 +95,7 @@ cargo test --workspace --all-targets --locked   31 passed, 0 failed
 cargo fmt --all -- --check                     pass
 PowerShell script syntax                      pass
 component, runtime, and final Defender scans   pass (definitions 1.459.63.0)
-isolated install and upgrade regression        pass (EEF and EEFN)
+isolated install and upgrade regression        pass (eef and eefn)
 installed file inventory checks                pass
 bundled Python media imports                   pass
 minimal llama.cpp server --version             pass (build 10621)

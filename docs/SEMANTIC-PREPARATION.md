@@ -39,7 +39,7 @@ caller-supplied fresh vocabulary. Model routing hints may use user-described are
 or display names, never node/resource/model IDs, roles, backends or compute limits.
 Unused parameters and model/device/resource-selection parameters reject. Other
 parameter values are untrusted request data, not proof of semantic correctness,
-file/device existence, ownership or permissions. EEF compilation must still
+file/device existence, ownership or permissions. eef compilation must still
 apply live provider/model/parameter/resource validation and separate owner approval.
 
 The prompt retains unchanged original text and the complete review/proposal/question/
@@ -66,14 +66,14 @@ receipts or an already-retained different plan reject. No saved receipt means a
 new explicit inference attempt; this is not an exactly-once model-call claim.
 
 New attempts share interpreter capacity, applied runtime generation and a
-20-second inference deadline. Prompts use fresh EEF-disclosed capability names.
+20-second inference deadline. Prompts use fresh eef-disclosed capability names.
 Runtime replacement invalidates an in-flight attempt. No second node, fallback
 model, automatic download or retry starts.
 
-EEF authenticates origin and correlation receipt, validates fresh capability
+eef authenticates origin and correlation receipt, validates fresh capability
 scope, immutable saved request context, full review digest/counts and exact
 revision. The final journal edit checks the source again under its existing gate.
-Fresh self/directionally disclosed executor filtering precedes ranking; EEF owns
+Fresh self/directionally disclosed executor filtering precedes ranking; eef owns
 final resource/model bindings.
 
 A method stores source evidence in the existing planning record and definition
@@ -92,7 +92,7 @@ Guarded local API: `POST /api/commands/requests/prepare`, with exactly
 `schema_version:1`, `expected_node_id`, and `command:{id,expected_revision,operation_id}`.
 It accepts no caller method, permission, approval or model-binding fields.
 Unconfirmed save replies remain uncertain unless known not sent. Runtime changes
-after submission may still leave valid EEF checkpoints; inspect or reuse the
+after submission may still leave valid eef checkpoints; inspect or reuse the
 exact receipt. No automatic replay or native-effects termination claim.
 
 The unreleased checkpoint-diagnostic increment distinguishes an authenticated

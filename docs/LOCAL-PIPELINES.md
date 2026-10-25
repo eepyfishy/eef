@@ -18,7 +18,7 @@ eefn --json requests submit --text "Process the selected input locally" --title 
 
 Submission saves immutable concrete input and compiles one durable task, normally
 `awaiting_approval`; it does not interpret, infer, create a grant or start stages.
-Inspect it with the existing `requests plan`/EEF owner inspection commands, then
+Inspect it with the existing `requests plan`/eef owner inspection commands, then
 use the existing separate exact-digest approval and execution commands. Owner
 review sees the complete graph and union of stage capability hints. No JSON,
 model result or browser can insert approval/execution flags into submission.
@@ -201,7 +201,7 @@ physical two-PC/media acceptance remain separate requirements.
 ### Verification (2026-10-18)
 
 Both final locked/offline workspace/all-target modes pass **755 tests plus one
-ignored each**: EEF 244 plus one ignored, owner CLI 17, installer 6, EEFN 470,
+ignored each**: eef 244 plus one ignored, owner CLI 17, installer 6, eefn 470,
 node CLI 18. Fresh headless binaries/examples build; formatter, diff, JS syntax
 and backend/browser source-boundary checks pass. Ten added cases cover exact
 transitions/scope/clock/authority, bounded durable reads after reopen, non-replay,
@@ -222,7 +222,7 @@ prove physical two-PC operation, model quality or continuous streaming/stop.
 Broader public `request-drafts-3EKRho` also passes origin/issuer-scoped remote
 receipt inspection, uncertain restart, explicit tracking abandonment and
 non-replay regressions. Both harnesses completed with no matching fixture
-EEF/EEFN/native-helper processes remaining. Evaluated headless binary SHA-256:
+eef/eefn/native-helper processes remaining. Evaluated headless binary SHA-256:
 
 ```text
 eef.exe  0e00fa99140e19572a9cd2ad408dc85736697410fb6b90bcc60910459ce61f98
@@ -273,7 +273,7 @@ remain in the full 0.4.0 roadmap. This finite foundation does not replace them.
 ## Structural verification checkpoint (2026-10-13)
 
 Final workspace/all-target suites pass **581 tests** in each feature mode:
-EEF library 220, owner CLI 16, installer 6, EEFN library 328, node CLI 11.
+eef library 220, owner CLI 16, installer 6, eefn library 328, node CLI 11.
 Fresh default workspace binaries/examples and formatting/diff/backend-browser
 source checks pass. Nine pipeline cases cover static identity/data resolution,
 resource ownership, exact temporal references, substitutions/unknown fields,
@@ -305,7 +305,7 @@ existing-operation acceptance, not a public pipeline execution claim.
 ## Private execution-core checkpoint (2026-10-13)
 
 Final workspace/all-target suites pass **592 tests** in both feature modes:
-EEF library 220, owner CLI 16, installer 6, EEFN library 339, node CLI 11.
+eef library 220, owner CLI 16, installer 6, eefn library 339, node CLI 11.
 Fresh default workspace binaries/examples, formatting/diff and the backend-browser
 source guard pass. Production startup still does not opt into this runtime.
 The tests privately enable it under the existing parent `AcceptedGrant` machinery;
@@ -346,7 +346,7 @@ required; the private availability switch is not a user-configured bypass.
 ## Public compiler and admission checkpoint (2026-10-13)
 
 Final workspace/all-target suites pass **601 tests** in both feature modes:
-EEF library 227, owner CLI 16, installer 6, EEFN library 341, node CLI 11.
+eef library 227, owner CLI 16, installer 6, eefn library 341, node CLI 11.
 Fresh default binaries/examples, formatting/diff, JS syntax and the backend-browser
 source guard pass. New compiler tests require the whole disclosed current graph,
 exact model/backend/role/resource identities, deferred data versus literal types,
@@ -384,13 +384,13 @@ assertions and known unsuccessful native-stage path. The live read-only observer
 holds creation-verified root/child handles and observes both exit; exit 17 keeps
 `completed`/`success:false`, `pipeline_stage_unsuccessful`, failed-step output and
 a failed coordinator job. Later writes never run, exact execution receipt reuse
-cannot replace native identities, and failed/completed histories survive EEF
+cannot replace native identities, and failed/completed histories survive eef
 restart unchanged. This is finite local native evidence, not a production stop
 acknowledgement or proof of unrelated external effects.
 
 Preceding `local-pipelines-Lz5uiQ` failed during native graph submission before
 that job/grant existed (two earlier jobs remained completed/interrupted). The
-fixture's local-ready wait did not establish fresh EEF registration after node
+fixture's local-ready wait did not establish fresh eef registration after node
 restart. Its barrier now requires both registered nodes and the actual current
 executor-native provider before making a new submission. The fresh isolated run
 passes; the earlier failure is not acceptance and no uncertain mutation was
@@ -411,7 +411,7 @@ continuous, peer, stop, bootstrap, cluster and stable-release gates remain open.
 ## Bounded recurrence checkpoint (2026-10-13)
 
 Final workspace/all-target suites pass **602 tests** in both feature modes:
-EEF library 228, owner CLI 16, installer 6, EEFN library 341, node CLI 11.
+eef library 228, owner CLI 16, installer 6, eefn library 341, node CLI 11.
 Fresh default binaries/examples, formatting/diff, JS syntax and the backend/browser
 source guard pass. The new frozen-scope unit keeps the child capability union and
 rejects rewritten paths or executors, including a rewritten operation with new
@@ -424,7 +424,7 @@ cases plus explicit disabled definition, separate reusable owner policy approval
 without work, explicit schedule enable, two fresh source/context/parent-grant
 occurrences and exhausted schedule inspection. Each graph keeps exact input and
 executor, both local read/write steps complete, the original compiled source is
-unchanged, and receipt reuse/EEF restart cannot rearm or repeat either occurrence.
+unchanged, and receipt reuse/eef restart cannot rearm or repeat either occurrence.
 No new runner, implicit approval, changed budgets or uncertainty continuation is
 introduced. These copies require no interpreter/model invocation.
 

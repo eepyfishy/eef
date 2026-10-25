@@ -12,11 +12,11 @@ param(
 $ErrorActionPreference = "Stop"
 if ($EnableStartup -and $DisableStartup) { throw "Choose either EnableStartup or DisableStartup" }
 $source = [IO.Path]::GetFullPath($PSScriptRoot)
-$defaultDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'EEFN'
+$defaultDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'eefn'
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     if ($NonInteractive) { $InstallDir = $defaultDir }
     else {
-        $answer = Read-Host "Install EEFN in its own directory [$defaultDir]"
+        $answer = Read-Host "Install eefn in its own directory [$defaultDir]"
         $InstallDir = if ([string]::IsNullOrWhiteSpace($answer)) { $defaultDir } else { $answer }
     }
 }
@@ -44,9 +44,9 @@ if (-not (Test-Path -LiteralPath $configTarget)) {
 }
 $startup = $EnableStartup
 if (-not $EnableStartup -and -not $DisableStartup -and -not $NonInteractive) {
-    $startup = (Read-Host 'Start EEFN automatically when you sign in? [y/N]') -match '^(y|yes)$'
+    $startup = (Read-Host 'Start eefn automatically when you sign in? [y/N]') -match '^(y|yes)$'
 }
-$startupPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\EEF Node.cmd'
+$startupPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\eef Node.cmd'
 if ($startup) {
     New-Item -ItemType Directory -Path (Split-Path -Parent $startupPath) -Force | Out-Null
     $line = '@start "" /min "{0}" --config "{1}"' -f (Join-Path $destination 'eefn.exe'), $configTarget
@@ -54,7 +54,7 @@ if ($startup) {
 } elseif ($DisableStartup -and (Test-Path -LiteralPath $startupPath)) {
     Remove-Item -LiteralPath $startupPath
 }
-Write-Host "EEFN installed in $destination"
+Write-Host "eefn installed in $destination"
 Write-Host "Open http://127.0.0.1:51336/ to configure this node. No model was installed."
 if ($StartNow) {
     Start-Process -FilePath (Join-Path $destination 'eefn.exe') -ArgumentList @('--config', $configTarget) -WorkingDirectory $destination -WindowStyle Hidden

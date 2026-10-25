@@ -1,6 +1,6 @@
 # Owner-controlled Ollama request context (unreleased)
 
-An owner can save an explicit context window for this node's EEF-owned Ollama
+An owner can save an explicit context window for this node's eef-owned Ollama
 requests without changing the shared Ollama server or a model definition:
 
 ```text
@@ -44,7 +44,7 @@ Ollama context option. A new runtime cannot claim an applied policy that its
 engine did not receive.
 
 This is node-wide, not per-model tuning, a tokenizer-aware input budget, provider
-attestation, total RAM/VRAM quota or a forced unload/termination guarantee. EEF
+attestation, total RAM/VRAM quota or a forced unload/termination guarantee. eef
 does not rewrite/truncate original text or messages; a backend may reject or
 truncate requests under its own context behavior. Do not assume every accepted
 input fits a small window. Unsupported backend options fail through the existing

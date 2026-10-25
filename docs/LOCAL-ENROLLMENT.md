@@ -1,6 +1,6 @@
 # Explicit same-PC private enrollment (unreleased)
 
-With updated EEF and EEFN running under the same user on the same PC:
+With updated eef and eefn running under the same user on the same PC:
 
 ```text
 eefn setup --local
@@ -115,8 +115,8 @@ remote-proxy authentication.
 ## Verification checkpoint
 
 Final workspace/all-target tests pass with default features and separately with
-`--no-default-features`: **693 passed, one ignored in each configuration** (EEF
-library 243, EEF CLI 17, installer 6, node library 412, node CLI 15). Fresh default
+`--no-default-features`: **693 passed, one ignored in each configuration** (eef
+library 243, eef CLI 17, installer 6, node library 412, node CLI 15). Fresh default
 binaries/examples build, and formatting, diff, JavaScript syntax and backend/UI
 dependency source checks pass. Early restart-unit fixture errors were corrected:
 saved settings require a nonzero port, and the runtime must reload the saved

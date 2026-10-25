@@ -54,7 +54,7 @@ impl SchedulingPolicy {
 pub enum SchedulingCommand {
     /// Inspect saved/applied policy and coordinator-local in-flight reservations.
     Show {},
-    /// Save limits for explicit EEF restart; zero means no additional ceiling.
+    /// Save limits for explicit eef restart; zero means no additional ceiling.
     Limits {
         #[arg(long)]
         freshness_seconds: Option<u64>,
@@ -257,7 +257,7 @@ pub fn command(
             "changed":changed,"saved_policy":saved,"applied_policy":applied,
             "restart_required":saved != *applied,"execution_authorized":false,"dispatched":false,
             "scope":"coordinator_local_non_model_reservations",
-            "note":"Saved limits apply after explicit EEF restart. Zero removes an additional ceiling, not executor limits or permissions. Reservations track local futures, not remote cancellation or physical resources. Model routing and direct owner recovery commands are separate."}),changed))
+            "note":"Saved limits apply after explicit eef restart. Zero removes an additional ceiling, not executor limits or permissions. Reservations track local futures, not remote cancellation or physical resources. Model routing and direct owner recovery commands are separate."}),changed))
     })
 }
 

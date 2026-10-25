@@ -20,7 +20,7 @@ External effects/services and processes outside the job are not covered.
 
 An exact existing local-GGUF model ID is required; duplicate/missing selections
 fail without a partial update. Bounds are 64-1048576 MiB (1 MiB = 1024 squared
-bytes). Default means no **EEF-configured** job-commit ceiling, not exemption
+bytes). Default means no **eef-configured** job-commit ceiling, not exemption
 from other OS/parent-job limits. The wire must explicitly provide integer `mib`
 or null for reset; omitting the field is rejected. Invalid values/types do not
 change saved configuration. Reselecting a GGUF with no new ceiling preserves the
@@ -37,7 +37,7 @@ explicit node restart/next start; saved selections and registered runtime
 selections are reported separately. `job_memory_limit_mib` is a bounded optional
 configuration field, not a memory-use estimate or remote attestation. Old missing
 fields normalize to no ceiling and are omitted from serialization/advertisements.
-Peer parsing rejects non-GGUF ceilings, invalid types and bounds; EEF's inventory
+Peer parsing rejects non-GGUF ceilings, invalid types and bounds; eef's inventory
 preserves the node-reported field without treating it as physical usage evidence.
 
 ## Enforcement and failure behavior
@@ -61,7 +61,7 @@ are never deleted or copied by these commands.
 ## Verification and remaining scope
 
 Native Windows tests compare the same 256 MiB committed allocation in a normal
-descendant: it succeeds with no EEF ceiling and is denied under a 128 MiB job
+descendant: it succeeds with no eef ceiling and is denied under a 128 MiB job
 ceiling. The configured job limit is read back. Invalid ceilings are refused
 before the root starts. This is real local kernel enforcement, not model quality,
 physical-network acceptance or a total-host/GPU quota.
@@ -80,7 +80,7 @@ changes, broader per-model policy and physical/release acceptance remain open.
 No installed node, release artifact or automatic model default is changed.
 
 Final-source default-feature and dashboard-free workspace/all-target suites each
-pass **655 tests** (EEF 237 plus one ignored profiler, owner CLI 16, installer 6,
+pass **655 tests** (eef 237 plus one ignored profiler, owner CLI 16, installer 6,
 node library 383, node CLI 13). Fresh default binaries/examples, formatting/diff,
 JS syntax and backend/browser source guard pass. `model-metadata-pNJ0V2` passes
 approved/refused remote ceilings, exact target inspection, lost/substituted reply

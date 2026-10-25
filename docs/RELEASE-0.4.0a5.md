@@ -1,4 +1,4 @@
-# EEF v0.4.0a5 - explicit update correction
+# eef v0.4.0a5 - explicit update correction
 
 Internal version `0.4.0-alpha.5`. Opt-in prerelease, not the completed roadmap.
 Two Windows x86-64 EXE installers. No model is bundled or automatically installed.

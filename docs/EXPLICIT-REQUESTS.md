@@ -37,7 +37,7 @@ and preserves unchanged original text and concrete input in the existing review.
 Input is not permission. No request originates from a fabricated node, and neither
 classifier attribution nor model authority is manufactured.
 
-EEF stamps authenticated origin/area, validates fresh disclosed capability names,
+eef stamps authenticated origin/area, validates fresh disclosed capability names,
 then compiles against fresh self/directionally disclosed executors before ranking.
 Selected model/resource and provider parameters still pass the existing compiler.
 No coordinator-local adapter, hidden-provider fallback, model inference, download,

@@ -1,7 +1,7 @@
-# EEF v0.4.0a4 - model lifecycle and request-preview alpha
+# eef v0.4.0a4 - model lifecycle and request-preview alpha
 
 Internal version: `0.4.0-alpha.4`. Opt-in Windows x86-64 prerelease, not the
-completed v0.4.0 roadmap. Two EXE installers, one each for EEF and EEFN.
+completed v0.4.0 roadmap. Two EXE installers, one each for eef and eefn.
 
 ## Added since v0.4.0a3
 

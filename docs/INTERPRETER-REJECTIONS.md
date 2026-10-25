@@ -91,7 +91,7 @@ regression while checking diagnostic redaction; the latter process exits cleanly
 after its existing restart/peer/workflow acceptance checks.
 
 Both locked/offline workspace/all-target suites pass **703 tests plus one ignored
-each**, with default features and `--no-default-features` (EEF 243, owner CLI 17,
+each**, with default features and `--no-default-features` (eef 243, owner CLI 17,
 installer 6, node library 422, node CLI 15). Fresh binaries/examples build; focused
 rejection tests, JS syntax, source dependency, frozen scorer, formatting and diff
 checks pass. The rebuilt reference retains system-prompt SHA-256

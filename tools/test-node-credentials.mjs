@@ -130,7 +130,7 @@ try {
     const request={schema_version:1,expected_node_id:node.id,request_id:randomUUID(),text:'Check',proposal};
     const endpoint=node.api+'/api/commands/requests/review-proposal';
     assert.equal((await json(endpoint,{...request,expected_node_id:'other'})).error_code,'invalid_proposal_request');
-    // Well-shaped unknown names reach EEF's fresh disclosure check; malformed
+    // Well-shaped unknown names reach eef's fresh disclosure check; malformed
     // names still fail locally before submission. Neither can authorize work.
     assert.equal((await json(endpoint,{...request,proposal:{...proposal,suggested_capabilities:['invented.capability']}})).error_code,'review_rejected');
     assert.equal((await json(endpoint,{...request,proposal:{...proposal,suggested_capabilities:['invalid name']}})).error_code,'invalid_supplied_proposal');

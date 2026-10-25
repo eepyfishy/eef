@@ -1,4 +1,4 @@
-# EEF v0.4.0a6 - interrupted-job reliability
+# eef v0.4.0a6 - interrupted-job reliability
 
 Internal version `0.4.0-alpha.6`. Opt-in prerelease, not the completed roadmap.
 Two Windows x86-64 EXE installers. No model is bundled or automatically installed.
@@ -77,7 +77,7 @@ definitions before publication. No exclusions or protection changes were made.
 After publication, GitHub reported exactly the two expected assets with matching
 byte counts and SHA-256 digests. An existing owner-approved alpha.5 node was
 updated using the installed coordinator's `node update` command, selecting the
-published EEFN installer, exact hash/size and one-shot prerelease consent. One
+published eefn installer, exact hash/size and one-shot prerelease consent. One
 request was sent, with no retry, shell installation fallback or feed edits.
 
 The node confirmed alpha.6 was staged while alpha.5 was still running. Its staged

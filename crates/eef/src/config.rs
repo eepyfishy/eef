@@ -183,7 +183,7 @@ fn deep_merge(mut base: Value, overlay: Value) -> Value {
 }
 
 pub fn embedded_defaults_for_test() -> Value {
-    json!({"identity": {"name": "EEF"}})
+    json!({"identity": {"name": "eef"}})
 }
 
 fn validate_ui_preference(value: &Value) -> Result<()> {
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn default_and_dotted_access() {
         let config = Config::load(None).unwrap();
-        assert_eq!(config.string("identity.name", ""), "EEF");
+        assert_eq!(config.string("identity.name", ""), "eef");
         assert_eq!(config.string("missing", "fallback"), "fallback");
     }
 

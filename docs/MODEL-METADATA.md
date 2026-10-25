@@ -80,10 +80,10 @@ legacy adapter support; an empty list explicitly disables model capabilities.
 Only subsets of the selected text/VLM adapter's supported capabilities are allowed.
 Roles remain optional labels. Lifecycle and resources cannot be fabricated through
 this selection object. New nodes project the hints into registration metadata and
-enforce capability restrictions at execution, not just in EEF's routing.
+enforce capability restrictions at execution, not just in eef's routing.
 
 [Node model commands](COMMANDS.md) provide locked updates without editing JSON.
-The development EEF command facade can invoke the same selection operations on
+The development eef command facade can invoke the same selection operations on
 connected, updated nodes; mutation requires node-local management approval,
 rechecked under the node configuration lock. It never downloads or restarts
 implicitly and does not use a legacy full-config save fallback.
@@ -107,7 +107,7 @@ not a natural-language interpreter or automatic role assignment.
 
 ## Tests
 
-`tools/test-model-metadata.mjs` uses an isolated EEF and node with a fake local
+`tools/test-model-metadata.mjs` uses an isolated eef and node with a fake local
 Ollama HTTP service. It tests versioned registration, owner inventory/CLI,
 backend selection without fallback, and removal of model registrations after
 selection is cleared and the fixture node restarts. It does not demonstrate real

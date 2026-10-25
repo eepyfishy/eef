@@ -1,4 +1,4 @@
-// API-only node -> EEF review, using fake inference and isolated local data.
+// API-only node -> eef review, using fake inference and isolated local data.
 // Review/preparation stay idle; separate owner-approved grant execution uses a fake backend.
 import assert from 'node:assert/strict';
 import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
@@ -458,7 +458,7 @@ try {
   await until(ready,'peer reconnected');
   assert.equal((await cli(['requests','review-proposal','--file',remoteFile])).coordinator_acknowledged,true);
   // A prompt formed before policy revocation cannot grandfather its hints into
-  // EEF after inference. Finish the fake backend exactly once, then reject review.
+  // eef after inference. Finish the fake backend exactly once, then reject review.
   mode='gate';const outdated=review('Fetch using the peer after a delayed interpretation',false);
   await until(()=>gates.size===1,'network interpretation in flight');
   assert(calls.at(-1).messages[0].content.includes('http.request'));
@@ -471,11 +471,11 @@ try {
   const revoked=await cli(['requests','review-proposal','--file',remoteFile],false);
   assert.equal(revoked.error_code,'review_rejected');
   assert.equal((await cli(['requests','revise-proposal',cross.result.id,'--revision','2','--file',revisionFile],false)).error_code,'draft_rejected');
-  assert.equal(calls.length,beforeNetwork+4,'EEF must independently reject the no-longer-disclosed hint without inference replay');
+  assert.equal(calls.length,beforeNetwork+4,'eef must independently reject the no-longer-disclosed hint without inference replay');
   const history=(await cli(['requests','draft',cross.result.id])).result;
   assert.deepEqual(history.draft,revisedCross.result.draft,'historical inspection cannot reinterpret a saved snapshot');
   await cli(['jobs','stop',cross.result.id]);await cli(['jobs','remove',cross.result.id]);
-  // Semantic preparation also uses EEF's disclosed cross-node compiler, never
+  // Semantic preparation also uses eef's disclosed cross-node compiler, never
   // direct peer execution or hidden-provider fallback.
   await coordinator(['discovery','grant','--requester',config.node_id,'--target',peerConfig.node_id]);
   contextRuntime=(await coordinator(['diagnostics'])).runtime_id;await coordinator(['restart']);
@@ -589,7 +589,7 @@ try {
   assert.equal((await cli(prepareArgs(methodId,1,methodOperation))).result.plan_sha256,prepared.result.plan_sha256);
   assert.equal((await cli(prepareArgs(questionId,1,questionOperation))).inspection_only,true);
   // Explicit caller inputs require neither interpreter selection nor inference.
-  // They retain source data and compile through the same EEF approval/grant path.
+  // They retain source data and compile through the same eef approval/grant path.
   const beforeConcrete=calls.length,concreteOperation=randomUUID();
   const concreteArgs=['requests','submit','--text','  Show system status\n','--title','Explicit status',
     '--template','system_info','--operation-id',concreteOperation];
@@ -669,7 +669,7 @@ try {
   assert.equal(calls.length,beforeConcrete+1);assert.equal(calls.at(-1).messages[0].content,textPrompt);
   assert.equal((await cli(['jobs','output',textId])).data.outputs[0].content,'fixture concrete grant result');
   assert.equal((await cli(requestedTextArgs)).data.status,'completed');assert.equal(calls.length,beforeConcrete+1);
-  // Final node output is durably separate from EEF's journal. Read it explicitly
+  // Final node output is durably separate from eef's journal. Read it explicitly
   // through the originating node or owner; routine receipts/jobs remain redacted.
   const textCompleted=(await cli(['jobs','get',textId])).data,textGrant=textCompleted.grant_attempts[0].grant_id;
   const resultArgs=['requests','result',textId,'--grant-id',textGrant];
@@ -725,8 +725,8 @@ try {
     assert.equal(closed.result.remote_effects_unknown,true);assert.equal(calls.length,count+1);
     mode='text-execution';
   }
-  // Deliberately fail only this isolated EEF job's completion checkpoint. The
-  // node finishes/checkpoints once; EEF stays interrupted until explicit recovery.
+  // Deliberately fail only this isolated eef job's completion checkpoint. The
+  // node finishes/checkpoints once; eef stays interrupted until explicit recovery.
   for (const recoveryActor of ['origin','owner']) {
     const count=calls.length,operation=randomUUID();
     const request=await cli(['jobs','request-text','--prompt','Recover '+recoveryActor,'--role','unselected_role',

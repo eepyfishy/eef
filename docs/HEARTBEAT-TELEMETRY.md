@@ -45,7 +45,7 @@ the single-thread async executor remains responsive; a deliberate collector faul
 returns an error rather than invented success. These are local source checks.
 
 Default and dashboard-free workspace/all-target suites each pass **609 tests**:
-EEF library 231 plus one ignored opt-in journal profiler, owner CLI 16,
+eef library 231 plus one ignored opt-in journal profiler, owner CLI 16,
 installer 6, node library 345 and node CLI 11. Fresh default executables/examples,
 formatting, diff and the backend/browser source boundary pass.
 

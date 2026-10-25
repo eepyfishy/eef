@@ -65,7 +65,7 @@ The optional `model_lifecycle` node configuration uses these validated fields:
 | `termination_wait_seconds` | 5 | 1-30 seconds covering explicit/idle owned termination observation and root reaping together. Windows also observes the owned job empty; other platforms retain root-only guarantees. |
 | `ollama_keep_alive_seconds` | null (inherit backend) | Ollama inference request preference: -1 indefinite, 0 request unload after its response, or 1-86400 seconds. Not ownership or observed residency. |
 | `thinking_mode` | inherit (omitted on the wire) | Node-wide inference hint: inherit, disabled or enabled. Not observed thinking state or per-model capability discovery. |
-| `ollama_context_tokens` | null / omitted | Optional 512–1,048,576-token `num_ctx` preference for EEF-owned Ollama requests. Not a model support or memory/quota claim. |
+| `ollama_context_tokens` | null / omitted | Optional 512–1,048,576-token `num_ctx` preference for eef-owned Ollama requests. Not a model support or memory/quota claim. |
 
 The context setting has explicit `--ollama-context-tokens` and
 `--ollama-context-default` choices, sharing existing saved/applied/CAS controls.
@@ -199,7 +199,7 @@ The engine constructs the backend request from this applied owner setting, not
 caller/model-supplied `keep_alive` parameters. Read-only policy, compilation,
 approval and result inspection never send inference or empty preload/unload.
 
-Previously EEFN always sent `keep_alive:-1`, forcing indefinite residency. New
+Previously eefn always sent `keep_alive:-1`, forcing indefinite residency. New
 unreleased code intentionally omits the hint by default so the backend owner’s
 policy applies. Select -1 explicitly if that retention is wanted. Published
 alpha.6 behavior/artifacts are unchanged. Older configs normalize to the new
@@ -210,7 +210,7 @@ Ollama documents numeric seconds, negative indefinite retention, zero after-resp
 unload, and omission inheriting its server settings in its [FAQ](https://docs.ollama.com/faq)
 and [chat API](https://docs.ollama.com/api/chat). This is a preference submitted only
 with ordinary authorized inference/owned preview. It can affect shared cache
-residency; another application may change it and EEF cannot promise a release
+residency; another application may change it and eef cannot promise a release
 time or exclusive ownership. Cancellation of a client future does not prove
 shared backend computation stopped. No service termination, environment edit,
 model deletion/download, background unload loop or physical-memory guarantee is
@@ -252,7 +252,7 @@ commands. Headless/browser-disabled and offline-owner paths share this service.
 ## Verification scope
 
 `tools/test-model-lifecycle-policy.mjs` exercises locked offline setup, unchanged
-defaults, manual no-process startup, pinned-TLS EEF control, remote owner approval,
+defaults, manual no-process startup, pinned-TLS eef control, remote owner approval,
 saved/applied separation, stale digest refusal, explicit restart, active inference
 pins across the idle interval, reset after the last pin, automatic inactive unload,
 historical load no-replay, reserved status under work saturation, immediate
@@ -275,7 +275,7 @@ lifecycle. It is not actual Ollama coexistence or physical memory acceptance.
 ## 2026-10-13 shared-request policy verification checkpoint
 
 Final workspace/all-target suites pass **571 tests** in each feature mode:
-EEF library 220, owner CLI 16, installer 6, EEFN library 318, node CLI 11.
+eef library 220, owner CLI 16, installer 6, eefn library 318, node CLI 11.
 Fresh default workspace binaries/examples, formatting/diff/JavaScript syntax
 and the backend/browser dependency guard pass. New units cover normalized older
 configs, strict numeric bounds, duration/default conflicts on the wire and CLI,
@@ -308,7 +308,7 @@ service or signing/Defender acceptance is changed by this source checkpoint.
 ## 2026-10-13 on-demand verification checkpoint
 
 Final workspace/all-target suites pass **563 tests** in each feature mode:
-EEF library 220, owner CLI 15, installer 6, EEFN library 312, node CLI 10.
+eef library 220, owner CLI 15, installer 6, eefn library 312, node CLI 10.
 Fresh default workspace binaries/examples, formatting/diff/JavaScript syntax
 and the backend/browser dependency guard pass. Tests use serial execution to
 avoid oversubscribing real-clock authorization fixtures on this machine.
@@ -358,7 +358,7 @@ signing/Defender acceptance is changed by this source checkpoint.
 ## 2026-10-12 verification checkpoint
 
 Final workspace/all-target suites pass **557 tests** in each feature mode:
-EEF library 219, owner CLI 15, installer 6, EEFN library 307, node CLI 10.
+eef library 219, owner CLI 15, installer 6, eefn library 307, node CLI 10.
 Fresh default binaries/examples, formatting/diff/JavaScript syntax and the
 backend/browser dependency guard pass separately. The new unit cases cover
 policy bounds/digests, locked offline CAS, running owner/runtime fences,

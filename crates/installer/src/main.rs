@@ -44,7 +44,7 @@ struct Product {
 
 fn main() {
     if let Err(error) = run() {
-        let message = format!("EEF installation failed:\n\n{error:#}");
+        let message = format!("eef installation failed:\n\n{error:#}");
         if let Some(path) = std::env::var_os("EEF_INSTALLER_ERROR_LOG") {
             let _ = fs::write(path, &message);
         }
@@ -119,7 +119,7 @@ fn install(options: Options, progress: Progress) -> Result<()> {
     }
     if !options.quiet {
         show_info(&format!(
-            "{} {} was installed in:\n{}\n\nStartup: {}\nOpen it again from the EEF folder in your Start menu.",
+            "{} {} was installed in:\n{}\n\nStartup: {}\nOpen it again from the eef folder in your Start menu.",
             product.display,
             manifest.version,
             install_dir.display(),
@@ -201,24 +201,24 @@ fn unpacked_size(payload: &[u8]) -> Result<u64> {
 }
 
 fn product(name: &str) -> Result<&'static Product> {
-    static EEF: Product = Product {
-        display: "EEF coordinator",
-        directory: "EEF",
+    static COORDINATOR_PRODUCT: Product = Product {
+        display: "eef coordinator",
+        directory: "eef",
         executable: "eef.exe",
         config: "config/default_identity.yaml",
-        startup_name: "EEF Coordinator",
+        startup_name: "eef Coordinator",
     };
-    static EEFN: Product = Product {
-        display: "EEFN node",
-        directory: "EEFN",
+    static NODE_PRODUCT: Product = Product {
+        display: "eefn node",
+        directory: "eefn",
         executable: "eefn.exe",
         config: "config.json",
-        startup_name: "EEF Node",
+        startup_name: "eef Node",
     };
     match name {
-        "eef" => Ok(&EEF),
-        "eefn" => Ok(&EEFN),
-        _ => bail!("unknown EEF product '{name}'"),
+        "eef" => Ok(&COORDINATOR_PRODUCT),
+        "eefn" => Ok(&NODE_PRODUCT),
+        _ => bail!("unknown eef product '{name}'"),
     }
 }
 
@@ -397,7 +397,7 @@ fn check_install_space(destination: &Path, payload_bytes: u64) -> Result<()> {
 
 fn create_app_shortcut(directory: &Path, product: &Product) -> Result<()> {
     let menu = PathBuf::from(std::env::var_os("APPDATA").context("APPDATA is unavailable")?)
-        .join("Microsoft/Windows/Start Menu/Programs/EEF");
+        .join("Microsoft/Windows/Start Menu/Programs/eef");
     fs::create_dir_all(&menu)?;
     let executable = directory.join(product.executable);
     let config = directory.join(product.config);
@@ -480,7 +480,7 @@ fn show_info(message: &str) {
         MessageBoxW(
             std::ptr::null_mut(),
             wide(message).as_ptr(),
-            wide("EEF installer").as_ptr(),
+            wide("eef installer").as_ptr(),
             MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND,
         );
     }
@@ -500,7 +500,7 @@ fn show_error(message: &str) {
         MessageBoxW(
             std::ptr::null_mut(),
             wide(message).as_ptr(),
-            wide("EEF installer").as_ptr(),
+            wide("eef installer").as_ptr(),
             MB_OK | MB_ICONERROR | MB_SETFOREGROUND,
         );
     }
@@ -561,10 +561,10 @@ mod tests {
 
     #[test]
     fn command_file_rejects_metacharacters() {
-        assert!(reject_cmd_text("C:\\Program Files\\EEF").is_ok());
+        assert!(reject_cmd_text("C:\\Program Files\\eef").is_ok());
         assert!(reject_cmd_text("C:\\bad&path").is_err());
-        assert!(reject_cmd_text("C:\\%TEMP%\\EEF").is_err());
-        assert!(reject_cmd_text("C:\\!variable!\\EEF").is_err());
+        assert!(reject_cmd_text("C:\\%TEMP%\\eef").is_err());
+        assert!(reject_cmd_text("C:\\!variable!\\eef").is_err());
     }
 
     #[test]

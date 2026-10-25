@@ -80,7 +80,7 @@ write failure, concurrent different destinations, absent copy sources, refusal t
 replace a directory, cleanup and installer secret preservation/recovery.
 
 Both locked/offline workspace/all-target feature modes pass **959 tests plus one
-ignored profiler each**: EEF 271, owner CLI 21, installer 14, EEFN 626 and node CLI
+ignored profiler each**: eef 271, owner CLI 21, installer 14, eefn 626 and node CLI
 27. Final logs and build:
 
 - .validation/atomic-settings-workspace-default-accepted.log

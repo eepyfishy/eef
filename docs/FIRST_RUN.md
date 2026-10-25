@@ -1,4 +1,4 @@
-# First installation: EEF 0.4.0a alpha
+# First installation: eef 0.4.0a alpha
 
 The alpha uses “node,” puts user input in the node app, provides feature-wide
 permission switches and Stop/Resume connection controls, and retains old scoped
@@ -7,23 +7,23 @@ grants until explicitly changed. See [alpha release notes](RELEASE-0.4.0a.md) an
 
 The node app also has a **Jobs** page for saved planned actions.
 Open a job's steps to see its status and assigned node. Pause/Stop prevent later
-steps, but actions already sent may finish. After an EEF restart, interrupted
+steps, but actions already sent may finish. After an eef restart, interrupted
 jobs wait for review; Resume is available only when the unfinished actions are
 safe to repeat. Successful steps are retained. This page requires a connection
-to the EEF that holds the history; it does not share history across coordinators.
+to the eef that holds the history; it does not share history across coordinators.
 
 Settings also provides **Location and resources**. Area
 names use a path such as `Home / Upstairs / Office`. Add a named camera,
 microphone, screen or output there; renaming it keeps its resource identity.
 Resource areas can inherit the node area. Save and restart to advertise changes.
 This does not enable permissions or start capture, and it does not yet provide
-live media relaying. EEF's Configure node view offers the same forms with the
+live media relaying. eef's Configure node view offers the same forms with the
 existing owner-approval rules.
 
-EEF manages your network; the **node app (EEFN)** supplies this PC's models
+eef manages your network; the **node app (eefn)** supplies this PC's models
 and allowed tools. They can run together on one PC. Another PC may run only
-the node app. At least one EEF and one connected node are needed to work
-as a network; EEF itself does not run a language model.
+the node app. At least one eef and one connected node are needed to work
+as a network; eef itself does not run a language model.
 
 ## Start on one PC
 
@@ -32,10 +32,10 @@ as a network; EEF itself does not run a language model.
 2. Open each installer. Keep its recommended folder, or Browse to a dedicated
    folder. The download folder cannot be the installation folder. Startup is
    optional and does not require administrator access.
-3. Select **Open app when finished**, or open EEF and EEF Node from
+3. Select **Open app when finished**, or open eef and eef Node from
    the Start menu later. Both programs run under your own Windows account.
-4. In the node app, Home should change from **Waiting for EEF** to
-   **Connected**. In EEF, Nodes should show this PC's detected name.
+4. In the node app, Home should change from **Waiting for eef** to
+   **Connected**. In eef, Nodes should show this PC's detected name.
 5. Open Permissions in the node app. Enable only what you want to share.
    Each switch grants its feature within your Windows account's rights. Existing
    limited grants stay limited until explicitly switched off and on. Click
@@ -52,27 +52,27 @@ as a network; EEF itself does not run a language model.
 You do not need to edit JSON, run PowerShell, or type a port number for these
 steps. Advanced remains available for less common settings and custom models.
 
-## Configure nodes from EEF
+## Configure nodes from eef
 
-In EEF, open Nodes and choose **Configure node**. The same permission,
-model, and name forms now refer to that PC, not the PC displaying EEF.
+In eef, open Nodes and choose **Configure node**. The same permission,
+model, and name forms now refer to that PC, not the PC displaying eef.
 By default, Save sends a proposal: the owner reviews and saves it in that
 PC's node app. To permit immediate remote settings changes, model installs,
-and restarts, enable **Allow EEF to apply settings and restart this node**
+and restarts, enable **Allow eef to apply settings and restart this node**
 locally in Settings and save. This trust change applies when saved. Remote
 management cannot enable itself. Local file pickers and startup remain local.
 
 ## Add your second PC
 
-In EEF, open Network and create a connection code. Keep it private: it contains
+In eef, open Network and create a connection code. Keep it private: it contains
 your network credential. On the second PC, install the node app, paste the
 code into Network, and save. The PCs must be reachable on your private network;
 Windows Firewall may ask for approval. Do not disable the firewall. If names
 cannot be resolved, the connection details support a reachable LAN address.
 
-Multiple EEF connections can have priorities under Network's connection
+Multiple eef connections can have priorities under Network's connection
 details. These control the order of reconnect attempts, not a shared election
-or replicated EEF state. Each connection must use the network's shared key.
+or replicated eef state. Each connection must use the network's shared key.
 
 ## Saving, restarting, and updates
 

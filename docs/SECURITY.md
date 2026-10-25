@@ -1,6 +1,6 @@
 # Security model
 
-The v0.3.0 EEFN and both v0.3.2 installers have reported Defender detections. Keep affected files quarantined;
+The v0.3.0 eefn and both v0.3.2 installers have reported Defender detections. Keep affected files quarantined;
 see [ANTIVIRUS.md](ANTIVIRUS.md). New maintenance builds require component and
 artifact scans; a clean scan does not constitute a malware-free guarantee.
 

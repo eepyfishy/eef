@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Self-extracting per-user installer for EEF releases"
+description = "Self-extracting per-user installer for eef releases"
 
 [dependencies]
 anyhow.workspace = true

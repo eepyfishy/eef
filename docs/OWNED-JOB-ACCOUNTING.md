@@ -23,12 +23,12 @@ remote execution is authorized.
 | `unavailable` | The owned-job observation failed or its returned data was invalid. No estimated metrics or raw OS details are substituted. |
 
 An available sample contains `job_commit_limit_bytes` (explicit null when no
-EEF job ceiling is set), `peak_job_commit_bytes`, `active_processes`,
+eef job ceiling is set), `peak_job_commit_bytes`, `active_processes`,
 `total_user_cpu_100ns` and `total_kernel_cpu_100ns`. Values come from Windows
 [extended limits](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_extended_limit_information)
 and [basic accounting](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_accounting_information).
 CPU totals use 100-nanosecond ticks and include associated processes that have
-terminated. Active process count includes the job's members, not only EEF's
+terminated. Active process count includes the job's members, not only eef's
 root/known application children. Peak committed memory is not current commit,
 working set, total node RAM, VRAM or a model resource estimate. Parent/other OS
 limits can be stricter than the job's configured ceiling.

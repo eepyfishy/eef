@@ -1,5 +1,5 @@
 // Opt-in CPU candidate evaluation. No downloads, model selection, user actions,
-// EEF connection, personal prompts or changes to an installed node.
+// eef connection, personal prompts or changes to an installed node.
 import assert from 'node:assert/strict';
 import {createReadStream} from 'node:fs';
 import {mkdtemp, readFile, stat, writeFile} from 'node:fs/promises';

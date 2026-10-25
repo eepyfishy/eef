@@ -400,7 +400,7 @@ impl Runtime {
                 json!({"version": crate::VERSION, "node_port": self.node_server.port()}),
             )
             .await;
-        info!(capabilities = ?self.registry.all_capabilities(), "EEF runtime initialized");
+        info!(capabilities = ?self.registry.all_capabilities(), "eef runtime initialized");
         Ok(())
     }
 
@@ -1117,7 +1117,7 @@ fn default_rules() -> Vec<ResponseRule> {
         ResponseRule::text(
             "greeting",
             "hello",
-            "Hi! I'm EEF — I'm running and watching.",
+            "Hi! I'm eef — I'm running and watching.",
             10.0,
         ),
         ResponseRule::text(

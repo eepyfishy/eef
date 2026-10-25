@@ -46,7 +46,7 @@ apply an already-completed manual setup. Unrelated pending runtime settings bloc
 automatic activation. An admitted restart may finish after later policy edits;
 those edits remain saved/pending, never overwritten by its private snapshot.
 
-Local-owner APIs use POST /api/commands/model-bootstrap-policy. The EEF owner
+Local-owner APIs use POST /api/commands/model-bootstrap-policy. The eef owner
 adapter uses POST /api/commands/node/model-bootstrap-policy and existing
 node.configure control framing. Remote inspection is read-only. Remote writes
 require the current node owner's existing remote-management consent, checked
@@ -158,7 +158,7 @@ Existing process-lifetime-8W31Pd, local-pipelines-neMSj0,
 python-policy-r20X6c, python-bridge-7qg8Dt,
 permission-commands-tfoUon, node-commands-wc6YHi,
 node-credentials-qvYLuV and model-downloads-IbRhZ2 suites also pass. Final
-headless apps/examples build; EEF, EEFN and both native fixture helpers match
+headless apps/examples build; eef, eefn and both native fixture helpers match
 the evaluated hashes. Source boundary, formatting, JS syntax and diff checks
 pass; fixture apps/helpers are terminal. No installed/remote node, visual UI,
 model selection/default, version, installer or update policy changed.

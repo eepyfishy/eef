@@ -96,8 +96,8 @@ impl Feature {
             Self::InputControl => "Keyboard / mouse",
             Self::PeerTransfers => "Approved peer transfers",
             Self::RemoteUpdates => "Remote updates",
-            Self::RemoteManagement => "Management from EEF",
-            Self::RemoteRepairSetupPolicy => "Shared installation maintenance policy from EEF",
+            Self::RemoteManagement => "Management from eef",
+            Self::RemoteRepairSetupPolicy => "Shared installation maintenance policy from eef",
         }
     }
 }

@@ -62,7 +62,7 @@ eef node verify-model --node NODE_ID inspect --operation-id OPERATION_UUID
 ```
 
 Start also accepts `--operation-id` to retain a chosen UUID before sending. The
-client sends `start_selected` with explicit inference consent. EEF checks retained
+client sends `start_selected` with explicit inference consent. eef checks retained
 history first, then resolves a fresh operation using confirmed read-only setup
 and permission snapshots. It requires exactly one saved/applied interpreter and
 local management consent, pinning the permission read to the observed node
@@ -93,7 +93,7 @@ Existing job-history retention is the deduplication boundary,
 not a permanent promise after owner removal of history.
 
 `returned_text` requires a bounded nonempty result confirming the exact retained
-grant and executor session. Definitive final reports already held by the EEF
+grant and executor session. Definitive final reports already held by the eef
 journal are read locally, even with the node disconnected or no model selected;
 `evidence_source` distinguishes coordinator-journal and node-journal evidence.
 Unknown local outcomes may be inspected against newer node evidence without
@@ -155,7 +155,7 @@ recorded above, not inferred from the earlier partial/failed builds.
   coordinator report. Partial evidence is preserved under
   `.validation/model-verification-before-offline-fix-*`; it is not acceptance of
   the corrected source. The corrected five coordinator tests and native
-  `model-verification-IHLHUN` pass, including disconnected history across EEF
+  `model-verification-IHLHUN` pass, including disconnected history across eef
   restart and offline retained start without node contact or execution.
   Both corrected full feature modes pass 1,099 tests plus one existing ignored
   profiler each across fourteen groups; all 302 source/resource/workflow hashes

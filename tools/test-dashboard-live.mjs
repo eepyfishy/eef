@@ -107,6 +107,6 @@ try{
  assert.equal((await progress({state:'downloading',completed:null,total:100})).value,null);
  role='eef';await page.goto('about:blank');await page.goto('http://localhost:51336/#devices');
  try{await page.getByRole('button',{name:'Configure node'}).waitFor({timeout:5000});}
- catch(error){console.error('EEF DOM:',await page.locator('#devices').innerHTML(),'Health:',await page.locator('#health').textContent());throw error;}
+ catch(error){console.error('eef DOM:',await page.locator('#devices').innerHTML(),'Health:',await page.locator('#health').textContent());throw error;}
  console.log('Dashboard initialization, copy stability and truthful installation status passed');
 }finally{await browser.close();}

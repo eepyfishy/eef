@@ -399,7 +399,7 @@ async fn models_on(server: &impl NodeControl, request: ModelsRequest) -> Result<
     if preview["data"]["remote_management_allowed"] != true {
         result["error_code"] = json!("approval_required");
         result["note"] =
-            json!("Enable management from EEF locally on this node. No mutation sent.");
+            json!("Enable management from eef locally on this node. No mutation sent.");
         return Ok(result);
     }
     command.command = request.command;

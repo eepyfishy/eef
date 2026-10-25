@@ -1,4 +1,4 @@
-# Node installation maintenance policy from EEF
+# Node installation maintenance policy from eef
 
 Unreleased after alpha.6. Commands and authenticated backend APIs own this
 behavior; no dashboard is required. This controls the existing
@@ -6,7 +6,7 @@ behavior; no dashboard is required. This controls the existing
 
 ## Owner commands
 
-On the node, explicitly authorize policy changes from EEF:
+On the node, explicitly authorize policy changes from eef:
 
 ```
 eefn permissions allow remote-management
@@ -14,8 +14,8 @@ eefn permissions allow remote-repair-setup-policy
 ```
 
 Both switches are off by default. The second switch can only be changed locally,
-even when EEF already has general remote-management permission. These switches
-take effect without restart. EEF cannot enable them through either permission
+even when eef already has general remote-management permission. These switches
+take effect without restart. eef cannot enable them through either permission
 commands or generic remote settings saves. A local deny revokes future policy
 saves; it does not turn off a policy already saved. To stop future maintenance,
 save that policy off explicitly before revoking remote access, or use the local
@@ -26,7 +26,7 @@ activation or make it report a pending application restart. Only the two known
 live management fields are excluded from that comparison; opaque future settings
 and actual model/permission changes retain their existing fences.
 
-From EEF:
+From eef:
 
 ```
 eef node repair-setup --node NODE_ID show
@@ -43,7 +43,7 @@ Nothing changes the automatic-update feed's prerelease exclusion.
 
 This is **shared node-role installation policy**, not policy limited to one
 configuration or device identity. Multiple node processes using that same
-installation share it. The local consent switch authorizes EEF to select off,
+installation share it. The local consent switch authorizes eef to select off,
 prompt or (on stable builds with its distinct flag) automatic maintenance for
 that installation. Saving an active mode always creates a new one-attempt policy
 identity, even when the mode is unchanged. A running supervisor can then evaluate
@@ -56,7 +56,7 @@ remain separate. Saving policy is not successful repair or runtime health.
 
 ## Shared service and uncertainty
 
-The EEF CLI first reads the policy, then sends one save pinned to the exact
+The eef CLI first reads the policy, then sends one save pinned to the exact
 node/runtime, inspected revision and canonical policy SHA-256. The coordinator
 adapter validates typed, correlated node replies. No alternate node, legacy
 action, repeated save or automatic retry is attempted after loss, rejection or
@@ -64,9 +64,9 @@ unsupported replies. A failed save response may leave the outcome unknown;
 inspect the policy before deciding whether to grant another attempt.
 
 Node commands: `POST /api/commands/repair-setup-policy` (local owner adapter).
-EEF commands: `POST /api/commands/node/repair-setup-policy`. Bodies are bounded
+eef commands: `POST /api/commands/node/repair-setup-policy`. Bodies are bounded
 to 16 KiB and retain existing owner/origin checks. Requests use schema 1, an exact
-runtime and canonical request UUID; only EEF read requests may omit the runtime
+runtime and canonical request UUID; only eef read requests may omit the runtime
 to discover it first. Wire actions are `repair_setup_policy_status` (show only,
 reserved control capacity) and `repair_setup_policy` (work capacity). A status
 action cannot smuggle a mutation through the control lane.
@@ -120,7 +120,7 @@ settings save, which intentionally marks restart pending; it now uses the same
 local permission commands as owners. Neither failed run is acceptance. Logs are
 retained in `.validation/package-policy-headless.log`; the first focused failure
 is also retained in the tool transcript. The lost-reply harness uses a separate
-EEF command configuration pointing at its loopback proxy, not a node discovery
+eef command configuration pointing at its loopback proxy, not a node discovery
 marker or edits to the running coordinator's settings.
 Review also found that the model-only activation comparison needed to exclude
 the new live consent alongside general remote-management consent. A direct
@@ -136,7 +136,7 @@ ignored each), then nineteen native suites. The combined run stopped at
 job-store owner still held its exclusive database lock. Its retained fixture has
 no accepted overall result. The replacement work adds an explicit bounded
 retirement wait for that exact store's connection/lock, not a lock bypass,
-unconditional delay or retry. Six focused retirement tests pass; rebuilt EEF
+unconditional delay or retry. Six focused retirement tests pass; rebuilt eef
 also passes `model-bootstrap-l6uYv7`, observing ten distinct runtimes across
 nine explicit restarts and refusing a second coordinator's database ownership.
 This focused result is not the full checkpoint. The failed combined run is

@@ -16,7 +16,7 @@ or node protocol probe.
 
 ## Secret-free discovery
 
-EEF publishes `owner-eef.json` alongside the existing per-user local discovery
+eef publishes `owner-eef.json` alongside the existing per-user local discovery
 file, using `EEF_DISCOVERY_DIR` when configured or the existing per-user default.
 Its exact schema contains only `schema_version`, loopback `owner_address`,
 loopback `node_address`, and a canonical coordinator `runtime_id`. It contains no
@@ -68,7 +68,7 @@ remain open.
 ## Verification checkpoint
 
 Final default and `--no-default-features` workspace/all-target suites each pass
-**687 tests with one ignored**: EEF library 241, EEF CLI 17, installer 6, node
+**687 tests with one ignored**: eef library 241, eef CLI 17, installer 6, node
 library 409, node CLI 14. Fresh default binaries/examples build; formatting,
 diff, JavaScript syntax and backend/browser dependency source checks pass.
 

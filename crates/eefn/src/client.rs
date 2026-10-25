@@ -404,7 +404,7 @@ impl NodeClient {
         )
     }
 
-    /// Probe the encrypted EEF service before authenticating/registering this node.
+    /// Probe the encrypted eef service before authenticating/registering this node.
     /// Reuse the probed connection. ICMP reachability is neither required nor trusted.
     async fn probe_endpoint(
         &self,
@@ -439,7 +439,7 @@ impl NodeClient {
             .await?;
             let reply = read_message(&self.crypto, &mut connection)
                 .await?
-                .context("EEF closed during the reachability check")?;
+                .context("eef closed during the reachability check")?;
             if reply["type"] == "pong"
                 && reply["nonce"] == nonce
                 && reply["protocol"] == crate::PROTOCOL_VERSION
@@ -458,10 +458,10 @@ impl NodeClient {
                 let local_ip = fallback.local_addr()?.ip();
                 return Ok((Box::new(fallback) as crate::tls::NodeStream, local_ip));
             }
-            bail!("EEF returned an invalid reachability response")
+            bail!("eef returned an invalid reachability response")
         })
         .await
-        .context("EEF unavailable: reachability check timed out after five seconds")??;
+        .context("eef unavailable: reachability check timed out after five seconds")??;
         self.connection_status("connecting", &endpoint.address, None, 0.0);
         Ok(stream)
     }
@@ -487,7 +487,7 @@ impl NodeClient {
             read_message(&self.crypto, &mut reader),
         )
         .await
-        .context("EEF did not finish signing this device in")??
+        .context("eef did not finish signing this device in")??
         .context("coordinator closed during auth")?;
         if reply.get("type").and_then(Value::as_str) != Some("ok") {
             bail!("coordinator denied auth: {reply}");
@@ -1060,7 +1060,7 @@ impl NodeClient {
             });
         }
         drop(heartbeat);
-        bail!("EEF closed the connection. Reconnecting automatically.")
+        bail!("eef closed the connection. Reconnecting automatically.")
     }
 }
 

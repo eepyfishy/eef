@@ -81,7 +81,7 @@ just as before; that is not proof the earlier automatic restart completed.
 ## Verification
 
 Both locked/offline workspace/all-target feature modes pass **928 tests plus one
-ignored profiler each**: EEF 268, owner CLI 21, installer 6, EEFN 607 and node CLI
+ignored profiler each**: eef 268, owner CLI 21, installer 6, eefn 607 and node CLI
 26. Eleven added regressions cover separate restart consent, CLI flag conflicts,
 stale generic restoration, frozen late edits, one-shot startup, applied-baseline
 and final policy/model/catalog/runtime fences, cancellation and live metadata.

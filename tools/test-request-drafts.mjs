@@ -282,7 +282,7 @@ try {
   const uncertain=await prepared('http_request','http.request',{url:`http://127.0.0.1:${gateServer.address().port}/uncertain`,method:'GET',timeout_seconds:20},15000);
   const start=await node(['requests','execute',uncertain.command.id,'--revision','3','--approval-digest',uncertain.command.approval_sha256,'--operation-id',uncertain.command.operation_id]);
   assert.equal(start.success,true);
-  await until(async()=>gateRequests===1&&(await node(['jobs','get',uncertain.command.id])).data.grant_attempts?.[0]?.state==='accepted','node HTTP effect and persisted EEF acceptance');
+  await until(async()=>gateRequests===1&&(await node(['jobs','get',uncertain.command.id])).data.grant_attempts?.[0]?.state==='accepted','node HTTP effect and persisted eef acceptance');
   const accepted=(await coordinator(['requests','inspect',uncertain.command.id])).plan;
   const uncertainGrant=accepted.execution.attempts[0].grant.grant_id;
   const pendingInspection=(await node(['requests','receipt',uncertain.command.id,'--grant-id',uncertainGrant])).result;
@@ -367,7 +367,7 @@ try {
   assert.deepEqual((await coordinator(['requests','inspect',ownerInterrupted.plan_id])).plan.execution.attempts,ownerInterrupted.execution.attempts);
   for(const res of gatedResponses)res.end('late data is not completion authority');
   assert.equal(gateRequests,2);assert.equal(await readFile(effectFile,'utf8'),'external owner marker');
-  assert.deepEqual((await coordinator(['requests','inspect',writeJob.command.id])).plan,completed,'completed grants must survive EEF restart unchanged');
+  assert.deepEqual((await coordinator(['requests','inspect',writeJob.command.id])).plan,completed,'completed grants must survive eef restart unchanged');
   await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,two_logical_nodes:true,pinned_tls13:true,api_only:true,
     model_free:true,origin_owned:true,immutable_original:true,clarification_answers:true,proposal_history:true,
     receipt_deduplication:true,revision_checks:true,restart_persistence:true,no_automatic_replay:true,

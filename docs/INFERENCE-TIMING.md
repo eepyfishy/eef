@@ -59,7 +59,7 @@ not promised response times or automatic retries.
 The original overall bounds can expire before every worst-case coordinator wait
 is exhausted; the extension preserves that design rather than inventing fresh
 leases per stage. Runtime retirement still interrupts immediately. Inference
-timeout drops EEF's request/wait; it is **not proof that shared provider work or
+timeout drops eef's request/wait; it is **not proof that shared provider work or
 external effects stopped**. No automatic reload, retry, provider switch or
 unconstrained fallback follows timeout. Previously retained answer/input commands
 still inspect history without reinference, even if the caller supplies a new

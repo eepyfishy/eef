@@ -1,7 +1,7 @@
 # Bundled runtime doctor (unreleased)
 
 The shared backend exposes local owner diagnostics independently of a dashboard,
-saved configuration or running EEF/EEFN service:
+saved configuration or running eef/eefn service:
 
 ```
 eefn doctor
@@ -20,7 +20,7 @@ No individual file/folder/application grants or JSON editing are required.
 
 The inspector resolves the existing semantic/physical package selection and
 inspects that generation's files directly. It does **not** launch the selected
-EEF/EEFN application or hide diagnostic failure behind bootstrap-child exit codes.
+eef/eefn application or hide diagnostic failure behind bootstrap-child exit codes.
 This also supports same-version repair generations without borrowing old-root
 runtime files. The inspector and selected application versions are reported
 separately; selected application launch/ABI compatibility remains unchecked.

@@ -80,7 +80,7 @@ current remote consent, stale policy/runtime/catalog refusal, immutable consent,
 busy transfers, revocation before and during metadata inspection, startup/crash
 recovery, damaged evidence, repeat refusal, separate activation consent and legacy
 report notes. Both locked/offline workspace/all-target feature modes pass **939
-tests plus one ignored profiler each**: EEF 269, owner CLI 21, installer 6, EEFN
+tests plus one ignored profiler each**: eef 269, owner CLI 21, installer 6, eefn
 616 and node CLI 27. Final logs/build:
 
 - .validation/prompt-approval-workspace-default-accepted.log

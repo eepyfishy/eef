@@ -1,6 +1,6 @@
 # Coordinator restart and journal ownership
 
-Unreleased after alpha.6. An in-process EEF restart must retire its previous
+Unreleased after alpha.6. An in-process eef restart must retire its previous
 job-database owner before initializing a replacement runtime. Shutdown intent,
 an empty runner set and a dropped root `Runtime` reference are not sufficient:
 other final callbacks or service references can still own the journal.
@@ -13,7 +13,7 @@ reference. The failed fixture is retained and is not replayed or accepted.
 
 ## Lifecycle boundary
 
-EEF still closes admission and drains runners, background work, node transport
+eef still closes admission and drains runners, background work, node transport
 and HTTP through the existing shutdown path. After HTTP draining, main consumes
 the runtime through `Runtime::retire`. It takes a receiver tied to that exact
 `JobStore`, drops its root runtime reference, and awaits the store's retirement
@@ -46,7 +46,7 @@ change permissions, relax prerelease exclusions or grant cluster leadership.
 
 Six focused `retirement` tests pass, including three new tests for final journal
 ownership, timeout refusal and runtime drop with independently retained stores.
-Rebuilt EEF passes `model-bootstrap-l6uYv7`: ten distinct runtime IDs across
+Rebuilt eef passes `model-bootstrap-l6uYv7`: ten distinct runtime IDs across
 nine explicit restart requests, plus refusal of a competing coordinator opening
 the active database. Those are fresh operations, not automatic recovery retries
 of the failed request. Existing restart-observation deadlines are unchanged.

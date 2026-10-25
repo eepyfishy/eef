@@ -115,7 +115,7 @@ pub fn generate_firmware(
         .map(|cap| cap.ability.as_str())
         .collect::<Vec<_>>();
     let mut source = format!(
-        "/* EEF generated firmware v{version}; do not edit. */\n#include <WiFi.h>\n#include <ArduinoJson.h>\n\nconst char* SSID = {};\nconst char* WIFI_PASS = {};\nconst char* EEF_HOST = {};\nconst uint16_t EEF_PORT = {};\nconst char* NODE_ID = {};\nconst char* NODE_NAME = {};\nconst char* PSK = {};\n// capabilities: {}\n\nvoid handleFirmwareBegin(JsonDocument& doc) {{}}\nvoid handleFirmwareChunk(JsonDocument& doc) {{}}\nvoid handleFirmwareApply(JsonDocument& doc) {{ ESP.restart(); }}\n",
+        "/* eef generated firmware v{version}; do not edit. */\n#include <WiFi.h>\n#include <ArduinoJson.h>\n\nconst char* SSID = {};\nconst char* WIFI_PASS = {};\nconst char* EEF_HOST = {};\nconst uint16_t EEF_PORT = {};\nconst char* NODE_ID = {};\nconst char* NODE_NAME = {};\nconst char* PSK = {};\n// capabilities: {}\n\nvoid handleFirmwareBegin(JsonDocument& doc) {{}}\nvoid handleFirmwareChunk(JsonDocument& doc) {{}}\nvoid handleFirmwareApply(JsonDocument& doc) {{ ESP.restart(); }}\n",
         c_string(&config.ssid),
         c_string(&config.wifi_pass),
         c_string(&config.host),

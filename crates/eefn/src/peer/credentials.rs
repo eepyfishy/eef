@@ -218,7 +218,7 @@ pub fn seal_pair(
     ca.not_before = not_before;
     ca.not_after = not_after;
     ca.distinguished_name
-        .push(rcgen::DnType::CommonName, format!("EEF peer {hash}"));
+        .push(rcgen::DnType::CommonName, format!("eef peer {hash}"));
     let ca_key = rcgen::KeyPair::generate()?;
     let ca_cert = ca.self_signed(&ca_key)?;
     let issuer = rcgen::Issuer::new(ca, ca_key);

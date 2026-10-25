@@ -1,7 +1,7 @@
 # Execution grant boundary (unreleased after alpha.6)
 
 This is an explicit one-shot boundary for roadmap stages 6-7, **not a completed
-automatic request workflow or a stable release**. The EEF
+automatic request workflow or a stable release**. The eef
 [bounded owner approval command](COMMANDS.md#bounded-owner-request-approval-unreleased-after-alpha6)
 retains `approved` without issuing a grant or starting work. A subsequent
 [explicit execution command](COMMANDS.md#explicit-approved-request-execution-unreleased-after-alpha6)
@@ -77,7 +77,7 @@ confirm granted execution. The reviewed execution path uses a direct journal
 observer, not a broadcast listener: issuance is saved before dispatch, and matching
 acceptance/final reports are saved before the RPC waiter receives confirmation.
 Journal failure cannot yield confirmed success. This is not a distributed second
-permission-to-start: effects can begin after the node sends acceptance, before EEF
+permission-to-start: effects can begin after the node sends acceptance, before eef
 checkpoints it. Results are bounded and stored once; ordinary job views redact
 parameters and raw reports. Exact retained command retries inspect without issuing
 another grant. Restart marks outstanding attempts unknown and never resumes them.
@@ -111,7 +111,7 @@ mismatched or unanswered proof denies admission before consumption/effects.
 The gateway does not accept an ACK before issuing proof or after its deadline.
 
 Updated nodes advertise `timing_mode: issuer_lease_challenge_v1`; missing or other
-modes cannot receive new grants from updated EEF. There is no wall-clock or legacy
+modes cannot receive new grants from updated eef. There is no wall-clock or legacy
 RPC fallback. Read-only inspection of existing compatible receipts does not require
 the new mode and cannot reactivate a lease. Existing schema-1 grant/receipt journals
 remain intact; update both roles before testing new execution on physical PCs.
@@ -167,8 +167,8 @@ The authenticated owner/origin decision is durable and idempotent. Separate expl
 history removal does not erase node nonce receipts. Lost-output/execution
 reconciliation and strong remote termination remain later boundaries.
 
-The original request node and local EEF owner can additionally use
-`requests receipt JOB_ID --grant-id GRANT_UUID --json` through EEF. It selects only
+The original request node and local eef owner can additionally use
+`requests receipt JOB_ID --grant-id GRANT_UUID --json` through eef. It selects only
 the exact retained issuance and reads the independently authenticated executor's
 journal under the same pinned issuer, including after session replacement.
 The complete scope digest and bounded identity/timestamp metadata must match.
@@ -181,12 +181,12 @@ same strict metadata. Neither read path creates, repairs, prunes or changes rece
 `automatically_retried: false`, `reconciled: false`. Coordinator state is a revision
 snapshot, not a write or resumed lease. This metadata-only command does not fetch
 output/success; schema-1 receipts cannot supply them. The separate explicit
-`result` command now reads schema-2 final reports without changing EEF tracking.
+`result` command now reads schema-2 final reports without changing eef tracking.
 Missing evidence cannot prove no effects, and observed terminal state cannot prove
 every external effect stopped. Inspection performs no reconciliation; local tracking
 abandonment is a separate explicit command, not lost-output or execution recovery.
 The separate [recover-result command](RESULT-RECOVERY.md) now saves exact retained
-completed evidence in EEF's interrupted job journal. It preserves original
+completed evidence in eef's interrupted job journal. It preserves original
 ACK/uncertainty and cannot dispatch unissued steps, renew authority or replay work.
 See [command contract](COMMANDS.md#executor-receipt-inspection-through-eef-unreleased-after-alpha6).
 

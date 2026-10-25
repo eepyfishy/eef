@@ -1,4 +1,4 @@
-# EEF v0.4.0a2 - two-PC diagnostic alpha
+# eef v0.4.0a2 - two-PC diagnostic alpha
 
 Internal version: `0.4.0-alpha.2`. This opt-in Windows x86-64 prerelease extends
 v0.4.0a for physical two-PC development/testing. It is not the completed roadmap.
@@ -7,7 +7,7 @@ Stable update feeds remain on v0.3.2; installing this alpha is an explicit choic
 ## Install
 
 Download `eef-installer.exe` and `eefn-installer.exe`. Install both on the first
-PC; install EEFN on the second PC. A node does not require local EEF. EEF can also
+PC; install eefn on the second PC. A node does not require local eef. eef can also
 be installed on the second PC for a separate coordinator test, but do not run
 the same stateful work on two coordinators: no safe cluster replication/fencing.
 
@@ -27,7 +27,7 @@ and permissions continue to work.
 - Shared node runtime services, not dashboard-owned model/configuration state.
 - `eefn network show/set`, `--no-ui`, separate stable identity/display name/
   advertised address, and optional coordinator advertisements.
-- `eefn network peers`: EEF-owner-scoped discovery with self-only defaults,
+- `eefn network peers`: eef-owner-scoped discovery with self-only defaults,
   bounded sanitized pages, heartbeat freshness and stale-address removal.
 - `eefn network diagnose --json` and `eef diagnostics --json`: explicit minimal
   local reports with versions/runtime IDs and connection information/counters.

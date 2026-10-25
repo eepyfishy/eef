@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>EEFN node dashboard</title>
+  <title>eefn node dashboard</title>
   <style>
     :root{color-scheme:dark;--bg:#101418;--panel:#192127;--text:#eef5f7;--accent:#55d6be;--warn:#ffd166}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif}
@@ -17,12 +17,12 @@
 </head>
 <body>
 <main>
-  <h1>EEFN node dashboard</h1>
+  <h1>eefn node dashboard</h1>
   <div id="notice" role="status" aria-live="polite"></div>
   <section>
     <h2>Node status</h2>
     <p id="status">Loading…</p>
-    <p>EEFN can run before it joins a network. At least one EEF coordinator is required for coordinated network tasks.</p>
+    <p>eefn can run before it joins a network. At least one eef coordinator is required for coordinated network tasks.</p>
     <button id="startup">Loading startup state…</button>
   </section>
   <section>
@@ -61,11 +61,11 @@ const checks=[...document.querySelectorAll('[data-policy]')];let startupEnabled=
 function parseConfig(){return JSON.parse($('config').value)}
 function setPath(object,path,value){const parts=path.split('.');let current=object.permissions??={};for(const part of parts.slice(0,-1))current=current[part]??={};current[parts.at(-1)]=value}
 function syncChecks(){try{const config=parseConfig();for(const box of checks){let value=config.permissions;for(const part of box.dataset.policy.split('.'))value=value?.[part];box.checked=value===true}}catch{}}
-for(const box of checks)box.addEventListener('change',()=>{try{const config=parseConfig();setPath(config,box.dataset.policy,box.checked);$('config').value=JSON.stringify(config,null,2);say('Permission changed locally. Save and restart EEFN to apply.')}catch(error){box.checked=!box.checked;say(`Fix the JSON before changing permissions: ${error.message}`,true)}});
+for(const box of checks)box.addEventListener('change',()=>{try{const config=parseConfig();setPath(config,box.dataset.policy,box.checked);$('config').value=JSON.stringify(config,null,2);say('Permission changed locally. Save and restart eefn to apply.')}catch(error){box.checked=!box.checked;say(`Fix the JSON before changing permissions: ${error.message}`,true)}});
 $('config').addEventListener('input',syncChecks);
 async function load(){try{const[status,config,startup]=await Promise.all([api('/api/status'),api('/api/config'),api('/api/startup')]);$('status').textContent=`${status.node_id} is running as a Rust node (version ${status.version}).`;$('config').value=JSON.stringify(config.config,null,2);syncChecks();startupEnabled=startup.enabled;$('startup').textContent=startupEnabled?'Disable startup app':'Enable startup app';say('Configuration loaded.')}catch(error){say(error.message,true)}}
-$('save').onclick=async()=>{try{const config=parseConfig();await api('/api/config',{method:'PUT',body:JSON.stringify({config})});say('Saved. Restart EEFN to apply.')}catch(error){say(error.message,true)}};
-$('startup').onclick=async()=>{try{const startup=await api('/api/startup',{method:'PUT',body:JSON.stringify({enabled:!startupEnabled})});startupEnabled=startup.enabled;$('startup').textContent=startupEnabled?'Disable startup app':'Enable startup app';say(startupEnabled?'EEFN startup enabled.':'EEFN startup disabled.')}catch(error){say(error.message,true)}};
+$('save').onclick=async()=>{try{const config=parseConfig();await api('/api/config',{method:'PUT',body:JSON.stringify({config})});say('Saved. Restart eefn to apply.')}catch(error){say(error.message,true)}};
+$('startup').onclick=async()=>{try{const startup=await api('/api/startup',{method:'PUT',body:JSON.stringify({enabled:!startupEnabled})});startupEnabled=startup.enabled;$('startup').textContent=startupEnabled?'Disable startup app':'Enable startup app';say(startupEnabled?'eefn startup enabled.':'eefn startup disabled.')}catch(error){say(error.message,true)}};
 $('reload').onclick=load;load();
 </script>
 </body>

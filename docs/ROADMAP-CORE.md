@@ -21,7 +21,10 @@ Existing owner bytes and credentials are preserved. Corrected full Rust modes
 the unchanged browser regression pass after a native package-setup timeout exposed
 costly repeated debug-build file hashing. No test deadline or authorization check
 is relaxed. The standalone read-only MSI planner has thirty-four separate local
-cases and its own CI step; new hosted acceptance remains pending. This is not
+cases and its own CI step. Published `4ea7964` passes all four hosted jobs,
+thirty Windows native suites and the planner step in
+[run 40176167808](https://github.com/eepyfishy/eef/actions/runs/40176167808).
+Later MSI authoring work needs its own acceptance. This is not
 complete private/model onboarding or MSI release acceptance.
 
 The optional [Granite 1B candidate screen](MODEL-CANDIDATE-EVALUATION.md#granite-40-1b-candidate-2026-10-25-not-default-approved)
@@ -56,7 +59,7 @@ commands, never service launches.
 The locally accepted backend-selected model-check follow-up has both full Rust
 modes passing 1,104 tests plus one ignored each, all thirty native suites and a
 separate cached real-CPU regression against unchanged evaluated hashes. CLI start submits
-one owner command; EEF reads retained history before resolving fresh node setup
+one owner command; eef reads retained history before resolving fresh node setup
 and consent. Typed readiness guidance does not choose a default, mutate setup,
 restart or automatically infer. Shared setup/approval guidance is preserved.
 This closes a client/backend ownership gap, not automatic onboarding, interpreter
@@ -92,10 +95,10 @@ twenty-eight native suites. It retains earlier capacity/stop-fixture failures an
 does not close automatic
 setup-to-inference health, approved default/model quality or release acceptance.
 
-EEF is the control plane: it validates requests, plans, authorizes, and observes
-work. EEFN is the node runtime: it interprets natural language when available,
+eef is the control plane: it validates requests, plans, authorizes, and observes
+work. eefn is the node runtime: it interprets natural language when available,
 enforces permissions, executes authorized workloads, and reports results.
-Authorized nodes may exchange data directly; EEF need not relay every payload.
+Authorized nodes may exchange data directly; eef need not relay every payload.
 
 Pause visual UI development. Prioritize reliable commands, diagnostics,
 automation, networking, execution, and model handling. UI changes are limited
@@ -106,12 +109,12 @@ Normal future PC node setup will supply or automatically obtain a replaceable,
 CPU-capable lightweight LM. This **supersedes the earlier requirement that new
 nodes never obtain a model**. Published v0.4.0a installers still contain/download
 no model; do not retroactively change their documentation or artifacts.
-EEF itself still needs no local LM. GPU/CUDA is optional, never a core dependency.
+eef itself still needs no local LM. GPU/CUDA is optional, never a core dependency.
 
 ## Commands own behavior; UI is a client
 
 [Shared setup/model guidance](SETUP-MODEL-GUIDANCE.md) is locally validated: the node
-and EEF observe the existing setup backend, so retained installation/approval
+and eef observe the existing setup backend, so retained installation/approval
 state is not mistaken for a need to choose another interpreter. The check never
 drives setup, grants permissions, infers, restarts or retries work. Owned bounded
 read workers preserve responsive controls. Both full feature modes pass 1,058
@@ -167,7 +170,7 @@ pass with unchanged app/helper hashes. Full packaging/HTTPS, physical, signature
 Defender, model/default and automatic-controller/health gates remain open.
 
 [Exact-build source proposals](REPAIR-SOURCES.md) remove manual package SHA/size
-entry from local EEF/EEFN repair: check an owner-selected HTTPS descriptor, then
+entry from local eef/eefn repair: check an owner-selected HTTPS descriptor, then
 approve the retained source/build/slot-bound UUID. No source/token is retained,
 no publisher is hardcoded, and existing admission/no-replay checks still own the
 artifact boundary. Offline inspection separates proposals from approval/history.
@@ -239,7 +242,7 @@ configuration directory. Native core-work, restart, local/remote consent and
 selection regressions pass. This is a reliability prerequisite for setup
 automation, not model-health, bootstrap-runner or release completion.
 
-The [bootstrap-policy foundation](MODEL-BOOTSTRAP-POLICY.md) adds shared node/EEF
+The [bootstrap-policy foundation](MODEL-BOOTSTRAP-POLICY.md) adds shared node/eef
 commands, exact owner catalog bindings and runtime/revision-fenced saves.
 Absent legacy settings preserve existing setup; older/generic saves cannot erase
 opt-outs or reset versions. Opaque unsupported setup metadata does not block
@@ -275,7 +278,7 @@ or full release acceptance. Six public regression suites and both full feature
 modes pass (860 tests plus one ignored each); see
 [scope and evidence](PROCESS-LIFETIME.md#executor-retirement-before-final-grant-checkpoint-subsequent-increment).
 
-Python adapter budgets now have typed local/EEF show/configure commands with
+Python adapter budgets now have typed local/eef show/configure commands with
 saved/applied separation, runtime/digest fences and current local consent for
 remote writes. An optional Windows owned-job commit ceiling covers each bridge
 host and its descendants using existing native containment; defaults are
@@ -292,12 +295,12 @@ without fresh resolution, inference or execution. Focused/public synthetic
 command and fault cases pass; both workspace/all-target feature modes pass 847
 tests plus one ignored each. Physical hardware and stable-release gates remain.
 
-Typed local/EEF relay setup now creates missing resource declarations and selects
+Typed local/eef relay setup now creates missing resource declarations and selects
 a receiver port without user JSON or port numbers. Existing bindings/settings
 survive repeated setup; ambiguous/disabled/foreign resources are not substituted.
 Setup never enables permissions, opens a listener or starts media/restarts.
 The separate `peer-transfers` switch retains existing limits; current local
-management consent gates EEF writes. Public synthetic command/fault cases pass.
+management consent gates eef writes. Public synthetic command/fault cases pass.
 This is not complete first-run dependency/model setup or physical acceptance.
 Finite authoring is described above. See [setup workflow and scope](RELAY-SETUP.md).
 
@@ -479,7 +482,7 @@ The unreleased [installed GGUF selection command](INSTALLED-MODEL-SELECTION.md)
 selects a verified node-cache text artifact by ID without caller paths or ports.
 Optional explicit interpreter assignment shares the existing atomic role service;
 provider, unrelated settings and matching owner tuning/extensions survive. Local,
-offline and approved EEF-mediated commands share asynchronous verification and
+offline and approved eef-mediated commands share asynchronous verification and
 snapshot/approval rechecks. Both suites pass 708 tests plus one ignored each;
 synthetic-cache CLI and remote protocol fixtures pass without loading/downloading
 weights or restarting. An existing 1.28 GB cache is also fully verified and
@@ -497,7 +500,7 @@ drafts. The prompt is unchanged. Better failure explanation is not semantic
 quality, automatic bootstrap, physical acceptance or release completion.
 
 The unreleased [application-context prompt increment](INTERPRETER-QUALITY.md#application-context-increment-unreleased-no-default-approval)
-explains EEF nodes and origin-relative references while preserving the original
+explains eef nodes and origin-relative references while preserving the original
 ambiguity, schema and authority rules. Both suites pass 701 tests plus one ignored
 each; public preview and production 2B comparisons pass their harnesses. Quality
 label totals remain 14/20 and 12/20, with fewer copied sample goals and mixed
@@ -606,7 +609,7 @@ locally, as recorded in the linked document.
 
 The subsequent unreleased [selected-GGUF lifecycle](MODEL-LIFECYCLE.md) provides
 runtime-owned per-selection load/unload/status/cancel commands through the node
-and approved EEF owner adapters. Exact runtime/generation receipts prevent
+and approved eef owner adapters. Exact runtime/generation receipts prevent
 replay; active inference pins block unload; current owner authority and load
 ownership are checked at application. The existing Windows process-tree guard
 also contains GGUF children. This does not finish full lifecycle, general local
@@ -743,7 +746,7 @@ strong termination and automatic continuation remain open; localhost tests
 do not replace physical acceptance or complete the roadmap.
 
 The next unreleased [execution boundary](EXECUTION-BOUNDARY.md) makes reviewed
-grants mandatory in the public EEF core and on the node's ordinary RPC receiver.
+grants mandatory in the public eef core and on the node's ordinary RPC receiver.
 It retires legacy workload admission/dispatch/resume, moves `--ask` and node
 HTTP input to durable review, and migrates text-job creation to review/compilation.
 No second node runtime, model/RPC fallback or configuration opt-out is introduced.
@@ -770,7 +773,7 @@ approvals are not supplied by preparation policy; the full release scope remains
 
 The subsequent [answer workflow](ANSWER-WORKFLOW.md) adds a separate applied
 resolution policy and explicit target/revision input through shared node commands.
-EEF records new answers' exact source revision/digest atomically; legacy unknown
+eef records new answers' exact source revision/digest atomically; legacy unknown
 evidence stays unknown. Bounded resolution/preparation keeps original history and
 awaits approval, while partial/reused receipts cannot trigger implicit continuation.
 This covers initial answer triggers, not durable automation definitions, reusable
@@ -933,7 +936,7 @@ The next explicit process authoring increment adds `eefn requests submit-process
 with typed literal options rather than a JSON file. It still uses the existing
 review/compiler/owner approval/grant path. Native acceptance exposed a nonzero
 exit incorrectly treated as successful; the node now retains an unsuccessful
-completed report and EEF records a failed job. Exact-grant confirmation rejects
+completed report and eef records a failed job. Exact-grant confirmation rejects
 contradictory false-success native evidence without rewriting old history.
 This advances command usability and failure-aware execution, not automatic
 code upgrades, universal stop acknowledgement, general pipelines or stable 0.4.0.
@@ -951,10 +954,10 @@ independent saved browser preferences while preserving legacy listener settings.
 
 ```text
 CLI / automation / dashboard -> shared typed commands -> policy + core services
-natural language -> node interpreter -> validated request -> EEF plan + grant
+natural language -> node interpreter -> validated request -> eef plan + grant
                                                           -> node execution
 authorized node <---------------- bounded data ----------------> authorized node
-                          status/events/results -> EEF -> origin node
+                          status/events/results -> eef -> origin node
 ```
 
 Commands are structured application operations, not arbitrary shell strings.
@@ -988,7 +991,7 @@ commands. Both paths pass the same authorization and validation boundaries.
 ## Mapping onto v0.4.0a
 
 Subsequent unreleased command increments now include model selections locally
-and through approved EEF control, explicit role-constrained text/vision routing,
+and through approved eef control, explicit role-constrained text/vision routing,
 and node-origin job CLI controls with bounded text-output inspection. These reuse
 the existing services, submission connection and durable journal. They do not
 complete automatic interpretation, model bootstrap, execution grants, direct-peer
@@ -1145,7 +1148,7 @@ existing `device-*` IDs: the proposed `node-*` example is not grounds to reset
 identity, job ownership or resources. Preserve the existing wire `name` field
 through compatible mapping if the public contract calls it `display_name`.
 
-An outgoing EEF endpoint, bind/listen endpoint, observed socket source, and
+An outgoing eef endpoint, bind/listen endpoint, observed socket source, and
 advertised reachable endpoint are distinct facts. Do not turn an outgoing
 connection's ephemeral source port into a peer service port. Validate IPv4,
 IPv6 and hostnames, with explicit service ports where needed; an address alone
@@ -1153,10 +1156,10 @@ does not imply an active listener. No Radmin/Playit/Hamachi/LAN protocol modes.
 Radmin is the owner's preferred PC deployment example, not a runtime dependency
 or a claim that the app configures an overlay/tunnel automatically.
 
-Support a node connecting to local EEF via `127.0.0.1:51335` while advertising an
+Support a node connecting to local eef via `127.0.0.1:51335` while advertising an
 owner-selected overlay address. Never substitute that loopback address for a
 remote peer endpoint. Reachability is requester/path-specific, time-bounded and
-distinct from authenticated identity. Keep the existing EEF pre-connect probe;
+distinct from authenticated identity. Keep the existing eef pre-connect probe;
 successful probing does not authorize operations.
 
 An optional coordinator advertisement contains coordinator identity, advertised
@@ -1165,7 +1168,7 @@ discovery metadata, not proof of leadership or authority to change trust roots.
 Newly learned coordinators still need the existing owner-approved trust/pairing
 path. Do not implement silent failover by trusting a registration string.
 
-EEF's node view includes identity/name, advertised endpoints, online/stale
+eef's node view includes identity/name, advertised endpoints, online/stale
 status, capabilities, models and optional coordinator presence. Update it from
 authenticated registration/heartbeats, bound collection sizes, expire stale
 records, and define compatible defaults for older nodes. Disclose only fields
@@ -1205,16 +1208,16 @@ input type, intent, goal, context hints, constraints, suggested capabilities,
 semantic complexity, one-shot/continuous intent, and optional plan/method hints.
 Treat all model output as untrusted: bound bytes/collections/time, validate
 schema, reject invented identifiers/permissions, keep unknown values unknown,
-and require clarification for ambiguous consequential actions. EEF revalidates
+and require clarification for ambiguous consequential actions. eef revalidates
 against live state; hints never override authenticated origin or owner policy.
 Neither natural language nor an LM-generated plan is executable shell code.
 Do not present the small classifier/interpreter as a heavy reasoning model.
 
 ## 6-7. Plans, grants and deterministic execution
 
-The unreleased origin planning increment lets the input node request EEF's existing
+The unreleased origin planning increment lets the input node request eef's existing
 compiler and inspect its private concrete plan through shared commands, without
-using EEF's owner interface or a dashboard. Candidate filtering precedes ranking
+using eef's owner interface or a dashboard. Candidate filtering precedes ranking
 and admits only fresh self/owner-disclosed peers; default remains self-only.
 Compilation retains `awaiting_approval`, never implicit approval or execution.
 Explicit `requests submit`/`jobs request-text` now admit immutable caller input
@@ -1225,7 +1228,7 @@ This is a grant-aware entry point, not migration of legacy task/chat/rule/RPC
 execution or completion of the grant-enforced default; see [explicit requests](EXPLICIT-REQUESTS.md).
 Simple parameter-free inputs have a file-free CLI adapter; explicit `requests
 prepare` can now produce a source-bound one-step method or answerable clarification
-using the selected interpreter. EEF atomically checkpoints it against immutable
+using the selected interpreter. eef atomically checkpoints it against immutable
 review/context; a method still awaits separate approval. Historical snapshots and
 saved preparation receipts do not renew lookup/authority or require inference.
 Bounded input/answer triggers now share runtime-owned services. General semantic
@@ -1261,7 +1264,7 @@ bounded terminal reports/output in the executor's existing grant journal before
 completion delivery. Admission reserves that space across independent handles;
 legacy migration preserves consumed history without inventing success/output.
 Origin/owner `requests result` and executor-local `grants result` explicitly fetch
-private evidence without changing EEF tracking, renewing authority or repeating
+private evidence without changing eef tracking, renewing authority or repeating
 effects, including after session replacement. Receipt/status paths stay redacted.
 This advances lost-output retrieval, not safe replay, explicit coordinator journal
 reconciliation, strong termination or physical release acceptance.
@@ -1286,7 +1289,7 @@ reliability, not automatic pairing, credential ESP support or physical acceptanc
 The 2026-10-10 unreleased [scheduling command increment](COMMANDS.md#coordinator-scheduling-limits-unreleased-after-alpha6)
 adds owner-configured non-model freshness and coordinator-local global/provider/
 exact-node concurrency ceilings. Atomic reservations include retired futures
-in global/node budgets until release; saving policy requires explicit EEF restart.
+in global/node budgets until release; saving policy requires explicit eef restart.
 This is stage 7 admission infrastructure, not physical resource enforcement,
 legacy model inference admission, remote cancellation acknowledgement or a grant.
 Direct owner diagnostics/recovery remain usable when scheduling capacity is full.
@@ -1300,7 +1303,7 @@ TLS record replay protection does not implement durable logical-command replay
 state or scoped issuer-session authorization; those remain required before safe
 execution grants/peer paths. This is a stage 6 prerequisite, not stage 6 completion.
 
-EEF uses the structured goal plus actual capabilities, models, freshness/load,
+eef uses the structured goal plus actual capabilities, models, freshness/load,
 reachability, priority, ownership and resource limits to build the authoritative
 plan. The LM may describe semantic complexity, not assert exact compute cost.
 Preserve the current scheduler and extend its constraints and measured inputs.
@@ -1318,7 +1321,7 @@ generation, executor node, exact capabilities/resources/model or pipeline,
 priority, enforceable limits, reporting policy and expiry/termination conditions.
 Persist issuance before dispatch, correlate acceptance/completion to that grant,
 and reject duplicate/stale attempts. Effective permission is the intersection
-of EEF's grant and current local node policy. Revoking local permission takes
+of eef's grant and current local node policy. Revoking local permission takes
 effect without waiting for a model or a coordinator reply.
 
 Design grants so nodes cannot forge coordinator authority using a network-wide
@@ -1383,9 +1386,9 @@ Continue those on the existing
 durable runtime; the full finite/continuous/media/peer scope below is unchanged.
 
 Owner clarification, 2026-09-22: see [presence and supervised media sessions](PRESENCE-AND-MEDIA.md).
-EEF approves and supervises sessions; payloads may use approved peer paths or a
+eef approves and supervises sessions; payloads may use approved peer paths or a
 user-selected bounded coordinator relay. This replaces the intermediate proposal
-to require every packet to traverse EEF, not EEF's authority over the session.
+to require every packet to traverse eef, not eef's authority over the session.
 Persistent virtual audio input/output, configurable microphone/TTS mixing,
 independent output routing and reusable lightweight presence are planned extensions
 of the existing resource/job/grant model. Presence supports welcoming, locating
@@ -1394,25 +1397,25 @@ Account for concurrent sessions and aggregate resource/bandwidth limits. These
 were recorded as documentation-only requirements, not implemented features;
 existing implementation order and security prerequisites remain.
 
-EEF gives only authorized endpoints and short-lived pair/job/resource-scoped
+eef gives only authorized endpoints and short-lived pair/job/resource-scoped
 session credentials. Both peers authenticate each other and validate direction,
 scope, generation and expiry; no authorization follows merely from learning an
 IP or sharing an overlay. Encrypt payloads, reject replay, bound frames/queues,
 connections, transfer bytes/rate and duration. Keep control traffic responsive
-under bulk load. Report transfer status/results to EEF. Failed reachability
+under bulk load. Report transfer status/results to eef. Failed reachability
 reports a clear failure or uses an explicitly allowed bounded relay, not an
 unbounded fallback or public unauthenticated listener.
 
 Extend durable jobs with local pipelines: camera -> detector -> optional VLM ->
 event; microphone -> VAD -> optional STT -> interpretation/filter -> event.
-Do not send every normal frame to EEF. Set rate/resolution, memory/disk/CPU
+Do not send every normal frame to eef. Set rate/resolution, memory/disk/CPU
 budgets, event deduplication, backpressure, bounded offline buffering and privacy
 retention before claiming continuous support. Add recurring triggers to the
 same job/attempt system with explicit overlap, missed-trigger and restart rules.
 
 The listening toggle means ambient input on explicitly selected nodes, **not**
-EEF service uptime. Default ambient capture is off and requires the local
-microphone permission plus an authorized listening workload. EEF may request it
+eef service uptime. Default ambient capture is off and requires the local
+microphone permission plus an authorized listening workload. eef may request it
 through normal approved commands but cannot override local denial. Listening off
 stops ambient capture/processing and releases resources; typed commands, network,
 job control and other authorized work remain available. Status must expose which
@@ -1423,7 +1426,7 @@ node is listening. Heavy LLM/VLM residency is never required to remain reachable
 Track UNLOADED, LOADING, READY, ACTIVE, WARM_IDLE and ERROR from backend/process
 observations, not desired configuration. Unknown backend state remains unknown.
 Bound concurrent loads, report load failure/cancellation, and pin models while
-active workloads use them. Unload EEFN-owned heavy processes after configurable
+active workloads use them. Unload eefn-owned heavy processes after configurable
 idle time; do not stop a shared Ollama service or disrupt another user's active
 work. Backend limitations must be explicit. Lightweight residency is optional.
 
@@ -1441,11 +1444,11 @@ updater/installers and no-unsafe-replay tests. Keep existing UI smoke tests but
 do not expand visual polish work. Test public commands rather than relying only
 on test helpers directly accessing internal modules.
 
-Physical multi-node gate: user command/NL on Node A -> interpretation -> EEF
+Physical multi-node gate: user command/NL on Node A -> interpretation -> eef
 validation/plan/grant -> Node B load/local execution -> status/result -> Node A.
 Record actual node IDs and remote execution evidence, network path, model/runtime
 versions, permission decisions and measured payload/event counts. Also verify a
-continuous pipeline keeps repeated payloads local while EEF receives bounded
+continuous pipeline keeps repeated payloads local while eef receives bounded
 useful events. One-PC fixtures and mocked inference remain separately labelled.
 
 Negative gates: wrong/expired/replayed grants, unauthorized peer lookup/session,
@@ -1471,7 +1474,7 @@ feeds or contributor/account isolation as part of this roadmap revision.
 - Added [network commands](COMMANDS.md), offline instance-lock protection,
   running-node commands, JSON output, and `--no-ui` API-only operation.
 - Validated independent advertisements and optional coordinator hints pass
-  through registration to EEF's existing node view. Old configs need no rewrite;
+  through registration to eef's existing node view. Old configs need no rewrite;
   old node IDs remain unchanged. Saved/applied addresses differ until restart.
 - 91 locked Rust tests passed. Public-command integration passed in
   `.validation/node-commands-NNknMl/`; existing browser mocks and real-process
@@ -1506,13 +1509,13 @@ increments. Published v0.4.0a stays unchanged.
 Unreleased follow-up adds `eef discovery show/grant/revoke`, `eef restart` and
 owner-approved `eef node restart`. Configuration edits use the latest saved state
 under a shared lock, preserve unrelated settings, and expose saved/applied policy.
-Exact-ID disclosure still needs EEF restart to apply. Node restart reports request,
+Exact-ID disclosure still needs eef restart to apply. Node restart reports request,
 acknowledgement and observed completion separately and does not replay uncertainty.
 Outbound queue waits are bounded; cancelled waiters release pending correlations.
 
 109 Rust tests passed. Live testing on the owner's two PCs confirmed registration,
 temporary one-way discovery followed by revocation, automatic reconnection across
-two EEF restarts, and authenticated remote ping samples. The real node denied
+two eef restarts, and authenticated remote ping samples. The real node denied
 restart without its local management approval; approved restart was validated in
 isolated real-process tests at that checkpoint. After the owner enabled the local
 management switch, `.validation/live-discovery-QGI8x0` also confirmed actual
@@ -1550,9 +1553,9 @@ owner approval. A separate native Windows Installer API/MakeCab probe now passes
 text-only package authoring and controlled per-user install/repair/uninstall,
 plus a separate post-write failure/rollback test, all preserving generated owner
 data. No additional tooling or tooling
-agreement was needed. No real EEF MSI package or release is accepted.
+agreement was needed. No real eef MSI package or release is accepted.
 
-The owner requested MSI on 2026-09-11. Add separate EEF and EEFN MSI packages in
+The owner requested MSI on 2026-09-11. Add separate eef and eefn MSI packages in
 a packaging increment, retaining current installers until replacements pass
 acceptance. Reuse verified payloads and inventories rather than a second build
 of the application. The synthetic probe is not distributable and does not prove

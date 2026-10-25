@@ -8,7 +8,7 @@ Unreleased after `0.4.0-alpha.6`. This is the manual owned-GGUF increment,
 not completion of the full model lifecycle roadmap or stable 0.4.0.
 Commands use the running node service; no dashboard, model inference, model
 download, selection change or node restart is required to control residency.
-EEF itself still requires no local model.
+eef itself still requires no local model.
 
 ## Published-source CPU follow-up (2026-10-24)
 
@@ -44,9 +44,9 @@ eefn --json model-lifecycle show --operation-id OPERATION_UUID
 eefn --json model-lifecycle --runtime RUNTIME_UUID cancel --operation-id LOAD_OPERATION_UUID
 ```
 
-The EEF equivalents use `eef node model-lifecycle --node NODE_ID`, with the
+The eef equivalents use `eef node model-lifecycle --node NODE_ID`, with the
 same runtime, generation and operation arguments. Remote mutations require
-the node owner's existing management approval; EEF cannot enable it for itself.
+the node owner's existing management approval; eef cannot enable it for itself.
 Status does not require mutation approval. Local commands require the running
 node and its guarded loopback command service; there is no offline mutation.
 
@@ -197,7 +197,7 @@ Reserved action names reject substituted mutating commands.
 ## Service contract and acceptance
 
 Guarded node endpoint: `POST /api/commands/model-lifecycle`.
-Guarded EEF-owner endpoint: `POST /api/commands/node/model-lifecycle`.
+Guarded eef-owner endpoint: `POST /api/commands/node/model-lifecycle`.
 Both accept the shared schema-1 `LifecycleRequest` with `expected_node_id`,
 optional `expected_runtime_id` (required for mutation) and tagged `command`.
 Remote dispatch uses the existing authenticated `node.configure` control path,
@@ -231,7 +231,7 @@ these mutations; it does not kill the user's Ollama service or switch backend.
 ## 2026-10-12 verification checkpoint
 
 Final workspace/all-target suites pass **545 tests** in each feature mode:
-EEF library 219, owner CLI 14, installer 6, EEFN library 297, node CLI 9.
+eef library 219, owner CLI 14, installer 6, eefn library 297, node CLI 9.
 Fresh default binaries/examples and formatting/diff/JavaScript/backend-boundary
 checks pass separately. Unit checks include exact duplicate admission, queue and
 receipt exhaustion without eviction, reserved-action substitution rejection,
@@ -241,7 +241,7 @@ authority after waiting for operation admission.
 Final public `model-lifecycle-ENeBVY` passes the synthetic pinned-TLS command
 path, including queued unload refusal after owner approval is revoked, local
 owner cancellation while remote cancellation is denied, and a separate fresh
-owner-approved load cancelled through EEF. Startup regression
+owner-approved load cancelled through eef. Startup regression
 `model-startup-0DctmF` passes the existing group behavior and cleanup.
 
 `real-model-fi7H33` passes with the existing exact-size/hash-verified 1.5B
@@ -300,7 +300,7 @@ isolated real-model harness (`real-model-5VkwJE`) using the existing verified
 two-thread inference uses pinned TLS and reviewed grants. Targeted unload/reload,
 historical receipt reuse without replay, runtime restart/stable identity,
 retained results, owner-applied idle unloading and grant-triggered on-demand
-startup pass. The model SHA-256 still matches after the run; no EEF/EEFN/
+startup pass. The model SHA-256 still matches after the run; no eef/eefn/
 llama-server fixture processes remain observed. Public whitelisted evidence is
 `.validation/730ad26-real-cpu-acceptance.json`; raw runner output remains private.
 

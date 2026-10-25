@@ -108,7 +108,7 @@ try {
  const privateFile=join(scratch,'PRIVATE-pair.json');await writeFile(privateFile,JSON.stringify(invitation));
  await cli('eef',eefConfig,['credentials','legacy','--allow','false']);
  const runtime=(await json(eef+'/api/diagnostics')).runtime_id;await cli('eef',eefConfig,['restart']);
- await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==runtime,'EEF private TLS runtime');
+ await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==runtime,'eef private TLS runtime');
  await nodeCli(['connection','pair','--code-file',privateFile]);
  await until(async()=>await ready()&&(await json(node+'/api/status')).execution_grants.available,'pinned node runtime');
  for(const base of [node,eef])assert.equal((await fetch(base+'/')).status,404);

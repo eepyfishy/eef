@@ -58,7 +58,7 @@ the private ownership token; explicit cancellation matching corrected it before
 the final passing focused run. The compile failure is not counted as a pass.
 
 Default and dashboard-free workspace/all-target suites each pass **623 tests**:
-EEF library 237 plus one ignored opt-in profiler, owner CLI 16, installer 6,
+eef library 237 plus one ignored opt-in profiler, owner CLI 16, installer 6,
 node library 353 and node CLI 11. Fresh default binaries/examples, formatting,
 diff and the backend/browser dependency guard pass; the full chain exits 0.
 
@@ -131,7 +131,7 @@ separately cover real credential/TLS establishment.
 
 Final focused server tests pass 62 cases, including eight new queue/framed
 cases. Default and dashboard-free workspace/all-target suites each pass **631
-tests**: EEF library 237 plus one ignored opt-in profiler, owner CLI 16,
+tests**: eef library 237 plus one ignored opt-in profiler, owner CLI 16,
 installer 6, node library 361 and node CLI 11. Fresh default executables/examples,
 formatting/diff and the backend/browser source guard pass.
 
@@ -179,5 +179,5 @@ portable runner; its private phase trace reaches `passed` and identifies 24.20.0
 The original native failure remains failed evidence. This changed-runner pass
 does not prove the complete crash cause, clear older native exits or guarantee
 every Windows runner is safe. These are development tools, not a Node.js runtime
-dependency added to EEF/EEFN. Physical/load/security and full stable acceptance
+dependency added to eef/eefn. Physical/load/security and full stable acceptance
 remain incomplete.

@@ -38,7 +38,7 @@ The permission command runs locally on the target node. Start explicitly approve
 one fixed greeting test of its single selected/applied request interpreter using
 ordinary owner review and execution grants, not arbitrary model work. The backend
 owns that workflow; the CLI and dashboard do not drive an execution loop.
-EEF checks history before reading fresh setup, resolves the selected model itself,
+eef checks history before reading fresh setup, resolves the selected model itself,
 and returns typed readiness guidance without changing permissions or selection.
 Retained starts work offline and after model/runtime changes; fresh unconfirmed
 setup/permission reads cannot prepare a source or authorize inference.
@@ -58,7 +58,7 @@ See [the contract](MODEL-VERIFICATION.md).
     eef node repair-setup --node NODE_ID configure --mode prompt
     eef node repair-setup --node NODE_ID configure --mode off
 
-The two permission commands run locally on the target node; EEF cannot enable
+The two permission commands run locally on the target node; eef cannot enable
 the new consent switch itself. This is shared installation policy, not per-config
 repair approval. An active save creates a new one-attempt identity. Prerelease
 automation remains blocked. See [scope and uncertainty](PACKAGE-POLICY-CONTROL.md).
@@ -136,7 +136,7 @@ See [admission races, uncertainty and remaining stop scope](GRANT-STOP.md).
     eef requests stop-receipt JOB_ID --grant-id GRANT_UUID
     eefn grants stop-receipt --id GRANT_UUID
 
-The origin node or local EEF owner can inspect the exact executor's retained
+The origin node or local eef owner can inspect the exact executor's retained
 stop intent, including after reconnect with the same pinned issuer. Executor-local
 inspection also works offline. No new stop, execution, reconciliation, repair or
 retry is requested. Missing evidence is not proof no stop/work was accepted;
@@ -424,7 +424,7 @@ change during ordinary control activity.
 
 `eefn requests recover-result JOB_ID --revision REV --grant-id GRANT_UUID
 --operation-id RECOVERY_UUID --json` explicitly settles one interrupted reviewed
-attempt from the exact executor's retained completed evidence. EEF's local owner
+attempt from the exact executor's retained completed evidence. eef's local owner
 uses the same `eef requests recover-result ...` form. Inspect the current job
 first and keep the entire receipt. No replay, fabricated wire ACK, implicit
 remaining-step dispatch or remote stop is authorized. Exact same-actor receipt
@@ -435,8 +435,8 @@ mean a committed decision: inspect before reusing that exact command. See
 ## Explicit retained executor output (unreleased after alpha.6)
 
 `eefn requests result JOB_ID --grant-id GRANT_UUID --json` reads a bounded saved
-final report from the exact executor through EEF. Only the immutable request
-origin or local EEF owner (`eef requests result ...`) is authorized. Executor-local
+final report from the exact executor through eef. Only the immutable request
+origin or local eef owner (`eef requests result ...`) is authorized. Executor-local
 `eefn grants result --id GRANT_UUID --json` also works offline without starting a
 runtime or creating a journal. Routine receipt commands remain metadata-only.
 Reads perform no inference, replay, lease renewal, job change or reconciliation.
@@ -453,7 +453,7 @@ matching and disconnect failure check both IDs, so a different session cannot
 confirm/fail the waiter simply by using the same persistent node ID.
 
 The gateway also stamps a private routing generation on accepted submissions,
-overwriting any caller field. EEF's completed/busy replies use that original
+overwriting any caller field. eef's completed/busy replies use that original
 session and matching transport ID, never the latest connection for the node.
 If the original session ended or its queue is full, the reply is not rerouted,
 queued for reconnect or replayed. Accepted work may still have been saved or run;
@@ -466,7 +466,7 @@ epoch, node-side attempt fence, executor acknowledgement or exactly-once promise
 
 ## Coordinator scheduling limits (unreleased after alpha.6)
 
-The local EEF owner can inspect/save non-model admission policy without a
+The local eef owner can inspect/save non-model admission policy without a
 dashboard, LM or permission changes. These commands require the running
 coordinator; they never launch another instance, edit a file as fallback or
 retry a mutation. Installed alpha.6 builds do not implement them.
@@ -546,7 +546,7 @@ eef node update-status --node NODE_ID --json
 eef node restart --node NODE_ID --wait-seconds 60 --json
 ```
 
-Use the internal version and exact byte count/hash of the release's EEFN
+Use the internal version and exact byte count/hash of the release's eefn
 installer. `--allow-prerelease` is required for that particular alpha/beta/RC;
 it is not a subscription or saved preference. Stable artifacts do not need the
 flag. No publisher, model or release URL is hardcoded. Choose trusted artifacts:
@@ -609,7 +609,7 @@ As a deterministic alternative to `resolve`, use
 `eefn requests revise-proposal DRAFT_ID --revision SOURCE_REVISION --file resolved-proposal.json --json`
 with the current inspected revision; do not reuse a pre-resolution revision.
 
-EEF stores a **non-executable review record** in the existing durable job journal,
+eef stores a **non-executable review record** in the existing durable job journal,
 with one stable ID, status `review`, gateway-stamped original node/area/receipt,
 exact original text, proposal revisions and clarification answers. No tasks,
 runner, dispatch, approval or execution grant are created. The record stays
@@ -627,7 +627,7 @@ commands cannot change its original text, original origin/area or opening receip
 An answer records the exact current question, proposal index and supplied text;
 `answer_recorded` does **not** mean model uncertainty has been resolved. An
 explicit proposal revision can change hints and clarification state, but still
-requires review and never grants execution authority. EEF validates its capability
+requires review and never grants execution authority. eef validates its capability
 hints against fresh owner-disclosed network registrations, not file-authored permissions.
 
 ### Explicit clarification reinterpretation (unreleased after alpha.6)
@@ -652,14 +652,14 @@ tokens and 20-second inference/single-capacity limits. If uncertainty remains,
 the new proposal can ask another question; `resolve` does not promise semantic
 correctness or force `needs_clarification` to false.
 
-EEF atomically checks the exact source revision, full review-record digest and
+eef atomically checks the exact source revision, full review-record digest and
 proposal/answer counts, then validates hints against fresh disclosed capability
 names. It appends one proposal and source-evidence receipt, preserving original
 identity/text, earlier proposals and all answers. The evidence retains reported
 interpreter backend/model ID; it is **origin-reported**, not model attestation,
 execution permission or proof of a correct answer. Concurrent answers, edits,
 Stop, disclosure changes and runtime replacement cannot overwrite a newer state.
-If a runtime changes after save submission, EEF may still commit that eligible
+If a runtime changes after save submission, eef may still commit that eligible
 revision; the node reports uncertainty and never automatically sends it again.
 Persisted source lineage is revalidated on read/restart; old builds without this
 field must not be used to downgrade these records.
@@ -780,7 +780,7 @@ registration, including normalized role/readiness metadata. No model is installe
 loaded or inferred; no resource reservation is made. Availability at compilation
 is not a promise that a later execution can use the same resource.
 
-EEF freezes exact node, model/backend or physical resource bindings, bounded task
+eef freezes exact node, model/backend or physical resource bindings, bounded task
 definitions and zero automatic retries, and stores `awaiting_approval` atomically
 under the same job ID. It records a SHA-256 definition digest. This detects
 definition inconsistencies; it is **not** a signature, execution grant, node-side
@@ -847,7 +847,7 @@ mutations remain uncertain unless known not sent: inspect `requests plan` or reu
 the exact source revision and operation ID. No model/file/chat fallback, implicit
 approval, new runtime or automatic retry. See [preparation contract](SEMANTIC-PREPARATION.md).
 
-The running input node can now request the same EEF compiler and inspect its own
+The running input node can now request the same eef compiler and inspect its own
 retained plan without a dashboard or coordinator port:
 
 ```powershell
@@ -863,7 +863,7 @@ interpreter preparation is available separately below. Omitting the
 operation ID generates one, returned in the report. Reuse only that exact receipt,
 revision and input after inspection, not a new UUID to replace a retained plan.
 
-EEF stamps authenticated origin, checks ownership before any private view and
+eef stamps authenticated origin, checks ownership before any private view and
 filters candidates **before ranking** to fresh origin/owner-disclosed peers under
 its applied directional discovery policy. Default is self-only; a faster hidden
 provider cannot be selected or exposed. Exact constraints remain exact; no hidden
@@ -903,7 +903,7 @@ delegated owner approval and the complete non-coder workflow remain later work.
 
 ## Bounded owner request approval (unreleased after alpha.6)
 
-After inspecting the exact private plan, the local EEF owner can retain a
+After inspecting the exact private plan, the local eef owner can retain a
 conditional approval without a browser:
 
 ```powershell
@@ -925,7 +925,7 @@ or invoking a model. Legacy/shared-secret nodes and unsupported grant contracts
 reject, leaving the compiled plan unchanged. Availability is not a reservation;
 dispatch must recheck it and the applied node permissions later.
 
-EEF atomically retains `approved` plus a strict owner receipt: exact plan digest,
+eef atomically retains `approved` plus a strict owner receipt: exact plan digest,
 issuer certificate fingerprint, source revision, approval/expiry times, limits and
 a canonical approval digest. **It issues no execution grant and starts no runner.**
 The issuer is not a shared network secret and approval is not a signature or
@@ -977,7 +977,7 @@ eefn requests execute REQUEST_ID --revision 3 --approval-digest APPROVAL_SHA256 
 ```
 
 The approval digest/revision come from private owner approval/inspection, not the
-model's proposal. The local EEF owner has the same `eef requests execute` command.
+model's proposal. The local eef owner has the same `eef requests execute` command.
 Both accept `--operation-id CANONICAL_UUID`; keep that receipt if the reply is
 lost. API automation uses the guarded node-local `POST /api/commands/requests/execute`
 with `schema_version: 1`, `expected_node_id` and exactly this command:
@@ -986,7 +986,7 @@ with `schema_version: 1`, `expected_node_id` and exactly this command:
 {"id":"REQUEST_ID","expected_revision":3,"operation_id":"CANONICAL_UUID","approval_sha256":"APPROVAL_SHA256"}
 ```
 
-The guarded EEF-local route uses `expected_runtime_id` instead of `expected_node_id`.
+The guarded eef-local route uses `expected_runtime_id` instead of `expected_node_id`.
 Nodes submit through their existing authenticated connection; they cannot submit
 grants, overwrite the original context, or activate another origin's request.
 The executor may be a different node but does not become the request's owner.
@@ -1003,13 +1003,13 @@ future, but does not enforce physical RAM/VRAM or model-instance load budgets.
 One task/attempt is issued at a time after successful predecessors, with no
 implicit result-to-parameter/media wiring, migration, fallback or automatic retry.
 
-EEF saves the complete exact grant and one executor assignment **before dispatch**.
+eef saves the complete exact grant and one executor assignment **before dispatch**.
 The node consumes its durable receipt before acceptance/effects. A direct gateway
-observer saves matching acceptance and completion in the same EEF job record
+observer saves matching acceptance and completion in the same eef job record
 before confirming them to its runner; broadcast event loss cannot drop these
 checkpoints. ACK persistence is not a second distributed permission-to-start or
 an atomic transaction with remote side effects: work may already be running by
-the time EEF saves the ACK. Journal failure cannot produce confirmed success.
+the time eef saves the ACK. Journal failure cannot produce confirmed success.
 Logical journal headroom is reserved before issuance for bounded result/recovery
 records; physical disk/temporary journal overhead remains additional.
 
@@ -1043,8 +1043,8 @@ pending; do not repair these states by editing JSON or erasing journals.
 These grants still advertise `rpc_future_only`: already-launched applications,
 blocking/native/backend work or sent network effects may outlive the future.
 Updated roles use the fresh `issuer_lease_challenge_v1` advertised timing mode,
-not comparisons between the PCs' wall clocks. New grants require updated EEF and
-EEFN; no clock/legacy fallback is available. Challenges expire after two seconds,
+not comparisons between the PCs' wall clocks. New grants require updated eef and
+eefn; no clock/legacy fallback is available. Challenges expire after two seconds,
 including queue/network time, and cannot renew a grant. Missing/expired proof
 denies execution; uncertainty after consumption still requires receipt inspection.
 No new command, NTP configuration or automatic update is implied. See
@@ -1055,7 +1055,7 @@ Automatic semantic compilation, continuous pipelines, physical budgets, peer/med
 paths, cluster fencing and physical two-PC/release acceptance remain open.
 Headless fixtures cover an origin node granting a write to another node,
 unchanged owner markers after receipt reuse/restart, pending HTTP effects after
-abrupt EEF termination without replay, exact model roles and saved text output.
+abrupt eef termination without replay, exact model roles and saved text output.
 Fake inference and two logical local nodes are not real model or two-PC acceptance.
 
 ## Node grant receipts (unreleased after alpha.6)
@@ -1068,14 +1068,14 @@ interrupted/uncertain; it is not authorization to repeat an operation.
 
 The [node execution grant boundary](EXECUTION-GRANTS.md) now validates exact
 owner-pinned issuer/session/operation scopes and durable node-side consumption.
-Normal EEF reviewed plans **still await approval**. Owner approval, persisted EEF
+Normal eef reviewed plans **still await approval**. Owner approval, persisted eef
 issuance/ACK integration and fixed reviewed-plan dispatch are described above;
 legacy RPCs are unchanged. No raw grant-issuance or receipt reset/replay command is exposed
 by this receipt inspector, and no public installer/update feed includes this work yet.
 
-## Executor receipt inspection through EEF (unreleased after alpha.6)
+## Executor receipt inspection through eef (unreleased after alpha.6)
 
-The original input node or local EEF owner can inspect the exact executor's
+The original input node or local eef owner can inspect the exact executor's
 consumed receipt without visiting that executor, dispatching work or rewriting a job:
 
 ```powershell
@@ -1086,7 +1086,7 @@ eef requests receipt JOB_ID --grant-id GRANT_UUID --json
 Obtain the grant UUID from the original node's `jobs get` metadata or private owner
 `requests inspect`. This is distinct from `eefn grants receipt`, which reads the
 local node's own journal and also works while it is stopped. The network command
-requires the origin node/EEF and exact executor to be running and connected using
+requires the origin node/eef and exact executor to be running and connected using
 independent credentials and the same owner-pinned TLS issuer. A new authenticated
 session can inspect an old session's receipt but cannot reactivate its lease.
 Issuer replacement, unsupported nodes, missing/damaged receipts or busy controls
@@ -1095,11 +1095,11 @@ executor, issuer, attempt, parameters or grant scope. An executor does not there
 gain ownership of another node's original request.
 
 Equivalent guarded APIs: `POST /api/commands/requests/receipt`.
-EEF accepts exactly `schema_version: 1`, `expected_runtime_id` and
+eef accepts exactly `schema_version: 1`, `expected_runtime_id` and
 `command: {"id":"JOB_ID","grant_id":"GRANT_UUID"}`. The node adapter accepts
 exactly `schema_version: 1`, `expected_node_id`, canonical `request_id` and the same
 command. Extra authority fields and cross-site callers reject. Node forwarding
-reuses the existing authenticated submission path; EEF checks retained origin and
+reuses the existing authenticated submission path; eef checks retained origin and
 issuance before reading the executor. The distinct wire query uses reserved
 node control capacity, not workload admission. Its bounded read/response retains
 that permit; a failed partial response retires the framed connection. Shared-secret
@@ -1125,7 +1125,7 @@ remote termination confirmation and execution/migration reconciliation remain re
 
 ## Explicit tracking abandonment (unreleased after alpha.6)
 
-After inspecting an uncertain granted attempt, the original node or local EEF
+After inspecting an uncertain granted attempt, the original node or local eef
 owner can explicitly close its coordinator tracking without claiming remote stop:
 
 ```powershell
@@ -1153,7 +1153,7 @@ another write; different decisions/actors cannot replace the receipt. Legacy
 run/resume/pause/Stop and fresh execution commands do not replay this work. An
 original execution receipt may still be inspected through exact reuse, not reissued.
 
-Guarded API: `POST /api/commands/requests/abandon`. EEF takes exactly
+Guarded API: `POST /api/commands/requests/abandon`. eef takes exactly
 `schema_version: 1`, `expected_runtime_id`, `command`; the node adapter instead
 takes `schema_version: 1`, `expected_node_id`, `command`. The command contains only
 `id`, `expected_revision`, canonical `operation_id`, `grant_id` and
@@ -1188,7 +1188,7 @@ eefn requests review-proposal --file proposal.json --json
 The UTF-8 file (optional BOM, at most 64 KiB) contains exactly `schema_version: 1`,
 `original_text`, and `proposal` from [the existing interpretation contract](INTERPRETATION.md).
 The node must already be running and connected. CLI validates file shape; the
-runtime independently validates proposal shape, and EEF checks capability hints
+runtime independently validates proposal shape, and eef checks capability hints
 against fresh owner-disclosed network registrations. The input node need not
 implement the suggested feature; undisclosed/stale/disconnected peers contribute
 no vocabulary. Neither a file nor a schema-valid reply supplies origin,
@@ -1204,10 +1204,10 @@ Input files may contain private user text; do not include them in public reports
 
 Model-based `requests review/open` now obtain the same network vocabulary before
 inference, with a five-second read-only lookup deadline and no local fallback or
-automatic replay. EEF recomputes membership after inference and on supplied
+automatic replay. eef recomputes membership after inference and on supplied
 proposal revision. Offline `requests preview` stays local. Discovery remains
 self-only until the coordinator owner grants directional peer disclosure and
-restarts EEF; this is not execution permission. See
+restarts eef; this is not execution permission. See
 [cross-node interpretation context](INTERPRETATION.md#cross-node-interpretation-context-unreleased-after-alpha6).
 
 Local owner endpoint: `POST /api/commands/requests/review-proposal`, with exactly
@@ -1235,7 +1235,7 @@ errors, not permission to download or pick another model.
 
 Preview calls the node's configured model backend and validates an untrusted
 proposal. It works with the coordinator connection paused and browser UI disabled.
-The text is not sent to EEF and no job, plan, permission or action is created.
+The text is not sent to eef and no job, plan, permission or action is created.
 `execution_authorized` and `dispatched` are always false. A schema-valid result
 still requires review; it is not proof that the model understood the request.
 See [proposal schema, bounds and limitations](INTERPRETATION.md).
@@ -1267,7 +1267,7 @@ eefn requests review --text "Is this node running?" --json
 
 This explicit command uses the same applied interpreter selection and bounded
 inference as preview, then sends original text and the strict proposal through
-the running node's authenticated EEF connection. EEF revalidates the schema and
+the running node's authenticated eef connection. eef revalidates the schema and
 capability hints using that session's accepted registration snapshot. It stamps
 origin node/area and request identity itself; caller/model fields cannot override
 them. Advertised capabilities are context, not permission to execute.
@@ -1280,10 +1280,10 @@ completed work. `execution_authorized`, `dispatched`, and result `persisted` are
 false: there is no plan, job, execution grant, clarification session or durable
 review receipt. Answering a question requires a new explicit request for now.
 
-An active EEF connection is required to complete review; a paused/offline node
+An active eef connection is required to complete review; a paused/offline node
 may still run local interpretation before reporting `coordinator_unavailable`.
-Preview remains available without EEF. Restart invalidates an in-flight review;
-EEF may already have reviewed it. No retry, chat fallback, model selection or
+Preview remains available without eef. Restart invalidates an in-flight review;
+eef may already have reviewed it. No retry, chat fallback, model selection or
 download is automatic. Submission waits at most 120 seconds after bounded
 inference; the CLI deadline is 150 seconds. A lost/mismatched reply reports
 `review_unconfirmed`, with `outcome_unknown: true`; only review may have happened,
@@ -1291,7 +1291,7 @@ never execution requested by this command.
 
 Local owner endpoint: `POST /api/commands/requests/review` uses the same body as
 preview. Additional errors: `coordinator_unavailable`, `review_rejected`,
-`review_unconfirmed`. Older EEF versions may reject the new submission kind;
+`review_unconfirmed`. Older eef versions may reject the new submission kind;
 `unsupported_command` describes an older node's missing local endpoint.
 
 ## Added in v0.4.0a4: model download commands
@@ -1307,7 +1307,7 @@ preview. Additional errors: `coordinator_unavailable`, `review_rejected`,
 ```
 
 These commands require the running alpha.4 node's local command API, not a
-browser, EEF connection or loaded LM. They discover the actual endpoint from the
+browser, eef connection or loaded LM. They discover the actual endpoint from the
 existing instance marker. A stopped node returns `node_not_running` without
 starting a process or transfer. Published v0.4.0a3 lacks this command endpoint;
 the CLI does not retry through legacy routes. Existing selection commands remain
@@ -1400,13 +1400,13 @@ to omit bundled dashboard assets entirely. Default builds retain the dashboard.
 ```
 
 Connection controls require a running development node and call the same backend
-operations as the existing UI. Pause saves disabled outgoing EEF connections;
+operations as the existing UI. Pause saves disabled outgoing eef connections;
 resume uses the existing endpoints and trust. Both request a node runtime restart
 to apply the change, including other pending settings. This does not restart
 Windows or shut down the local command API. Inspect the returned saved policy
 separately from live connection state; acknowledgement is not reconnection.
 
-`pair-local` explicitly clears selected EEF endpoints and enables automatic
+`pair-local` explicitly clears selected eef endpoints and enables automatic
 same-user local pairing. It is an owner configuration change, not a network scan
 or trust grant for arbitrary peers. It must not be used merely to inspect status.
 No connection command implicitly downloads models or executes inference.
@@ -1417,7 +1417,7 @@ secret argument. Clients call `POST /api/commands/connection/pair` with strict
 node/runtime/correlation identity and a private code body. The shared core
 preserves feature permissions, identity, models and paused preference, saves
 the certificate/credential, and requests (not verifies) a node restart. It does
-not provision/rotate credentials, restart EEF, enable a paused connection or
+not provision/rotate credentials, restart eef, enable a paused connection or
 approve work. Lost/substituted replies remain unknown, without fallback/retry;
 inspect `connection show` and diagnostics. The correlation is not a durable
 receipt. See [input, privacy, bounds and setup limits](NODE-CREDENTIALS.md#file-free-invitation-input-unreleased-after-alpha6).
@@ -1428,7 +1428,7 @@ saved identity without rotation, configuration writes or either app's restart.
 It refuses saved revocations, missing identities and missing TLS trust; it never
 auto-provisions. The output can be piped into `eefn connection pair-stdin --json`
 on the same PC without a new secret file. Saved pending trust may still require
-an explicit EEF restart; pairing requests a node restart, not verified connection.
+an explicit eef restart; pairing requests a node restart, not verified connection.
 See [private invitation recovery and remaining setup limits](NODE-CREDENTIALS.md#recover-an-existing-private-invitation-unreleased-after-alpha6).
 
 `eefn setup --local` inspects the running same-PC coordinator without node IDs,
@@ -1448,7 +1448,7 @@ replaced. Partial/lost outcomes require inspection, never automatic write retry.
 See [enrollment contracts, bounds and remaining acceptance](LOCAL-ENROLLMENT.md).
 
 Saved UI preferences are `dashboard.ui_enabled` on the node and `web.ui_enabled`
-on EEF, both defaulting to true. False hides the browser while keeping commands
+on eef, both defaulting to true. False hides the browser while keeping commands
 available. Apply saved preferences with the role's restart command. On the node,
 the browser route gate changes without rebinding its command listener; that node
 runtime restart still applies other pending settings. `--no-ui` overrides a saved
@@ -1491,12 +1491,12 @@ but a compiled request awaits separate approval and execution.
 
 These deterministic commands need the development node; `generate-text` and
 `output` also need the development coordinator. They use the running node's
-actual local command endpoint and existing authenticated EEF connection, never
+actual local command endpoint and existing authenticated eef connection, never
 launching a second node or guessing an executor from its hostname. They work in
 API-only mode. Node-local management approval is not required to control this
 node's own jobs; execution still requires the executor's normal permissions.
 
-EEF stamps the origin from the connection. List, status, controls and output are
+eef stamps the origin from the connection. List, status, controls and output are
 restricted to jobs submitted by that stable origin node, not jobs merely executed
 there or created by the coordinator owner. `generate-text` optionally accepts
 `--target-node`, `--backend` and `--model`; `--role` is an exact advertised model
@@ -1607,7 +1607,7 @@ implement automatic interpretation/planning. Node permissions still apply.
 ## Added in v0.4.0a3: coordinator discovery controls and restart
 
 These additions are in the development tree, **not the published v0.4.0a2
-installers**. They work with existing v0.4.0a2 nodes; only EEF needs the new code.
+installers**. They work with existing v0.4.0a2 nodes; only eef needs the new code.
 
 ```powershell
 .\eef.exe discovery show --json
@@ -1630,14 +1630,14 @@ not completion: verify a new diagnostics `runtime_id` and node reconnection.
 Existing jobs are not automatically replayed. Plan restarts around active work.
 
 `node restart` restarts the **node app, not Windows**. The node owner must first
-enable Settings > Management from EEF > "Allow EEF to apply settings and restart
+enable Settings > Management from eef > "Allow eef to apply settings and restart
 this node." This existing permission also permits remote settings changes; the
 command cannot enable it itself. Denial returns `approval_required` with exit 1
 and sends no restart. Restarting can interrupt active work; use an idle node.
 
 Unreleased after alpha.6: updated nodes add `control_schema_version:1`,
 `remote_allowed`, `runtime_id` and `connection_state` to existing
-`node.configure/status`. EEF uses reserved status capacity for restart approval,
+`node.configure/status`. eef uses reserved status capacity for restart approval,
 runtime inspection and completion polling. Model-work saturation alone therefore
 does not block this workflow. The node checks approval again when applying restart.
 An explicitly rejected full control pool reports `node_busy`/`not_started`, without
@@ -1674,7 +1674,7 @@ Corrupt or missing saved config is rejected rather than recreated from defaults.
 `EEF_LIVE_NODE_BINARY`, `EEF_LIVE_NODE_CONFIG` and `EEF_LIVE_REMOTE_NODE` to
 owner-selected local paths and the other node's stable ID. Use an idle test
 coordinator with no pending changes. It temporarily grants one-way visibility,
-restarts EEF, tests discovery/pings, revokes the grant and restarts again. It
+restarts eef, tests discovery/pings, revokes the grant and restarts again. It
 attempts grant cleanup on failure and records local evidence under `.validation`.
 It does not deploy binaries, update remote nodes, run media/model workloads, upload data
 or infer physical device count from IDs alone. Do not run against production jobs.
@@ -1703,7 +1703,7 @@ The default completion wait is 30 seconds, with 0-60 supported. Zero waits for
 acknowledgement only. A positive wait requires the same stable node ID and a new
 initialized runtime ID. Results distinguish requested, acknowledged, completed
 and unknown outcome. Timeout/lost replies return failure with an uncertain outcome,
-not proof that restart did not happen. Completion does not verify EEF reconnection,
+not proof that restart did not happen. Completion does not verify eef reconnection,
 workloads or model readiness. If the restart disables the local API, local
 completion cannot be observed; inspect state before any explicit retry.
 
@@ -1743,9 +1743,9 @@ The development coordinator also exposes these operations for a connected node:
 .\eef.exe node models --node NODE_ID remove --backend ollama --model OWNER_MODEL_ID --json
 ```
 
-Both EEF and the target node need the development version. `show` is read-only
+Both eef and the target node need the development version. `show` is read-only
 over the existing authenticated coordinator connection. Changes require the
-node owner's existing management approval. EEF first inspects support/approval;
+node owner's existing management approval. eef first inspects support/approval;
 the node checks current approval again under its configuration lock before
 applying the change. Approval cannot be granted by these commands. Older nodes
 fail with `model_commands_unavailable`, without a legacy full-config save fallback.
@@ -1757,7 +1757,7 @@ No download, model load, provider switch or restart is implicit. Run the separat
 approved `eef node restart --node NODE_ID` command when ready to apply all pending
 settings. Saved selections and registered models remain distinct.
 
-The EEF result wraps the node report in `data` and includes `mutation_requested`,
+The eef result wraps the node report in `data` and includes `mutation_requested`,
 `acknowledged` and `outcome_unknown`. A mutation is sent once; a lost/ambiguous
 response returns `model_change_unconfirmed`, not an automatic retry. Inspect
 saved selections before retrying. This does not promise durable deduplication or
@@ -1892,7 +1892,7 @@ futures. The reserved operations are `system.ping` and `node.configure` actions
 `status`/`restart`. This changes admission only: restart still needs the normal
 owner approval, and every admitted request still passes the engine's permissions.
 Model installs/updates and other management actions use the work allowance.
-The reserve is per wire request, not an unbounded workflow queue. Updated EEF/node
+The reserve is per wire request, not an unbounded workflow queue. Updated eef/node
 restart checks and polling use status capacity throughout; legacy get/diagnostics
 compatibility and model controls use work capacity. A received reply may still
 be flushing, but completed execution no longer retains its execution slot for
@@ -1932,7 +1932,7 @@ sent. Missing `not_started` confirmation or a lost reply remains uncertain.
 .\eef.exe invite --address YOUR_COORDINATOR_ADDRESS:51335 --json
 ```
 
-EEF commands contact its running loopback API; node diagnostics also work while
+eef commands contact its running loopback API; node diagnostics also work while
 stopped, with `running:false` and no live measurements. `--config` selects an
 explicit installation. Reports are printed locally, never automatically uploaded.
 They include stable node/runtime IDs, software version, basic state and numeric
@@ -1959,7 +1959,7 @@ limitation explicit: no aggregate count guarantees a particular job can run.
 Check the required node/capability, model and permissions; dispatch can still fail.
 
 Unreleased after alpha.6: `node_event_loss_count` counts skipped gateway events
-since this EEF runtime started, and `node_state_reconciliation_count` counts
+since this eef runtime started, and `node_state_reconciliation_count` counts
 completed live-state reconciliations, including listener startup. Recovery restores
 accepted registrations and metrics, not lost requests or completed effects.
 Historical routes do not re-add offline nodes. State repair itself does not replay
@@ -1976,7 +1976,7 @@ event/keyword rules are unchanged; these counters are not delivery acknowledgeme
 Explicit ping probes sample 1-10 `system.ping` calls with a two-second timeout
 per sample and report round-trip milliseconds, versions and failures. They do
 not test inference or perform device I/O. A failed sample makes CLI exit nonzero.
-GET `/api/diagnostics` exists on both local APIs; EEF additionally accepts POST
+GET `/api/diagnostics` exists on both local APIs; eef additionally accepts POST
 `/api/diagnostics/probe` with `{node_id,samples}`. Reports contain pseudonymous IDs;
 review before sharing. Raw configs/logs are not support reports.
 
@@ -2037,7 +2037,7 @@ errors retain the existing API shape/status, not the CLI wrapper.
 Registration has additive `network:{advertised_address,coordinator}` metadata;
 coordinator fields are `coordinator_id`, `address`, `state`. Missing metadata means
 no advertisement; missing coordinator state means unknown. Gateway validation
-keeps it separate from observed source IP/port. EEF world/status entries expose
+keeps it separate from observed source IP/port. eef world/status entries expose
 it; disconnected entries stay marked offline. Node status reports applied values.
 Existing owner-approved remote configuration may also propose `network` changes.
 
@@ -2053,14 +2053,14 @@ implement failover. Scoped discovery is now available as described below.
 .\eefn.exe network peers --after node-a --json
 ```
 
-Requires a running node connected to EEF; offline commands do not start a new
+Requires a running node connected to eef; offline commands do not start a new
 connection for discovery. Requests use the existing authenticated submission
-channel. EEF uses server-stamped origin, not a caller-supplied requester ID.
+channel. eef uses server-stamped origin, not a caller-supplied requester ID.
 The local API accepts `command:{operation:"peers",query:{limit:32}}`; optional
 query fields are `node_id` and `after` (mutually exclusive).
 
-By default a node can inspect **only itself**. EEF's owner can configure exact,
-directional disclosure grants in EEF configuration, using the existing owner
+By default a node can inspect **only itself**. eef's owner can configure exact,
+directional disclosure grants in eef configuration, using the existing owner
 config API or a config file. The development grant CLI is described above;
 published v0.4.0a2 does not have it. Example:
 
@@ -2073,7 +2073,7 @@ discovery:
 
 This allows A to inspect B, not B to inspect A or A to inspect B's other peers.
 No wildcards or implicit transitive grants. Use actual persistent node IDs.
-Policy changes, including revocation, apply after **EEF restart**, not when
+Policy changes, including revocation, apply after **eef restart**, not when
 saved. Invalid policies fail validation; no fallback to unrestricted discovery.
 Limits: 256 requesters, 256 targets each, 4096 total grants, 256 KiB policy and
 freshness of 1-300 seconds. Policy is local to this coordinator, not replicated.

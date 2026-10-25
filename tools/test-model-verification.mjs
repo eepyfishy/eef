@@ -110,7 +110,7 @@ try{
  const uncertain=await cli('eef',[...owner,'start','--allow-inference','--operation-id',uncertainOperation],undefined,[1],proxyIdentity);
  assert.equal(uncertain.report_type,'model_verification_client_unconfirmed');assert.equal(uncertain.operation_id,uncertainOperation);
  assert.equal(uncertain.outcome_unknown,true);assert.equal(uncertain.automatically_retried,false);assert.equal(dropped,1);
- assert.equal(clientSetupReads,0,'CLI must leave model selection and readiness reads in EEF');
+ assert.equal(clientSetupReads,0,'CLI must leave model selection and readiness reads in eef');
  let recovered;
  await until(async()=>{recovered=await cli('eef',[...owner,'inspect','--operation-id',uncertainOperation],undefined,[0,1]);return recovered.state==='returned_text';},'lost owner reply inspected without replay');
  assert.equal(recovered.source_operation_id,uncertain.source_operation_id);assert.equal(generations,3);

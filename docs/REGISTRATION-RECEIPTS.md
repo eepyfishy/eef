@@ -1,6 +1,6 @@
 # Correlated registration receipts (unreleased)
 
-Node status now distinguishes a registration write from EEF acknowledging that
+Node status now distinguishes a registration write from eef acknowledging that
 registration on the current authenticated session. `eefn setup`, node status and
 minimal diagnostics expose `registration` as `accepted`, `awaiting_receipt`,
 `unknown`, or `not_connected`. Setup text explains registration separately from
@@ -25,7 +25,7 @@ with `with_registration_runtime`; a mutable status object is not used to invent
 an identity binding. The actual node app supplies its existing runtime UUID.
 
 After all normal registration validation and storage for that active gateway
-session, EEF queues a `registration_accepted` control frame. It contains schema,
+session, eef queues a `registration_accepted` control frame. It contains schema,
 exact authenticated node ID, offered runtime UUID/nonce, and the gateway session
 UUID from authentication. It uses the existing bounded outgoing queue/framing;
 queue failure retires the session instead of creating another queue or replaying
@@ -78,8 +78,8 @@ field; they must not ignore validation failures or invent acceptance as a fallba
 ## Verification checkpoint
 
 Final workspace/all-target suites pass with default features and separately with
-`--no-default-features`: **698 passed, one ignored in each configuration** (EEF
-library 243, EEF CLI 17, installer 6, node library 417, node CLI 15). Fresh default
+`--no-default-features`: **698 passed, one ignored in each configuration** (eef
+library 243, eef CLI 17, installer 6, node library 417, node CLI 15). Fresh default
 binaries/examples build; formatting, diff, JavaScript syntax and the backend/UI
 dependency source check pass. The initial EOF-test success expectation was
 corrected to the existing disconnect error behavior. A full-suite regression in

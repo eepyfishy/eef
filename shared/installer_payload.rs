@@ -1,4 +1,4 @@
-//! Locate an EEF ZIP payload, including after Authenticode appends a certificate.
+//! Locate an eef ZIP payload, including after Authenticode appends a certificate.
 //! This parses framing only. It does NOT authenticate a signature or publisher.
 //! Release signing must be verified separately; updates still verify file SHA-256.
 use std::io::{self, Read, Seek, SeekFrom};

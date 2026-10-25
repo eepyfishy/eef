@@ -44,7 +44,7 @@ physical update, installer rebuild or security-scanner certification is claimed.
 - Browser/CLI: automatic local registration and stable ID, approval-gated remote
   configuration/restart, permission forms, private selected resource binding,
   authenticated immutable origin/area, persisted jobs/drafts, copy/selection/focus
-  retention, mobile layout and storage limits after a verified EEF restart.
+  retention, mobile layout and storage limits after a verified eef restart.
   Forged origin on browser input is rejected. Missing interpreter/role cannot
   invoke a keyword fallback. With the subsequent input-workflow policy, fresh
   browser/CLI input prepares an eligible plan awaiting approval, not a workload.
@@ -469,8 +469,8 @@ Stable 0.4.0 is not claimed.
 ## Explicit terminal occurrence archiving (2026-10-12)
 
 The subsequent archive increment adds eight tests, for **477** passing in
-each workspace/all-target feature mode (186 EEF library, 11 owner CLI,
-6 installer, 268 EEFN library, 6 node CLI). Its fresh default binaries/examples,
+each workspace/all-target feature mode (186 eef library, 11 owner CLI,
+6 installer, 268 eefn library, 6 node CLI). Its fresh default binaries/examples,
 formatting, diff, JavaScript syntax and backend/browser source guard also pass.
 The core uses the existing journal/admission gate; it is not a browser controller.
 
@@ -505,7 +505,7 @@ releases/feeds and browser assets are unchanged. Stable 0.4.0 is not claimed.
 ## Durable trigger ownership foundation (2026-10-12)
 
 Twelve added tests bring final workspace/all-target suites to **489** in each
-feature mode (EEF library 197, owner CLI 11, installer 6, EEFN library 269,
+feature mode (eef library 197, owner CLI 11, installer 6, eefn library 269,
 node CLI 6). The fresh default binaries/examples, formatting, diff and backend/
 browser source guard pass. This extends the same journal and grant checkpoints,
 not a dashboard controller or a second workload runner.
@@ -539,7 +539,7 @@ artifacts, browser assets and model files are unchanged.
 ## Fresh-admission source/launch fencing (2026-10-12)
 
 Ten journal tests bring final workspace/all-target suites to **499** in both
-feature modes (207 EEF library, 11 owner CLI, 6 installer, 269 EEFN library,
+feature modes (207 eef library, 11 owner CLI, 6 installer, 269 eefn library,
 6 node CLI). Fresh default binaries/examples, formatting, diff and the backend/
 browser source guard pass. The internal runtime bridge is compiled against
 the existing ordinary explicit compiler, atomic reservation and grant driver;
@@ -569,7 +569,7 @@ Prior intermittent input/busy failures remain unproven.
 ## Bounded automatic fixed-input scheduling (2026-10-12)
 
 Five added tests bring final workspace/all-target suites to **504** in both
-feature modes (EEF library 211, owner CLI 12, installer 6, EEFN library 269,
+feature modes (eef library 211, owner CLI 12, installer 6, eefn library 269,
 node CLI 6). Fresh default binaries/examples, formatting, script syntax, diff
 and backend/browser source guard pass. Guarded owner commands now enable/stop/
 inspect schedules; a bounded runtime timer calls the existing one-shot bridge,
@@ -604,7 +604,7 @@ releases/feeds, browser assets and models are unchanged. Stable 0.4.0 is not cla
 ## Proof-bound pre-launch refusal recovery (2026-10-12)
 
 Final workspace/all-target suites pass **512** tests in both feature modes
-(EEF library 218, owner CLI 13, installer 6, EEFN library 269, node CLI 6),
+(eef library 218, owner CLI 13, installer 6, eefn library 269, node CLI 6),
 with fresh default binaries/examples and formatting/diff/script/backend checks.
 Eight added tests cover exact concurrent resolution, transactional rollback,
 marked/missing/partial refusal, stale/corrupt proof, restart/lowered quotas,
@@ -648,7 +648,7 @@ checked interval. Its cause is unproven; a passing traced rerun is not a fix cla
 ## Bounded Windows process lifetime (2026-10-12)
 
 Final workspace/all-target suites pass **519** tests in both feature modes:
-EEF library 218, owner CLI 13, installer 6, EEFN library 276, node CLI 6.
+eef library 218, owner CLI 13, installer 6, eefn library 276, node CLI 6.
 Fresh default executables/examples, formatting/diff/script syntax and backend
 dependency guard pass. Seven added Windows entries include six real native
 lifetime scenarios and a test-only helper. They observe held root/descendant
@@ -729,7 +729,7 @@ devices, suspended/overloaded systems or different adapters.
 ## Typed native process authoring and unsuccessful exit handling (2026-10-12)
 
 Final workspace/all-target suites pass **529** tests in both feature modes:
-EEF library 219, owner CLI 13, installer 6, EEFN library 283, node CLI 8.
+eef library 219, owner CLI 13, installer 6, eefn library 283, node CLI 8.
 Fresh default binaries/examples, formatting/diff/JS syntax and backend source
 guard pass. Six added typed-source/CLI tests preserve raw text, literal/empty/
 hyphen arguments, exact receipts and optional choices, enforce existing argument/
@@ -886,7 +886,7 @@ after its async waiter is cancelled; shutdown drains it before interrupting
 schedules, and queued callbacks skip journal work after closing begins.
 
 All six focused timer tests pass. Default and dashboard-free all-target suites
-each pass **612 tests**: EEF library 234 plus one ignored profiler, owner CLI 16,
+each pass **612 tests**: eef library 234 plus one ignored profiler, owner CLI 16,
 installer 6, node library 345 and node CLI 11. Fresh default executables/examples,
 formatting/diff and the backend/browser source guard pass.
 

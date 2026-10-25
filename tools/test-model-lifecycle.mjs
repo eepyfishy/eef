@@ -138,7 +138,7 @@ try {
  await control('unload','a',currentReady.generation,randomUUID(),false,false);assert.equal(model(await show(),'a').owned_pid,currentReady.owned_pid);
  const remoteActive=await show(undefined,true);assert.equal(model(remoteActive,'a').state,'active');
  await writeFile(inferGate,'release synthetic inference');await until(async()=>model(await show(),'a').state==='warm_idle','pin release publishes warm idle');const report=await review.result(plan.id);assert.equal(report.success,true);
- // Load cancellation from EEF is an exact control path, not an inference stop.
+ // Load cancellation from eef is an exact control path, not an inference stop.
  const currentA=model(await show(),'a'),secondUnload=randomUUID();await control('unload','a',currentA.generation,secondUnload);await until(async()=>(await show(secondUnload)).receipt.phase==='completed','unload before gated startup');
  await unlink(readyA);const cold=model(await show(),'a'),cancelledLoad=randomUUID();await control('load','a',cold.generation,cancelledLoad,true);
  await until(async()=>{const m=model(await show(),'a');return m.state==='loading'&&!!m.owned_pid;},'own partial load before health');
@@ -157,7 +157,7 @@ try {
  const failedA=model(await show(),'a'),freshLoad=randomUUID();await control('load','a',failedA.generation,freshLoad,true);
  await until(async()=>{const m=model(await show(),'a');return m.state==='loading'&&!!m.owned_pid;},'fresh explicit partial load');
  await owner(['node','model-lifecycle','--node',id,'--runtime',runtime,'cancel','--operation-id',freshLoad]);
- await until(async()=>(await show(freshLoad)).receipt.phase==='cancelled','EEF owner cancels exact partial load');
+ await until(async()=>(await show(freshLoad)).receipt.phase==='cancelled','eef owner cancels exact partial load');
  assert.equal(model(await show(),'a').owned_pid,null);assert.equal(model(await show(),'b').owned_pid,b.owned_pid);assert.equal((await control('load','a',cold.generation,cancelledLoad,true)).result.reused,true);
  let response=await fetch(node+'/api/commands/model-lifecycle',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({schema_version:1,expected_node_id:id,expected_runtime_id:runtime,command:{operation:'show',operation_id:null}})});assert.equal(response.status,403);
  let restartObserver,restartTreeExitProof;

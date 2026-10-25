@@ -125,7 +125,7 @@ impl SubmissionMailbox {
             .as_ref()
             .ok_or_else(|| {
                 SubmissionFailure::NotSent(
-                    "EEF is not connected. Wait for Connected, then send again.".into(),
+                    "eef is not connected. Wait for Connected, then send again.".into(),
                 )
             })?
             .try_send(command)

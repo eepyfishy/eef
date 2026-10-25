@@ -12,7 +12,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 #[derive(Debug, Parser)]
-#[command(name = "eefn", version, about = "Native EEF node")]
+#[command(name = "eefn", version, about = "Native eef node")]
 struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -138,7 +138,7 @@ enum Commands {
         #[command(subcommand)]
         command: eefn::request_preview::RequestAction,
     },
-    /// Control the outgoing EEF connection while keeping local commands available.
+    /// Control the outgoing eef connection while keeping local commands available.
     Connection {
         #[command(subcommand)]
         command: eefn::connection_commands::ConnectionAction,
@@ -1499,7 +1499,7 @@ enum NetworkAction {
     Show,
     /// Export a minimal connection report; does not upload anything.
     Diagnose,
-    /// Inspect only peers disclosed by EEF's owner; does not authorize access.
+    /// Inspect only peers disclosed by eef's owner; does not authorize access.
     Peers {
         #[arg(long, conflicts_with = "after")]
         node: Option<String>,
@@ -3202,9 +3202,9 @@ async fn run_node(
     if !file.endpoints.is_empty() {
         validate_secret(&file.psk)?;
     } else if args.ask.is_some() {
-        bail!("--ask requires at least one configured EEF coordinator")
+        bail!("--ask requires at least one configured eef coordinator")
     } else {
-        warn!("no EEF coordinator configured; node remains available through its local dashboard");
+        warn!("no eef coordinator configured; node remains available through its local dashboard");
     }
 
     let ollama_models = if args.selected_models.is_empty() {
@@ -3484,7 +3484,7 @@ async fn run_node(
             {
                 let mut status = dashboard.live.lock().unwrap();
                 // llama.cpp and Ollama are mutually exclusive providers here. Keep
-                // this local snapshot inspectable even while EEF is unreachable.
+                // this local snapshot inspectable even while eef is unreachable.
                 status["models"] = serde_json::json!(server.models()?);
                 status["capabilities"] = serde_json::json!(engine.capabilities());
             }
@@ -3577,7 +3577,7 @@ fn start_update_monitor(
             match eefn::updater::check(&url, eefn::VERSION, Duration::from_secs(30)).await {
                 Ok(check) if check.update_available => {
                     dashboard.live.lock().unwrap()["update"] = serde_json::json!(check);
-                    info!(current = %check.current_version, latest = %check.latest_version, %policy, "EEF node update available");
+                    info!(current = %check.current_version, latest = %check.latest_version, %policy, "eef node update available");
                     if matches!(policy.as_str(), "auto" | "automatic") {
                         match eefn::updater::apply_for(
                             &url,
@@ -3590,15 +3590,15 @@ fn start_update_monitor(
                             Ok(applied) => {
                                 dashboard.live.lock().unwrap()["pending_restart"] =
                                     serde_json::json!(true);
-                                warn!(version = %applied.new_version, "EEF node update installed; restart required");
+                                warn!(version = %applied.new_version, "eef node update installed; restart required");
                                 return;
                             }
-                            Err(error) => warn!(%error, "EEF node automatic update failed"),
+                            Err(error) => warn!(%error, "eef node automatic update failed"),
                         }
                     }
                 }
                 Ok(_) => {}
-                Err(error) => warn!(%error, "EEF node update check failed"),
+                Err(error) => warn!(%error, "eef node update check failed"),
             }
             tokio::time::sleep(interval).await;
         }

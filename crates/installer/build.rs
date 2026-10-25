@@ -18,10 +18,10 @@ const MANIFEST: &str = r#"
 fn main() -> std::io::Result<()> {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         winresource::WindowsResource::new()
-            .set("ProductName", "EEF")
-            .set("FileDescription", "EEF per-user application installer")
-            .set("CompanyName", "EEF contributors")
-            .set("LegalCopyright", "EEF contributors. MIT licensed.")
+            .set("ProductName", "eef")
+            .set("FileDescription", "eef per-user application installer")
+            .set("CompanyName", "eef contributors")
+            .set("LegalCopyright", "eef contributors. MIT licensed.")
             .set_manifest(MANIFEST)
             .compile()?;
     }

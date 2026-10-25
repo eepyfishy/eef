@@ -11,11 +11,11 @@ eef requests recover-result JOB_ID --revision REV --grant-id GRANT_UUID --operat
 
 Inspect `jobs get` first for the interrupted revision and uncertain grant. Choose
 a distinct UUID for this decision and retain the entire command. The node command
-uses the running origin node's existing authenticated connection. The EEF command
+uses the running origin node's existing authenticated connection. The eef command
 is for its local owner. Caller-supplied reports, completion flags, permissions,
 issuer identity, replacement grants and retry fields are rejected.
 
-EEF validates immutable origin, approved plan, original grant and journal before
+eef validates immutable origin, approved plan, original grant and journal before
 reading the exact executor. Retrieval uses the existing independently
 authenticated pinned-issuer control query and full issuance digest, including
 the original session; it does not grant execution authority to a new session.
@@ -27,7 +27,7 @@ Only a bounded, checksum-validated retained `completed` report that confirms the
 full original grant can settle tracking. A completed error is a **failed** task,
 not success. Legacy metadata, an accepted receipt, missing output or a retained
 `unknown` report cannot settle it. Missing evidence never means no effects.
-Independent node/EEF wall clocks are not compared to each other.
+Independent node/eef wall clocks are not compared to each other.
 
 In-process cancellation/disconnect drops the accepted node runtime. It now
 best-effort checkpoints a null-output `unknown` report
@@ -73,7 +73,7 @@ effects, model correctness nor strong process/backend termination.
 Both guarded local APIs use `POST /api/commands/requests/recover-result`:
 
 - Node: `{schema_version:1,expected_node_id,command:{id,expected_revision,grant_id,operation_id}}`.
-- EEF owner: `{schema_version:1,expected_runtime_id,command:{id,expected_revision,grant_id,operation_id}}`.
+- eef owner: `{schema_version:1,expected_runtime_id,command:{id,expected_revision,grant_id,operation_id}}`.
 
 Authenticated node submissions use `requests.recover_result`; the operation ID
 must equal the authenticated request correlation ID. Existing local-owner and

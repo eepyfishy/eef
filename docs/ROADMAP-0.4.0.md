@@ -38,7 +38,7 @@ the baseline; a schema or placeholder is not a completed milestone.
 
 ## Cross-cutting owner requirements
 
-- Say **node** in the user interface. Users interact through EEFN; EEF coordinates.
+- Say **node** in the user interface. Users interact through eefn; eef coordinates.
 - Restore the compact navy/blue visual direction. Background updates must not
   disrupt text selection, copying, editing, focus, or expanded details.
 - One explicit switch grants a feature's supported operations within the
@@ -50,7 +50,7 @@ the baseline; a schema or placeholder is not a completed milestone.
   independently of heartbeat/control traffic, with visible start/stop state.
 - Models are owner-selected, never bundled on first install. Prefer existing
   Ollama, otherwise the included llama.cpp runtime.
-- Keep two installers, EEF and EEFN; preserve per-user installation, optional
+- Keep two installers, eef and eefn; preserve per-user installation, optional
   startup, restart controls, remote configuration approval, and anonymous
   repository-local contributor identity.
 - Investigate unresolved Defender reports. Signing is publisher identity and
@@ -70,7 +70,7 @@ claims. Unsupported or untested behaviors remain explicitly incomplete.
 - 52 workspace Rust tests passed on Windows with the locked dependency set.
 - `tools/test-dashboard-live.mjs` passed both-role rendering, accessible navigation
   names, unchanged DOM identity and copy-selection preservation using local mocks.
-- `tools/test-first-run.mjs` passed with real EEF/EEFN processes and Chrome:
+- `tools/test-first-run.mjs` passed with real eef/eefn processes and Chrome:
   running-node browser/CLI input, no duplicate registration, scoped-grant migration,
   full HTTP feature grant, selection/caret preservation across polls, persistent
   Stop/Resume, remote approval/configuration, reconnect, model pull/select/cancel
@@ -106,7 +106,7 @@ gate the complete v0.4.0 release.
 - Both browser suites passed. Real-process evidence is in
   `.validation/first-run-zp1xCk/`: local pairing, permission migration, remote
   configuration, area/resource forms, a bound file request returning through the
-  running node, unchanged origin in executor diagnostics and history after EEF
+  running node, unchanged origin in executor diagnostics and history after eef
   restart, plus existing copy/focus/model/reconnect regressions. Model downloads
   use a mock service; file execution uses isolated fixtures, not personal files.
 - No physical media/radio test or new Defender clearance is claimed. Existing
@@ -131,7 +131,7 @@ remaining media, mesh, optimization and coordinator-cluster milestones.
 - Updater tests cover local and chunked size bounds, exact-size/hash rejection,
   valid staging for both products and refusal to overwrite existing versions.
   Downloads remain memory-buffered up to the documented 512 MiB ceiling.
-- Fixed a gap in the prior origin checkpoint: EEF's remote-save allowlist omitted
+- Fixed a gap in the prior origin checkpoint: eef's remote-save allowlist omitted
   metadata. Remote area/resource edits now persist, retain local approval rules,
   and appear in remote status; dedicated tests cover these paths.
 - Browser mocks verify auto-detected vision selection, explicit fallback for older
@@ -174,7 +174,7 @@ and GitHub/global contributor settings are unchanged.
 Validation: **80 workspace Rust tests passed** with locked dependencies; both
 debug applications built. Both browser suites passed. Real-process evidence is
 in `.validation/first-run-SPJdR4/`, including the node Jobs page, copy/expanded
-history preservation, unchanged completed jobs after a verified new EEF instance,
+history preservation, unchanged completed jobs after a verified new eef instance,
 and refusal to read/remove coordinator-origin jobs from an executing node.
 These are isolated one-PC fixtures, not physical two-PC or media acceptance.
 
@@ -186,9 +186,9 @@ These are isolated one-PC fixtures, not physical two-PC or media acceptance.
 - Additive reservation migration also handles a process stopping after the
   schema change but before data backfill. New work never replays automatically.
 - Added Settings forms for job count and MiB limits and Jobs usage reporting.
-  Saved EEF preferences survive a page reload before restart; status continues
+  Saved eef preferences survive a page reload before restart; status continues
   to show applied limits. Redacted keys preserve saved rather than stale keys.
 - **83 Rust tests passed** with locked dependencies. Browser mocks cover job
   Resume/Pause/Stop/removal controls; real-process validation passed in
   `.validation/first-run-rMIdzj/`, including storage forms, saved/applied separation,
-  reload, a second verified EEF restart, and node-visible effective usage.
+  reload, a second verified eef restart, and node-visible effective usage.

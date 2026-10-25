@@ -1,4 +1,4 @@
-// API-only owner preview acceptance. Fake model, no EEF, jobs, downloads or actions.
+// API-only owner preview acceptance. Fake model, no eef, jobs, downloads or actions.
 import assert from 'node:assert/strict';
 import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';

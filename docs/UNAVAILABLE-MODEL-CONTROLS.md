@@ -89,7 +89,7 @@ and model-downloads-Eh9KJA also pass. These are isolated native regression
 fixtures, not installed applications or the physical remote node.
 
 Both locked/offline workspace/all-target feature modes pass 904 tests plus one
-ignored profiler each: EEF 268, owner CLI 21, installer 6, EEFN 584 and node CLI
+ignored profiler each: eef 268, owner CLI 21, installer 6, eefn 584 and node CLI
 25. The final default run follows the fixture's supported-grant validation fix;
 the final headless run also includes that fix. Logs are retained under
 .validation/model-reference-workspace-default-final.log and
@@ -97,7 +97,7 @@ the final headless run also includes that fix. Logs are retained under
 applications/examples build. These checks do not close the model bootstrap,
 continuous-workload, physical-device or stable-release gates above.
 
-The final EEF/EEFN executables and both native process/Python fixture helpers
+The final eef/eefn executables and both native process/Python fixture helpers
 match all four hashes captured before the twelve native suites in
 .validation/model-reference-native-hashes.json. Source boundary, formatting,
 JavaScript syntax and diff checks pass. No evaluated application/helper or

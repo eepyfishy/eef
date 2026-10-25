@@ -79,7 +79,7 @@ approved audio job still binds its own exact transport and media resource IDs.
 Device enumeration, audio-device switching, virtual call devices and mixing are
 not implemented by these setup commands.
 
-## Configure from EEF
+## Configure from eef
 
 ```text
 eef node relay --node NODE_ID show
@@ -97,7 +97,7 @@ saved configuration digest itself; users do not supply runtime IDs or hashes.
 
 ## Shared backend contract and limits
 
-Local clients use `/api/commands/relay`; the EEF adapter uses
+Local clients use `/api/commands/relay`; the eef adapter uses
 `/api/commands/node/relay` and the existing authenticated `node.configure`
 control channel. Typed `show`/`configure` requests validate exact node/runtime
 identity, a saved relay-configuration digest, roles and bounded selectors.

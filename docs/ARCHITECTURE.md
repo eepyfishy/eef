@@ -3,7 +3,7 @@
 This page describes the v0.4.0a baseline. The accepted next architecture and
 source-module mapping are in [Command-first core roadmap](ROADMAP-CORE.md).
 The target makes CLI, automation and UI clients of shared core commands; nodes
-interpret input and execute locally, while EEF plans/authorizes and controls
+interpret input and execute locally, while eef plans/authorizes and controls
 scoped peer data paths. Visual UI work is paused. Execution leases, continuous
 pipelines, peer authorization and default-LM bootstrap remain pending. The first
 development slice now extracts `eefn::NodeService` and adds independent network
@@ -12,7 +12,7 @@ uses runtime-owned state instead of a dashboard-owned object.
 
 The 2026-09-22 [presence and media design record](PRESENCE-AND-MEDIA.md) adds
 planned persistent virtual audio devices, microphone/TTS mixing, independent
-input/output routes, and reusable lightweight presence. EEF authorizes and
+input/output routes, and reusable lightweight presence. eef authorizes and
 supervises concurrent sessions; approved peers may carry media directly, with
 an optional bounded coordinator relay. This is target architecture, not current
 alpha.6 support. Camera permission alone never enables presence-triggered call
@@ -43,7 +43,7 @@ model. Its `LlmService` only routes requests to models explicitly advertised by
 authenticated connected nodes.
 
 The coordinator is not implicitly a node. It starts its dashboard and gateway
-in `waiting_for_node` state and becomes operational only after at least one EEFN
+in `waiting_for_node` state and becomes operational only after at least one eefn
 connects. Device actions and model inference therefore always come from nodes.
 
 `eefn` owns authenticated failover/reconnect, live load/spec reporting, scoped
@@ -51,9 +51,9 @@ filesystem and process/network/application capabilities, model and configurable
 STT provider access, encrypted framing, OTA streaming, versioned updates, and
 opt-in Python media adapters using the bundled interpreter.
 
-Coordinator endpoints have an owner-configured integer priority. EEFN sorts
-them highest-first on every connection attempt, so loss of the preferred EEF
-causes a retry against the next reachable EEF. String endpoint entries remain
+Coordinator endpoints have an owner-configured integer priority. eefn sorts
+them highest-first on every connection attempt, so loss of the preferred eef
+causes a retry against the next reachable eef. String endpoint entries remain
 supported and have priority zero.
 
 ## Hard-rule mapping
@@ -82,7 +82,7 @@ Only trusted plugin paths should be configured.
 
 Normal user input originates on a node. `eefn --ask "..."` authenticates,
 registers the node, submits the message, continues servicing capability calls
-needed by the plan, and prints the final result returned by EEF. The HTTP chat
+needed by the plan, and prints the final result returned by eef. The HTTP chat
 route remains an administrative/dashboard interface, not the required network
 topology.
 

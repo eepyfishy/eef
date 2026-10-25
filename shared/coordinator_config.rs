@@ -33,7 +33,7 @@ fn prepare_secret(value: &mut Value) -> Result<bool> {
     }
     let object = value
         .as_object_mut()
-        .context("EEF settings must be a mapping")?;
+        .context("eef settings must be a mapping")?;
     let node = object.entry("node").or_insert_with(|| json!({}));
     node.as_object_mut()
         .context("Node settings must be a mapping")?

@@ -1,6 +1,16 @@
 # GitHub core verification
 
-## First-run and read-only MSI planning checkpoint (local verified; hosted pending)
+## Lowercase project naming
+
+Maintained documentation, comments, UI and installer messages use `eef` and
+`eefn`, including at the beginning of sentences. The shared CI check runs
+`node tools/test-project-names.mjs` and `node tools/check-project-names.mjs`.
+Mixed-case branding is rejected. Exact legacy machine-interface exceptions
+preserve verification prefixes, installed-package recognition and discovery
+paths; environment-variable identifiers remain compatible. User-owned future
+drafts and historical generated artifacts are not rewritten.
+
+## Accepted first-run and read-only MSI planning checkpoint (2026-10-25)
 
 The application increment passes both full local Rust modes (1,132 tests plus one
 existing ignored profiler each), all thirty-two native Windows suites, a separate
@@ -14,8 +24,13 @@ initialization. Package-doctor and unavailable-model controls still require the
 existing verified package/runtime and remain local-only. The separate read-only
 MSI payload planner has thirty-four local synthetic cases and an explicit test
 step in every matrix job; it launches no payload, installs no MSI and downloads
-no model. Actionlint and local standalone tests pass. Hosted acceptance of this
-combined source is pending, not inherited from the older catalog run below.
+no model. Published `4ea7964b47c6db5cab990f391a9e368b5c9c87d4` passes all four
+hosted jobs in [run 40176167808](https://github.com/eepyfishy/eef/actions/runs/40176167808).
+The independent exact-revision audit confirms the thirty Windows native suites
+in dispatch order, successful regression and planner steps in all four jobs,
+and the explicit thirty-four-case planner output. Its record is
+`.validation/initialization-ci-acceptance.json`. Later development MSI authoring
+and inspection changes are separate, not accepted by this older run.
 No version, release asset, stable feed or installed node changed.
 
 ## Accepted optional Granite catalog follow-up (2026-10-25)

@@ -1,4 +1,4 @@
-"""Optional Windows keyboard adapter. Enable it explicitly in the EEF config."""
+"""Optional Windows keyboard adapter. Enable it explicitly in the eef config."""
 
 CAPABILITY = "keyboard"
 ACTIONS = ["type", "press", "hotkey", "key_down", "key_up"]

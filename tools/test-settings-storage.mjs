@@ -48,7 +48,7 @@ try{
  start(join(bin,'eef.exe'),['--config',identity,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],false,{EEF_NODE_PSK:randomBytes(24).toString('hex')});
  await until(async()=>(await json(node+'/api/diagnostics')).runtime_id&&(await json(eef+'/api/diagnostics')).initialized,'core apps without models');
  const nodeValue=(await json(node+'/api/config')).config;nodeValue.name='First saved node';await save(node,nodeValue,true);
- const eefValue=(await json(eef+'/api/config')).config;eefValue.identity.name='First saved EEF';await save(eef,eefValue,true);
+ const eefValue=(await json(eef+'/api/config')).config;eefValue.identity.name='First saved eef';await save(eef,eefValue,true);
  await cli('eefn',config,['restart','--wait-seconds','60']);
  assert.equal((await json(node+'/api/status')).pending_restart,false);
  const originalRuntime=(await json(node+'/api/diagnostics')).runtime_id;
@@ -58,8 +58,8 @@ try{
  });
  await blocked(node,config,config+'.bak',value=>value.name='Node writer recovered',false);
  await blocked(node,config,config+'.bak',value=>value.name='Node backup writer recovered',true);
- await blocked(eef,identity,identity+'.bak',value=>value.identity.name='EEF writer recovered',false);
- await blocked(eef,identity,identity+'.bak',value=>value.identity.name='EEF backup writer recovered',true);
+ await blocked(eef,identity,identity+'.bak',value=>value.identity.name='eef writer recovered',false);
+ await blocked(eef,identity,identity+'.bak',value=>value.identity.name='eef backup writer recovered',true);
  assert.equal((await json(node+'/api/diagnostics')).runtime_id,originalRuntime,'Saving is not automatic application/restart');
  for(const path of [config+'.next',identity+'.next'])assert.deepEqual(await readFile(path),sentinel);
  assert(!(await readdir(scratch)).some(name=>name.startsWith('.eef-write-')));

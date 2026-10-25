@@ -19,7 +19,7 @@ impl IdentityMemory {
         Self { config }
     }
     pub fn name(&self) -> String {
-        self.config.string("identity.name", "EEF")
+        self.config.string("identity.name", "eef")
     }
     pub fn version(&self) -> String {
         self.config.string("identity.version", crate::VERSION)

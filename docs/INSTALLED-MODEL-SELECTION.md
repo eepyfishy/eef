@@ -17,14 +17,14 @@ second node, restart, delete files or approve a default model. The provider is
 preserved unless `--interpreter --activate-backend` explicitly saves llama.cpp
 as provider in that same write; see [atomic backend choice](INTERPRETER-SETUP.md#save-the-interpreter-and-its-backend-together).
 
-The same target-node operation is available from EEF with current node-owner
+The same target-node operation is available from eef with current node-owner
 management approval:
 
 ```powershell
 eef node models --node NODE_ID select-installed-gguf --model MODEL_ID --interpreter --json
 ```
 
-EEF does not interpret the ID as a path on its own device. Both roles need the
+eef does not interpret the ID as a path on its own device. Both roles need the
 new development implementation; no legacy save/file-selection fallback is used.
 The existing owner endpoint `POST /api/commands/models` takes:
 
@@ -163,7 +163,7 @@ Default bootstrap, real-model quality, complete onboarding, physical and release
 acceptance remain unfinished.
 
 Both locked/offline workspace/all-target suites pass **708 tests plus one ignored
-each**, with default features and without dashboard features (EEF 243, owner CLI
+each**, with default features and without dashboard features (eef 243, owner CLI
 17, installer 6, node library 427, node CLI 15). Fresh binaries/examples build;
 format, diff, JavaScript syntax and backend/browser dependency checks pass. No
 model weights were downloaded/copied, no installed application was changed and

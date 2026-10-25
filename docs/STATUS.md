@@ -3,6 +3,32 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Locally verified, unreleased: native MSI authoring and lowercase naming
+
+The development-only MSI author and independent database inspector now cover
+both role payloads, regenerated file inventories, scoped per-user component
+ownership, verified embedded cabinets and exact standard action sequences.
+Synthetic fixtures reject seven altered recipes per role without installation
+or payload execution. An earlier separate checkpoint also authored the accepted
+`4ea7964` applications with cached runtimes; those artifacts were not installed
+and are not evidence for subsequent source changes.
+
+Maintained project branding is strictly `eef` and `eefn`, including comments,
+command messages, installer display names, UI and sentence starts. A persistent
+project rule and shared CI naming regression preserve this convention without
+changing existing environment identifiers, verification markers or legacy
+package/discovery recognition. Owner settings and installed applications were
+not rewritten.
+
+The naming checkpoint passes both complete Rust modes: 1,132 tests plus one
+existing ignored profiler each. The read-only naming scan passes 428 maintained
+text files; workflow, dashboard syntax and backend-boundary checks pass. The
+native two-role authoring/refusal regression passes again against unchanged
+evaluated source hashes. Hosted verification of this combined increment remains
+separate. Real application installation/first launch, migration, repair/uninstall,
+startup choices, rollback, signing/Defender and stable-release acceptance remain
+open. This is not a released MSI or an approved default model.
+
 ## Locally verified, unreleased: optional Granite choice; default quality rejected
 
 One optional manual catalog entry pins the publisher's Granite 4.0 1B GGUF;
@@ -74,13 +100,13 @@ The remote node is older and legacy-authenticated, not compatible/pinned for the
 current reviewed-workload gate. Upgrade and private pairing remain prerequisites;
 no old workload RPC, shell bootstrap or weakened trust was used to substitute for
 them. This is physical legacy-control evidence, not Node A interpretation through
-EEF grants to Node B execution/results, automatic onboarding, MSI, signing,
+eef grants to Node B execution/results, automatic onboarding, MSI, signing,
 Defender or stable v0.4.0 acceptance.
 
 ## Locally accepted, unreleased: backend-selected check and readiness guidance
 
 `eef node verify-model ... start` now submits the new `start_selected` owner
-command, leaving model resolution and setup/permission reads in EEF. The backend
+command, leaving model resolution and setup/permission reads in eef. The backend
 checks retained history before contacting the node, so repeats can inspect the
 original operation offline or after selection/runtime changes. Fresh starts
 require a confirmed single saved/applied interpreter and current local management
@@ -174,7 +200,7 @@ release asset, feed or OS trust setting changed.
 
 ## Unreleased: remote maintenance policy and coordinator retirement
 
-The command/backend increment adds EEF inspection/configuration of a node's
+The command/backend increment adds eef inspection/configuration of a node's
 shared installation maintenance policy, behind separate default-off local
 consent. Saves pin runtime, revision and digest; remote self-grants and remote
 repair run/approval are excluded. Prerelease automation remains blocked.
@@ -234,7 +260,7 @@ installed/remote node, release, version or feed changed.
 
 ## Interim: setup stop before combined reply-ownership correction
 
-Shared node/EEF commands can stop one current setup before configuration commit,
+Shared node/eef commands can stop one current setup before configuration commit,
 without disabling saved automation. The durable stop precedes exact-transfer
 cancellation; admission/selection recheck it, and late work cannot overwrite it.
 Remote consent, exact runtime/policy/attempt scope and no-replay remain required.
@@ -264,12 +290,12 @@ not changed. This is operational regression evidence, not interpreter quality,
 an approved default, automatic setup-to-inference verification or physical
 two-PC acceptance. See [model lifecycle](MODEL-LIFECYCLE.md).
 
-## Unreleased: shared setup/model guidance and EEF inspection
+## Unreleased: shared setup/model guidance and eef inspection
 
 The prior binary reproduces misleading interpreter-choice guidance while its
 approved model setup is already downloading. The node's existing setup check now
 reuses validated setup status to explain approval, retained progress, application
-and failed/unknown evidence without changing settings or running work. EEF adds
+and failed/unknown evidence without changing settings or running work. eef adds
 `node setup --node NODE_ID` over the same authenticated backend. A single owned
 read slot keeps journal I/O off async controls and survives caller cancellation.
 The existing consent, runtime, bounded-capacity and no-replay boundaries remain.
@@ -319,7 +345,7 @@ See [scope and retained failures](AUTOMATION-SCHEDULES.md#single-view-timer-obse
 
 ## Unreleased: selected-package runtime doctor
 
-Local EEF/EEFN `doctor` commands now share backend-owned package inspection and
+Local eef/eefn `doctor` commands now share backend-owned package inspection and
 explicit bounded runtime probes, independent of saved config or a dashboard.
 The library resolves valid selected generations directly, without launching the
 selected app; broken selection permits invoked metadata only and blocks runtime
@@ -372,7 +398,7 @@ CI stays local; no installed node, release, UI, trust/Defender or feed changed.
 
 ## Unreleased: opt-in missing-package-file maintenance
 
-Local EEF/EEFN `repair-setup` commands and service supervisors now consume a
+Local eef/eefn `repair-setup` commands and service supervisors now consume a
 separate default-off, exact-build public-source policy. Prompt retains a proposal
 for owner approval; auto requires distinct consent and allows one attempt per
 explicit policy identity. All prerelease automation is blocked. Durable attempt
@@ -422,7 +448,7 @@ Defender setting or auto-update policy changed. CI remains local and unpublished
 
 ## Unreleased: exact-build repair source proposals
 
-Shared local EEF/EEFN source commands check an owner-selected HTTPS descriptor
+Shared local eef/eefn source commands check an owner-selected HTTPS descriptor
 and retain a bounded digest-only proposal before separate exact approval. The
 proposal binds source URL/bytes, current executable/version/slot and one future
 repair ID; source changes, expiry, changed build/consent, damaged evidence and
@@ -479,7 +505,7 @@ HTTPS repair and installer/signing/Defender/stable-release gates remain open.
 
 ## Unreleased: explicit same-build package repair
 
-EEF/EEFN now expose backend-owned Windows repair, offline selection status and
+eef/eefn now expose backend-owned Windows repair, offline selection status and
 rollback commands, plus a distinct approved remote node repair action. Exact
 size/SHA-256, product/version, running executable hash and a complete bounded file
 inventory precede immutable generation selection; loaded files, owner settings
@@ -612,7 +638,7 @@ unavailable-model-PdWpTG with applied eager startup, pinned-TLS reconnection,
 reviewed system-information work, remote proposals/consent, explicit restart,
 model removal and stale-reference refusal. See [scope and evidence](UNAVAILABLE-MODEL-CONTROLS.md).
 Both locked/offline workspace/all-target feature modes pass 904 tests plus one
-ignored profiler each: EEF 268, owner CLI 21, installer 6, EEFN 584 and node CLI
+ignored profiler each: eef 268, owner CLI 21, installer 6, eefn 584 and node CLI
 25. Final logs are retained under .validation/model-reference-workspace-default-final.log
 and .validation/model-reference-workspace-headless-final.log; final headless
 apps/examples build. A final package-only run passes all three named regressions,
@@ -625,7 +651,7 @@ visual UI, version, installer or update policy changed.
 
 ## Unreleased: bootstrap preferences and exact owner catalog bindings
 
-Node and EEF model-bootstrap-policy commands share the node-owned service.
+Node and eef model-bootstrap-policy commands share the node-owned service.
 Runtime and versioned-policy fences protect atomic preference saves; central
 configuration writes own monotonic revisions, preserve omitted opt-outs and
 refuse counter reset/ABA. Owner-selected text-GGUF catalog bindings retain exact
@@ -642,7 +668,7 @@ execution, restart and retry claims remain false. Existing model setup and
 installer defaults are unchanged. See [contract and remaining automation](MODEL-BOOTSTRAP-POLICY.md).
 
 Fifteen new regressions pass. Public model-bootstrap-uwjwWa verifies local and
-pinned-TLS EEF commands, consent/revocation, immutable catalog binding, strict
+pinned-TLS eef commands, consent/revocation, immutable catalog binding, strict
 runtime/CAS/body/origin checks, no-op bytes, catalog drift/re-pinning, lost or
 altered save replies without replay/private echo, unsupported endpoints before
 mutation, restart persistence without installation, offline refusal without
@@ -654,8 +680,8 @@ Existing process-lifetime-8W31Pd, local-pipelines-neMSj0,
 python-policy-r20X6c, python-bridge-7qg8Dt,
 permission-commands-tfoUon, node-commands-wc6YHi,
 node-credentials-qvYLuV and model-downloads-IbRhZ2 also pass. Both locked/offline
-workspace/all-target modes pass **901 tests plus one ignored each**: EEF 268 plus
-one ignored profiler, owner CLI 21, installer 6, EEFN 581 and node CLI 25. Logs
+workspace/all-target modes pass **901 tests plus one ignored each**: eef 268 plus
+one ignored profiler, owner CLI 21, installer 6, eefn 581 and node CLI 25. Logs
 are retained under .validation/bootstrap-policy-workspace-default.log and
 .validation/bootstrap-policy-workspace-headless.log. Final headless apps/examples
 build; all four evaluated native hashes match. Source boundary, format, JS
@@ -724,8 +750,8 @@ Existing python-policy-zu5yVa, python-bridge-IJhd5z,
 permission-commands-2DuR28, node-commands-fg458E,
 node-credentials-Hbju03 and model-downloads-gUrt9d also pass. Both final
 locked/offline workspace/all-target feature modes pass **886 tests plus one
-ignored each**: EEF 267 plus one ignored profiler, owner CLI 20, installer 6,
-EEFN 569 and node CLI 24. Logs are retained under
+ignored each**: eef 267 plus one ignored profiler, owner CLI 20, installer 6,
+eefn 569 and node CLI 24. Logs are retained under
 .validation/stop-inspection-workspace-default-final.log and
 .validation/stop-inspection-workspace-headless-final.log. Final headless
 apps/examples build and all four evaluated native binary hashes match. Source
@@ -771,10 +797,10 @@ focused stop-selected tests pass, including thirteen new cases (nine node stop,
 two coordinator journal and two plain-output tests).
 
 Both locked/offline workspace/all-target modes pass **873 tests plus one ignored
-each**: EEF 266 plus one ignored profiler, owner CLI 19, installer 6, EEFN 559 and
+each**: eef 266 plus one ignored profiler, owner CLI 19, installer 6, eefn 559 and
 node CLI 23. Logs are retained in .validation/grant-stop-workspace-default.log
 and .validation/grant-stop-workspace-headless.log. Final headless apps/examples
-build; EEF, EEFN and both native fixture helpers match evaluated binary hashes.
+build; eef, eefn and both native fixture helpers match evaluated binary hashes.
 Source boundary, JS syntax and diff checks pass; fixture apps/helpers are
 terminal. No installed/remote node, UI source, model, version, installer or update
 policy changed. Strong stop proof, blocked-I/O/external effects, physical two-PC,
@@ -811,10 +837,10 @@ finite audio/pipelines and existing command/permission/restart workflows, not
 physical two-PC media or default-model acceptance.
 
 Both locked/offline workspace/all-target modes pass **860 tests plus one ignored
-each**: EEF 264 plus one ignored profiler, owner CLI 19, installer 6, EEFN 548 and
+each**: eef 264 plus one ignored profiler, owner CLI 19, installer 6, eefn 548 and
 node CLI 23. Logs are retained in .validation/grant-cleanup-workspace-default.log
 and .validation/grant-cleanup-workspace-headless.log. Final headless binaries/
-examples build; EEF, EEFN and both native fixture helpers match the evaluated
+examples build; eef, eefn and both native fixture helpers match the evaluated
 binary hashes. Source-boundary and diff checks pass; fixture apps/helpers are
 terminal. No installed/remote node, UI,
 model, version, installer or update policy changed. Strong stop acknowledgement,
@@ -823,7 +849,7 @@ physical two-PC and the remaining roadmap/release acceptance stay open.
 ## Unreleased: command-first Python budgets and owned-job commit ceiling
 
 Running nodes expose python show/configure through the node-owned service,
-local-owner API and EEF adapter. CLI changes merge only specified time/pipe/memory
+local-owner API and eef adapter. CLI changes merge only specified time/pipe/memory
 fields against inspected saved settings. Exact runtime binding and normalized
 saved-policy digest fence saves under the existing configuration lock; current
 local management consent is rechecked for remote writes. No-op saves do not
@@ -839,7 +865,7 @@ independent. Each invocation tree has its own ceiling, not a total-node quota,
 resident RAM/VRAM measurement, device-buffer limit or security sandbox.
 
 Eight focused policy tests pass. Public python-policy-vnmOvx and expanded
-python-policy-iawAA9 pass local/EEF commands, current owner approval/revocation,
+python-policy-iawAA9 pass local/eef commands, current owner approval/revocation,
 saved/applied separation, explicit restart, no-op preservation, runtime/digest/
 origin/body rejection and lost/corrupt/unsupported replies without retry or
 fallback. The expanded fixture also refuses an older inspection endpoint before
@@ -857,10 +883,10 @@ existing public regressions, including synthetic finite audio through real
 reviewed/consumed grants. No real microphone, camera or speaker is opened.
 
 Both locked/offline workspace/all-target modes pass **855 tests plus one ignored
-each**: EEF 264 plus one ignored profiler, owner CLI 19, installer 6, EEFN 543 and
+each**: eef 264 plus one ignored profiler, owner CLI 19, installer 6, eefn 543 and
 node CLI 23. Logs are retained in .validation/python-policy-workspace-default.log
 and .validation/python-policy-workspace-headless.log. Final headless binaries/
-examples build; EEF/EEFN hashes match the evaluated production binaries. Source
+examples build; eef/eefn hashes match the evaluated production binaries. Source
 boundary, JS syntax and diff checks pass; fixture apps/helpers are terminal.
 
 Earlier python-policy-VAgrN4 used an invalid fixture discovery-marker field and
@@ -911,8 +937,8 @@ node-credentials-sNNSIe, request-drafts-apiUfJ, browser copy/status smoke and
 recursive backend/browser source guard pass. Public fixture apps/helpers are terminal.
 
 Both locked/offline workspace/all-target modes pass **847 tests plus one ignored
-each**, including no-dashboard: EEF 263 plus one ignored profiler, owner CLI 18,
-installer 6, EEFN 538 and node CLI 22. Logs are retained in
+each**, including no-dashboard: eef 263 plus one ignored profiler, owner CLI 18,
+installer 6, eefn 538 and node CLI 22. Logs are retained in
 `.validation/audio-authoring-workspace-default.log` and
 `.validation/audio-authoring-workspace-headless.log`.
 Final headless binaries/examples build and match the evaluated production
@@ -923,7 +949,7 @@ two-PC media/stop/resource acceptance, continuous media/virtual devices, presenc
 mesh/ESP/Bluetooth, measured migration, coordinator clustering and signing/
 Defender/stable-release acceptance remain unfinished.
 
-## Unreleased: typed local and EEF relay configuration
+## Unreleased: typed local and eef relay configuration
 
 `eefn relay show/configure` and `eef node relay --node NODE_ID show/configure`
 now use one node-owned setup service. They create missing transport/microphone/
@@ -946,7 +972,7 @@ Remote writes recheck current local management consent under the config lock.
 
 Fresh headless binaries/examples build. Public `local-pipelines-IYFmFP` starts
 with no relay resources and disabled peer/media switches, configures both
-logical nodes through local/EEF commands without JSON/resource UUIDs/port numbers,
+logical nodes through local/eef commands without JSON/resource UUIDs/port numbers,
 checks preserved identity/preferences and stable repeated setup, then separately
 consents/restarts and passes finite synthetic audio and existing pipeline cases.
 No real microphone, speaker or camera is opened; physical two-PC acceptance is
@@ -958,8 +984,8 @@ Existing `node-commands-1T98D6`, `model-downloads-1v0ayB`,
 the recursive backend/browser source guard pass. Fixture apps/helpers are terminal.
 
 Both locked/offline workspace/all-target modes pass **839 tests plus one ignored
-each**, including no-dashboard: EEF 261 plus one ignored profiler, owner CLI 18,
-installer 6, EEFN 533 and node CLI 21. Final headless binaries/examples build and
+each**, including no-dashboard: eef 261 plus one ignored profiler, owner CLI 18,
+installer 6, eefn 533 and node CLI 21. Final headless binaries/examples build and
 match the evaluated production binary hashes; fixture apps/helpers are terminal.
 No installed/remote node, UI source, model, published installer, version or update
 policy changed. JSON-free audio-job authoring, complete first-run model/dependency
@@ -1005,8 +1031,8 @@ startup instead of a fixed delay that could expire before invocation.
 browser copy/status smoke and the recursive backend/browser source guard pass.
 
 Both locked/offline workspace/all-target modes pass **831 tests plus one ignored
-each**, including no-dashboard: EEF 260 plus one ignored profiler, owner CLI 17,
-installer 6, EEFN 528 and node CLI 20. Final headless binaries/examples build;
+each**, including no-dashboard: eef 260 plus one ignored profiler, owner CLI 17,
+installer 6, eefn 528 and node CLI 20. Final headless binaries/examples build;
 fixture apps/helpers are terminal. Versioned releases and update feeds remain
 unchanged.
 Physical two-PC/current installer acceptance, stronger observed stop/resource
@@ -1161,7 +1187,7 @@ evidence is not public peer command, physical two-PC or media acceptance.
 Fresh headless binaries/examples build; final-binary public
 `local-pipelines-TX38Bw` and `model-downloads-MB5qua` pass existing command,
 history, permission-loss and restart/no-replay regressions. Both fixtures are
-terminal with no matching EEF/EEFN/native-helper processes. Browser smoke passes
+terminal with no matching eef/eefn/native-helper processes. Browser smoke passes
 initialization, copy stability and truthful installation status, without UI edits.
 
 No app listener, command, permission, capability, grant operation or media path
@@ -1245,7 +1271,7 @@ loss and executor/coordinator restart without replay. This is two authenticated
 logical nodes on one PC with a synthetic model, not physical two-PC acceptance.
 Broader `request-drafts-3EKRho` also passes authenticated receipt inspection,
 uncertain restart, tracking abandonment and no-replay regressions. Both harnesses
-completed; no fixture EEF/EEFN/native-helper processes remain.
+completed; no fixture eef/eefn/native-helper processes remain.
 
 An intermediate suite caught a small-journal regression. Progress tables and
 reservations are now pipeline-only and first creation shares the claim
@@ -1586,7 +1612,7 @@ mesh/cluster roadmap remain unfinished.
 
 ## Unreleased: explicit interrupted-result reconciliation (2026-10-11)
 
-Origin/EEF-owner `requests recover-result` now reconciles an exact idle
+Origin/eef-owner `requests recover-result` now reconciles an exact idle
 interrupted reviewed attempt from its authenticated executor's retained completed
 report. The existing job journal saves a separate bounded recovery receipt;
 original grant, request context, assignment, attempt count, actual ACK and
@@ -1631,7 +1657,7 @@ Final baselines pass in `job-shutdown-pUQnYw`, `scheduling-Vkua3P`,
 `request-drafts-WuxHKs`, `model-metadata-jtgKVn` and the isolated
 `node-credentials-9MMTXJ`. The durable-request regression
 now requires the new unknown/null-output cancellation report and still verifies
-no replay after restart, abandonment or EEF history removal. Formatter, JS syntax,
+no replay after restart, abandonment or eef history removal. Formatter, JS syntax,
 backend/browser source-boundary and diff checks pass. The fake-model/headless
 fixtures explicitly report `real_inference:false` and `physical_two_pc:false`.
 
@@ -1650,11 +1676,11 @@ migration preserves old consumed receipts without inventing output/success;
 read-only legacy inspection does not migrate. Damaged/future journals and failed
 checkpoints fail closed. Cached output is explicit/private, not routine status.
 
-Origin/EEF owner `requests result` reads the exact retained issuance from its
+Origin/eef owner `requests result` reads the exact retained issuance from its
 independently authenticated pinned-issuer executor, including after session
 replacement. Executor-local `grants result` works offline. Strict bounds,
 scope/identity checks and API guards apply; no other origin, issuer or fallback
-can fetch it. Receipt commands stay metadata-only. Reads neither change EEF
+can fetch it. Receipt commands stay metadata-only. Reads neither change eef
 tracking nor infer, issue/renew grants, retry or reconcile. See
 [retained result contract](RETAINED-RESULTS.md).
 
@@ -1677,7 +1703,7 @@ without re-executing. These are local isolated tests, not physical acceptance.
 connected origin's denial, strict API guards, routine-output redaction and both
 role restarts with unchanged job state and no inference replay. The earlier new
 denial fixture reached a stopped peer; reconnecting it tests actual authenticated
-EEF refusal without weakening assertions/deadlines. Baselines pass in
+eef refusal without weakening assertions/deadlines. Baselines pass in
 `request-drafts-BdBLPW`, `job-shutdown-KRqpnK`, `scheduling-tq7XqD`,
 `model-metadata-rROQlm` and `node-credentials-Kez5vL`. Formatter, JS syntax,
 backend/browser source boundary and diff checks pass. Fake-model/headless command
@@ -1727,7 +1753,7 @@ method input or coordinator port is needed. It preserves complete review history
 and uses the selected interpreter with shared single-capacity, generation and
 inference-deadline guards. Existing explicit deterministic compilation remains.
 
-EEF revalidates authenticated origin, immutable context, exact source revision,
+eef revalidates authenticated origin, immutable context, exact source revision,
 full review digest/counts and fresh disclosed vocabulary. Source is checked again
 inside the journal edit. A method uses existing scoped compiler/bindings and saves
 as awaiting approval; a question saves as an answerable, source-pinned proposal
@@ -1772,14 +1798,14 @@ or clarification from an exact retained review, preserving original text and ful
 proposal/question/answer history. Source evidence pins job/revision/full digest/
 counts and reported backend/model identity; it does not attest inference or semantic
 truth. A single authoritative template/action/parameter catalogue is shared with
-EEF's existing planner. Candidate hints cannot invent node/model/resource bindings,
-permissions, roles, backends or compute limits; EEF validation/approval remain
+eef's existing planner. Candidate hints cannot invent node/model/resource bindings,
+permissions, roles, backends or compute limits; eef validation/approval remain
 mandatory. Existing interpretation prompts/output and explicit template behavior
 are preserved.
 
 This is a core schema/prompt/inference increment, **not a new user command, saved
 plan, automatic trigger or completed semantic compiler**. Fresh context, service
-capacity/generation guards, atomic EEF source verification/checkpointing, saved
+capacity/generation guards, atomic eef source verification/checkpointing, saved
 receipt inspection and durable new-question handling still need integration.
 See [contract and remaining workflow](SEMANTIC-PREPARATION.md).
 Installed apps/physical nodes, versions, installers and update feeds are unchanged.
@@ -1795,11 +1821,11 @@ are local logical-node regressions, not physical two-PC or real-model acceptance
 
 ## Unreleased: origin-node concrete planning commands (2026-10-11)
 
-The input node can now invoke EEF's existing compiler and inspect its own private
+The input node can now invoke eef's existing compiler and inspect its own private
 plan via `requests compile/plan` and a guarded local command API, without a
 dashboard or coordinator port. Shared typed inputs retain old owner file/API
 contracts. A simple parameter-free CLI mode needs no JSON file; advanced inputs
-still use explicit data. EEF checks immutable origin before reading/compiling,
+still use explicit data. eef checks immutable origin before reading/compiling,
 then filters fresh executor candidates to applied self/directional owner-disclosed
 scope before existing capability/model ranking. No hidden-provider fallback,
 inference, permission widening, model load/download, approval or dispatch occurs.
@@ -1816,7 +1842,7 @@ planning, delegated owner approval, grant migration and the complete non-coder
 workflow remain required; this is a stage 5-6 command/workflow increment only.
 
 Validation: **349 workspace/all-target Rust tests pass in both feature modes**,
-with fresh no-dashboard EEF/EEFN binaries. Added units cover pre-ranking scope
+with fresh no-dashboard eef/eefn binaries. Added units cover pre-ranking scope
 filtering, strict origin/receipt/revision/input/view contracts, malformed graphs,
 binding changes, duplicate fields, authority widening, file bounds and disconnected
 operation without configuration/journal creation. Rejected/corrupt confirmation
@@ -1859,7 +1885,7 @@ backend termination or safe coordinator cluster is claimed. Physical clock/netwo
 acceptance remains required; see [timing contract](EXECUTION-GRANTS.md#limits-and-honest-termination).
 
 Validation: **344 workspace/all-target Rust tests pass in both feature modes**,
-with fresh no-dashboard EEF/EEFN binaries. Added units exercise synthetic issuer
+with fresh no-dashboard eef/eefn binaries. Added units exercise synthetic issuer
 timestamps offset by +/-48 hours, exact nonce/session/digest matching, expired and
 widened replies, full round-trip deduction, local clock changes, cancellation
 cleanup and partial-write retirement. Expired proof cannot claim a receipt;
@@ -1887,7 +1913,7 @@ workflow for a retained origin-owned review and its current recorded answer.
 The selected interpreter receives unchanged original text, the current proposal
 and all recorded questions/answers as separate untrusted data; prompts are bounded
 at 64 KiB without truncating answers. Existing role/backend/finish/output limits,
-single-capacity and runtime invalidation remain. EEF saves one new review-only
+single-capacity and runtime invalidation remain. eef saves one new review-only
 proposal atomically against source revision, full review digest and exact history
 counts, rechecking fresh disclosed capability names. Source lineage is validated
 on retained reads/restart. Original identity/text, proposals and answers persist;
@@ -1902,7 +1928,7 @@ source; no automatic replay or exactly-once model call is claimed. See
 [resolution commands and limits](COMMANDS.md#explicit-clarification-reinterpretation-unreleased-after-alpha6).
 
 Validation: **339 workspace/all-target Rust tests pass in both feature modes**,
-with fresh no-dashboard EEF/EEFN binaries. New unit tests cover bounded unchanged
+with fresh no-dashboard eef/eefn binaries. New unit tests cover bounded unchanged
 original/QA prompts, strict result contracts, full source lineage and corruption
 rejection, origin/revision/digest conflicts, atomic receipt reuse and durable
 reopening without executable work. Headless `request-review-NtBv6u` covers
@@ -1928,10 +1954,10 @@ versions, installers and update feeds remain unchanged.
 ## Unreleased: cross-node interpretation vocabulary (2026-10-11)
 
 Online request interpretation now obtains a strict, read-only capability-name
-context from EEF before inference. Names come from fresh live advertisements of
+context from eef before inference. Names come from fresh live advertisements of
 the input node and peers already authorized by applied directional discovery
 grants; default disclosure remains self-only. The input node need not implement
-the suggested feature. EEF independently recomputes membership when reviewing,
+the suggested feature. eef independently recomputes membership when reviewing,
 opening or revising proposals; input/model-supplied names cannot authorize work.
 The new lookup contains no user text, peer IDs, model IDs, endpoints or bindings,
 has a five-second deadline, and is cancelled/rejected across runtime change.
@@ -1939,11 +1965,11 @@ Offline preview stays local. Saved vocabulary remains historical evidence;
 inspection and clarification answers do not require a current executor.
 
 Validation: **336 workspace/all-target Rust tests pass in both feature modes**,
-with fresh no-dashboard EEF/EEFN binaries. Headless `request-review-6CbnZu`
+with fresh no-dashboard eef/eefn binaries. Headless `request-review-6CbnZu`
 uses two independently paired TLS nodes and fake inference to verify actual
 prompt vocabulary when the origin lacks the peer feature, default non-disclosure,
 cross-node opening/revision, disconnect/reconnect withdrawal, applied revocation
-while inference is in flight, independent EEF rejection without replay, unchanged
+while inference is in flight, independent eef rejection without replay, unchanged
 historical snapshots and local-only offline preview. No cross-node hint implicitly
 creates tasks/grants. The fixture also retains its separately owner-approved
 model-grant execution regression. Durable jobs (`request-drafts-XF3HnP`),
@@ -1952,7 +1978,7 @@ credential isolation (`node-credentials-lkCREW`), model metadata
 (`scheduling-K3XEKg`) pass; fixture children closed through cleanup. Source
 dependency, formatting, JavaScript syntax and diff checks pass. These are local
 isolated logical-node/fake-model checks, not physical two-PC or real-model
-acceptance. Well-shaped unknown hints now fail at EEF; malformed hints still
+acceptance. Well-shaped unknown hints now fail at eef; malformed hints still
 fail locally. Existing rejection assertions were updated to reflect that boundary.
 
 This is interpretation context, not automatic planning, execution approval,
@@ -2001,7 +2027,7 @@ no stable v0.4.0, signing or Defender-clearance claim is made.
 
 ## Unreleased: credential-only startup without a legacy secret (2026-10-11)
 
-EEF no longer requires an unused shared secret when the owner has explicitly
+eef no longer requires an unused shared secret when the owner has explicitly
 disabled legacy authentication. The gateway constructs no legacy key in that mode;
 independent credential/certificate validation and explicit provisioning remain
 mandatory for connections. A missing TLS identity leaves owner commands available,
@@ -2013,7 +2039,7 @@ saved old keys are not automatically erased. See [migration contract](NODE-CREDE
 
 Validation: **329 workspace/all-target Rust tests pass in both feature modes**.
 The real pinned-TLS grant/receipt unit fixture now uses no legacy gateway secret.
-Fresh headless `node-credentials-WI587I` proves a cold EEF restart with no config/env
+Fresh headless `node-credentials-WI587I` proves a cold eef restart with no config/env
 legacy secret, two independent reconnects, unchanged certificate identity, blank
 shared-key advertisement and atomic denial of invalid legacy re-enablement.
 Granted request/receipt/restart checks (`request-drafts-7vE282`) and fake-model
@@ -2028,7 +2054,7 @@ are unchanged. No Defender/signing clearance is claimed.
 
 ## Unreleased: authenticated executor receipt inspection (2026-10-11)
 
-Original-node and local EEF-owner `requests receipt` commands now inspect the
+Original-node and local eef-owner `requests receipt` commands now inspect the
 exact retained executor grant through the current independently authenticated,
 owner-pinned TLS session. Complete scope digests and bounded issuer/node/job/task/
 attempt/state/timestamp fields must match. A replacement session can inspect old
@@ -2052,7 +2078,7 @@ Validation: **327 workspace/all-target Rust tests pass in both feature modes**.
 Fresh headless fixture `request-drafts-7W3HPD` passes owner/origin inspection of a
 different executor, scope matching, unchanged node/job journals, wrong-origin and
 cross-site denial, control availability during a saturated HTTP operation, and
-inspection of retained uncertainty after EEF restart without replay. Fake-model
+inspection of retained uncertainty after eef restart without replay. Fake-model
 review/granted inference (`request-review-omnDyt`), credentials
 (`node-credentials-HsWAOc`), model metadata (`model-metadata-0jhX3K`), shutdown
 (`job-shutdown-di5Xic`) and scheduling (`scheduling-edXRhi`) regressions pass.
@@ -2105,7 +2131,7 @@ disabled update feeds are unchanged; no Defender/signing clearance is claimed.
 
 ## Unreleased: bounded owner approval without grant issuance (2026-10-10)
 
-EEF now supports `requests approve` through the same backend planning command/API,
+eef now supports `requests approve` through the same backend planning command/API,
 without a dashboard or model call. Approval names the exact compiled revision and
 definition digest, explicit validity/execution/result bounds and current pinned
 issuer. Fresh fixed executors/resources and exact model/backend/role routes must
@@ -2125,7 +2151,7 @@ damaged approvals remain retained without repair or activation. New development
 states require the new build and must not be automatically downgraded.
 
 This completes **explicit conditional owner approval**, not stage 6 as a whole.
-Reviewed plans still cannot execute. EEF's durable issuance, persisted executor
+Reviewed plans still cannot execute. eef's durable issuance, persisted executor
 ACK/completion, exact reviewed-plan dispatch and uncertainty reconciliation remain
 the next integration boundary. Stronger OS/backend termination, continuous local
 pipelines, peer/media paths, model bootstrap/lifecycle and physical two-PC/release
@@ -2170,7 +2196,7 @@ starting a runtime, creating a journal, exporting parameters or replaying work.
 See [scope, storage and honest deadline limitations](EXECUTION-GRANTS.md).
 
 This is the node-side stage 6 boundary, **not the complete approved workflow**.
-Normal reviewed requests still stop at `awaiting_approval`. Owner approval, EEF's
+Normal reviewed requests still stop at `awaiting_approval`. Owner approval, eef's
 durable issuance/ACK lifecycle and reviewed-plan dispatch/reconciliation remain pending.
 Legacy execution is unchanged, not retroactively grant-enforced. Deadlines currently
 bound the RPC future, not all OS/backend side effects or process trees. Full physical
@@ -2196,7 +2222,7 @@ node was used by these fixtures.
 
 ## Unreleased: concrete reviewed plans awaiting approval (2026-10-10)
 
-EEF now offers owner command/API `requests inspect/compile` without a browser.
+eef now offers owner command/API `requests inspect/compile` without a browser.
 Strict explicit template inputs compile resolved one-shot reviews against current
 registered providers; model selections must match fresh gateway metadata, including
 roles/readiness rather than only cached model IDs. Compilation preserves immutable
@@ -2246,7 +2272,7 @@ waiters. Response completion checks both identities. Old cleanup cannot fail
 a replacement session's request, nor can the replacement confirm an old waiter.
 
 Accepted submissions get a gateway-owned routing generation, replacing any
-caller field. Completed/busy EEF replies require that original live session and
+caller field. Completed/busy eef replies require that original live session and
 matching transport ID; they never follow the node ID onto its latest connection.
 Missing, malformed, stale generations and saturated queues reject without late
 delivery or replay. No wire requirement, persisted identity or job origin changes.
@@ -2273,7 +2299,7 @@ update-feed change; no physical two-PC or stable-release acceptance claimed.
 
 Nodes now have command/API-only `requests open/open-proposal/draft/answer/revise-proposal`
 operations. Optional natural-language opening reuses the bounded interpreter;
-supplied proposals, inspection and answers need no model. EEF saves non-executable
+supplied proposals, inspection and answers need no model. eef saves non-executable
 `review` records in the existing durable job journal with stable identity, exact
 original text/context, proposal history and clarification answers. Original
 origin/area/text are immutable, explicit revisions protect concurrent edits, and
@@ -2354,7 +2380,7 @@ remote ID before policy lookup and verifies those same bytes without trimming.
 Invalid claims do not reserve an identity, register providers or consume a replay
 receipt. Replay keys are typed `(node ID, nonce)` pairs, not delimiter strings.
 
-Remote IDs also cannot use the query wildcard or EEF's internal `local` provider
+Remote IDs also cannot use the query wildcard or eef's internal `local` provider
 alias. Provisioning/revocation, credential policy, TLS selector, invitation
 pairing, node client, saved settings, first-run identity and peer registration
 enforce the same rule. Existing valid IDs remain case-sensitive and unchanged;
@@ -2376,7 +2402,7 @@ checks pass. Installed nodes and public artifacts/feeds are unchanged.
 
 ## Unreleased: command-owned coordinator scheduling budgets (2026-10-10)
 
-The local EEF owner now has typed `scheduling show/limits/node/remove-node`
+The local eef owner now has typed `scheduling show/limits/node/remove-node`
 commands for non-model freshness and global/per-provider/exact-node concurrency
 ceilings. Validated, atomic edits preserve latest unrelated configuration and
 report saved/applied separation. The running registry uses immutable applied
@@ -2508,9 +2534,9 @@ permission, release feed, installer, signing or public artifact was changed.
 ## Unreleased: model-independent structured review adapter (2026-10-10)
 
 `eefn requests review-proposal --file` sends a supplied structured proposal to
-EEF for review without consulting an interpreter. The strict bounded UTF-8
+eef for review without consulting an interpreter. The strict bounded UTF-8
 file contract preserves original text; CLI checks shape, the live node runtime
-checks capabilities, and EEF independently revalidates gateway-stamped context.
+checks capabilities, and eef independently revalidates gateway-stamped context.
 Both model-generated and supplied hints use the same confirmed review service.
 The supplied adapter additionally compares its exact proposal in the final CLI
 reply and labels `interpretation_source: supplied_proposal`.
@@ -2592,10 +2618,10 @@ never publish those directories as diagnostics.
 ## Unreleased: reserved-capacity remote restart workflow (2026-10-10)
 
 The bounded control pool initially protected raw status/restart requests, but
-EEF's restart command first requested full configuration and diagnostics through
+eef's restart command first requested full configuration and diagnostics through
 work capacity. Updated nodes now include a versioned control snapshot in existing
 status replies: approval state, stable node ID, current runtime ID and connection
-state. EEF uses reserved status for preflight and completion polling, avoiding
+state. eef uses reserved status for preflight and completion polling, avoiding
 full-configuration retrieval over the network and work-slot dependence. The node
 still rechecks owner approval when applying restart. Control slots are bounded;
 confirmed rejection reports not-started, without retry or an uncertain execution
@@ -2622,7 +2648,7 @@ node, model, permission, release-feed, installer or signing change.
 A deterministic overload test evicted registration/disconnect events from the
 gateway's 256-event channel and reproduced stale/missing scheduler entries.
 The gateway now retains only each live session's latest sanitized registration
-and metrics, with no request history or adapter bindings. EEF reconciles providers,
+and metrics, with no request history or adapter bindings. eef reconciles providers,
 models and node observations at listener start and after lag. State notifications
 consult live snapshots so old disconnects cannot delete a newer session.
 Normal heartbeats clone only metrics, without revalidating all advertised models.
@@ -2658,7 +2684,7 @@ release-feed, installer or signing change.
 
 One combined capacity-one model fixture (`model-metadata-Ukr9mW`) received an
 unconfirmed multi-stage model-setting reply after reconnect. Capacity rejection
-was previously classified as uncertain at this boundary. EEF now preserves a
+was previously classified as uncertain at this boundary. eef now preserves a
 confirmed `NodeBusy`/`not_started:true` result as `node_busy`, with no automatic
 mutation retry; missing confirmation remains uncertain. Tests cover rejection
 both before and after preflight. The successful fixture verifies real saturated
@@ -2671,23 +2697,23 @@ capacity for another command.
 
 `eefn requests review` extends bounded local interpreter preview through the
 existing authenticated node submission path. The gateway overwrites origin and
-capability context using accepted registration snapshots; EEF revalidates the
+capability context using accepted registration snapshots; eef revalidates the
 strict schema, bounds and hint membership. Both service and CLI confirm response
-identity, original text and review-only flags. EEF returns review/clarification
+identity, original text and review-only flags. eef returns review/clarification
 state without invoking its brain, planning, dispatching or writing a job.
 
 Review is ephemeral, not a durable receipt or approval. It has no automatic
 retry, default-model selection or chat fallback. The one-inference preview
 budget is shared; restart invalidates waits. The configured external model may
 continue computation after local cancellation. Local preview remains usable
-with EEF paused. Interactive clarification and independent execution grants
+with eef paused. Interactive clarification and independent execution grants
 remain planned; a model's well-formed proposal is not proof of understanding.
 
 Validation: strict-schema Rust tests and isolated headless request review
 (`request-review-MriG3f`) and preview (`request-preview-kg5qj1`) fixtures passed.
 Cases cover exact original text, gateway-stamped origin/area, clarification,
 invalid authority fields, shared inference capacity, restart invalidation,
-offline EEF, lost/corrupted replies and missing older endpoints without fallback.
+offline eef, lost/corrupted replies and missing older endpoints without fallback.
 No jobs were created. Final combined verification is recorded above when complete.
 These use fake inference on one PC, not physical two-PC validation. No installed
 node, model, permission or release change.
@@ -2902,7 +2928,7 @@ installer validation is claimed for this unreleased increment.
 Recorded the owner's [presence and supervised media requirements](PRESENCE-AND-MEDIA.md):
 fixed virtual audio input/output, user-preferred microphone/TTS mixing and output
 routing, optional assistant participation, reusable lightweight presence for
-welcoming/locating/handoff, and EEF-approved peer or coordinator-relayed sessions.
+welcoming/locating/handoff, and eef-approved peer or coordinator-relayed sessions.
 The design includes concurrent resource use, bounded bandwidth, local sensing,
 authorization expiry and explicit privacy/automation preferences.
 
@@ -3033,7 +3059,7 @@ No default interpreter is approved and preview never dispatches work.
   results cannot become current proposals. Missing/ambiguous roles, invalid or
   partial results and unavailable backends fail without fallback. CLI discovery,
   target/correlation checks, origin guard and no-replay behavior work without UI
-  or an EEF connection. External providers may continue compute after disconnect.
+  or an eef connection. External providers may continue compute after disconnect.
 - Validation checkpoint 2026-09-20: 178 Rust tests passed with and without
   dashboard support. `request-preview-nFGNN7` passed paused-node CLI preview,
   original text retention, invalid/incomplete rejection, role checks, exact target,
@@ -3043,7 +3069,7 @@ No default interpreter is approved and preview never dispatches work.
   `model-metadata-Qv24TM` and `model-downloads-Fy8QLw` passed existing model/job,
   response-boundary, approval and transfer regressions. All process backends were
   synthetic, not a real interpreter quality or physical two-PC acceptance claim.
-- Automatic chat interpretation, interactive clarification/approval, EEF context
+- Automatic chat interpretation, interactive clarification/approval, eef context
   validation and execution grants remain planned. No release, installed node or
   teacher-submission snapshot changed. See [usage](COMMANDS.md#request-preview-development)
   and [contract limits](INTERPRETATION.md).
@@ -3073,7 +3099,7 @@ No default interpreter is approved and preview never dispatches work.
   unknown fields, capability context and clarification consistency are checked.
   Every accepted proposal remains untrusted and requires review or clarification;
   it cannot provide execution authority, origin identity or target/grant fields.
-- This is not integrated into chat, command submission, EEF planning or live
+- This is not integrated into chat, command submission, eef planning or live
   interpretation. No model role/default or automatic actions were enabled. The
   test-only stdin example is not packaged; the CPU harness's `contract` profile
   uses that native parser rather than duplicating validation in JavaScript.
@@ -3155,7 +3181,7 @@ No default interpreter is approved and preview never dispatches work.
 
 - `eefn models installed`, `inspect`, `install`, `download-status` and
   `cancel-download` use a typed local command service backed by the existing model
-  installer. They need a running node but no browser, EEF connection or model.
+  installer. They need a running node but no browser, eef connection or model.
 - CLI install attempts carry a pre-send UUID. Lost replies remain unknown and
   are never automatically replayed. Exact-ID status/cancellation cannot target
   a newer transfer; the currently retained ID cannot be admitted twice.
@@ -3182,7 +3208,7 @@ No default interpreter is approved and preview never dispatches work.
 - Loading/error/unloaded groups remain visible with unavailable metadata; both
   capability advertisement and direct inference refuse non-ready groups.
   Readiness refreshes the existing authenticated registration without reconnect.
-  EEF preserves unchanged capability in-flight counts, limits and measured load
+  eef preserves unchanged capability in-flight counts, limits and measured load
   atomically while replacing the advertised capability snapshot.
 - No default model, interpreter, inference weights, peer transport, UI changes,
   installer changes or physical-node deployment are included in this increment.
@@ -3224,7 +3250,7 @@ See [release scope and limits](RELEASE-0.4.0a3.md).
 
 ## Unreleased job receipt recovery
 
-- The node CLI generates an operation receipt before sending. Updated EEF stores
+- The node CLI generates an operation receipt before sending. Updated eef stores
   it in the authenticated job origin context while keeping transport reply IDs
   independent. `eefn jobs find --operation-id UUID` searches only that origin's
   retained creation history, filtering before the bounded result page.
@@ -3261,7 +3287,7 @@ See [release scope and limits](RELEASE-0.4.0a3.md).
   proposal, startup and update operations owned by `NodeService`. Browser files
   contain presentation routes/native picker only. A source dependency guard
   checks that runtime modules do not import the browser/HTTP adapters.
-- Added `eefn connection show/pause/resume/pair-local`. Pausing the outgoing EEF
+- Added `eefn connection show/pause/resume/pair-local`. Pausing the outgoing eef
   connection does not disable the local command API. Connection config edits
   serialize with model edits, preserving unrelated saved settings.
 - Saved `dashboard.ui_enabled` / `web.ui_enabled` preferences hide just the
@@ -3288,7 +3314,7 @@ See [release scope and limits](RELEASE-0.4.0a3.md).
   guarded typed `/api/commands/jobs`. The runtime service uses the running node's
   existing submission connection and actual API discovery; no second node,
   browser controller, local LM or remote-management permission is required.
-- EEF preserves authenticated origin ownership and existing durable lifecycle
+- eef preserves authenticated origin ownership and existing durable lifecycle
   rules. Creation acknowledges a job, not completed work; pause/stop report
   intermediate states. Commands distinguish known-not-sent from rejected or
   uncertain mutations and never automatically resubmit after a lost reply.
@@ -3307,8 +3333,8 @@ See [release scope and limits](RELEASE-0.4.0a3.md).
 
 ## Unreleased coordinator-to-node model commands
 
-- EEF now exposes `node models` using the same typed model-selection operations
-  and CLI adapter as EEFN. Mutations require node-local management approval,
+- eef now exposes `node models` using the same typed model-selection operations
+  and CLI adapter as eefn. Mutations require node-local management approval,
   rechecked under the config lock. Inspection remains read-only. No implicit
   downloads, loads, restarts or legacy full-config save fallback.
 - Requests are sent once; uncertain replies are explicitly unconfirmed. Remote
@@ -3491,7 +3517,7 @@ still do not supply/download a model.
 
 Implementation packaged in v0.4.0a2: shared `NodeService` state/model operations, network
 show/set commands, API-only `--no-ui`, validated independent node/coordinator
-advertisements and EEF node-view propagation. 91 Rust tests and command/browser
+advertisements and eef node-view propagation. 91 Rust tests and command/browser
 integration passed; see [commands and limitations](COMMANDS.md). Peer-address
 distribution is now implemented as exact owner-scoped pull discovery with
 monotonic freshness and bounded sanitized pages (`network peers`). Discovery
@@ -3511,8 +3537,8 @@ implementations with automated acceptance checks.
 
 - Node-first browser and CLI input over the running node's authenticated
   connection; bounded pending requests, no submission replay after disconnect.
-- Encrypted EEF reachability probe before authentication/registration, without
-  creating a node record. Older EEF's encrypted auth denial is accepted only as
+- Encrypted eef reachability probe before authentication/registration, without
+  creating a node record. Older eef's encrypted auth denial is accepted only as
   service reachability; a fresh socket still requires normal authentication.
 - Persistent Stop/Resume connection controls. Stop waiting for a reply is
   explicitly distinct from cancelling work already running on other nodes.
@@ -3535,7 +3561,7 @@ implementations with automated acceptance checks.
 - Hierarchical node/resource areas, node-qualified stable resource IDs, owner
   adapter bindings and locality-aware routing after suitability/freshness checks.
   Explicit unavailable resources fail without falling back to another resource.
-- Node location/resource forms, also available through EEF remote configuration.
+- Node location/resource forms, also available through eef remote configuration.
   Resource creation is independent of permission grants and hardware activation.
 - Remote-save now explicitly includes validated metadata; remote status returns
   applied areas/resources and last-request diagnostics. Tests cover both proposal
@@ -3561,7 +3587,7 @@ implementations with automated acceptance checks.
   claimed batch; they do not acknowledge remote cancellation or undo effects.
 - Jobs history, step details and Pause/Resume/Stop controls in the node app over
   its existing authenticated connection. Nodes see/control only their own origin
-  jobs; the loopback EEF owner API can manage all jobs. Finished history removal
+  jobs; the loopback eef owner API can manage all jobs. Finished history removal
   is explicit. UI responses omit raw parameters, file contents and media results.
 - Shutdown joins node submissions and interrupts active runners before reopening
   the journal. Cancellation drops scheduler capacity guards. Runtime instance IDs
@@ -3571,7 +3597,7 @@ implementations with automated acceptance checks.
   development journals migrate additively, including partial migration recovery.
   Dashboard forms configure history count and MiB budget; Jobs shows effective
   network usage. Physical disk exhaustion and corruption still fail closed.
-- EEF configuration forms load saved preferences, not stale running settings,
+- eef configuration forms load saved preferences, not stale running settings,
   while status keeps reporting applied settings until restart. Subsequent saves
   preserve a redacted saved network key rather than reverting to the running key.
 
@@ -3593,12 +3619,12 @@ the open-source project from presenting an unsafe approximation as complete.
 - Home, Devices, Models, Permissions, Network, Settings, and Advanced pages;
   form-based common settings, explicit save/apply/restart, and mobile layout.
 - Persistent generated device ID, detected hostname, single-instance launch,
-  and same-account local EEF pairing in either app launch order.
+  and same-account local eef pairing in either app launch order.
 - Live connection/retry/error states and applied permissions; Windows hardware
   metadata is detected without opening the camera or recording audio.
 - Owner-requested model downloads, progress/cancel, hash-verified GGUF catalog,
   and Ollama-first selection. No model is included or downloaded on installation.
-- Device configuration through EEF's authenticated node transport. Owners
+- Device configuration through eef's authenticated node transport. Owners
   approve proposals locally unless they explicitly allow remote management;
   remote requests cannot grant themselves that permission or replace device ID.
 - Restart controls for both roles; optional automatic restart after saving
@@ -3610,7 +3636,7 @@ the open-source project from presenting an unsafe approximation as complete.
 This is not completion of the entire proposed UX/architecture roadmap.
 Automatic LAN discovery, per-camera/microphone selection, richer voice/provider
 forms, persistent offline-device history, and a larger curated model catalog
-remain future work. Offline history currently lasts for the EEF session.
+remain future work. Offline history currently lasts for the eef session.
 Detection is not proof a media permission or driver works; live recording,
 vision inference, Wake-on-LAN, and two-PC failover require device-specific tests.
 
@@ -3630,7 +3656,7 @@ roadmap or establish that the 0.3.0 detection was a false positive.
 ## Implemented in 0.3.0
 
 - Rust coordinator and PC node executables in one workspace.
-- Normal `node -> EEF -> selected node(s) -> EEF -> originating node` requests.
+- Normal `node -> eef -> selected node(s) -> eef -> originating node` requests.
 - Authenticated, encrypted node transport with configurable endpoints and
   priority-ordered reconnect/failover across the configured endpoint list.
 - Live capability/model registration and load, latency, capacity, hardware,
@@ -3649,19 +3675,19 @@ roadmap or establish that the 0.3.0 detection was a false positive.
 - Optional isolated Python plugin sidecars using the bundled CPython runtime.
 - Configurable `off`, `prompt`, and `auto` verified updates for both programs,
   with version handoff and rollback.
-- Local EEF and EEFN dashboards for full configuration, capability permission
+- Local eef and eefn dashboards for full configuration, capability permission
   switches, and optional startup.
 - Two self-extracting Windows installers with per-user defaults, config
   preservation, generated coordinator secret, and a 5 GB storage floor.
-- Standalone EEFN operation with zero coordinators; EEF only becomes
+- Standalone eefn operation with zero coordinators; eef only becomes
   operational when at least one node connects.
 
 ## Not yet complete
 
 - Automatic coordinator discovery, quorum election, replicated coordinator
   state, and partition-safe split-brain prevention. Configured node priorities
-  already provide deterministic failover when the preferred EEF disconnects.
-- A separately authenticated EEFN peer mesh that remains online when every EEF
+  already provide deterministic failover when the preferred eef disconnects.
+- A separately authenticated eefn peer mesh that remains online when every eef
   coordinator is unavailable.
 - Transport plugins beyond TCP. The protocol is not coupled to a VPN vendor,
   but the pluggable transport interface is still future work.

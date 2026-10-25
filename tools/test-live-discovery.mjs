@@ -1,4 +1,4 @@
-// Explicit, owner-operated live-network test. Restarts EEF; never updates nodes.
+// Explicit, owner-operated live-network test. Restarts eef; never updates nodes.
 // Optional flags inspect registered models and restart the owner-approved node.
 // No fixed PC IDs/addresses, telemetry upload, media access or model download.
 import assert from 'node:assert/strict';
@@ -7,7 +7,7 @@ import {resolve,join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 
-assert.equal(process.env.EEF_LIVE_TEST,'1','Set EEF_LIVE_TEST=1 only for an owner-approved idle test network; EEF will restart.');
+assert.equal(process.env.EEF_LIVE_TEST,'1','Set EEF_LIVE_TEST=1 only for an owner-approved idle test network; eef will restart.');
 const required=name=>{assert(process.env[name],name+' is required');return process.env[name];};
 const eefBinary=resolve(required('EEF_LIVE_EEF_BINARY')),eefConfig=resolve(required('EEF_LIVE_EEF_CONFIG'));
 const nodeBinary=resolve(required('EEF_LIVE_NODE_BINARY')),nodeConfig=resolve(required('EEF_LIVE_NODE_CONFIG'));

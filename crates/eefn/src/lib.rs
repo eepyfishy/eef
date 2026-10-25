@@ -1,4 +1,4 @@
-//! EEF node library.
+//! eef node library.
 //!
 //! The wire format is byte-compatible with the Python 0.1 implementation:
 //! newline-framed JSON encrypted with AES-256-GCM and the same HKDF inputs.

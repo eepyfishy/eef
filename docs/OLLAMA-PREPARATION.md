@@ -79,7 +79,7 @@ evicted to admit more work. Restart interrupts pending operations and never
 resumes/replays them. After missing/malformed replies, inspect the original
 operation ID rather than create an automatic replacement.
 
-Cancellation/timeout drops EEF's wait/request, not ownership of Ollama. It never
+Cancellation/timeout drops eef's wait/request, not ownership of Ollama. It never
 requests forced unloading, stops the shared service, or
 proves that server work/VRAM use ended. Provider scheduling may evict other models or change other
 residency; the operation offers no exclusive lease or RAM/VRAM quota. These

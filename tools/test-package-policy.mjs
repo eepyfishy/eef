@@ -80,7 +80,7 @@ try {
  await remote(['configure','--mode','off'],false);await absent(policy);
  const beforeConsent=await readFile(config,'utf8');
  await owner(['node','permissions','--node',id,'allow','remote-repair-setup-policy'],false);
- assert.equal(await readFile(config,'utf8'),beforeConsent,'EEF cannot self-enable consent');
+ assert.equal(await readFile(config,'utf8'),beforeConsent,'eef cannot self-enable consent');
  const enabled=(await local(['permissions','allow','remote-repair-setup-policy'])).result;
  assert.equal(enabled.restart_required,false);
  const off=await remote(['configure','--mode','off']);assert.equal(off.result.policy.revision,1);

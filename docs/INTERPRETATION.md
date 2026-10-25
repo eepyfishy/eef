@@ -95,7 +95,7 @@ promise that an external Ollama service stops all computation on disconnect.
 Ordinary inference traffic is not governed by this preview-only semaphore.
 
 The original text goes only to the configured model backend (which may be an
-owner-configured remote Ollama endpoint), not to EEF. Preview has no job journal
+owner-configured remote Ollama endpoint), not to eef. Preview has no job journal
 entry, execution grant or persistent receipt. A lost reply does not automatically
 retry. Closing the CLI may leave bounded inference running until service timeout;
 it cannot cause an action to be executed. No UI is required, and a paused or
@@ -105,20 +105,20 @@ The unreleased review command sends original text and a typed proposal through
 the existing bounded node submission mailbox, with fresh reply-routing identity
 separate from its request UUID. The gateway replaces origin with accepted
 registration metadata for the authenticated session. In the latest unreleased
-increment, EEF supplies capability vocabulary from fresh live registrations
+increment, eef supplies capability vocabulary from fresh live registrations
 permitted by its applied directional discovery policy, not just the input node.
-EEF revalidates all proposal bounds and semantic consistency with the shared
+eef revalidates all proposal bounds and semantic consistency with the shared
 validator, without invoking its brain, planner or job store. The response retains
 original text and server-stamped context. The node service and CLI reject
 mismatched identity/text or execution flags. Capability advertisements remain
 untrusted hints, never authority. The review is ephemeral and creates no durable
 receipt, job, grant or implicit clarification answer. Losing its reply never
-causes replay. Preview still does not send text to EEF.
+causes replay. Preview still does not send text to eef.
 
 ### Cross-node interpretation context (unreleased after alpha.6)
 
 `requests review` and `requests open` first request a bounded read-only vocabulary
-through the running node's authenticated EEF connection. The strict response
+through the running node's authenticated eef connection. The strict response
 binds authenticated origin and a fresh correlation UUID and contains only sorted,
 distinct capability names (at most 64), the discovery freshness limit, and false
 execution/direct-access flags. It contains no peer IDs, endpoints, model IDs or
@@ -134,12 +134,12 @@ eef discovery grant --requester ORIGIN_NODE_ID --target PEER_NODE_ID --json
 eef restart --json
 ```
 
-Discovery grants are directional and not transitive, apply after EEF restart,
+Discovery grants are directional and not transitive, apply after eef restart,
 and never approve work. Revocation uses `eef discovery revoke` with the same
 flags, then restart. There is no wildcard or implicit disclosure of every node.
 
 The model receives this network vocabulary but still produces only untrusted
-hints. An input node need not implement the suggested feature. EEF independently
+hints. An input node need not implement the suggested feature. eef independently
 recomputes the current disclosed vocabulary on stateless review and new/revised
 durable proposals: names from a file, local HTTP caller, old response or model are
 never accepted as authority. If a peer or disclosure disappears during inference,
@@ -148,9 +148,9 @@ executor reassignment or download. Context lookup has a five-second deadline and
 shares the preview's single-capacity and restart-invalidation boundaries.
 
 `requests preview` is deliberately still an offline-capable **local-node**
-vocabulary preview and never contacts EEF. Online preparation reports
+vocabulary preview and never contacts eef. Online preparation reports
 `interpretation_context: coordinator_disclosed_network`; preview reports
-`local_node`. Supplied-proposal adapters validate shape locally and let EEF
+`local_node`. Supplied-proposal adapters validate shape locally and let eef
 check current network membership without calling a model. Saved proposal
 `allowed_capabilities` remains a historical vocabulary snapshot, not a grant;
 inspecting saved reviews/recording clarification answers does not require those

@@ -1,13 +1,13 @@
 # Owner HTTP socket boundary (unreleased)
 
-EEF and EEFN owner HTTP controls require a real loopback socket peer as well as
+eef and eefn owner HTTP controls require a real loopback socket peer as well as
 the existing local Host, matching browser Origin and non-cross-site fetch checks.
 The shared guard covers the owner API and browser routes, not just mutating
 commands. It runs before route handlers; malformed/missing transport metadata
 fails closed. `Host`, `Forwarded`, `X-Forwarded-For` and `X-Real-IP` cannot establish
 that a connection came from this PC.
 
-The production EEF listener and node `ApiServer` now supply Axum
+The production eef listener and node `ApiServer` now supply Axum
 `ConnectInfo<SocketAddr>` from the accepted TCP connection. IPv4 loopback, native
 IPv6 loopback and IPv4-mapped IPv6 loopback are accepted. Remote IPv4/IPv6 peers,
 including IPv4-mapped remote addresses, are refused even with loopback headers.
@@ -15,7 +15,7 @@ Ordinary localhost commands, local browser controls and private local enrollment
 continue using the same services. No browser dependency, new trust grant,
 credential change, model download or command retry is introduced.
 
-Custom Rust embeddings of the EEF router must also serve it with
+Custom Rust embeddings of the eef router must also serve it with
 `into_make_service_with_connect_info::<std::net::SocketAddr>()`. A plain router
 without trusted socket metadata receives HTTP 403, including on a local request.
 Do not reconstruct that metadata from client-provided headers or let callers
@@ -68,8 +68,8 @@ mesh/cluster or complete stable-release acceptance.
 ## Verification checkpoint
 
 Final workspace/all-target suites pass with default features and separately with
-`--no-default-features`: **694 passed, one ignored in each configuration** (EEF
-library 243, EEF CLI 17, installer 6, node library 413, node CLI 15). Fresh default
+`--no-default-features`: **694 passed, one ignored in each configuration** (eef
+library 243, eef CLI 17, installer 6, node library 413, node CLI 15). Fresh default
 binaries/examples build; formatting, diff, fixture JavaScript syntax and the
 backend/browser dependency source check pass.
 

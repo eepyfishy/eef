@@ -69,11 +69,25 @@ jobs:
         run: |
           cargo fmt --all --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/test-project-names.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/check-project-names.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/test-backend-boundary.mjs
           exit $LASTEXITCODE
       - name: Read-only MSI payload planning (synthetic)
         run: |
           node tools/test-msi-payload-plan.mjs
+          exit $LASTEXITCODE
+      - name: Native development MSI authoring (synthetic; no installation)
+        if: matrix.os == 'windows-2025' && matrix.mode == 'headless'
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5) { throw 'MSI fixtures require Windows PowerShell 5.1' }
+          Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
+          node -e "const r=require('node:child_process').spawnSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-Command Get-FileHash,Get-AuthenticodeSignature -ErrorAction Stop | Out-Null'],{stdio:'inherit'});process.exit(r.status??1)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/test-msi-authoring.mjs
           exit $LASTEXITCODE
       - name: Workspace and all-target regression tests
         run: |

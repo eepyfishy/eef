@@ -11,7 +11,7 @@ publisher's exact-build HTTPS descriptor and approve its retained UUID without
 manually entering artifact SHA/size. It is not an automatic repair source or
 controller; this document retains the original raw-artifact checkpoint below.
 
-The backend can stage an explicitly selected **same-build** EEF or EEFN package
+The backend can stage an explicitly selected **same-build** eef or eefn package
 without replacing loaded files. This is a repair primitive, not an automatic
 dependency-repair controller, application upgrade, model installer or readiness
 certificate. The dashboard is not needed. No new model/provider is selected.

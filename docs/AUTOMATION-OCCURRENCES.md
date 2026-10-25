@@ -207,7 +207,7 @@ Stable 0.4.0 remains open.
 ## Terminal archive evidence (2026-10-12)
 
 Eight additional tests bring both passing workspace/all-target feature modes
-to **477** (EEF library 186, owner CLI 11, installer 6, EEFN library 268,
+to **477** (eef library 186, owner CLI 11, installer 6, eefn library 268,
 node CLI 6). Five journal tests cover terminal archival across expiry/restart,
 permanent budget consumption and request tombstones, exact receipt conflicts,
 insertion/deletion/commit-clock rollback, stale references and nonterminal

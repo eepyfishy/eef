@@ -33,7 +33,7 @@ for the whole feature, not an inspection or automatic permission grant.
 | `camera`, `screen-capture`, `input-control` | Existing media flags |
 | `peer-transfers` | Existing peer transport switch and local byte/rate/session limits; no work approval |
 | `remote-updates` | Existing owner update permission; does not choose an update/feed |
-| `remote-management` | Existing current owner approval for management from EEF |
+| `remote-management` | Existing current owner approval for management from eef |
 
 There are no per-folder, file, executable, application, host or target-computer
 questions for feature-wide access. Existing byte/time/result limits, deterministic
@@ -103,7 +103,7 @@ expected_digest: "INSPECTED_DIGEST"}`. Requests are capped at 4 KiB and use the
 existing local-owner/cross-origin boundary. CLI `allow`/`deny` supply the inspected
 digest automatically; a rejection requires a new explicit decision.
 
-EEF clients use `POST /api/commands/node/permissions`. Show uses the existing
+eef clients use `POST /api/commands/node/permissions`. Show uses the existing
 authenticated node's modern status to select its exact runtime, then the same
 service. Set requires that inspected runtime/digest. Reserved `permission_status`
 uses bounded control capacity and rejects Set payloads; mutations use ordinary

@@ -1,6 +1,6 @@
-# EEF v0.3.2 — UX/UI overhaul
+# eef v0.3.2 — UX/UI overhaul
 
-A simpler first installation for EEF and the EEF device app (EEFN), including
+A simpler first installation for eef and the eef device app (eefn), including
 both roles on the same PC. See the [getting-started guide](https://github.com/eepyfishy/eef/blob/main/docs/FIRST_RUN.md).
 
 - Graphical setup with a folder picker, startup/launch choices, progress, and
@@ -8,7 +8,7 @@ both roles on the same PC. See the [getting-started guide](https://github.com/ee
 - New Home, Devices, Models, Permissions, Network, Settings, and Advanced pages.
 - Automatic same-account local pairing, detected hostname, persistent device
   identity, and a single running instance per configuration.
-- Configure devices from EEF. Owners approve proposed changes locally unless
+- Configure devices from eef. Owners approve proposed changes locally unless
   they explicitly grant remote-management permission.
 - Restart buttons for both apps and optional restart after saving device
   settings. Installed updates can be applied with Restart.
@@ -23,7 +23,7 @@ Validation: 35 Rust tests passed. Final release binaries passed isolated
 same-PC pairing, identity/rename, permission-form, remote-approval/configuration,
 restart, and narrow-screen browser tests. Mock Ollama tests covered explicit
 install/select/registration and cancellation of a stalled download. A real,
-hash-verified Qwen 2.5 0.5B GGUF download ran CPU inference through EEF and the
+hash-verified Qwen 2.5 0.5B GGUF download ran CPU inference through eef and the
 bundled llama.cpp server, including inference after restarting the selected
 model. The test model is not included in either installer.
 
@@ -44,7 +44,7 @@ eefn-installer.exe (109,176,861 bytes)
 
 Known limits: LAN connection codes are manual; coordinator priorities are
 reconnect ordering, not a shared election. Camera/microphone device selection
-uses system defaults, and offline-device history lasts for the EEF session.
+uses system defaults, and offline-device history lasts for the eef session.
 Some uncommon settings still use Advanced. Two-PC failover, live media
 capture, vision models, and Wake-on-LAN need tests on your actual devices.
 

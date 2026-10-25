@@ -121,7 +121,7 @@ refusal, policy opt-in/old digest compatibility and an 8 KiB supervisor-frame
 ceiling. These fixtures do not contain real inference weights.
 
 Both final locked/offline workspace/all-target modes pass 917 tests plus one
-ignored profiler each: EEF 268, owner CLI 21, installer 6, EEFN 597 and node CLI
+ignored profiler each: eef 268, owner CLI 21, installer 6, eefn 597 and node CLI
 25. Logs are retained under .validation/setup-runner-workspace-default-final.log
 and .validation/setup-runner-workspace-headless-final.log. Final headless
 applications/examples build.

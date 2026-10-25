@@ -421,10 +421,10 @@ pub fn render(value: &Value) -> Result<String> {
         bail!("unconfirmed setup observations")
     }
     let connection = match report.connection {
-        ConnectionState::Connected => "Connected to EEF (not permission to execute work)",
+        ConnectionState::Connected => "Connected to eef (not permission to execute work)",
         ConnectionState::Paused => "Connection paused; local node controls remain usable",
         ConnectionState::Unknown => "Connection state unknown",
-        _ => "Not connected to EEF yet; local node controls remain usable",
+        _ => "Not connected to eef yet; local node controls remain usable",
     };
     let receipts = match report.execution_receipts_available {
         Some(true) => "Configured; each workload still needs separate owner approval",
@@ -464,7 +464,7 @@ pub fn render(value: &Value) -> Result<String> {
         report.node_id
     );
     text.push_str(match report.registration {
-        Some(crate::registration::State::Accepted)=>"Registration: EEF accepted this runtime on the current authenticated connection; model, permission and workload readiness are separate.\n",
+        Some(crate::registration::State::Accepted)=>"Registration: eef accepted this runtime on the current authenticated connection; model, permission and workload readiness are separate.\n",
         Some(crate::registration::State::AwaitingReceipt)=>"Registration: receipt not received; connected alone is not confirmation. Older coordinators may not support receipts.\n",
         Some(crate::registration::State::NotConnected)=>"Registration: no current connected session.\n",
         _=>"Registration: unknown on this runtime/build; not assumed accepted.\n",
@@ -486,9 +486,9 @@ pub fn render(value: &Value) -> Result<String> {
     for step in report.next_steps {
         text.push_str("Next: ");
         text.push_str(match step {
-            NextStep::ResumeConnection => "Resume the connection when you want this node to use EEF: eefn connection resume",
-            NextStep::CheckCoordinator => "Start/check EEF and your configured connection: eefn connection show",
-            NextStep::PairPrivate => "Pair this node with a private EEF invitation; shared-key connection does not support reviewed work",
+            NextStep::ResumeConnection => "Resume the connection when you want this node to use eef: eefn connection resume",
+            NextStep::CheckCoordinator => "Start/check eef and your configured connection: eefn connection show",
+            NextStep::PairPrivate => "Pair this node with a private eef invitation; shared-key connection does not support reviewed work",
             NextStep::InspectExecutionTransport => "Inspect private pairing and execution receipts: eefn connection show",
             NextStep::ChooseInterpreter => "Browse installed models, select one and assign its interpreter role: eefn models installed; eefn models interpreter --help",
             NextStep::ChooseOneInterpreter => "Assign the interpreter role to exactly one model: eefn models interpreter --help",
@@ -497,7 +497,7 @@ pub fn render(value: &Value) -> Result<String> {
             NextStep::InspectStartupIssues => "Inspect reported startup issues: eefn network diagnose",
             NextStep::WaitForInputChannel => "Wait for the node's input channel or inspect connection show; no input was sent or replayed",
             NextStep::WaitForInputCapacity => "Wait for capacity before a new explicit input decision; do not replay an uncertain request",
-            NextStep::WaitForRegistrationReceipt=>"Wait for a current EEF registration receipt or inspect coordinator compatibility; no registration/work was replayed by this check",
+            NextStep::WaitForRegistrationReceipt=>"Wait for a current eef registration receipt or inspect coordinator compatibility; no registration/work was replayed by this check",
             NextStep::ApproveModelSetup => "Review the pinned model and explicitly approve one setup attempt: eefn model-bootstrap-policy show; eefn model-bootstrap-policy approve",
             NextStep::InspectModelSetup => "Inspect model setup and its exact retained receipt before another choice or restart: eefn model-bootstrap-policy show. A checkpoint alone does not confirm a live worker or permit retry",
             NextStep::ChooseModelSetup => "No project default is approved. Browse installed models or choose an explicit catalog model: eefn models installed; eefn model-bootstrap-policy configure --help",
@@ -704,7 +704,7 @@ mod tests {
         assert!(confirmed(&accepted, &request));
         assert_eq!(accepted["registration"], "accepted");
         assert_eq!(accepted["execution_authorized"], false);
-        assert!(render(&accepted).unwrap().contains("EEF accepted"));
+        assert!(render(&accepted).unwrap().contains("eef accepted"));
         let mut older = accepted.clone();
         older.as_object_mut().unwrap().remove("registration");
         assert!(confirmed(&older, &request));
