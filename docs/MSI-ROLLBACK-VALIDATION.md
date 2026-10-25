@@ -82,6 +82,16 @@ switch, ACL takeover, rollback disabling, registry/GPO workaround, administrator
 request or security exclusion is applied. The cause and a supported recovery
 design still need investigation and independent acceptance.
 
+A subsequent read-only ACL check finds inherited current-user full control on
+the Installer products parent key. It does not support blaming missing parent
+access; the removed product child keys' original security is not established.
+The retained native log also records both user and machine `DisableRollback`
+policies as zero and actually executes rollback operations. Microsoft's
+[rollback documentation](https://learn.microsoft.com/en-us/windows/win32/msi/rollback-installation)
+distinguishes disabled rollback from attempted rollback; these observations do
+not establish a supported root cause or recovery fix. No policy, registry,
+ownership or security-setting change is made based on that investigation.
+
 After confirming the failed native PID absent and retaining exact evidence,
 three uniquely receipted normal uninstall operations remove only this fixture's
 known candidate/advertised-old/node registrations. All return zero. Independent

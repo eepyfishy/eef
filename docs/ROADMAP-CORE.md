@@ -13,6 +13,16 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+A fresh read-only physical-node checkpoint on 2026-10-26 observes the same stable
+node registering and confirms management consent, no selected models and installed
+`0.4.0-alpha.6`. The isolated diagnostic coordinator is subsequently retired;
+no workload, update, remote restart or permission mutation is sent. Installed
+configuration and eleven accepted application/helper artifact hashes are unchanged.
+The [status record](STATUS.md#read-only-physical-node-checkpoint-2026-10-26)
+retains separate cleanup-guard and missing-native-exit observations. This is not
+private-pairing/current-protocol or physical-workload acceptance; compatible
+upgrade and supported private enrollment remain prerequisites, not bypasses.
+
 The [node-output fixture follow-up](TRANSPORT-OUTPUT.md#fixture-registration-ownership-follow-up-2026-10-26)
 reproduces and corrects ownership based on TCP arrival rather than authenticated
 registration. It preserves all deadlines and no-replay/settings/runtime checks,

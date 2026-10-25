@@ -3,6 +3,30 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Read-only physical-node checkpoint: 2026-10-26
+
+A fresh isolated coordinator using the unchanged, locally accepted `7df79a1`
+application artifacts observes the previously tested second PC registering with
+the same stable node ID. Public command replies confirm remote management is
+allowed, zero saved model selections and installed/current `0.4.0-alpha.6`.
+No jobs, updates, node restarts, permission changes or model operations are sent.
+Installed owner configuration and all eleven accepted artifact hashes remain
+unchanged. The temporary coordinator is retired; the physical node is not stopped.
+
+The first cleanup guard refuses a sub-microsecond CIM/native timestamp mismatch.
+A separately recorded cleanup verifies the exact native start time, executable,
+private database/configuration, runtime ID and empty job state before retiring
+only that owned coordinator. The original failed guard remains retained. Both
+JSON command replies are independently reconciled, but their native exit codes
+were not captured and are explicitly unconfirmed; reply success is not substituted
+for process-exit evidence. Private logs/configuration are not published.
+
+This is fresh registration/management-read evidence, not private-pairing or
+current-protocol workload acceptance. A compatible node update and supported
+private enrollment remain prerequisites to the physical request/plan/grant/result
+test. It does not close model/default/onboarding, continuous-media, MSI rollback,
+signing/Defender or stable-release gates. No release or automatic-update change.
+
 ## Locally verified, unreleased: node-output fixture registration ownership
 
 The [transport fixture follow-up](TRANSPORT-OUTPUT.md#fixture-registration-ownership-follow-up-2026-10-26)
