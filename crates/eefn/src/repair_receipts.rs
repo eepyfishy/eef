@@ -161,7 +161,7 @@ fn write(install: &Path, records: &Records) -> Result<String> {
     if bytes.len() > MAX_BYTES {
         bail!("repair receipt journal byte quota is full")
     }
-    crate::atomic_file::write(&path(install), &bytes)?;
+    crate::atomic_file::write(&path(install), &bytes).context("publish complete repair receipt")?;
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
@@ -317,7 +317,8 @@ impl Attempt {
         lease
             .try_lock_exclusive()
             .context("repair operation lease is busy")?;
-        let expected_sha256 = guarded_write(install, &records, &expected)?;
+        let expected_sha256 = guarded_write(install, &records, &expected)
+            .context("persist repair admission before artifact work")?;
         Ok(Self {
             install: install.into(),
             records,

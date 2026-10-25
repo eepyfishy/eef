@@ -22,9 +22,27 @@ function launch(exe,args){const c=spawn(exe,args,{cwd:root,env,windowsHide:true,
  c.logs=()=>({out,err});c.result=new Promise((r,j)=>{c.on('error',j);c.on('close',code=>r({code,out,err}));});children.push(c);return c;}
 async function cli(exe,args,success=true,json=true){const c=launch(exe,[...(json?['--json']:[]),'repair',...args]),timer=setTimeout(()=>c.kill(),25000);
  try{const r=await c.result;assert.equal(r.code,success?0:1,r.out+r.err);return json?JSON.parse(r.out):r.out;}finally{clearTimeout(timer);}}
-async function until(fn,label){const end=Date.now()+30000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('Timeout: '+label);}
+async function until(fn,label,isActive=()=>true){const end=Date.now()+30000;while(Date.now()<end){if(!isActive())throw Error('Fixture exited before: '+label);try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('Timeout: '+label);}
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
+function downloadingSnapshot(report,id){
+ const evidence=report?.repair_receipts;if(evidence?.available!==true||!Array.isArray(evidence.attempts))return false;
+ const matches=evidence.attempts.filter(a=>a.receipt?.request_id===id);
+ return matches.length===1&&matches[0].lease==='active'&&matches[0].receipt.step==='downloading'&&matches[0].receipt.outcome==='in_progress';
+}
 try{
+ // A CLI snapshot may capture admitted, then the download starts while the CLI
+ // exits. A later TCP observation cannot turn that older snapshot into a
+ // downloading receipt. Require the exact durable phase in the status itself.
+ const observedId=randomUUID(),otherId=randomUUID();
+ const snapshot=(step,lease='active',id=observedId,outcome='in_progress')=>({repair_receipts:{available:true,attempts:[{lease,receipt:{request_id:id,step,outcome}}]}});
+ assert.equal(downloadingSnapshot(snapshot('admitted'),observedId),false);
+ assert.equal(downloadingSnapshot(snapshot('downloading'),observedId),true);
+ assert.equal(downloadingSnapshot(snapshot('downloading','released'),observedId),false);
+ assert.equal(downloadingSnapshot(snapshot('downloading','active',otherId),observedId),false);
+ assert.equal(downloadingSnapshot(snapshot('downloading','active',observedId,'failed'),observedId),false);
+ assert.equal(downloadingSnapshot({repair_receipts:{available:false}},observedId),false);
+ assert.equal(downloadingSnapshot({repair_receipts:{available:true,attempts:[...snapshot('downloading').repair_receipts.attempts,...snapshot('downloading').repair_receipts.attempts]}},observedId),false);
+ console.log('Repair receipt readiness snapshot checks passed: 7');
  await new Promise(r=>gate.listen(0,'127.0.0.1',r));const url=`https://127.0.0.1:${gate.address().port}/fixture?token=PRIVATE-SYNTHETIC-SOURCE`;
  for(const role of ['eefn','eef']){
   const install=join(scratch,role),exe=join(install,role+'.exe'),helper=join(install,'repair-receipt-fixture.exe');
@@ -33,7 +51,7 @@ try{
   await writeFile(owner,'owner sentinel: intentionally not JSON; offline repair never reads or overwrites it');const ownerBytes=await readFile(owner);
   const before=connections,active=launch(helper,[role,id,url]);
   let live;
-  await until(async()=>{live=await cli(exe,['--status','--operation-id',id]);return connections>before&&live.repair_receipts.attempts[0]?.lease==='active';},role+' live admitted repair');
+  await until(async()=>{live=await cli(exe,['--status','--operation-id',id]);return connections>before&&downloadingSnapshot(live,id);},role+' live downloading repair',()=>active.exitCode===null&&!active.signalCode);
   assert.equal(active.exitCode,null);assert.equal(live.schema_version,2);assert.equal(live.scope,'invoked_executable');
   assert.equal(live.application_restart_required,null);assert.equal(live.running_service_inspected,false);
   assert.equal(live.repair_receipts.attempts[0].receipt.step,'downloading');assert.equal(live.repair_receipts.attempts[0].interrupted,false);

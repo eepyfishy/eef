@@ -5,6 +5,10 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 
+#[cfg(windows)]
+#[path = "windows_atomic_file.rs"]
+mod windows;
+
 fn replace_with(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     if path.file_name().is_none() {
         return Err(io::Error::new(
@@ -26,6 +30,9 @@ fn replace_with(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) ->
     pending.as_file().sync_all()?;
     // On failure PersistError owns the staging file; dropping it cleans up only
     // that new file. Never fall back to modifying the destination in place.
+    #[cfg(windows)]
+    windows::persist(pending, path)?;
+    #[cfg(not(windows))]
     drop(pending.persist(path).map_err(|failure| failure.error)?);
     Ok(())
 }
@@ -267,6 +274,99 @@ mod tests {
         std::fs::write(&marker, b"keep this").unwrap();
         assert!(write(&target, b"must not replace a directory").is_err());
         assert_eq!(std::fs::read(marker).unwrap(), b"keep this");
+        assert!(staging_files(dir.path()).is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_settings_publication_keeps_open_readers_on_their_original_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("配置-é.json");
+        write(&path, b"old complete owner settings").unwrap();
+        let mut old = File::open(&path).unwrap();
+        write(&path, b"new complete owner settings").unwrap();
+        let mut bytes = Vec::new();
+        use std::io::Read;
+        old.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"old complete owner settings");
+        assert_eq!(std::fs::read(path).unwrap(), b"new complete owner settings");
+        assert!(staging_files(dir.path()).is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_settings_concurrent_readers_never_see_missing_or_partial_publication() {
+        use std::io::Read;
+        use std::sync::{
+            Arc, Barrier,
+            atomic::{AtomicBool, AtomicU64, Ordering},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.json");
+        write(&path, b"complete:00000000:end").unwrap();
+        let ready = Arc::new(Barrier::new(5));
+        let done = Arc::new(AtomicBool::new(false));
+        let count = Arc::new(AtomicU64::new(0));
+        let mut readers = vec![];
+        for _ in 0..4 {
+            let (path, ready, done, count) =
+                (path.clone(), ready.clone(), done.clone(), count.clone());
+            readers.push(std::thread::spawn(move || {
+                ready.wait();
+                let mut error = false;
+                while !done.load(Ordering::Acquire) {
+                    let mut bytes = vec![];
+                    match File::open(&path).and_then(|mut file| file.read_to_end(&mut bytes)) {
+                        Ok(_)
+                            if bytes.len() == 21
+                                && bytes.starts_with(b"complete:")
+                                && bytes.ends_with(b":end")
+                                && bytes[9..17].iter().all(u8::is_ascii_digit) => {}
+                        _ => error = true,
+                    }
+                    count.fetch_add(1, Ordering::Relaxed);
+                }
+                error
+            }));
+        }
+        ready.wait();
+        let mut result = Ok(());
+        for index in 0..128 {
+            result = write(&path, format!("complete:{index:08}:end").as_bytes());
+            if result.is_err() {
+                break;
+            }
+        }
+        done.store(true, Ordering::Release);
+        for reader in readers {
+            assert!(
+                !reader.join().unwrap(),
+                "a reader observed incomplete/missing data"
+            );
+        }
+        result.unwrap();
+        assert!(count.load(Ordering::Relaxed) > 0);
+        assert_eq!(std::fs::read(path).unwrap(), b"complete:00000127:end");
+        assert!(staging_files(dir.path()).is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_settings_publication_preserves_read_only_owner_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("protected.json");
+        std::fs::write(&path, b"protected owner bytes").unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions.clone()).unwrap();
+        let result = write(&path, b"must not replace a read-only file");
+        let bytes = std::fs::read(&path).unwrap();
+        let remained_readonly = std::fs::metadata(&path).unwrap().permissions().readonly();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&path, permissions).unwrap();
+        assert!(result.is_err());
+        assert_eq!(bytes, b"protected owner bytes");
+        assert!(remained_readonly);
         assert!(staging_files(dir.path()).is_empty());
     }
 

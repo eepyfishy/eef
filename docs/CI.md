@@ -1,5 +1,26 @@
 # GitHub core verification
 
+## Retained version-policy run failure and atomic-reader follow-up
+
+`fcd559f` [run 40198635175](https://github.com/eepyfishy/eef/actions/runs/40198635175)
+is not accepted overall. Three jobs, all four Rust regressions and the Windows
+MSI authoring/policy checks pass, but the Windows native sequence stops at
+`test-repair-receipts.mjs`: a valid admitted snapshot is mistaken for a downloading
+snapshot after a later network event. The readiness correction keeps exact state
+assertions/deadlines. Repeated local verification also exposes a distinct Windows
+atomic-publication/read collision; its retained failure and shared backend fix
+are tracked in [atomic settings](ATOMIC-SETTINGS.md#windows-live-reader-follow-up-in-development).
+Neither failure is converted into success by rerunning the old hosted revision.
+Both full local Rust modes of the follow-up pass 1,138 tests plus one ignored.
+All thirty hosted-selection native suites, two cached-runtime suites, five
+additional distinct receipt fixtures and the unchanged first-run browser
+regression pass against frozen source and eleven native artifact hashes.
+The separate shared-source stress test completes 5,000 publications without
+incomplete reads; a cached real-CPU workflow and independent read-only audit also
+pass. A retained standalone harness loader failure is corrected only through its
+process-local compiler-runtime search path, without replaying completed suites.
+New exact-revision hosted acceptance remains separate and pending.
+
 ## Current in-development MSI version-policy regression
 
 The [packed-patch-v1 contract](MSI-VERSION-POLICY.md) adds thirteen pure policy

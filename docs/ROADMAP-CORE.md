@@ -13,6 +13,23 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [Windows live-reader follow-up](ATOMIC-SETTINGS.md#windows-live-reader-follow-up-in-development)
+corrects both an imprecise repair-readiness observation and a separately
+reproduced atomic replacement collision with ordinary readers. Complete staging
+and one native rename preserve old snapshots, delete-sharing/read-only refusals
+and existing authorization; no replay, copy fallback or security bypass is added.
+Both full local Rust modes pass 1,138 tests plus one ignored each. Thirty-two
+native suites, five extra distinct receipt fixtures and the unchanged browser
+regression pass against frozen source/artifact hashes. A separate actual-source
+stress check passes 5,000 publications with complete reads; the cached real-CPU
+owner workflow and independent read-only reconciliation pass too. A standalone
+harness loader failure is retained and corrected using only its process-local
+compiler-runtime search path. New hosted acceptance remains separate and pending.
+The failed `fcd559f` hosted run is retained,
+not accepted overall. Installed-version MSI fencing, actual upgrade/migration,
+approved automatic model onboarding, second-PC, signing/Defender and remaining
+core requirements below stay open; no release or installed-node update is made.
+
 The locally verified [MSI version policy](MSI-VERSION-POLICY.md) now enforces
 source/numeric version consistency in planning and authoring, with an independent
 PowerShell inspector, explicit unverified legacy diagnostics and overflow refusal.

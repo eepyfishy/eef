@@ -108,6 +108,16 @@ certifies that a runtime is running, healthy or using working dependencies.
 
 ## Verification boundary and outstanding work
 
+The [Windows atomic-reader follow-up](ATOMIC-SETTINGS.md#windows-live-reader-follow-up-in-development)
+retains the `fcd559f` hosted snapshot-race failure and the distinct local
+pre-admission access failure. Native readiness now requires the same observed
+operation, active lease, in-progress outcome and downloading step, rather than
+inferring a newer durable phase from a later socket event. The original timeout,
+crash/interruption, immutable evidence and no-replay assertions remain. Shared
+Windows publication now permits normal readers without copying over live files
+or bypassing explicit delete locks. Final broader verification is separate from
+the older receipt checkpoints below.
+
 The native fixture uses the public HTTPS entrypoint and a local TCP/TLS gate
 that never serves a handshake/artifact. It terminates only its fixture process,
 checks the released lease/read-only interruption view, and proves that replay

@@ -6,13 +6,70 @@ helper. The former rename-error fallback
 copied over the live destination; it is removed. Existing fixed `.next` siblings
 are not reused, truncated, restored or deleted by a new write.
 
+## Windows live-reader follow-up (in development)
+
+The `fcd559f` hosted run fails in the repair-receipt fixture: its readiness poll
+combines a CLI snapshot captured at `admitted` with a later TCP connection, then
+incorrectly assumes that older snapshot already says `downloading`. The poll now
+requires the exact operation's active, in-progress downloading receipt in the
+status itself. Seven deterministic snapshot cases cover admitted, terminal,
+wrong-ID, duplicate and unavailable evidence; the original state assertions and
+thirty-second observation bound remain. A helper confirmed exited before that
+phase causes an immediate test failure, not prolonged polling or action replay.
+
+Four fresh local fixtures pass that correction, but a fifth retains an independent
+`Access is denied` admission failure with an empty journal and an unadmitted lease.
+No operation is resumed or reset. An isolated Windows reproducer then fails at
+the existing `tempfile`/`MoveFileExW` replacement while ordinary readers are active.
+This is separate from the earlier snapshot race and from antivirus clearance.
+
+Windows replacement now uses one
+[`SetFileInformationByHandle`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfileinformationbyhandle)
+rename through a reopened staging handle, with replace/POSIX semantics, after
+the existing complete write and synchronization. Ordinary DELETE access to an
+existing target is required; read-only-ignore, ACL-bypass, copy fallback, retry,
+sleep and recovery flags are not used. Old reader handles retain their complete
+snapshot while new opens see the published file. Delete-denying handles still
+refuse replacement. No-clobber creation and non-Windows publication are unchanged.
+Unsupported native information classes/filesystems fail closed; this is not a
+new certification of network shares or older Windows releases.
+
+The isolated prototype records 5,000 successful publications with four concurrent
+readers, 265,306 reads and no failed reads or invalid record prefixes. Fixed-length
+shared-source tests separately check complete payloads. A negative native
+experiment with a delete-denying handle refuses publication without changing the
+original. Shared Rust tests cover open snapshots, fixed-length concurrent reads,
+Unicode names, read-only files and the previous delete-lock/directory/partial-write
+failures. Both full local Rust modes pass 1,138 tests plus one ignored profiler
+each. Fresh applications pass all thirty hosted-selection native suites, two
+cached-runtime native suites, five additional distinct receipt fixtures and the
+unchanged first-run browser regression against frozen source and eleven native
+artifact hashes. A separate executable including the actual shared source
+completes 5,000 writes and 4,033 fixed-length validated reads without publication,
+read or incomplete-record errors. Its initial loader failure (`0xc0000135`)
+precedes any journal creation and remains retained; a process-local search path
+to the already-cached compiler runtime allows the unchanged executable to run.
+Neither completed native suite is replayed and no DLL is downloaded or installed.
+
+The separate cached real-CPU owner workflow passes private enrollment, reviewed
+work, identity-preserving restart, retained results/no replay, model withdrawal,
+explicit reload and automatic idle unload without a node restart. No model is
+downloaded or copied; this verifies operation mechanics, not interpretation quality
+or a default model. The independent read-only reconciliation is retained in
+`.validation/atomic-reader-final-acceptance.json`; all fixture processes are
+retired and evaluated source/artifact hashes match. New hosted follow-up remains
+separate and pending, not accepted by these local checks.
+No new dependency version, model, installed user application or update policy is
+changed by this source increment. Custom ACL preservation and power-loss/multi-file
+transaction guarantees are still not claimed.
+
 ## Contract
 
 Serialization/validation happens before writing settings. Each write creates a
 unique temporary file beside its destination, writes all bytes, synchronizes that
-file, and uses the existing `tempfile` dependency's
+file. Non-Windows replacement and no-clobber creation use the existing `tempfile` dependency's
 [atomic persist operation](https://docs.rs/tempfile/3.27.0/tempfile/struct.NamedTempFile.html#method.persist)
-to publish it. No new package/version is downloaded: the installer promotes its
+to publish it; Windows replacement uses the native path described above. No new package/version is downloaded: the installer promotes its
 already-locked tempfile test dependency to a normal dependency and includes the
 small shared module, not the node runtime. The
 [standard rename semantics](https://doc.rust-lang.org/std/fs/fn.rename.html)

@@ -3,6 +3,37 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Locally verified, unreleased: Windows live-reader publication
+
+The `fcd559f` [hosted run](https://github.com/eepyfishy/eef/actions/runs/40198635175)
+passes all four Rust modes and the new MSI version-policy/authoring steps, but
+fails a repair-receipt readiness assertion. The correction requires the exact
+operation's active downloading status, not an older admitted snapshot followed
+by a later socket event. Seven deterministic observation cases preserve the
+original phase assertions and thirty-second bound; helper exit fails promptly.
+
+Repeated local checks retain a separate Windows access-denied publication failure
+under concurrent ordinary readers. The [shared Windows writer](ATOMIC-SETTINGS.md#windows-live-reader-follow-up-in-development)
+now uses a synchronized staging file and one native replace/POSIX rename while
+preserving normal DELETE access checks, read-only/delete-sharing refusals and
+old-reader snapshots. There is no retry, copy fallback, permission/security
+bypass or change to no-clobber/non-Windows publication.
+
+Both full Rust modes pass 1,138 tests plus one ignored profiler each. Fresh
+applications pass thirty-two native suites, five additional independent receipt
+fixtures and the unchanged browser regression against frozen source and eleven
+native artifact hashes. A separate stress executable including the actual shared
+source completes 5,000 writes and 4,033 full-record reads with no errors. The
+cached real-CPU owner workflow and independent read-only audit also pass; no model
+is downloaded/copied or approved for interpretation/default quality. The original
+standalone loader failure is retained and corrected through a process-local
+compiler-runtime search path without replaying completed suites. Hosted follow-up
+remains separate and pending. Retained failures are not relabeled as successful runs.
+No version, release, installed user application, remote node, model default or
+update policy changes. MSI installed-version/upgrade/migration, automatic model
+onboarding/quality, physical second-PC, signing/Defender and stable-release gates
+remain open; this fix does not replace or narrow them.
+
 ## Locally verified, unreleased: MSI source-version encoding enforcement
 
 The [packed-patch-v1 policy](MSI-VERSION-POLICY.md) maps supported canonical source
