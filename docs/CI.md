@@ -10,6 +10,18 @@ preserve verification prefixes, installed-package recognition and discovery
 paths; environment-variable identifiers remain compatible. User-owned future
 drafts and historical generated artifacts are not rewritten.
 
+## Accepted native authoring/naming checkpoint (2026-10-25)
+
+Published `f9951af` passes all four matrix jobs in
+[run 40194073272](https://github.com/eepyfishy/eef/actions/runs/40194073272).
+The exact-revision audit verifies the thirty native Windows suites in dispatch
+order, thirty-four planner cases, successful Windows development MSI authoring
+and the shared naming checks. No installer is executed in that hosted authoring
+step. Separate local current-application browser and
+[controlled MSI lifecycle](MSI-PACKAGING.md#current-application-lifecycle-checkpoint-2026-10-25-development-only)
+evidence covers standard-user install/repair/uninstall of both roles; those local
+observations are not additional hosted tests or stable-release acceptance.
+
 ## Accepted first-run and read-only MSI planning checkpoint (2026-10-25)
 
 The application increment passes both full local Rust modes (1,132 tests plus one

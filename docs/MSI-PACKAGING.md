@@ -185,6 +185,59 @@ accepted `4ea7964` run. Fresh-install application health, two-role installation,
 startup choices, repair/uninstall, migration, rollback and release gates below
 remain required.
 
+## Current-application lifecycle checkpoint (2026-10-25; development only)
+
+Published application/tool source `f9951af` passes all four GitHub jobs in
+[run 40194073272](https://github.com/eepyfishy/eef/actions/runs/40194073272),
+including the exact thirty native Windows suites, thirty-four planner cases,
+two-role development authoring and lowercase naming checks. Both complete local
+Rust modes pass 1,132 tests plus one existing ignored profiler each. Fresh
+default-feature applications also pass the existing browser regression.
+
+New guarded packages use those exact current applications with independently
+verified cached runtimes; application and runtime provenance remain separate.
+Independent read-only reconciliation recomputes the complete plans and component
+identities and verifies the current application hashes, package hashes and new
+inventories. These are different artifacts from the earlier `4ea7964` candidates.
+
+One controlled standard-user test then installs both roles into their authored
+default, distinct per-user directories. Every installed immutable file matches
+its expected hash. No configuration is packaged. The node starts alone, creates
+its stable ID/detected hostname and waits for a coordinator. Ordinary launches,
+without configuration or port arguments and from an unrelated working directory,
+create saved settings, automatically register and serve the lowercase dashboards.
+Explicit private enrollment preserves identity, permissions and model choices.
+Local consent followed by coordinator-owned permission changes, node restart,
+bundled Python/node llama.cpp probes and cold relaunch all pass. The unrelated
+working directory remains empty. No model is downloaded or inferred.
+
+The first repair-preparation attempt exposes a **test-harness** cross-volume
+`rename` error between the installed C: directory and retained E: evidence. It
+occurs before either repair starts. The original controller and failure remain
+recorded; the products/applications are not reinstalled or replayed. A separately
+guarded continuation verifies existing payload/owner hashes and retired processes,
+copies each package-owned test README into retained evidence, verifies both hashes,
+and removes only that exact installed file before repair.
+
+Both missing-file repairs restore the complete immutable payload with all saved
+owner bytes unchanged. Both subsequent uninstalls remove all 54/2,287 package-owned
+files and component registration values, unregister the products and preserve all
+six generated owner files per role, including settings, stable node identity and
+the unowned retention marker. Independent native registration/file/hash reads
+verify final state. All six native transactions and their logs report success.
+The invoking token is not administrator; no elevation, startup change, forced
+Windows restart or security-policy change is requested. Test applications are
+retired; retained settings/evidence and original recovery MSIs remain.
+
+This proves one isolated, unattended current-application lifecycle on this PC,
+not a non-coder release installer or physical second-PC acceptance. Start-menu
+integration, installer dialogs/startup choices, same-package reinstall, Unicode
+end-user paths, upgrade/downgrade ordering and migration, running/locked files,
+real-application rollback, approved model onboarding, signing and Defender gates
+remain open. Private enrollment was explicit, model readiness/quality was not
+claimed, and the development guard and synthetic product namespace/version are
+not approved production metadata. Published release installers are unchanged.
+
 ## Package contract
 
 - Two independent per-user packages, eef and eefn, can coexist on one PC. Keep
@@ -214,8 +267,10 @@ remain required.
 
 ## Acceptance still required
 
-Validate MSI tables, component ownership and CAB contents before installation.
-Then test dedicated-directory first install, reinstall, repair, EXE migration,
+Retain the separate table/component/CAB, synthetic rollback and current-payload
+evidence above; do not substitute it for the remaining release checks.
+Extend dedicated-directory first install and missing-file repair/uninstall to
+release metadata, normal setup UI and additional machines. Also test reinstall, EXE migration,
 MSI upgrade/downgrade fences, cancellation/rollback, locked-file behavior,
 unattended installation, startup choices and uninstall with owner data intact.
 Test both roles together and actual backend launch, stable node ID/hostname,

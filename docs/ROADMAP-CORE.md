@@ -13,6 +13,20 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [development MSI lifecycle](MSI-PACKAGING.md#current-application-lifecycle-checkpoint-2026-10-25-development-only)
+now verifies current `f9951af` applications in separate standard-user per-user
+packages: standalone node startup, default registration, explicit private pairing,
+command-owned permissions, restart, bundled runtime probes, cold relaunch,
+missing-file repair and owner-data-preserving uninstall. All six native actions
+and independent final-state reads pass after a retained cross-drive preparation
+failure is corrected without replaying installations or workloads. `f9951af`
+also passes all four hosted jobs, thirty native Windows suites, planner, native
+authoring and naming checks in
+[run 40194073272](https://github.com/eepyfishy/eef/actions/runs/40194073272).
+These guarded developer artifacts do not close normal installer UI/startup,
+production identity/version/migration/rollback, approved model onboarding,
+physical second-PC, signing/Defender or stable-release gates.
+
 The [backend first-run increment](FIRST-RUN-INITIALIZATION.md) creates missing
 coordinator settings independently of a dashboard or installer custom action and
 anchors both roles' managed default settings to their persistent installation.

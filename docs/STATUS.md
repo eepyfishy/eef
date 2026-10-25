@@ -3,6 +3,36 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Verified development checkpoint: current MSI two-role lifecycle
+
+Published `f9951af` passes all four hosted jobs, the exact thirty-suite Windows
+native dispatch, standalone thirty-four-case planner, native development MSI
+authoring and naming checks in
+[run 40194073272](https://github.com/eepyfishy/eef/actions/runs/40194073272).
+Both full local Rust modes pass 1,132 tests plus one ignored each. Fresh
+default-feature apps pass the existing browser regression against unchanged
+application hashes.
+
+Separate current-payload MSI authoring and independent plan/component/hash
+reconciliation pass. A controlled standard-user install of both roles then proves
+standalone node startup, automatic default registration, stable ID/hostname,
+explicit private enrollment, command-owned permission configuration, node restart,
+bundled runtime probes and cold relaunch with saved bytes preserved. No JSON or
+port arguments are supplied to the applications; no model is selected/downloaded.
+Both missing-file repairs and uninstalls pass with all six owner files per role
+unchanged. Independent native registration/file/hash inspection confirms removal
+of package-owned resources and retirement of test applications. All six MSI
+transactions return zero without an administrator token or elevation request.
+
+The initial cross-drive test-README move fails before repair. That test-harness
+failure/source is retained; guarded copy/hash/exact-file removal preparation
+continues from verified existing state, without reinstalling or relaunching work.
+See [the lifecycle scope](MSI-PACKAGING.md#current-application-lifecycle-checkpoint-2026-10-25-development-only).
+These are guarded developer packages, not releases: setup UI/startup integration,
+production identities/version ordering, reinstall/migration/upgrade/locked-file/
+real rollback, automatic approved model onboarding, second-PC and signing/Defender
+acceptance remain open. Existing user installations and releases are unchanged.
+
 ## Locally verified, unreleased: native MSI authoring and lowercase naming
 
 The development-only MSI author and independent database inspector now cover
