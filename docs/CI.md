@@ -1,5 +1,28 @@
 # GitHub core verification
 
+## Node-output fixture ownership and failure diagnostics
+
+`2a66c47` [run 40222139226](https://github.com/eepyfishy/eef/actions/runs/40222139226)
+is not accepted overall: all four Rust modes and the expanded MSI read-only probe
+step pass, but the native sequence stops at its nineteenth suite, node output,
+on initial connection/runtime observation. The old hosted trace does not establish
+why that observation failed.
+
+A [controlled local reproduction](TRANSPORT-OUTPUT.md#fixture-registration-ownership-follow-up-2026-10-26)
+proves that a healthy registered node is misclassified after a probe-only first
+socket closes. The fixture now owns the first authenticated registration, not
+the first TCP accept, retaining every original bound/no-replay/settings assertion.
+Fifteen ownership/privacy/process-observation cases, both distinct native paths
+and a missing-executable diagnostic negative case pass locally with unchanged
+application artifacts. No production networking or model policy changes.
+
+Every matrix job runs the pure fixture-state test. Windows headless keeps all
+thirty main suites and separately runs the injected pre-registration-close case
+once after them, for 31 native executions. Failure diagnostics are whitelisted
+metadata in the job log; raw process/error evidence stays private/ignored and is
+not uploaded. Fresh hosted acceptance must verify both the exact main order and
+the additional completion marker. Old failed runs are never converted to passes.
+
 ## In-development rollback probe: read-only checks are not recovery approval
 
 The Windows authoring test adds exact synthetic rollback-probe construction and

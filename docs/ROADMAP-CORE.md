@@ -13,6 +13,17 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [node-output fixture follow-up](TRANSPORT-OUTPUT.md#fixture-registration-ownership-follow-up-2026-10-26)
+reproduces and corrects ownership based on TCP arrival rather than authenticated
+registration. It preserves all deadlines and no-replay/settings/runtime checks,
+adds whitelisted failure observations and confirms prompt spawn-failure diagnosis.
+Fifteen pure cases and both native paths pass locally with unchanged application
+artifacts. CI keeps thirty main suites plus one distinct forced-prefix-closure
+case; fresh hosted acceptance remains separate. The prior `2a66c47` hosted run
+remains failed at node output despite passing Rust/MSI checks; missing old hosted
+observations prevent proving that failure's exact cause. No runtime/model policy,
+release/feed or user-installation change, and no reduction of remaining gates.
+
 The [post-write MSI rollback probe](MSI-ROLLBACK-VALIDATION.md) now exposes a
 registration recovery failure despite restored payload/owner hashes. Exact
 source/logs and fresh API observations are retained; no permission/security

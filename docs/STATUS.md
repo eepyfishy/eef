@@ -3,6 +3,26 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Locally verified, unreleased: node-output fixture registration ownership
+
+The [transport fixture follow-up](TRANSPORT-OUTPUT.md#fixture-registration-ownership-follow-up-2026-10-26)
+corrects a proven test-ownership error: a closed probe-only first socket prevents
+selection of a later healthy authenticated registration. A controlled pre-fix
+run retains the timeout despite observed registration/heartbeats. The corrected
+fixture claims exactly one authenticated registration, never hands mutation
+ownership to reconnects, preserves 20-second bounds and retains every previous
+settings/runtime/input-channel/no-replay assertion. No node runtime code changes.
+
+Fifteen pure checks, two distinct native positive cases and a confirmed missing-
+binary diagnostic failure pass locally against unchanged source/artifact hashes.
+Public failure diagnostics exclude arbitrary/private text; detailed process/error
+evidence remains ignored/private. CI retains thirty main suites and adds one
+explicit extra native case. `2a66c47` hosted run 40222139226 passes all Rust modes
+and expanded MSI probe checks but fails the nineteenth native suite; its exact
+hosted timeout cause is unproven and the run remains failed. New hosted acceptance
+is separate. MSI rollback, model/default/onboarding, physical two-PC and all other
+release gates remain open; no policy, user install, model or feed changes.
+
 ## Unresolved, unreleased: post-write MSI upgrade rollback
 
 The new [separately guarded probe](MSI-ROLLBACK-VALIDATION.md) deliberately fails

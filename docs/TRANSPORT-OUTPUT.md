@@ -9,6 +9,53 @@ The existing node-to-coordinator encrypted connection now has one shared output
 guard. This does not add a transport, retry a command, change authentication or
 replace the reviewed execution boundary.
 
+## Fixture registration ownership follow-up (2026-10-26)
+
+The `2a66c47` hosted run passes all four Rust modes and MSI authoring/probe
+checks, then stops at `test-node-output.mjs` waiting for initial connection/runtime
+evidence. The old fixture retains no hosted phase/process observations, so the
+exact hosted cause remains unproven; that run is not accepted overall.
+
+A controlled pre-fix reproduction closes only the first probe-only TCP socket.
+The node subsequently authenticates, registers and emits heartbeats on another
+socket, with its runtime observed. Nevertheless, the test times out because it
+chooses the blocked-output target by **TCP acceptance order**, not authenticated
+registration. No work is admitted on that first closed socket. The unchanged
+original and injected diagnostic source and failure remain retained in
+`.validation/node-output-ke6BTd` and adjacent pre-fix records.
+
+The fixture now claims its one target only on the first authenticated
+registration. Closing that target never transfers mutation authority to a later
+session; pending configuration/reply work is not resent. No production runtime,
+authentication, framing or reconnect policy is changed. Initial/reconnect
+observation bounds remain 20 seconds, and existing settings-byte, runtime-ID,
+input-channel, legacy-acknowledgment and no-work/response-replay assertions stay.
+Confirmed process exit/signal/spawn failure fails promptly outside the polling
+exception handler. A retained rejected process promise cannot escape before the
+owned finalizer and diagnostic observation.
+
+Failure output now contains only fixed phases, known connection/input states,
+bounded process/session summaries, numeric exit/count observations and frame-type
+counts. IDs, endpoints, secrets, model names, arbitrary errors and process output
+are excluded. Detailed error/runtime/last-command text remains in the generated
+ignored `PRIVATE-failure.json`, never printed or uploaded by CI. Inspection alone
+does not retry a fixture or a workload.
+
+Fifteen pure ownership/diagnostic cases pass. Final native fixtures
+`node-output-6bbFug` (injected first-probe closure) and `node-output-pQWlsg` (ordinary)
+pass against the same eleven accepted app/helper artifacts and four frozen fixture/
+workflow sources; blocked-session recovery measures 8,025 and 6,422 ms respectively.
+A missing-executable negative case fails in 2,838 ms with confirmed spawn-failure
+metadata, without exposing its synthetic private path in public output. Fixture
+processes are retired. The local record is
+`.validation/node-output-fixture-fix-acceptance.json`.
+
+CI retains the exact thirty-suite main sequence and adds one explicitly labelled
+pre-registration-close native case, not a retry after failure. The pure tests run
+in every matrix job. New exact-revision hosted acceptance remains separate.
+These encrypted legacy-loopback tests are not pinned-TLS, physical two-PC,
+strong termination, model quality, MSI rollback or stable-release acceptance.
+
 ## Contract
 
 Every post-probe node frame uses a five-second cooperative deadline, including

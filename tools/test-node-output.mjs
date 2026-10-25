@@ -7,6 +7,7 @@ import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
 import {createServer as httpServer} from 'node:http';
 import {randomBytes, hkdfSync, createCipheriv, createDecipheriv, createHmac} from 'node:crypto';
+import {OutputBackpressureTarget,outputFixtureDiagnostic,fixtureProcessStopped} from './node-output-fixture-state.mjs';
 
 const root=resolve(import.meta.dirname,'..'), bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const scratch=await mkdtemp(join(root,'.validation','node-output-'));
@@ -15,7 +16,8 @@ const secret=randomBytes(24).toString('hex'), id='output-fixture-node';
 const key=Buffer.from(hkdfSync('sha256',Buffer.from(secret),Buffer.from('eef-node-salt'),Buffer.from('eef-node-v1'),32));
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),
   PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
-let fault, blocked, blockedAt, runtime;
+const target=new OutputBackpressureTarget(),closePrefix=process.env.EEF_TEST_NODE_OUTPUT_PREFIX_CLOSE==='1';
+let fault, blocked, blockedAt, runtime,runtimeChild,blockedSession,lastStatus,phase='startup';
 function encode(value){
   const nonce=randomBytes(12), cipher=createCipheriv('aes-256-gcm',key,nonce);
   const payload=Buffer.concat([cipher.update(JSON.stringify(value)),cipher.final()]);
@@ -29,7 +31,11 @@ function decode(line){
 function launch(args){
   const child=spawn(join(bin,'eefn.exe'),['--config',configPath,...args],{cwd:root,windowsHide:true,env,stdio:['ignore','pipe','pipe']});
   let out='',err='';child.stdout.on('data',b=>out=(out+b).slice(-1048576));child.stderr.on('data',b=>err=(err+b).slice(-1048576));
-  child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r({code,out,err}));});children.push(child);return child;
+  child.fixtureRole=args.includes('--no-ui')?'runtime':'cli';child.fixtureLogs=()=>({out,err});child.on('error',()=>{child.fixtureSpawnFailed=true;});
+  child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r({code,out,err}));});
+  // Retain failures for the owned waiter/finalizer without an unhandled rejection
+  // escaping before the redacted diagnostic can inspect the actual process state.
+  child.result.catch(()=>{});children.push(child);return child;
 }
 async function cli(args){
   const child=launch(['--json',...args]), timer=setTimeout(()=>child.kill(),20000);
@@ -37,32 +43,34 @@ async function cli(args){
   finally{clearTimeout(timer);}
 }
 async function until(fn,label,ms=20000){
-  const end=Date.now()+ms;while(Date.now()<end){if(fault)throw fault;try{if(await fn())return;}catch(error){if(fault)throw fault;}
+  const end=Date.now()+ms;while(Date.now()<end){if(fault)throw fault;if(fixtureProcessStopped(runtimeChild))throw Error('Fixture runtime stopped before '+label);try{if(await fn())return;}catch(error){if(fault)throw fault;}
     await new Promise(r=>setTimeout(r,100));}throw Error('Timeout: '+label);
 }
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 const tags=httpServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end('{"models":[]}');});
 const peer=createServer(socket=>{
   sockets.add(socket);socket.on('close',()=>sockets.delete(socket));socket.on('error',()=>{});
-  const session={messages:[],registered:false}, first=sessions.length===0; sessions.push(session);
+  const session={messages:[],authenticated:false,registered:false,closed:false},prefix=closePrefix&&sessions.length===0;sessions.push(session);socket.on('close',()=>{session.closed=true;});
   let pending='';
   socket.on('data',bytes=>{
-    if(first&&session.registered)return; // Deliberately never drain blocked output.
+    if(target.owns(session))return; // Deliberately never drain blocked output.
     try{
       pending+=bytes.toString('ascii');assert(pending.length<8*1024*1024);
       while(pending.includes('\n')){
         const cut=pending.indexOf('\n'), value=decode(pending.slice(0,cut));pending=pending.slice(cut+1);
         session.messages.push(value.type);
+        if(value.type==='probe'&&prefix){socket.destroy();return;} // Optional deterministic pre-registration failure; no work admitted.
         if(value.type==='probe')socket.write(encode({type:'pong',nonce:value.nonce,protocol:1}));
         else if(value.type==='auth'){
           assert.equal(value.node_id,id);
           assert.equal(value.signature,createHmac('sha256',key).update(`${value.nonce}|${value.node_id}|${value.version}|${value.timestamp}`).digest('base64'));
+          session.authenticated=true;
           socket.write(encode({type:'ok'}));
         }else if(value.type==='register'){
           assert(!('registration_receipt' in value),'Legacy coordinator without negotiation must receive the original registration shape');
           assert.equal(value.node_id,id);session.registered=true;
-          if(first){
-            blocked=socket;socket.pause();blockedAt=Date.now();
+          if(target.claim(session)){
+            blocked=socket;blockedSession=session;socket.pause();blockedAt=Date.now();
             socket.write(encode({type:'request',id:'saved-before-loss',capability:'node.configure',action:'model_command',
               params:{schema_version:1,expected_node_id:id,command:{operation:'cpu_threads',model_id:'cpu-fixture',threads:2}}}));
             for(let i=0;i<64;i++)socket.write(encode({type:'request',id:`inspection-${i}`,capability:'node.configure',action:'model_command',
@@ -87,14 +95,18 @@ try{
     endpoints:[`127.0.0.1:${peer.address().port}`],heartbeat_seconds:0.5,request_limits:{work:128,control:2},
     dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:apiPort},update:{policy:'off'},management:{allow_remote:true},
     models:{provider:'ollama',ollama:{base_url:`http://127.0.0.1:${tags.address().port}`,selected:[]},llamacpp:{slots}}});
-  await writeFile(configPath,JSON.stringify(config));launch(['--no-ui']);
-  await until(async()=>{const report=await cli(['network','diagnose']);runtime=report.runtime_id;return blocked&&runtime;},'initial connection and runtime');
+  await writeFile(configPath,JSON.stringify(config));runtimeChild=launch(['--no-ui']);
+  phase='initial_connection';
+  await until(async()=>{const report=await cli(['network','diagnose']);lastStatus=report;runtime=report.runtime_id;return blocked&&runtime;},'initial connection and runtime');
+  phase='saving_setting';
   await until(async()=>JSON.parse(await readFile(configPath,'utf8')).models.llamacpp.slots[0].cpu_threads===2,'owner-approved save before output loss');
   const saved=await readFile(configPath,'utf8');
-  await until(async()=>{const report=await cli(['network','diagnose']);return report.successful_connections>=2&&report.connection_state==='connected';},'node retires blocked output and reconnects',20000);
+  phase='retiring_output';
+  await until(async()=>{const report=await cli(['network','diagnose']);lastStatus=report;return report.successful_connections>=2&&report.connection_state==='connected';},'node retires blocked output and reconnects',20000);
   const reconnectMs=Date.now()-blockedAt;
   assert(reconnectMs<20000);assert(sessions.length>=2);
   const reconnected=await cli(['network','diagnose']);
+  phase='after_reconnect';lastStatus=reconnected;
   assert.equal(reconnected.runtime_id,runtime,'connection retirement must not restart the node runtime');
   assert.equal(reconnected.input_channel,'ready','Reconnection owns a fresh usable local queue, not an old closed sender');
   assert.equal(reconnected.registration,'unknown','A legacy peer without receipt negotiation must not be assumed acknowledged');
@@ -102,16 +114,29 @@ try{
   assert.equal(models.saved_selections.find(m=>m.model_id==='cpu-fixture').cpu_threads,2);
   assert.equal(await readFile(configPath,'utf8'),saved,'reconnection must preserve saved settings');
   // Read-only polling observes a healthy reconnected session; no new mutations.
-  await until(async()=>sessions.slice(1).some(s=>s.messages.includes('heartbeat')),'heartbeat after reconnection');
-  for(const session of sessions.slice(1))assert(session.messages.every(t=>['probe','auth','register','heartbeat'].includes(t)));
+  const later=()=>sessions.slice(sessions.indexOf(blockedSession)+1);
+  await until(async()=>later().some(s=>s.messages.includes('heartbeat')),'heartbeat after reconnection');
+  for(const session of later())assert(session.messages.every(t=>['probe','auth','register','heartbeat'].includes(t)));
   assert.equal((await cli(['network','diagnose'])).busy_rejections,0,'test must exercise ordinary output, not busy rejection');
   assert.equal((await fetch(`http://127.0.0.1:${apiPort}/`)).status,404);
   if(fault)throw fault;
   await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,actual_node_process:true,local_commands_after_reconnect:true,
     saved_change_survives:true,reconnect_ms:reconnectMs,no_response_or_work_replay:true,fresh_input_channel_after_retirement:true,legacy_encrypted_loopback:true,
     registration_receipt_unknown_without_negotiation:true,
+    pre_registration_close_injected:closePrefix,blocked_target_is_first_authenticated_registration:true,
     pinned_tls:false,physical_two_pc:false,native_termination_proven:false},null,2));
   console.log('Node output validation passed: '+scratch);
+  if(closePrefix)console.log('Node output pre-registration-close checks passed');
+  phase='done';
+}catch(error){
+  // Hosted output is a strict whitelist. Raw process/error data remains private
+  // in the owned ignored fixture; never print secrets, paths or peer error text.
+  const diagnostic=outputFixtureDiagnostic({phase,children,sessions,target,runtimeObserved:!!runtime,status:lastStatus});
+  console.error('Node output fixture diagnostics: '+JSON.stringify(diagnostic));
+  await writeFile(join(scratch,'failure-diagnostic.json'),JSON.stringify(diagnostic,null,2));
+  const main=children.find(c=>c.fixtureRole==='runtime'),last=children.at(-1);
+  await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({error:String(error),runtime:main?.fixtureLogs(),lastCommand:last===main?null:{out:last?.fixtureLogs().out.slice(-65536),err:last?.fixtureLogs().err.slice(-65536)}},null,2));
+  throw Error('Node output fixture failed during '+phase+'; inspect redacted diagnostics and retained private evidence');
 }finally{
   for(const child of children)if(child.exitCode===null)child.kill();await Promise.allSettled(children.map(c=>c.result));
   for(const socket of sockets)socket.destroy();await Promise.all([new Promise(r=>peer.close(r)),new Promise(r=>tags.close(r))]);

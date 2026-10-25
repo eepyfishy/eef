@@ -73,6 +73,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/check-project-names.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/test-node-output-fixture-state.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/test-backend-boundary.mjs
           exit $LASTEXITCODE
       - name: Read-only MSI payload planning (synthetic)
@@ -114,6 +116,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Path '.validation' -Force | Out-Null
           $env:EEF_TEST_PYTHON = (Get-Command python.exe -ErrorAction Stop).Source
+          $env:EEF_TEST_NODE_OUTPUT_PREFIX_CLOSE = ''
           $scripts = @(
             'test-coordinator-initialization.mjs',
             'test-automation-schedules.mjs',
@@ -151,6 +154,13 @@ jobs:
             node (Join-Path 'tools' $script)
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+          # Independent extra case: a probe-only socket must not consume the
+          # first authenticated registration's backpressure target. No retries.
+          Write-Output 'Running node-output pre-registration-close native regression'
+          $env:EEF_TEST_NODE_OUTPUT_PREFIX_CLOSE = '1'
+          node tools/test-node-output.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:EEF_TEST_NODE_OUTPUT_PREFIX_CLOSE = ''
           # Package-doctor and unavailable-model suites additionally require
           # existing verified package/llama.cpp runtimes. CI does not download
           # them or claim those omitted suites, successful package repair, model quality,
