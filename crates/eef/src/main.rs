@@ -1,4 +1,3 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
@@ -2380,14 +2379,26 @@ async fn main() -> Result<()> {
     let executable = std::env::current_exe()?;
     let install_root = eefn::updater::installation_root(&executable)?;
     let parsed = Args::try_parse();
+    let service = parsed.as_ref().is_ok_and(|args| args.command.is_none());
+    if service {
+        eefn::console::detach_owned_service_console();
+    }
     let repair = parsed.as_ref().is_ok_and(|args| {
         matches!(
             args.command,
             Some(Command::Repair { .. } | Command::RepairSetup { .. } | Command::Doctor { .. })
         )
     });
-    if !repair && eefn::updater::handoff_if_selected(&install_root, eef::VERSION, "eef")? {
-        return Ok(());
+    if !repair {
+        if service {
+            if eefn::updater::handoff_if_selected(&install_root, eef::VERSION, "eef")? {
+                return Ok(());
+            }
+        } else if let Some(code) =
+            eefn::updater::handoff_command_if_selected(&install_root, eef::VERSION, "eef")?
+        {
+            std::process::exit(code);
+        }
     }
     let mut args = parsed.unwrap_or_else(|error| error.exit());
     if args.config == PathBuf::from("config/default_identity.yaml")

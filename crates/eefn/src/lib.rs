@@ -15,6 +15,7 @@ pub mod automation_policy;
 pub mod bundle_selection;
 pub mod client;
 pub mod connection_commands;
+pub mod console;
 pub mod context;
 pub mod credential_pairing;
 pub mod crypto;

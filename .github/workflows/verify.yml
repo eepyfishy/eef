@@ -102,6 +102,7 @@ jobs:
             'test-repair-sources.mjs',
             'test-repair-receipts.mjs',
             'test-package-handoff.mjs',
+            'test-windows-shell.mjs',
             'test-explicit-updates.mjs',
             'test-bundled-components.mjs',
             'test-settings-storage.mjs',

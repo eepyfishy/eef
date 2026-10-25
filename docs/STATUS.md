@@ -3,6 +3,57 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Locally verified, unreleased: Windows shell I/O and selected-command completion
+
+The real-node preflight exposed missing output/exit observations from direct
+PowerShell calls to GUI-subsystem role executables. Both command entrypoints
+now use console semantics; only exclusively owned service consoles without
+redirected handles may be detached. Selected-package commands wait for child
+completion and forward its exit code; service handoff keeps retirement semantics.
+Two focused ownership tests, legacy-flag classification and fresh headless builds
+pass. Corrected real PowerShell checks pass twenty-four command/handoff cases
+plus both live hidden-service console checks. Node legacy one-shot flags are not
+service launches. The earlier combined run was deliberately interrupted to fix
+that classification, not accepted despite its two full modes passing 1,106 tests
+plus one ignored each. The corrected two full modes each pass 1,107 tests plus
+one existing ignored profiler across fourteen groups. All thirty-one native
+suites pass sequentially with 304 source/resource/workflow and nine native
+artifact hashes unchanged; no matching fixture app/model processes remain
+observed. Independent records are `.validation/windows-console-acceptance.json`
+and its process observation. Real-CPU fixture `real-model-qaQaMt` also passes the
+selected owner check with ordinary grants, retained results/no replay, removal,
+unload/reload, restart, idle and on-demand regressions using unchanged cached
+weights and matching apps. No weights were downloaded/copied, and no matching
+processes remain observed. Its record is
+`.validation/windows-console-real-cpu-acceptance.json`. Hosted, default/model
+quality, automatic onboarding, physical workload and full release acceptance
+remain separate and open.
+See [scope and verification](WINDOWS-COMMAND-ENTRYPOINTS.md).
+
+## Verified: published model-check CI and physical legacy control
+
+Published source `1babe4f434a12d706d18442dbcb78b756c3a3426` passes all four jobs in
+[hosted run 40139874670](https://github.com/eepyfishy/eef/actions/runs/40139874670).
+Its completed Windows headless log confirms all twenty-eight selected native
+suites in exact order; `.validation/1babe4f-ci-acceptance.json` records the audit.
+This closes that checkpoint's pending hosted status, not the later shell edits.
+
+The isolated coordinator also registered the owner's physical second PC running
+alpha.6, inspected its supported read/management/update state, and sent exactly
+one supported node-app restart. The same stable ID reconnected with a new runtime;
+permissions, metadata and installed local coordinator config remained unchanged.
+No jobs, model selection, update, permission change or inference was requested.
+The record is `.validation/physical-node-control-acceptance.json`. The empty local
+diagnostic coordinator was then retired after checking its PID/executable/config,
+runtime and zero-job state; installed apps and the remote node were not stopped.
+
+The remote node is older and legacy-authenticated, not compatible/pinned for the
+current reviewed-workload gate. Upgrade and private pairing remain prerequisites;
+no old workload RPC, shell bootstrap or weakened trust was used to substitute for
+them. This is physical legacy-control evidence, not Node A interpretation through
+EEF grants to Node B execution/results, automatic onboarding, MSI, signing,
+Defender or stable v0.4.0 acceptance.
+
 ## Locally accepted, unreleased: backend-selected check and readiness guidance
 
 `eef node verify-model ... start` now submits the new `start_selected` owner

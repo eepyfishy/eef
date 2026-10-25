@@ -1,4 +1,3 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -63,6 +62,16 @@ struct Args {
     selected_models: Vec<String>,
     #[arg(long, env = "EEF_NODE_OLLAMA")]
     ollama_url: Option<String>,
+}
+
+impl Args {
+    fn is_service(&self) -> bool {
+        self.command.is_none()
+            && self.ask.is_none()
+            && !self.check_update
+            && !self.rollback
+            && !self.list_ollama_models
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -2725,6 +2734,10 @@ fn main() -> Result<()> {
     let executable = std::env::current_exe()?;
     let install_dir = eefn::updater::installation_root(&executable)?;
     let parsed = Args::try_parse();
+    let service = parsed.as_ref().is_ok_and(Args::is_service);
+    if service {
+        eefn::console::detach_owned_service_console();
+    }
     if parsed.as_ref().is_ok_and(|args| {
         matches!(
             args.command,
@@ -2734,8 +2747,14 @@ fn main() -> Result<()> {
         // Offline inspection/repair must survive a selected package that cannot start.
         return run(parsed.unwrap(), install_dir);
     }
-    if eefn::updater::handoff_if_selected(&install_dir, eefn::VERSION, "eefn")? {
-        return Ok(());
+    if service {
+        if eefn::updater::handoff_if_selected(&install_dir, eefn::VERSION, "eefn")? {
+            return Ok(());
+        }
+    } else if let Some(code) =
+        eefn::updater::handoff_command_if_selected(&install_dir, eefn::VERSION, "eefn")?
+    {
+        std::process::exit(code);
     }
     // Clap builds the whole command tree synchronously. Keep it outside the
     // async poll frame and Tokio block_on stack (Windows main reserves 1 MiB).
@@ -2893,25 +2912,24 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
         }
         return Ok(());
     }
-    let _instance =
-        if args.ask.is_none() && !args.check_update && !args.rollback && !args.list_ollama_models {
-            match eefn::setup::instance_lock(&args.config)? {
-                Some(lock) => Some(lock),
-                None => {
-                    let config = load_file(&args.config)?.dashboard.unwrap_or_default();
-                    if args.open_dashboard
-                        && !args.no_ui
-                        && config.ui_enabled
-                        && cfg!(feature = "dashboard")
-                    {
-                        eefn::setup::open_dashboard(&config.host, config.port);
-                    }
-                    return Ok(());
+    let _instance = if args.is_service() {
+        match eefn::setup::instance_lock(&args.config)? {
+            Some(lock) => Some(lock),
+            None => {
+                let config = load_file(&args.config)?.dashboard.unwrap_or_default();
+                if args.open_dashboard
+                    && !args.no_ui
+                    && config.ui_enabled
+                    && cfg!(feature = "dashboard")
+                {
+                    eefn::setup::open_dashboard(&config.host, config.port);
                 }
+                return Ok(());
             }
-        } else {
-            None
-        };
+        }
+    } else {
+        None
+    };
     let initial = eefn::setup::initialize_identity(&args.config)?;
     let _ = eefn::setup::pair_local(&args.config)?;
     let file = load_file(&args.config)?;
@@ -2920,8 +2938,7 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
         args.config.clone(),
         initial["node_id"].as_str().unwrap().into(),
     );
-    let interactive =
-        args.ask.is_none() && !args.check_update && !args.rollback && !args.list_ollama_models;
+    let interactive = args.is_service();
     let mut dashboard_task = if dashboard_config.enabled && interactive {
         Some(
             dashboard
@@ -3683,6 +3700,29 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn service_classification_excludes_all_legacy_one_shot_flags() {
+        use clap::Parser;
+        for argv in [
+            vec!["eefn"],
+            vec!["eefn", "--no-ui"],
+            vec!["eefn", "--select-model", "owner-model=text"],
+        ] {
+            assert!(super::Args::try_parse_from(argv).unwrap().is_service());
+        }
+        for argv in [
+            vec!["eefn", "--ask", "fixture input"],
+            vec!["eefn", "--check-update"],
+            vec!["eefn", "--rollback"],
+            vec!["eefn", "--list-ollama-models"],
+            vec!["eefn", "setup"],
+            vec!["eefn", "connection", "show"],
+            vec!["eefn", "doctor"],
+        ] {
+            assert!(!super::Args::try_parse_from(argv).unwrap().is_service());
+        }
+    }
+
     #[test]
     fn bundled_components_python_file_paths_are_config_relative_but_cli_keeps_its_intent() {
         let dir = tempfile::tempdir().unwrap();

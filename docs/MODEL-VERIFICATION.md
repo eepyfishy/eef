@@ -125,7 +125,9 @@ checks with unchanged catalog-verified cached weights and full-regression apps.
 The independent record is
 `.validation/model-check-readiness-real-cpu-acceptance.json`; no matching fixture
 app/model processes remain observed. No weights were downloaded or copied.
-Hosted acceptance of this new follow-up remains pending. Automatic inference
+Published `1babe4f` also passes its four-job hosted run and all twenty-eight
+configured native suites in exact order; the subsequent Windows shell follow-up
+remains separate. Automatic inference
 authority, approved defaults/interpretation quality, first-run health, physical
 two-PC and stable-release gates remain separate requirements. The counts in the
 historical checkpoint below do not cover subsequent edits.

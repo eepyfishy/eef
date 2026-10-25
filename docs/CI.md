@@ -1,6 +1,21 @@
 # GitHub core verification
 
-## Backend-selected start/readiness follow-up (locally accepted, hosted pending)
+## Windows shell follow-up (locally verified; hosted pending)
+
+The new Windows PowerShell native suite exercises ordinary command I/O/status
+and selected-package command handoff. Configured Windows native suites increase
+to twenty-nine; the previously accepted hosted revision below ran twenty-eight.
+No hosted acceptance of these new edits is claimed.
+Both full local modes pass 1,107 tests plus one existing ignored profiler each,
+all thirty-one native suites pass against unchanged evaluated hashes, and the
+independent cached real-CPU regression passes. Its twenty-four shell cases cover
+legacy one-shot options and nonempty stdin propagation as well as selected child
+exit/output and two API-live quiet services. The earlier pre-classification run
+was deliberately interrupted for a real legacy-flag correction, not accepted.
+Read-only records are `.validation/windows-console-acceptance.json` and
+`.validation/windows-console-real-cpu-acceptance.json`.
+
+## Accepted backend-selected start/readiness checkpoint (2026-10-25)
 
 Both full local feature modes pass 1,104 tests plus one existing ignored profiler
 each, all thirty native suites pass sequentially, and the independent cached
@@ -9,8 +24,11 @@ records are `.validation/model-check-readiness-acceptance.json` and
 `.validation/model-check-readiness-real-cpu-acceptance.json`.
 The native model-check fixture now covers CLI/backend ownership, typed preflight
 refusals without a source, and retained selected starts offline and after model/
-runtime changes. Hosted acceptance of this subsequent follow-up is pending;
-the green revision-specific baseline below does not cover it.
+runtime changes. Published `1babe4f434a12d706d18442dbcb78b756c3a3426` passes all four
+matrix jobs in [run 40139874670](https://github.com/eepyfishy/eef/actions/runs/40139874670).
+The completed Windows headless log confirms all twenty-eight configured suites
+in exact order; `.validation/1babe4f-ci-acceptance.json` records the audit. This
+accepts that revision, not the later shell/source changes.
 
 ## Accepted explicit model-check checkpoint (2026-10-25)
 
@@ -56,7 +74,7 @@ backend-to-browser dependency boundary, and the locked workspace/all-target
 Rust regression suite. Rust is pinned to 1.98.1 and Node to 24.20.0.
 
 The current Windows headless job additionally builds command services and example
-helpers, then selects 28 sequential native synthetic regression scripts. Python
+helpers, then selects 29 sequential native synthetic regression scripts. Python
 3.11.9 is selected explicitly for the Python fixtures. These tests use isolated
 fixture configuration, loopback services, and synthetic artifacts, not installed
 user nodes or downloaded language models. The workflow file is the authoritative

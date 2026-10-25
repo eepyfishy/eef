@@ -4,6 +4,12 @@ v0.4.0a6 supports these commands without a browser. Deterministic commands need 
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
 
+The unreleased [Windows command-entrypoint follow-up](WINDOWS-COMMAND-ENTRYPOINTS.md)
+uses normal console I/O/waiting for `eef.exe` and `eefn.exe`, including selected
+package command exit codes. Background service launch/console ownership remains
+separate. Existing published installers are unchanged; full acceptance of the
+new follow-up is still pending.
+
 ## Explicit interpreter check (unreleased after alpha.6)
 
     eefn permissions allow remote-management

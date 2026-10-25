@@ -462,21 +462,56 @@ pub fn handoff_if_selected(
     current_version: &str,
     program: &str,
 ) -> Result<bool> {
+    let Some(mut command) =
+        selected_handoff_command(install_dir.as_ref(), current_version, program)?
+    else {
+        return Ok(false);
+    };
+    command.spawn().context("launch selected update")?;
+    Ok(true)
+}
+
+/// Commands/help/parse errors must wait for the selected executable and return
+/// its actual status. A successful spawn is not a successful owner operation.
+/// Stdin/stdout/stderr stay inherited, including private pairing input and pipes.
+pub fn handoff_command_if_selected(
+    install_dir: impl AsRef<Path>,
+    current_version: &str,
+    program: &str,
+) -> Result<Option<i32>> {
+    let Some(mut command) =
+        selected_handoff_command(install_dir.as_ref(), current_version, program)?
+    else {
+        return Ok(None);
+    };
+    let status = command.status().context("wait for selected command")?;
+    Ok(Some(status.code().unwrap_or(1)))
+}
+
+fn selected_handoff_command(
+    install_dir: &Path,
+    current_version: &str,
+    program: &str,
+) -> Result<Option<std::process::Command>> {
     let Some(executable) = crate::bundle_selection::pending_executable(
-        install_dir.as_ref(),
+        install_dir,
         current_version,
         program,
         &std::env::current_exe()?,
     )?
     else {
-        return Ok(false);
+        return Ok(None);
     };
-    std::process::Command::new(executable)
+    let mut command = std::process::Command::new(executable);
+    command
         .args(std::env::args_os().skip(1))
-        .current_dir(std::env::current_dir()?)
-        .spawn()
-        .context("launch selected update")?;
-    Ok(true)
+        .current_dir(std::env::current_dir()?);
+    #[cfg(windows)]
+    if !crate::console::attached() {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    }
+    Ok(Some(command))
 }
 
 pub fn restart_required(install: &Path, current_version: &str, program: &str) -> Result<bool> {

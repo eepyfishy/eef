@@ -13,6 +13,19 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [Windows command-entrypoint follow-up](WINDOWS-COMMAND-ENTRYPOINTS.md) is
+locally verified after the real-node preflight exposed missing PowerShell I/O/
+exit observations. Console commands retain their receipts and selected child
+status; background-service console ownership is separate. Published `1babe4f`
+passes its complete four-job/28-native hosted run, and physical legacy-node
+read/control/restart passes without config/permission/model changes. The older
+remote node still needs upgrade/private pairing before current reviewed-workload
+acceptance. None of this closes full onboarding/model quality or release gates.
+The shell correction passes both full modes (1,107 tests plus one ignored each),
+all thirty-one native suites and an independent cached real-CPU regression with
+unchanged evaluated source/artifact hashes. Hosted acceptance of that new source
+remains separate; legacy one-shot flags are commands, never service launches.
+
 The locally accepted backend-selected model-check follow-up has both full Rust
 modes passing 1,104 tests plus one ignored each, all thirty native suites and a
 separate cached real-CPU regression against unchanged evaluated hashes. CLI start submits
