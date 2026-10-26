@@ -13,6 +13,34 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [one-call schedule definition index](SCHEDULE-DEFINITION-READS.md) reduces
+duplicate reads without caching authority across calls or writes. Existing
+corruption/compiler/generation checks and all launch/settlement/deadline gates
+remain. Fresh validation must still establish the full recurring path; the
+previous fixture with completed jobs but an unsettled schedule stays failed.
+
+The [process-local Windows thread lookup](WINDOWS-OWNED-THREAD.md) addresses
+measured overhead before bounded Python execution. It keeps suspended creation,
+job assignment, complete single-owned-thread verification and checked resume,
+without a whole-PC walk or uncontained fallback. Native/full/hosted acceptance
+remains pending; earlier failed pipeline and pressure checks remain failures.
+
+The [owned-launch journal follow-up](SCHEDULE-LAUNCH-JOURNAL.md) removes a periodic
+observation that cannot act while its launch callback is pending. It returns no
+authority and leaves clock fences, durable admission and validated settlement
+intact. Held-journal evidence and a separately retained recurring-job failure
+motivate fresh validation; no deadline, retry, permission or release gate is
+relaxed, and no broad fairness or physical reliability is claimed.
+
+The [grant cleanup clock follow-up](GRANT-CLEANUP-CLOCK.md) makes synthetic
+in-flight ordering deterministic while retaining real-clock expired-before-start
+refusal and native tree cleanup. Production deadlines/authority are not renewed
+or widened. Its focused/full/native/hosted validation remains separate.
+The preceding `73252fe` passes all four hosted jobs, 31+1 hosted native cases,
+both local full Rust modes and 37 local native cases. This accepts that exact
+development checkpoint, not the subsequent clock change, earlier failure causes,
+model/default, physical, installer or stable-release gates.
+
 The [Python startup observations](PYTHON-STARTUP-DIAGNOSTICS.md) retain typed
 failure categories and bounded plugin counters for command-first diagnosis.
 Original deadlines and fixture checks remain intact. The preceding `5b48055`

@@ -5,6 +5,10 @@ use anyhow::Result;
 use tokio::process::{Child, Command};
 
 #[cfg(windows)]
+#[path = "process_thread.rs"]
+mod process_thread;
+
+#[cfg(windows)]
 pub(crate) use windows::ProcessTree;
 
 #[cfg(not(windows))]
@@ -45,12 +49,8 @@ mod windows {
     use anyhow::{Context, bail};
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use windows_sys::Win32::{
-        Foundation::{ERROR_NO_MORE_FILES, GetLastError, HANDLE, INVALID_HANDLE_VALUE},
+        Foundation::{HANDLE, INVALID_HANDLE_VALUE},
         System::{
-            Diagnostics::ToolHelp::{
-                CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First,
-                Thread32Next,
-            },
             JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_JOB_MEMORY,
                 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
@@ -58,10 +58,7 @@ mod windows {
                 JobObjectExtendedLimitInformation, QueryInformationJobObject,
                 SetInformationJobObject, TerminateJobObject,
             },
-            Threading::{
-                CREATE_NO_WINDOW, CREATE_SUSPENDED, GetProcessIdOfThread, OpenThread, ResumeThread,
-                THREAD_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME,
-            },
+            Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED},
         },
     };
 
@@ -236,48 +233,9 @@ mod windows {
             if unsafe { AssignProcessToJobObject(self.0.as_raw_handle(), process) } == 0 {
                 return Err(std::io::Error::last_os_error()).context("Contain suspended child");
             }
-            // Stable Rust/Tokio do not expose the primary-thread handle. The
-            // suspended child cannot spawn more threads or release/reuse its PID.
-            let snapshot = owned(
-                unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) },
-                "Inspect only newly suspended child threads",
-            )?;
-            let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
-            entry.dwSize = std::mem::size_of_val(&entry) as u32;
-            let mut thread_id = None;
-            let mut more = unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) };
-            while more != 0 {
-                if entry.th32OwnerProcessID == pid {
-                    if thread_id.replace(entry.th32ThreadID).is_some() {
-                        bail!("Suspended child has ambiguous thread ownership; no execution");
-                    }
-                }
-                entry.dwSize = std::mem::size_of_val(&entry) as u32;
-                more = unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) };
-            }
-            if unsafe { GetLastError() } != ERROR_NO_MORE_FILES {
-                bail!("Suspended child thread snapshot incomplete; no execution");
-            }
-            let id = thread_id.context("Suspended child's primary thread unavailable")?;
-            let thread = owned(
-                unsafe {
-                    OpenThread(
-                        THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION,
-                        0,
-                        id,
-                    )
-                },
-                "Open newly suspended child's thread",
-            )?;
-            if unsafe { GetProcessIdOfThread(thread.as_raw_handle()) } != pid {
-                bail!("Suspended child thread identity changed; no execution");
-            }
-            // SAFETY: verified thread belongs to our still-live suspended child,
-            // already contained in the kill-on-close job. Never resume peers.
-            if unsafe { ResumeThread(thread.as_raw_handle()) } != 1 {
-                bail!("Suspended child resume count changed; terminate contained work");
-            }
-            Ok(())
+            // The live, suspended child is already contained. Enumerate only
+            // its thread IDs, not all threads on the PC. No fallback on refusal.
+            super::process_thread::resume(child, pid)
         }
     }
     pub(super) fn spawn(
@@ -291,12 +249,24 @@ mod windows {
         memory_bytes: Option<usize>,
         contain: impl FnOnce(&ProcessTree, &Child) -> Result<()>,
     ) -> Result<(Child, ProcessTree)> {
+        let started = std::time::Instant::now();
         let tree = ProcessTree::new(memory_bytes)?;
+        let prepared = std::time::Instant::now();
         command.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW);
         let mut child = command
             .spawn()
             .context("Create suspended bounded command")?;
-        if let Err(error) = contain(&tree, &child) {
+        let created = std::time::Instant::now();
+        let contained = contain(&tree, &child);
+        // Optional bounded diagnostics, never command/handle/PID/error contents.
+        tracing::debug!(
+            prepare_ms = prepared.duration_since(started).as_millis(),
+            create_ms = created.duration_since(prepared).as_millis(),
+            contain_resume_ms = created.elapsed().as_millis(),
+            containment_confirmed = contained.is_ok(),
+            "Owned Windows process startup timing"
+        );
+        if let Err(error) = contained {
             // No downgrade. Closing tree covers assigned work; root kill also
             // covers failed assignment while its primary thread is suspended.
             let _ = child.start_kill();

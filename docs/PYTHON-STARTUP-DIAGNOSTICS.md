@@ -27,6 +27,34 @@ media, permissions, model quality or effect completion. Failed startup attempts
 do not acquire authority, repair a package, retry, change grants or widen limits.
 The existing five-second interpreter probe and bridge deadlines are unchanged.
 
+## In development: opt-in exchange timing
+
+An unpublished native pipeline run with the grant-clock and launch-journal
+changes failed its existing Python output-pressure check: it received
+`python_exchange_deadline` rather than the required `python_stdout_byte_limit`.
+No abnormal native process exit was observed. This is a failed check, not proof
+that either guard is broken or that a later successful run explains its cause.
+The two-second bridge budget and six-second parent grant remain unchanged.
+
+Debug logging can separate setup, synchronous process spawning, exchange and
+cleanup durations using numeric millisecond fields and a closed exchange code.
+The Windows process-lifetime target separately reports job preparation, process
+creation and containment/resume durations plus a containment-confirmed boolean.
+These observations contain no command, path, process ID, request, child output
+or exception text. They do not reset a deadline or change containment. Enable
+only the needed targets, for example:
+
+```text
+RUST_LOG=info,eefn::python=debug,eefn::process_lifetime=debug
+```
+
+This does not make the rest of a log safe to publish. `python_exchange_ok` means
+the transport exchange finished, before exit-status and reply validation; it is
+not plugin success, health, authority or effect confirmation. Spawn/setup failures
+that return before exchange are not covered by that exchange observation.
+Closed-code privacy tests and fresh native observations are separate evidence;
+the timing fields alone do not explain the prior failure or accept the draft.
+
 ## Hosted failure and evidence boundary
 
 [Run 40291186483](https://github.com/eepyfishy/eef/actions/runs/40291186483)

@@ -403,22 +403,11 @@ fn validated_history(connection: &Connection) -> Result<HistoryView> {
     // Read and fully validate dependencies once for THIS invocation only. The
     // caller owns the connection lock/transaction; nothing is cached across a
     // write, checkpoint or call. Point readers share the exact same predicates.
-    let policies = automation_authorizations::records(connection)?
+    let (records, definitions) = automation_authorizations::records_and_definitions(connection)?;
+    let policies = records
         .into_iter()
         .map(|p| (p.id.clone(), p))
         .collect::<std::collections::BTreeMap<_, _>>();
-    let mut definitions = std::collections::BTreeMap::new();
-    for p in policies.values() {
-        let PolicyCommand::Approve { definition, .. } = &p.creation else {
-            unreachable!()
-        };
-        if !definitions.contains_key(definition) {
-            definitions.insert(
-                definition.clone(),
-                automations::read_definition(connection, definition)?,
-            );
-        }
-    }
     let mut retained_schedules = std::collections::BTreeMap::new();
     let mut statement = connection.prepare("SELECT schedule_id,record_json,reserved_bytes FROM automation_schedules ORDER BY schedule_id")?;
     for row in statement.query_map([], |r| {

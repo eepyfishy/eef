@@ -24,11 +24,20 @@ pub(super) fn read(connection: &Connection, id: &str) -> Result<Option<Authoriza
         bail!("Missing policy creation");
     };
     let definition = automations::read_definition(connection, definition)?;
-    crate::automation_policy::validate_authorization(&record, &definition)?;
-    if record.id != id || reserved < 0 || usize::try_from(reserved)? != reserve(&record) {
+    validate_read_record(&record, id, reserved, &definition)?;
+    Ok(Some(record))
+}
+fn validate_read_record(
+    record: &Authorization,
+    id: &str,
+    reserved: i64,
+    definition: &eefn::automation::Definition,
+) -> Result<()> {
+    crate::automation_policy::validate_authorization(record, definition)?;
+    if record.id != id || reserved < 0 || usize::try_from(reserved)? != reserve(record) {
         bail!("Authorization identity/revocation reserve mismatch");
     }
-    Ok(Some(record))
+    Ok(())
 }
 pub(super) fn records(connection: &Connection) -> Result<Vec<Authorization>> {
     let mut statement = connection.prepare(
@@ -38,8 +47,12 @@ pub(super) fn records(connection: &Connection) -> Result<Vec<Authorization>> {
     for id in statement.query_map([], |r| r.get::<_, String>(0))? {
         result.push(read(connection, &id?)?.context("Missing retained authorization")?);
     }
+    validate_generations(&result)?;
+    Ok(result)
+}
+fn validate_generations(records: &[Authorization]) -> Result<()> {
     let mut generations = std::collections::BTreeMap::<String, Vec<u64>>::new();
-    for record in &result {
+    for record in records {
         let PolicyCommand::Approve { definition, .. } = &record.creation else {
             unreachable!();
         };
@@ -58,7 +71,49 @@ pub(super) fn records(connection: &Connection) -> Result<Vec<Authorization>> {
             bail!("Authorization generation history is damaged; retain without activation");
         }
     }
-    Ok(result)
+    Ok(())
+}
+type Definitions = std::collections::BTreeMap<String, eefn::automation::Definition>;
+/// One locked read's dependency index, never a cache across calls or writes.
+/// Existing point readers and every record/generation predicate are retained.
+pub(super) fn records_and_definitions(
+    connection: &Connection,
+) -> Result<(Vec<Authorization>, Definitions)> {
+    records_loading_definitions(connection, automations::read_definition)
+}
+fn records_loading_definitions(
+    connection: &Connection,
+    mut load: impl FnMut(&Connection, &str) -> Result<eefn::automation::Definition>,
+) -> Result<(Vec<Authorization>, Definitions)> {
+    let mut definitions = Definitions::new();
+    let mut records = Vec::new();
+    let mut statement = connection.prepare(
+        "SELECT authorization_id,record_json,reserved_bytes FROM automation_authorizations ORDER BY authorization_id",
+    )?;
+    for row in statement.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, i64>(2)?,
+        ))
+    })? {
+        let (id, raw, reserved) = row?;
+        let record: Authorization = serde_json::from_str(&raw)
+            .context("Damaged or future authorization; retained without activation")?;
+        let PolicyCommand::Approve { definition, .. } = &record.creation else {
+            bail!("Missing policy creation");
+        };
+        let source = match definitions.entry(definition.clone()) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(load(connection, definition)?)
+            }
+        };
+        validate_read_record(&record, &id, reserved, source)?;
+        records.push(record);
+    }
+    validate_generations(&records)?;
+    Ok((records, definitions))
 }
 pub(super) fn validate_all(connection: &Connection) -> Result<()> {
     records(connection)?;
@@ -319,6 +374,129 @@ pub(super) mod tests {
                 r.approved_at_ms,
             )
             .unwrap()
+    }
+    #[test]
+    fn indexed_read_loads_each_definition_once_without_writes_and_matches_point_readers() {
+        let store = JobStore::in_memory().unwrap();
+        let (_, _, first_definition, first) = fixture(store.clone());
+        save(&store, &first);
+        let mut next = first.clone();
+        next.id = uuid::Uuid::new_v4().to_string();
+        if let PolicyCommand::Approve {
+            operation_id,
+            generation,
+            ..
+        } = &mut next.creation
+        {
+            *operation_id = next.id.clone();
+            *generation = 1;
+        }
+        next.generation = 2;
+        next.authorization_sha256 = next.digest().unwrap();
+        save(&store, &next);
+        let (_, _, second_definition, second) = fixture(store.clone());
+        save(&store, &second);
+        let connection = store.connection.lock().unwrap();
+        let before: i64 = connection
+            .query_row("SELECT total_changes()", [], |r| r.get(0))
+            .unwrap();
+        let mut loaded = Vec::new();
+        let (indexed, definitions) = records_loading_definitions(&connection, |connection, id| {
+            loaded.push(id.to_owned());
+            automations::read_definition(connection, id)
+        })
+        .unwrap();
+        assert_eq!(indexed, records(&connection).unwrap());
+        assert_eq!(indexed.len(), 3);
+        assert_eq!(definitions.len(), 2);
+        loaded.sort();
+        let mut expected = vec![first_definition.id.clone(), second_definition.id.clone()];
+        expected.sort();
+        assert_eq!(
+            loaded, expected,
+            "one actual definition validation per distinct dependency"
+        );
+        for (id, definition) in definitions {
+            assert_eq!(
+                serde_json::to_value(definition).unwrap(),
+                serde_json::to_value(automations::read_definition(&connection, &id).unwrap())
+                    .unwrap()
+            );
+        }
+        let after: i64 = connection
+            .query_row("SELECT total_changes()", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            after, before,
+            "inspection must not write or grant authority"
+        );
+    }
+    #[test]
+    fn indexed_read_revalidates_changed_definition_on_the_next_call() {
+        let store = JobStore::in_memory().unwrap();
+        let (_, _, definition, first) = fixture(store.clone());
+        save(&store, &first);
+        let connection = store.connection.lock().unwrap();
+        assert!(records_and_definitions(&connection).is_ok());
+        connection
+            .execute(
+                "UPDATE automation_definitions SET record_json='{}' WHERE definition_id=?1",
+                [&definition.id],
+            )
+            .unwrap();
+        assert!(records(&connection).is_err());
+        assert!(
+            records_and_definitions(&connection).is_err(),
+            "no cached dependency survives a call"
+        );
+    }
+    #[test]
+    fn indexed_read_preserves_identity_scope_reserve_and_generation_refusal() {
+        let store = JobStore::in_memory().unwrap();
+        let (_, _, _, first) = fixture(store.clone());
+        save(&store, &first);
+        let connection = store.connection.lock().unwrap();
+        let original: (String, i64) = connection.query_row("SELECT record_json,reserved_bytes FROM automation_authorizations WHERE authorization_id=?1", [&first.id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert!(records_and_definitions(&connection).is_ok());
+        for field in ["identity", "scope", "reserve", "generation", "future"] {
+            let mut bad = first.clone();
+            let mut reserved = original.1;
+            match field {
+                "identity" => {
+                    bad.id = uuid::Uuid::new_v4().to_string();
+                    if let PolicyCommand::Approve { operation_id, .. } = &mut bad.creation {
+                        *operation_id = bad.id.clone();
+                    }
+                }
+                "scope" => {
+                    bad.scope.operations[0].executor_node = "other".into();
+                }
+                "reserve" => {
+                    reserved = -1;
+                }
+                "generation" => {
+                    bad.generation = 2;
+                    if let PolicyCommand::Approve { generation, .. } = &mut bad.creation {
+                        *generation = 1;
+                    }
+                }
+                "future" => {}
+                _ => unreachable!(),
+            }
+            bad.scope_sha256 = eefn::grants::definition_digest(&json!(bad.scope)).unwrap();
+            bad.authorization_sha256 = bad.digest().unwrap();
+            let raw = if field == "future" {
+                "{\"schema_version\":999}".to_owned()
+            } else {
+                serde_json::to_string(&bad).unwrap()
+            };
+            connection.execute("UPDATE automation_authorizations SET record_json=?2,reserved_bytes=?3 WHERE authorization_id=?1", params![first.id, raw, reserved]).unwrap();
+            let point = records(&connection).unwrap_err();
+            let indexed = records_and_definitions(&connection).unwrap_err();
+            assert_eq!(indexed.to_string(), point.to_string(), "{field}");
+            connection.execute("UPDATE automation_authorizations SET record_json=?2,reserved_bytes=?3 WHERE authorization_id=?1", params![first.id, original.0, original.1]).unwrap();
+            assert!(records_and_definitions(&connection).is_ok());
+        }
     }
     #[test]
     fn durable_approval_does_not_mutate_source_and_exact_reuse_cannot_renew() {

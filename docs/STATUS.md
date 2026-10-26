@@ -3,6 +3,74 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: one-call schedule dependency indexing
+
+The [schedule definition-read follow-up](SCHEDULE-DEFINITION-READS.md) removes
+duplicate definition validation within a single locked snapshot. All policies
+and original record/compiler/generation predicates remain checked; no index
+survives a call or write. Three focused parity/corruption/work-count tests and
+fresh regression acceptance are pending. The preceding owned-thread draft
+passes 17 focused tests and both native lifetime/Python suites, but its complete
+pipeline remains failed: two successful jobs are retained while the schedule is
+still in flight at the original observation deadline. No budget is increased.
+
+## In development: process-local owned-thread lookup
+
+The [Windows startup follow-up](WINDOWS-OWNED-THREAD.md) replaces a whole-PC
+thread walk with a thread-ID-only query against the newly suspended, already
+job-contained child. A separate native comparison found the same primary thread
+through both APIs without ever resuming it, and measured substantially lower
+query cost on this host. Exact ownership/completeness checks and fail-closed
+resume ordering remain; no fallback, grant or deadline change is added. Four
+selector tests and fresh native lifetime/Python/pipeline acceptance are pending.
+The preceding instrumented draft passes 12 focused Python tests and builds fresh
+native apps, but fails the pipeline's first positive capture; it is not accepted.
+
+## In development: bounded Python exchange timing
+
+The combined grant-clock/launch-journal draft's next native pipeline run failed
+an existing Python pressure assertion: deadline refusal arrived instead of the
+required stdout-limit refusal. No abnormal native exit was observed; the exact
+cause remains unconfirmed. The [opt-in timing observations](PYTHON-STARTUP-DIAGNOSTICS.md#in-development-opt-in-exchange-timing)
+separate numeric setup/spawn/exchange/cleanup and Windows containment timings
+without child text, paths or IDs. No budget or original assertion is relaxed.
+Focused tests and a fresh source-pinned diagnostic run remain pending.
+
+## In development: journal-friendly owned-launch observations
+
+The [timer follow-up](SCHEDULE-LAUNCH-JOURNAL.md) addresses observed multi-second
+journal contention during a recurring launch. An already-owned launch's periodic
+no-op observer yields the journal, but clock-discontinuity handling, real launch
+fences, stop/shutdown and validated settlement remain unchanged. A held-journal
+regression fails before the change and its clock-fence negative control passes.
+The preceding corrected clock draft clears paired audio with no abnormal process
+exit but its full native fixture remains failed at `job_unresolved`; no cause or
+full acceptance is inferred from partial progress. Fresh validation is pending.
+
+## In development: deterministic grant-cleanup ordering
+
+The [cleanup clock follow-up](GRANT-CLEANUP-CLOCK.md) separates synthetic
+in-flight deadline testing from real expired-before-start refusal. A private
+clock seam retains the normal real-clock entry point and all production lease,
+policy, stop and final-checkpoint guards. Controlled tests retain every original
+ownership/journal/report/no-replay assertion; separate real-clock expiry and
+wall-drift cases add negative coverage. The initial unpublished draft passed
+both full Rust modes but failed a native audio pipeline with a destination stack
+overflow before admission. A focused layout regression proves an extra stored
+async frame; the corrected wrapper returns the implementation future directly.
+Old failures are retained. Fresh validation is pending, not acceptance.
+
+## Accepted development checkpoint: `73252fe`
+
+[Run 40302593200](https://github.com/eepyfishy/eef/actions/runs/40302593200)
+passes all four jobs, all 31 Windows native suites and the distinct prefix-close
+case. Both local Rust modes pass 1,157 tests plus one existing ignored profiler
+each; 37 local native cases and both existing Python layouts pass. Independent
+reconciliation verifies source/artifact boundaries, retained failure evidence and
+process retirement. The successful hosted run does not exercise the failed-Rust
+continuation branch or explain either earlier hosted failure. It does not accept
+subsequent clock changes or close any remaining stable-release requirement.
+
 ## In development: independent native CI observations
 
 At `4a9a24f`, both local Rust modes pass 1,157 tests plus one existing ignored

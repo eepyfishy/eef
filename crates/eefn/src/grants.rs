@@ -12,6 +12,9 @@ use std::{
 };
 
 pub const MAX_DURATION_MS: u64 = 30_000;
+#[path = "grant_execution_clock.rs"]
+mod execution_clock;
+use execution_clock::{ExecutionClock, SystemClock};
 #[path = "grant_stop.rs"]
 pub mod stop;
 // Full report identity/flags/error overhead, in addition to bounded output.
@@ -902,13 +905,29 @@ impl AcceptedGrant {
     /// Shared lease, permission watcher, uncertainty and durable outcome path.
     /// Peer operations must enter through recipient-bound admission, never this
     /// ordinary executor or a separate receipt implementation.
-    pub(crate) async fn run_operation<F>(
+    pub(crate) fn run_operation<F>(
+        self,
+        engine: &crate::NodeEngine,
+        operation: F,
+    ) -> impl std::future::Future<Output = GrantReport>
+    where
+        F: std::future::Future<Output = Result<Value>>,
+    {
+        // No public/configuration/wire selector can replace the real clock.
+        // Return its future directly: another async wrapper stores another
+        // operation frame and can overflow stacks for large peer workloads.
+        self.run_operation_with_clock(engine, operation, SystemClock)
+    }
+
+    async fn run_operation_with_clock<F, C>(
         mut self,
         engine: &crate::NodeEngine,
         operation: F,
+        clock: C,
     ) -> GrantReport
     where
         F: std::future::Future<Output = Result<Value>>,
+        C: ExecutionClock,
     {
         let g = &self.grant;
         // Retire the executing future before any synchronous final journal I/O.
@@ -917,7 +936,7 @@ impl AcceptedGrant {
         // waiter still is not proof that remote/external effects have stopped.
         let mut result = {
             tokio::pin!(operation);
-            let deadline = tokio::time::Instant::from_std(self.deadline);
+            let deadline = self.deadline;
             let mut tick = tokio::time::interval(Duration::from_millis(100));
             loop {
                 if *self.stop.receiver.borrow() {
@@ -928,15 +947,15 @@ impl AcceptedGrant {
                         Some("grant_stop_requested_effects_unknown"),
                     );
                 }
-                let now = crate::protocol::now_ms();
+                let now = clock.wall_ms();
                 let expected = self.accepted_wall.saturating_add(
-                    self.accepted
-                        .elapsed()
+                    clock
+                        .elapsed(self.accepted)
                         .as_millis()
                         .try_into()
                         .unwrap_or(u64::MAX),
                 );
-                if Instant::now() >= self.deadline || now.abs_diff(expected) > 1000 {
+                if clock.reached(deadline) || now.abs_diff(expected) > 1000 {
                     break GrantReport::new(
                         g,
                         ReceiptState::Unknown,
@@ -955,7 +974,7 @@ impl AcceptedGrant {
                 tokio::select! {
                     biased;
                     _=self.stop.receiver.changed()=>{},
-                    _=tokio::time::sleep_until(deadline)=>break GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some("grant_deadline_exceeded")),
+                    _=clock.sleep_until(deadline)=>break GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some("grant_deadline_exceeded")),
                     _=tick.tick()=>{},
                     value=&mut operation=>break match value {
                         Ok(data) if serde_json::to_vec(&data).is_ok_and(|v|v.len()<=g.limits.max_result_bytes)=>completed_outcome(g,data),
@@ -966,7 +985,7 @@ impl AcceptedGrant {
                 }
             }
         };
-        if result.state == ReceiptState::Completed && Instant::now() >= self.deadline {
+        if result.state == ReceiptState::Completed && clock.reached(self.deadline) {
             result = GrantReport::new(
                 g,
                 ReceiptState::Unknown,

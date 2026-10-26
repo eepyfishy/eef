@@ -215,6 +215,11 @@ impl TimerManager {
             engine
                 .store
                 .schedule_interrupt_now(id, "clock_discontinuity")?;
+        } else if launching {
+            // This callback owns no transition while its launch is pending.
+            // Yield the journal to that launch; its admission/dispatch fences
+            // still revalidate, and clock discontinuity above never skips I/O.
+            return Ok(None);
         }
         let (schedule, plan) = engine.store.schedule_timer_snapshot(id, launching)?;
         match schedule.state {
@@ -497,6 +502,94 @@ mod tests {
         assert!(!manager.journal_work.lock().unwrap().periodic);
         assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
         manager.close(&store).unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn launching_checkpoint_yields_held_journal_without_claiming_authority() {
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let engine = TaskEngine::with_store(crate::event::EventBus::new(10), store.clone());
+        let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        manager.active.lock().unwrap().insert(id.clone());
+        let (ready, held) = tokio::sync::oneshot::channel();
+        let (release, hold) = std::sync::mpsc::channel();
+        let locked = store.clone();
+        let holder = std::thread::spawn(move || {
+            locked.with_test_journal_lock(|_| {
+                ready.send(()).unwrap();
+                let _ = hold.recv_timeout(Duration::from_secs(5));
+            })
+        });
+        held.await.unwrap();
+        // Missing synthetic schedule cannot grant authority. An already-owned
+        // launch's observer must return None without competing for this lock.
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(3),
+            manager.poll_schedule(
+                engine,
+                id.clone(),
+                "fixture-runtime".into(),
+                false,
+                true,
+                true,
+            ),
+        )
+        .await;
+        let returned_while_held = !holder.is_finished();
+        release.send(()).unwrap();
+        holder.join().unwrap();
+        wait_for(|| !manager.journal_work.lock().unwrap().any()).await;
+        manager.active.lock().unwrap().remove(&id);
+        manager.close(&store).unwrap();
+        assert!(returned_while_held);
+        assert!(
+            outcome
+                .expect("no-op observation must not wait for launch journal")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn launching_checkpoint_does_not_skip_clock_discontinuity() {
+        let store = crate::jobs::JobStore::in_memory().unwrap();
+        let engine = TaskEngine::with_store(crate::event::EventBus::new(10), store.clone());
+        let manager = TimerManager::new(&crate::config::Config::load(None).unwrap()).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        manager.active.lock().unwrap().insert(id.clone());
+        let (ready, held) = tokio::sync::oneshot::channel();
+        let (release, hold) = std::sync::mpsc::channel();
+        let locked = store.clone();
+        let holder = std::thread::spawn(move || {
+            locked.with_test_journal_lock(|_| {
+                ready.send(()).unwrap();
+                let _ = hold.recv_timeout(Duration::from_secs(5));
+            })
+        });
+        held.await.unwrap();
+        let worker = manager.clone();
+        let checkpoint = tokio::spawn(async move {
+            worker
+                .poll_schedule(engine, id, "fixture-runtime".into(), true, true, true)
+                .await
+        });
+        wait_for(|| manager.journal_work.lock().unwrap().periodic).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let blocked_for_clock_checkpoint = !checkpoint.is_finished();
+        release.send(()).unwrap();
+        holder.join().unwrap();
+        let outcome = checkpoint.await.unwrap();
+        manager.close(&store).unwrap();
+        assert!(
+            blocked_for_clock_checkpoint,
+            "clock fence must still use the journal while launch is owned"
+        );
+        assert!(
+            outcome.is_err(),
+            "missing schedule cannot accept clock-fence mutation"
+        );
+        assert_eq!(store.with_test_journal_lock(|db| db.total_changes()), 0);
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -1,6 +1,31 @@
 //! Deterministic pipe bounds, not device/Python acceptance.
 use super::*;
 
+#[test]
+fn exchange_timing_observation_uses_only_closed_codes_not_private_errors() {
+    let sentinel = "PRIVATE-path-token-plugin-output";
+    assert_eq!(exchange_observation_code(None), "python_exchange_ok");
+    let error = anyhow::anyhow!(sentinel);
+    assert_eq!(
+        exchange_observation_code(Some(&error)),
+        "python_exchange_other"
+    );
+    for failure in [
+        BridgeFailure::RequestLimit,
+        BridgeFailure::StdoutLimit,
+        BridgeFailure::StderrLimit,
+        BridgeFailure::Deadline,
+        BridgeFailure::Process,
+        BridgeFailure::Reply,
+        BridgeFailure::Metadata,
+    ] {
+        let error = anyhow::Error::from(failure).context(sentinel);
+        let observed = exchange_observation_code(Some(&error));
+        assert_eq!(observed, failure.code());
+        assert!(!observed.contains(sentinel));
+    }
+}
+
 #[tokio::test]
 async fn availability_failures_are_typed_without_private_paths_or_errors() {
     let dir = tempfile::tempdir().unwrap();

@@ -384,6 +384,7 @@ impl PythonRuntime {
         if Instant::now() >= deadline {
             return Err(BridgeFailure::Deadline.into());
         }
+        let spawn_started = Instant::now();
         let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit(
             &mut command,
             self.limits.max_job_memory_mib,
@@ -394,6 +395,7 @@ impl PythonRuntime {
                 self.executable.display()
             )
         })?;
+        let spawned = Instant::now();
         let stdin = child.stdin.take().context("Python stdin unavailable")?;
         let stdout = child.stdout.take().context("Python stdout unavailable")?;
         let stderr = child.stderr.take().context("Python stderr unavailable")?;
@@ -415,6 +417,7 @@ impl PythonRuntime {
             },
         )
         .await;
+        let exchange_ended = Instant::now();
         // On Windows closing this exact owned job requests termination of all
         // descendants. Root-only elsewhere; no sandbox/elevation/physical-stop
         // guarantee. Keep containment through every successful pipe/root wait.
@@ -423,11 +426,34 @@ impl PythonRuntime {
             let _ = child.start_kill();
             let _ = timeout(Duration::from_secs(1), child.wait()).await;
         }
+        // Opt-in numeric diagnostics only: no paths, IDs, params or child text.
+        // Transport completion is not plugin success, health or effect proof.
+        tracing::debug!(
+            setup_ms = spawn_started
+                .duration_since(deadline - Duration::from_secs(self.limits.timeout_seconds))
+                .as_millis(),
+            spawn_ms = spawned.duration_since(spawn_started).as_millis(),
+            exchange_ms = exchange_ended.duration_since(spawned).as_millis(),
+            cleanup_ms = Instant::now().duration_since(exchange_ended).as_millis(),
+            budget_ms = self.limits.timeout_seconds * 1000,
+            outcome_code = exchange_observation_code(outcome.as_ref().err()),
+            "Python exchange timing; not plugin health"
+        );
         let (status, stdout) = outcome?;
         if !status.success() {
             return Err(BridgeFailure::Process.into());
         }
         decode_reply(&stdout)
+    }
+}
+
+fn exchange_observation_code(error: Option<&anyhow::Error>) -> &'static str {
+    match error {
+        None => "python_exchange_ok",
+        Some(error) => error
+            .downcast_ref::<BridgeFailure>()
+            .map(|failure| failure.code())
+            .unwrap_or("python_exchange_other"),
     }
 }
 

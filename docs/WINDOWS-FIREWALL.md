@@ -31,6 +31,46 @@ open all Public-network access automatically. Updates that change the listening
 executable path require an explicit rule-lifecycle design; one-time setup is not
 yet claimed to cover every future installation path.
 
+## Explicit one-time rule setup
+
+`tools/configure-windows-firewall.ps1` is a development/operator command, not
+yet an installer feature. Without `-Apply` it only reads policy and prints a
+JSON plan. Supply the exact installed executable and its configured listening
+port. Mixed-case role input is normalized to the lowercase project name.
+Choose the installation rather than a temporary test copy. For example:
+
+```powershell
+# Preview only; replace this example path with the real installation.
+./tools/configure-windows-firewall.ps1 -Role eef -Executable 'C:\apps\eef\eef.exe' -LocalPort 51335
+```
+
+After reviewing the plan, rerun the same command with `-Apply` from a terminal
+you have explicitly opened as administrator. The script does not open an
+elevation prompt or install startup elevation. An existing exact managed rule
+is reused. A changed executable path or listening port has a distinct identity;
+conflicting managed rules are refused, not overwritten. `-Apply -WhatIf` does
+not create a rule. Other enabled inbound allow rules for that application also
+require review rather than creating duplicates. Old rules are not automatically
+removed.
+
+The rule allows **only TCP, that executable and port, the Private profile and
+LocalSubnet**. It does not expose the localhost dashboard, allow UDP, change
+adapter categories, disable notifications, or change Defender. It conservatively
+reports potential application/global block filters and refuses creation when
+they exist; the report is not a complete policy-precedence or reachability test.
+
+For `-Role eefn`, select only an explicitly enabled peer receiver's listening
+port. An ordinary outbound-only node connection needs no inbound exception.
+Do not select the node's owner dashboard port. Public-classified VPNs and
+non-local-subnet peers need a separately reviewed rule; this command deliberately
+does not broaden its scope for them.
+
+`tools/test-windows-firewall.ps1` uses mocked policy commands and harmless empty
+fixture files. It checks preview, stable/distinct identities, exact-rule reuse,
+conflicts, block reporting, WhatIf and non-admin refusal without firewall writes.
+It is not evidence of elevated creation, prompt suppression, physical networking
+or installer/update/uninstall lifecycle acceptance.
+
 ## Same-PC regression fixtures
 
 Template-based local fixtures use `tools/local-test-network.mjs`. It changes

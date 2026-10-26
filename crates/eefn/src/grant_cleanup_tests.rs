@@ -8,6 +8,56 @@ enum Mode {
     Failed,
     Deadline,
     Permission,
+    Expired,
+    ClockJump,
+}
+
+#[derive(Clone)]
+struct ControlledClock {
+    state: Arc<Mutex<(Instant, u64)>>,
+    wake: Arc<tokio::sync::Notify>,
+}
+impl ControlledClock {
+    fn at(accepted: &AcceptedGrant) -> Self {
+        Self {
+            state: Arc::new(Mutex::new((accepted.accepted, accepted.accepted_wall))),
+            wake: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+    fn advance_to(&self, deadline: Instant) {
+        let mut state = self.state.lock().unwrap();
+        let elapsed = deadline.duration_since(state.0);
+        state.1 += u64::try_from(elapsed.as_millis()).unwrap();
+        state.0 = deadline;
+        drop(state);
+        // notify_one retains a permit if the select's sleep is not polled yet.
+        self.wake.notify_one();
+    }
+    fn jump_wall(&self) {
+        self.state.lock().unwrap().1 += 1001;
+    }
+}
+impl ExecutionClock for ControlledClock {
+    fn wall_ms(&self) -> u64 {
+        self.state.lock().unwrap().1
+    }
+    fn elapsed(&self, since: Instant) -> Duration {
+        self.state.lock().unwrap().0.duration_since(since)
+    }
+    fn reached(&self, deadline: Instant) -> bool {
+        self.state.lock().unwrap().0 >= deadline
+    }
+    fn sleep_until(&self, deadline: Instant) -> impl Future<Output = ()> + Send {
+        async move {
+            loop {
+                let notified = self.wake.notified();
+                if self.reached(deadline) {
+                    return;
+                }
+                notified.await;
+            }
+        }
+    }
 }
 struct Dropped(mpsc::Sender<()>);
 impl Drop for Dropped {
@@ -38,7 +88,7 @@ fn ordering(mode: Mode) {
     let ledger =
         GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
     let mut g = super::tests::grant();
-    if matches!(mode, Mode::Deadline) {
+    if matches!(mode, Mode::Deadline | Mode::Expired) {
         g.limits.max_execution_ms = 1000;
     }
     if matches!(mode, Mode::Permission) {
@@ -47,7 +97,7 @@ fn ordering(mode: Mode) {
         g.params =
             json!({"path":dir.path().join("not-executed"),"content":"synthetic future only"});
     }
-    let accepted = AcceptedGrant::prepare(
+    let mut accepted = AcceptedGrant::prepare(
         g.clone(),
         ledger.clone(),
         &engine,
@@ -56,35 +106,56 @@ fn ordering(mode: Mode) {
         "owner",
     )
     .unwrap();
+    let clock = ControlledClock::at(&accepted);
+    let worker_clock = clock.clone();
+    let deadline = accepted.deadline;
+    if matches!(mode, Mode::Expired) {
+        // Narrow only this synthetic test lease. The real wrapper must refuse
+        // before polling; never rejuvenate a lease consumed by setup or I/O.
+        accepted.deadline = accepted.deadline.min(Instant::now());
+    }
     let (started_tx, started_rx) = mpsc::channel();
     let (dropped_tx, dropped_rx) = mpsc::channel();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let mut release_tx = Some(release_tx);
     let drop_guard = Dropped(dropped_tx);
     // Hold the actual journal mutex, not a sleep pretending that storage is slow.
     // The executor thread can observe policy/deadline but cannot finish its save.
     let journal = ledger.connection.lock().unwrap();
     let worker = std::thread::spawn(move || {
         runtime().block_on(async move {
-            accepted
-                .run_operation(&engine, async move {
-                    let _guard = drop_guard;
-                    let _ = started_tx.send(());
-                    let _ = release_rx.await;
-                    if matches!(mode, Mode::Failed) {
-                        bail!("PRIVATE_EXECUTOR_FAILURE")
-                    }
-                    Ok(json!({"synthetic":true}))
-                })
-                .await
+            let operation = async move {
+                let _guard = drop_guard;
+                let _ = started_tx.send(());
+                let _ = release_rx.await;
+                if matches!(mode, Mode::Failed) {
+                    bail!("PRIVATE_EXECUTOR_FAILURE")
+                }
+                Ok(json!({"synthetic":true}))
+            };
+            if matches!(mode, Mode::Expired) {
+                accepted.run_operation(&engine, operation).await
+            } else {
+                accepted
+                    .run_operation_with_clock(&engine, operation, worker_clock)
+                    .await
+            }
         })
     });
     let started = started_rx.recv_timeout(Duration::from_secs(3)).is_ok();
     if matches!(mode, Mode::Completed | Mode::Failed) {
-        let _ = release_tx.send(());
+        let _ = release_tx.take().unwrap().send(());
     } else if matches!(mode, Mode::Permission) {
         service
             .save_configuration(json!({"node_id":"owner","permissions":{}}))
             .unwrap();
+    } else if matches!(mode, Mode::Deadline) {
+        // Only after actual first poll. No real sleep or larger grant budget.
+        // Also unblock cleanup on a failed start handshake, then fail its
+        // original assertion after joining rather than hanging the fixture.
+        clock.advance_to(deadline);
+    } else if matches!(mode, Mode::ClockJump) {
+        clock.jump_wall();
     }
     let dropped_before_save = dropped_rx.recv_timeout(Duration::from_secs(3)).is_ok();
     let not_returned_before_save = !worker.is_finished();
@@ -96,9 +167,18 @@ fn ordering(mode: Mode) {
         )
         .unwrap();
     // Always release/join before asserting, including against the buggy version.
+    // Observations above are already fixed. Unblock a buggy synthetic operation
+    // as teardown only, so frozen test time cannot hang a failing fixture.
+    if let Some(release) = release_tx.take() {
+        let _ = release.send(());
+    }
     drop(journal);
     let report = worker.join().unwrap();
-    assert!(started, "operation must actually poll: {mode:?}");
+    if matches!(mode, Mode::Expired) {
+        assert!(!started, "expired real-clock operation must never poll");
+    } else {
+        assert!(started, "operation must actually poll: {mode:?}");
+    }
     assert!(
         dropped_before_save,
         "executor retained while final checkpoint blocks: {mode:?}"
@@ -122,6 +202,18 @@ fn ordering(mode: Mode) {
     );
     if matches!(mode, Mode::Permission) {
         assert_eq!(report.error_code.as_deref(), Some("local_policy_changed"));
+    }
+    if matches!(mode, Mode::Deadline) {
+        assert!(matches!(
+            report.error_code.as_deref(),
+            Some("grant_deadline_exceeded" | "grant_deadline_or_clock_changed")
+        ));
+    }
+    if matches!(mode, Mode::Expired | Mode::ClockJump) {
+        assert_eq!(
+            report.error_code.as_deref(),
+            Some("grant_deadline_or_clock_changed")
+        );
     }
     let receipt = ledger
         .result(
@@ -163,6 +255,58 @@ fn grant_cleanup_deadline_retires_before_blocked_final_checkpoint() {
 #[test]
 fn grant_cleanup_permission_loss_retires_before_blocked_final_checkpoint() {
     ordering(Mode::Permission);
+}
+
+#[test]
+fn grant_cleanup_expired_real_clock_never_polls_before_blocked_final_checkpoint() {
+    ordering(Mode::Expired);
+}
+
+#[test]
+fn grant_cleanup_clock_jump_retires_before_blocked_final_checkpoint() {
+    ordering(Mode::ClockJump);
+}
+
+#[tokio::test]
+async fn controlled_clock_notification_before_sleep_cannot_lose_deadline() {
+    let now = Instant::now();
+    let clock = ControlledClock {
+        state: Arc::new(Mutex::new((now, 10))),
+        wake: Arc::new(tokio::sync::Notify::new()),
+    };
+    let deadline = now + Duration::from_millis(1000);
+    assert!(!clock.reached(deadline));
+    clock.advance_to(deadline);
+    assert_eq!(clock.wall_ms(), 1010);
+    assert_eq!(clock.elapsed(now), Duration::from_millis(1000));
+    tokio::time::timeout(Duration::from_secs(3), clock.sleep_until(deadline))
+        .await
+        .unwrap();
+}
+
+#[test]
+fn normal_clock_wrapper_does_not_duplicate_large_operation_future() {
+    async fn large_operation() -> Result<Value> {
+        let bytes = [7_u8; 64 * 1024];
+        std::future::pending::<()>().await;
+        Ok(json!({"bytes": std::hint::black_box(&bytes).len()}))
+    }
+    // Infer real executor future layouts without constructing a grant/engine,
+    // polling an operation or allocating the large synthetic buffer at runtime.
+    fn size<F, R>(_: F) -> usize
+    where
+        F: FnOnce(AcceptedGrant, &'static crate::NodeEngine) -> R,
+    {
+        std::mem::size_of::<R>()
+    }
+    let direct = size(|accepted, engine| {
+        accepted.run_operation_with_clock(engine, large_operation(), SystemClock)
+    });
+    let normal = size(|accepted, engine| accepted.run_operation(engine, large_operation()));
+    assert_eq!(
+        normal, direct,
+        "normal wrapper must return the clock future directly, not store another async frame"
+    );
 }
 
 #[cfg(windows)]
