@@ -198,9 +198,17 @@ pub fn validate_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+#[path = "service_instance.rs"]
+mod service_instance;
+pub use service_instance::{ServiceInstance, service_instance_lock};
+
 pub fn instance_lock(config: &Path) -> Result<Option<std::fs::File>> {
+    named_instance_lock(config, "instance.lock")
+}
+
+fn named_instance_lock(config: &Path, extension: &str) -> Result<Option<std::fs::File>> {
     use fs2::FileExt;
-    let path = config.with_extension("instance.lock");
+    let path = config.with_extension(extension);
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
     }

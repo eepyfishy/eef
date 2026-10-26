@@ -3,6 +3,29 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: service startup versus offline commands
+
+The previous `177334b` hosted run passes three jobs but fails Windows headless
+at node output, reporting a runtime exit code zero before registration. That
+run remains failed. A controlled local reproduction against its accepted app
+hashes demonstrates the same silent exit when an offline command owns the
+configuration instance lock and no service is running; the hosted failure's
+exact cause remains unproven without its private process output.
+
+The [startup ownership follow-up](SERVICE-STARTUP.md) separates service-start
+ownership from the existing command lock for both roles. Startup waits briefly
+without initializing settings or starting services. Persistent contention is an
+explicit error; duplicate current launches cannot steal an initializing owner.
+Old commands keep their lock interface, no older runtime is evicted, and both
+guards are released before existing update handoff.
+
+Seven focused Rust tests and a real-executable fixture pass for both eefn and
+eef, covering command release, pending duplicates, no early API/config writes,
+matching command runtime, persistent-contention error and an explicit later
+launch. CI adds this regression while retaining all original node-output checks
+and deadlines. Full Rust/native, browser and new exact-revision hosted acceptance
+remain separate; this is not a release, model policy or installed-node update.
+
 ## Locally verified: same-PC test listener isolation
 
 Thirty-six template-based same-PC fixtures now read an explicit loopback-only

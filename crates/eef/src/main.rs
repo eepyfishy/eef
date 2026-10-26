@@ -2585,19 +2585,17 @@ async fn main() -> Result<()> {
             .unwrap_or(&install_root)
             .join("data/eef_memory.db");
     }
-    let _instance = match eefn::setup::instance_lock(&args.config)? {
+    let _instance = match eefn::setup::service_instance_lock(&args.config).await? {
         Some(lock) => lock,
         None => {
-            let config = eef::config::Config::load(Some(&args.config))?;
-            if args.open_dashboard
-                && !args.no_ui
-                && config.bool("web.ui_enabled", true)
-                && cfg!(feature = "dashboard")
-            {
-                eefn::setup::open_dashboard(
-                    &config.string("web.host", "127.0.0.1"),
-                    config.u64("web.port", 51334) as u16,
-                );
+            if args.open_dashboard && !args.no_ui && cfg!(feature = "dashboard") {
+                let config = eef::config::Config::load(Some(&args.config))?;
+                if config.bool("web.ui_enabled", true) {
+                    eefn::setup::open_dashboard(
+                        &config.string("web.host", "127.0.0.1"),
+                        config.u64("web.port", 51334) as u16,
+                    );
+                }
             }
             return Ok(());
         }

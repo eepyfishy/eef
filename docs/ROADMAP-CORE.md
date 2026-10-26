@@ -13,6 +13,16 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [service-startup reliability follow-up](SERVICE-STARTUP.md) fixes a controlled
+reproduction of a service returning success without starting while an offline
+command holds its instance lock. Separate service ownership preserves command
+exclusion, bounded waiting, explicit persistent-contention failure and update
+handoff. Seven focused tests and real executable contention/timeout checks pass
+for both roles. Full regression and fresh hosted acceptance remain separate;
+the preceding hosted node-output failure stays failed. No model/default,
+permission, release/feed, installed-node or remaining acceptance requirement is
+changed or reduced.
+
 The [pre-preparation model-check intent follow-up](MODEL-VERIFICATION.md#pre-preparation-intent-follow-up-in-development)
 addresses a reproduced gap where an unconfirmed preparation with no saved source
 could be retried into authority under the same owner operation. Immutable intent

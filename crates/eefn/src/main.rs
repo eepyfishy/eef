@@ -2912,16 +2912,14 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
         return Ok(());
     }
     let _instance = if args.is_service() {
-        match eefn::setup::instance_lock(&args.config)? {
+        match eefn::setup::service_instance_lock(&args.config).await? {
             Some(lock) => Some(lock),
             None => {
-                let config = load_file(&args.config)?.dashboard.unwrap_or_default();
-                if args.open_dashboard
-                    && !args.no_ui
-                    && config.ui_enabled
-                    && cfg!(feature = "dashboard")
-                {
-                    eefn::setup::open_dashboard(&config.host, config.port);
+                if args.open_dashboard && !args.no_ui && cfg!(feature = "dashboard") {
+                    let config = load_file(&args.config)?.dashboard.unwrap_or_default();
+                    if config.ui_enabled {
+                        eefn::setup::open_dashboard(&config.host, config.port);
+                    }
                 }
                 return Ok(());
             }

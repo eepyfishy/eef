@@ -121,6 +121,7 @@ jobs:
           $env:EEF_TEST_NODE_OUTPUT_PREFIX_CLOSE = ''
           $scripts = @(
             'test-coordinator-initialization.mjs',
+            'test-service-startup-lock.mjs',
             'test-automation-schedules.mjs',
             'test-package-setup.mjs',
             'test-package-policy.mjs',
