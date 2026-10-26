@@ -53,3 +53,34 @@ negative test checks every empty state/failure variant before fresh acceptance.
 Fresh full-regression and exact-revision hosted acceptance remain separate.
 No release/feed, model/default, installed-node, firewall, signing/Defender, MSI
 rollback or remaining roadmap gate is changed by these observations.
+
+## Independent CI observations, not relaxed acceptance
+
+At `4a9a24f`, both local Rust modes pass 1,157 tests plus one existing ignored
+profiler each. Thirty-seven native cases and a separate existing regular-Python
+component check pass; independent reconciliation verifies 450 source hashes,
+twelve artifact hashes and all ten component observations. The first regular
+check's signature-path preflight failed before any interpreter/node executed;
+the separately corrected helper and original failed record are retained.
+
+[Run 40298967494](https://github.com/eepyfishy/eef/actions/runs/40298967494)
+still fails Windows headless at the existing grant-cleanup unit test's required
+first poll. It never reaches native Python testing; the other three jobs pass.
+The test starts a one-second lease before durable setup and thread/runtime
+startup, while production correctly refuses already-expired work before polling.
+The precise hosted timing stage is not recorded. Do not renew a production
+lease, increase limits or remove cleanup assertions to make this test green.
+
+CI now identifies the Rust-test and fresh-native-build steps separately. On an
+uncancelled Windows headless run, native building may follow either a passed or
+failed Rust test step, but not skipped setup/tests. Native diagnostics require
+that fresh build to succeed. Cancellation still stops work, and Rust failure
+still fails the job: no `continue-on-error` or skipped acceptance gate is added.
+The existing 31 native suites and distinct connection-order case remain required.
+Closed-expression tests cover 288 canonical state combinations; these are not a
+general workflow parser or proof of a hosted run.
+
+This uses GitHub's documented
+[status-check semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions)
+to collect independent evidence, not reinterpret failure as success. Neither
+previous hosted failure is explained or accepted by this workflow change.

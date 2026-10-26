@@ -3,6 +3,22 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: independent native CI observations
+
+At `4a9a24f`, both local Rust modes pass 1,157 tests plus one existing ignored
+profiler each; 37 native cases, ten component observations and a separate existing
+regular-Python check pass independent reconciliation. However,
+[run 40298967494](https://github.com/eepyfishy/eef/actions/runs/40298967494)
+fails Windows headless at an existing grant-cleanup first-poll assertion before
+reaching Python. Three other jobs pass. Neither that timing stage nor the earlier
+`5b48055` hosted Python failure is explained by a green local run.
+
+The [CI observability follow-up](PYTHON-STARTUP-DIAGNOSTICS.md#independent-ci-observations-not-relaxed-acceptance)
+allows native diagnostics after a failed Rust test only when a fresh native build
+succeeds. Failed tests still fail the job; cancellation, skipped setup and stale
+binaries cannot authorize native execution. No assertion, timeout, permission,
+model/default, installed node, release/feed or other acceptance gate is changed.
+
 ## In development: typed Python startup observations
 
 The [startup diagnostic follow-up](PYTHON-STARTUP-DIAGNOSTICS.md) preserves
