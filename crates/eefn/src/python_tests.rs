@@ -2,6 +2,17 @@
 use super::*;
 
 #[test]
+fn managed_commands_disable_import_cache_writes_and_keep_isolation_and_utf8() {
+    let runtime = PythonRuntime::discover(Some(PathBuf::from("owned-python.exe"))).unwrap();
+    let command = runtime.command();
+    assert_eq!(command.as_std().get_program(), "owned-python.exe");
+    assert_eq!(
+        command.as_std().get_args().collect::<Vec<_>>(),
+        ["-I", "-B", "-X", "utf8"]
+    );
+}
+
+#[test]
 fn bundled_components_python_override_precedence_and_missing_managed_interpreter_are_explicit() {
     let dir = tempfile::tempdir().unwrap();
     let bundle = dir.path().join("versions/0.4.0-test");

@@ -13,6 +13,21 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [managed Python cache follow-up](PYTHON-PAYLOAD-CACHES.md) addresses a reproduced
+import side effect without deleting caches or weakening inventory checks. Shared
+isolated UTF-8/no-bytecode commands, no-bytecode build probes and a read-only
+staging guard pass focused checks; full regression/hosted acceptance is separate.
+It does not recertify old cached runtimes or close installer recovery/release gates.
+
+The [property-order diagnostic](experiments/interpreter-property-order.md) completes
+eighty controlled requests with identical prompt/schema semantics and frozen
+grading. Reduced over-questioning/template copying does not make 29/40 labels or
+poorly grounded questions suitable for a default. No interpreter/default policy
+changes follow. `32d2c02` separately passes four hosted jobs, 31+1 hosted native
+cases, both full Rust modes, 37 local native cases, cached native CPU and browser
+acceptance; that checkpoint does not verify the subsequent Python follow-up or
+remove any model, physical, continuous-workload, MSI or other remaining requirement.
+
 The [service-startup reliability follow-up](SERVICE-STARTUP.md) fixes a controlled
 reproduction of a service returning success without starting while an offline
 command holds its instance lock. Separate service ownership preserves command

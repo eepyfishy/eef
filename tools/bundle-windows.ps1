@@ -244,11 +244,15 @@ try {
     & $scanScript -Path $bundle -ReportPath (Join-Path $validation 'unpacked-bundle-scan.json')
     & (Join-Path $bundle "eef.exe") --version
     & (Join-Path $bundle "eefn.exe") --version
-    & (Join-Path $bundle "python\python.exe") -I -c "import sys; print(sys.version)"
+    & (Join-Path $bundle "python\python.exe") -I -B -c "import sys; print(sys.version)"
     if (-not $SkipOptionalPythonPackages) {
-        & (Join-Path $bundle "python\python.exe") -I -c "import PIL, pyautogui, sounddevice, soundfile, cv2, pyttsx3; print('optional media packages: ok')"
+        & (Join-Path $bundle "python\python.exe") -I -B -c "import PIL, pyautogui, sounddevice, soundfile, cv2, pyttsx3; print('optional media packages: ok')"
         if ($LASTEXITCODE -ne 0) { throw "Bundled Python media package import failed" }
     }
+
+    # Never inventory/sign generated import caches as immutable Python payload.
+    # Refuse dirty staging rather than deleting files or relaxing file hashes.
+    & (Join-Path $PSScriptRoot 'assert-python-payload.ps1') -PythonDirectory (Join-Path $bundle 'python') | Out-Null
 
     $eefPackage = Join-Path $packageRoot "eef"
     $eefnPackage = Join-Path $packageRoot "eefn"

@@ -44,7 +44,7 @@ def handle(action,params):
         while not (ROOT/'child-started').exists() and time.monotonic()<end: time.sleep(.005)
         (ROOT/'root-started').write_text('ready')
         if mode not in ('descendant','inherited'): time.sleep(30)
-    return {'bounded':'valid','request':params.get('text','')}
+    return {'bounded':'valid','request':params.get('text',''),'bytecode_writes_disabled':sys.dont_write_bytecode}
 `);
 async function probe(params,limits={},cancel_after_ms=null,cancel_after_marker=null){
  // Ordinary success probes must allow process inspection/startup. The explicit
@@ -60,7 +60,10 @@ async function probe(params,limits={},cancel_after_ms=null,cancel_after_marker=n
 }
 function successfulData(probeResult,label){assert.equal(probeResult.result.success,true,`${label}: ${probeResult.result.failure||'unknown failure'}; private ${scratch}`);assert(probeResult.result.data&&typeof probeResult.result.data==='object',`${label}: missing data; private ${scratch}`);return probeResult.result.data;}
 try{
- assert.equal(successfulData(await probe({text:'bounded input'}),'initial bounded probe').request,'bounded input');
+ const initial=successfulData(await probe({text:'bounded input'}),'initial bounded probe');
+ assert.equal(initial.request,'bounded input');
+ assert.equal(initial.bytecode_writes_disabled,true,'Managed Python must suppress automatic import-cache writes');
+ await assert.rejects(()=>stat(join(scratch,'__pycache__')),{code:'ENOENT'},'Inspection and invocation must not create import caches beside plugin sources');
  for(const mode of ['memory','child-memory']){
   const control=successfulData(await probe({mode},{timeout_seconds:8}),mode+' control').allocation_succeeded;
   const capped=successfulData(await probe({mode},{timeout_seconds:8,max_job_memory_mib:128}),mode+' capped').allocation_succeeded;
@@ -124,6 +127,6 @@ try{
  await writeFile(join(scratch,'result.json'),JSON.stringify({passed:true,scope:'real-interpreter, bounded synthetic plugin; no hardware or grant authority',memoryResults,
   ordinary_probe_timeout_seconds:8,explicit_deadline_seconds:1,deadlineParentStarted,deadlineChildStarted,
   deadline_post_start_not_assumed:true,post_start_deadline_seconds:8,post_start_deadline_parent_and_child_retired:true,
-  marker_triggered_cancel_requires_parent_and_child:true}));
+  marker_triggered_cancel_requires_parent_and_child:true,managed_bytecode_writes_disabled:true,plugin_import_cache_not_created:true}));
  console.log('Python bridge native checks passed: '+scratch);
 }finally{for(const child of children)if(child.exitCode===null)child.kill();}

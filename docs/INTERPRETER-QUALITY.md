@@ -1,5 +1,12 @@
 # Production interpreter quality evaluation (unreleased)
 
+The [property-order screen](experiments/interpreter-property-order.md) isolates
+wire ordering with identical prompt/schema semantics, cases and limits. Goal-first
+reduces unnecessary questions and copied goals, but label matches improve only
+from 27/40 to 29/40. Manual review still finds missing grounding and clear-request
+failures. No production serialization or default changes follow; direct-backend
+diagnostics are not public-node or independent quality acceptance.
+
 The subsequent [Granite 4.0 1B screen](MODEL-CANDIDATE-EVALUATION.md#granite-40-1b-candidate-2026-10-25-not-default-approved)
 also fails default candidacy: all forty proposals pass schema validation, but
 labels match only 11/20 and 6/20; all fifteen clear inputs receive unnecessary

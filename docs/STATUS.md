@@ -3,6 +3,50 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: managed Python import-cache writes
+
+A native regression against the accepted `32d2c02` bridge reproduces automatic
+cache creation beside a synthetic plugin. The [cache follow-up](PYTHON-PAYLOAD-CACHES.md)
+shares isolated UTF-8/no-bytecode launch arguments across availability and plugin
+calls, adds no-bytecode bundle probes and rejects dirty/link-containing Python
+staging without deleting files or loosening inventory checks. Nine focused Rust
+tests and seven read-only staging checks pass. The original bridge's UTF-8,
+memory, output, deadline, descendant and cancellation assertions are retained;
+full native/workspace and fresh hosted acceptance remain separate.
+
+This does not ignore existing bytecode, sandbox plugins, recertify the previously
+failed cached-Python inventory, clear MSI rollback or imply signing/Defender
+approval. No model/default, release/feed or installed-node change.
+
+## Interpreter quality diagnostic: field order is insufficient
+
+The [fixed property-order comparison](experiments/interpreter-property-order.md)
+completes eighty captured requests using the existing verified 2B artifact,
+matching Rust reference/validator, identical schema semantics and frozen cases.
+Goal-first improves labels only from 27/40 to 29/40; unnecessary questions fall
+13 to 9 and literal template goals 26 to 11, with no required questions lost.
+Manual review still finds clear-request failures and poorly grounded questions.
+No production serializer, prompt, model default or acceptance criterion changes.
+The initial numeric-exit-only auditor remains failed; a separate corrected audit
+leaves native exit codes unconfirmed and independently verifies process retirement
+without rerunning inference. This is diagnostic, not independent/public-node
+quality, bootstrap or stable-release acceptance.
+
+## Accepted development checkpoint: `32d2c02`
+
+The service-startup fix passes all four hosted jobs and the exact thirty-one main
+Windows native suites plus the distinct pre-registration-close case in
+[run 40284296697](https://github.com/eepyfishy/eef/actions/runs/40284296697).
+Both local Rust modes pass 1,153 tests plus one existing ignored profiler each;
+thirty-seven final native cases, cached native-CPU owner workflow and separate
+default-feature browser regression pass. Independent reconciliation verifies
+330 source hashes, current default app hashes, cached native runtime/model bytes,
+the retained model-check intent after explicit source removal, unchanged read-only
+database bytes and no remaining owned app/helper/compiler/model processes.
+This accepts that exact revision, not subsequent Python changes, an entire cached
+Python bundle, model quality/default/onboarding, physical PCs, MSI rollback or
+stable v0.4.0. Original failed observations remain retained.
+
 ## In development: service startup versus offline commands
 
 The previous `177334b` hosted run passes three jobs but fails Windows headless

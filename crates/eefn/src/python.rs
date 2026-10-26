@@ -152,18 +152,23 @@ impl PythonRuntime {
         &self.limits
     }
 
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.executable);
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000);
+        // Import caches do not belong beside installed payload/plugin sources.
+        // This is not a sandbox: trusted plugin code can still write files.
+        command.arg("-I").arg("-B").arg("-X").arg("utf8");
+        command
+    }
+
     /// Probe only the configured interpreter, without importing a device plugin.
     pub async fn check_available(&self) -> Result<()> {
         self.limits.validate()?;
         crate::model_memory::supported(self.limits.max_job_memory_mib)?;
         let deadline = Instant::now() + Duration::from_secs(5);
-        let mut command = Command::new(&self.executable);
-        #[cfg(windows)]
-        command.creation_flags(0x0800_0000);
+        let mut command = self.command();
         command
-            .arg("-I")
-            .arg("-X")
-            .arg("utf8")
             .arg("-c")
             .arg("pass")
             .stdin(Stdio::null())
@@ -266,13 +271,8 @@ impl PythonRuntime {
         if !metadata.is_file() {
             bail!("Python plugin '{}' does not exist", plugin_path.display());
         }
-        let mut command = Command::new(&self.executable);
-        #[cfg(windows)]
-        command.creation_flags(0x0800_0000);
+        let mut command = self.command();
         command
-            .arg("-I")
-            .arg("-X")
-            .arg("utf8")
             .arg("-c")
             .arg(PLUGIN_HOST)
             .arg(plugin_path)
