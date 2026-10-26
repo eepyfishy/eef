@@ -109,6 +109,10 @@ impl NodeService {
         live["startup_issues"] = json!(issues);
     }
 
+    pub fn record_python_startup(&self, observation: &crate::python::PythonStartup) {
+        self.live.lock().unwrap()["python_startup"] = json!(observation);
+    }
+
     pub fn new(config_path: PathBuf, node_id: String) -> Arc<Self> {
         let (download_receipts, recovered) =
             crate::download_receipts::Journal::recover(&config_path, &node_id);
@@ -334,6 +338,7 @@ impl NodeService {
             "node_alive":true,"coordinator_required_for_node":false,"coordinator_required_for_orchestration":true,
             "model_activation":live["model_activation"],
             "startup_issues":startup_issues(&live),
+            "python_startup":python_startup(&live),
             "name":config["name"],"hostname":crate::setup::hostname(),"coordinator_name":config["coordinator_name"],"metadata":live["metadata"],
             "connection":live["connection"],"input_channel":self.submissions.state(),"hardware":live["hardware"],"permissions":live["permissions"],"models":live["models"],
             "capabilities":live["capabilities"],"last_activity":live["last_activity"],"last_request_context":live["last_request_context"],
@@ -817,6 +822,7 @@ impl NodeService {
             "capability_count":live["capabilities"].as_array().map(Vec::len).unwrap_or(0),
             "request_limits":limits,"busy_rejections":live["busy_rejections"].as_u64().unwrap_or(0),
             "startup_issues":startup_issues(&live),
+            "python_startup":python_startup(&live),
             "privacy":"Includes stable node/runtime IDs for correlation. No automatic upload."})
     }
 
@@ -1260,6 +1266,11 @@ fn require_remote_authority(config: &Value) -> Result<()> {
         )
     }
     Ok(())
+}
+
+fn python_startup(live: &Value) -> Option<crate::python::PythonStartup> {
+    // Reparse rather than forwarding arbitrary live JSON into diagnostic exports.
+    serde_json::from_value(live["python_startup"].clone()).ok()
 }
 
 fn startup_issues(live: &Value) -> Vec<StartupIssue> {
@@ -1953,6 +1964,54 @@ mod tests {
             .unwrap();
         let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(saved["psk"], "secret-value");
+    }
+
+    #[test]
+    fn python_startup_diagnostics_are_read_only_typed_observations() {
+        use crate::python::{
+            AvailabilityFailure, InterpreterStartup, PluginStartupCounts, PythonStartup,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        crate::setup::write_json(
+            &path,
+            &json!({"node_id":"stable","psk":"private","endpoints":[]}),
+        )
+        .unwrap();
+        let service = NodeService::new(path.clone(), "stable".into());
+        let before = std::fs::read(&path).unwrap();
+        assert!(service.status()["python_startup"].is_null());
+        assert!(service.diagnostics()["python_startup"].is_null());
+        let observation = PythonStartup {
+            complete: true,
+            interpreter: InterpreterStartup::Failed {
+                reason: AvailabilityFailure::Spawn,
+            },
+            builtin_plugins: PluginStartupCounts {
+                requested: 1,
+                ..Default::default()
+            },
+            custom_plugins: PluginStartupCounts::default(),
+        };
+        service.record_python_startup(&observation);
+        for value in [service.status(), service.diagnostics()] {
+            assert_eq!(value["python_startup"], json!(observation));
+        }
+        assert_eq!(service.status()["python_bridge"]["enabled"], false);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        for injection in [
+            json!({"complete":true,"interpreter":{"state":"PRIVATE-path-token-output"}}),
+            {
+                let mut value = json!(observation);
+                value["private"] = json!("PRIVATE-path-token-output");
+                value
+            },
+        ] {
+            service.live.lock().unwrap()["python_startup"] = injection;
+            assert!(service.status()["python_startup"].is_null());
+            assert!(service.diagnostics()["python_startup"].is_null());
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 
     #[tokio::test]

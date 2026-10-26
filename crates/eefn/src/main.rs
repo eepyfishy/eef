@@ -3304,28 +3304,79 @@ async fn run_node(
         (media.screen_capture, "screen_capture.py"),
         (media.input_control, "input_control.py"),
     ];
+    use eefn::python::{
+        InterpreterStartup, PluginStartupCounts, PluginStartupFailure, PythonStartup,
+    };
+    let requested_builtins = builtin_plugins
+        .iter()
+        .filter(|(enabled, _)| *enabled)
+        .count();
+    let requested = requested_builtins > 0 || !file.python_plugins.is_empty();
+    let mut python_startup = PythonStartup {
+        complete: !requested,
+        interpreter: if requested {
+            InterpreterStartup::Checking {}
+        } else {
+            InterpreterStartup::NotRequested {}
+        },
+        builtin_plugins: PluginStartupCounts {
+            requested: requested_builtins.min(u32::MAX as usize) as u32,
+            ..Default::default()
+        },
+        custom_plugins: PluginStartupCounts {
+            requested: file.python_plugins.len().min(u32::MAX as usize) as u32,
+            ..Default::default()
+        },
+    };
+    dashboard.record_python_startup(&python_startup);
     dashboard.live.lock().unwrap()["python_bridge"] = serde_json::Value::Null;
-    if !file.python_plugins.is_empty() || builtin_plugins.iter().any(|(enabled, _)| *enabled) {
+    if requested {
         let executable =
             python_for_startup(&args.config, file.python.clone(), args.python.is_some());
         let configured = PythonRuntime::discover(executable)
             .map(|runtime| runtime.with_limits(file.python_bridge.clone()))
             .transpose();
         let runtime = match configured {
-            Ok(Some(runtime)) if runtime.check_available().await.is_ok() => Some(Arc::new(runtime)),
-            _ => None,
+            Ok(Some(runtime)) => match runtime.check_availability().await {
+                Ok(()) => {
+                    python_startup.interpreter = InterpreterStartup::Available {};
+                    Some(Arc::new(runtime))
+                }
+                Err(reason) => {
+                    python_startup.interpreter = InterpreterStartup::Failed { reason };
+                    None
+                }
+            },
+            Ok(None) => {
+                python_startup.interpreter = InterpreterStartup::NotConfigured {};
+                None
+            }
+            Err(_) => {
+                python_startup.interpreter = InterpreterStartup::InvalidLimits {};
+                None
+            }
         };
+        dashboard.record_python_startup(&python_startup);
         if let Some(runtime) = runtime {
             dashboard.live.lock().unwrap()["python_bridge"] = serde_json::json!(runtime.limits());
             info!(python = %runtime.executable().display(), "Python plugin runtime enabled");
             for (_, filename) in builtin_plugins.iter().filter(|(enabled, _)| *enabled) {
-                let load = async {
-                    let path =
-                        component_layout.builtin_plugin(filename, development_root.as_deref())?;
-                    engine.add_python_plugin(runtime.clone(), path).await
-                }
-                .await;
-                if let Err(error) = load {
+                let load =
+                    match component_layout.builtin_plugin(filename, development_root.as_deref()) {
+                        Ok(path) => engine
+                            .add_python_plugin(runtime.clone(), path)
+                            .await
+                            .map_err(|error| {
+                                let reason = PluginStartupFailure::from_error(&error);
+                                (error, reason)
+                            }),
+                        Err(error) => Err((error, PluginStartupFailure::Lookup {})),
+                    };
+                python_startup
+                    .builtin_plugins
+                    .record(load.as_ref().err().map(|(_, reason)| *reason));
+                dashboard.record_python_startup(&python_startup);
+                if let Err((error, _)) = load {
                     warn!(plugin = %filename, %error, "built-in plugin unavailable; node core will remain connected");
                     dashboard.record_startup_issue(
                         eefn::service::StartupIssue::BuiltinPluginUnavailable,
@@ -3334,10 +3385,14 @@ async fn run_node(
             }
             for plugin in &file.python_plugins {
                 let path = resolve_relative(&args.config, plugin);
-                if let Err(error) = engine
+                let load = engine
                     .add_python_plugin(runtime.clone(), path.clone())
-                    .await
-                {
+                    .await;
+                python_startup
+                    .custom_plugins
+                    .record(load.as_ref().err().map(PluginStartupFailure::from_error));
+                dashboard.record_python_startup(&python_startup);
+                if let Err(error) = load {
                     warn!(plugin = %path.display(), %error, "Python plugin not loaded");
                     dashboard
                         .record_startup_issue(eefn::service::StartupIssue::CustomPluginUnavailable);
@@ -3349,6 +3404,8 @@ async fn run_node(
             );
             dashboard.record_startup_issue(eefn::service::StartupIssue::PythonRuntimeUnavailable);
         }
+        python_startup.complete = true;
+        dashboard.record_python_startup(&python_startup);
     }
     let peer_runtime = if file.permissions.peer_transfers.enabled {
         engine = engine

@@ -3,6 +3,23 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: typed Python startup observations
+
+The [startup diagnostic follow-up](PYTHON-STARTUP-DIAGNOSTICS.md) preserves
+bounded interpreter failure categories and built-in/custom plugin attempt counts
+in backend status/explicit exports. An independent fixture whitelist excludes
+private output and IDs from hosted failure diagnostics. Startup observations are
+not readiness, physical media health or permission authority; budgets and original
+fixture assertions are retained. New controlled failure and hostile-input checks
+require fresh regression/hosted acceptance.
+
+The preceding `5b48055` has complete local Rust/native/CPU/browser evidence, but
+[run 40291186483](https://github.com/eepyfishy/eef/actions/runs/40291186483)
+remains failed: three jobs pass, Windows headless fails at the selected bundled
+plugin marker. The exact hosted cause is unconfirmed despite both trusted local
+Python layouts passing. No signing/Defender, MSI rollback, physical or release
+acceptance is inferred, and no model/default or installed-node policy changes.
+
 ## In development: managed Python import-cache writes
 
 A native regression against the accepted `32d2c02` bridge reproduces automatic

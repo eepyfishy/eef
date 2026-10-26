@@ -53,7 +53,8 @@ impl BridgeLimits {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BridgeFailure {
     RequestLimit,
     StdoutLimit,
@@ -89,6 +90,94 @@ impl BridgeFailure {
             Self::Metadata => "python_invalid_metadata",
         }
     }
+}
+
+/// Fixed categories only: never expose interpreter output, paths or OS errors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AvailabilityFailure {
+    InvalidLimits,
+    UnsupportedMemoryLimit,
+    Spawn,
+    Wait,
+    Deadline,
+    Cleanup,
+    Exit,
+}
+impl std::fmt::Display for AvailabilityFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::InvalidLimits => "Python availability limits are invalid",
+            Self::UnsupportedMemoryLimit => "Python availability memory limit is unsupported",
+            Self::Spawn => "Python availability process could not start",
+            Self::Wait => "Python availability process wait failed",
+            Self::Deadline => "Python availability deadline exceeded",
+            Self::Cleanup => "Python availability owned-process cleanup unconfirmed",
+            Self::Exit => "Python availability process returned an unsuccessful exit",
+        })
+    }
+}
+impl std::error::Error for AvailabilityFailure {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InterpreterStartup {
+    // Empty struct variants enforce unknown-field rejection; Serde's tagged
+    // unit variants otherwise accept extra map entries despite the annotation.
+    NotRequested {},
+    Checking {},
+    NotConfigured {},
+    InvalidLimits {},
+    Available {},
+    Failed { reason: AvailabilityFailure },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "stage", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PluginStartupFailure {
+    Lookup {},
+    Bridge {
+        reason: BridgeFailure,
+    },
+    /// Includes untyped file/process/registration errors; no inferred cause.
+    Other {},
+}
+impl PluginStartupFailure {
+    pub fn from_error(error: &anyhow::Error) -> Self {
+        error
+            .downcast_ref::<BridgeFailure>()
+            .map_or(Self::Other {}, |reason| Self::Bridge { reason: *reason })
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginStartupCounts {
+    pub requested: u32,
+    pub loaded: u32,
+    pub failed: u32,
+    pub last_failure: Option<PluginStartupFailure>,
+}
+impl PluginStartupCounts {
+    pub fn record(&mut self, failure: Option<PluginStartupFailure>) {
+        if let Some(failure) = failure {
+            self.failed = self.failed.saturating_add(1);
+            self.last_failure = Some(failure);
+        } else {
+            self.loaded = self.loaded.saturating_add(1);
+        }
+    }
+}
+
+/// Startup observations, not ongoing health, readiness or permission authority.
+/// Constant-size enums/counters; no plugin names, paths, output or credentials.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PythonStartup {
+    pub complete: bool,
+    pub interpreter: InterpreterStartup,
+    pub builtin_plugins: PluginStartupCounts,
+    pub custom_plugins: PluginStartupCounts,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -164,8 +253,17 @@ impl PythonRuntime {
 
     /// Probe only the configured interpreter, without importing a device plugin.
     pub async fn check_available(&self) -> Result<()> {
-        self.limits.validate()?;
-        crate::model_memory::supported(self.limits.max_job_memory_mib)?;
+        self.check_availability().await?;
+        Ok(())
+    }
+
+    /// Typed counterpart for bounded startup diagnostics. Budgets are unchanged.
+    pub async fn check_availability(&self) -> std::result::Result<(), AvailabilityFailure> {
+        self.limits
+            .validate()
+            .map_err(|_| AvailabilityFailure::InvalidLimits)?;
+        crate::model_memory::supported(self.limits.max_job_memory_mib)
+            .map_err(|_| AvailabilityFailure::UnsupportedMemoryLimit)?;
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut command = self.command();
         command
@@ -179,15 +277,18 @@ impl PythonRuntime {
             &mut command,
             self.limits.max_job_memory_mib,
         )
-        .context("Python interpreter could not start")?;
+        .map_err(|_| AvailabilityFailure::Spawn)?;
         let status = timeout_at(deadline, child.wait())
             .await
-            .context("Python interpreter availability check timed out")??;
+            .map_err(|_| AvailabilityFailure::Deadline)?
+            .map_err(|_| AvailabilityFailure::Wait)?;
         #[cfg(windows)]
-        tree.terminate_and_observe_until(deadline).await?;
+        tree.terminate_and_observe_until(deadline)
+            .await
+            .map_err(|_| AvailabilityFailure::Cleanup)?;
         drop(tree);
         if !status.success() {
-            bail!("Python interpreter availability check failed")
+            return Err(AvailabilityFailure::Exit);
         }
         Ok(())
     }

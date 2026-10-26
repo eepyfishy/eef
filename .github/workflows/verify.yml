@@ -79,6 +79,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/test-python-package-policy.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/test-python-startup-observation.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/test-backend-boundary.mjs
           exit $LASTEXITCODE
       - name: Read-only MSI payload planning (synthetic)

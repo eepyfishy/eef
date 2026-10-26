@@ -1,6 +1,91 @@
 //! Deterministic pipe bounds, not device/Python acceptance.
 use super::*;
 
+#[tokio::test]
+async fn availability_failures_are_typed_without_private_paths_or_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let sentinel = "PRIVATE-interpreter-path-token";
+    let mut runtime = PythonRuntime::discover(Some(dir.path().join(sentinel))).unwrap();
+    let failure = runtime.check_availability().await.unwrap_err();
+    assert_eq!(failure, AvailabilityFailure::Spawn);
+    assert!(!failure.to_string().contains(sentinel));
+    let error = runtime.check_available().await.unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<AvailabilityFailure>(),
+        Some(&AvailabilityFailure::Spawn)
+    );
+    runtime.limits.timeout_seconds = 0;
+    assert_eq!(
+        runtime.check_availability().await.unwrap_err(),
+        AvailabilityFailure::InvalidLimits
+    );
+}
+
+#[test]
+fn startup_observations_are_constant_shape_and_do_not_forward_untyped_errors() {
+    let sentinel = "PRIVATE-plugin-path-output-token";
+    assert_eq!(
+        PluginStartupFailure::from_error(&anyhow::anyhow!(sentinel)),
+        PluginStartupFailure::Other {}
+    );
+    let error = anyhow::Error::from(BridgeFailure::Process).context(sentinel);
+    let failure = PluginStartupFailure::from_error(&error);
+    assert_eq!(
+        failure,
+        PluginStartupFailure::Bridge {
+            reason: BridgeFailure::Process
+        }
+    );
+    let mut counts = PluginStartupCounts {
+        requested: 2,
+        ..Default::default()
+    };
+    counts.record(None);
+    counts.record(Some(failure));
+    assert_eq!((counts.requested, counts.loaded, counts.failed), (2, 1, 1));
+    let report = PythonStartup {
+        complete: true,
+        interpreter: InterpreterStartup::Available {},
+        builtin_plugins: counts.clone(),
+        custom_plugins: PluginStartupCounts::default(),
+    };
+    let value = serde_json::to_value(&report).unwrap();
+    assert!(!value.to_string().contains(sentinel));
+    assert_eq!(
+        serde_json::from_value::<PythonStartup>(value.clone()).unwrap(),
+        report
+    );
+    let mut injected = value.clone();
+    injected["interpreter"]["private"] = json!(sentinel);
+    assert!(serde_json::from_value::<PythonStartup>(injected).is_err());
+    let mut injected = value;
+    injected["builtin_plugins"]["last_failure"]["reason"] = json!(sentinel);
+    assert!(serde_json::from_value::<PythonStartup>(injected).is_err());
+    for state in [
+        "not_requested",
+        "checking",
+        "not_configured",
+        "invalid_limits",
+        "available",
+    ] {
+        let mut value = json!({"state": state});
+        assert!(serde_json::from_value::<InterpreterStartup>(value.clone()).is_ok());
+        value["private"] = json!(sentinel);
+        assert!(serde_json::from_value::<InterpreterStartup>(value).is_err());
+    }
+    for stage in ["lookup", "other"] {
+        let mut value = json!({"stage": stage});
+        assert!(serde_json::from_value::<PluginStartupFailure>(value.clone()).is_ok());
+        value["private"] = json!(sentinel);
+        assert!(serde_json::from_value::<PluginStartupFailure>(value).is_err());
+    }
+    counts.loaded = u32::MAX;
+    counts.failed = u32::MAX;
+    counts.record(None);
+    counts.record(Some(PluginStartupFailure::Lookup {}));
+    assert_eq!((counts.loaded, counts.failed), (u32::MAX, u32::MAX));
+}
+
 #[test]
 fn managed_commands_disable_import_cache_writes_and_keep_isolation_and_utf8() {
     let runtime = PythonRuntime::discover(Some(PathBuf::from("owned-python.exe"))).unwrap();

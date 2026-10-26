@@ -13,6 +13,13 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [Python startup observations](PYTHON-STARTUP-DIAGNOSTICS.md) retain typed
+failure categories and bounded plugin counters for command-first diagnosis.
+Original deadlines and fixture checks remain intact. The preceding `5b48055`
+passes local full Rust/native/CPU/browser checks, but its hosted Windows bundled
+plugin failure remains unexplained and failed; later diagnostics cannot erase
+that result. No release, physical, installer, model or other gate is closed.
+
 The [managed Python cache follow-up](PYTHON-PAYLOAD-CACHES.md) addresses a reproduced
 import side effect without deleting caches or weakening inventory checks. Shared
 isolated UTF-8/no-bytecode commands, no-bytecode build probes and a read-only
