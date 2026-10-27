@@ -70,6 +70,22 @@ try {
   assert.equal(await exists(join(dir,'pids.json')),false,'submission must not execute');
   const sourceAgain=await local(origin,sourceArgs);assert.equal(sourceAgain.result.creation_reused,true);assert.equal(sourceAgain.result.plan.id,plan.id);assert.equal(await exists(join(dir,'pids.json')),false,'exact source reuse must not execute');
   const full=await review.inspect(plan.id);assert.equal(full.goal.request_context.origin_node,origin.id);assert.equal(full.planning.bindings[0].node_id,executor.id);
+  if(scenario.label==='complete'){
+   const baseline=await owner(['requests','stop-status',plan.id]);
+   assert.equal(baseline.stop_requested,false);assert.equal(baseline.issued_attempts,0);assert.deepEqual(baseline.grants,[]);
+   const endpoint=eef+'/api/commands/jobs/stop-status';
+   const body={schema_version:1,expected_runtime_id:(await json(eef+'/api/diagnostics')).runtime_id,command:{id:plan.id}};
+   for(const [request,status,originHeader]of [
+    [{...body,expected_runtime_id:randomUUID()},400],
+    [{...body,command:{id:plan.id,stop:true}},422],
+    [{...body,padding:'x'.repeat(4096)},413],
+    [body,403,'https://untrusted.example'],
+   ]){
+    const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json',...(originHeader?{Origin:originHeader}:{})},body:JSON.stringify(request),signal:AbortSignal.timeout(10000)});
+    await response.text();assert.equal(response.status,status);
+   }
+   assert.deepEqual(await review.inspect(plan.id),full);assert.equal(await exists(join(dir,'pids.json')),false);
+  }
   const command=await review.approve(plan,{max_execution_ms:scenario.grantMs,max_result_bytes:16384});assert.equal(await exists(join(dir,'pids.json')),false,'approval must not execute');
   await review.start(command);await until(()=>exists(join(dir,'pids.json')),'own native root/child started');
   const identities=await readFile(join(dir,'pids.json'),'utf8'),observer=start(helper,['observe',dir]);
@@ -96,7 +112,8 @@ try {
   assert.equal(proof.both_exited,true);assert.equal(proof.held_creation_verified_handles,true);assert(Number.isSafeInteger(proof.observed_after_ms)&&proof.observed_after_ms>=0);
   if(['origin-stop','coordinator-stop','permission-revoked','node-restart','coordinator-restart'].includes(scenario.label))assert(proof.observed_after_ms<2000,'lifecycle cleanup must precede the 10-second grant deadline, not merely eventually expire');
   const terminal=await review.wait(plan.id),attempts=terminal.grant_attempts;assert.equal(attempts.length,1);
-  const report=await review.result(plan.id);assert.equal(report.state,['complete','fail'].includes(scenario.mode)?'completed':'unknown');assert.equal(report.success,scenario.mode==='complete');assert.equal(report.persisted,true);
+  let report;await until(async()=>{report=await review.result(plan.id);return true;},'retained native final checkpoint');
+  assert.equal(report.state,['complete','fail'].includes(scenario.mode)||scenario.label.endsWith('-stop')?'completed':'unknown');assert.equal(report.success,scenario.mode==='complete');assert.equal(report.persisted,true);
   if(['complete','fail'].includes(scenario.mode)){
    assert.equal(report.data.process_tree.mode,'windows_owned_job');
    assert.equal(report.data.process_tree.empty_observed,true,'normal report requires the owned job to be observed empty');
@@ -104,8 +121,19 @@ try {
   }
   if(scenario.mode==='fail'){assert.equal(report.error_code,'process_exit_unsuccessful');assert.equal(report.data.exit_code,17);assert.equal(report.data.success,false);}
   if(scenario.label==='permission-revoked')assert.equal(report.error_code,'local_policy_changed');
-  if(scenario.label.endsWith('-stop'))assert.equal(report.error_code,'grant_stop_requested_effects_unknown');
-  assert.equal(terminal.status,scenario.mode==='complete'?'completed':scenario.mode==='fail'?'failed':'interrupted');
+  if(scenario.label.endsWith('-stop')){
+   assert.equal(report.error_code,'process_exit_unsuccessful');
+   assert.equal(report.data.process_stop_observation.mode,'windows_owned_job');
+   assert.equal(report.data.process_stop_observation.owned_process_tree_empty,true);
+   assert.equal(report.data.process_stop_observation.external_effects_stopped,false);
+   assert.equal(report.data.process_stop_observation.finished_actions_undone,false);
+   assert.equal(report.data.output_discarded_for_stop,true);assert.equal(report.data.truncated,true);
+   assert.equal(report.data.stdout,'');assert.equal(report.data.stderr,'');
+   // Tracking can retain the unsuccessful completion before its stop waiter
+   // retires, or remain interrupted. Require the exact state implied by the
+   // immutable tracked attempt; neither tracking state is termination proof.
+   assert.equal(terminal.status,attempts[0].state==='completed'?'failed':'interrupted');
+  }else assert.equal(terminal.status,scenario.mode==='complete'?'completed':scenario.mode==='fail'?'failed':'interrupted');
   const saved=await review.inspect(plan.id);assert.equal(saved.execution.attempts.length,1);
   if(scenario.label.endsWith('-stop')){
    await until(async()=>!!(await review.inspect(plan.id)).execution.attempts[0].stop?.report?.persisted,'exact durable stop receipt retained');
@@ -149,11 +177,40 @@ try {
    assert.deepEqual(await review.inspect(plan.id),planBefore,'inspection cannot reconcile or revise tracking');
    assert.deepEqual(await readFile(journal),before,'inspection cannot write, repair or signal through the journal');
   }
+  async function inspectProcessStopStatus() {
+   const before=await review.inspect(plan.id),journal=executor.config+'.grant-receipts.sqlite3',bytes=await readFile(journal);
+   const source=await local(origin,['jobs','stop-status',plan.id]);
+   const owned=await owner(['requests','stop-status',plan.id]);
+   assert.equal(source.success,true);const status=source.data;
+   assert.deepEqual(status,owned);
+   assert.equal(status.report_type,'job_process_stop_status');assert.equal(status.id,plan.id);
+   assert.equal(status.origin_node,origin.id);assert.equal(status.issued_attempts,1);
+   for(const flag of ['execution_requested','stop_signal_sent','automatically_retried','reconciled','external_effects_stopped','finished_actions_undone'])assert.equal(status[flag],false);
+   assert.equal(status.read_only,true);
+   if(scenario.label.endsWith('-stop')){
+    assert.equal(status.grants.length,1);assert.equal(status.not_inspected_issued_attempts,0);
+    assert.equal(status.grants[0].scope.grant_id,retainedGrant.grant_id);
+    assert.equal(status.grants[0].scope.session_id,retainedGrant.session_id);
+    assert.equal(status.grants[0].availability,'owned_process_tree_empty');
+    assert.deepEqual(status.grants[0].observation,report.data.process_stop_observation);
+    assert.equal(status.grants[0].intent_recorded,true);
+   }else{assert.equal(status.grants.length,0);assert.equal(status.not_inspected_issued_attempts,1);}
+   assert(!JSON.stringify(status).includes(helper));assert(!JSON.stringify(status).includes(dir));
+   const plain=start(join(bin,'eefn.exe'),['--config',origin.config,'jobs','stop-status',plan.id]);
+   const rendered=await plain.result;assert.equal(rendered.code,0);assert(rendered.out.includes('Process stop status for job '+plan.id));assert(rendered.out.includes('external effects'));
+   const ownerPlain=start(join(bin,'eef.exe'),['--config',coordinatorConfig,'requests','stop-status',plan.id]);
+   const renderedOwner=await ownerPlain.result;assert.equal(renderedOwner.code,0);assert.equal(renderedOwner.out,rendered.out);
+   const denied=await cli('eefn',executor.config,['jobs','stop-status',plan.id],undefined,1);assert.equal(denied.success,false);assert.equal(denied.outcome_unknown,false);
+   assert.deepEqual(await review.inspect(plan.id),before,'process status cannot reconcile tracking');
+   assert.deepEqual(await readFile(journal),bytes,'process status cannot rewrite the node journal');
+  }
   await inspectStopEvidence();
+  await inspectProcessStopStatus();
   if(scenario.label==='origin-stop') {
    const before=(await json(executor.url+'/api/diagnostics')).runtime_id;await local(executor,['restart']);
    await until(async()=>(await json(executor.url+'/api/diagnostics')).runtime_id!==before&&(await json(eef+'/api/diagnostics')).registered_node_count===2,'read original stop evidence after executor reconnect');
    await inspectStopEvidence();
+   await inspectProcessStopStatus();
    retainedStop=retainedGrant;
    outcomes.push({stop_inspection_after_reconnect:true,original_session_preserved:true,no_journal_or_tracking_writes:true});
   }
@@ -175,8 +232,11 @@ try {
  assert.equal(offline.availability,'retained');assert.equal(offline.scope.session_id,retainedStop.session_id);
  assert.equal(offline.read_only,true);assert.equal(offline.stop_requested,false);
  assert.deepEqual(await readFile(offlineJournal),offlineBefore);
+ const unavailable=await owner(['requests','stop-status',retainedStop.job_id]);
+ assert.equal(unavailable.grants[0].availability,'unavailable');assert.equal(unavailable.grants[0].observation,null);
+ assert.equal(unavailable.execution_requested,false);assert.equal(unavailable.stop_signal_sent,false);
  outcomes.push({offline_executor_runtime_absent:true,retained_intent_read:true,no_journal_write:true});
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,typed_file_free_process_authoring:true,source_receipt_reuse_no_execution:true,no_models:true,no_ui_controller:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,separate_origin_and_executor:true,outcomes},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,typed_file_free_process_authoring:true,source_receipt_reuse_no_execution:true,no_models:true,no_ui_controller:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,separate_origin_and_executor:true,owned_process_stop_observation:true,job_id_only_read_only_status:true,status_after_reconnect:true,offline_unconfirmed_not_stopped:true,v1_external_effect_guarantees_unchanged:true,outcomes},null,2));
  phase='passed';
  console.log('Public process lifetime validation passed: '+scratch);
 }catch(error){

@@ -106,6 +106,7 @@ impl SubmissionMailbox {
                 | "jobs.pause"
                 | "jobs.resume"
                 | "jobs.stop"
+                | "jobs.stop_status"
                 | "jobs.remove"
         ) || serde_json::to_vec(&payload)?.len() > 64 * 1024
         {

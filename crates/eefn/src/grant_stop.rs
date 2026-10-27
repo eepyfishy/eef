@@ -285,6 +285,16 @@ impl GrantLedger {
         session: &str,
         node: &str,
     ) -> Result<Report> {
+        self.request_stop_scope_after_signal(g, issuer, session, node, || {})
+    }
+    fn request_stop_scope_after_signal(
+        &self,
+        g: &Scope,
+        issuer: &str,
+        session: &str,
+        node: &str,
+        after_signal: impl FnOnce(),
+    ) -> Result<Report> {
         g.validate()?;
         if node != self.node_id || !g.matches_session(issuer, session, node) {
             bail!("Stop scope differs from pinned session")
@@ -384,6 +394,9 @@ impl GrantLedger {
             report.cancellation_signalled = sender.receiver_count() > 0;
             sender.send_replace(true);
         }
+        // The shipping caller always supplies a no-op. Tests observe cleanup
+        // while this actual journal lock is still held, not with a fake sleep.
+        after_signal();
         if !report.confirms_scope(g) {
             bail!("Stop receipt failed confirmation")
         }

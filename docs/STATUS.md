@@ -3,7 +3,29 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: one-shot model check after setup
+## In development: owned-process stop observations
+
+The [process-stop observation path](PROCESS-STOP-OBSERVATION.md) adds bounded
+cooperative cleanup for admitted Windows direct process grants and read-only
+job-ID-based inspection from the node or coordinator CLI. It requires original
+stop intent and matching retained execution evidence; it never promotes v1 stop
+receipts into outside-effect, rollback or job-wide proof. This draft needs
+focused/native/full/hosted acceptance; no release or installed-node change.
+
+## Accepted development checkpoint: `00e3c3d`
+
+The setup-model-check implementation passes both corrected local modes with
+1,201 tests and one existing ignored test each, all 38 fresh local native cases,
+fresh cached-CPU inference/lifecycle and separate default-build browser checks.
+[Run 40527014975](https://github.com/eepyfishy/eef/actions/runs/40527014975)
+passes all four jobs, all 32 Windows native suites and the distinct close case.
+Independent source/binary/model/runtime and read-only receipt audits pass.
+An attempted binary-identity shortcut failed, so no old native/model/browser
+result was substituted for fresh testing. Earlier failures remain failed.
+No release, default/model approval, installed/remote update, firewall mutation
+or Defender clearance is claimed. Full stable v0.4.0 requirements remain open.
+
+## Earlier development: one-shot model check after setup
 
 Revision `260da57` passes both full local Windows modes (1,201 tests plus one
 existing ignored test each), all 38 local native cases, exact persisted receipt

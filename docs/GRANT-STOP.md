@@ -61,6 +61,11 @@ peer socket lifetime and finite-pipeline cancellation apply. Repeated identical
 node stops reuse the original timestamp and never execute work or alter a
 completed result. Registry entries retire with their accepted grant.
 
+The subsequent [owned-process observation increment](PROCESS-STOP-OBSERVATION.md)
+adds bounded cooperative cleanup for direct admitted Windows processes, with
+separate read-only job-ID-based status. That draft does not change the v1 stop
+receipt's intent-only guarantees or claim shared-service/external-effect stop.
+
 ## What a receipt proves
 
 Per-grant stop receipts prove retained stop intent for an exact scope. They

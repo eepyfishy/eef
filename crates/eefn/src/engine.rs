@@ -215,6 +215,48 @@ const fn default_http_response_bytes() -> usize {
     4 * 1024 * 1024
 }
 
+enum ProcessCollection {
+    Completed(std::process::ExitStatus, (Vec<u8>, bool), (Vec<u8>, bool)),
+    Stopped(Value),
+}
+
+#[cfg(test)]
+mod dispatch_frame_tests {
+    use super::*;
+    #[test]
+    fn common_dispatch_future_has_heap_boundary_before_capability_selection() {
+        let directory = tempfile::tempdir().unwrap();
+        let engine = NodeEngine::new(false, vec![], directory.path().into()).unwrap();
+        // Construct only. No future is polled, work authorized or child started.
+        let direct = engine.execute_with_execution_control(
+            "system.ping",
+            "run",
+            json!({}),
+            None,
+            None,
+            None,
+        );
+        let wrapper =
+            engine.execute_with_python_output_limit("system.ping", "run", json!({}), None, None);
+        let process = engine.process_exec("run", json!({}), None, None);
+        let expected = std::mem::size_of::<
+            std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>>,
+        >();
+        let sizes = json!({"dispatch_bytes":std::mem::size_of_val(&direct),"wrapper_bytes":std::mem::size_of_val(&wrapper),"process_bytes":std::mem::size_of_val(&process),"boxed_pointer_bytes":expected});
+        println!("DISPATCH_FUTURE_STORAGE {sizes}");
+        assert_eq!(
+            std::mem::size_of_val(&direct),
+            expected,
+            "unselected provider state must not be embedded in dispatcher callers"
+        );
+        assert_eq!(
+            std::mem::size_of_val(&wrapper),
+            expected,
+            "budget forwarding must preserve the same boxed future boundary"
+        );
+    }
+}
+
 pub struct NodeEngine {
     policy: NodePolicy,
     pub model_server: Option<Arc<ModelServer>>,
@@ -776,13 +818,54 @@ impl NodeEngine {
 
     /// Internal data/time-budget intersection, not another execution authority.
     /// Ordinary grants and finite stages retain all existing policy checks.
-    pub(crate) async fn execute_with_python_output_limit(
+    pub(crate) fn execute_with_python_output_limit<'a>(
+        &'a self,
+        capability: &'a str,
+        action: &'a str,
+        params: Value,
+        python_output_limit: Option<usize>,
+        execution_deadline: Option<tokio::time::Instant>,
+    ) -> impl std::future::Future<Output = Result<Value>> + Send + 'a {
+        self.execute_with_execution_control(
+            capability,
+            action,
+            params,
+            python_output_limit,
+            execution_deadline,
+            None,
+        )
+    }
+
+    /// Only the accepted-grant driver supplies this private cancellation input.
+    pub(crate) fn execute_with_execution_control<'a>(
+        &'a self,
+        capability: &'a str,
+        action: &'a str,
+        params: Value,
+        python_output_limit: Option<usize>,
+        execution_deadline: Option<tokio::time::Instant>,
+        process_stop: Option<crate::process_stop::Control>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send + 'a>> {
+        // Keep unselected providers' state out of callers' stack frames. The
+        // boundary precedes capability selection and preserves every check.
+        Box::pin(self.execute_with_execution_control_inner(
+            capability,
+            action,
+            params,
+            python_output_limit,
+            execution_deadline,
+            process_stop,
+        ))
+    }
+
+    async fn execute_with_execution_control_inner(
         &self,
         capability: &str,
         action: &str,
         mut params: Value,
         python_output_limit: Option<usize>,
         execution_deadline: Option<tokio::time::Instant>,
+        process_stop: Option<crate::process_stop::Control>,
     ) -> Result<Value> {
         if !self.media_allowed(capability) {
             bail!("Local media permission is disabled")
@@ -825,7 +908,10 @@ impl NodeEngine {
             })),
             "system.info" => self.system_info(action).await,
             "filesystem" => self.filesystem(action, params).await,
-            "process.exec" => self.process_exec(action, params, execution_deadline).await,
+            "process.exec" => {
+                self.process_exec(action, params, execution_deadline, process_stop)
+                    .await
+            }
             "application.control" | "launch_application" => {
                 self.application_control(action, params).await
             }
@@ -1012,7 +1098,14 @@ impl NodeEngine {
         action: &str,
         params: Value,
         execution_deadline: Option<tokio::time::Instant>,
+        mut process_stop: Option<crate::process_stop::Control>,
     ) -> Result<Value> {
+        if process_stop
+            .as_ref()
+            .is_some_and(|control| *control.0.borrow())
+        {
+            bail!("Granted process stopped before launch")
+        }
         if action != "run" || !self.policy.process.enabled {
             bail!("process.exec is not enabled for this action")
         }
@@ -1052,7 +1145,6 @@ impl NodeEngine {
             deadline,
         )
         .with_context(|| format!("could not start allowed program '{program}'"))?;
-        let mut tree = Some(tree);
         let stdout = child.stdout.take().context("process stdout unavailable")?;
         let stderr = child.stderr.take().context("process stderr unavailable")?;
         let limit = self.policy.process.max_output_bytes;
@@ -1065,25 +1157,56 @@ impl NodeEngine {
                 // A completed bounded command cannot leave a persistent child
                 // holding its output pipes. Keep ownership until a bounded OS
                 // observation; no new timeout/lease or PID-based termination.
-                if let Some(tree) = tree.take() {
-                    #[cfg(windows)]
-                    tree.terminate_and_observe_until(deadline).await?;
-                    drop(tree);
-                }
+                #[cfg(windows)]
+                tree.terminate_and_observe_until(deadline).await?;
                 result.map_err(anyhow::Error::from)
             };
-            let (status, stdout, stderr) = tokio::join!(
-                wait,
-                read_limited(stdout, limit),
-                read_limited(stderr, limit)
-            );
-            Ok::<_, anyhow::Error>((status?, stdout?, stderr?))
+            tokio::select! {
+                biased;
+                _ = async {
+                    if let Some(control) = &mut process_stop {
+                        control.requested().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    #[cfg(windows)]
+                    {
+                        // Keep the exact owned handle alive across cancellation
+                        // of pipe/root waits. Close/drop alone is not exit proof.
+                        tree.terminate_and_observe_until(deadline).await?;
+                        let status = child.wait().await?;
+                        let observation = crate::process_stop::Observation::observed();
+                        observation.validate()?;
+                        Ok::<_, anyhow::Error>(ProcessCollection::Stopped(json!({
+                            "success":false,"exit_code":status.code(),
+                            "stdout":"","stderr":"","truncated":true,
+                            "output_discarded_for_stop":true,
+                            "process_stop_observation":observation,
+                        })))
+                    }
+                    #[cfg(not(windows))]
+                    { bail!("Owned process stop observation unsupported") }
+                },
+                collected = async {
+                    let (status, stdout, stderr) = tokio::join!(
+                        wait,
+                        read_limited(stdout, limit),
+                        read_limited(stderr, limit)
+                    );
+                    Ok::<_, anyhow::Error>(ProcessCollection::Completed(status?, stdout?, stderr?))
+                } => collected,
+            }
         })
         .await;
         let (status, (stdout, stdout_truncated), (stderr, stderr_truncated)) = match collected {
-            Ok(result) => result?,
+            Ok(Ok(ProcessCollection::Stopped(stopped))) => return Ok(stopped),
+            Ok(Ok(ProcessCollection::Completed(status, stdout, stderr))) => {
+                (status, stdout, stderr)
+            }
+            Ok(Err(error)) => return Err(error),
             Err(_) => {
-                drop(tree.take());
+                drop(tree);
                 let _ = child.kill().await;
                 let _ = child.wait().await;
                 bail!("allowed process exceeded the {seconds}-second timeout")

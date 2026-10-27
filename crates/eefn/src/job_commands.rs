@@ -81,6 +81,10 @@ pub enum JobCommand {
     Stop {
         id: String,
     },
+    /// Inspect bounded owned-process stop observations; never signal or replay.
+    StopStatus {
+        id: String,
+    },
     /// Remove finished history only; does not stop active work.
     Remove {
         id: String,
@@ -138,7 +142,11 @@ impl JobCommand {
     pub fn mutates(&self) -> bool {
         !matches!(
             self,
-            Self::List {} | Self::Find { .. } | Self::Get { .. } | Self::Output { .. }
+            Self::List {}
+                | Self::Find { .. }
+                | Self::Get { .. }
+                | Self::Output { .. }
+                | Self::StopStatus { .. }
         )
     }
 
@@ -172,6 +180,10 @@ impl JobCommand {
             Self::Pause { id } => identified("jobs.pause", id),
             Self::Resume { id } => identified("jobs.resume", id),
             Self::Stop { id } => identified("jobs.stop", id),
+            Self::StopStatus { id } => {
+                crate::process_stop_status::Command { id: id.clone() }.validate()?;
+                identified("jobs.stop_status", id)
+            }
             Self::Remove { id } => identified("jobs.remove", id),
             Self::GenerateText {
                 prompt,
@@ -297,6 +309,16 @@ impl crate::NodeService {
             .await
         {
             Ok(data) => {
+                if let JobCommand::StopStatus { id } = &request.command {
+                    if !crate::process_stop_status::confirmed(
+                        &data,
+                        &crate::process_stop_status::Command { id: id.clone() },
+                        Some(&self.node_id),
+                        None,
+                    ) {
+                        bail!("Unconfirmed scoped stop status; no fallback")
+                    }
+                }
                 if kind == "jobs.create" {
                     result["creation_correlated"] =
                         json!(data["request_context"]["request_id"] == operation_id);

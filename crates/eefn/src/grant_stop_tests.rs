@@ -252,12 +252,30 @@ async fn stop_native_process_uses_owned_tree_cleanup_before_original_deadline() 
     .await
     .unwrap();
     assert!(start.elapsed() < Duration::from_secs(3));
-    assert_eq!(report.state, ReceiptState::Unknown);
+    assert_eq!(report.state, ReceiptState::Completed);
+    assert!(!report.success);
     assert_eq!(
         report.error_code.as_deref(),
-        Some("grant_stop_requested_effects_unknown")
+        Some("process_exit_unsuccessful")
     );
     assert!(report.confirms(&g));
+    assert!(crate::process_stop::confirmed(&g, &proof, &report).is_some());
+    assert!(!proof.external_effects_stopped);
+    assert!(!proof.execution_stopped);
+    let retained: crate::request_result::RetainedResult = serde_json::from_value(
+        ledger
+            .result(
+                &g.issuer_id,
+                &g.grant_id,
+                &definition_digest(&json!(g)).unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(retained.report.unwrap()).unwrap(),
+        serde_json::to_value(&report).unwrap()
+    );
 }
 
 #[test]
@@ -316,4 +334,167 @@ fn stop_control_scope_is_bounded_and_never_resends_original_private_payload() {
             .validate(&g.issuer_id, &g.session_id, &g.executor_node)
             .is_err()
     );
+}
+
+#[cfg(windows)]
+fn native_process_fixture(dir: &Path) -> (crate::NodeEngine, Arc<GrantLedger>, ExecutionGrant) {
+    let program = std::env::current_exe().unwrap();
+    let policy: crate::NodePolicy = serde_json::from_value(
+        json!({"process":{"enabled":true,"max_seconds":30,"allowed_executables":[program]}}),
+    )
+    .unwrap();
+    let runner = engine(dir).with_policy(policy).unwrap();
+    let ledger = GrantLedger::open(&dir.join("receipts.db"), Default::default(), "owner").unwrap();
+    let mut grant = super::super::tests::grant();
+    grant.capability = "process.exec".into();
+    grant.params =
+        json!({"program":program,"args":crate::process_lifetime::tests::args("loop",dir)});
+    grant.limits.max_execution_ms = 10_000;
+    (runner, ledger, grant)
+}
+#[cfg(windows)]
+#[tokio::test]
+async fn process_stop_before_first_poll_does_not_launch_or_invent_a_tree_observation() {
+    let dir = tempfile::tempdir().unwrap();
+    let (runner, ledger, grant) = native_process_fixture(dir.path());
+    let accepted = AcceptedGrant::prepare(
+        grant.clone(),
+        ledger.clone(),
+        &runner,
+        &grant.issuer_id,
+        &grant.session_id,
+        "owner",
+    )
+    .unwrap();
+    let intent = stop(&ledger, &grant).unwrap();
+    let report = accepted.run(&runner).await;
+    assert_eq!(report.state, ReceiptState::Unknown);
+    assert_eq!(
+        report.error_code.as_deref(),
+        Some("grant_stop_requested_effects_unknown")
+    );
+    assert!(report.data.is_null());
+    assert!(!dir.path().join("pids.json").exists());
+    assert!(crate::process_stop::confirmed(&grant, &intent, &report).is_none());
+    assert!(
+        AcceptedGrant::prepare(
+            grant.clone(),
+            ledger,
+            &runner,
+            &grant.issuer_id,
+            &grant.session_id,
+            "owner"
+        )
+        .is_err()
+    );
+}
+#[cfg(windows)]
+#[tokio::test]
+async fn owned_tree_exits_while_stop_journal_is_held_but_confirmation_waits_for_checkpoint() {
+    use crate::process_lifetime::tests::Processes;
+    let dir = tempfile::tempdir().unwrap();
+    let (runner, ledger, grant) = native_process_fixture(dir.path());
+    let accepted = AcceptedGrant::prepare(
+        grant.clone(),
+        ledger.clone(),
+        &runner,
+        &grant.issuer_id,
+        &grant.session_id,
+        "owner",
+    )
+    .unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let report = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(accepted.run(&runner));
+        let _ = tx.send(());
+        report
+    });
+    let processes = Processes::observe(dir.path()).await;
+    processes.alive();
+    let mut exited_while_held = false;
+    let mut reply_before_release = false;
+    let scope = Scope::from_grant(&grant).unwrap();
+    let intent = ledger
+        .request_stop_scope_after_signal(
+            &scope,
+            &grant.issuer_id,
+            &grant.session_id,
+            "owner",
+            || {
+                let end = Instant::now() + Duration::from_secs(2);
+                while Instant::now() < end && !processes.exited_now() {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                exited_while_held = processes.exited_now();
+                reply_before_release = rx.try_recv().is_ok();
+            },
+        )
+        .unwrap();
+    let report = worker.join().unwrap();
+    assert!(
+        exited_while_held,
+        "actual held root/descendant handles must be exited before journal release"
+    );
+    assert!(
+        !reply_before_release,
+        "no durable-result acknowledgement before final checkpoint"
+    );
+    assert!(crate::process_stop::confirmed(&grant, &intent, &report).is_some());
+    assert!(!intent.execution_stopped);
+    assert!(!intent.external_effects_stopped);
+    let retained: crate::request_result::RetainedResult = serde_json::from_value(
+        ledger
+            .result(
+                &grant.issuer_id,
+                &grant.grant_id,
+                &definition_digest(&json!(grant)).unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(json!(retained.report.unwrap()), json!(report));
+}
+#[cfg(windows)]
+#[tokio::test]
+async fn completed_process_is_not_relabelled_as_a_stop_observation() {
+    use crate::process_lifetime::tests::{Processes, args};
+    let dir = tempfile::tempdir().unwrap();
+    let (runner, ledger, mut grant) = native_process_fixture(dir.path());
+    grant.params["args"] = json!(args("exit", dir.path()));
+    let accepted = AcceptedGrant::prepare(
+        grant.clone(),
+        ledger.clone(),
+        &runner,
+        &grant.issuer_id,
+        &grant.session_id,
+        "owner",
+    )
+    .unwrap();
+    let task = tokio::spawn(async move { accepted.run(&runner).await });
+    let processes = Processes::observe(dir.path()).await;
+    std::fs::write(dir.path().join("release"), b"fixture").unwrap();
+    let report = tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(report.success);
+    assert!(processes.exited_now());
+    let intent = stop(&ledger, &grant).unwrap();
+    assert!(!intent.cancellation_signalled);
+    assert!(crate::process_stop::confirmed(&grant, &intent, &report).is_none());
+    let retained: crate::request_result::RetainedResult = serde_json::from_value(
+        ledger
+            .result(
+                &grant.issuer_id,
+                &grant.grant_id,
+                &definition_digest(&json!(grant)).unwrap(),
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(json!(retained.report.unwrap()), json!(report));
 }

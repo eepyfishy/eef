@@ -2851,6 +2851,19 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                 } = command
                 {
                     print!("{}", eefn::job_commands::render_stop(&value, id)?);
+                } else if let Commands::Jobs {
+                    command: eefn::job_commands::JobCommand::StopStatus { id },
+                } = command
+                {
+                    let node = load_file(&args.config)?.node_id;
+                    print!(
+                        "{}",
+                        eefn::process_stop_status::render(
+                            &value["data"],
+                            &eefn::process_stop_status::Command { id: id.clone() },
+                            Some(&node)
+                        )?
+                    );
                 } else if value.get("nodes").is_some() || value.get("report_type").is_some() {
                     println!("{}", serde_json::to_string_pretty(&value)?);
                 } else {
@@ -3963,6 +3976,22 @@ mod tests {
         }
         assert!(Args::try_parse_from(["eefn", "requests", "stop-receipt", "job"]).is_err());
         assert!(Args::try_parse_from(["eefn", "grants", "stop-receipt"]).is_err());
+    }
+    #[test]
+    fn process_stop_status_cli_needs_only_job_id_and_has_no_mutation_flags() {
+        let base = ["eefn", "jobs", "stop-status", "aabb"];
+        Args::try_parse_from(base).unwrap();
+        for flag in [
+            "--stop",
+            "--execute",
+            "--retry",
+            "--restart",
+            "--force",
+            "--grant-id",
+        ] {
+            assert!(Args::try_parse_from(base.into_iter().chain([flag])).is_err());
+        }
+        assert!(Args::try_parse_from(["eefn", "jobs", "stop-status"]).is_err());
     }
     #[test]
     fn python_policy_cli_has_bounded_limits_and_no_workload_authority() {

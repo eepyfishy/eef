@@ -459,6 +459,22 @@ mod credential_cli_tests {
         assert!(Args::try_parse_from(["eef", "requests", "stop-receipt", "job"]).is_err());
     }
     #[test]
+    fn process_stop_status_cli_needs_only_job_id_and_has_no_mutation_flags() {
+        let base = ["eef", "requests", "stop-status", "aabb"];
+        Args::try_parse_from(base).unwrap();
+        for flag in [
+            "--stop",
+            "--execute",
+            "--retry",
+            "--restart",
+            "--force",
+            "--grant-id",
+        ] {
+            assert!(Args::try_parse_from(base.into_iter().chain([flag])).is_err());
+        }
+        assert!(Args::try_parse_from(["eef", "requests", "stop-status"]).is_err());
+    }
+    #[test]
     fn remote_python_policy_cli_preserves_explicit_budgets_without_execution_flags() {
         let args = Args::try_parse_from([
             "eef",
@@ -1976,6 +1992,30 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     "remote_stop_confirmed":false,"error_code":"recovery_unconfirmed",
                     "note":"Inspect the request and reuse only this exact receipt. No replay, continuation, renewal or fallback."})));
             }
+            if let eef::request_planning::PlanningAction::StopStatus { id } = command {
+                let command = eefn::process_stop_status::Command { id: id.clone() };
+                command.validate()?;
+                let state =
+                    command_response(client.get(format!("{base}/api/diagnostics")).send().await?)
+                        .await?;
+                let runtime = state["runtime_id"].as_str().context("Missing runtime ID")?;
+                let result = command_response(
+                    client
+                        .post(format!("{base}/api/commands/jobs/stop-status"))
+                        .json(&eefn::process_stop_status::Request {
+                            schema_version: 1,
+                            expected_runtime_id: runtime.into(),
+                            command: command.clone(),
+                        })
+                        .send()
+                        .await?,
+                )
+                .await?;
+                if !eefn::process_stop_status::confirmed(&result, &command, None, Some(runtime)) {
+                    bail!("Unconfirmed stop status; no fallback")
+                }
+                return Ok(result);
+            }
             if let eef::request_planning::PlanningAction::Receipt { id, grant_id }
             | eef::request_planning::PlanningAction::Result { id, grant_id }
             | eef::request_planning::PlanningAction::StopReceipt { id, grant_id } = command
@@ -2042,6 +2082,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 eef::request_planning::PlanningAction::Receipt { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Result { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::StopReceipt { .. } => unreachable!(),
+                eef::request_planning::PlanningAction::StopStatus { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Execute { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Inspect { id } => {
                     eef::request_planning::PlanningCommand::Inspect { id: id.clone() }
@@ -2629,6 +2670,28 @@ async fn main() -> Result<()> {
                     )
                 {
                     print!("{}", eef::setup_model_check::render(&value));
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Requests {
+                            command: eef::request_planning::PlanningAction::StopStatus { .. }
+                        }
+                    )
+                {
+                    let Command::Requests {
+                        command: eef::request_planning::PlanningAction::StopStatus { id },
+                    } = command
+                    else {
+                        unreachable!()
+                    };
+                    print!(
+                        "{}",
+                        eefn::process_stop_status::render(
+                            &value,
+                            &eefn::process_stop_status::Command { id: id.clone() },
+                            None
+                        )?
+                    );
                 } else if !args.json && matches!(command, Command::Repair { .. }) {
                     print!("{}", eefn::package_repair::render(&value)?);
                 } else if !args.json && matches!(command, Command::Doctor { .. }) {

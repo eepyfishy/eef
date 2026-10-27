@@ -902,6 +902,17 @@ impl Runtime {
                     )),
                 }
             }
+            "jobs.stop_status" => {
+                match serde_json::from_value::<eefn::process_stop_status::Command>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(command) => {
+                        self.inspect_process_stop_status(command, Some(context.origin_node()))
+                            .await
+                    }
+                    Err(_) => Err(anyhow::anyhow!("Invalid stop status command")),
+                }
+            }
             kind if kind.starts_with("jobs.") => {
                 self.engine
                     .job_request(kind, message["payload"].clone(), Some(context))

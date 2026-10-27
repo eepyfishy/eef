@@ -31,6 +31,7 @@ pub mod node_relay;
 pub mod node_setup;
 mod peer_jobs;
 mod pipeline_planning;
+pub mod process_stop_status;
 pub mod request_approval;
 pub mod request_drafts;
 pub mod request_execution;

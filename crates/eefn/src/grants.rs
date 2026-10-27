@@ -761,6 +761,7 @@ pub struct AcceptedGrant {
     accepted_wall: u64,
     final_checkpoint_attempted: bool,
     stop: stop::Watch,
+    process_stop: Option<tokio::sync::watch::Sender<bool>>,
 }
 impl Drop for AcceptedGrant {
     fn drop(&mut self) {
@@ -872,6 +873,7 @@ impl AcceptedGrant {
             accepted_wall,
             final_checkpoint_attempted: false,
             stop,
+            process_stop: None,
         })
     }
     pub fn acknowledgement(&self) -> GrantReport {
@@ -880,8 +882,12 @@ impl AcceptedGrant {
     pub(crate) fn execution_deadline(&self) -> std::time::Instant {
         self.deadline
     }
-    pub async fn run(self, engine: &crate::NodeEngine) -> GrantReport {
+    pub async fn run(mut self, engine: &crate::NodeEngine) -> GrantReport {
         let g = self.grant.clone();
+        let process_stop = crate::process_stop::control(&g).map(|(sender, control)| {
+            self.process_stop = Some(sender);
+            control
+        });
         let ledger = self.ledger.clone();
         let execution_deadline = self.deadline;
         let mut params = g.params.clone();
@@ -894,12 +900,13 @@ impl AcceptedGrant {
                 crate::pipeline_runtime::execute(engine, &g, &ledger, execution_deadline).await
             } else {
                 engine
-                    .execute_with_python_output_limit(
+                    .execute_with_execution_control(
                         &g.capability,
                         &g.action,
                         params,
                         Some(g.limits.max_result_bytes),
                         Some(tokio::time::Instant::from_std(execution_deadline)),
+                        process_stop,
                     )
                     .await
             }
@@ -942,14 +949,23 @@ impl AcceptedGrant {
             tokio::pin!(operation);
             let deadline = self.deadline;
             let mut tick = tokio::time::interval(Duration::from_millis(100));
+            let mut process_stopping = false;
             loop {
-                if *self.stop.receiver.borrow() {
-                    break GrantReport::new(
-                        g,
-                        ReceiptState::Unknown,
-                        Value::Null,
-                        Some("grant_stop_requested_effects_unknown"),
-                    );
+                if *self.stop.receiver.borrow() && !process_stopping {
+                    if let Some(control) = self.process_stop.take() {
+                        // This channel belongs only to this admitted native
+                        // operation. Continue driving its bounded OS cleanup;
+                        // unsupported providers retain the existing unknown path.
+                        control.send_replace(true);
+                        process_stopping = true;
+                    } else {
+                        break GrantReport::new(
+                            g,
+                            ReceiptState::Unknown,
+                            Value::Null,
+                            Some("grant_stop_requested_effects_unknown"),
+                        );
+                    }
                 }
                 let now = clock.wall_ms();
                 let expected = self.accepted_wall.saturating_add(
@@ -984,7 +1000,8 @@ impl AcceptedGrant {
                         Ok(data) if serde_json::to_vec(&data).is_ok_and(|v|v.len()<=g.limits.max_result_bytes)=>completed_outcome(g,data),
                         Ok(_)=>GrantReport::new(g,ReceiptState::Completed,Value::Null,Some("result_too_large")),
                         Err(error)=>GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some(
-                            error.downcast_ref::<crate::python::BridgeFailure>().map(|failure|failure.code()).unwrap_or("execution_failed_effects_unknown"))),
+                            if process_stopping { "grant_stop_requested_effects_unknown" } else {
+                            error.downcast_ref::<crate::python::BridgeFailure>().map(|failure|failure.code()).unwrap_or("execution_failed_effects_unknown") })),
                     }
                 }
             }

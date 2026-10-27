@@ -63,6 +63,8 @@ pub mod pipeline;
 pub mod pipeline_progress;
 mod pipeline_runtime;
 mod process_lifetime;
+pub mod process_stop;
+pub mod process_stop_status;
 pub mod protocol;
 pub mod python;
 pub mod python_policy;

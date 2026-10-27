@@ -13,6 +13,12 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [owned-process stop observation](PROCESS-STOP-OBSERVATION.md) increment is in
+development after accepted checkpoint `00e3c3d`. It retains the original grant
+deadline while observing a direct Windows process tree after exact stop intent,
+with read-only command status and explicit coverage gaps. It does not close
+general strong-stop, continuous-work, resource or physical acceptance gates.
+
 The [one-shot setup model check](SETUP-MODEL-CHECKS.md) is a new development
 increment toward separately consented automatic setup verification. Immutable
 exact-model consent waits in the backend and uses the existing review/grant

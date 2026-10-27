@@ -391,6 +391,8 @@ pub enum PlanningAction {
         #[arg(long)]
         grant_id: String,
     },
+    /// Inspect exact stop-target process observations without grant IDs or mutation.
+    StopStatus { id: String },
     /// Inspect one issued attempt's current authenticated executor receipt; never replay or reconcile.
     Receipt {
         id: String,
