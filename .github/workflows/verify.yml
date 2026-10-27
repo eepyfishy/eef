@@ -85,6 +85,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/test-backend-boundary.mjs
           exit $LASTEXITCODE
+      - name: Windows firewall command mocks (no policy changes)
+        if: ${{ !cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless' }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./tools/test-windows-firewall.ps1
       - name: Read-only MSI payload planning (synthetic)
         run: |
           node tools/test-msi-version-policy.mjs

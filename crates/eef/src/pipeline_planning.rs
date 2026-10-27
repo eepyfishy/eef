@@ -9,17 +9,35 @@ use eefn::{network::PeerRecord, pipeline::FinitePipeline};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
+#[cfg(test)]
 pub(crate) fn definition(params: &Value, node: Option<&str>) -> Result<FinitePipeline> {
+    definition_for("pipeline.run", params, node)
+}
+pub(crate) fn definition_for(
+    capability: &str,
+    params: &Value,
+    node: Option<&str>,
+) -> Result<FinitePipeline> {
     if params
         .as_object()
         .is_none_or(|p| p.len() != 1 || !p.contains_key("pipeline"))
     {
         bail!("Expected one exact pipeline definition")
     }
+    if capability == eefn::conditional_pipeline::CAPABILITY {
+        let definition: eefn::conditional_pipeline::ConditionalPipeline =
+            serde_json::from_value(params["pipeline"].clone())?;
+        definition.validate_for_executor(node)?;
+        return Ok(definition.graph);
+    }
+    if capability != "pipeline.run" {
+        bail!("Unsupported compound pipeline operation")
+    }
     let definition: FinitePipeline = serde_json::from_value(params["pipeline"].clone())?;
     definition.validate_for_executor(node)?;
     Ok(definition)
 }
+#[cfg(test)]
 pub(crate) fn validate_peer(
     definition: &FinitePipeline,
     peer: &PeerRecord,
@@ -27,8 +45,21 @@ pub(crate) fn validate_peer(
     models: &ModelRegistry,
     context: Option<&eefn::context::RequestContext>,
 ) -> Result<()> {
+    validate_peer_for("pipeline.run", definition, peer, registry, models, context)
+}
+pub(crate) fn validate_peer_for(
+    capability: &str,
+    definition: &FinitePipeline,
+    peer: &PeerRecord,
+    registry: &CapabilityRegistry,
+    models: &ModelRegistry,
+    context: Option<&eefn::context::RequestContext>,
+) -> Result<()> {
+    if !eefn::pipeline::is_compound(capability) {
+        bail!("Unsupported compound pipeline operation")
+    }
     definition.validate_for_executor(Some(&peer.node_id))?;
-    if !peer.capabilities.iter().any(|c| c == "pipeline.run") {
+    if !peer.capabilities.iter().any(|c| c == capability) {
         bail!("Node does not advertise finite pipeline support")
     }
     let one = BTreeSet::from([peer.node_id.clone()]);
@@ -103,6 +134,7 @@ fn validate_literals(
     CapabilityRegistry::validate_properties_params(&properties, params)
 }
 pub(crate) async fn select(
+    capability: &str,
     params: &Value,
     constraints: &Value,
     context: Option<&eefn::context::RequestContext>,
@@ -111,9 +143,9 @@ pub(crate) async fn select(
     server: &eefn::NodeServer,
     permitted: Option<&BTreeSet<String>>,
 ) -> Result<String> {
-    let definition = definition(params, None)?;
+    let definition = definition_for(capability, params, None)?;
     let mut suitable = BTreeSet::new();
-    let candidates = registry.find("pipeline.run", "run");
+    let candidates = registry.find(capability, "run");
     if candidates.len() > 256 {
         bail!("Too many pipeline candidates; constrain the route")
     }
@@ -124,19 +156,19 @@ pub(crate) async fn select(
         let Ok(peer) = crate::request_planning::live_peer(
             server,
             &provider.node_id,
-            "pipeline.run",
+            capability,
             registry.scheduling_policy().freshness_seconds,
         )
         .await
         else {
             continue;
         };
-        if validate_peer(&definition, &peer, registry, models, context).is_ok() {
+        if validate_peer_for(capability, &definition, &peer, registry, models, context).is_ok() {
             suitable.insert(provider.node_id);
         }
     }
     registry
-        .find_best_scoped("pipeline.run", "run", constraints, context, Some(&suitable))
+        .find_best_scoped(capability, "run", constraints, context, Some(&suitable))
         .map(|provider| provider.node_id)
         .context("No disclosed current executor supports every exact pipeline stage")
 }
@@ -188,6 +220,22 @@ mod tests {
         let mut other = definition.clone();
         other.steps[0].resource_id = Some("node-b::files".into());
         assert!(validate_peer(&other, &peer, &registry, &models, None).is_err());
+    }
+    #[test]
+    fn conditional_pipeline_requires_its_exact_advertisement_and_all_possible_children() {
+        let (graph, mut peer, registry, models) = fixture();
+        let cap = eefn::conditional_pipeline::CAPABILITY;
+        let params = json!({"pipeline":{"schema_version":1,"graph":graph,"conditions":{"infer":{"source_step":"read","pointer":"/content","operator":"equal","expected":"trigger"}}}});
+        let decoded = definition_for(cap, &params, Some(&peer.node_id)).unwrap();
+        assert!(definition(&params, None).is_err());
+        assert!(validate_peer_for(cap, &decoded, &peer, &registry, &models, None).is_err());
+        peer.capabilities.push(cap.into());
+        validate_peer_for(cap, &decoded, &peer, &registry, &models, None).unwrap();
+        peer.capabilities.retain(|c| c != "llm.infer");
+        assert!(validate_peer_for(cap, &decoded, &peer, &registry, &models, None).is_err());
+        let mut bad = params;
+        bad["pipeline"]["conditions"]["infer"]["source_step"] = json!("infer");
+        assert!(definition_for(cap, &bad, None).is_err());
     }
     #[test]
     fn only_bound_data_fields_defer_provider_type_validation() {

@@ -9,6 +9,23 @@ pub const MAX_STEPS: usize = 16;
 pub const MAX_DEFINITION_BYTES: usize = 64 * 1024;
 pub const MAX_RETAINED_BYTES: usize = 1024 * 1024;
 
+pub fn is_compound(capability: &str) -> bool {
+    matches!(
+        capability,
+        "pipeline.run" | crate::conditional_pipeline::CAPABILITY
+    )
+}
+
+/// Shared static graph view after validating the exact parent operation kind.
+/// Neither this view nor its child operation shapes authorize execution.
+pub(crate) fn graph_from_grant(grant: &crate::grants::ExecutionGrant) -> Result<FinitePipeline> {
+    if grant.capability == crate::conditional_pipeline::CAPABILITY {
+        Ok(crate::conditional_pipeline::ConditionalPipeline::from_grant(grant)?.graph)
+    } else {
+        FinitePipeline::from_grant(grant)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FinitePipeline {
@@ -346,7 +363,7 @@ pub(crate) fn encoded_bytes(value: &impl Serialize, limit: usize) -> Result<usiz
     serde_json::to_writer(&mut counter, value)?;
     Ok(counter.bytes)
 }
-fn valid_pointer(pointer: &str) -> bool {
+pub(crate) fn valid_pointer(pointer: &str) -> bool {
     if pointer.len() > 256
         || pointer.chars().any(char::is_control)
         || (!pointer.is_empty() && !pointer.starts_with('/'))

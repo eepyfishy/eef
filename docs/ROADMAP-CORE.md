@@ -13,6 +13,14 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [conditional-stage increment](CONDITIONAL-PIPELINES.md) is in development as
+an event-gating prerequisite. It keeps finite grant/permission/deadline rules,
+reserves every possible provider and reports explicit skips instead of running
+heavy analysis on a false condition. Twelve added focused tests, both 1,229-test
+local modes, all 38 native cases and separate cached-CPU/browser checks pass;
+exact-revision hosted acceptance remains separate. It does not replace the continuous
+sessions, listening controls, detectors, event transport or resource gates below.
+
 The [owned-process stop observation](PROCESS-STOP-OBSERVATION.md) increment passes
 development acceptance at `dd6ae21`. It retains the original grant
 deadline while observing a direct Windows process tree after exact stop intent,

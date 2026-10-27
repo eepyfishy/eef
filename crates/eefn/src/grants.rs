@@ -250,6 +250,10 @@ impl ExecutionGrant {
             crate::pipeline::FinitePipeline::from_grant(self)?;
             return Ok(());
         }
+        if self.capability == crate::conditional_pipeline::CAPABILITY {
+            crate::conditional_pipeline::ConditionalPipeline::from_grant(self)?;
+            return Ok(());
+        }
         if self.capability == "peer.transfer" {
             crate::peer::admission::Definition::from_grant(self)?;
             return Ok(());
@@ -452,7 +456,7 @@ impl GrantReport {
                 && g.capability == "process.exec"
                 && g.action == "run"
                 && self.data.get("success").and_then(Value::as_bool) == Some(false))
-            && (g.capability != "pipeline.run"
+            && (!crate::pipeline::is_compound(&g.capability)
                 || self.state != ReceiptState::Completed
                 || (self.data.is_null()
                     && !self.success
@@ -896,7 +900,7 @@ impl AcceptedGrant {
             params["backend"] = json!(g.backend);
         }
         let operation = async {
-            if g.capability == "pipeline.run" {
+            if crate::pipeline::is_compound(&g.capability) {
                 crate::pipeline_runtime::execute(engine, &g, &ledger, execution_deadline).await
             } else {
                 engine
@@ -1039,7 +1043,7 @@ fn completed_outcome(grant: &ExecutionGrant, data: Value) -> GrantReport {
             Some("peer_result_unconfirmed"),
         );
     }
-    if grant.capability == "pipeline.run" {
+    if crate::pipeline::is_compound(&grant.capability) {
         return match crate::pipeline_runtime::confirmed_result(grant, &data) {
             Ok(success) => GrantReport::new(
                 grant,

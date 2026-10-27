@@ -115,7 +115,10 @@ impl DraftRecord {
         if let Some(input) = &self.concrete_input {
             input.validate()?;
             if !crate::request_planning::METHOD_TEMPLATES.contains(&input.template.as_str())
-                && !matches!(input.template.as_str(), "local_pipeline" | "peer_transfer")
+                && !matches!(
+                    input.template.as_str(),
+                    "local_pipeline" | "conditional_pipeline" | "peer_transfer"
+                )
             {
                 bail!("Unsupported explicit one-step request template")
             }
@@ -131,10 +134,12 @@ impl DraftRecord {
                 bail!("duplicate review receipt")
             }
             let explicit_pipeline = index == 0
-                && self
-                    .concrete_input
-                    .as_ref()
-                    .is_some_and(|input| input.template == "local_pipeline");
+                && self.concrete_input.as_ref().is_some_and(|input| {
+                    matches!(
+                        input.template.as_str(),
+                        "local_pipeline" | "conditional_pipeline"
+                    )
+                });
             let output = serde_json::to_vec(&revision.proposal)?;
             if explicit_pipeline {
                 crate::interpretation::validate_with_cap_limit(

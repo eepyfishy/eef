@@ -8,6 +8,11 @@ pub fn template_steps(
     Ok(match template {
         "system_info" => vec![("system.info", "run", &[])],
         "local_pipeline" => vec![("pipeline.run", "run", &["pipeline"])],
+        "conditional_pipeline" => vec![(
+            crate::conditional_pipeline::CAPABILITY,
+            "run",
+            &["pipeline"],
+        )],
         "peer_transfer" => vec![
             ("peer.transfer", "send", &[]),
             ("peer.transfer", "receive", &[]),
@@ -111,9 +116,20 @@ pub fn concrete_capabilities(input: &PlanInput) -> Result<Vec<String>> {
     input.validate()?;
     let steps = template_steps(&input.template)?;
     let mut capabilities = vec![steps[0].0.to_owned()];
-    if input.template == "local_pipeline" {
-        let definition: crate::pipeline::FinitePipeline =
-            serde_json::from_value(input.params["pipeline"].clone())?;
+    if matches!(
+        input.template.as_str(),
+        "local_pipeline" | "conditional_pipeline"
+    ) {
+        let definition = if input.template == "conditional_pipeline" {
+            serde_json::from_value::<crate::conditional_pipeline::ConditionalPipeline>(
+                input.params["pipeline"].clone(),
+            )?
+            .graph
+        } else {
+            serde_json::from_value::<crate::pipeline::FinitePipeline>(
+                input.params["pipeline"].clone(),
+            )?
+        };
         for step in definition.steps {
             if !capabilities.contains(&step.capability) {
                 capabilities.push(step.capability);
@@ -151,7 +167,10 @@ impl PlanInput {
         {
             bail!("Invalid or oversized concrete plan input")
         }
-        if self.template == "local_pipeline" {
+        if matches!(
+            self.template.as_str(),
+            "local_pipeline" | "conditional_pipeline"
+        ) {
             if self
                 .params
                 .as_object()
@@ -159,10 +178,18 @@ impl PlanInput {
             {
                 bail!("Local pipeline input requires one exact definition")
             }
-            let definition: crate::pipeline::FinitePipeline =
-                serde_json::from_value(self.params["pipeline"].clone())?;
-            definition
-                .validate_for_executor(self.constraints.get("node_id").and_then(Value::as_str))?;
+            let executor = self.constraints.get("node_id").and_then(Value::as_str);
+            if self.template == "conditional_pipeline" {
+                serde_json::from_value::<crate::conditional_pipeline::ConditionalPipeline>(
+                    self.params["pipeline"].clone(),
+                )?
+                .validate_for_executor(executor)?;
+            } else {
+                serde_json::from_value::<crate::pipeline::FinitePipeline>(
+                    self.params["pipeline"].clone(),
+                )?
+                .validate_for_executor(executor)?;
+            }
             if self
                 .constraints
                 .as_object()

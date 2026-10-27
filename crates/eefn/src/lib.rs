@@ -14,6 +14,7 @@ pub mod automation_occurrence;
 pub mod automation_policy;
 pub mod bundle_selection;
 pub mod client;
+pub mod conditional_pipeline;
 pub mod connection_commands;
 pub mod console;
 pub mod context;

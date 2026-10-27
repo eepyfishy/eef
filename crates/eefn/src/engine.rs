@@ -509,6 +509,7 @@ impl NodeEngine {
             .collect::<Vec<_>>();
         if self.pipeline_enabled {
             values.push("pipeline.run".into());
+            values.push(crate::conditional_pipeline::CAPABILITY.into());
         }
         if self.service.is_some() {
             values.push("node.configure".into());
@@ -658,11 +659,11 @@ impl NodeEngine {
             }
             return Ok(());
         }
-        if g.capability == "pipeline.run" {
+        if crate::pipeline::is_compound(&g.capability) {
             if !self.pipeline_enabled {
                 bail!("Pipeline compiler/runtime integration is not enabled")
             }
-            let definition = crate::pipeline::FinitePipeline::from_grant(g)?;
+            let definition = crate::pipeline::graph_from_grant(g)?;
             for step in &definition.steps {
                 let params = step.bound_params()?;
                 self.check_operation_policy(step.operation(&params), &g.limits, admission)?;
@@ -870,7 +871,7 @@ impl NodeEngine {
         if !self.media_allowed(capability) {
             bail!("Local media permission is disabled")
         }
-        if matches!(capability, "pipeline.run" | "peer.transfer") {
+        if crate::pipeline::is_compound(capability) || capability == "peer.transfer" {
             return Err(crate::execution_boundary::ExecutionGrantRequired.into());
         }
         if let Some(id) = params.get("resource_id") {

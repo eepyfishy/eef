@@ -43,12 +43,23 @@ function Assert-ExactRule($Rules){
     }
 }
 if($existing.Count){Assert-ExactRule $existing}
-$otherAllows=@($persistent | Where-Object {$_.Name -cne $ruleName -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and $_.Enabled -eq 'True'} |
-    Get-NetFirewallApplicationFilter -ErrorAction Stop | Where-Object {$_.Program -ieq $program})
+$otherAllowRules=@($persistent | Where-Object {$_.Name -cne $ruleName -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' -and $_.Enabled -eq 'True'})
+$otherAllows=@()
+if($otherAllowRules.Count){
+    $otherAllows=@($otherAllowRules | Get-NetFirewallApplicationFilter -ErrorAction Stop | Where-Object {$_.Program -ieq $program})
+}
 # A broad block may have additional conditions. Report conservatively, never
 # delete/override it or promise that a new allow rule proves connectivity.
-$possibleBlocks=@(Get-NetFirewallRule -PolicyStore ActiveStore -Direction Inbound -Action Block -Enabled True -ErrorAction Stop |
-    Get-NetFirewallApplicationFilter -ErrorAction Stop | Where-Object {$_.Program -ieq $program -or $_.Program -eq 'Any'})
+# Enumerate then filter: empty CIM-filtered queries throw on Windows. Never
+# pipe zero rules into a filter cmdlet, which can enumerate unscoped filters.
+# Genuine policy-read failures remain terminating, not an empty allow decision.
+$possibleBlockRules=@(Get-NetFirewallRule -PolicyStore ActiveStore -ErrorAction Stop |
+    Where-Object {$_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' -and $_.Enabled -eq 'True'})
+$possibleBlocks=@()
+if($possibleBlockRules.Count){
+    $possibleBlocks=@($possibleBlockRules | Get-NetFirewallApplicationFilter -ErrorAction Stop |
+        Where-Object {$_.Program -ieq $program -or $_.Program -eq 'Any'})
+}
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 try{$admin=([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)}finally{$identity.Dispose()}
 $created=$false

@@ -249,7 +249,10 @@ pub fn validate_concrete(
     allowed_capabilities: &[String],
 ) -> Result<ValidatedInterpretation> {
     input.validate()?;
-    let limit = if input.input.template == "local_pipeline" {
+    let limit = if matches!(
+        input.input.template.as_str(),
+        "local_pipeline" | "conditional_pipeline"
+    ) {
         crate::pipeline::MAX_STEPS + 1
     } else {
         MAX_HINTS

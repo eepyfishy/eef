@@ -473,6 +473,77 @@ def handle(action,params):
  assert.equal((await owner(['automation-occurrences','list','--policy',policy.id])).result.items.length,2);
  for(const p of automaticJobs)assert.equal(JSON.stringify(await review.inspect(p.plan_id)),JSON.stringify(p));
  assert.equal((await json(origin.url+'/api/config')).config.permissions.filesystem.read,false,'origin feature is never widened');
+ // Conditional stages remain finite, reviewed and fixed to this executor. This
+ // is a prerequisite for local event gating, not continuous capture/listening.
+ checkpoint('conditional-pipelines');
+ await until(async()=>(await json(executor.url+'/api/status')).capabilities.includes('pipeline.when'),'conditional pipeline advertisement');
+ const conditionalCallsBefore=calls.length,conditionalJobs=[];
+ const conditional=(expected,target,pointer='/pong')=>({template:'conditional_pipeline',constraints:{node_id:executor.id},params:{pipeline:{schema_version:1,graph:{schema_version:1,max_retained_bytes:2048,steps:[
+  {id:'sample',capability:'system.ping',action:'run',params:{}},
+  {id:'infer',capability:'llm.infer',action:'run',model_id:'selected',backend:'ollama',params:{prompt:'conditional-model-input',max_tokens:16}},
+  {id:'write',capability:'filesystem',action:'write',params:{path:target},inputs:[{parameter:'content',source_step:'infer',pointer:'/content'}]}
+ ]},conditions:{infer:{source_step:'sample',pointer,operator:'equal',expected}}}}});
+ async function conditionalReceipt(id){
+  const p=await review.inspect(id);assert.equal(p.execution.attempts.length,1);const grant=p.execution.attempts[0].grant;
+  assert.equal(grant.capability,'pipeline.when');assert.equal(grant.executor_node,executor.id);assert.equal(grant.request_context.origin_node,origin.id);
+  const before=await readFile(executor.config+'.grant-receipts.sqlite3');
+  const direct=(await local(executor,['grants','receipt','--id',grant.grant_id])).receipt;
+  assert.deepEqual((await local(origin,['requests','receipt',id,'--grant-id',grant.grant_id])).result.receipt,direct);
+  assert.deepEqual((await owner(['requests','receipt',id,'--grant-id',grant.grant_id])).receipt,direct);
+  assert.equal(direct.pipeline_progress??null,null,'skipped stages must not be relabelled by the legacy completed-step schema');
+  assert.deepEqual(await readFile(executor.config+'.grant-receipts.sqlite3'),before,'conditional receipt inspection cannot write');
+  conditionalJobs.push({id,grant_id:grant.grant_id,grant_sha256:direct.grant_sha256??null,state:direct.state});return p;
+ }
+ const skippedTarget=join(work,'conditional-skipped.txt'),conditionalInput=conditional(false,skippedTarget),conditionalFile=join(scratch,'conditional-input.json');
+ const conditionalBytes=JSON.stringify({schema_version:1,...conditionalInput});await writeFile(conditionalFile,conditionalBytes);
+ const conditionalOperation=randomUUID(),conditionalArgs=['requests','submit','--text','Only analyze when the declared sample condition matches.','--title','Conditional local analysis','--file',conditionalFile,'--operation-id',conditionalOperation];
+ const conditionalSaved=await local(origin,conditionalArgs),skipPlan=conditionalSaved.result.plan;
+ assert.equal(skipPlan.status,'awaiting_approval');assert.equal(skipPlan.tasks.length,1);assert.equal(skipPlan.tasks[0].capability,'pipeline.when');
+ assert.deepEqual(skipPlan.draft.proposals[0].proposal.suggested_capabilities,['pipeline.when','system.ping','llm.infer','filesystem']);
+ assert.equal(skipPlan.bindings[0].node_id,executor.id);assert.equal(calls.length,conditionalCallsBefore);assert.equal(await exists(skippedTarget),false);
+ const identical=await local(origin,conditionalArgs);assert.equal(identical.result.creation_reused,true);assert.equal(identical.result.plan.id,skipPlan.id);
+ const altered=structuredClone(conditionalInput);altered.params.pipeline.conditions.infer.expected=true;await writeFile(conditionalFile,JSON.stringify({schema_version:1,...altered}));
+ try{const refused=await cli('eefn',origin.config,conditionalArgs,undefined,false);assert.equal(refused.success,false);assert.equal(refused.dispatched,false);}
+ finally{await writeFile(conditionalFile,conditionalBytes);}
+ assert.equal((await review.inspect(skipPlan.id)).planning.input.params.pipeline.conditions.infer.expected,false,'a reused source cannot replace its condition');
+ const skipCommand=await review.approve(skipPlan,{max_execution_ms:8000,max_result_bytes:8192});assert.equal(calls.length,conditionalCallsBefore);
+ await review.start(skipCommand);const skippedReport=await review.result(skipPlan.id);
+ assert.equal(skippedReport.state,'completed');assert.equal(skippedReport.success,true);assert.equal(skippedReport.data.report_type,'conditional_pipeline_result');
+ assert.deepEqual(skippedReport.data.outcomes.map(o=>o.state),['completed','skipped_condition','skipped_dependency']);assert.equal(skippedReport.data.outcomes[1].condition_matched,false);assert.equal(skippedReport.data.outcomes[2].skipped_dependency,'infer');assert.equal(skippedReport.data.output,null);
+ assert.equal(calls.length,conditionalCallsBefore);assert.equal(await exists(skippedTarget),false);assert.equal((await conditionalReceipt(skipPlan.id)).status,'completed');
+ await review.start(skipCommand);assert.equal(calls.length,conditionalCallsBefore);assert.equal((await review.inspect(skipPlan.id)).execution.attempts.length,1);
+ const trueTarget=join(work,'conditional-true.txt'),truePlan=await review.save(conditional(true,trueTarget));
+ assert.equal(calls.length,conditionalCallsBefore);const trueCommand=await review.approve(truePlan,{max_execution_ms:8000,max_result_bytes:8192});
+ await review.start(trueCommand);const trueReport=await review.result(truePlan.id);assert.equal(trueReport.state,'completed');assert.equal(trueReport.success,true);
+ assert.deepEqual(trueReport.data.outcomes.map(o=>o.state),['completed','completed','completed']);assert.equal(trueReport.data.outcomes[1].condition_matched,true);
+ assert.equal(await readFile(trueTarget,'utf8'),'synthetic local result: conditional-model-input');assert.equal(calls.length,conditionalCallsBefore+1);
+ assert.equal(JSON.stringify(trueReport.data).includes('synthetic local result:'),false,'intermediate model text stays local');await conditionalReceipt(truePlan.id);
+ await review.start(trueCommand);assert.equal(calls.length,conditionalCallsBefore+1);assert.equal((await review.inspect(truePlan.id)).execution.attempts.length,1);
+ const missingTarget=join(work,'conditional-missing.txt'),missingPlan=await review.save(conditional(false,missingTarget,'/missing'));
+ const missingCommand=await review.approve(missingPlan,{max_execution_ms:8000,max_result_bytes:8192});await review.start(missingCommand);
+ const missingReport=await review.result(missingPlan.id);assert.equal(missingReport.state,'unknown');assert.equal(missingReport.success,false);assert.equal(missingReport.data,null);assert.equal(await exists(missingTarget),false);assert.equal(calls.length,conditionalCallsBefore+1);await conditionalReceipt(missingPlan.id);
+ const conditionalNative=join(scratch,'conditional-native-failed'),conditionalAfterFailure=join(work,'conditional-after-failure.txt');await mkdir(conditionalNative);
+ const nativeConditional={template:'conditional_pipeline',constraints:{node_id:executor.id},params:{pipeline:{schema_version:1,graph:{schema_version:1,max_retained_bytes:2048,steps:[
+  {id:'sample',capability:'system.ping',action:'run',params:{}},
+  {id:'native',capability:'process.exec',action:'run',params:{program:helper,args:['fail',conditionalNative],timeout_seconds:20}},
+  {id:'write',capability:'filesystem',action:'write',params:{path:conditionalAfterFailure,content:'never after failure'}}
+ ]},conditions:{native:{source_step:'sample',pointer:'/pong',operator:'equal',expected:true}}}}};
+ const conditionalNativePlan=await review.save(nativeConditional),conditionalNativeCommand=await review.approve(conditionalNativePlan,{max_execution_ms:8000,max_result_bytes:8192});
+ assert.equal(await exists(join(conditionalNative,'pids.json')),false);await review.start(conditionalNativeCommand);
+ await until(()=>exists(join(conditionalNative,'pids.json')),'conditional native stage started');const conditionalIdentities=await readFile(join(conditionalNative,'pids.json'),'utf8');
+ const conditionalObserver=spawnCommand(helper,['observe',conditionalNative]);await until(()=>exists(join(conditionalNative,'observer-ready')),'conditional native verified handles held');
+ await writeFile(join(conditionalNative,'release'),'release isolated conditional fixture');const conditionalObserved=await conditionalObserver.result;
+ assert.equal(conditionalObserved.code,0);const conditionalProof=JSON.parse(conditionalObserved.out);assert.equal(conditionalProof.both_exited,true);assert.equal(conditionalProof.held_creation_verified_handles,true);
+ const conditionalFailedReport=await review.result(conditionalNativePlan.id);assert.equal(conditionalFailedReport.state,'completed');assert.equal(conditionalFailedReport.success,false);assert.equal(conditionalFailedReport.error_code,'pipeline_stage_unsuccessful');
+ assert.deepEqual(conditionalFailedReport.data.outcomes.map(o=>o.state),['completed','failed']);assert.equal(conditionalFailedReport.data.output.exit_code,17);assert.equal(await exists(conditionalAfterFailure),false);assert.equal((await conditionalReceipt(conditionalNativePlan.id)).status,'failed');
+ await review.start(conditionalNativeCommand);assert.equal(await readFile(join(conditionalNative,'pids.json'),'utf8'),conditionalIdentities);assert.equal((await review.inspect(conditionalNativePlan.id)).execution.attempts.length,1);
+ const conditionalHistory=await Promise.all(conditionalJobs.map(async row=>({id:row.id,plan:JSON.stringify(await review.inspect(row.id))})));
+ const beforeConditionalRestart=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);
+ await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==beforeConditionalRestart&&(await json(eef+'/api/diagnostics')).registered_node_count===2,'conditional coordinator restart');
+ for(const row of conditionalHistory)assert.equal(JSON.stringify(await review.inspect(row.id)),row.plan,'conditional history is immutable across restart');
+ assert.equal(calls.length,conditionalCallsBefore+1);assert.equal(await exists(skippedTarget),false);assert.equal(await exists(missingTarget),false);assert.equal(await exists(conditionalAfterFailure),false);
+ assert.equal((await owner(['automation-occurrences','list','--policy',policy.id])).result.items.length,2,'conditional history cannot rearm the previous exhausted schedule');
+ await writeFile(join(scratch,'conditional-jobs-results.json'),JSON.stringify({passed:true,jobs:conditionalJobs,one_parent_attempt_each:true,additional_model_calls:1,skipped_model_calls:0,unknown_not_false:true,native_creation_verified_exit_observed:true,immutable_source_condition:true,history_survives_restart:true,physical_two_pc:false,continuous_workloads:false},null,2));
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,command_driven:true,no_ui_controller:true,pinned_tls_two_logical_nodes:true,physical_two_pc:false,synthetic_model:true,real_model_quality:false,
   explicit_source_compilation:true,no_work_before_approval_and_execution:true,one_local_compound_parent:true,atomic_child_provider_accounting:true,exact_stage_definitions:true,local_dataflow:true,one_selected_model_call:true,
   no_intermediate_coordinator_payload:true,one_attempt_no_replay:true,later_permission_loss_stops_pending_work:true,unknown_retained_after_restart:true,completed_history_unchanged:true,origin_permissions_unchanged:true,
@@ -487,6 +558,7 @@ def handle(action,params):
   corrupted_and_unsupported_audio_authoring_no_fallback:!!python,retained_audio_history_after_disclosure_revocation:!!python,
   retained_audio_choices_survive_resource_reconfiguration:!!python,explicit_new_audio_request_can_choose_new_resource:!!python,
   paired_audio_permission_and_route_revocation:!!python,paired_audio_explicit_stop_intent:!!python,malformed_audio_never_played:!!python,paired_audio_no_replay:!!python,
+  conditional_local_stages:true,conditional_false_skips_heavy_work:true,conditional_skip_cascade:true,conditional_missing_data_unknown:true,conditional_known_failure_halts:true,conditional_source_immutable:true,conditional_history_survives_restart:true,
   continuous_workloads:false,physical_resource_quota_proven:false,strong_stop_acknowledgement:false},null,2));
  checkpoint('passed');console.log('Public local pipeline validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}

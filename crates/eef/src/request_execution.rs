@@ -620,9 +620,14 @@ impl Driver {
         } else {
             self.server.grant_session(&b.node_id).await?
         };
-        if t.capability == "pipeline.run" {
-            let definition = crate::pipeline_planning::definition(&t.params, Some(&b.node_id))?;
-            crate::pipeline_planning::validate_peer(
+        if eefn::pipeline::is_compound(&t.capability) {
+            let definition = crate::pipeline_planning::definition_for(
+                &t.capability,
+                &t.params,
+                Some(&b.node_id),
+            )?;
+            crate::pipeline_planning::validate_peer_for(
+                &t.capability,
                 &definition,
                 &peer,
                 &self.registry,
@@ -715,9 +720,9 @@ impl Driver {
             {
                 bail!("Approved issuer or node bounds changed")
             }
-            let dependencies = if t.capability == "pipeline.run" {
+            let dependencies = if eefn::pipeline::is_compound(&t.capability) {
                 let node = &p.planning.as_ref().unwrap().bindings[index].node_id;
-                crate::pipeline_planning::definition(&t.params, Some(node))?
+                crate::pipeline_planning::definition_for(&t.capability, &t.params, Some(node))?
                     .steps
                     .into_iter()
                     .map(|step| {

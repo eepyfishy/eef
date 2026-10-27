@@ -31,6 +31,12 @@ open all Public-network access automatically. Updates that change the listening
 executable path require an explicit rule-lifecycle design; one-time setup is not
 yet claimed to cover every future installation path.
 
+The current updater selects executables under `versions/<version>/`; the runtime
+path can therefore change on an update. An exception for the launcher or previous
+version must not be presented as permission for that new listener. Coordinated
+installer/update rule lifecycle remains a release requirement, not a reason to
+add wildcard, folder-wide or unrestricted Public-network exceptions.
+
 ## Explicit one-time rule setup
 
 `tools/configure-windows-firewall.ps1` is a development/operator command, not
@@ -70,6 +76,15 @@ fixture files. It checks preview, stable/distinct identities, exact-rule reuse,
 conflicts, block reporting, WhatIf and non-admin refusal without firewall writes.
 It is not evidence of elevated creation, prompt suppression, physical networking
 or installer/update/uninstall lifecycle acceptance.
+
+The helper enumerates policy before filtering enabled inbound blocks. A native
+filtered query with no matching rules can throw `CmdletizationQuery_NotFound`;
+that is not evidence that the policy service is unavailable. Conversely, access
+denial or a genuine enumeration failure is never swallowed as an empty result.
+Empty rule sets skip application-filter queries entirely. Expanded pure mocks
+cover these boundaries, inactive and global blocks for both roles. CI runs those
+mocks only on Windows, without reading or changing real firewall policy. A
+read-only local preview is still not proof of rule creation or reachability.
 
 ## Same-PC regression fixtures
 

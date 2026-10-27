@@ -3,6 +3,44 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Local development acceptance: conditional stages and firewall inspection
+
+The [conditional finite graph](CONDITIONAL-PIPELINES.md) reuses the existing
+compiler, static provider union and one consumed parent grant. False conditions
+can skip analysis and its data dependents, without selecting another operation
+or relaxing local permissions. Missing/wrong-type guard data remains unknown;
+known unsuccessful native exits still stop later work. Twelve added focused
+tests, both full local modes (1,229 passed plus one existing ignored test each),
+all 38 native cases, cached CPU inference/lifecycle and a separate default-build
+browser/copy/focus/restart check pass. Read-only audits correlate four conditional
+jobs with exact grant digests, one parent attempt and retained reports. Original
+pipeline assertions, deadlines, stop guarantees and replay protection remain.
+Exact-revision hosted acceptance is separate; this is not continuous/listening
+completion or stable v0.4.0 acceptance.
+
+The [firewall operator helper](WINDOWS-FIREWALL.md) also fixes a real empty-query
+failure: Windows reports a filtered query with no matching rules as an error.
+Policy enumeration now precedes filtering, empty rule sets do not call unscoped
+application-filter queries, and genuine read failures still terminate. Expanded
+mock coverage includes both roles, inactive/global blocks and policy failures;
+CI has a separate Windows-only mock gate. This changes no firewall policy or
+administrator requirement and does not complete installer/update rule lifecycle.
+
+## Installer investigation: fresh standalone reproduction
+
+A separate text-only first-install probe starts with no installed, advertised or
+related product. It fails after publication and actual writes with native 1603,
+yet its candidate remains installed in current-user unmanaged registration.
+All five payload/inventory files and scoped component markers have rolled back;
+the generated owner marker is intact. A fresh read confirms the same state.
+One separately receipted normal uninstall removes only this test registration.
+Read-only reconciliation verifies source/package hashes and cleanup, while
+keeping rollback acceptance false. This counterexample is not limited to an
+old-product removal or upgrade; the underlying cause remains unproven. Public
+MSI recipes, security policy, application installations and older failed fixtures
+remain unchanged. The earlier preflight field-contract refusal is retained and
+occurred before any installer invocation; it is not a failed runtime replay.
+
 ## Accepted development checkpoint: `dd6ae21`
 
 The [process-stop observation path](PROCESS-STOP-OBSERVATION.md) adds bounded

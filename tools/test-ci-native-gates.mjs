@@ -5,6 +5,9 @@ import {readFile} from 'node:fs/promises';
 const workflow=(await readFile(new URL('../.github/workflows/verify.yml',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
 function step(name){const result=workflow.split(/^      - name: /m).find(block=>block.startsWith(name+'\n'));assert(result,'Missing guarded step');return result;}
 const tests=step('Workspace and all-target regression tests'),build=step('Build Windows command services and isolated helpers'),native=step('Native Windows synthetic regressions (no installer or model download)');
+const firewall=step('Windows firewall command mocks (no policy changes)');
+assert.match(firewall,/^        shell: powershell$/m);
+assert.match(firewall,/& \.\/tools\/test-windows-firewall\.ps1/);
 assert.match(tests,/^        id: workspace_tests$/m);assert.match(build,/^        id: native_build$/m);
 assert.match(tests,/cargo test --workspace --all-targets @features --locked --offline --quiet -j2\n          exit \$LASTEXITCODE/);
 assert.match(build,/cargo build --workspace --bins --examples --no-default-features --locked --offline --quiet -j2\n          exit \$LASTEXITCODE/);
@@ -17,11 +20,13 @@ function condition(block,expected){
 }
 const canBuild=condition(build,"!cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless' && (steps.workspace_tests.outcome == 'success' || steps.workspace_tests.outcome == 'failure')");
 const canRun=condition(native,"!cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless' && steps.native_build.outcome == 'success'");
+const canMock=condition(firewall,"!cancelled() && matrix.os == 'windows-2025' && matrix.mode == 'headless'");
 let checked=0;
 for(const os of ['windows-2025','ubuntu-24.04'])for(const mode of ['headless','dashboard'])for(const cancelled of [false,true])for(const rust of ['success','failure','skipped','cancelled','','unknown'])for(const fresh of ['success','failure','skipped','cancelled','','unknown']){
  const matrix={os,mode},steps={workspace_tests:{outcome:rust},native_build:{outcome:fresh}},eligible=!cancelled&&os==='windows-2025'&&mode==='headless';
  assert.equal(canBuild(matrix,steps,()=>cancelled),eligible&&['success','failure'].includes(rust));
  assert.equal(canRun(matrix,steps,()=>cancelled),eligible&&fresh==='success');checked++;
+ assert.equal(canMock(matrix,steps,()=>cancelled),eligible,'Pure firewall mocks require Windows but no application build or policy access');
  const reachable={...steps,native_build:{outcome:canBuild(matrix,steps,()=>cancelled)?fresh:'skipped'}};
  if(!canBuild(matrix,steps,()=>cancelled))assert.equal(canRun(matrix,reachable,()=>cancelled),false,'Skipped prerequisites must not reach native execution');
 }

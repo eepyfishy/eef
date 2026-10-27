@@ -1,16 +1,23 @@
 # Pure command mocks: no real firewall reads/writes, listeners or elevation.
 $ErrorActionPreference='Stop'
 $tool=Join-Path $PSScriptRoot 'configure-windows-firewall.ps1'
-$firewallTestState=@{Rules=@();Blocks=@();Writes=0;Cases=0}
+$firewallTestState=@{Rules=@();Blocks=@();Writes=0;Cases=0;FailStore='';ReadFailure='';Filters=0}
 function Get-NetFirewallRule {
     [CmdletBinding()]
     param($PolicyStore,$Direction,$Action,$Enabled)
+    if($firewallTestState.FailStore -eq $PolicyStore){throw $firewallTestState.ReadFailure}
+    # Empty filtered CIM queries throw on real Windows. Enumerate then filter.
+    if($Direction -or $Action -or $Enabled){throw 'CmdletizationQuery_NotFound: no matching policy objects'}
     if($PolicyStore -eq 'ActiveStore'){return $firewallTestState.Blocks}
     return $firewallTestState.Rules
 }
 function Get-NetFirewallApplicationFilter {
     param([Parameter(ValueFromPipeline=$true)]$InputObject)
-    process{[pscustomobject]@{Program=$InputObject.Program}}
+    process{
+        if($null -eq $InputObject){throw 'Do not enumerate unscoped application filters on an empty pipeline'}
+        $firewallTestState.Filters++
+        [pscustomobject]@{Program=$InputObject.Program}
+    }
 }
 function Get-NetFirewallPortFilter {
     param([Parameter(ValueFromPipeline=$true)]$InputObject)
@@ -35,7 +42,9 @@ try{
     foreach($role in @('eef','eefn')){
         $exe=Join-Path $mockPath ($role+'.exe')
         $ruleParams=@{Role=$role;Executable=$exe;LocalPort=54321}
+        $firewallTestState.Filters=0
         $plan=(& $tool @ruleParams | ConvertFrom-Json)
+        Check ($firewallTestState.Filters -eq 0) 'Empty rule sets must not enumerate application filters';$firewallTestState.Cases++
         $mixed=(& $tool -Role ($role.ToUpperInvariant()) -Executable $exe -LocalPort 54321 | ConvertFrom-Json)
         Check ($mixed.role -ceq $role -and $mixed.rule_name -ceq $plan.rule_name) 'Role output must stay lowercase for mixed-case input';$firewallTestState.Cases++
         Check (-not $plan.created -and -not $plan.existing_exact_rule -and $plan.profile -ceq 'Private' -and $plan.remote_address -ceq 'LocalSubnet') 'Unsafe plan'
@@ -61,10 +70,29 @@ try{
         $firewallTestState.Rules=@()
         $whatif=(& $tool @ruleParams -Apply -WhatIf | ConvertFrom-Json)
         Check (-not $whatif.created) 'WhatIf must not apply';$firewallTestState.Cases++
-        $firewallTestState.Blocks=@([pscustomobject]@{Program=$plan.program})
+        $firewallTestState.Blocks=@([pscustomobject]@{Program=$plan.program;Direction='Inbound';Action='Block';Enabled='True'})
         $blocked=(& $tool @ruleParams | ConvertFrom-Json);Check ($blocked.potential_block_filters -eq 1) 'Must disclose potential blocks';$firewallTestState.Cases++
         Refuses {& $tool @ruleParams -Apply}
+        $firewallTestState.Blocks=@(
+            [pscustomobject]@{Program=$plan.program;Direction='Outbound';Action='Block';Enabled='True'},
+            [pscustomobject]@{Program=$plan.program;Direction='Inbound';Action='Block';Enabled='False'},
+            [pscustomobject]@{Program='Any';Direction='Inbound';Action='Allow';Enabled='True'}
+        )
+        $irrelevant=(& $tool @ruleParams | ConvertFrom-Json)
+        Check ($irrelevant.potential_block_filters -eq 0) 'Only enabled inbound block rules are possible blockers';$firewallTestState.Cases++
+        $firewallTestState.Blocks=@([pscustomobject]@{Program='Any';Direction='Inbound';Action='Block';Enabled='True'})
+        $global=(& $tool @ruleParams | ConvertFrom-Json)
+        Check ($global.potential_block_filters -eq 1) 'Global blocks must still be disclosed';$firewallTestState.Cases++
+        Refuses {& $tool @ruleParams -Apply}
         $firewallTestState.Blocks=@()
+        foreach($failure in @(
+            @{Store='PersistentStore';Message='Access denied reading persistent policy'},
+            @{Store='ActiveStore';Message='Access denied reading active policy'},
+            @{Store='ActiveStore';Message='Firewall service unavailable'}
+        )){
+            $firewallTestState.FailStore=$failure.Store;$firewallTestState.ReadFailure=$failure.Message
+            try{Refuses {& $tool @ruleParams}}finally{$firewallTestState.FailStore='';$firewallTestState.ReadFailure=''}
+        }
         $firewallTestState.Rules=@([pscustomobject]@{Name='user-owned-rule';Direction='Inbound';Action='Allow';Enabled='True';Program=$plan.program})
         $other=(& $tool @ruleParams | ConvertFrom-Json)
         Check ($other.other_application_allow_filters -eq 1) 'Existing app rules must be disclosed';$firewallTestState.Cases++

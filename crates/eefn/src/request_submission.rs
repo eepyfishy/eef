@@ -27,7 +27,7 @@ impl ConcreteInput {
             || (!crate::request_planning::METHOD_TEMPLATES.contains(&self.input.template.as_str())
                 && !matches!(
                     self.input.template.as_str(),
-                    "local_pipeline" | "peer_transfer"
+                    "local_pipeline" | "conditional_pipeline" | "peer_transfer"
                 ))
             || serde_json::to_vec(self)?.len() > 160 * 1024
         {

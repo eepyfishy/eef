@@ -87,8 +87,12 @@ fn unbound_plan(plan: &Plan, input: &PlanInput) -> Result<Plan> {
     }) {
         bail!("Concrete template widens the reviewed capability hints; revise the proposal first")
     }
-    if input.template == "local_pipeline" {
-        let definition = crate::pipeline_planning::definition(&input.params, None)?;
+    if matches!(
+        input.template.as_str(),
+        "local_pipeline" | "conditional_pipeline"
+    ) {
+        let capability = eefn::request_planning::template_steps(&input.template)?[0].0;
+        let definition = crate::pipeline_planning::definition_for(capability, &input.params, None)?;
         if definition.steps.iter().any(|step| {
             !draft
                 .current()
@@ -267,8 +271,12 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             bail!("Binding violates explicit node selection")
         }
         constraints["node_id"] = json!(binding.node_id);
-        if task.capability == "pipeline.run" {
-            crate::pipeline_planning::definition(&params, Some(&binding.node_id))?;
+        if eefn::pipeline::is_compound(&task.capability) {
+            crate::pipeline_planning::definition_for(
+                &task.capability,
+                &params,
+                Some(&binding.node_id),
+            )?;
             if binding.resource_id.is_some()
                 || binding.model_id.is_some()
                 || binding.backend.is_some()
@@ -901,8 +909,9 @@ async fn bind_tasks(
             model_id: None,
             backend: None,
         };
-        if task.capability == "pipeline.run" {
+        if eefn::pipeline::is_compound(&task.capability) {
             binding.node_id = crate::pipeline_planning::select(
+                &task.capability,
                 &task.params,
                 &constraints,
                 task.request_context.as_ref(),

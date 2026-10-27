@@ -145,7 +145,10 @@ fn validate_scope_compilation(record: &Authorization) -> Result<()> {
     if plan.tasks.len() != scope.operations.len() {
         bail!("Fixed scope template shape changed; migration required");
     }
-    let capabilities = if scope.input.template == "local_pipeline" {
+    let capabilities = if matches!(
+        scope.input.template.as_str(),
+        "local_pipeline" | "conditional_pipeline"
+    ) {
         // A compound parent is one scoped operation but its immutable source
         // review must still disclose every child. This validation envelope is
         // neither a model proposal nor a new authorization/occurrence receipt.
