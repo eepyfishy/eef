@@ -3,14 +3,43 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: owned-process stop observations
+## Accepted development checkpoint: `dd6ae21`
 
 The [process-stop observation path](PROCESS-STOP-OBSERVATION.md) adds bounded
 cooperative cleanup for admitted Windows direct process grants and read-only
 job-ID-based inspection from the node or coordinator CLI. It requires original
 stop intent and matching retained execution evidence; it never promotes v1 stop
-receipts into outside-effect, rollback or job-wide proof. This draft needs
-focused/native/full/hosted acceptance; no release or installed-node change.
+receipts into outside-effect, rollback or job-wide proof. Both full local modes
+pass 1,217 tests plus one existing ignored test each; all 38 local native cases,
+cached CPU inference/lifecycle and separate browser/copy/focus/restart checks
+pass. [Run 40556221544](https://github.com/eepyfishy/eef/actions/runs/40556221544)
+passes all four jobs, 32 Windows native suites and the separate connection-close
+case. Independent source/binary/runtime/model and read-only journal audits pass.
+
+The earlier full native run exposed a real stack-overflow exit in paired audio.
+Boxing the common capability dispatcher reduces its callers' future storage from
+19,472 to 16 bytes without changing the original checks/body, stack sizes or
+deadlines. A retained failing layout test becomes green, and fresh native audio
+passes twice. This supports the mitigation, not a proven exact crash call site;
+the failed fixture remains failed. No release, installed-node update, universal
+stop, default/model quality or remaining stable v0.4.0 gate is accepted.
+
+## Installer investigation: post-finalize removal still fails rollback
+
+A fresh text-only experiment postpones old-product removal until after the new
+installation commits. Its first eef failure occurs after product publication and
+real writes, before either commit or old-product removal. Both the old product
+and failed candidate remain registered as installed; nine observed old payload
+hashes and both generated owner markers match. The original process is terminal
+and registration access-denied entries remain in its log. The cause is unproven.
+
+Three separately receipted ordinary uninstalls remove only this experiment's test
+registrations. Fresh reads confirm all four identities absent, eleven owned
+payload/inventory files absent, no scoped component-marker values and both owner
+markers intact. This cleanup does not convert the original failure into a pass.
+The [rollback gate](MSI-ROLLBACK-VALIDATION.md#post-finalize-removal-experiment-2026-10-28)
+remains open; public MSI recipes, security policy and installed applications are
+unchanged. Earlier failed fixtures and their stranded evidence are retained.
 
 ## Accepted development checkpoint: `00e3c3d`
 

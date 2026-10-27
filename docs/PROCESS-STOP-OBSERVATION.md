@@ -1,4 +1,4 @@
-# Owned-process stop observations (in development)
+# Owned-process stop observations (development checkpoint)
 
 An accepted Windows `process.exec` grant can now keep driving bounded native
 cleanup after its exact durable stop request. It retains the owned unnamed job
@@ -67,14 +67,20 @@ The common capability dispatcher returns a boxed future before selecting a
 provider. This keeps unused providers' state out of its callers' stack frames;
 the resource, permission, lease and cancellation checks inside it are unchanged.
 A portable regression constructs but does not poll the dispatch paths and
-requires both direct dispatch and budget forwarding to retain that boundary.
+requires both direct dispatch and budget forwarding to retain that boundary;
+their caller storage falls from 19,472 to 16 bytes on the tested x64 host.
 The preceding native audio regression exited with a Windows stack-overflow
 status. Its failed fixture is retained; the exact crash call site is unproven,
-and this mitigation needs fresh native/full acceptance without larger stacks,
-longer deadlines or weakened assertions.
+and the failed fixture remains retained. Fresh native/full acceptance uses no
+larger stacks, longer deadlines or weakened assertions.
 
-Validation of this increment is pending. Native tests must independently hold
-creation-verified root/descendant handles, observe actual exits, exercise journal
-contention and verify exact retained reports/no replay. Full regression, hosted,
-physical two-PC, continuous work, broader acknowledged stop/resource budgets,
+Checkpoint `dd6ae21` passes both 1,217-test local modes plus one existing ignored
+test each, 38 fresh local native cases, separate cached CPU/browser regressions
+and [all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/40556221544),
+including 32 Windows native suites and the separate connection-close case.
+Creation-verified root/descendant exit observers, held-journal cleanup, exact
+retained grant/stop/result reconciliation and read-only database hashes pass.
+The new native process fixture retains two scoped stop observations among nine
+original jobs/receipts; it never upgrades unknown outcomes or v1 intent flags.
+Physical two-PC, continuous work, broader acknowledged stop/resource budgets,
 model onboarding and installer/signing/Defender acceptance remain required.

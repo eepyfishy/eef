@@ -154,6 +154,47 @@ post-cleanup API reads and retained artifacts. Its audit passes while
 `native_rollback_accepted` and `real_application_rollback_accepted` remain false.
 No public MSI recipe or release is changed by this investigation.
 
+## Post-finalize removal experiment (2026-10-28)
+
+Microsoft also permits old-product removal after `InstallFinalize`. This has a
+different failure boundary: a subsequent removal failure rolls back the old
+uninstall, not the already-committed new installation. See the
+[documented sequence restrictions](https://learn.microsoft.com/en-us/windows/win32/msi/removeexistingproducts-action).
+It is not equivalent to an atomic two-product transaction or an accepted policy
+change. A distinct private experiment tests pre-commit recovery first.
+
+Seven source copies retain the original context, identity, payload, owner-data,
+downgrade, repair and registration assertions. Only the experimental recipe tag
+and removal position change: commit at 6600, removal at 6700. The same message-only
+fault stays at 6550, after `InstallExecute` and product publication. The unchanged
+public inspector rejects all four experimental canonical packages. Payloads are
+tiny non-executable text, with a fresh namespace and no elevation or new tooling.
+
+`msi-post-finalize-v1/.validation/msi-upgrade-b3VevJ` returns native 1603 for its
+first eef rollback probe. The log proves file/registry writes, publication and
+rollback, without reaching commit or executing old-product removal. Fresh API
+reads find both old eef and its failed candidate installed (state 5); the older
+eefn is untouched and its candidate absent. Nine observed inventoried payload
+hashes and both owner markers match. Pre-cleanup restoration of the regenerated
+inventory file was not independently established. Registration access-denied
+entries persist; the underlying cause remains unproven. No later upgrade or
+eefn failure probe runs. Post-commit removal-failure acceptance is not reached.
+
+After retaining that failure and confirming its process absent, three normal
+uninstalls remove only the experiment's registrations. Fresh reads confirm all
+four identities absent, eleven owned payload/inventory files absent and no scoped
+component-marker values, while both generated owner markers remain intact.
+This is separately verified cleanup, not successful rollback. Older failed
+fixtures and their stranded evidence are not cleaned or reclassified.
+
+`msi-post-finalize-v1/independent-audit.json` reconciles the seven evaluated
+source hashes, unchanged public sources/MSIs, publication/write/fault ordering,
+fresh native states and cleanup receipts. Initial source-guard and expected-error
+collector failures are retained separately; neither caused an installer replay
+or relaxed a runtime assertion. The audit passes with `native_rollback_accepted`
+and `real_application_rollback_accepted` false. Public packaging and security
+settings remain unchanged. Changing removal sequencing alone is not a fix.
+
 ## Acceptance still required
 
 At this diagnostic checkpoint, `msi-authoring-9tWuI0` passes six version boundaries,

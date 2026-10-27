@@ -13,18 +13,29 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
-The [owned-process stop observation](PROCESS-STOP-OBSERVATION.md) increment is in
-development after accepted checkpoint `00e3c3d`. It retains the original grant
+The [owned-process stop observation](PROCESS-STOP-OBSERVATION.md) increment passes
+development acceptance at `dd6ae21`. It retains the original grant
 deadline while observing a direct Windows process tree after exact stop intent,
 with read-only command status and explicit coverage gaps. It does not close
 general strong-stop, continuous-work, resource or physical acceptance gates.
+Both 1,217-test local modes, 38 local native cases, separate CPU/browser checks
+and the exact [four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/40556221544)
+pass independent reconciliation. A native audio stack-overflow failure remains
+retained; the tested boxed-dispatch mitigation does not prove its exact call site.
+
+A separate [post-finalize MSI experiment](MSI-ROLLBACK-VALIDATION.md#post-finalize-removal-experiment-2026-10-28)
+still leaves a failed candidate registered, even though old-product removal never
+runs. Nine observed old payload hashes return, but registration rollback fails.
+Separate ordinary uninstalls clean only that experiment; no public recipe or
+security policy changes, and installer recovery remains an open release gate.
 
 The [one-shot setup model check](SETUP-MODEL-CHECKS.md) is a new development
 increment toward separately consented automatic setup verification. Immutable
 exact-model consent waits in the backend and uses the existing review/grant
 service once; neither a dashboard nor a client-side poll loop controls it.
-Waiting cancellation is distinct from stopping admitted inference. Full
-validation is pending, and approved model quality/defaults, complete onboarding,
+Waiting cancellation is distinct from stopping admitted inference. Checkpoint
+`00e3c3d` passes local/native/CPU/browser and hosted acceptance; approved model
+quality/defaults, complete onboarding,
 continuous work/strong stop, physical and installer requirements stay open.
 
 The [bounded native-start deadline follow-up](NATIVE-START-DEADLINES.md) narrows
