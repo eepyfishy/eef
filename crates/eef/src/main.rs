@@ -115,6 +115,13 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum NodeCommand {
+    /// Consent to one bounded exact-model check after setup, or inspect/cancel its wait.
+    SetupModelCheck {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eef::setup_model_check::Action,
+    },
     /// Explicitly test one selected interpreter or inspect historical test evidence.
     VerifyModel {
         #[arg(long)]
@@ -256,6 +263,69 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn setup_check_cli_requires_exact_model_consent_and_read_commands_cannot_arm() {
+        let base = ["eef", "node", "setup-model-check", "--node", "fixture"];
+        let arm = [
+            "arm",
+            "--backend",
+            "llamacpp",
+            "--model-id",
+            "chosen",
+            "--allow-inference",
+        ];
+        assert!(Args::try_parse_from(base.into_iter().chain(arm)).is_ok());
+        for missing in ["--allow-inference", "--backend", "--model-id"] {
+            let mut args = base.to_vec();
+            let mut i = 0;
+            while i < arm.len() {
+                if arm[i] == missing {
+                    i += if missing == "--allow-inference" { 1 } else { 2 };
+                } else {
+                    args.push(arm[i]);
+                    i += 1;
+                }
+            }
+            assert!(Args::try_parse_from(args).is_err());
+        }
+        for operation in ["inspect", "cancel-wait"] {
+            assert!(Args::try_parse_from(base.into_iter().chain([operation])).is_err());
+            assert!(
+                Args::try_parse_from(base.into_iter().chain([
+                    operation,
+                    "--operation-id",
+                    "fixture"
+                ]))
+                .is_ok()
+            );
+            for extra in [
+                "--allow-inference",
+                "--model-id",
+                "--backend",
+                "--wait-seconds",
+            ] {
+                assert!(
+                    Args::try_parse_from(base.into_iter().chain([
+                        operation,
+                        "--operation-id",
+                        "fixture",
+                        extra
+                    ]))
+                    .is_err()
+                );
+            }
+        }
+        for seconds in ["0", "301"] {
+            assert!(
+                Args::try_parse_from(
+                    base.into_iter()
+                        .chain(arm)
+                        .chain(["--wait-seconds", seconds])
+                )
+                .is_err()
+            );
+        }
+    }
     #[test]
     fn model_check_cli_requires_explicit_consent_and_separates_inspection() {
         assert!(
@@ -1288,6 +1358,106 @@ async fn remote_setup_cli(
         "error_code":"node_setup_unconfirmed","note":"Node setup observations are unavailable or unconfirmed. No client retry, legacy fallback, model setup, restart or workload was requested."})))
 }
 
+async fn setup_model_check_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eef::setup_model_check::Action,
+) -> Result<serde_json::Value> {
+    use eef::setup_model_check::{Action, Command, Request};
+    use serde_json::json;
+    let operation = match action {
+        Action::Arm { operation_id, .. } => operation_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        Action::Inspect { operation_id } | Action::CancelWait { operation_id } => {
+            operation_id.clone()
+        }
+    };
+    eefn::model_verification::receipt_id(node, &operation, "source", None)?;
+    let command = match action {
+        Action::Arm {
+            backend,
+            model_id,
+            allow_inference,
+            wait_seconds,
+            ..
+        } => {
+            if !allow_inference {
+                bail!("Explicit --allow-inference consent required")
+            }
+            let model = eefn::setup_check::ModelRef {
+                backend: serde_json::from_value(json!(backend))?,
+                model_id: model_id.clone(),
+            };
+            let max_wait_ms = wait_seconds
+                .checked_mul(1000)
+                .context("Setup check wait overflow")?;
+            eef::setup_model_check::Definition {
+                schema_version: 1,
+                node_id: node.into(),
+                operation_id: operation.clone(),
+                model: model.clone(),
+                max_wait_ms,
+            }
+            .validate()?;
+            Command::Arm {
+                model,
+                max_wait_ms,
+                approve_inference: true,
+            }
+        }
+        Action::Inspect { .. } => Command::Inspect {},
+        Action::CancelWait { .. } => Command::CancelWait {},
+    };
+    let mut sending = false;
+    let exchange = async {
+        let response = client
+            .get(format!("{base}/api/diagnostics"))
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Coordinator unavailable")
+        }
+        let diagnostic = eefn::model_manager::bounded_json(response).await?;
+        if diagnostic["schema_version"] != 1
+            || diagnostic["success"] != true
+            || diagnostic["report_type"] != "coordinator_diagnostics"
+        {
+            bail!("Coordinator observation unconfirmed")
+        }
+        let request = Request {
+            schema_version: 1,
+            expected_runtime_id: diagnostic["runtime_id"]
+                .as_str()
+                .context("Missing coordinator runtime")?
+                .into(),
+            node_id: node.into(),
+            operation_id: operation.clone(),
+            command: command.clone(),
+        };
+        request.validate()?;
+        sending = !matches!(command, Command::Inspect {});
+        let response = client
+            .post(format!("{base}/api/commands/node/setup-model-check"))
+            .timeout(std::time::Duration::from_secs(10))
+            .json(&request)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Setup check command unconfirmed")
+        }
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !eef::setup_model_check::confirmed(&value, &request) {
+            bail!("Setup check reply unconfirmed")
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"setup_model_check_client_unconfirmed","success":false,"node_id":node,"operation_id":operation,"sending_attempted":sending,"outcome_unknown":sending,"automatically_retried":false,"note":"Inspect this exact operation before arming another. A lost consent reply may still have created one bounded check. No client retry, model selection, permission change or automatic renewal was requested."})))
+}
+
 async fn model_verification_cli(
     client: &reqwest::Client,
     base: &str,
@@ -2175,6 +2345,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             command: NodeCommand::VerifyModel { node, command },
         } => return model_verification_cli(&client, &base, node, command).await,
         Command::Node {
+            command: NodeCommand::SetupModelCheck { node, command },
+        } => return setup_model_check_cli(&client, &base, node, command).await,
+        Command::Node {
             command: NodeCommand::Models { node, command },
         } => {
             eefn::network::validate_node_id(node)?;
@@ -2447,6 +2620,15 @@ async fn main() -> Result<()> {
                     )
                 {
                     print!("{}", eef::model_verification::render(&value));
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::SetupModelCheck { .. }
+                        }
+                    )
+                {
+                    print!("{}", eef::setup_model_check::render(&value));
                 } else if !args.json && matches!(command, Command::Repair { .. }) {
                     print!("{}", eefn::package_repair::render(&value)?);
                 } else if !args.json && matches!(command, Command::Doctor { .. }) {

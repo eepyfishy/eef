@@ -34,6 +34,7 @@ impl Config {
             defaults
         };
         validate_ui_preference(&value)?;
+        crate::setup_model_check::validate_settings(value.get("setup_model_checks"))?;
         crate::scheduling::SchedulingPolicy::parse(value.get("scheduling"))?;
         eefn::authentication::AuthenticationPolicy::parse(value.pointer("/node/authentication"))?;
         Ok(Self {
@@ -129,6 +130,7 @@ impl Config {
         crate::discovery::DiscoveryPolicy::parse(value.get("discovery"))?;
         crate::scheduling::SchedulingPolicy::parse(value.get("scheduling"))?;
         validate_ui_preference(value)?;
+        crate::setup_model_check::validate_settings(value.get("setup_model_checks"))?;
         eefn::authentication::AuthenticationPolicy::parse(value.pointer("/node/authentication"))?;
         for section in [
             "web", "node", "models", "update", "python", "identity", "jobs",

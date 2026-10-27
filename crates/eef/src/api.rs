@@ -211,6 +211,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(model_verification).layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
         .route(
+            "/api/commands/node/setup-model-check",
+            post(setup_model_check).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/commands/node/python",
             post(node_python_policy).layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
@@ -481,6 +485,12 @@ async fn model_verification(
     Json(request): Json<crate::model_verification::Request>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.model_verification_command(request).await?))
+}
+async fn setup_model_check(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::setup_model_check::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.setup_model_check_command(request).await?))
 }
 async fn node_python_policy(
     State(runtime): State<Arc<Runtime>>,

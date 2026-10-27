@@ -3,15 +3,58 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: bounded native-start deadlines
+## In development: one-shot model check after setup
+
+The [setup check controller](SETUP-MODEL-CHECKS.md) adds explicit, immutable
+consent for one exact node/backend/model once its setup is applied. It waits in
+the backend and reuses ordinary node-origin model verification, approval and
+execution grants. Cancel-wait atomically fences only pre-launch work; lost
+ownership, restart and uncertainty never rearm the operation. Shared storage and
+worker admission remain bounded. The first focused run found two serde rejection
+bugs; their source fixes pass a separately retained focused run. A subsequent
+native run completed its inference but retained an unknown control summary
+because the new summary confused compact job IDs with runtime/grant UUIDs. The
+existing job-ID validator and a regression correct that contract; the failed
+fixture stays unchanged. A fresh native run and independent read-only audit
+verify exact receipts, cancellation/restart/no-replay behavior and pruned-job
+history. A final corruption/quota guard and full regression/hosted acceptance
+remain pending. No default, automatic-onboarding, physical or strong-stop claim
+is added.
+
+## Installer investigation: late transactional removal still fails
+
+A fresh, isolated text-only MSI experiment moves old-product removal after
+`InstallExecute` and still reproduces the registration rollback failure. Actual
+writes and completed removal precede the intentional Type 19 failure; old payload
+hashes and owner markers return, but the old product is advertised and the failed
+candidate remains installed. Separate ordinary uninstalls remove only the test
+registrations, leaving five small synthetic payload/inventory files and five
+scoped component values as forensic evidence. No public recipe, real installation,
+security policy or elevation changes. The
+[failed-upgrade gate](MSI-ROLLBACK-VALIDATION.md#late-transactional-removal-experiment-2026-10-27)
+remains open; changing sequencing alone is not an accepted fix.
+
+## Accepted development checkpoint: `a356aa7`
 
 The [native-start follow-up](NATIVE-START-DEADLINES.md) carries the existing
 absolute parent budget to bounded process/Python adapters, including finite
 pipeline and paired-audio stages. A final Windows check occurs while the verified
 owned root remains suspended; timeout windows are intersected, not renewed.
-Seven new propagation/classification/placement tests and full/native/hosted
-acceptance remain pending. This does not upgrade intent-only stop or
-`rpc_future_only` timing into a hard real-time/physical guarantee.
+Seven new tests pass. Both full local modes pass 1,178 tests plus one existing
+ignored profiler each; all 37 local native cases pass.
+[Run 40480350717](https://github.com/eepyfishy/eef/actions/runs/40480350717)
+passes all four jobs, 31 Windows native suites and the distinct connection-close
+case. Cached CPU inference/lifecycle and separate browser/copy/focus/restart
+checks pass independent source, binary, model/runtime and read-only journal
+reconciliation. An observer's fixed child-count failure stays retained; its
+corrected read-only audit distinguishes additional schedule polls from work
+attempts without replay or relaxed runtime assertions.
+
+This does not upgrade intent-only stop or `rpc_future_only` timing into a hard
+real-time/physical guarantee. No release, installed-node update, model/default,
+permission, firewall or signing/Defender change. Strong stop/continuous workloads,
+approved model quality/automatic onboarding, physical current-protocol two-PC,
+production MSI recovery and remaining roadmap requirements stay open.
 
 ## Accepted development checkpoint: `f50a5a1`
 

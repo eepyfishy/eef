@@ -56,6 +56,7 @@ pub struct Runtime {
     background: AsyncMutex<Vec<JoinHandle<()>>>,
     submissions: AsyncMutex<tokio::task::JoinSet<()>>,
     pub(crate) model_verification: AsyncMutex<()>,
+    pub(crate) setup_model_checks: Arc<crate::setup_model_check::Manager>,
 }
 
 impl Runtime {
@@ -183,6 +184,7 @@ impl Runtime {
 
         let runtime = Arc::new(Self {
             automation_timers: crate::automation_timer::TimerManager::new(&config)?,
+            setup_model_checks: crate::setup_model_check::Manager::new(&config)?,
             config,
             bus,
             identity,
@@ -1037,6 +1039,7 @@ impl Runtime {
             warn!(%error,"Schedule shutdown checkpoint failed; no cancellation proof");
         }
         self.brain.stop().await;
+        self.setup_model_checks.close().await;
         for task in self.background.lock().await.drain(..) {
             task.abort();
             let _ = task.await;

@@ -234,7 +234,7 @@ fn selected_readiness(
 }
 
 #[async_trait::async_trait]
-trait ReadinessTransport: Sync {
+pub(crate) trait ReadinessTransport: Sync {
     async fn setup(&self, request: crate::node_setup::Request) -> Result<Value>;
     async fn permissions(
         &self,
@@ -260,7 +260,7 @@ impl ReadinessTransport for eefn::NodeServer {
         .await
     }
 }
-async fn selected_on(
+pub(crate) async fn selected_on(
     transport: &impl ReadinessTransport,
     node: &str,
     operation: &str,

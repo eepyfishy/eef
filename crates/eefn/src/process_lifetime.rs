@@ -21,6 +21,7 @@ impl ProcessTree {
     }
 }
 
+#[cfg(all(test, windows))]
 pub(crate) fn spawn(command: &mut Command) -> Result<(Child, ProcessTree)> {
     spawn_with_job_memory_limit(command, None)
 }

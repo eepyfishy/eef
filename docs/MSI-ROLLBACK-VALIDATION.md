@@ -106,6 +106,54 @@ explicit test cleanup, **not a successful automatic rollback** or replay of the
 failed upgrade. User applications, settings, releases and remote nodes are not
 changed. The cleanup receipt is retained with the original failed fixture.
 
+## Late transactional removal experiment (2026-10-27)
+
+Microsoft also documents removal between `InstallExecute` and `InstallFinalize`,
+with both the new install and old-product removal inside the rollback boundary.
+See [the supported sequence locations](https://learn.microsoft.com/en-us/windows/win32/msi/removeexistingproducts-action).
+A fresh private experiment tests that alternative; it is not a public packaging
+policy or a claim that the earlier placement caused the failure.
+
+Seven source copies use an explicit experimental recipe identity. The builder
+and independent inspector require `InstallExecute` at 6500, `RemoveExistingProducts`
+at 6520 and finalization at 6600. The same message-only Type 19 fault stays at
+6550, after removal and before commit. The probe retains all original registration,
+payload, owner-data, privilege, downgrade and lifecycle assertions, and adds a
+check that the deliberate failure follows completed late removal. No executable
+payload, custom script action, elevation, security-policy change or new tooling
+is introduced. Public source at `a356aa7` remains unchanged during the experiment.
+
+`msi-late-execute-v1/.validation/msi-upgrade-16KW4R` uses a new namespace and
+text-only packages. Both older roles install successfully as current-user
+unmanaged products. The first eef rollback probe then returns native 1603.
+Its log confirms actual file/registry writes, successful `InstallExecute` and
+old-product removal, the intentional failure, and subsequent rollback scripts.
+The helper preserves the native-exit receipt before failing its state observation.
+No later upgrade or eefn rollback attempt is run after that failure.
+
+A separate fresh-process read confirms the same mismatch as the earlier recipe:
+older eef state 1, failed candidate eef state 5, untouched older eefn state 5 and
+its candidate absent. All old payload hashes and both owner markers match.
+The native log records access-denied registration operations under Windows
+Installer's `UserData` product paths. This does not establish an underlying
+Windows, impersonation, ACL or policy cause. Moving removal alone is therefore
+not a verified fix on the tested host; no broader platform conclusion follows.
+
+After confirming the failed process absent, three separately receipted ordinary
+uninstalls return zero. Fresh API reads confirm all four experiment product
+identities absent and both owner markers unchanged. Five small eef synthetic
+payload/inventory files and five scoped component-marker values remain. They
+are retained with the logs, not manually deleted to make cleanup look complete.
+This is registration-only partial cleanup, not successful rollback. The earlier
+failed fixture and user applications are untouched.
+
+`msi-late-execute-v1/independent-audit.json` verifies the seven evaluated source
+hashes, unchanged original public sources and MSI bytes, the write/removal/fault/
+rollback ordering, original registration failure, native cleanup receipts,
+post-cleanup API reads and retained artifacts. Its audit passes while
+`native_rollback_accepted` and `real_application_rollback_accepted` remain false.
+No public MSI recipe or release is changed by this investigation.
+
 ## Acceptance still required
 
 At this diagnostic checkpoint, `msi-authoring-9tWuI0` passes six version boundaries,

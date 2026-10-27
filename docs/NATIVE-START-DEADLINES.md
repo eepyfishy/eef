@@ -1,8 +1,8 @@
 # Deadline-aware start for bounded owned processes
 
-This is an in-development execution-safety follow-up, not stronger stop proof.
-The accepted `f50a5a1` checkpoint keeps the existing `rpc_future_only` grant timing
-advertisement and intent-only stop receipts. Neither guarantee is changed here.
+This execution-safety follow-up is accepted at development checkpoint `a356aa7`,
+not as stronger stop proof. The existing `rpc_future_only` grant timing
+advertisement and intent-only stop receipts remain unchanged.
 
 Python previously checked its deadline immediately before synchronous process
 creation. Windows then created the suspended child, assigned its owned job,
@@ -12,7 +12,7 @@ The local `process.exec` timeout also began after that start sequence. Faster
 thread lookup reduces observed overhead but does not remove the boundary gap.
 This identifies the code path, not the exact cause of earlier fixture failures.
 
-The candidate adds a private deadline-aware spawn entry point. It checks the
+The implementation adds a private deadline-aware spawn entry point. It checks the
 existing absolute monotonic deadline before creation and, on Windows, again
 after job assignment, complete thread lookup/cleanup and owner verification,
 immediately before resume. A refused child stays suspended and contained; the
@@ -43,5 +43,27 @@ uses only the verified owned primary-thread handle: it briefly increments and
 restores its suspend count, requiring the original count to be one. A refusal
 then observes exit through a retained root handle; the positive control starts
 and retires its real root/descendant tree. This avoids sleep-dependent first-poll
-assumptions and does not resume an unrelated process. Focused/full/native/hosted
-acceptance is pending; no release or installed/physical-node update is implied.
+assumptions and does not resume an unrelated process.
+
+## Verification at `a356aa7`
+
+Seven new tests pass. Both full local Rust modes pass 1,178 tests plus one existing
+ignored profiler each; all 37 local native cases pass. The exact
+[four-job CI run](https://github.com/eepyfishy/eef/actions/runs/40480350717)
+passes, including 31 Windows native suites and the distinct connection-close case.
+Separate cached native CPU and default-feature browser/copy/focus/restart checks
+pass. Independent reconciliation verifies frozen source/binary/model/runtime
+hashes and read-only job journals, without model downloads or replay.
+
+The first independent observer failed because it assumed a fixed number of
+harness children: the focused fixture has three extra read-only schedule-show
+polls. Its original failure remains retained. A corrected observer verifies the
+read-only flags, matching other command counts, two one-attempt jobs and exact
+durable receipts in both fixtures, exhausted schedules and unchanged database
+hashes. No application test, deadline or authority rule was changed or rerun to
+obtain that reconciliation.
+
+This accepts the exact development checkpoint, not current physical two-PC
+operation, automatic model onboarding/quality, strong stop, continuous workloads,
+production installer recovery, signing/Defender or stable-release acceptance.
+No release or installed/physical-node update is implied.

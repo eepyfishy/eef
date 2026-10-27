@@ -41,6 +41,7 @@ pub mod request_review;
 pub mod request_submission;
 pub mod runtime;
 pub mod scheduling;
+pub mod setup_model_check;
 pub mod task;
 pub mod update;
 #[cfg(feature = "dashboard")]

@@ -13,11 +13,30 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [one-shot setup model check](SETUP-MODEL-CHECKS.md) is a new development
+increment toward separately consented automatic setup verification. Immutable
+exact-model consent waits in the backend and uses the existing review/grant
+service once; neither a dashboard nor a client-side poll loop controls it.
+Waiting cancellation is distinct from stopping admitted inference. Full
+validation is pending, and approved model quality/defaults, complete onboarding,
+continuous work/strong stop, physical and installer requirements stay open.
+
 The [bounded native-start deadline follow-up](NATIVE-START-DEADLINES.md) narrows
 start behavior using the existing absolute lease and local budget. It does not
-renew authority, widen limits or replace stop/receipt guarantees. Its new tests
-and full regression/hosted acceptance remain separate from the preceding
-accepted development checkpoint.
+renew authority, widen limits or replace stop/receipt guarantees. Checkpoint
+`a356aa7` passes both 1,178-test local modes, 37 local native cases, separate cached
+CPU/browser checks and the exact
+[four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/40480350717),
+including 31+1 Windows native cases. Independent source/binary/journal checks
+retain an observer's failed fixed poll count without replaying application work.
+This does not close default-model, automatic onboarding, strong stop/continuous,
+physical, installer, signing/Defender or stable-release requirements.
+
+A separate [late transactional removal experiment](MSI-ROLLBACK-VALIDATION.md#late-transactional-removal-experiment-2026-10-27)
+reproduces the failed MSI registration rollback after real writes and old-product
+removal. Five synthetic payload/inventory files and five component values remain
+after explicit registration-only cleanup. Public packaging and security policy
+are unchanged; sequencing alone is not an accepted recovery fix.
 
 The combined reliability checkpoint `f50a5a1` passes
 [all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/40408873600),

@@ -35,7 +35,11 @@ pub(super) fn bytes(connection: &Connection) -> Result<usize> {
     )?;
     Ok(usize::try_from(n)?)
 }
-fn read(connection: &Connection, node: &str, operation: &str) -> Result<Option<Definition>> {
+pub(super) fn read(
+    connection: &Connection,
+    node: &str,
+    operation: &str,
+) -> Result<Option<Definition>> {
     let source = receipt_id(node, operation, "source", None)?;
     let raw: Option<String> = connection
         .query_row(

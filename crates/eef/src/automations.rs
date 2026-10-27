@@ -416,7 +416,7 @@ pub(super) fn read_definition(connection: &Connection, id: &str) -> Result<Defin
 }
 pub(super) fn count(connection: &Connection) -> Result<usize> {
     let n: i64 = connection.query_row(
-        "SELECT (SELECT count(*) FROM durable_jobs)+(SELECT count(*) FROM automation_definitions)+(SELECT count(*) FROM automation_authorizations)+(SELECT count(*) FROM automation_occurrences)+(SELECT count(*) FROM automation_occurrence_archives)+(SELECT count(*) FROM automation_schedules)+(SELECT count(*) FROM automation_triggers)+(SELECT count(*) FROM model_verification_intents)",
+        "SELECT (SELECT count(*) FROM durable_jobs)+(SELECT count(*) FROM automation_definitions)+(SELECT count(*) FROM automation_authorizations)+(SELECT count(*) FROM automation_occurrences)+(SELECT count(*) FROM automation_occurrence_archives)+(SELECT count(*) FROM automation_schedules)+(SELECT count(*) FROM automation_triggers)+(SELECT count(*) FROM model_verification_intents)+(SELECT count(*) FROM setup_model_checks)",
         [],
         |r| r.get(0),
     )?;
@@ -428,8 +428,10 @@ pub(super) fn definition_bytes(connection: &Connection) -> Result<usize> {
         [],
         |r| r.get(0),
     )?;
+    let checks = setup_model_checks::bytes(connection)?;
     usize::try_from(n)?
         .checked_add(model_verification_intents::bytes(connection)?)
+        .and_then(|n| n.checked_add(checks))
         .context("Storage size overflow")
 }
 impl JobStore {
@@ -460,7 +462,9 @@ impl JobStore {
         if !previous.is_some_and(|old| old >= 0 && encoded.len() as u64 <= old as u64) {
             let jobs:i64=connection.query_row("SELECT COALESCE(SUM(length(CAST(plan_json AS BLOB))+reserved_bytes),0) FROM durable_jobs",[],|r|r.get(0))?;
             let other:i64=connection.query_row("SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))),0) FROM automation_definitions WHERE definition_id<>?1",[&definition.id],|r|r.get(0))?;
-            let intent_bytes = model_verification_intents::bytes(connection)?;
+            let intent_bytes = model_verification_intents::bytes(connection)?
+                .checked_add(setup_model_checks::bytes(connection)?)
+                .context("Storage overflow")?;
             let authorization_bytes = automation_authorizations::bytes(connection)?
                 .checked_add(automation_occurrences::bytes(connection)?)
                 .and_then(|n| n.checked_add(intent_bytes))
