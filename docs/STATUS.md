@@ -3,6 +3,46 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: bounded native-start deadlines
+
+The [native-start follow-up](NATIVE-START-DEADLINES.md) carries the existing
+absolute parent budget to bounded process/Python adapters, including finite
+pipeline and paired-audio stages. A final Windows check occurs while the verified
+owned root remains suspended; timeout windows are intersected, not renewed.
+Seven new propagation/classification/placement tests and full/native/hosted
+acceptance remain pending. This does not upgrade intent-only stop or
+`rpc_future_only` timing into a hard real-time/physical guarantee.
+
+## Accepted development checkpoint: `f50a5a1`
+
+[Run 40408873600](https://github.com/eepyfishy/eef/actions/runs/40408873600)
+passes all four jobs, all 31 Windows native suites and the distinct
+pre-registration-close case. Both local Rust modes pass 1,171 tests plus the
+existing ignored profiler each; all 37 local native cases pass. Separate cached
+CPU inference/lifecycle and default-feature browser/copy/focus/restart regressions
+pass independent source, binary, runtime/model and read-only journal reconciliation.
+No model weights are downloaded or copied, and no installed/physical node is updated.
+
+This accepts the private grant-clock/direct-future correction, owned-launch
+journal yield, numeric-only startup observations, process-local Windows thread
+lookup and one-call schedule-definition index at that exact revision. The
+firewall command has 51 mocked checks, not elevated rule-creation or installer
+lifecycle acceptance. Earlier failed runs remain failed evidence; their exact
+causes are not established merely by later passes.
+
+The authoring pipeline itself passed all original assertions, but its wrapper
+then failed collecting a failure-only log. A separate read-only reconciliation
+used its existing successful harness exit and unchanged databases: two jobs had
+matching durable executor receipts and the schedule was exhausted. No work was
+rerun or result rewritten to make that observation succeed. The final native
+batch independently passed the original pipeline again.
+
+This is source-only development acceptance. No release/tag, stable update feed,
+model/default, permission, firewall, elevation, signing/Defender or physical-node
+change is made. Model quality/automatic onboarding, general planning/continuation,
+continuous workloads/strong stop/resource budgets, physical two-PC, full MSI
+recovery and the other remaining roadmap requirements are still open.
+
 ## In development: one-call schedule dependency indexing
 
 The [schedule definition-read follow-up](SCHEDULE-DEFINITION-READS.md) removes

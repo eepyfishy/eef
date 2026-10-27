@@ -13,6 +13,22 @@ completed increments and explicit diagnostics, not the full roadmap.
 
 ## Direction and policy changes
 
+The [bounded native-start deadline follow-up](NATIVE-START-DEADLINES.md) narrows
+start behavior using the existing absolute lease and local budget. It does not
+renew authority, widen limits or replace stop/receipt guarantees. Its new tests
+and full regression/hosted acceptance remain separate from the preceding
+accepted development checkpoint.
+
+The combined reliability checkpoint `f50a5a1` passes
+[all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/40408873600),
+31+1 hosted Windows native cases, both 1,171-test local Rust modes, 37 local native
+cases, cached native CPU mechanics and separate browser regressions. Independent
+reconciliation retains earlier failures and separates a successful authoring
+pipeline from its failed optional log collector without replaying work.
+This accepts that exact development source, not a stable release, approved model,
+automatic onboarding, physical operation, MSI rollback or firewall/signing/Defender
+lifecycle. Remaining implementation and acceptance scope below is unchanged.
+
 The [one-call schedule definition index](SCHEDULE-DEFINITION-READS.md) reduces
 duplicate reads without caching authority across calls or writes. Existing
 corruption/compiler/generation checks and all launch/settlement/deadline gates

@@ -301,6 +301,7 @@ impl AdmittedPeer {
         stream: S,
         source_payload: Option<Vec<u8>>,
     ) -> GrantReport {
+        let execution_deadline = tokio::time::Instant::from_std(self.accepted.execution_deadline());
         let Self {
             grant,
             accepted,
@@ -316,7 +317,14 @@ impl AdmittedPeer {
                     bail!("Audio must use its approved capture adapter")
                 }
                 super::audio_runtime::transfer(
-                    engine, &grant, endpoint, role, scope, definition, stream,
+                    engine,
+                    &grant,
+                    endpoint,
+                    role,
+                    scope,
+                    definition,
+                    stream,
+                    execution_deadline,
                 )
                 .await
             } else {
@@ -351,6 +359,7 @@ impl AdmittedPeer {
         Fut: std::future::Future<Output = Result<()>>,
     {
         let acknowledgement = self.acknowledgement();
+        let execution_deadline = tokio::time::Instant::from_std(self.accepted.execution_deadline());
         let Self {
             grant,
             accepted,
@@ -379,7 +388,14 @@ impl AdmittedPeer {
             };
             if definition.audio.is_some() {
                 super::audio_runtime::transfer(
-                    engine, &grant, endpoint, role, scope, definition, stream,
+                    engine,
+                    &grant,
+                    endpoint,
+                    role,
+                    scope,
+                    definition,
+                    stream,
+                    execution_deadline,
                 )
                 .await
             } else {

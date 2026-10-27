@@ -877,6 +877,9 @@ impl AcceptedGrant {
     pub fn acknowledgement(&self) -> GrantReport {
         GrantReport::new(&self.grant, ReceiptState::Accepted, Value::Null, None)
     }
+    pub(crate) fn execution_deadline(&self) -> std::time::Instant {
+        self.deadline
+    }
     pub async fn run(self, engine: &crate::NodeEngine) -> GrantReport {
         let g = self.grant.clone();
         let ledger = self.ledger.clone();
@@ -896,6 +899,7 @@ impl AcceptedGrant {
                         &g.action,
                         params,
                         Some(g.limits.max_result_bytes),
+                        Some(tokio::time::Instant::from_std(execution_deadline)),
                     )
                     .await
             }

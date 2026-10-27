@@ -49,3 +49,12 @@ still prove startup/refusal, descendant lifetime and memory limits through actua
 held handles, then exercise the original Python and pipeline paths. Full Rust,
 hosted, physical and stable-release acceptance remain separate. Earlier failures
 are not erased or explained away by a later pass.
+
+## Subsequent checkpoint
+
+The four selectors, thirteen existing lifetime tests, public native lifetime/
+Python/pipeline paths, both full Rust modes and all four hosted jobs pass at
+`f50a5a1`. Separate CPU and browser checks also pass independent reconciliation;
+see [checkpoint scope](STATUS.md#accepted-development-checkpoint-f50a5a1).
+That is evidence for the exercised ownership/lifetime paths, not universal native
+latency, physical stopping, installer behavior or signing/Defender clearance.

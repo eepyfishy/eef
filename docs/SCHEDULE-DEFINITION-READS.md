@@ -37,3 +37,16 @@ zero inspection writes, fresh refusal after a definition changes, and identical
 identity/scope/reserve/generation/future-record refusals. These are correctness
 and work-count checks, not latency guarantees. Focused, full/native and hosted
 acceptance remain pending. A later pass cannot erase the retained failed run.
+
+## Subsequent checkpoint
+
+At `f50a5a1`, the three new tests, all eleven authorization tests and thirty-two
+schedule tests pass (the existing profiler stays ignored). Both full Rust modes,
+all 37 local native cases, separate cached CPU/browser checks and all four hosted
+jobs pass independent reconciliation. The original pipeline passes in authoring
+and the final native batch; budgets and assertions are unchanged. Authoring's
+optional log collector failed after its successful fixture exit. Existing harness
+and journal evidence establish exhausted scheduling and matching completed-job
+receipts without rerunning work; that wrapper failure is retained separately.
+See [checkpoint scope](STATUS.md#accepted-development-checkpoint-f50a5a1).
+Earlier failure causes and all broader release requirements remain separate.

@@ -2,6 +2,49 @@
 use super::*;
 
 #[test]
+fn start_expiry_is_classified_without_private_spawn_error_text() {
+    let error = anyhow::Error::from(crate::process_lifetime::StartDeadlineElapsed)
+        .context("PRIVATE-interpreter-path-token");
+    assert_eq!(
+        availability_spawn_failure(&error),
+        AvailabilityFailure::Deadline
+    );
+    assert_eq!(
+        bridge_spawn_failure(error).downcast_ref::<BridgeFailure>(),
+        Some(&BridgeFailure::Deadline)
+    );
+    let error = anyhow::anyhow!("PRIVATE-original-spawn-error");
+    assert_eq!(
+        availability_spawn_failure(&error),
+        AvailabilityFailure::Spawn
+    );
+    assert_eq!(
+        bridge_spawn_failure(error).to_string(),
+        "PRIVATE-original-spawn-error"
+    );
+}
+
+#[tokio::test]
+async fn expired_parent_refuses_before_plugin_metadata_or_interpreter_spawn() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = PythonRuntime::discover(Some(dir.path().join("not-started.exe"))).unwrap();
+    let plugin = PythonPlugin {
+        capability: "camera.capture".into(),
+        actions: vec!["capture".into()],
+        path: dir.path().join("not-inspected.py"),
+        params: Value::Null,
+    };
+    let error = runtime
+        .invoke_with_output_limit(&plugin, "capture", json!({}), 1024, Some(Instant::now()))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<BridgeFailure>(),
+        Some(&BridgeFailure::Deadline)
+    );
+}
+
+#[test]
 fn exchange_timing_observation_uses_only_closed_codes_not_private_errors() {
     let sentinel = "PRIVATE-path-token-plugin-output";
     assert_eq!(exchange_observation_code(None), "python_exchange_ok");
@@ -188,6 +231,7 @@ async fn oversized_request_is_refused_before_plugin_metadata_or_interpreter_spaw
             &dir.path().join("does-not-exist.py"),
             json!({"op":"invoke","params":{"data":"x".repeat(2048)}}),
             1024,
+            None,
         )
         .await
         .unwrap_err();

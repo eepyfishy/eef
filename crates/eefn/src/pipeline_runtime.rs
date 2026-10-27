@@ -133,6 +133,7 @@ pub(crate) async fn execute(
                 &step.action,
                 params,
                 Some(definition.max_retained_bytes),
+                Some(tokio::time::Instant::from_std(deadline)),
             )
             .await?;
         let bytes = encoded_bytes(&output, definition.max_retained_bytes)?;

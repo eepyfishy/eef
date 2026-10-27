@@ -770,11 +770,11 @@ impl NodeEngine {
     }
 
     pub async fn execute(&self, capability: &str, action: &str, params: Value) -> Result<Value> {
-        self.execute_with_python_output_limit(capability, action, params, None)
+        self.execute_with_python_output_limit(capability, action, params, None, None)
             .await
     }
 
-    /// Internal data-budget intersection, not another execution authority.
+    /// Internal data/time-budget intersection, not another execution authority.
     /// Ordinary grants and finite stages retain all existing policy checks.
     pub(crate) async fn execute_with_python_output_limit(
         &self,
@@ -782,6 +782,7 @@ impl NodeEngine {
         action: &str,
         mut params: Value,
         python_output_limit: Option<usize>,
+        execution_deadline: Option<tokio::time::Instant>,
     ) -> Result<Value> {
         if !self.media_allowed(capability) {
             bail!("Local media permission is disabled")
@@ -824,7 +825,7 @@ impl NodeEngine {
             })),
             "system.info" => self.system_info(action).await,
             "filesystem" => self.filesystem(action, params).await,
-            "process.exec" => self.process_exec(action, params).await,
+            "process.exec" => self.process_exec(action, params, execution_deadline).await,
             "application.control" | "launch_application" => {
                 self.application_control(action, params).await
             }
@@ -842,13 +843,15 @@ impl NodeEngine {
                     .python
                     .as_ref()
                     .context("Python runtime is unavailable")?;
-                if let Some(limit) = python_output_limit {
-                    runtime
-                        .invoke_with_output_limit(plugin, action, params, limit)
-                        .await
-                } else {
-                    runtime.invoke(plugin, action, params).await
-                }
+                runtime
+                    .invoke_with_output_limit(
+                        plugin,
+                        action,
+                        params,
+                        python_output_limit.unwrap_or(runtime.limits().max_stdout_bytes),
+                        execution_deadline,
+                    )
+                    .await
             }
         }
     }
@@ -1004,7 +1007,12 @@ impl NodeEngine {
         crate::client::system_snapshot().await
     }
 
-    async fn process_exec(&self, action: &str, params: Value) -> Result<Value> {
+    async fn process_exec(
+        &self,
+        action: &str,
+        params: Value,
+        execution_deadline: Option<tokio::time::Instant>,
+    ) -> Result<Value> {
         if action != "run" || !self.policy.process.enabled {
             bail!("process.exec is not enabled for this action")
         }
@@ -1018,6 +1026,14 @@ impl NodeEngine {
         {
             bail!("program '{program}' is not in the node allowlist")
         }
+        let seconds = params
+            .get("timeout_seconds")
+            .and_then(Value::as_u64)
+            .unwrap_or(self.policy.process.max_seconds)
+            .clamp(1, self.policy.process.max_seconds);
+        let local_deadline = tokio::time::Instant::now() + Duration::from_secs(seconds);
+        let deadline =
+            crate::process_lifetime::intersect_deadline(local_deadline, execution_deadline);
         let mut command = Command::new(program);
         if let Some(arguments) = params.get("args") {
             command.args(validated_arguments(arguments)?);
@@ -1030,21 +1046,19 @@ impl NodeEngine {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let (mut child, tree) = crate::process_lifetime::spawn(&mut command)
-            .with_context(|| format!("could not start allowed program '{program}'"))?;
+        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit_before(
+            &mut command,
+            None,
+            deadline,
+        )
+        .with_context(|| format!("could not start allowed program '{program}'"))?;
         let mut tree = Some(tree);
         let stdout = child.stdout.take().context("process stdout unavailable")?;
         let stderr = child.stderr.take().context("process stderr unavailable")?;
         let limit = self.policy.process.max_output_bytes;
-        let seconds = params
-            .get("timeout_seconds")
-            .and_then(Value::as_u64)
-            .unwrap_or(self.policy.process.max_seconds)
-            .clamp(1, self.policy.process.max_seconds);
         // Readers belong to this future rather than detached Tokio tasks. The
         // timeout covers root wait AND pipe collection; cancellation drops both
         // readers, the root child and the Windows tree lifetime handle.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(seconds);
         let collected = tokio::time::timeout_at(deadline, async {
             let wait = async {
                 let result = child.wait().await;

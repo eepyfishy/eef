@@ -28,6 +28,7 @@ pub(super) async fn transfer<S: crate::tls::NodeIo + 'static>(
     scope: Scope,
     definition: Definition,
     stream: S,
+    execution_deadline: tokio::time::Instant,
 ) -> Result<Value> {
     let audio = definition
         .audio
@@ -39,7 +40,13 @@ pub(super) async fn transfer<S: crate::tls::NodeIo + 'static>(
         engine.check_grant_policy(g)?;
         let (cap, action, params) = audio.operation(role);
         let output = engine
-            .execute_with_python_output_limit(cap, action, params, Some(maximum_encoded))
+            .execute_with_python_output_limit(
+                cap,
+                action,
+                params,
+                Some(maximum_encoded),
+                Some(execution_deadline),
+            )
             .await?;
         let encoded = output["data_base64"]
             .as_str()
@@ -112,7 +119,13 @@ pub(super) async fn transfer<S: crate::tls::NodeIo + 'static>(
         let (cap, action, mut params) = audio.operation(role);
         params["data_base64"] = json!(STANDARD.encode(&bytes));
         let played = engine
-            .execute_with_python_output_limit(cap, action, params, Some(g.limits.max_result_bytes))
+            .execute_with_python_output_limit(
+                cap,
+                action,
+                params,
+                Some(g.limits.max_result_bytes),
+                Some(execution_deadline),
+            )
             .await?;
         if played["played"] != true || played["bytes"] != manifest.payload_bytes {
             bail!("Audio sink did not report exact playback completion")

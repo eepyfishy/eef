@@ -76,7 +76,11 @@ fn unique_thread(pid: u32, mut next: impl FnMut() -> Result<Option<(u32, u32)>>)
     Ok(id)
 }
 
-pub(super) fn resume(child: &Child, pid: u32) -> Result<()> {
+pub(super) fn resume(
+    child: &Child,
+    pid: u32,
+    before_resume: impl FnOnce(&OwnedHandle) -> Result<()>,
+) -> Result<()> {
     if child.id() != Some(pid) {
         bail!("Suspended child identity changed; no execution");
     }
@@ -138,6 +142,9 @@ pub(super) fn resume(child: &Child, pid: u32) -> Result<()> {
     if unsafe { GetProcessIdOfThread(thread.as_raw_handle()) } != pid {
         bail!("Suspended child thread identity changed; no execution");
     }
+    // Setup/creation/snapshot time consumes the caller's original budget.
+    // Refusal leaves this exact root suspended and job-contained for teardown.
+    before_resume(&thread)?;
     // SAFETY: verified thread of our still-live, suspended, job-contained child.
     // No other process is resumed. A changed count is a refusal, never a retry.
     if unsafe { ResumeThread(thread.as_raw_handle()) } != 1 {

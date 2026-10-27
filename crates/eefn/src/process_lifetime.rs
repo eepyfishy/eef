@@ -29,17 +29,89 @@ pub(crate) fn spawn_with_job_memory_limit(
     command: &mut Command,
     limit_mib: Option<u64>,
 ) -> Result<(Child, ProcessTree)> {
+    spawn_limited(command, limit_mib, None)
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("owned process start deadline elapsed")]
+pub(crate) struct StartDeadlineElapsed;
+
+pub(crate) fn intersect_deadline(
+    local: tokio::time::Instant,
+    parent: Option<tokio::time::Instant>,
+) -> tokio::time::Instant {
+    parent.map_or(local, |parent| parent.min(local))
+}
+
+fn check_start_deadline(deadline: Option<tokio::time::Instant>) -> Result<()> {
+    if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
+        return Err(StartDeadlineElapsed.into());
+    }
+    Ok(())
+}
+
+/// Intersect with an existing absolute budget; never start a fresh time window.
+pub(crate) fn spawn_with_job_memory_limit_before(
+    command: &mut Command,
+    limit_mib: Option<u64>,
+    deadline: tokio::time::Instant,
+) -> Result<(Child, ProcessTree)> {
+    spawn_limited(command, limit_mib, Some(deadline))
+}
+
+fn spawn_limited(
+    command: &mut Command,
+    limit_mib: Option<u64>,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<(Child, ProcessTree)> {
     let limit = crate::model_memory::bytes(limit_mib)?;
+    check_start_deadline(deadline)?;
     command.kill_on_drop(true);
     #[cfg(windows)]
     {
-        windows::spawn(command, limit)
+        windows::spawn(command, limit, deadline)
     }
     #[cfg(not(windows))]
     {
         let _ = limit;
         // A requested limit was rejected before spawn. No non-Windows tree guarantee.
+        check_start_deadline(deadline)?;
         Ok((command.spawn()?, ProcessTree))
+    }
+}
+
+#[cfg(test)]
+mod start_deadline_tests {
+    use super::*;
+    use std::time::Duration;
+    #[test]
+    fn deadline_intersection_never_extends_either_bound() {
+        let local = tokio::time::Instant::now() + Duration::from_secs(60);
+        let earlier = local - Duration::from_secs(10);
+        let later = local + Duration::from_secs(10);
+        assert_eq!(intersect_deadline(local, None), local);
+        assert_eq!(intersect_deadline(local, Some(earlier)), earlier);
+        assert_eq!(intersect_deadline(local, Some(later)), local);
+    }
+    #[tokio::test]
+    async fn expired_start_refuses_before_even_spawning_a_missing_program() {
+        let mut command = Command::new("PRIVATE-program-must-never-start");
+        let error = match spawn_with_job_memory_limit_before(
+            &mut command,
+            None,
+            tokio::time::Instant::now(),
+        ) {
+            Ok(_) => panic!("Expired start must refuse"),
+            Err(error) => error,
+        };
+        assert!(error.is::<StartDeadlineElapsed>());
+        assert_eq!(error.to_string(), "owned process start deadline elapsed");
+        assert!(!error.to_string().contains("PRIVATE"));
+        assert!(check_start_deadline(None).is_ok());
+        assert!(
+            check_start_deadline(Some(tokio::time::Instant::now() + Duration::from_secs(60)))
+                .is_ok()
+        );
     }
 }
 
@@ -223,7 +295,11 @@ mod windows {
             }
             Ok(information)
         }
-        fn attach_and_resume(&self, child: &Child) -> Result<()> {
+        fn attach_and_resume(
+            &self,
+            child: &Child,
+            before_resume: impl FnOnce(&OwnedHandle) -> Result<()>,
+        ) -> Result<()> {
             let pid = child.id().context("Suspended child identity unavailable")?;
             let process = child
                 .raw_handle()
@@ -235,14 +311,17 @@ mod windows {
             }
             // The live, suspended child is already contained. Enumerate only
             // its thread IDs, not all threads on the PC. No fallback on refusal.
-            super::process_thread::resume(child, pid)
+            super::process_thread::resume(child, pid, before_resume)
         }
     }
     pub(super) fn spawn(
         command: &mut Command,
         memory_bytes: Option<usize>,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<(Child, ProcessTree)> {
-        spawn_checked(command, memory_bytes, ProcessTree::attach_and_resume)
+        spawn_checked(command, memory_bytes, |tree, child| {
+            tree.attach_and_resume(child, |_| check_start_deadline(deadline))
+        })
     }
     fn spawn_checked(
         command: &mut Command,
@@ -280,6 +359,15 @@ mod windows {
             bail!("isolated pre-resume containment refusal")
         })
     }
+    #[cfg(test)]
+    pub(super) fn inspect_final_gate(
+        command: &mut Command,
+        inspect: impl FnOnce(&Child, &OwnedHandle) -> Result<()>,
+    ) -> Result<(Child, ProcessTree)> {
+        spawn_checked(command, None, |tree, child| {
+            tree.attach_and_resume(child, |thread| inspect(child, thread))
+        })
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -298,8 +386,8 @@ pub(crate) mod tests {
             MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
         },
         System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
-            WaitForSingleObject,
+            GetProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+            ResumeThread, SuspendThread, WaitForSingleObject,
         },
     };
     const HELPER: &str = "process_lifetime::tests::process_tree_child_helper";
@@ -554,6 +642,93 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert!(windows::refuse_before_resume(&mut command("loop", dir.path())).is_err());
         tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!dir.path().join("pids.json").exists());
+    }
+    fn still_initially_suspended(thread: &OwnedHandle) {
+        // Only the verified primary thread of our owned, not-yet-started child.
+        // Restore its original count before either allowing or refusing resume.
+        let count = unsafe { SuspendThread(thread.as_raw_handle()) };
+        assert_ne!(count, u32::MAX);
+        let restored = unsafe { ResumeThread(thread.as_raw_handle()) };
+        assert_eq!(restored, count + 1);
+        assert_eq!(count, 1, "Final gate must precede the original resume");
+    }
+    #[tokio::test]
+    async fn expired_final_gate_keeps_contained_root_suspended_and_observes_its_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut held = None;
+        let mut checks = 0;
+        let result =
+            windows::inspect_final_gate(&mut command("loop", dir.path()), |child, thread| {
+                checks += 1;
+                still_initially_suspended(thread);
+                let pid = child.id().unwrap();
+                let raw = unsafe {
+                    OpenProcess(
+                        PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                        0,
+                        pid,
+                    )
+                };
+                assert!(!raw.is_null());
+                let observer = unsafe { OwnedHandle::from_raw_handle(raw) };
+                assert_eq!(unsafe { GetProcessId(observer.as_raw_handle()) }, pid);
+                held = Some(observer);
+                // Deterministic final-gate expiry, not a sleep-dependent start race.
+                check_start_deadline(Some(tokio::time::Instant::now()))
+            });
+        let error = match result {
+            Ok(_) => panic!("Expired final gate resumed work"),
+            Err(error) => error,
+        };
+        assert!(error.is::<StartDeadlineElapsed>());
+        assert_eq!(checks, 1);
+        let held = held.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if unsafe { WaitForSingleObject(held.as_raw_handle(), 0) } == WAIT_OBJECT_0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Our refused root must exit through its retained handle");
+        assert!(!dir.path().join("pids.json").exists());
+    }
+    #[tokio::test]
+    async fn final_gate_runs_once_before_the_allowed_primary_thread_is_resumed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut checks = 0;
+        let (mut child, tree) =
+            windows::inspect_final_gate(&mut command("loop", dir.path()), |_, thread| {
+                checks += 1;
+                still_initially_suspended(thread);
+                check_start_deadline(None)
+            })
+            .unwrap();
+        assert_eq!(checks, 1);
+        let processes = Processes::observe(dir.path()).await;
+        processes.alive();
+        drop(tree);
+        processes.exited().await;
+        child.wait().await.unwrap();
+    }
+    #[tokio::test]
+    async fn engine_parent_deadline_is_not_replaced_by_a_fresh_local_process_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner = engine(dir.path(), 30);
+        let error = runner
+            .execute_with_python_output_limit(
+                "process.exec",
+                "run",
+                params("loop", dir.path()),
+                None,
+                Some(tokio::time::Instant::now()),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.is::<StartDeadlineElapsed>());
         assert!(!dir.path().join("pids.json").exists());
     }
     #[tokio::test]

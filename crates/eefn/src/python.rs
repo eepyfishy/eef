@@ -273,11 +273,12 @@ impl PythonRuntime {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit(
+        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit_before(
             &mut command,
             self.limits.max_job_memory_mib,
+            deadline,
         )
-        .map_err(|_| AvailabilityFailure::Spawn)?;
+        .map_err(|error| availability_spawn_failure(&error))?;
         let status = timeout_at(deadline, child.wait())
             .await
             .map_err(|_| AvailabilityFailure::Deadline)?
@@ -296,7 +297,7 @@ impl PythonRuntime {
     pub async fn inspect(&self, plugin_path: impl AsRef<Path>) -> Result<PythonPlugin> {
         let path = plugin_path.as_ref().to_path_buf();
         let value = self
-            .call(&path, json!({"op": "inspect"}), 64 * 1024)
+            .call(&path, json!({"op": "inspect"}), 64 * 1024, None)
             .await?;
         let mut plugin: PythonPlugin =
             serde_json::from_value(value).map_err(|_| BridgeFailure::Metadata)?;
@@ -320,7 +321,7 @@ impl PythonRuntime {
         action: &str,
         params: Value,
     ) -> Result<Value> {
-        self.invoke_with_output_limit(plugin, action, params, self.limits.max_stdout_bytes)
+        self.invoke_with_output_limit(plugin, action, params, self.limits.max_stdout_bytes, None)
             .await
     }
 
@@ -332,6 +333,7 @@ impl PythonRuntime {
         action: &str,
         params: Value,
         output_limit: usize,
+        execution_deadline: Option<Instant>,
     ) -> Result<Value> {
         if !plugin
             .actions
@@ -349,16 +351,26 @@ impl PythonRuntime {
             output_limit
                 .saturating_add(4096)
                 .min(self.limits.max_stdout_bytes),
+            execution_deadline,
         )
         .await
     }
 
-    async fn call(&self, plugin_path: &Path, request: Value, stdout_limit: usize) -> Result<Value> {
+    async fn call(
+        &self,
+        plugin_path: &Path,
+        request: Value,
+        stdout_limit: usize,
+        execution_deadline: Option<Instant>,
+    ) -> Result<Value> {
         self.limits.validate()?;
         // Never silently drop an explicitly requested native ceiling.
         crate::model_memory::supported(self.limits.max_job_memory_mib)?;
         let stdout_limit = stdout_limit.min(self.limits.max_stdout_bytes);
-        let deadline = Instant::now() + Duration::from_secs(self.limits.timeout_seconds);
+        let started = Instant::now();
+        let local_deadline = started + Duration::from_secs(self.limits.timeout_seconds);
+        let deadline =
+            crate::process_lifetime::intersect_deadline(local_deadline, execution_deadline);
         // Bounded serialization precedes spawn. No large copy first, and an
         // oversized request cannot execute an import or acquire a device.
         let input = encode_request(&request, self.limits.max_request_bytes)?;
@@ -385,10 +397,12 @@ impl PythonRuntime {
             return Err(BridgeFailure::Deadline.into());
         }
         let spawn_started = Instant::now();
-        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit(
+        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit_before(
             &mut command,
             self.limits.max_job_memory_mib,
+            deadline,
         )
+        .map_err(bridge_spawn_failure)
         .with_context(|| {
             format!(
                 "could not start bundled Python at '{}'",
@@ -429,13 +443,12 @@ impl PythonRuntime {
         // Opt-in numeric diagnostics only: no paths, IDs, params or child text.
         // Transport completion is not plugin success, health or effect proof.
         tracing::debug!(
-            setup_ms = spawn_started
-                .duration_since(deadline - Duration::from_secs(self.limits.timeout_seconds))
-                .as_millis(),
+            setup_ms = spawn_started.duration_since(started).as_millis(),
             spawn_ms = spawned.duration_since(spawn_started).as_millis(),
             exchange_ms = exchange_ended.duration_since(spawned).as_millis(),
             cleanup_ms = Instant::now().duration_since(exchange_ended).as_millis(),
             budget_ms = self.limits.timeout_seconds * 1000,
+            effective_budget_ms = deadline.saturating_duration_since(started).as_millis(),
             outcome_code = exchange_observation_code(outcome.as_ref().err()),
             "Python exchange timing; not plugin health"
         );
@@ -444,6 +457,22 @@ impl PythonRuntime {
             return Err(BridgeFailure::Process.into());
         }
         decode_reply(&stdout)
+    }
+}
+
+fn availability_spawn_failure(error: &anyhow::Error) -> AvailabilityFailure {
+    if error.is::<crate::process_lifetime::StartDeadlineElapsed>() {
+        AvailabilityFailure::Deadline
+    } else {
+        AvailabilityFailure::Spawn
+    }
+}
+
+fn bridge_spawn_failure(error: anyhow::Error) -> anyhow::Error {
+    if error.is::<crate::process_lifetime::StartDeadlineElapsed>() {
+        BridgeFailure::Deadline.into()
+    } else {
+        error
     }
 }
 
