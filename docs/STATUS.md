@@ -5,6 +5,17 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: one-shot model check after setup
 
+Revision `260da57` passes both full local Windows modes (1,201 tests plus one
+existing ignored test each), all 38 local native cases, exact persisted receipt
+reconciliation, cached native-CPU inference/lifecycle and a separate default-build
+browser/copy/focus/restart check. It is not fully accepted: both Linux jobs in
+[run 40497997982](https://github.com/eepyfishy/eef/actions/runs/40497997982) fail to
+compile an existing cross-platform model-lifecycle test. The test-only `spawn`
+convenience wrapper was mistakenly gated to Windows. Its guard is corrected to
+`cfg(test)` on every platform; production spawn/containment behavior is unchanged.
+The failed run stays retained, and the correction needs its own validation and
+hosted acceptance. No release, default, permission or installed-node change.
+
 The [setup check controller](SETUP-MODEL-CHECKS.md) adds explicit, immutable
 consent for one exact node/backend/model once its setup is applied. It waits in
 the backend and reuses ordinary node-origin model verification, approval and
