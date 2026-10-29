@@ -16,6 +16,9 @@ use tokio::time::{Instant, timeout, timeout_at};
 
 const PLUGIN_HOST: &str = include_str!("../../../python/eef_plugin_host.py");
 
+#[path = "python_stream.rs"]
+pub mod stream;
+
 /// Bounds the bridge exchange, plus an optional Windows owned-job commit ceiling.
 /// This is not working-set RAM, VRAM, a sandbox or external-effect containment.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

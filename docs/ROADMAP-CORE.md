@@ -1587,6 +1587,12 @@ old authority is known to be stopped/expired; clustering remains a later gate.
 
 ## 8-9. Peer paths, continuous work and listening
 
+The [owned Python streaming bridge](PYTHON-STREAMS.md) adds live bounded metadata
+delivery from a trusted iterator under the existing Python process/job limits.
+It is a transport building block: no ambient producer, workload admission,
+listening control or coordinator event path is enabled. The complete continuous
+requirements below remain open.
+
 The [peer transport library foundation](PEER-TRANSPORT.md) adds recipient-only
 signed credential delivery, scoped mutual TLS and bounded framed transfer.
 Its follow-up finite admission binds full grant digests, uses existing consumed

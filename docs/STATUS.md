@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: owned Python observation streams
+
+The [streaming bridge](PYTHON-STREAMS.md) delivers bounded metadata before source
+EOF and reuses the existing owned Python process/job limits. Both local build
+modes pass 1,237 tests plus one existing ignored test each. Ten real-interpreter
+synthetic Windows cases pass, including creation-verified producer/child exit
+after cancellation and deadline expiry. Independent local evidence reconciliation
+passes. Exact-revision hosted acceptance is pending. This does not enable ambient
+capture or complete continuous jobs, listening controls, event reporting or
+physical acceptance.
+
 ## Accepted development checkpoint: `25475b3`
 
 Conditional local stages and safe firewall inspection pass their complete
