@@ -169,6 +169,7 @@ jobs:
             'test-python-stream.mjs',
             'test-microphone-energy.mjs',
             'test-microphone-stream.mjs',
+            'test-listening-commands.mjs',
             'test-permission-commands.mjs',
             'test-node-commands.mjs',
             'test-node-credentials.mjs',

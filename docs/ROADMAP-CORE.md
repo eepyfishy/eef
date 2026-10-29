@@ -1599,6 +1599,13 @@ It has fake-device and source/transport coverage, with no startup registration,
 user command or physical capture acceptance. Connect it to the existing durable
 workload lifecycle and local listening/permission controls before enabling it.
 
+[Local listening consent](LISTENING-CONTROL.md) now has a command/API control path
+and a revocation wrapper. Both local build modes and affected native command
+regressions pass; exact-source hosted acceptance is pending. It provides no grant
+or ambient startup path. Integrate the source with durable admission, resource
+selection, ongoing permission checks and bounded event reporting before claiming
+continuous listening support.
+
 The [peer transport library foundation](PEER-TRANSPORT.md) adds recipient-only
 signed credential delivery, scoped mutual TLS and bounded framed transfer.
 Its follow-up finite admission binds full grant digests, uses existing consumed

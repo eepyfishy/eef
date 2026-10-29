@@ -101,6 +101,11 @@ enum Commands {
         #[command(subcommand)]
         command: eefn::python_policy::Action,
     },
+    /// Inspect or change local ambient-input consent; never start capture or work.
+    Listening {
+        #[command(subcommand)]
+        command: eefn::listening::Action,
+    },
     /// Configure finite audio relay resources; never enable permissions or execute.
     Relay {
         #[command(subcommand)]
@@ -2011,7 +2016,100 @@ async fn execute_python_policy(
     )
 }
 
+async fn execute_listening(
+    args: &Args,
+    action: &eefn::listening::Action,
+) -> Result<serde_json::Value> {
+    use eefn::listening::{Action, Command, Request};
+    use serde_json::{Value, json};
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start this node first; listening commands never launch a runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    let mutation = !matches!(action, Action::Show);
+    let mut sending = false;
+    let mut requested = Value::Null;
+    let result = async {
+        let response = client
+            .get(format!("http://{address}/api/diagnostics"))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Node diagnostics unavailable")
+        }
+        let diagnostics = eefn::model_manager::bounded_json(response).await?;
+        if diagnostics["success"] != true || diagnostics["node_id"] != file.node_id {
+            bail!("Unconfirmed node diagnostics")
+        }
+        let mut request = Request {
+            schema_version: 1,
+            expected_node_id: file.node_id.clone(),
+            expected_runtime_id: diagnostics["runtime_id"]
+                .as_str()
+                .context("Node runtime unavailable")?
+                .into(),
+            command: Command::Show {},
+        };
+        request.validate()?;
+        let url = format!("http://{address}/api/commands/listening");
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Listening inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::listening::confirmed(&inspected, &request) {
+            bail!("Unconfirmed listening inspection")
+        }
+        let enabled = match action {
+            Action::Show => return Ok::<_, anyhow::Error>(inspected),
+            Action::Enable => true,
+            Action::Disable => false,
+        };
+        request.command = Command::Set {
+            enabled,
+            expected_revision: inspected["revision"]
+                .as_u64()
+                .context("Listening revision unavailable")?,
+            expected_epoch: inspected["runtime_epoch"]
+                .as_u64()
+                .context("Listening runtime epoch unavailable")?,
+        };
+        request.validate()?;
+        requested = json!(request.command);
+        sending = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Listening save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::listening::confirmed(&saved, &request) {
+            bail!("Unconfirmed listening save")
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(
+        json!({"schema_version":1,"report_type":"node_listening_command","node_id":file.node_id,"success":result.is_ok(),"mutation_requested":mutation,"sending_attempted":sending,"outcome_unknown":result.is_err()&&sending,"command":requested,"result":result.ok(),"execution_authorized":false,"capture_started":false,"restart_requested":false,"automatically_retried":false,"note":"Inspect listening show after uncertainty; no retry, workload or restart was sent."}),
+    )
+}
+
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Listening { command } = command {
+        return execute_listening(args, command).await;
+    }
     if let Commands::Doctor { options } = command {
         return eefn::package_health::execute(
             &eefn::package_health::Context::current("eefn")?,
@@ -2812,6 +2910,14 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     } else {
                         println!(
                             "Python policy outcome was not confirmed. Inspect python show; no retry, permission change, restart or workload was sent."
+                        );
+                    }
+                } else if matches!(command, Commands::Listening { .. }) {
+                    if value["success"] == true {
+                        print!("{}", eefn::listening::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Listening consent outcome unconfirmed. Inspect `eefn listening show`; no automatic retry, workload or restart was sent."
                         );
                     }
                 } else if matches!(command, Commands::Relay { .. }) {
@@ -3767,6 +3873,19 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn listening_cli_is_local_consent_with_no_workload_options() {
+        use clap::Parser;
+        for action in ["show", "enable", "disable"] {
+            let args = super::Args::try_parse_from(["eefn", "listening", action]).unwrap();
+            assert!(matches!(
+                args.command,
+                Some(super::Commands::Listening { .. })
+            ));
+        }
+        assert!(super::Args::try_parse_from(["eefn", "listening", "enable", "--grant"]).is_err());
+        assert!(super::Args::try_parse_from(["eefn", "listening", "start-capture"]).is_err());
+    }
     #[test]
     fn service_classification_excludes_all_legacy_one_shot_flags() {
         use clap::Parser;

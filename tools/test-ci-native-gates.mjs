@@ -30,11 +30,12 @@ for(const os of ['windows-2025','ubuntu-24.04'])for(const mode of ['headless','d
  const reachable={...steps,native_build:{outcome:canBuild(matrix,steps,()=>cancelled)?fresh:'skipped'}};
  if(!canBuild(matrix,steps,()=>cancelled))assert.equal(canRun(matrix,reachable,()=>cancelled),false,'Skipped prerequisites must not reach native execution');
 }
-const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,35);assert.equal(new Set(scripts).size,35);
+const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,36);assert.equal(new Set(scripts).size,36);
 assert(scripts.includes('test-setup-model-check.mjs'));
 assert(scripts.includes('test-coordinator-initialization.mjs'));assert(scripts.includes('test-bundled-components.mjs'));assert(scripts.includes('test-python-bridge.mjs'));
 assert(scripts.includes('test-python-stream.mjs'));
 assert(scripts.includes('test-microphone-energy.mjs'));assert(scripts.includes('test-microphone-stream.mjs'));
+assert(scripts.includes('test-listening-commands.mjs'));
 assert.match(native,/EEF_TEST_NODE_OUTPUT_PREFIX_CLOSE = '1'/);
 assert.match(native,/foreach \(\$script in \$scripts\)[\s\S]*?if \(\$LASTEXITCODE -ne 0\) \{ exit \$LASTEXITCODE \}/);
 console.log(`CI native gate checks passed: ${checked} combinations; all failure and native acceptance gates retained`);

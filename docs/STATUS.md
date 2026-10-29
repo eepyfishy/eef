@@ -3,26 +3,43 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: single-open microphone energy source
+## Local development acceptance: listening consent and revocation
+
+[Listening controls](LISTENING-CONTROL.md) add backend-owned local consent,
+revision/epoch checks and a deadline-bound trusted-library revocation wrapper.
+CLI and local API operations do not start capture, grant microphone permission or
+authorize work. Generic restores and remote management cannot re-enable a local
+denial. Both local build modes pass 1,249 tests plus one existing ignored test
+each, and all five affected native suites pass. The real CLI disables a synthetic
+supervised source; held creation-verified Windows handles observe its Python root
+and child exit while the command API remains available. Lost acknowledgements
+cause one mutation and no retry. Independent source/result reconciliation passes.
+Exact-source hosted acceptance is pending; continuous job/resource/event
+integration and physical gates remain open.
+
+## Accepted source checkpoint: streaming and microphone energy
 
 The [microphone energy iterator](MICROPHONE-ENERGY.md) holds one blocking input
 stream and reports RMS energy metadata with configurable hysteresis. Eleven
 fake-device tests and three tests through the production Rust/Python stream
 transport pass locally. Source gaps remain unknown, and normal completion,
-iterator closure and read/validation failure exit the input context. Exact-source
-hosted acceptance is pending. The source has no startup registration or user
-command; microphone permission, local listening control, durable workload
-admission, event reporting and physical acceptance still need integration.
+iterator closure and read/validation failure exit the input context. Source
+`044a21b` passes [all four main-branch hosted jobs](https://github.com/eepyfishy/eef/actions/runs/40895246064),
+35 Windows native suites, the separate connection-close case and firewall mocks.
+The source has no startup registration or capture command. Durable admission,
+resource/listening integration, event reporting and physical acceptance remain
+required before enabling continuous microphone workloads.
 Energy thresholding is not speech or person recognition.
 
-## In development: owned Python observation streams
+## Accepted source checkpoint: owned Python observation streams
 
 The [streaming bridge](PYTHON-STREAMS.md) delivers bounded metadata before source
 EOF and reuses the existing owned Python process/job limits. Both local build
 modes pass 1,237 tests plus one existing ignored test each. Ten real-interpreter
 synthetic Windows cases pass, including creation-verified producer/child exit
 after cancellation and deadline expiry. Independent local evidence reconciliation
-passes. Exact-revision hosted acceptance is pending. This does not enable ambient
+passes. Source `58ff63c` also passes [all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/40888355182),
+including its 33 native suites; its successor above retains those gates. This does not enable ambient
 capture or complete continuous jobs, listening controls, event reporting or
 physical acceptance.
 

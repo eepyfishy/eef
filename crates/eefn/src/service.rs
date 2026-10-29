@@ -19,6 +19,7 @@ pub enum StartupIssue {
 
 #[derive(Clone)]
 pub struct NodeService {
+    pub(crate) listening_gate: Arc<crate::listening::Gate>,
     pub(crate) config_path: PathBuf,
     pub(crate) node_id: String,
     pub live: Arc<std::sync::Mutex<Value>>,
@@ -117,6 +118,7 @@ impl NodeService {
         let (download_receipts, recovered) =
             crate::download_receipts::Journal::recover(&config_path, &node_id);
         Arc::new(Self {
+            listening_gate: Arc::new(crate::listening::Gate::default()),
             config_path,
             node_id,
             model_runtime: Arc::new(std::sync::Mutex::new(None)),
@@ -168,13 +170,21 @@ impl NodeService {
     }
 
     pub(crate) fn save_config_locked(&self, value: Value) -> Result<()> {
-        self.save_config_inner(value, false)
+        self.save_config_inner(value, false, false)
     }
     /// Only the runtime/CAS-checked bootstrap command may enable a new auto epoch.
     pub(crate) fn save_bootstrap_config_locked(&self, value: Value) -> Result<()> {
-        self.save_config_inner(value, true)
+        self.save_config_inner(value, true, false)
     }
-    fn save_config_inner(&self, mut value: Value, bootstrap_authorized: bool) -> Result<()> {
+    pub(crate) fn save_listening_config_locked(&self, value: Value) -> Result<()> {
+        self.save_config_inner(value, false, true)
+    }
+    fn save_config_inner(
+        &self,
+        mut value: Value,
+        bootstrap_authorized: bool,
+        listening_authorized: bool,
+    ) -> Result<()> {
         if !value.is_object() {
             bail!("node configuration must be a JSON object")
         }
@@ -182,6 +192,7 @@ impl NodeService {
         // Backend-owned version survives generic saves/restore as well as the
         // typed policy command. Content rollback must not revive an old CAS.
         crate::model_bootstrap::preserve_revision(&old, &mut value, bootstrap_authorized)?;
+        crate::listening::preserve_revision(&old, &mut value, listening_authorized)?;
         let previous_policy =
             crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(&old)?;
         let incoming_policy =
@@ -232,6 +243,13 @@ impl NodeService {
         validate_config_shape(&value)?;
         validate_model_references(&value, &old, &self.config_path)?;
         let bytes = serde_json::to_vec_pretty(&value)?;
+        // Revocation precedes storage, including a failed save. Only an explicit
+        // fresh local enable clears this latch; generic saves cannot revive it.
+        if !crate::listening::Consent::from_config(&value)?.enabled
+            || value.pointer("/permissions/media/microphone") != Some(&json!(true))
+        {
+            self.listening_gate.deny();
+        }
         if self.config_path.is_file() {
             crate::atomic_file::copy(
                 &self.config_path,
@@ -1114,6 +1132,8 @@ impl NodeService {
 
 /// Structural/policy validation; commits separately validate introduced artifacts.
 fn validate_config_shape(value: &Value) -> Result<()> {
+    crate::listening::Consent::from_config(value)?;
+    crate::listening::revision(value)?;
     if value.get("management").is_some_and(|v| !v.is_object())
         || ["allow_remote", "allow_remote_repair_setup_policy"]
             .iter()

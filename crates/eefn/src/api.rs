@@ -124,6 +124,10 @@ impl NodeService {
                 post(python_policy).layer(axum::extract::DefaultBodyLimit::max(8192)),
             )
             .route(
+                "/api/commands/listening",
+                post(listening_command).layer(axum::extract::DefaultBodyLimit::max(4096)),
+            )
+            .route(
                 "/api/commands/permissions",
                 post(permission_command).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
@@ -291,6 +295,12 @@ async fn python_policy(
     Json(request): Json<crate::python_policy::Request>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.python_policy(request, false)?))
+}
+async fn listening_command(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::listening::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.listening_command(request, false)?))
 }
 
 async fn model_bootstrap_policy(
