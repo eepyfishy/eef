@@ -101,6 +101,7 @@ pub mod startup;
 pub mod submission;
 pub mod tls;
 pub mod updater;
+pub mod workload_leases;
 
 pub use client::{
     CoordinatorEndpoint, NodeClient, NodeClientConfig, SelectedModel, current_load,

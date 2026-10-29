@@ -3,6 +3,19 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: reviewed continuous session contracts
+
+[Renewable session mechanics](WORKLOAD-LEASES.md) separate a bounded session
+lifetime from its short authority windows while preserving existing v1 limits.
+An exact definition binds origin, plan, source/resource/adapter, normalized
+microphone parameters and memory/frame/event budgets into the lease identity.
+Renewals supervise one future and cannot widen its original session end. Issuer
+renewals require exact scope and an independently validated consumed-grant ACK.
+The policy defaults disabled and has no exposed setting or authenticated route.
+Durable issuance/consumption, ongoing local permission/resource checks, event
+transport, product capture and physical acceptance remain required. This is a
+backend library increment, not completed continuous workload support.
+
 ## Local development acceptance: listening consent and revocation
 
 [Listening controls](LISTENING-CONTROL.md) add backend-owned local consent,
