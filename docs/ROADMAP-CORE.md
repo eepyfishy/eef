@@ -18,8 +18,18 @@ an event-gating prerequisite. It keeps finite grant/permission/deadline rules,
 reserves every possible provider and reports explicit skips instead of running
 heavy analysis on a false condition. Twelve added focused tests, both 1,229-test
 local modes, all 38 native cases and separate cached-CPU/browser checks pass;
-exact-revision hosted acceptance remains separate. It does not replace the continuous
+the exact `25475b3` [four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/40599793148)
+also passes, including 32 native suites, connection-close and firewall mock gates.
+Independent source/artifact/journal audits pass. It does not replace the continuous
 sessions, listening controls, detectors, event transport or resource gates below.
+
+A [deferred-script MSI failure](MSI-ROLLBACK-VALIDATION.md#deferred-script-failure-experiment-2026-10-29)
+reproduces stranded registration after publication without an immediate Type 19
+fault. All five synthetic payload/inventory files and component markers roll back;
+ordinary exact uninstall removes the remaining test registration, with owner data
+preserved. The underlying cause and production MSI recovery gate remain open.
+Do not change privileges, weaken late-failure coverage or reinterpret this cleanup
+as successful automatic rollback.
 
 The [owned-process stop observation](PROCESS-STOP-OBSERVATION.md) increment passes
 development acceptance at `dd6ae21`. It retains the original grant

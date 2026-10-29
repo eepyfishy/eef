@@ -3,7 +3,9 @@
 This increment adds explicit data conditions to a finite graph. It is a
 prerequisite for local event gating, not continuous capture, ambient listening,
 an automatic detector, a heavy planner or new execution authority. Local public
-commands and full regression pass; exact-revision hosted acceptance is separate.
+commands and full regression pass. Published `25475b3` also passes
+[all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/40599793148);
+these results do not establish continuous or physical workload acceptance.
 
 `conditional_pipeline` is an explicit concrete input template, separate from
 `local_pipeline`. Its single `pipeline.when / run` parent contains:
@@ -111,8 +113,9 @@ default-build browser checks pass. Independent read-only audits correlate four
 conditional outcomes with their exact single-parent grants and retained reports.
 The public command fixture proves false skips without model/sink effects, true
 execution once, missing-data uncertainty, known native failure, immutable source
-conditions and restart history without replay. Hosted acceptance must be checked
-against the exact pushed revision before accepting that development checkpoint.
+conditions and restart history without replay. The exact hosted checkpoint passes
+32 Windows native suites, separate connection-close and firewall mock gates;
+source, compiled-input, binary, runtime/model and retained-journal audits pass.
 Continuous sessions, listening controls, light detector
 adapters, event transport/backpressure, strong stop/resource budgets, physical
 two-PC, approved model onboarding and installer/signing/Defender release gates

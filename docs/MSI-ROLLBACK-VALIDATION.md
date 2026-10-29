@@ -215,3 +215,54 @@ Real-application failed-upgrade rollback, installed EXE/updater selection migrat
 locked files, normal installer UI/startup, approved model onboarding, second-PC
 and signing/Defender acceptance remain open. Successful ordinary lifecycle/CI and
 read-only probe checks must not be reported as failed-upgrade acceptance.
+
+## Deferred-script failure experiment (2026-10-29)
+
+A fresh, standard-user, single-product diagnostic tests a different failure
+origin: an error inside the execution script after real file writes,
+`RegisterProduct` and `PublishProduct`, rather than an immediate Type 19 error
+after `InstallExecute`. It starts with no installed, advertised or related
+product, uses a new namespace and preserves a generated owner marker.
+
+Only tiny synthetic text is packaged. The private diagnostic adds exactly one
+deferred Type 17 + 1024 action, bound to the installed `nested/payload.txt` file.
+The source is hash-verified plain text without an MZ header, not a DLL. There is
+no executable payload, system-context flag, rollback custom action or fallback
+Type 19 fault. The normal package tables, cabinet and summary are independently
+compared with their canonical source before any native operation. This is a
+failure-injection fixture, not a proposed production custom action. Microsoft's
+[Type 17](https://learn.microsoft.com/en-us/windows/win32/msi/custom-action-type-17)
+and [deferred-action](https://learn.microsoft.com/en-us/windows/win32/msi/deferred-execution-custom-actions)
+contracts distinguish source-file binding from the time of script execution.
+
+The native log confirms actual writes and publication before the queued action's
+1723 module-load failure. `InstallExecute` fails and a rollback script runs;
+`InstallFinalize` does not complete. Native exit is 1603. Fresh native API reads
+still report the candidate installed in current-user unmanaged context. All five
+payload/inventory files and scoped component-marker values are already absent,
+and owner data is unchanged. The decoded log contains access-denied observations
+in both user and machine registration areas. Rollback policy is enabled.
+
+This rules out an immediate Type 19 action as a necessary condition for the
+observed stranded registration. It does not prove the engine, package authoring,
+ACL ownership, caller token or another environmental factor is the root cause.
+The caller's later read-only token inspection finds no restricting-SID list or
+AppContainer and does find a filtered, non-elevated token; it does not inspect
+the installer worker's token. A [related open upstream report](https://github.com/wixtoolset/issues/issues/8574)
+describes similar per-user registration rollback symptoms. That corroborates
+symptoms, not a fix or a causal conclusion for these packages.
+
+One separately guarded, ordinary uninstall returns zero for only this synthetic
+product. Fresh reads confirm its product/related registrations absent, all five
+payload/inventory files absent, no scoped component markers and the owner marker
+intact. Eight pinned authoring/execution inputs and both package hashes match.
+The read-only audit is
+`.validation/msi-deferred-rollback-v2/independent-audit-v3.json`; registration and
+real-application rollback acceptance remain false.
+
+An earlier preparation path-literal error occurred before any installation and
+is retained separately. Collector errors involving an unsupported output option
+and UTF-16LE log decoding are also retained; corrected read-only collectors do
+not replay native operations or weaken assertions. Older failed fixtures and
+their evidence remain untouched. No ACL, UAC, MSI policy, installation context,
+public recipe, real application or tooling change is used to manufacture a pass.

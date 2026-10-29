@@ -3,6 +3,26 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Accepted development checkpoint: `25475b3`
+
+Conditional local stages and safe firewall inspection pass their complete
+development audit: both local modes pass 1,229 tests plus one existing ignored
+test each, all 38 local native cases pass, and cached CPU lifecycle plus separate
+default-build browser/copy/focus/restart checks pass. The exact published source
+passes [all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/40599793148),
+32 Windows native suites, the separate connection-close case and the new firewall
+mock gate (63 cases on the elevated CI runner; 65 on the local filtered token).
+Source/binary/runtime/model and retained-journal reconciliation pass. This is
+development acceptance, not stable release, model quality or physical acceptance.
+
+The [new deferred-script MSI probe](MSI-ROLLBACK-VALIDATION.md#deferred-script-failure-experiment-2026-10-29)
+still leaves a failed per-user product registered after actual writes/publication,
+even without an immediate Type 19 fault. Payloads and component markers roll
+back, but registration records do not. Separate ordinary uninstall and fresh
+read-only inspection clean only this synthetic product and preserve owner data.
+The cause remains unproven; no public installer recipe, security policy, startup
+privilege, installed application, update feed or release is changed.
+
 ## Local development acceptance: conditional stages and firewall inspection
 
 The [conditional finite graph](CONDITIONAL-PIPELINES.md) reuses the existing
