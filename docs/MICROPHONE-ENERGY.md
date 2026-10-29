@@ -39,3 +39,9 @@ and eleven fake-device tests. They verify lazy single-open capture, closure, fai
 exact block sizes, limits, hysteresis, overflow uncertainty, stereo/full-scale
 levels and device selection. They never access microphone hardware or require
 the sounddevice package.
+
+`tools/test-microphone-stream.mjs` separately checks the actual source through the
+production Rust/Python stream transport with a fake audio device. Normal energy,
+overflow uncertainty and a malformed block retain exact requests and process
+outcomes. All three cases observe one input context opening and closing. This is
+synthetic source/transport integration, not physical microphone acceptance.
