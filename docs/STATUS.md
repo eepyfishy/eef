@@ -14,8 +14,14 @@ each, and all five affected native suites pass. The real CLI disables a syntheti
 supervised source; held creation-verified Windows handles observe its Python root
 and child exit while the command API remains available. Lost acknowledgements
 cause one mutation and no retry. Independent source/result reconciliation passes.
-Exact-source hosted acceptance is pending; continuous job/resource/event
-integration and physical gates remain open.
+Source `ea3ae13` passes [all four validation-branch hosted jobs](https://github.com/eepyfishy/eef/actions/runs/40941061655),
+including 36 Windows native suites. After the same source fast-forwarded to main,
+its Windows dashboard job exceeded the Python payload fixture's 15-second child
+process timeout. That fixture now permits a bounded 60 seconds for cold shell
+startup and reports the actual spawn error, signal or stderr; it performs no
+retry and retains all seven read-only policy checks. Main-ref acceptance of this
+fix is pending. Continuous job/resource/event integration and physical gates
+remain open.
 
 ## Accepted source checkpoint: streaming and microphone energy
 
