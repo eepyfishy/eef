@@ -1010,20 +1010,34 @@ mod tests {
                     .unwrap();
             let accepted = AcceptedGrant::prepare(
                 g.clone(),
-                ledger,
+                ledger.clone(),
                 &engine,
                 &g.issuer_id,
                 &g.session_id,
                 &g.executor_node,
             )
             .unwrap();
+            let started = std::time::Instant::now();
             let report = accepted.run(&engine).await;
+            let elapsed = started.elapsed();
+            let checkpoint = ledger.receipt(&g.issuer_id, &g.grant_id);
             if simultaneous {
-                assert_eq!(report.state, ReceiptState::Unknown);
+                assert_eq!(
+                    report.state,
+                    ReceiptState::Unknown,
+                    "simultaneous={simultaneous} elapsed={elapsed:?} report={report:?} checkpoint={checkpoint:?}"
+                );
                 assert!(!dir.path().join("copy-a.txt").exists());
             } else {
-                assert_eq!(report.state, ReceiptState::Completed);
-                assert!(report.success);
+                assert_eq!(
+                    report.state,
+                    ReceiptState::Completed,
+                    "simultaneous={simultaneous} elapsed={elapsed:?} report={report:?} checkpoint={checkpoint:?}"
+                );
+                assert!(
+                    report.success,
+                    "simultaneous={simultaneous} elapsed={elapsed:?} report={report:?} checkpoint={checkpoint:?}"
+                );
                 assert_eq!(
                     std::fs::read_to_string(dir.path().join("copy-b.txt"))
                         .unwrap()
