@@ -211,11 +211,11 @@ fn read(db: &Connection, id: &str) -> Result<Option<Report>> {
         schema_version:1,report_type:"grant_stop_receipt".into(),grant_id:r.get(0)?,grant_sha256:r.get(1)?,issuer_id:r.get(2)?,session_id:r.get(3)?,executor_node:r.get(4)?,job_id:r.get(5)?,task_id:r.get(6)?,attempt:r.get(7)?,recorded_at_ms:u64::try_from(r.get::<_,i64>(8)?).map_err(|_|rusqlite::Error::InvalidQuery)?,receipt_preexisted:r.get(9)?,reused:true,cancellation_signalled:false,persisted:true,stop_requested:true,execution_stopped:false,external_effects_stopped:false,execution_authorized:false,automatically_retried:false
     })).optional()?)
 }
-pub(super) fn recorded(db: &Connection, g: &ExecutionGrant) -> Result<bool> {
+pub(super) fn recorded_scope(db: &Connection, g: &Scope) -> Result<bool> {
     let Some(report) = read(db, &g.grant_id)? else {
         return Ok(false);
     };
-    if !report.confirms(g) {
+    if !report.confirms_scope(g) {
         bail!("Stop evidence does not match the exact grant")
     }
     Ok(true)
@@ -252,17 +252,20 @@ pub(super) fn validate_all(db: &Connection, node: &str) -> Result<()> {
 }
 impl GrantLedger {
     pub(super) fn watch_stop(&self, g: &ExecutionGrant) -> Result<Watch> {
+        self.watch_stop_scope(&Scope::from_grant(g)?)
+    }
+    pub(super) fn watch_stop_scope(&self, g: &Scope) -> Result<Watch> {
         let db = self
             .connection
             .lock()
             .map_err(|_| anyhow::anyhow!("Grant journal unavailable"))?;
-        let stopped = recorded(&db, g)?;
+        let stopped = recorded_scope(&db, g)?;
         let mut active = self.stops.0.lock().expect("grant stop registry");
         if active.contains_key(&g.grant_id) {
             bail!("Grant already has a stop watcher")
         }
         let (sender, receiver) = watch::channel(stopped);
-        active.insert(g.grant_id.clone(), (definition_digest(&json!(g))?, sender));
+        active.insert(g.grant_id.clone(), (g.grant_sha256.clone(), sender));
         Ok(Watch {
             receiver,
             id: g.grant_id.clone(),

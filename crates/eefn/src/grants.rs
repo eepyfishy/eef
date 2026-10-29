@@ -17,6 +17,8 @@ mod execution_clock;
 use execution_clock::{ExecutionClock, SystemClock};
 #[path = "grant_stop.rs"]
 pub mod stop;
+#[path = "workload_receipts.rs"]
+pub mod workload;
 // Full report identity/flags/error overhead, in addition to bounded output.
 pub(crate) const REPORT_HEADROOM: usize = 8192;
 /// Durable coordinator journal hook. Called on validated, session-bound reports
@@ -500,6 +502,69 @@ pub struct GrantLedger {
     policy: GrantPolicy,
     stops: Arc<stop::Registry>,
 }
+// Both operation and continuous receipts share attempt slots and reservation
+// accounting. Changing operation kind cannot bypass an unresolved attempt.
+fn check_attempt_slot(db: &Connection, scope: &stop::Scope) -> Result<()> {
+    if stop::recorded_scope(db, scope)? {
+        return Err(GrantDenied("grant_stop_recorded").into());
+    }
+    let used: i64 = db.query_row(
+        "SELECT count(*) FROM execution_receipts WHERE grant_id=?1",
+        [&scope.grant_id],
+        |r| r.get(0),
+    )?;
+    let previous: Option<(u32, String)> = db.query_row(
+        "SELECT attempt,state FROM execution_receipts WHERE issuer_id=?1 AND job_id=?2 AND task_id=?3 ORDER BY attempt DESC LIMIT 1",
+        params![scope.issuer_id,scope.job_id,scope.task_id], |r| Ok((r.get(0)?,r.get(1)?)),
+    ).optional()?;
+    if used != 0
+        || previous.is_some_and(|(attempt, state)| scope.attempt <= attempt || state != "completed")
+    {
+        return Err(GrantDenied("grant_attempt_replayed_or_unresolved").into());
+    }
+    Ok(())
+}
+fn check_receipt_budget(
+    db: &Connection,
+    policy: &GrantPolicy,
+    result_bytes: usize,
+    definition_bytes: usize,
+    pipeline: bool,
+) -> Result<()> {
+    let count: i64 = db.query_row("SELECT count(*) FROM execution_receipts", [], |r| r.get(0))?;
+    let pages = usize::try_from(db.query_row::<i64, _, _>("PRAGMA page_count", [], |r| r.get(0))?)?;
+    let page_size =
+        usize::try_from(db.query_row::<i64, _, _>("PRAGMA page_size", [], |r| r.get(0))?)?;
+    let reserved: i64 = db.query_row(
+        "SELECT coalesce(sum(max_result_bytes+?2+4*?1),0) FROM execution_receipts WHERE state='accepted' AND max_result_bytes>0",
+        params![i64::try_from(page_size)?,i64::try_from(REPORT_HEADROOM)?], |r| r.get(0),
+    )?;
+    let progress_reserved = if crate::pipeline_progress::available(db)? {
+        let count: i64 = db.query_row("SELECT count(*) FROM execution_pipeline_progress p JOIN execution_receipts r ON r.grant_id=p.grant_id WHERE r.state='accepted' AND r.max_result_bytes>0", [], |r| r.get(0))?;
+        usize::try_from(count)?.saturating_mul(crate::pipeline_progress::JOURNAL_RESERVATION)
+    } else {
+        0
+    };
+    if usize::try_from(count)? >= policy.max_receipts
+        || pages
+            .saturating_mul(page_size)
+            .saturating_add(usize::try_from(reserved)?)
+            .saturating_add(progress_reserved)
+            .saturating_add(result_bytes)
+            .saturating_add(definition_bytes)
+            .saturating_add(REPORT_HEADROOM)
+            .saturating_add(if pipeline {
+                crate::pipeline_progress::JOURNAL_RESERVATION
+            } else {
+                0
+            })
+            .saturating_add(4 * page_size)
+            > policy.max_journal_bytes
+    {
+        return Err(GrantDenied("grant_receipt_quota_full").into());
+    }
+    Ok(())
+}
 impl GrantLedger {
     pub fn open(path: &Path, policy: GrantPolicy, node_id: &str) -> Result<Arc<Self>> {
         policy.validate()?;
@@ -514,9 +579,10 @@ impl GrantLedger {
             bail!("Damaged grant journal; retained for recovery")
         }
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if !matches!(version, 0 | 1 | 2) {
+        if !matches!(version, 0 | 1 | 2 | 3) {
             bail!("Unknown grant journal version; retained for recovery")
         }
+        workload::validate_schema(&db, version)?;
         if crate::pipeline_progress::available(&db)? && version == 0 {
             bail!("Unversioned pipeline observation evidence; retained without initialization")
         }
@@ -575,7 +641,11 @@ impl GrantLedger {
         // Validate before migrating. Never turn a damaged legacy record into a
         // new schema or admit more work beside malformed retained evidence.
         for id in &ids {
-            crate::request_result::read_result(&db, node_id, None, id)?;
+            if workload::is_workload(&db, id)? {
+                workload::read(&db, node_id, None, id)?;
+            } else {
+                crate::request_result::read_result(&db, node_id, None, id)?;
+            }
         }
         stop::validate_all(&db, node_id)?;
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;")?;
@@ -588,7 +658,7 @@ impl GrantLedger {
         // Additive migration retains consumed legacy receipts without inventing
         // output/success. Owner/version/metadata checks precede any migration.
         // Older binaries reject version 2; do not overlap or downgrade runtimes.
-        if version != 2 {
+        if version < 2 {
             let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute_batch("ALTER TABLE execution_receipts ADD COLUMN max_result_bytes INTEGER NOT NULL DEFAULT 0; ALTER TABLE execution_receipts ADD COLUMN report TEXT; ALTER TABLE execution_receipts ADD COLUMN report_sha256 TEXT; PRAGMA user_version=2;")?;
             tx.commit()?;
@@ -622,59 +692,12 @@ impl GrantLedger {
             .lock()
             .map_err(|_| anyhow::anyhow!("Grant journal lock unavailable"))?;
         let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        if stop::recorded(&tx, g)? {
-            return Err(GrantDenied("grant_stop_recorded").into());
-        }
-        let used: i64 = tx.query_row(
-            "SELECT count(*) FROM execution_receipts WHERE grant_id=?1",
-            [&g.grant_id],
-            |r| r.get(0),
-        )?;
-        if used != 0 {
-            return Err(GrantDenied("grant_attempt_replayed_or_unresolved").into());
-        }
-        let previous:Option<(u32,String)>=tx.query_row("SELECT attempt,state FROM execution_receipts WHERE issuer_id=?1 AND job_id=?2 AND task_id=?3 ORDER BY attempt DESC LIMIT 1",
-            params![g.issuer_id,g.job_id,g.task_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
-        if previous.is_some_and(|(attempt, state)| g.attempt <= attempt || state != "completed") {
-            return Err(GrantDenied("grant_attempt_replayed_or_unresolved").into());
-        }
+        check_attempt_slot(&tx, &stop::Scope::from_grant(g)?)?;
         let pipeline = g.capability == "pipeline.run";
         if pipeline && !crate::pipeline_progress::available(&tx)? {
             crate::pipeline_progress::initialize(&tx)?;
         }
-        let count: i64 =
-            tx.query_row("SELECT count(*) FROM execution_receipts", [], |r| r.get(0))?;
-        let pages =
-            usize::try_from(tx.query_row::<i64, _, _>("PRAGMA page_count", [], |r| r.get(0))?)?;
-        let page_size =
-            usize::try_from(tx.query_row::<i64, _, _>("PRAGMA page_size", [], |r| r.get(0))?)?;
-        let reserved: i64 = tx.query_row(
-            "SELECT coalesce(sum(max_result_bytes+?2+4*?1),0) FROM execution_receipts WHERE state='accepted' AND max_result_bytes>0",
-            params![i64::try_from(page_size)?,i64::try_from(REPORT_HEADROOM)?], |r| r.get(0),
-        )?;
-        let progress_reserved = if crate::pipeline_progress::available(&tx)? {
-            let count: i64 = tx.query_row("SELECT count(*) FROM execution_pipeline_progress p JOIN execution_receipts r ON r.grant_id=p.grant_id WHERE r.state='accepted' AND r.max_result_bytes>0", [], |r| r.get(0))?;
-            usize::try_from(count)?.saturating_mul(crate::pipeline_progress::JOURNAL_RESERVATION)
-        } else {
-            0
-        };
-        if usize::try_from(count)? >= self.policy.max_receipts
-            || pages
-                .saturating_mul(page_size)
-                .saturating_add(usize::try_from(reserved)?)
-                .saturating_add(progress_reserved)
-                .saturating_add(g.limits.max_result_bytes)
-                .saturating_add(REPORT_HEADROOM)
-                .saturating_add(if pipeline {
-                    crate::pipeline_progress::JOURNAL_RESERVATION
-                } else {
-                    0
-                })
-                .saturating_add(4 * page_size)
-                > self.policy.max_journal_bytes
-        {
-            return Err(GrantDenied("grant_receipt_quota_full").into());
-        }
+        check_receipt_budget(&tx, &self.policy, g.limits.max_result_bytes, 0, pipeline)?;
         let now = i64::try_from(crate::protocol::now_ms())?;
         tx.execute(
             "INSERT INTO execution_receipts(issuer_id,job_id,task_id,attempt,grant_id,grant_digest,state,accepted_ms,updated_ms,max_result_bytes,report) VALUES (?1,?2,?3,?4,?5,?6,'accepted',?7,?7,?8,NULL)",

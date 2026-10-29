@@ -267,8 +267,21 @@ pub(crate) fn read_result(
     // Consistent read snapshot: a concurrent final checkpoint must not mix an
     // accepted metadata row with the subsequently completed output.
     let tx = db.unchecked_transaction()?;
-    let receipt = crate::request_receipt::read_consumed(&tx, node, issuer, id)?;
-    let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    let result = read_in_snapshot(&tx, node, issuer, id)?;
+    tx.commit()?;
+    Ok(result)
+}
+pub(crate) fn read_in_snapshot(
+    db: &rusqlite::Connection,
+    node: &str,
+    issuer: Option<&str>,
+    id: &str,
+) -> Result<RetainedResult> {
+    if crate::grants::workload::is_workload(db, id)? {
+        bail!("Workload receipt requires typed workload inspection")
+    }
+    let receipt = crate::request_receipt::read_consumed(db, node, issuer, id)?;
+    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     let mut result = RetainedResult {
         schema_version: 1,
         receipt,
@@ -277,9 +290,9 @@ pub(crate) fn read_result(
         report: None,
         report_sha256: None,
     };
-    if version == 2 {
+    if version >= 2 {
         // Check storage size before materializing/parsing untrusted report text.
-        let (limit, size, raw, checksum): (i64, Option<i64>, Option<String>, Option<String>) = tx.query_row(
+        let (limit, size, raw, checksum): (i64, Option<i64>, Option<String>, Option<String>) = db.query_row(
             "SELECT max_result_bytes,length(CAST(report AS BLOB)),CASE WHEN length(CAST(report AS BLOB))<=?2 THEN report ELSE NULL END,report_sha256 FROM execution_receipts WHERE grant_id=?1",
             rusqlite::params![id,i64::try_from(1024*1024+REPORT_HEADROOM)?], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
         )?;
@@ -299,7 +312,6 @@ pub(crate) fn read_result(
         }
     }
     result.validate()?;
-    tx.commit()?;
     Ok(result)
 }
 

@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: durable workload consumption
+
+The [node consumption journal draft](WORKLOAD-RECEIPTS.md) extends the existing
+grant table with exact workload definitions and shared attempt/quota/stop
+fencing. Its schema upgrade and consumption are atomic, and journal waits spend
+the original lease. Dropped tokens retain uncertainty without replay or success
+claims. Legacy results remain readable; operation-output readers refuse workload
+rows. No command or network path invokes this internal persistence boundary.
+Coordinator issuance, permissions/resource ownership, authenticated routing,
+source execution and event delivery remain open; this is not product admission.
+
 ## In development: reviewed continuous session contracts
 
 [Renewable session mechanics](WORKLOAD-LEASES.md) separate a bounded session

@@ -269,6 +269,16 @@ impl LeaseProof {
     pub fn session_deadline(&self) -> Instant {
         self.session_deadline
     }
+    pub(crate) fn initial_deadline(&self, contract: &Contract, policy: &Policy) -> Result<Instant> {
+        contract.permitted(policy)?;
+        ensure!(
+            self.sequence == 1 && self.contract_sha256 == contract.digest()?,
+            "Initial workload lease scope changed"
+        );
+        let deadline = self.deadline.min(self.session_deadline);
+        ensure!(Instant::now() < deadline, "Initial workload lease expired");
+        Ok(deadline)
+    }
 }
 
 struct Pending {

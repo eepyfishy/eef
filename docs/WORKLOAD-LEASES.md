@@ -34,7 +34,10 @@ the existing job-commit limit, not a working-set, CPU or device-buffer quota.
 Raw media destinations, extra authority fields, arbitrary plugins and unimplemented
 camera/STT/model source shapes are rejected. Nested origin fields are strict for
 this new schema without changing older request-context readers. The definition
-has no durable issuance/consumption path yet; validation never authorizes capture.
+does not itself issue or consume authority; validation never authorizes capture.
+The follow-on [node journal draft](WORKLOAD-RECEIPTS.md) adds internal durable
+consumption only. It is not yet wired into coordinator issuance or product
+admission, and does not make this definition an execution grant by itself.
 
 The issuer helper retains the original monotonic issuance deadline from an
 already-recorded offer; queue delays cannot restart a relative budget. It refuses
