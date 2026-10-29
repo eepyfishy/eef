@@ -167,6 +167,8 @@ jobs:
             'test-python-policy.mjs',
             'test-python-bridge.mjs',
             'test-python-stream.mjs',
+            'test-microphone-energy.mjs',
+            'test-microphone-stream.mjs',
             'test-permission-commands.mjs',
             'test-node-commands.mjs',
             'test-node-credentials.mjs',

@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: single-open microphone energy source
+
+The [microphone energy iterator](MICROPHONE-ENERGY.md) holds one blocking input
+stream and reports RMS energy metadata with configurable hysteresis. Eleven
+fake-device tests and three tests through the production Rust/Python stream
+transport pass locally. Source gaps remain unknown, and normal completion,
+iterator closure and read/validation failure exit the input context. Exact-source
+hosted acceptance is pending. The source has no startup registration or user
+command; microphone permission, local listening control, durable workload
+admission, event reporting and physical acceptance still need integration.
+Energy thresholding is not speech or person recognition.
+
 ## In development: owned Python observation streams
 
 The [streaming bridge](PYTHON-STREAMS.md) delivers bounded metadata before source

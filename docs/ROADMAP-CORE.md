@@ -1593,6 +1593,12 @@ It is a transport building block: no ambient producer, workload admission,
 listening control or coordinator event path is enabled. The complete continuous
 requirements below remain open.
 
+The [single-open microphone energy source](MICROPHONE-ENERGY.md) is a separate
+iterator using blocking fixed-size reads and metadata-only RMS/hysteresis output.
+It has fake-device and source/transport coverage, with no startup registration,
+user command or physical capture acceptance. Connect it to the existing durable
+workload lifecycle and local listening/permission controls before enabling it.
+
 The [peer transport library foundation](PEER-TRANSPORT.md) adds recipient-only
 signed credential delivery, scoped mutual TLS and bounded framed transfer.
 Its follow-up finite admission binds full grant digests, uses existing consumed
