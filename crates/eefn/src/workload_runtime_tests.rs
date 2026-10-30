@@ -282,6 +282,7 @@ async fn prepared_source_cannot_accept_a_different_consumed_definition() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("differs"));
+    wait_retired(&ledger, &changed).await;
     assert_eq!(
         ledger
             .workload_receipt(&changed.issuer_id, &changed.grant_id)
@@ -305,6 +306,7 @@ async fn listening_off_on_cannot_launch_an_old_prepared_source() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("epoch"));
+    wait_retired(&ledger, &f.definition).await;
     assert_eq!(
         ledger
             .workload_receipt(&f.definition.issuer_id, &f.definition.grant_id)
@@ -314,4 +316,24 @@ async fn listening_off_on_cannot_launch_an_old_prepared_source() {
         "unknown"
     );
     assert!(f.service.microphone_pool.reserve().is_ok());
+}
+
+async fn wait_retired(ledger: &crate::grants::GrantLedger, definition: &Definition) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if ledger.workload_reporting_ready()
+                && ledger
+                    .workload_receipt(&definition.issuer_id, &definition.grant_id)
+                    .unwrap()
+                    .receipt
+                    .state
+                    == "unknown"
+            {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
 }

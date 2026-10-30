@@ -21,6 +21,8 @@ pub(crate) use execution_clock::{ExecutionClock, SystemClock};
 pub mod stop;
 #[path = "workload_receipts.rs"]
 pub mod workload;
+#[path = "workload_journal_worker.rs"]
+mod workload_journal_worker;
 // Full report identity/flags/error overhead, in addition to bounded output.
 pub(crate) const REPORT_HEADROOM: usize = 8192;
 /// Durable coordinator journal hook. Called on validated, session-bound reports
@@ -504,6 +506,9 @@ pub struct GrantLedger {
     policy: GrantPolicy,
     stops: Arc<stop::Registry>,
     event_workers: Arc<tokio::sync::Semaphore>,
+    final_slots: Arc<tokio::sync::Semaphore>,
+    final_reporting_failed: std::sync::atomic::AtomicBool,
+    workload_worker: Mutex<Option<workload_journal_worker::Sender>>,
 }
 // Both operation and continuous receipts share attempt slots and reservation
 // accounting. Changing operation kind cannot bypass an unresolved attempt.
@@ -677,6 +682,9 @@ impl GrantLedger {
             policy,
             stops: Arc::default(),
             event_workers: Arc::new(tokio::sync::Semaphore::new(1)),
+            final_slots: Arc::new(tokio::sync::Semaphore::new(1)),
+            final_reporting_failed: std::sync::atomic::AtomicBool::new(false),
+            workload_worker: Mutex::new(None),
         }))
     }
     pub fn policy(&self) -> &GrantPolicy {

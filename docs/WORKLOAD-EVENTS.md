@@ -48,11 +48,13 @@ save failure. Retired logical reservations do not erase retained events or pages
 
 ## Worker and source lifetime
 
-One owned blocking event worker per ledger handle performs SQLite work. It retains
-its capacity permit even if its async waiter is cancelled while a started write
-is still blocked. A second worker is refused; there is no unbounded spawn queue,
-offline event buffer or automatic retry. The prepared transport awaits one save
-and observer at a time, within the reviewed pending-event limit.
+One lazy native journal thread per ledger handle performs event and final-status
+SQLite work. Its bounded queue owns metadata only, never a source, process or
+renewal handle. One event permit stays charged until its actual save ends, even
+if its async waiter is cancelled while storage is blocked. A second event save
+is refused; there is no unbounded spawn queue, offline event buffer or automatic
+retry. The prepared transport awaits one save and observer at a time, within the
+reviewed pending-event limit. Runtime shutdown does not join this journal thread.
 
 The waiter and worker share the same captured reporting checkpoint. Checks before
 and after lock/transaction/commit bind the consumed contract, live supervisor and
@@ -63,10 +65,30 @@ retires the source future before the existing final uncertainty checkpoint. An
 event committed while a waiter expires is historical evidence only: its late
 result cannot deliver an acknowledgement, renew a lease, restart or replay work.
 
-The existing final uncertainty save is still synchronous. A stalled final save
-can delay its task after the source has been retired; making final reporting
-asynchronous and bounded remains required for responsive public admission.
-Likewise, a transport summary or saved event prefix does not attest completion.
+Final uncertainty saves use the same worker. Admission reserves one final-status
+slot before consuming a workload, retains it for that workload's lifetime, and
+transfers it to the save until the actual storage operation ends. A live workload
+or pending final save refuses a second workload on the same handle before waiting
+on its primary database mutex. Independent handles still share the durable
+attempt, quota and SQLite transaction fences. This is an internal single-source
+admission bound, not configurable multi-source scheduling or a global lock.
+
+Normal return drops the source and retires reporting before awaiting the final
+save for at most three seconds. An otherwise successful source returns an error
+if the save cannot be confirmed within that wait; an original source error stays
+an error. Cancelling the whole task or dropping an unused consumption queues the
+same save without waiting for storage, including after its Tokio runtime is gone.
+Dropping or timing out the waiter cannot free capacity before the real save ends.
+The wait is after source retirement and does not extend execution authority.
+
+A failed final write, worker submission or caught final-save panic denies new
+workloads on that handle. The retained accepted row remains consumed and uncertain;
+there is no automatic retry, replay, journal repair or claim of completion. A
+timeout alone does not assert storage failure: a late successful save may record
+uncertainty and release its slot. A process exit can leave accepted evidence; a
+reopened journal still validates retained state and never reconstructs execution.
+
+A transport summary or saved event prefix does not attest completion.
 Typed observed source exit, durable completion, authenticated public offer/lease/
 event/stop wiring, long-session transport and physical acceptance remain open.
 
@@ -79,5 +101,11 @@ failed insert rollback, corrupt/oversized/orphaned/downgraded evidence, version-
 migration, cancelled-worker capacity retention and original-lease expiry during
 a real SQLite write-lock wait. The existing opt-in combined Python/native-source
 test also requires each callback's exact event to be readable durably first.
-This journal draft requires hosted verification; local checks run formatting,
-source guards and a tiny in-memory SQL catalog check only.
+The event-journal checkpoint passed hosted run `41139146907`, including all four
+jobs, 1,352 Windows headless Rust tests plus one existing ignored test, and all
+36 native suites with the extra listener-close case. Six added final-status
+regressions cover blocked final saves, waiter cancellation, dropping without a
+runtime, failure denial, reserved capacity and post-consumption stop-registration
+failure. Existing cancellation tests now also require the runtime to exit while
+storage is still blocked. These asynchronous-finalization changes require their
+own hosted verification; local checks run formatting and source guards only.

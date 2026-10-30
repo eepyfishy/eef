@@ -7,6 +7,8 @@ use crate::workload_leases::{Contract, LeaseProof, Policy, definition::Definitio
 const MAX_DEFINITION_BYTES: usize = 64 * 1024;
 #[path = "workload_event_journal.rs"]
 mod event_journal;
+#[path = "workload_finalization.rs"]
+mod finalization;
 pub(crate) fn event_reserved(db: &Connection) -> Result<usize> {
     event_journal::reserved(db)
 }
@@ -156,10 +158,11 @@ pub struct Consumption {
     ledger: Arc<GrantLedger>,
     stop: stop::Watch,
     reporting: crate::workload_leases::ReportingAuthority,
+    final_slot: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 // Explicit destruction order also covers cancellation of the whole async task.
-// Final synchronous journal I/O must never keep an owned source future alive.
+// Final journal I/O must never keep an owned source future alive.
 struct Running<F> {
     operation: Option<std::pin::Pin<Box<F>>>,
     consumption: Option<Consumption>,
@@ -171,6 +174,16 @@ impl<F> Drop for Running<F> {
     }
 }
 impl Consumption {
+    pub(crate) async fn retire(mut self) -> Result<()> {
+        self.reporting.retire();
+        let slot = self
+            .final_slot
+            .take()
+            .context("Workload final checkpoint already delegated")?;
+        finalization::start(&self.ledger, self.contract.scope.clone(), slot)?
+            .wait()
+            .await
+    }
     pub(crate) fn event_writer(&self) -> Result<EventWriter> {
         let receipt = self.acknowledgement()?;
         Ok(EventWriter {
@@ -217,8 +230,8 @@ impl Consumption {
     /// Drive one lazy, already-prepared source after the authenticated caller
     /// writes the consumed ACK. This does not acquire resources, check listening
     /// or prepare/authorize source code; typed source admission must do those.
-    /// An operation result is not a durable completion receipt. Drop still marks
-    /// uncertainty until bounded event/completion persistence is integrated.
+    /// An operation result is not a durable completion receipt. Source retirement
+    /// precedes bounded asynchronous uncertainty persistence, including Drop.
     #[allow(dead_code)]
     pub(crate) async fn supervise<F, T>(
         self,
@@ -232,52 +245,73 @@ impl Consumption {
             operation: Some(Box::pin(operation)),
             consumption: Some(self),
         };
-        let consumed = running.consumption.as_mut().unwrap();
-        consumed.acknowledgement()?;
-        let initial = consumed
-            .initial
-            .take()
-            .context("Workload authority already transferred")?;
-        let contract = consumed.contract.clone();
-        let policy = consumed.policy.clone();
-        let mut stop = consumed.stop.receiver.clone();
-        let operation = crate::workload_leases::supervise_reporting(
-            &contract,
-            &policy,
-            initial,
-            renewals,
-            running.operation.as_mut().unwrap().as_mut(),
-            consumed.reporting.clone(),
-        );
-        tokio::pin!(operation);
-        loop {
-            if *stop.borrow() {
-                bail!("Workload stop requested")
+        let result = {
+            let consumed = running.consumption.as_mut().unwrap();
+            consumed.acknowledgement()?;
+            let initial = consumed
+                .initial
+                .take()
+                .context("Workload authority already transferred")?;
+            let contract = consumed.contract.clone();
+            let policy = consumed.policy.clone();
+            let mut stop = consumed.stop.receiver.clone();
+            let operation = crate::workload_leases::supervise_reporting(
+                &contract,
+                &policy,
+                initial,
+                renewals,
+                running.operation.as_mut().unwrap().as_mut(),
+                consumed.reporting.clone(),
+            );
+            tokio::pin!(operation);
+            loop {
+                if *stop.borrow() {
+                    break Err(anyhow::anyhow!("Workload stop requested"));
+                }
+                tokio::select! {
+                    biased;
+                    changed=stop.changed()=> {
+                        if let Err(error)=changed {break Err(anyhow::Error::from(error).context("Workload stop control unavailable"));}
+                    },
+                    result=&mut operation=> {
+                        if *stop.borrow() { break Err(anyhow::anyhow!("Workload stop requested before result")); }
+                        break result;
+                    },
+                }
             }
-            tokio::select! {
-                biased;
-                changed=stop.changed()=> {
-                    changed.context("Workload stop control unavailable")?;
-                },
-                result=&mut operation=> {
-                    if *stop.borrow() { bail!("Workload stop requested before result"); }
-                    return result;
-                },
+        };
+        // Drop the exact source and reporting window before starting any save.
+        drop(running.operation.take());
+        let retired = running.consumption.take().unwrap().retire().await;
+        match result {
+            Err(error) => Err(error),
+            Ok(value) => {
+                retired?;
+                Ok(value)
             }
         }
     }
 }
 impl Drop for Consumption {
     fn drop(&mut self) {
-        // Retire in memory before any potentially blocked journal checkpoint.
+        // Retire in memory before delegating any potentially blocked checkpoint.
         // Outstanding reporting handles cannot keep this lifetime active.
         self.reporting.retire();
         // No automatic retry after a failed write. An accepted row retained
         // after a crash/I/O failure remains consumed and uncertain, never live.
-        let _ = self.ledger.mark_workload_unknown(&self.contract.scope);
+        if let Some(slot) = self.final_slot.take() {
+            let _ = finalization::start(&self.ledger, self.contract.scope.clone(), slot);
+        }
     }
 }
 impl GrantLedger {
+    #[cfg(test)]
+    pub(crate) fn workload_reporting_ready(&self) -> bool {
+        self.final_slots.available_permits() == 1
+            && !self
+                .final_reporting_failed
+                .load(std::sync::atomic::Ordering::Acquire)
+    }
     /// Read-only bounded historical events. No live source, completion or replay
     /// authority is reconstructed from a retained prefix.
     pub fn workload_events(
@@ -322,6 +356,14 @@ impl GrantLedger {
     ) -> Result<Consumption> {
         let contract = definition.lease_contract()?;
         let reporting = crate::workload_leases::ReportingAuthority::new(&contract)?;
+        if self
+            .final_reporting_failed
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            bail!(
+                "Workload final reporting failed; restart and inspect the journal before admission"
+            )
+        }
         if node != self.node_id || !contract.scope.matches_session(issuer, session, node) {
             bail!("Workload consumption differs from pinned session/node")
         }
@@ -329,7 +371,11 @@ impl GrantLedger {
         if definition.events.max_total_bytes > self.policy.max_result_bytes {
             return Err(GrantDenied("grant_owner_limits_exceeded").into());
         }
+        if self.final_slots.available_permits() == 0 {
+            bail!("Workload final reporting capacity is busy; no consumption")
+        }
         let encoded = serde_json::to_string(&definition)?;
+        let final_slot;
         {
             let mut db = self
                 .connection
@@ -348,6 +394,15 @@ impl GrantLedger {
                     .context("Workload reservation overflow")?,
                 false,
             )?;
+            final_slot = self.final_slots.clone().try_acquire_owned().map_err(|_| {
+                anyhow::anyhow!("Workload final reporting capacity is busy; no consumption")
+            })?;
+            if self
+                .final_reporting_failed
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                bail!("Workload final reporting failed before admission")
+            }
             initial.initial_deadline(&contract, policy)?;
             let now = i64::try_from(crate::protocol::now_ms().max(1))?;
             tx.execute("INSERT INTO execution_receipts(issuer_id,job_id,task_id,attempt,grant_id,grant_digest,state,accepted_ms,updated_ms,max_result_bytes,report,report_sha256,receipt_kind,workload_definition) VALUES(?1,?2,?3,?4,?5,?6,'accepted',?7,?7,?8,NULL,NULL,'workload',?9)",
@@ -358,7 +413,7 @@ impl GrantLedger {
         let stop = match self.watch_stop_scope(&contract.scope) {
             Ok(watch) => watch,
             Err(error) => {
-                let _ = self.mark_workload_unknown(&contract.scope);
+                let _ = finalization::start(self, contract.scope.clone(), final_slot);
                 return Err(error);
             }
         };
@@ -369,6 +424,7 @@ impl GrantLedger {
             ledger: self.clone(),
             stop,
             reporting,
+            final_slot: Some(final_slot),
         };
         // I/O/stop registration consumes the original lease; no deadline reset.
         consumed.acknowledgement()?;
@@ -416,15 +472,17 @@ impl EventWriter {
         let definition = self.definition.clone();
         let stop = self.stop.clone();
         let authority = checkpoint.clone();
-        let worker = tokio::task::spawn_blocking(move || {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        self.ledger.submit_workload_job(Box::new(move || {
             // Cancellation cannot release this slot while a started SQLite save
             // is still running. No unbounded worker queue or automatic retry.
-            let _slot = slot;
-            event_journal::append(&ledger, &definition, event, &authority, &stop)
-        });
+            let result = event_journal::append(&ledger, &definition, event, &authority, &stop);
+            drop(slot);
+            let _ = sender.send(result);
+        }))?;
         checkpoint
             .supervise(&contract, async {
-                worker
+                receiver
                     .await
                     .context("Workload journal worker unavailable")?
             })

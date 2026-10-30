@@ -69,7 +69,8 @@ async fn native_wait_reusable(f: &Fixture, processes: &crate::process_lifetime::
     .await
     .unwrap();
 }
-fn native_unknown(f: &Fixture, ledger: &crate::grants::GrantLedger) {
+async fn native_unknown(f: &Fixture, ledger: &crate::grants::GrantLedger) {
+    wait_retired(ledger, &f.definition).await;
     let receipt = ledger
         .workload_receipt(&f.definition.issuer_id, &f.definition.grant_id)
         .unwrap();
@@ -182,7 +183,7 @@ async fn native_prepared_source_runs_exact_bytes_with_consumption_and_filtered_e
     ] {
         assert!(!encoded.contains(private));
     }
-    native_unknown(&f, &ledger);
+    native_unknown(&f, &ledger).await;
     let retained = ledger
         .workload_events(&f.definition.issuer_id, &f.definition.grant_id, 0, 128)
         .unwrap();
@@ -223,7 +224,7 @@ async fn native_prepared_consent_revocation_retires_actual_root_and_descendant()
             .is_err()
     );
     native_wait_reusable(&f, &processes).await;
-    native_unknown(&f, &ledger);
+    native_unknown(&f, &ledger).await;
     assert_eq!(
         native_trace(trace.path())
             .iter()
@@ -264,7 +265,7 @@ async fn native_prepared_whole_future_drop_retires_actual_owned_source() {
         // Drop the actual owned run future here, not just a Pin reference.
     }
     native_wait_reusable(&f, &processes).await;
-    native_unknown(&f, &ledger);
+    native_unknown(&f, &ledger).await;
     assert_eq!(
         native_trace(trace.path())
             .iter()

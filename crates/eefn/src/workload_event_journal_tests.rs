@@ -360,7 +360,12 @@ async fn event_storage_reservation_is_shared_with_ordinary_receipts_before_accep
     second.job_id = "f".repeat(32);
     second.task_id = "e".repeat(32);
     assert!(
-        consume(&ledger, second.clone()).await.is_err(),
+        consume(
+            &GrantLedger::open(&path, ledger.policy.clone(), "owner").unwrap(),
+            second.clone()
+        )
+        .await
+        .is_err(),
         "Outstanding row/index reservation must be charged"
     );
     let mut ordinary = crate::grants::tests::grant();
@@ -372,10 +377,15 @@ async fn event_storage_reservation_is_shared_with_ordinary_receipts_before_accep
         "grant_receipt_quota_full",
         "Ordinary operations cannot bypass event reservations"
     );
-    drop(token);
+    token.retire().await.unwrap();
     // Retired reservations no longer block a fresh task; physical retained pages
     // and all old result/receipt budgets still count.
-    drop(consume(&ledger, second).await.unwrap());
+    consume(&ledger, second)
+        .await
+        .unwrap()
+        .retire()
+        .await
+        .unwrap();
     assert_eq!(version(&path), 4);
 }
 
@@ -472,6 +482,11 @@ async fn cancelled_event_save_retains_worker_slot_and_never_writes_after_retirem
     let dropped = dropped_rx.recv_timeout(Duration::from_secs(5));
     let retired = checkpoint.check(&contract).is_err();
     let retained_slot = ledger.event_workers.available_permits() == 0;
+    let end = Instant::now() + Duration::from_secs(5);
+    while !worker.is_finished() && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let responsive_shutdown = worker.is_finished();
     drop(journal);
     let joined = worker.join();
     dropped.unwrap();
@@ -481,6 +496,10 @@ async fn cancelled_event_save_retains_worker_slot_and_never_writes_after_retirem
         "A cancelled waiter cannot free an occupied blocking-worker slot"
     );
     assert!(retired);
+    assert!(
+        responsive_shutdown,
+        "Runtime shutdown cannot join a blocked journal worker"
+    );
     tokio::time::timeout(Duration::from_secs(5), async {
         while ledger.event_workers.available_permits() != 1 {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -488,6 +507,7 @@ async fn cancelled_event_save_retains_worker_slot_and_never_writes_after_retirem
     })
     .await
     .unwrap();
+    wait_unknown(&ledger, &d).await;
     let shown = ledger
         .workload_events(&d.issuer_id, &d.grant_id, 0, 128)
         .unwrap();
@@ -502,7 +522,12 @@ async fn legacy_v3_consumption_upgrades_without_inventing_events_or_recovery_aut
     let path = dir.path().join("receipts.db");
     let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
     let old = definition();
-    drop(consume(&ledger, old.clone()).await.unwrap());
+    consume(&ledger, old.clone())
+        .await
+        .unwrap()
+        .retire()
+        .await
+        .unwrap();
     let before = json!(
         ledger
             .workload_receipt(&old.issuer_id, &old.grant_id)
@@ -523,7 +548,12 @@ async fn legacy_v3_consumption_upgrades_without_inventing_events_or_recovery_aut
     let mut fresh = definition();
     fresh.job_id = "e".repeat(32);
     fresh.task_id = "f".repeat(32);
-    drop(consume(&ledger, fresh).await.unwrap());
+    consume(&ledger, fresh)
+        .await
+        .unwrap()
+        .retire()
+        .await
+        .unwrap();
     assert_eq!(version(&path), 4);
     assert_eq!(
         json!(

@@ -2,6 +2,7 @@ use super::*;
 use crate::workload_leases::{IssuerWindow, Query, Requests, definition::*};
 
 include!("workload_event_journal_tests.rs");
+include!("workload_finalization_tests.rs");
 
 #[derive(Default)]
 struct SourceEvidence {
@@ -156,6 +157,29 @@ async fn consume(ledger: &Arc<GrantLedger>, d: Definition) -> Result<Consumption
     );
     ledger.consume_workload(d, &policy(), proof, &issuer, &session, &node)
 }
+async fn wait_unknown(ledger: &GrantLedger, definition: &Definition) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if ledger.final_slots.available_permits() == 1 {
+                let receipt = ledger
+                    .workload_receipt(&definition.issuer_id, &definition.grant_id)
+                    .unwrap();
+                if receipt.receipt.state == "unknown" {
+                    return;
+                }
+                assert!(
+                    !ledger
+                        .final_reporting_failed
+                        .load(std::sync::atomic::Ordering::Acquire),
+                    "Final checkpoint failed"
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
 fn version(path: &Path) -> i64 {
     Connection::open(path)
         .unwrap()
@@ -227,6 +251,7 @@ async fn cancelling_whole_consumed_task_drops_source_before_persisting_uncertain
     }
     source_retired_before_uncertainty(&evidence);
     assert!(reporting.checkpoint(&contract).is_err());
+    wait_unknown(&ledger, &d).await;
     assert_eq!(
         ledger
             .workload_receipt(&d.issuer_id, &d.grant_id)
@@ -251,6 +276,7 @@ async fn retired_consumption_never_polls_a_prepared_source_again() {
     assert!(consumed.supervise(renewals, source).await.is_err());
     assert!(!evidence.polled.load(SeqCst));
     assert!(evidence.dropped.load(SeqCst));
+    wait_unknown(&ledger, &d).await;
     assert!(
         consume(&ledger, d).await.is_err(),
         "Consumed uncertainty is never replayable"
@@ -280,6 +306,10 @@ async fn source_result_alone_cannot_mark_a_consumed_session_completed() {
     let retained = ledger.workload_receipt(&d.issuer_id, &d.grant_id).unwrap();
     assert_eq!(retained.receipt.state, "unknown");
     assert!(!retained.execution_authorized && !retained.restart_authorized);
+    assert!(
+        ledger.workload_reporting_ready(),
+        "Normal source return waits for its final checkpoint"
+    );
     assert!(reporting.checkpoint(&contract).is_err());
 }
 
@@ -334,7 +364,11 @@ async fn whole_task_cancellation_retires_reporting_before_blocked_final_journal_
     let source_dropped = dropped_rx.recv_timeout(Duration::from_secs(5));
     let retired_before_save =
         checkpoint.check(&contract).is_err() && reporting.checkpoint(&contract).is_err();
-    let waiting_for_save = !worker.is_finished();
+    let end = Instant::now() + Duration::from_secs(5);
+    while !worker.is_finished() && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let returned_before_save = worker.is_finished();
     let state = journal.query_row::<String, _, _>(
         "SELECT state FROM execution_receipts WHERE grant_id=?1",
         [&d.grant_id],
@@ -348,8 +382,12 @@ async fn whole_task_cancellation_retires_reporting_before_blocked_final_journal_
         retired_before_save,
         "Reporting must retire before source destruction and blocked storage"
     );
-    assert!(waiting_for_save);
+    assert!(
+        returned_before_save,
+        "Cancellation and runtime shutdown cannot wait on final SQLite I/O"
+    );
     assert_eq!(state.unwrap(), "accepted");
+    wait_unknown(&ledger, &d).await;
     assert_eq!(
         ledger
             .workload_receipt(&d.issuer_id, &d.grant_id)
@@ -450,7 +488,7 @@ async fn real_journal_consumes_exact_definition_before_ack_and_preserves_legacy_
         before
     );
     assert!(consume(&ledger, d.clone()).await.is_err());
-    drop(token);
+    token.retire().await.unwrap();
     drop(ledger);
     let reopened = GrantLedger::open(&path, Default::default(), "owner").unwrap();
     let retained = reopened
@@ -474,7 +512,7 @@ async fn unresolved_attempts_fence_both_operation_kinds_and_higher_attempts() {
         GrantLedger::open(&dir.path().join("one.db"), Default::default(), "owner").unwrap();
     let d = definition();
     let token = consume(&ledger, d.clone()).await.unwrap();
-    drop(token);
+    token.retire().await.unwrap();
     let mut operation = crate::grants::tests::grant();
     operation.issuer_id = d.issuer_id.clone();
     operation.job_id = d.job_id.clone();
@@ -564,7 +602,7 @@ async fn existing_stop_journal_fences_before_start_and_signals_consumed_session(
     assert!(stop.cancellation_signalled);
     assert!(!stop.execution_stopped && !stop.external_effects_stopped);
     assert!(token.acknowledgement().is_err());
-    drop(token);
+    token.retire().await.unwrap();
     drop(ledger);
     let reopened = GrantLedger::open(&path, Default::default(), "owner").unwrap();
     assert_eq!(
@@ -708,7 +746,7 @@ async fn malformed_retained_definition_or_reservation_is_refused_without_repair(
     ].into_iter().enumerate() {
         let path=dir.path().join(format!("corrupt-{index}.db"));
         let ledger=GrantLedger::open(&path,Default::default(),"owner").unwrap();
-        drop(consume(&ledger,definition()).await.unwrap());drop(ledger);
+        consume(&ledger,definition()).await.unwrap().retire().await.unwrap();drop(ledger);
         let db=Connection::open(&path).unwrap();db.execute_batch(sql).unwrap();drop(db);
         let before=Sha256::digest(std::fs::read(&path).unwrap());
         assert!(GrantLedger::open(&path,Default::default(),"owner").is_err(),"{index}");
@@ -721,7 +759,12 @@ async fn downgraded_schema_owner_mismatch_and_changed_legacy_evidence_are_retain
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("receipts.db");
     let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
-    drop(consume(&ledger, definition()).await.unwrap());
+    consume(&ledger, definition())
+        .await
+        .unwrap()
+        .retire()
+        .await
+        .unwrap();
     drop(ledger);
     assert!(GrantLedger::open(&path, Default::default(), "other-node").is_err());
     let db = Connection::open(&path).unwrap();
