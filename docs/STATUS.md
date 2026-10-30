@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: consumed reporting lifetime and bounded callbacks
+
+The [reporting lifetime draft](WORKLOAD-LEASES.md#reporting-lifetime-draft) binds
+read-only checkpoints to one exact consumed runner. Only validated supervisor
+windows activate/update them; failed binding, return and cancellation retire them.
+Each prepared source event callback now has a captured conservative window with
+pre/post checks, so renewals cannot extend a stalled callback indefinitely. Eight
+new tests include actual journal-mutex contention during whole-task cancellation,
+plus expiry, scope and final-poll fences. Local formatting/source checks precede
+hosted validation; no heavy local runtime test or capture was run. Durable event
+storage/completion, authenticated public launch and physical acceptance remain open.
+
 ## In development: deterministic native readiness expiry checks
 
 The retirement-fence candidate passed its Linux jobs, Windows dashboard job and

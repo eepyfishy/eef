@@ -169,11 +169,15 @@ async fn consumed_runner_stop_drops_source_before_final_real_journal_write() {
     let d = definition();
     let consumed = consume(&ledger, d.clone()).await.unwrap();
     consumed.acknowledgement().unwrap();
+    let reporting = consumed.reporting_authority();
+    let contract = d.lease_contract().unwrap();
+    assert!(reporting.checkpoint(&contract).is_err());
     let (source, started, evidence) = pending_source(&ledger, &d);
     let (_sender, renewals) = crate::workload_leases::renewal_channel();
     let run = consumed.supervise(renewals, source);
     tokio::pin!(run);
     tokio::select! {value=started=>value.unwrap(), result=&mut run=>panic!("Source ended before stop: {result:?}")};
+    let checkpoint = reporting.checkpoint(&contract).unwrap();
     let stop = ledger
         .request_stop_scope(
             &d.scope().unwrap(),
@@ -190,6 +194,8 @@ async fn consumed_runner_stop_drops_source_before_final_real_journal_write() {
             .is_err()
     );
     source_retired_before_uncertainty(&evidence);
+    assert!(checkpoint.check(&contract).is_err());
+    assert!(reporting.checkpoint(&contract).is_err());
     assert_eq!(
         ledger
             .workload_receipt(&d.issuer_id, &d.grant_id)
@@ -207,6 +213,8 @@ async fn cancelling_whole_consumed_task_drops_source_before_persisting_uncertain
         GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
     let d = definition();
     let consumed = consume(&ledger, d.clone()).await.unwrap();
+    let reporting = consumed.reporting_authority();
+    let contract = d.lease_contract().unwrap();
     let (source, started, evidence) = pending_source(&ledger, &d);
     let (_sender, renewals) = crate::workload_leases::renewal_channel();
     {
@@ -216,6 +224,7 @@ async fn cancelling_whole_consumed_task_drops_source_before_persisting_uncertain
         // Drop the actual future at scope exit, not just a Pin reference to it.
     }
     source_retired_before_uncertainty(&evidence);
+    assert!(reporting.checkpoint(&contract).is_err());
     assert_eq!(
         ledger
             .workload_receipt(&d.issuer_id, &d.grant_id)
@@ -253,14 +262,101 @@ async fn source_result_alone_cannot_mark_a_consumed_session_completed() {
         GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
     let d = definition();
     let consumed = consume(&ledger, d.clone()).await.unwrap();
+    let reporting = consumed.reporting_authority();
+    let contract = d.lease_contract().unwrap();
     let (_sender, renewals) = crate::workload_leases::renewal_channel();
     assert_eq!(
-        consumed.supervise(renewals, async { Ok(7) }).await.unwrap(),
+        consumed
+            .supervise(renewals, async {
+                reporting.checkpoint(&contract)?.check(&contract)?;
+                Ok(7)
+            })
+            .await
+            .unwrap(),
         7
     );
     let retained = ledger.workload_receipt(&d.issuer_id, &d.grant_id).unwrap();
     assert_eq!(retained.receipt.state, "unknown");
     assert!(!retained.execution_authorized && !retained.restart_authorized);
+    assert!(reporting.checkpoint(&contract).is_err());
+}
+
+#[tokio::test]
+async fn whole_task_cancellation_retires_reporting_before_blocked_final_journal_io() {
+    use std::sync::mpsc;
+    struct SourceDrop(mpsc::Sender<()>);
+    impl Drop for SourceDrop {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let ledger =
+        GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
+    let d = definition();
+    let consumed = consume(&ledger, d.clone()).await.unwrap();
+    let reporting = consumed.reporting_authority();
+    let contract = d.lease_contract().unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (dropped_tx, dropped_rx) = mpsc::channel();
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    let (_sender, renewals) = crate::workload_leases::renewal_channel();
+    let owned = SourceDrop(dropped_tx);
+    let worker = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let source = async move {
+                let _owned = owned;
+                started_tx.send(()).unwrap();
+                std::future::pending::<Result<()>>().await
+            };
+            let run = consumed.supervise(renewals, source);
+            tokio::pin!(run);
+            tokio::select! {
+                biased;
+                _=cancel_rx=>{},
+                result=&mut run=>panic!("Source ended before requested cancellation: {result:?}"),
+            }
+            // The actual owned run future drops at scope exit. Its final
+            // journal write will block on the real mutex held by this test.
+        });
+    });
+    let started = started_rx.recv_timeout(Duration::from_secs(5));
+    if started.is_err() {
+        let _ = cancel_tx.send(());
+        let _ = worker.join();
+        panic!("Source did not start: {started:?}");
+    }
+    let checkpoint = reporting.checkpoint(&contract).unwrap();
+    let journal = ledger.connection.lock().unwrap();
+    let _ = cancel_tx.send(());
+    let source_dropped = dropped_rx.recv_timeout(Duration::from_secs(5));
+    let retired_before_save =
+        checkpoint.check(&contract).is_err() && reporting.checkpoint(&contract).is_err();
+    let waiting_for_save = !worker.is_finished();
+    let state = journal.query_row::<String, _, _>(
+        "SELECT state FROM execution_receipts WHERE grant_id=?1",
+        [&d.grant_id],
+        |r| r.get(0),
+    );
+    drop(journal);
+    let joined = worker.join();
+    source_dropped.unwrap();
+    joined.unwrap();
+    assert!(
+        retired_before_save,
+        "Reporting must retire before source destruction and blocked storage"
+    );
+    assert!(waiting_for_save);
+    assert_eq!(state.unwrap(), "accepted");
+    assert_eq!(
+        ledger
+            .workload_receipt(&d.issuer_id, &d.grant_id)
+            .unwrap()
+            .receipt
+            .state,
+        "unknown"
+    );
+    assert!(consume(&ledger, d).await.is_err());
 }
 
 #[tokio::test]

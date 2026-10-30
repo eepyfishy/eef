@@ -1,6 +1,6 @@
-//! Version-two session lease mechanics, not durable workload admission.
-//! No startup, registration, RPC or source calls this module yet. Existing v1
-//! grant/lease limits remain unchanged. One future survives valid renewals.
+//! Version-two session lease mechanics; public admission remains incomplete.
+//! Internal prepared sources use this without a startup, registration or public
+//! RPC launch. Existing v1 limits remain unchanged. Renewals retain one future.
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -19,6 +19,9 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[path = "workload_definition.rs"]
 pub mod definition;
+#[path = "workload_reporting.rs"]
+mod reporting;
+pub(crate) use reporting::ReportingAuthority;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -392,8 +395,25 @@ struct Window {
     sequence: u64,
     deadline: Instant,
     session_deadline: Instant,
+    reporting: Option<reporting::Guard>,
 }
 impl Window {
+    fn new_with_reporting(
+        contract: &Contract,
+        policy: &Policy,
+        proof: LeaseProof,
+        reporting: Option<ReportingAuthority>,
+    ) -> Result<Self> {
+        // Even a failed first lease/binding attempt permanently retires the
+        // associated reporting lifetime. Only this owned runner can publish it.
+        let reporting_guard = reporting.map(ReportingAuthority::guard);
+        let mut window = Self::new(contract, policy, proof)?;
+        if let Some(guard) = reporting_guard {
+            guard.bind(&window)?;
+            window.reporting = Some(guard);
+        }
+        Ok(window)
+    }
     fn new(contract: &Contract, policy: &Policy, proof: LeaseProof) -> Result<Self> {
         contract.permitted(policy)?;
         ensure!(
@@ -405,6 +425,7 @@ impl Window {
             sequence: 1,
             deadline: proof.deadline,
             session_deadline: proof.session_deadline,
+            reporting: None,
         };
         result.live()?;
         Ok(result)
@@ -432,6 +453,9 @@ impl Window {
         self.sequence = proof.sequence;
         self.deadline = proof.deadline;
         self.session_deadline = session_deadline;
+        if let Some(reporting) = &self.reporting {
+            reporting.advance(self)?;
+        }
         Ok(())
     }
 }
@@ -440,17 +464,52 @@ impl Window {
 /// source, repeat a recording or extend the initial session's absolute deadline.
 /// This lease primitive does not consume a durable job/grant, check permissions,
 /// acquire resources, create renewals or start work from a network/UI handler.
-pub async fn supervise<F, T>(
+pub fn supervise<F, T>(
+    contract: &Contract,
+    policy: &Policy,
+    initial: LeaseProof,
+    renewals: Renewals,
+    operation: F,
+) -> impl Future<Output = Result<T>>
+where
+    F: Future<Output = Result<T>>,
+{
+    supervise_inner(contract, policy, initial, renewals, operation, None)
+}
+
+pub(crate) fn supervise_reporting<F, T>(
+    contract: &Contract,
+    policy: &Policy,
+    initial: LeaseProof,
+    renewals: Renewals,
+    operation: F,
+    reporting: ReportingAuthority,
+) -> impl Future<Output = Result<T>>
+where
+    F: Future<Output = Result<T>>,
+{
+    supervise_inner(
+        contract,
+        policy,
+        initial,
+        renewals,
+        operation,
+        Some(reporting),
+    )
+}
+
+async fn supervise_inner<F, T>(
     contract: &Contract,
     policy: &Policy,
     initial: LeaseProof,
     mut renewals: Renewals,
     operation: F,
+    reporting: Option<ReportingAuthority>,
 ) -> Result<T>
 where
     F: Future<Output = Result<T>>,
 {
-    let mut window = Window::new(contract, policy, initial)?;
+    let mut window = Window::new_with_reporting(contract, policy, initial, reporting)?;
     let mut closed = false;
     tokio::pin!(operation);
     loop {

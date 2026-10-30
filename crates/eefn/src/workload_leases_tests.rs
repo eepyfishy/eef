@@ -52,6 +52,198 @@ fn proof(c: &Contract, sequence: u64, lease: u64, session: u64) -> LeaseProof {
 }
 
 #[test]
+fn reporting_starts_only_in_its_exact_runner_and_retires_permanently() {
+    let c = contract();
+    let reporting = ReportingAuthority::new(&c).unwrap();
+    assert!(reporting.checkpoint(&c).is_err());
+    let window = Window::new_with_reporting(
+        &c,
+        &policy(),
+        proof(&c, 1, 900, 40_000),
+        Some(reporting.clone()),
+    )
+    .unwrap();
+    let checkpoint = reporting.checkpoint(&c).unwrap();
+    checkpoint.check(&c).unwrap();
+    assert_eq!(checkpoint.sequence(), 1);
+    assert_eq!(
+        checkpoint.deadline(),
+        window.deadline.min(window.session_deadline)
+    );
+    let mut other = c.clone();
+    other.scope.session_id = uuid::Uuid::new_v4().to_string();
+    assert!(reporting.checkpoint(&other).is_err());
+    assert!(checkpoint.check(&other).is_err());
+    drop(window);
+    assert!(checkpoint.check(&c).is_err());
+    assert!(reporting.checkpoint(&c).is_err());
+    assert!(
+        Window::new_with_reporting(
+            &c,
+            &policy(),
+            proof(&c, 1, 900, 40_000),
+            Some(reporting.clone())
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn renewal_updates_new_reporting_windows_without_extending_existing_checkpoints() {
+    let mut c = contract();
+    c.max_lease_ms = 10_000;
+    let reporting = ReportingAuthority::new(&c).unwrap();
+    let mut window = Window::new_with_reporting(
+        &c,
+        &policy(),
+        proof(&c, 1, 1000, 40_000),
+        Some(reporting.clone()),
+    )
+    .unwrap();
+    let old = reporting.checkpoint(&c).unwrap();
+    let old_deadline = old.deadline();
+    let original_end = window.session_deadline;
+    window.advance(proof(&c, 2, 5000, 60_000)).unwrap();
+    let fresh = reporting.checkpoint(&c).unwrap();
+    assert_eq!(fresh.sequence(), 2);
+    assert!(fresh.deadline() > old_deadline);
+    assert_eq!(old.deadline(), old_deadline);
+    assert_eq!(window.session_deadline, original_end);
+    old.check(&c).unwrap();
+    fresh.check(&c).unwrap();
+    window.advance(proof(&c, 3, 500, 500)).unwrap();
+    assert!(reporting.checkpoint(&c).unwrap().deadline() < old_deadline);
+    assert!(reporting.checkpoint(&c).unwrap().deadline() <= window.session_deadline);
+}
+
+#[test]
+fn failed_reporting_bind_cannot_be_retried_with_fresh_initial_authority() {
+    let c = contract();
+    let reporting = ReportingAuthority::new(&c).unwrap();
+    let mut expired = proof(&c, 1, 900, 40_000);
+    expired.deadline = Instant::now();
+    assert!(Window::new_with_reporting(&c, &policy(), expired, Some(reporting.clone())).is_err());
+    assert!(reporting.checkpoint(&c).is_err());
+    assert!(
+        Window::new_with_reporting(
+            &c,
+            &policy(),
+            proof(&c, 1, 900, 40_000),
+            Some(reporting.clone())
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn in_flight_reporting_checkpoint_expires_even_after_a_valid_renewal() {
+    let mut c = contract();
+    c.max_lease_ms = 10_000;
+    let reporting = ReportingAuthority::new(&c).unwrap();
+    let mut window = Window::new_with_reporting(
+        &c,
+        &policy(),
+        proof(&c, 1, 1000, 40_000),
+        Some(reporting.clone()),
+    )
+    .unwrap();
+    let checkpoint = reporting.checkpoint(&c).unwrap();
+    let original = checkpoint.deadline();
+    window.advance(proof(&c, 2, 5000, 60_000)).unwrap();
+    tokio::time::sleep_until(tokio::time::Instant::from_std(original)).await;
+    assert!(checkpoint.check(&c).is_err());
+    assert_eq!(checkpoint.deadline(), original);
+    reporting.checkpoint(&c).unwrap().check(&c).unwrap();
+}
+
+#[tokio::test]
+async fn invalid_renewal_retires_reporting_before_source_poll_or_return() {
+    let c = contract();
+    let reporting = ReportingAuthority::new(&c).unwrap();
+    let mut other = c.clone();
+    other.scope.grant_sha256 = "e".repeat(64);
+    let (sender, renewals) = renewal_channel();
+    sender.try_send(proof(&other, 2, 900, 40_000)).ok().unwrap();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let count = starts.clone();
+    assert!(
+        supervise_reporting(
+            &c,
+            &policy(),
+            proof(&c, 1, 900, 40_000),
+            renewals,
+            async move {
+                count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            reporting.clone()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(starts.load(Ordering::SeqCst), 0);
+    assert!(reporting.checkpoint(&c).is_err());
+}
+
+#[tokio::test]
+async fn reporting_result_that_retires_its_runner_in_final_poll_is_refused() {
+    let c = contract();
+    let reporting = ReportingAuthority::new(&c).unwrap();
+    let _window = Window::new_with_reporting(
+        &c,
+        &policy(),
+        proof(&c, 1, 900, 40_000),
+        Some(reporting.clone()),
+    )
+    .unwrap();
+    let checkpoint = reporting.checkpoint(&c).unwrap();
+    assert!(
+        checkpoint
+            .supervise(&c, async {
+                reporting.retire();
+                Ok(7)
+            })
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn blocked_reporting_future_is_dropped_at_its_captured_window_after_renewal() {
+    let mut c = contract();
+    c.max_lease_ms = 10_000;
+    let reporting = ReportingAuthority::new(&c).unwrap();
+    let mut window = Window::new_with_reporting(
+        &c,
+        &policy(),
+        proof(&c, 1, 1000, 40_000),
+        Some(reporting.clone()),
+    )
+    .unwrap();
+    let checkpoint = reporting.checkpoint(&c).unwrap();
+    window.advance(proof(&c, 2, 5000, 60_000)).unwrap();
+    let drops = Arc::new(AtomicUsize::new(0));
+    let guard = DropCount(drops.clone());
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        checkpoint.supervise(&c, async move {
+            let _owned = guard;
+            std::future::pending::<Result<()>>().await
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("reporting window expired")
+    );
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    reporting.checkpoint(&c).unwrap().check(&c).unwrap();
+}
+
+#[test]
 fn session_contract_is_separate_from_v1_and_disabled_by_default() {
     let c = contract();
     c.validate().unwrap();

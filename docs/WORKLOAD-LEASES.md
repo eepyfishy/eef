@@ -8,8 +8,9 @@ window is at most 30 seconds; the protocol session ceiling is 24 hours and the
 default local ceiling is one hour. Existing v1 grants, limits and timing messages
 are unchanged.
 
-This is a lease primitive, not a workload grant or admission implementation. No
-startup, registration, command, ordinary RPC, node or coordinator route calls it.
+This is a lease primitive, not a public workload admission implementation. The
+internal prepared source uses it, but no startup, registration, command or public
+RPC launches a source through it.
 The new policy is not yet exposed as an application configuration setting. There
 is no new source launch, capture permission, model binding or job database.
 
@@ -85,3 +86,36 @@ supported scope/source/budget field and verify that each changes the lease hash;
 wrong-node resources, missing bounds, unknown nested fields, unsupported sources,
 invalid pins and incompatible legacy grants are refused. They do not prove product admission,
 network authentication, continuous capture or release readiness.
+
+## Reporting lifetime draft
+
+The consumed runner now binds one in-memory reporting lifetime to its exact
+contract. A read-only handle is inactive before the runner starts. Only the lease
+supervisor publishes validated windows; a handle cannot renew authority, prepare
+a source, mark completion or start a replacement runner. Failed initial binding,
+invalid renewal, return and cancellation retire it permanently. Consumption also
+retires it before potentially blocked final journal I/O. No lifetime is reconstructed
+from retained receipts or restored after restart.
+
+A checkpoint captures the current conservative deadline and sequence. A valid
+renewal can update newly created checkpoints, but cannot extend an in-flight
+checkpoint. The current window can also tighten an older checkpoint. Checks bind
+the full contract digest and refuse expiry or retirement; the original session end
+remains fixed. The prepared microphone runner now supervises each useful event
+callback under this captured deadline with pre/post lifetime checks. A callback
+that retires the runner in its final poll cannot return accepted success.
+
+This is the lifetime boundary for a future bounded blocking journal worker, not
+an event persistence implementation. Such a worker must check before and after
+its transaction, while its async waiter remains bounded by the captured deadline.
+A worker already inside SQLite may outlive waiter cancellation; a late write must
+never acknowledge, renew, replay or authorize source work. No reporting-control
+mutex may be held across journal I/O. Exact durable event sequencing/deduplication,
+storage reservations, downgrade refusal and observed completion remain open.
+
+Eight new regressions cover reporting scope/retirement, captured deadlines across
+renewal, failed binding, invalid renewal, final-poll retirement, blocked callbacks
+and cancellation while the actual existing journal mutex blocks final persistence.
+Existing real-receipt stop/cancellation/result tests also verify handle retirement.
+Hosted verification is pending; these are backend/synthetic-source checks, not
+physical source, network or release acceptance.

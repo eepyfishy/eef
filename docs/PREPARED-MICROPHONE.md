@@ -80,3 +80,11 @@ durable evidence. Event persistence, receipt deduplication and observed completi
 remain required before public execution. Eight filter regressions cover uncertainty,
 sequence positions, exact rate/count/byte boundaries and permanent overflow refusal;
 hosted verification is pending.
+
+Each event callback is now additionally bound to a captured conservative reporting
+window from the exact consumed runner. Valid renewals keep the source alive but
+cannot extend that in-flight callback. Pre/post checks reject a callback completing
+after expiry or retiring its own runner in the final poll. Cancellation retires
+reporting before the existing final journal save can block. This does not add
+event storage or turn callback delivery into a durable completion receipt; see
+[reporting lifetime](WORKLOAD-LEASES.md#reporting-lifetime-draft).

@@ -141,6 +141,7 @@ pub struct Consumption {
     initial: Option<LeaseProof>,
     ledger: Arc<GrantLedger>,
     stop: stop::Watch,
+    reporting: crate::workload_leases::ReportingAuthority,
 }
 
 // Explicit destruction order also covers cancellation of the whole async task.
@@ -156,6 +157,10 @@ impl<F> Drop for Running<F> {
     }
 }
 impl Consumption {
+    #[allow(dead_code)]
+    pub(crate) fn reporting_authority(&self) -> crate::workload_leases::ReportingAuthority {
+        self.reporting.clone()
+    }
     pub(crate) fn session_deadline(&self) -> Result<Instant> {
         let proof = self
             .initial
@@ -214,12 +219,13 @@ impl Consumption {
         let contract = consumed.contract.clone();
         let policy = consumed.policy.clone();
         let mut stop = consumed.stop.receiver.clone();
-        let operation = crate::workload_leases::supervise(
+        let operation = crate::workload_leases::supervise_reporting(
             &contract,
             &policy,
             initial,
             renewals,
             running.operation.as_mut().unwrap().as_mut(),
+            consumed.reporting.clone(),
         );
         tokio::pin!(operation);
         loop {
@@ -241,6 +247,9 @@ impl Consumption {
 }
 impl Drop for Consumption {
     fn drop(&mut self) {
+        // Retire in memory before any potentially blocked journal checkpoint.
+        // Outstanding reporting handles cannot keep this lifetime active.
+        self.reporting.retire();
         // No automatic retry after a failed write. An accepted row retained
         // after a crash/I/O failure remains consumed and uncertain, never live.
         let _ = self.ledger.mark_workload_unknown(&self.contract.scope);
@@ -271,6 +280,7 @@ impl GrantLedger {
         node: &str,
     ) -> Result<Consumption> {
         let contract = definition.lease_contract()?;
+        let reporting = crate::workload_leases::ReportingAuthority::new(&contract)?;
         if node != self.node_id || !contract.scope.matches_session(issuer, session, node) {
             bail!("Workload consumption differs from pinned session/node")
         }
@@ -313,6 +323,7 @@ impl GrantLedger {
             initial: Some(initial),
             ledger: self.clone(),
             stop,
+            reporting,
         };
         // I/O/stop registration consumes the original lease; no deadline reset.
         consumed.acknowledgement()?;

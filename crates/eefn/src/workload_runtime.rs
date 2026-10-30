@@ -156,6 +156,8 @@ impl PreparedMicrophone {
         })?;
         let deadline = tokio::time::Instant::from_std(consumed.session_deadline()?);
         let mut events = crate::workload_events::Filter::new(&self.definition)?;
+        let reporting = consumed.reporting_authority();
+        let reporting_contract = self.definition.lease_contract()?;
         let operation = self.python.observe_reserved_microphone(
             &self.source,
             self.params,
@@ -166,14 +168,22 @@ impl PreparedMicrophone {
             move |observation| {
                 let pending = events
                     .observe(observation, std::time::Instant::now())
-                    .map(|event| event.map(&mut observe));
+                    .and_then(|event| {
+                        event
+                            .map(|event| {
+                                let checkpoint = reporting.checkpoint(&reporting_contract)?;
+                                Ok((checkpoint, observe(event)))
+                            })
+                            .transpose()
+                    });
+                let contract = reporting_contract.clone();
                 async move {
                     // read_frames awaits this future before reading another
                     // observation. At most one event is pending, tighter than
                     // every valid reviewed max_pending; no detached worker or
                     // offline queue can outlive the lease/listening supervisor.
-                    if let Some(delivery) = pending? {
-                        delivery.await?;
+                    if let Some((checkpoint, delivery)) = pending? {
+                        checkpoint.supervise(&contract, delivery).await?;
                     }
                     Ok(())
                 }

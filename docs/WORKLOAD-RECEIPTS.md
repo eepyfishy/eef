@@ -41,6 +41,13 @@ end or replays consumed authority. An explicit destruction guard drops that futu
 before final synchronous uncertainty persistence, including cancellation of the
 entire task. A source result alone still cannot create a completion receipt.
 
+The reporting lifetime follow-up binds one read-only control to the exact consumed
+runner. It is inactive before supervision and permanently retires on cancellation
+or return, including before blocked final persistence. No retained receipt or
+cloned reporting handle can restore it. Prepared event callbacks use captured
+conservative windows; later renewals cannot keep a stalled callback pending forever.
+This adds no schema, durable event/completion or asynchronous journal writer yet.
+
 Five new real-journal regressions cover stop, whole-task cancellation, retirement
 before the first source poll, missing renewal and the absence of false durable
 completion. Their source is a synthetic pending future whose destructor reads the
