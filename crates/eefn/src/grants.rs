@@ -1051,6 +1051,33 @@ impl AcceptedGrant {
             );
             result.persisted = false;
         }
+        // Test-only, bounded diagnostics for unexpected pipeline uncertainty.
+        // Never emit parameters, paths, model output or node identities. Release
+        // builds and their deadline/permission behavior are unchanged.
+        #[cfg(test)]
+        if crate::pipeline::is_compound(&g.capability) && result.state == ReceiptState::Unknown {
+            let progress = if result.persisted {
+                self.ledger
+                    .receipt(&g.issuer_id, &g.grant_id)
+                    .ok()
+                    .and_then(|receipt| receipt.get("pipeline_progress").cloned())
+            } else {
+                None
+            };
+            let progress = progress.map(|value| json!({
+                "phase":value.get("phase"),"sequence":value.get("sequence"),
+                "completed_steps":value.get("completed_steps"),"total_steps":value.get("total_steps"),
+                "retained_encoded_bytes":value.get("retained_encoded_bytes"),
+                "resolved_encoded_bytes":value.get("resolved_encoded_bytes")
+            }));
+            eprintln!(
+                "eef test pipeline outcome {}",
+                json!({
+                    "code":result.error_code,"elapsed_ms":self.accepted.elapsed().as_millis(),
+                    "budget_ms":g.limits.max_execution_ms,"persisted":result.persisted,"progress":progress
+                })
+            );
+        }
         result
     }
 }
