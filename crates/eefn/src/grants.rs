@@ -14,7 +14,9 @@ use std::{
 pub const MAX_DURATION_MS: u64 = 30_000;
 #[path = "grant_execution_clock.rs"]
 mod execution_clock;
-use execution_clock::{ExecutionClock, SystemClock};
+#[cfg(test)]
+pub(crate) use execution_clock::ControlledClock;
+pub(crate) use execution_clock::{ExecutionClock, SystemClock};
 #[path = "grant_stop.rs"]
 pub mod stop;
 #[path = "workload_receipts.rs"]
@@ -957,7 +959,7 @@ impl AcceptedGrant {
         self.run_operation_with_clock(engine, operation, SystemClock)
     }
 
-    async fn run_operation_with_clock<F, C>(
+    pub(crate) async fn run_operation_with_clock<F, C>(
         mut self,
         engine: &crate::NodeEngine,
         operation: F,

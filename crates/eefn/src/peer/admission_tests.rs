@@ -616,26 +616,46 @@ async fn native_socket_readiness_owns_listener_and_accept_wait_expires_under_ori
     let engine = f.engine(Role::Destination, true);
     let ledger = f.ledger(Role::Destination);
     let admitted = f
-        .prepare(Role::Destination, &engine, ledger.clone(), 500)
+        .prepare(Role::Destination, &engine, ledger.clone(), 10000)
         .await
         .unwrap();
+    // Keep native socket ownership, but separate the exact deadline transition
+    // from host scheduling and SQLite latency. This advances the original
+    // admitted lease; it neither resets nor lengthens execution authority.
+    let deadline = admitted.accepted.execution_deadline();
+    let clock = crate::grants::ControlledClock::at(&admitted.accepted);
+    let expiry = clock.clone();
     let started = std::time::Instant::now();
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let observed = ready.clone();
     let report = admitted
-        .run_tcp(&engine, None, |ack| async move {
-            assert_eq!(ack.state, ReceiptState::Accepted);
-            assert!(
-                tokio::net::TcpListener::bind(address).await.is_err(),
-                "ACK preceded native socket ownership"
-            );
-            observed.store(true, std::sync::atomic::Ordering::SeqCst);
-            Ok(())
-        })
+        .run_tcp_with_clock(
+            &engine,
+            None,
+            |ack| async move {
+                assert_eq!(ack.state, ReceiptState::Accepted);
+                assert!(
+                    tokio::net::TcpListener::bind(address).await.is_err(),
+                    "ACK preceded native socket ownership"
+                );
+                observed.store(true, std::sync::atomic::Ordering::SeqCst);
+                expiry.advance_to(deadline);
+                Ok(())
+            },
+            clock,
+        )
         .await;
-    assert!(ready.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(
+        ready.load(std::sync::atomic::Ordering::SeqCst),
+        "Ready was not observed: {:?}",
+        report.error_code
+    );
     assert_eq!(report.state, ReceiptState::Unknown);
     assert!(report.persisted && !report.success);
+    assert!(matches!(
+        report.error_code.as_deref(),
+        Some("grant_deadline_exceeded" | "grant_deadline_or_clock_changed")
+    ));
     assert!(started.elapsed() < Duration::from_secs(3));
     let _released = tokio::net::TcpListener::bind(address).await.unwrap();
     assert_eq!(
@@ -648,6 +668,119 @@ async fn native_socket_readiness_owns_listener_and_accept_wait_expires_under_ori
         "unknown"
     );
     assert!(engine.peer_slot().is_ok());
+}
+
+#[tokio::test]
+async fn native_expired_original_lease_never_binds_or_calls_readiness() {
+    let mut f = Fixture::new();
+    // Keep this socket owned. An incorrectly polled operation would return a
+    // bind failure, not the required deadline outcome before source effects.
+    let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = occupied.local_addr().unwrap();
+    f.transport.scope.destination_address = address;
+    f.transport.reseal();
+    let engine = f.engine(Role::Destination, true);
+    let ledger = f.ledger(Role::Destination);
+    let admitted = f
+        .prepare(Role::Destination, &engine, ledger.clone(), 10000)
+        .await
+        .unwrap();
+    let clock = crate::grants::ControlledClock::at(&admitted.accepted);
+    clock.advance_to(admitted.accepted.execution_deadline());
+    let report = admitted
+        .run_tcp_with_clock(
+            &engine,
+            None,
+            |_| async {
+                panic!("Expired authority cannot reach readiness");
+                #[allow(unreachable_code)]
+                Ok(())
+            },
+            clock,
+        )
+        .await;
+    assert_eq!(report.state, ReceiptState::Unknown);
+    assert_eq!(
+        report.error_code.as_deref(),
+        Some("grant_deadline_or_clock_changed")
+    );
+    assert!(report.persisted && !report.success && report.data.is_null());
+    assert_eq!(
+        ledger
+            .receipt(
+                &f.grant(Role::Destination).issuer_id,
+                &f.grant(Role::Destination).grant_id
+            )
+            .unwrap()["state"],
+        "unknown"
+    );
+    assert!(engine.peer_slot().is_ok());
+    assert!(
+        f.prepare(Role::Destination, &engine, ledger, 10000)
+            .await
+            .is_err(),
+        "Consumed authority must never replay"
+    );
+    assert_eq!(occupied.local_addr().unwrap(), address);
+}
+
+#[tokio::test]
+async fn blocked_native_readiness_output_cannot_extend_the_original_lease() {
+    let mut f = Fixture::new();
+    let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = probe.local_addr().unwrap();
+    drop(probe);
+    f.transport.scope.destination_address = address;
+    f.transport.reseal();
+    let engine = f.engine(Role::Destination, true);
+    let ledger = f.ledger(Role::Destination);
+    let admitted = f
+        .prepare(Role::Destination, &engine, ledger.clone(), 10000)
+        .await
+        .unwrap();
+    let deadline = admitted.accepted.execution_deadline();
+    let clock = crate::grants::ControlledClock::at(&admitted.accepted);
+    let expiry = clock.clone();
+    let observed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ready = observed.clone();
+    let report = tokio::time::timeout(
+        Duration::from_secs(3),
+        admitted.run_tcp_with_clock(
+            &engine,
+            None,
+            |_| async move {
+                assert!(tokio::net::TcpListener::bind(address).await.is_err());
+                ready.store(true, std::sync::atomic::Ordering::SeqCst);
+                expiry.advance_to(deadline);
+                std::future::pending::<Result<()>>().await
+            },
+            clock,
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(
+        observed.load(std::sync::atomic::Ordering::SeqCst),
+        "Readiness not polled: {:?}",
+        report.error_code
+    );
+    assert_eq!(report.state, ReceiptState::Unknown);
+    assert!(matches!(
+        report.error_code.as_deref(),
+        Some("grant_deadline_exceeded" | "grant_deadline_or_clock_changed")
+    ));
+    assert!(report.persisted && !report.success);
+    let _released = tokio::net::TcpListener::bind(address).await.unwrap();
+    assert!(engine.peer_slot().is_ok());
+    assert_eq!(
+        ledger
+            .receipt(
+                &f.grant(Role::Destination).issuer_id,
+                &f.grant(Role::Destination).grant_id
+            )
+            .unwrap()["state"],
+        "unknown"
+    );
 }
 
 #[tokio::test]
@@ -692,5 +825,29 @@ async fn cancelling_native_ready_wait_releases_socket_and_fences_consumed_grant(
         f.prepare(Role::Destination, &engine, ledger, 10000)
             .await
             .is_err()
+    );
+}
+
+#[test]
+fn tcp_system_clock_wrapper_does_not_duplicate_large_readiness_future() {
+    async fn large_ready(_: GrantReport) -> Result<()> {
+        let bytes = [7_u8; 64 * 1024];
+        std::future::pending::<()>().await;
+        std::hint::black_box(&bytes);
+        Ok(())
+    }
+    fn size<F, R>(_: F) -> usize
+    where
+        F: FnOnce(AdmittedPeer, &'static NodeEngine) -> R,
+    {
+        std::mem::size_of::<R>()
+    }
+    let direct = size(|admitted, engine| {
+        admitted.run_tcp_with_clock(engine, None, large_ready, crate::grants::SystemClock)
+    });
+    let normal = size(|admitted, engine| admitted.run_tcp(engine, None, large_ready));
+    assert_eq!(
+        normal, direct,
+        "TCP wrapper must not store a duplicate large async frame"
     );
 }

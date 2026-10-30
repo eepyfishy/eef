@@ -348,15 +348,32 @@ impl AdmittedPeer {
     /// readiness means its listener is owned, not that a source or sink ran.
     /// Even binding, readiness output and accept/connect are inside the original
     /// lease/policy watcher. Dropping the future releases every owned socket.
-    pub async fn run_tcp<F, Fut>(
+    pub fn run_tcp<F, Fut>(
         self,
         engine: &crate::NodeEngine,
         source_payload: Option<Arc<[u8]>>,
         ready: F,
+    ) -> impl std::future::Future<Output = GrantReport>
+    where
+        F: FnOnce(GrantReport) -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
+    {
+        // Static production clock; no command/configuration/wire selector.
+        // Return directly to avoid an extra large async operation frame.
+        self.run_tcp_with_clock(engine, source_payload, ready, crate::grants::SystemClock)
+    }
+
+    async fn run_tcp_with_clock<F, Fut, C>(
+        self,
+        engine: &crate::NodeEngine,
+        source_payload: Option<Arc<[u8]>>,
+        ready: F,
+        clock: C,
     ) -> GrantReport
     where
         F: FnOnce(GrantReport) -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
+        C: crate::grants::ExecutionClock,
     {
         let acknowledgement = self.acknowledgement();
         let execution_deadline = tokio::time::Instant::from_std(self.accepted.execution_deadline());
@@ -402,7 +419,9 @@ impl AdmittedPeer {
                 transfer(endpoint, role, scope, definition, stream, source_payload).await
             }
         };
-        let report = accepted.run_operation(engine, operation).await;
+        let report = accepted
+            .run_operation_with_clock(engine, operation, clock)
+            .await;
         drop(_slot);
         report
     }

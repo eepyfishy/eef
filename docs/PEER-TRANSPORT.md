@@ -461,3 +461,27 @@ Before exposing a usable node session, integrate and verify all of:
 In particular, TLS/frame replay rejection inside one channel is not evidence
 that application session replay or stale coordinator leadership is solved.
 No installed/remote node, update policy, model selection or release changes.
+
+## Readiness deadline fixture follow-up
+
+Hosted run `41108969937` passed all 36 native suites and its extra listener-close
+case, including the request-input restart assertions. Its Windows headless Rust
+tests nevertheless failed the readiness flag in the native socket unit fixture.
+That fixture granted 500 ms for admission, journal work, listener setup and expiry.
+The old assertion retained no outcome code, so the original cause is unproven;
+the green native suites do not override the failed job.
+
+The socket fixture now shares the existing test-only controlled execution clock
+with the grant cleanup tests. Native binding and the required readiness ACK remain
+real. After observing owned-listener readiness, the test advances to the exact
+original admitted deadline and requires uncertainty plus listener/slot release.
+Admission uses an existing valid ten-second synthetic lease; no runtime permission,
+deadline or lease margin is widened. Two added cases advance the original deadline
+before binding and during blocked readiness output. They require durable unknown,
+no expired readiness effect, and no replay. Existing real-clock short-lease tests
+remain. A layout regression prevents the production wrapper from duplicating a
+large async readiness frame. Only test builds contain the controlled clock; the
+public TCP path always selects the real system clock and exposes no selector.
+
+This is deterministic coverage of deadline/ownership logic, not evidence of a
+physical network, device or installer. Hosted validation of the follow-up is pending.

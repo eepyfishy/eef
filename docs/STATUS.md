@@ -3,6 +3,19 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: deterministic native readiness expiry checks
+
+The retirement-fence candidate passed its Linux jobs, Windows dashboard job and
+all Windows native command suites, but the Windows headless Rust job failed an
+existing socket-readiness flag. The original cause is not proven; no main
+promotion or overall acceptance follows from partial success. The fixture now
+uses the existing test-only execution clock with real owned TCP sockets, keeping
+required readiness and exact original deadline retirement assertions. Added
+expired-before-bind and blocked-readiness tests require unknown outcomes and
+resource release; a third regression checks that the system-clock wrapper does
+not duplicate a large async frame. Real-clock short-lease tests and production
+limits/clock selection remain unchanged. Hosted verification is pending.
+
 ## In development: bounded microphone activity events
 
 The internal [prepared source](PREPARED-MICROPHONE.md#activity-event-filtering-draft)

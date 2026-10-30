@@ -12,53 +12,6 @@ enum Mode {
     ClockJump,
 }
 
-#[derive(Clone)]
-struct ControlledClock {
-    state: Arc<Mutex<(Instant, u64)>>,
-    wake: Arc<tokio::sync::Notify>,
-}
-impl ControlledClock {
-    fn at(accepted: &AcceptedGrant) -> Self {
-        Self {
-            state: Arc::new(Mutex::new((accepted.accepted, accepted.accepted_wall))),
-            wake: Arc::new(tokio::sync::Notify::new()),
-        }
-    }
-    fn advance_to(&self, deadline: Instant) {
-        let mut state = self.state.lock().unwrap();
-        let elapsed = deadline.duration_since(state.0);
-        state.1 += u64::try_from(elapsed.as_millis()).unwrap();
-        state.0 = deadline;
-        drop(state);
-        // notify_one retains a permit if the select's sleep is not polled yet.
-        self.wake.notify_one();
-    }
-    fn jump_wall(&self) {
-        self.state.lock().unwrap().1 += 1001;
-    }
-}
-impl ExecutionClock for ControlledClock {
-    fn wall_ms(&self) -> u64 {
-        self.state.lock().unwrap().1
-    }
-    fn elapsed(&self, since: Instant) -> Duration {
-        self.state.lock().unwrap().0.duration_since(since)
-    }
-    fn reached(&self, deadline: Instant) -> bool {
-        self.state.lock().unwrap().0 >= deadline
-    }
-    fn sleep_until(&self, deadline: Instant) -> impl Future<Output = ()> + Send {
-        async move {
-            loop {
-                let notified = self.wake.notified();
-                if self.reached(deadline) {
-                    return;
-                }
-                notified.await;
-            }
-        }
-    }
-}
 struct Dropped(mpsc::Sender<()>);
 impl Drop for Dropped {
     fn drop(&mut self) {
