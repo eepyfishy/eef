@@ -307,7 +307,9 @@ try {
  await until(()=>gates.size===1,'gated method');
  const busy=await input('Do not queue this input',randomUUID(),false);assert.equal(busy.error_code,'input_workflow_busy');assert.equal(busy.creation_attempted,false);assert.equal(calls.length,count+2);
  const restart=await nodeCli(['restart','--wait-seconds','20']);assert.equal(restart.success,true);await until(ready,'runtime changed during method inference');
- const interrupted=await pending;assert.equal(interrupted.success,false);assert.equal(interrupted.source_confirmed,true);assert.equal(interrupted.outcome_unknown,true);
+ const interrupted=await pending;
+ const interruptedDiagnostic=JSON.stringify({error_code:interrupted.error_code,status:interrupted.status,source_confirmed:interrupted.source_confirmed,outcome_unknown:interrupted.outcome_unknown,creation_attempted:interrupted.creation_attempted,preparation_requested:!!interrupted.preparation_command,preparation_error_code:interrupted.preparation?.error_code});
+ assert.equal(interrupted.success,false,interruptedDiagnostic);assert.equal(interrupted.source_confirmed,true,interruptedDiagnostic);assert.equal(interrupted.outcome_unknown,true,interruptedDiagnostic);
  assert(['runtime_changed','local_input_reply_unconfirmed'].includes(interrupted.error_code));
  for(const gate of gates)gate.destroy();mode='valid';
  const afterRestart=await input('Gated preparation',gatedId);assert.equal(afterRestart.status,'historical_snapshot');assert.equal(afterRestart.result.revision,1);assert.equal(calls.length,count+2);

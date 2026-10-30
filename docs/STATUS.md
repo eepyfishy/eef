@@ -3,6 +3,26 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: prepared microphone source and shared owned reservation
+
+[Prepared microphone sources](PREPARED-MICROPHONE.md) bind compiled bytes and local
+private resources to the exact consumed definition. The source runs under existing
+lease/stop and listening-epoch supervision. Windows finite capture shares the same
+node reservation; process cancellation retains it until owned job exit is observed,
+with quarantine on failed cleanup. Runtime retirement invalidates old listening
+epochs without granting new consent. Fourteen new regressions cover preparation,
+handoff and ownership, including held Windows root/child handles. Hosted checks are
+pending. Public session launch, long-session transport, durable events/completion
+and physical resource acceptance remain incomplete.
+
+The Windows main-ref request-input regression exposed a completion-poll race:
+runtime retirement could occur after the cancellation watch was polled but before
+a preparation result returned. Input now fences that result against both the
+generation value and unseen retirement notifications. Two controlled async tests
+reproduce the unfenced ordering and require cancellation to retain priority.
+Original native assertions remain; failures now include bounded status diagnostics
+without request text, node identity or model output. Hosted verification is pending.
+
 ## In development: consumed source lifetime and receipt ordering
 
 The internal consumed-workload runner drives one prepared future under the exact

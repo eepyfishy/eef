@@ -203,6 +203,48 @@ impl Drop for Dropped {
         self.0.store(true, Ordering::SeqCst);
     }
 }
+
+#[tokio::test]
+async fn runtime_retirement_invalidates_existing_listening_without_granting_consent() {
+    let gate = Gate::default();
+    let old = gate.permit().unwrap();
+    gate.retire_runtime();
+    let polled = Arc::new(AtomicBool::new(false));
+    let mark = polled.clone();
+    assert!(
+        old.supervise(async move {
+            mark.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .await
+        .is_err()
+    );
+    assert!(!polled.load(Ordering::SeqCst));
+    assert!(!gate.snapshot().1);
+    gate.deny();
+    gate.retire_runtime();
+    assert!(gate.snapshot().1);
+    assert!(gate.permit().is_err());
+}
+#[tokio::test]
+async fn runtime_guard_replacement_cancels_only_its_original_listening_generation() {
+    let f = Fixture::new(true);
+    f.change(true);
+    let before = f.service.listening_gate.snapshot();
+    let replacement = f
+        .service
+        .attach_preview_runtime(&f._engine, uuid::Uuid::new_v4().to_string());
+    assert!(f.service.listening_gate.snapshot().0 > before.0);
+    let after = f.service.listening_gate.snapshot();
+    drop(f._guard);
+    assert_eq!(
+        f.service.listening_gate.snapshot(),
+        after,
+        "retired old guard cannot revoke its replacement"
+    );
+    drop(replacement);
+    assert!(f.service.listening_gate.snapshot().0 > after.0);
+}
 #[tokio::test]
 async fn disable_drops_owned_future_before_returning_to_final_storage() {
     let f = Fixture::new(true);

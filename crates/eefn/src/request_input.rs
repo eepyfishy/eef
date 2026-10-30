@@ -203,11 +203,15 @@ impl NodeService {
         let budget =
             crate::inference_budget::InferenceBudget::new(request.inference_timeout_seconds)
                 .expect("validated inference budget");
-        let result = tokio::select! {
-            biased;
-            _=generation.changed()=>Err("runtime_changed"),
-            result=tokio::time::timeout(Duration::from_secs(budget.extend_seconds(135,2)),self.input_request_inner(&request,policy,&mut report))=>result.unwrap_or(Err("input_workflow_timeout")),
-        };
+        let result = within_runtime(&mut generation, &runtime, async {
+            tokio::time::timeout(
+                Duration::from_secs(budget.extend_seconds(135, 2)),
+                self.input_request_inner(&request, policy, &mut report),
+            )
+            .await
+            .unwrap_or(Err("input_workflow_timeout"))
+        })
+        .await;
         if let Err(code) = result {
             if report["error_code"].is_null() {
                 report["error_code"] = json!(code)
@@ -386,6 +390,30 @@ impl NodeService {
         report["success"] = json!(true);
         report["outcome_unknown"] = json!(false);
         Ok(())
+    }
+}
+
+// A biased select polls the watch before the operation, but an operation can
+// observe retirement and finish during that same poll. Fence the returned
+// result as well; otherwise a nested cancellation can lose its runtime scope.
+async fn within_runtime<F, T>(
+    generation: &mut tokio::sync::watch::Receiver<Option<String>>,
+    expected: &str,
+    operation: F,
+) -> std::result::Result<T, &'static str>
+where
+    F: std::future::Future<Output = std::result::Result<T, &'static str>>,
+{
+    let result = tokio::select! {
+        biased;
+        _=generation.changed()=>Err("runtime_changed"),
+        result=operation=>result,
+    };
+    if generation.has_changed().unwrap_or(true) || generation.borrow().as_deref() != Some(expected)
+    {
+        Err("runtime_changed")
+    } else {
+        result
     }
 }
 
@@ -915,5 +943,60 @@ mod tests {
         assert!(!reply.contains("Old question"));
         let partial = json!({"success":false,"source_confirmed":true,"error_code":"input_preparation_not_confirmed","request_id":"receipt"});
         assert!(input_reply(&partial).contains("source request was saved"));
+    }
+    #[tokio::test]
+    async fn runtime_retirement_during_final_poll_cannot_hide_behind_a_nested_result() {
+        for replacement in ["second", "first"] {
+            for succeeds in [true, false] {
+                // This is the old select statement's deterministic timing:
+                // watch is pending, then the stage retires the runtime and
+                // returns in that same poll. Bias alone cannot fence its result.
+                let (sender, mut generation) =
+                    tokio::sync::watch::channel(Some("first".to_owned()));
+                let unfenced: std::result::Result<i32, &'static str> = tokio::select! {
+                    biased;
+                    _=generation.changed()=>Err("runtime_changed"),
+                    result=async {
+                        sender.send_replace(Some(replacement.into()));
+                        if succeeds { Ok(7) } else { Err("nested_method_retired") }
+                    }=>result,
+                };
+                assert_eq!(
+                    unfenced,
+                    if succeeds {
+                        Ok(7)
+                    } else {
+                        Err("nested_method_retired")
+                    }
+                );
+                let (sender, mut generation) =
+                    tokio::sync::watch::channel(Some("first".to_owned()));
+                let fenced = within_runtime(&mut generation, "first", async {
+                    sender.send_replace(Some(replacement.into()));
+                    if succeeds {
+                        Ok(7)
+                    } else {
+                        Err("nested_method_retired")
+                    }
+                })
+                .await;
+                assert_eq!(fenced, Err("runtime_changed"));
+            }
+        }
+    }
+    #[tokio::test]
+    async fn unchanged_runtime_preserves_known_stage_success_and_failure() {
+        let (_sender, mut generation) = tokio::sync::watch::channel(Some("first".to_owned()));
+        assert_eq!(
+            within_runtime(&mut generation, "first", async { Ok(7) }).await,
+            Ok(7)
+        );
+        assert_eq!(
+            within_runtime(&mut generation, "first", async {
+                Err::<i32, _>("known_stage_failure")
+            })
+            .await,
+            Err("known_stage_failure")
+        );
     }
 }

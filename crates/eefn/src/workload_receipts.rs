@@ -156,6 +156,14 @@ impl<F> Drop for Running<F> {
     }
 }
 impl Consumption {
+    pub(crate) fn session_deadline(&self) -> Result<Instant> {
+        let proof = self
+            .initial
+            .as_ref()
+            .context("Initial workload authority already transferred")?;
+        proof.initial_deadline(&self.contract, &self.policy)?;
+        Ok(proof.session_deadline())
+    }
     pub fn acknowledgement(&self) -> Result<Receipt> {
         let initial = self
             .initial

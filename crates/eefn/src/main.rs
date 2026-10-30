@@ -3531,6 +3531,7 @@ async fn run_node(
         };
         dashboard.record_python_startup(&python_startup);
         if let Some(runtime) = runtime {
+            engine = engine.with_python_runtime(runtime.clone());
             dashboard.live.lock().unwrap()["python_bridge"] = serde_json::json!(runtime.limits());
             info!(python = %runtime.executable().display(), "Python plugin runtime enabled");
             for (_, filename) in builtin_plugins.iter().filter(|(enabled, _)| *enabled) {

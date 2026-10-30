@@ -334,6 +334,7 @@ impl Default for PreviewRuntime {
 pub struct PreviewGuard {
     runtime: Arc<PreviewRuntime>,
     runtime_id: String,
+    listening: Arc<crate::listening::Gate>,
 }
 impl Drop for PreviewGuard {
     fn drop(&mut self) {
@@ -343,6 +344,7 @@ impl Drop for PreviewGuard {
             .is_some_and(|b| b.runtime_id == self.runtime_id)
         {
             *binding = None;
+            self.listening.retire_runtime();
             self.runtime.generation.send_replace(None);
         }
     }
@@ -796,6 +798,9 @@ impl NodeService {
         let runtime = self.preview.clone();
         {
             let mut binding = runtime.binding.lock().unwrap();
+            if binding.is_some() {
+                self.listening_gate.retire_runtime();
+            }
             *binding = Some(Binding {
                 runtime_id: runtime_id.clone(),
                 engine: Arc::downgrade(engine),
@@ -806,6 +811,7 @@ impl NodeService {
         PreviewGuard {
             runtime,
             runtime_id,
+            listening: self.listening_gate.clone(),
         }
     }
 

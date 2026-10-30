@@ -290,6 +290,7 @@ impl PythonRuntime {
             bounds,
             execution_deadline,
             observe,
+            None,
         )
         .await
     }
@@ -328,6 +329,34 @@ impl PythonRuntime {
             bounds,
             execution_deadline,
             observe,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn observe_reserved_microphone<F, C>(
+        &self,
+        source: &PinnedStreamSource,
+        params: Value,
+        stream_id: &str,
+        bounds: StreamBounds,
+        execution_deadline: Instant,
+        reservation: crate::capture_ownership::Reservation,
+        observe: F,
+    ) -> Result<StreamSummary>
+    where
+        F: FnMut(StreamObservation) -> C + Send,
+        C: Future<Output = Result<()>> + Send,
+    {
+        self.observe_stream_source(
+            Source::Pinned(source),
+            "energy",
+            params,
+            stream_id,
+            bounds,
+            execution_deadline,
+            observe,
+            Some(reservation),
         )
         .await
     }
@@ -341,6 +370,7 @@ impl PythonRuntime {
         bounds: StreamBounds,
         execution_deadline: Instant,
         observe: F,
+        reservation: Option<crate::capture_ownership::Reservation>,
     ) -> Result<StreamSummary>
     where
         F: FnMut(StreamObservation) -> C + Send,
@@ -393,6 +423,8 @@ impl PythonRuntime {
             deadline,
         )
         .map_err(super::bridge_spawn_failure)?;
+        let tree = std::sync::Arc::new(tree);
+        let mut capture = reservation.map(|reservation| reservation.bind(tree.clone()));
         let stdin = child.stdin.take().context("Stream stdin unavailable")?;
         let stdout = child.stdout.take().context("Stream stdout unavailable")?;
         let stderr = child.stderr.take().context("Stream stderr unavailable")?;
@@ -408,7 +440,12 @@ impl PythonRuntime {
                 async {
                     let status = child.wait().await.context("Stream child wait failed")?;
                     #[cfg(windows)]
-                    tree.terminate_and_observe_until(deadline).await?;
+                    {
+                        tree.terminate_and_observe_until(deadline).await?;
+                        if let Some(capture) = &mut capture {
+                            capture.observed_empty();
+                        }
+                    }
                     Ok::<_, anyhow::Error>(status)
                 }
             )?;
@@ -422,6 +459,12 @@ impl PythonRuntime {
         .and_then(|v| v);
         // Retire the exact owned process before returning even on malformed data,
         // failed observers, deadline or cancellation. Drop is not external proof.
+        if outcome.is_err() {
+            if let Some(capture) = &mut capture {
+                let _ = capture.retire().await;
+            }
+        }
+        drop(capture);
         drop(tree);
         if outcome.is_err() {
             let _ = child.start_kill();

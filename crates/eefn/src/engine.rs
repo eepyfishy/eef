@@ -280,6 +280,7 @@ pub struct NodeEngine {
     peer_admission_enabled: bool,
     peer_receive_address: Option<Option<std::net::SocketAddr>>,
     peer_slots: Arc<tokio::sync::Semaphore>,
+    microphone_pool: crate::capture_ownership::Pool,
 }
 
 impl NodeEngine {
@@ -325,6 +326,7 @@ impl NodeEngine {
             peer_admission_enabled: false,
             peer_receive_address: None,
             peer_slots: Arc::new(tokio::sync::Semaphore::new(1)),
+            microphone_pool: Default::default(),
             resource_owner: String::new(),
             resources: Vec::new(),
         })
@@ -380,6 +382,22 @@ impl NodeEngine {
     pub(crate) fn python_configured(&self) -> bool {
         self.python.is_some()
     }
+    /// Retain the configured interpreter independently of optional plugin loads.
+    /// This grants no feature permission and imports or starts no source.
+    pub fn with_python_runtime(mut self, runtime: Arc<PythonRuntime>) -> Self {
+        self.python = Some(runtime);
+        self
+    }
+    pub(crate) fn microphone_runtime(
+        &self,
+        node: &str,
+        pool: &crate::capture_ownership::Pool,
+    ) -> Result<Arc<PythonRuntime>> {
+        if self.resource_owner != node || !self.microphone_pool.same(pool) {
+            bail!("Microphone runtime does not share this node's source ownership")
+        }
+        self.python.clone().context("Python runtime is unavailable")
+    }
     fn media_allowed(&self, capability: &str) -> bool {
         match capability {
             "audio.capture" => self.policy.media.microphone,
@@ -403,6 +421,7 @@ impl NodeEngine {
         Ok(self)
     }
     pub fn with_service(mut self, service: Arc<crate::NodeService>) -> Self {
+        self.microphone_pool = service.microphone_pool.clone();
         self.granted_model_config = service.read_config().ok().map(|c| c["models"].clone());
         self.service = Some(service);
         self
@@ -933,13 +952,22 @@ impl NodeEngine {
                     .python
                     .as_ref()
                     .context("Python runtime is unavailable")?;
+                #[cfg(windows)]
+                let reservation = if other == "audio.capture" {
+                    Some(self.microphone_pool.reserve()?)
+                } else {
+                    None
+                };
+                #[cfg(not(windows))]
+                let reservation = None;
                 runtime
-                    .invoke_with_output_limit(
+                    .invoke_with_capture_reservation(
                         plugin,
                         action,
                         params,
                         python_output_limit.unwrap_or(runtime.limits().max_stdout_bytes),
                         execution_deadline,
+                        reservation,
                     )
                     .await
             }

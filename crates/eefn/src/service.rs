@@ -19,6 +19,7 @@ pub enum StartupIssue {
 
 #[derive(Clone)]
 pub struct NodeService {
+    pub(crate) microphone_pool: crate::capture_ownership::Pool,
     pub(crate) listening_gate: Arc<crate::listening::Gate>,
     pub(crate) config_path: PathBuf,
     pub(crate) node_id: String,
@@ -118,6 +119,7 @@ impl NodeService {
         let (download_receipts, recovered) =
             crate::download_receipts::Journal::recover(&config_path, &node_id);
         Arc::new(Self {
+            microphone_pool: Default::default(),
             listening_gate: Arc::new(crate::listening::Gate::default()),
             config_path,
             node_id,

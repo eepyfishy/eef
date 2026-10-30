@@ -63,3 +63,7 @@ It accepts owned, digest-checked trusted source bytes and avoids reopening a
 mutable plugin path. It retains the ordinary bridge deadline and memory/output
 limits. Wiring the compiled-in source to durable workload consumption, current
 consent and leases remains required; the new primitive alone enables no capture.
+
+The [prepared microphone backend](PREPARED-MICROPHONE.md) now composes those
+pieces in a private node-owned source factory and adds shared Windows capture
+ownership. It remains in hosted validation and has no public launch route.

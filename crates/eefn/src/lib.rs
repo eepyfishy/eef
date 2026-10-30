@@ -13,6 +13,7 @@ pub mod automation;
 pub mod automation_occurrence;
 pub mod automation_policy;
 pub mod bundle_selection;
+mod capture_ownership;
 pub mod client;
 pub mod conditional_pipeline;
 pub mod connection_commands;
@@ -102,6 +103,7 @@ pub mod submission;
 pub mod tls;
 pub mod updater;
 pub mod workload_leases;
+mod workload_runtime;
 pub mod workload_sources;
 
 pub use client::{

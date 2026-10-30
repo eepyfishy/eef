@@ -206,6 +206,14 @@ mod windows {
                 bail!("Process tree observation deadline expired");
             }
             self.request_termination()?;
+            self.observe_empty_until(deadline).await
+        }
+        /// Read-only cleanup observation of this owned job. It issues no new
+        /// execution/termination request and grants no additional source time.
+        pub(crate) async fn observe_empty_until(
+            &self,
+            deadline: tokio::time::Instant,
+        ) -> Result<()> {
             loop {
                 if tokio::time::Instant::now() >= deadline {
                     bail!("Owned process tree exit unconfirmed before deadline");

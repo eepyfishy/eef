@@ -88,6 +88,15 @@ impl Gate {
             true
         });
     }
+    pub(crate) fn retire_runtime(&self) {
+        self.0.send_modify(|state| {
+            if let Some(epoch) = state.epoch.checked_add(1) {
+                state.epoch = epoch;
+            } else {
+                state.blocked = true;
+            }
+        });
+    }
     fn allow(&self) -> Result<()> {
         let mut exhausted = false;
         self.0.send_if_modified(|state| {
@@ -343,6 +352,19 @@ impl crate::NodeService {
     where
         F: Future<Output = Result<T>>,
     {
+        self.supervise_listening_epoch(runtime_id, deadline, None, operation)
+            .await
+    }
+    pub(crate) async fn supervise_listening_epoch<F, T>(
+        &self,
+        runtime_id: &str,
+        deadline: tokio::time::Instant,
+        expected_epoch: Option<u64>,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: Future<Output = Result<T>>,
+    {
         ensure!(
             tokio::time::Instant::now() < deadline,
             "Listening workload deadline expired"
@@ -360,7 +382,12 @@ impl crate::NodeService {
                         && engine.applied_permissions().media.microphone,
                     "Listening requires local consent and microphone permission"
                 );
-                self.listening_gate.permit()
+                let permit = self.listening_gate.permit()?;
+                ensure!(
+                    expected_epoch.is_none_or(|epoch| epoch == permit.epoch),
+                    "Prepared source listening epoch changed"
+                );
+                Ok(permit)
             })
         })?;
         tokio::time::timeout_at(deadline, permit.supervise(operation))

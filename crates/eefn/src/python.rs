@@ -338,6 +338,25 @@ impl PythonRuntime {
         output_limit: usize,
         execution_deadline: Option<Instant>,
     ) -> Result<Value> {
+        self.invoke_with_capture_reservation(
+            plugin,
+            action,
+            params,
+            output_limit,
+            execution_deadline,
+            None,
+        )
+        .await
+    }
+    pub(crate) async fn invoke_with_capture_reservation(
+        &self,
+        plugin: &PythonPlugin,
+        action: &str,
+        params: Value,
+        output_limit: usize,
+        execution_deadline: Option<Instant>,
+        reservation: Option<crate::capture_ownership::Reservation>,
+    ) -> Result<Value> {
         if !plugin
             .actions
             .iter()
@@ -348,13 +367,14 @@ impl PythonRuntime {
                 plugin.capability
             );
         }
-        self.call(
+        self.call_with_capture_reservation(
             &plugin.path,
             json!({"op": "invoke", "action": action, "params": params}),
             output_limit
                 .saturating_add(4096)
                 .min(self.limits.max_stdout_bytes),
             execution_deadline,
+            reservation,
         )
         .await
     }
@@ -365,6 +385,23 @@ impl PythonRuntime {
         request: Value,
         stdout_limit: usize,
         execution_deadline: Option<Instant>,
+    ) -> Result<Value> {
+        self.call_with_capture_reservation(
+            plugin_path,
+            request,
+            stdout_limit,
+            execution_deadline,
+            None,
+        )
+        .await
+    }
+    async fn call_with_capture_reservation(
+        &self,
+        plugin_path: &Path,
+        request: Value,
+        stdout_limit: usize,
+        execution_deadline: Option<Instant>,
+        reservation: Option<crate::capture_ownership::Reservation>,
     ) -> Result<Value> {
         self.limits.validate()?;
         // Never silently drop an explicitly requested native ceiling.
@@ -413,6 +450,8 @@ impl PythonRuntime {
             )
         })?;
         let spawned = Instant::now();
+        let tree = std::sync::Arc::new(tree);
+        let mut capture = reservation.map(|reservation| reservation.bind(tree.clone()));
         let stdin = child.stdin.take().context("Python stdin unavailable")?;
         let stdout = child.stdout.take().context("Python stdout unavailable")?;
         let stderr = child.stderr.take().context("Python stderr unavailable")?;
@@ -429,15 +468,26 @@ impl PythonRuntime {
             async {
                 let status = child.wait().await.context("Python child wait failed")?;
                 #[cfg(windows)]
-                tree.terminate_and_observe_until(deadline).await?;
+                {
+                    tree.terminate_and_observe_until(deadline).await?;
+                    if let Some(capture) = &mut capture {
+                        capture.observed_empty();
+                    }
+                }
                 Ok(status)
             },
         )
         .await;
         let exchange_ended = Instant::now();
+        if outcome.is_err() {
+            if let Some(capture) = &mut capture {
+                let _ = capture.retire().await;
+            }
+        }
         // On Windows closing this exact owned job requests termination of all
         // descendants. Root-only elsewhere; no sandbox/elevation/physical-stop
         // guarantee. Keep containment through every successful pipe/root wait.
+        drop(capture);
         drop(tree);
         if outcome.is_err() {
             let _ = child.start_kill();
