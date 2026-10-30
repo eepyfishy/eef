@@ -152,6 +152,11 @@ impl IssuerWindow {
         })
     }
     pub fn acknowledge_consumed(&mut self, scope: &crate::grants::stop::Scope) -> Result<()> {
+        self.check_consumed(scope)?;
+        self.consumed = true;
+        Ok(())
+    }
+    pub fn check_consumed(&self, scope: &crate::grants::stop::Scope) -> Result<()> {
         ensure!(
             !self.stopped
                 && !self.consumed
@@ -160,7 +165,6 @@ impl IssuerWindow {
                 && *scope == self.contract.scope,
             "Consumed acknowledgement scope or lifecycle changed"
         );
-        self.consumed = true;
         Ok(())
     }
     pub fn stop(&mut self) {

@@ -7,7 +7,53 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+pub const CAPABILITY: &str = "workload.session";
+pub const TEMPLATE: &str = "continuous_workload";
+
+/// Exact reviewable source and bounds, before any grant identity is assigned.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Template {
+    pub schema_version: u32,
+    pub executor_node: String,
+    pub priority: i32,
+    pub source: Source,
+    pub limits: Limits,
+    pub events: Events,
+}
+impl Template {
+    pub fn from_params(params: &serde_json::Value) -> Result<Self> {
+        ensure!(
+            params
+                .as_object()
+                .is_some_and(|p| p.len() == 1 && p.contains_key("workload")),
+            "Workload input requires one exact definition"
+        );
+        let template: Self = serde_json::from_value(params["workload"].clone())?;
+        template.validate()?;
+        Ok(template)
+    }
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema_version == 2 && serde_json::to_vec(self)?.len() <= 64 * 1024,
+            "Invalid workload template schema or size"
+        );
+        validate_components(
+            &self.executor_node,
+            self.priority,
+            &self.source,
+            &self.limits,
+            &self.events,
+        )
+    }
+    pub fn resource_id(&self) -> &str {
+        match &self.source {
+            Source::MicrophoneEnergy { resource_id, .. } => resource_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
     pub schema_version: u32,
@@ -29,7 +75,7 @@ pub struct Definition {
 
 /// Only the implemented metadata-producing source has a reviewed shape today.
 /// No arbitrary plugin path, code, command, model or raw media destination.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Source {
     MicrophoneEnergy {
@@ -40,7 +86,7 @@ pub enum Source {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnergyParameters {
     pub sample_rate: u32,
@@ -51,7 +97,7 @@ pub struct EnergyParameters {
     pub deactivation_level: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
     pub max_session_ms: u64,
@@ -62,7 +108,7 @@ pub struct Limits {
 
 /// Metadata-only reporting with explicit aggregate and pending bounds. This
 /// describes required behavior, not an event queue or retention implementation.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Events {
     pub mode: EventMode,
@@ -73,12 +119,12 @@ pub struct Events {
     pub max_pending: usize,
     pub overflow: Overflow,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventMode {
     ActivityTransitions,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Overflow {
     Stop,
@@ -143,50 +189,13 @@ impl Definition {
         crate::network::validate_remote_node_id(self.request_context.origin_node())?;
         crate::automation_occurrence::uuid(self.request_context.request_id())?;
         crate::context::validate_area(self.request_context.origin_area())?;
-        let limits = &self.limits;
-        crate::model_memory::validate(Some(limits.max_job_memory_mib))?;
-        ensure!(
-            (1..=MAX_SESSION_MS).contains(&limits.max_session_ms)
-                && (1..=MAX_LEASE_MS).contains(&limits.max_lease_ms)
-                && limits.max_lease_ms <= limits.max_session_ms
-                && (1..=409_600_000).contains(&limits.max_source_frames),
-            "Invalid workload session or source limits"
-        );
-        let events = &self.events;
-        ensure!(
-            (10..=60_000).contains(&events.min_interval_ms)
-                && (1..=100_000).contains(&events.max_events)
-                && (128..=4096).contains(&events.max_event_bytes)
-                && (1024..=4 * 1024 * 1024).contains(&events.max_total_bytes)
-                && events.max_event_bytes <= events.max_total_bytes
-                && (1..=64).contains(&events.max_pending),
-            "Invalid workload event bounds"
-        );
-        match &self.source {
-            Source::MicrophoneEnergy {
-                resource_id,
-                resource_sha256,
-                adapter_sha256,
-                parameters,
-            } => {
-                parameters.validate()?;
-                let prefix = format!("{}::", self.executor_node);
-                let local = resource_id.strip_prefix(&prefix).unwrap_or("");
-                ensure!(
-                    !local.is_empty()
-                        && local.len() <= 100
-                        && local
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-                        && digest(resource_sha256)
-                        && digest(adapter_sha256)
-                        && u64::from(parameters.block_frames) * u64::from(parameters.max_blocks)
-                            <= limits.max_source_frames,
-                    "Workload source resource, adapter or frame budget changed"
-                );
-            }
-        }
-        Ok(())
+        validate_components(
+            &self.executor_node,
+            self.priority,
+            &self.source,
+            &self.limits,
+            &self.events,
+        )
     }
     fn identity_scope(&self, grant_sha256: String) -> crate::grants::stop::Scope {
         crate::grants::stop::Scope {
@@ -198,6 +207,16 @@ impl Definition {
             job_id: self.job_id.clone(),
             task_id: self.task_id.clone(),
             attempt: self.attempt,
+        }
+    }
+    pub fn template(&self) -> Template {
+        Template {
+            schema_version: self.schema_version,
+            executor_node: self.executor_node.clone(),
+            priority: self.priority,
+            source: self.source.clone(),
+            limits: self.limits.clone(),
+            events: self.events.clone(),
         }
     }
     pub fn scope(&self) -> Result<crate::grants::stop::Scope> {
@@ -212,6 +231,63 @@ impl Definition {
             max_lease_ms: self.limits.max_lease_ms,
         })
     }
+}
+fn validate_components(
+    node: &str,
+    priority: i32,
+    source: &Source,
+    limits: &Limits,
+    events: &Events,
+) -> Result<()> {
+    crate::network::validate_remote_node_id(node)?;
+    ensure!(
+        (-1000..=1000).contains(&priority),
+        "Invalid workload priority"
+    );
+    crate::model_memory::validate(Some(limits.max_job_memory_mib))?;
+    ensure!(
+        (1..=MAX_SESSION_MS).contains(&limits.max_session_ms)
+            && (1..=MAX_LEASE_MS).contains(&limits.max_lease_ms)
+            && limits.max_lease_ms <= limits.max_session_ms
+            && (1..=409_600_000).contains(&limits.max_source_frames),
+        "Invalid workload session or source limits"
+    );
+    ensure!(
+        (10..=60_000).contains(&events.min_interval_ms)
+            && (1..=100_000).contains(&events.max_events)
+            && (128..=4096).contains(&events.max_event_bytes)
+            && (1024..=4 * 1024 * 1024).contains(&events.max_total_bytes)
+            && events.max_event_bytes <= events.max_total_bytes
+            && (1..=64).contains(&events.max_pending),
+        "Invalid workload event bounds"
+    );
+    match source {
+        Source::MicrophoneEnergy {
+            resource_id,
+            resource_sha256,
+            adapter_sha256,
+            parameters,
+        } => {
+            parameters.validate()?;
+            let prefix = format!("{node}::");
+            let local = resource_id.strip_prefix(&prefix).unwrap_or("");
+            ensure!(
+                !local.is_empty()
+                    && local.len() <= 100
+                    && local
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+                    && digest(resource_sha256)
+                    && digest(adapter_sha256)
+                    && u64::from(parameters.block_frames) * u64::from(parameters.max_blocks)
+                        <= limits.max_source_frames,
+                "Workload source resource, adapter or frame budget changed"
+            );
+        }
+    }
+    Ok(())
+}
+impl Definition {
     /// Resolve private device data only on its owning node, against the reviewed
     /// resource snapshot and source bytes. Never advertise/forward this request.
     /// This neither opens a source nor proves admission or permission/ownership.

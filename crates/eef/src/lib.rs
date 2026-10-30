@@ -47,6 +47,7 @@ pub mod task;
 pub mod update;
 #[cfg(feature = "dashboard")]
 mod web_ui;
+pub mod workload_jobs;
 pub mod world;
 
 pub use runtime::Runtime;

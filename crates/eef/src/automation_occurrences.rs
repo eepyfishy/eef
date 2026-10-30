@@ -522,6 +522,7 @@ impl JobStore {
                         limits: policy_record.creation.limits().unwrap(),
                         approval_sha256: String::new(),
                         delegation: Some(delegation.clone()),
+                        workload: None,
                     };
                     approval.approval_sha256 = crate::request_approval::digest(&approval)?;
                     plan.approval = Some(approval);

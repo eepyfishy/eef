@@ -7,6 +7,11 @@ pub fn template_steps(
 ) -> Result<Vec<(&'static str, &'static str, &'static [&'static str])>> {
     Ok(match template {
         "system_info" => vec![("system.info", "run", &[])],
+        crate::workload_leases::definition::TEMPLATE => vec![(
+            crate::workload_leases::definition::CAPABILITY,
+            "run",
+            &["workload"],
+        )],
         "local_pipeline" => vec![("pipeline.run", "run", &["pipeline"])],
         "conditional_pipeline" => vec![(
             crate::conditional_pipeline::CAPABILITY,
@@ -116,6 +121,9 @@ pub fn concrete_capabilities(input: &PlanInput) -> Result<Vec<String>> {
     input.validate()?;
     let steps = template_steps(&input.template)?;
     let mut capabilities = vec![steps[0].0.to_owned()];
+    if input.template == crate::workload_leases::definition::TEMPLATE {
+        capabilities.push("audio.capture".into());
+    }
     if matches!(
         input.template.as_str(),
         "local_pipeline" | "conditional_pipeline"
@@ -166,6 +174,12 @@ impl PlanInput {
             || serde_json::to_vec(self)?.len() > 64 * 1024
         {
             bail!("Invalid or oversized concrete plan input")
+        }
+        if self.template == crate::workload_leases::definition::TEMPLATE {
+            crate::workload_leases::definition::Template::from_params(&self.params)?;
+            if !self.constraints.as_object().unwrap().is_empty() {
+                bail!("Workload bindings belong inside the exact definition")
+            }
         }
         if matches!(
             self.template.as_str(),

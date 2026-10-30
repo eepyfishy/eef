@@ -58,7 +58,7 @@ pub(crate) fn digest(plan: &Plan, record: &PlanningRecord) -> Result<String> {
     let bytes = serde_json::to_vec(&definition)?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
-fn unbound_plan(plan: &Plan, input: &PlanInput) -> Result<Plan> {
+pub(crate) fn unbound_plan(plan: &Plan, input: &PlanInput) -> Result<Plan> {
     input.validate()?;
     let compiled = TaskPlanner.plan(Goal {
         request_context: plan.goal.request_context.clone(),
@@ -182,13 +182,20 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
         }
         validate_preparation(plan, &record.input, source)?;
     }
-    if record.schema_version != 1
+    let workload = record.input.template == eefn::workload_leases::definition::TEMPLATE;
+    if record.schema_version != if workload { 2 } else { 1 }
         || record.source_revision == 0
         || record.source_revision >= plan.revision
         || record.compiled_at_ms == 0
         || record.proposal_index != draft.proposals.len() - 1
         || draft.current().needs_clarification
-        || draft.current().workload != eefn::interpretation::Workload::OneShot
+        || draft.current().workload
+            != if workload {
+                eefn::interpretation::Workload::Continuous
+            } else {
+                eefn::interpretation::Workload::OneShot
+            }
+        || (workload && record.preparation.is_some())
         || draft
             .proposals
             .iter()
@@ -284,7 +291,16 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
                 bail!("Pipeline cannot substitute top-level bindings")
             }
         }
-        if matches!(task.capability.as_str(), "llm.infer" | "vlm.analyze") {
+        if task.capability == eefn::workload_leases::definition::CAPABILITY {
+            let w = eefn::workload_leases::definition::Template::from_params(&params)?;
+            if binding.node_id != w.executor_node
+                || binding.resource_id.as_deref() != Some(w.resource_id())
+                || binding.model_id.is_some()
+                || binding.backend.is_some()
+            {
+                bail!("Workload binding differs from its reviewed source")
+            }
+        } else if matches!(task.capability.as_str(), "llm.infer" | "vlm.analyze") {
             validate_model_input(&expected.params, task.capability == "vlm.analyze")?;
             if constraints
                 .as_object()

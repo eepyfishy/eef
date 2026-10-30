@@ -58,6 +58,8 @@ pub struct ExecutionRecord {
     pub peer: Option<crate::peer_jobs::Issuance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_requested_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload: Option<crate::workload_jobs::Execution>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -172,6 +174,17 @@ pub(crate) fn receipt_attempt<'a>(
         .context("Issued attempt not found for this request")
 }
 pub(crate) fn reserved_bytes(plan: &Plan) -> usize {
+    if let Some(w) = plan.execution.as_ref().and_then(|e| e.workload.as_ref()) {
+        return match w.state {
+            AttemptState::Issued => w
+                .definition
+                .events
+                .max_total_bytes
+                .saturating_add(2 * 65536 + 8192),
+            AttemptState::Accepted => w.definition.events.max_total_bytes.saturating_add(8192),
+            _ => 0,
+        };
+    }
     plan.execution
         .as_ref()
         .into_iter()
@@ -189,6 +202,9 @@ pub(crate) fn reserved_bytes(plan: &Plan) -> usize {
 }
 pub(crate) fn interrupt(plan: &mut Plan) {
     if let Some(e) = &mut plan.execution {
+        if let Some(w) = &mut e.workload {
+            w.state = AttemptState::Unknown;
+        }
         for a in &mut e.attempts {
             if matches!(a.state, AttemptState::Issued | AttemptState::Accepted) {
                 a.state = AttemptState::Unknown;
@@ -199,9 +215,10 @@ pub(crate) fn interrupt(plan: &mut Plan) {
 pub(crate) fn can_settle_unissued_stop(plan: &Plan) -> bool {
     plan.status == PlanStatus::Stopping
         && plan.execution.as_ref().is_some_and(|e| {
-            e.attempts
-                .iter()
-                .all(|a| matches!(a.state, AttemptState::Completed | AttemptState::Rejected))
+            e.workload.is_none()
+                && e.attempts
+                    .iter()
+                    .all(|a| matches!(a.state, AttemptState::Completed | AttemptState::Rejected))
         })
 }
 pub(crate) fn settle_unissued_stop(plan: &mut Plan) {
@@ -209,6 +226,13 @@ pub(crate) fn settle_unissued_stop(plan: &mut Plan) {
     cancel_pending(plan);
 }
 pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
+    if plan
+        .execution
+        .as_ref()
+        .is_some_and(|e| e.schema_version == 2 || e.workload.is_some())
+    {
+        return crate::workload_jobs::validate_execution(plan);
+    }
     crate::execution_stop::validate(plan)?;
     let Some(e) = &plan.execution else {
         return Ok(());
@@ -866,6 +890,9 @@ pub(crate) fn append_attempt(p: &mut Plan, g: ExecutionGrant) {
 pub(crate) fn start(p: &mut Plan, command: &ExecuteCommand, now: u64) -> Result<()> {
     command.validate()?;
     let a = p.approval.as_ref().context("Owner approval missing")?;
+    if a.workload.is_some() || a.schema_version != 1 {
+        bail!("Workload approval cannot enter the v1 execution path")
+    }
     if p.execution.is_some()
         || p.plan_id != command.id
         || p.revision != command.expected_revision
@@ -882,6 +909,7 @@ pub(crate) fn start(p: &mut Plan, command: &ExecuteCommand, now: u64) -> Result<
         abandonment: None,
         peer: None,
         stop_requested_at_ms: None,
+        workload: None,
     });
     p.status = PlanStatus::Running;
     Ok(())

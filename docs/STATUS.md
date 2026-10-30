@@ -3,6 +3,38 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: reviewed continuous coordinator issuance
+
+The [coordinator issuance draft](WORKLOAD-ISSUANCE.md) extends the existing
+review/job/attempt records with an exact continuous template, separate session
+approval and durable issuance before an offer. V1 grant paths refuse the new
+approval. ACKs precede renewal authority; interruption, immutable session identity
+and restart-to-uncertain tracking prevent automatic replay. Seven focused tests
+cover real temporary job databases and synthetic peer ACKs, including permanent
+issuer retirement after an observed local clock failure. Both original full
+local modes pass 1,283 tests plus one existing ignored test each; four affected
+command suites pass. Later test-only outcome diagnostics are checked separately
+from that full baseline. The retirement fix requires a new full validation;
+product/authenticated runtime integration remains open.
+
+The earlier node receipt revision `512846f` passed both local full modes and four
+affected command suites, plus all 36 hosted native suites. Its Windows headless
+Rust run failed the existing pipeline buffer-budget case with an unknown outcome
+instead of completion. The original failed assertion omitted its error/phase and
+elapsed time. A diagnostic-only follow-up preserves the original budget and
+deadline while reporting those details. That follow-up's Windows dashboard run
+failed a different existing positive pipeline case, also without the report in
+its failing assertion. Test-only diagnostics now retain bounded error codes,
+elapsed time and checkpoint counters for every uncertain pipeline outcome,
+without parameters, paths or model output. Both failures remain retained and
+their cause is still unproven; no unchanged run was retried or failure ignored.
+The generic diagnostic revision passed Rust in all four hosted jobs, then failed
+the first native fixture's temporary executable cleanup with `EBUSY` after its
+process-close waits. Cleanup now permits a bounded five seconds of `EBUSY`-only
+unlink observations, without replaying setup or enrollment, and records success
+only after cleanup. Local first-run validation passes; hosted acceptance remains
+pending. That failed run did not complete the 36 native suites.
+
 ## In development: durable workload consumption
 
 The [node consumption journal draft](WORKLOAD-RECEIPTS.md) extends the existing

@@ -425,6 +425,7 @@ impl JobStore {
         let connection = self.connection.lock().expect("job journal");
         let mut plan = read(&connection, id)?;
         let old_stop = crate::execution_stop::snapshot(&plan);
+        let old_workload = crate::workload_jobs::snapshot(&plan);
         let frozen_audio = plan
             .request_review
             .as_ref()
@@ -444,6 +445,7 @@ impl JobStore {
             return Ok(plan);
         }
         crate::execution_stop::preserve(&old_stop, &plan)?;
+        crate::workload_jobs::preserve(&old_workload, &plan)?;
         if frozen_audio.as_ref().is_some_and(|(draft, context)| {
             *draft != json!(plan.request_review) || *context != json!(plan.goal.request_context)
         }) {

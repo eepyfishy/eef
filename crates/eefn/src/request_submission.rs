@@ -27,7 +27,10 @@ impl ConcreteInput {
             || (!crate::request_planning::METHOD_TEMPLATES.contains(&self.input.template.as_str())
                 && !matches!(
                     self.input.template.as_str(),
-                    "local_pipeline" | "conditional_pipeline" | "peer_transfer"
+                    "local_pipeline"
+                        | "conditional_pipeline"
+                        | "peer_transfer"
+                        | crate::workload_leases::definition::TEMPLATE
                 ))
             || serde_json::to_vec(self)?.len() > 160 * 1024
         {
@@ -47,7 +50,11 @@ impl ConcreteInput {
             constraints: vec![],
             suggested_capabilities: capabilities,
             complexity: Complexity::Unknown,
-            workload: Workload::OneShot,
+            workload: if self.input.template == crate::workload_leases::definition::TEMPLATE {
+                Workload::Continuous
+            } else {
+                Workload::OneShot
+            },
             needs_clarification: false,
             clarification: None,
         })

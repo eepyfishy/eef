@@ -25,6 +25,8 @@ pub struct ApprovalRecord {
     pub approval_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation: Option<eefn::automation_occurrence::Delegation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload: Option<eefn::workload_leases::definition::Template>,
 }
 pub(crate) fn validate_options(
     plan_sha256: &str,
@@ -60,7 +62,9 @@ impl ApprovalRecord {
             && now < self.expires_at_ms
     }
     pub(crate) fn confirms(&self, command: &PlanningCommand) -> bool {
-        self.delegation.is_none()
+        self.schema_version == 1
+            && self.workload.is_none()
+            && self.delegation.is_none()
             && matches!(command, PlanningCommand::Approve { operation_id, expected_revision, plan_sha256, valid_for_ms, limits, .. }
             if self.operation_id == *operation_id && self.source_revision == *expected_revision
             && self.plan_sha256 == *plan_sha256 && self.valid_for_ms == *valid_for_ms && self.limits == *limits)
@@ -70,6 +74,9 @@ impl ApprovalRecord {
 /// Validate the *shape* of each fixed operation with the node's exact contract.
 /// Temporary validation values are never persisted, sent or returned as grants.
 pub(crate) fn scope(plan: &Plan, index: usize, record: &ApprovalRecord) -> Result<ExecutionGrant> {
+    if record.schema_version != 1 || record.workload.is_some() {
+        bail!("Workload approval cannot authorize a v1 operation")
+    }
     let task = &plan.tasks[index];
     let binding = &plan
         .planning
@@ -120,6 +127,9 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
         }
         return Ok(());
     };
+    if record.schema_version == 2 || record.workload.is_some() {
+        return crate::workload_jobs::validate_approval(plan);
+    }
     let planning = plan
         .planning
         .as_ref()
@@ -205,6 +215,9 @@ pub(crate) async fn approve(
     saved: Plan,
     command: &PlanningCommand,
 ) -> Result<(Plan, bool)> {
+    if saved.goal.template == eefn::workload_leases::definition::TEMPLATE {
+        bail!("Continuous sessions require explicit version-two workload approval")
+    }
     let PlanningCommand::Approve {
         expected_revision,
         operation_id,
@@ -248,6 +261,7 @@ pub(crate) async fn approve(
         limits: limits.clone(),
         approval_sha256: String::new(),
         delegation: None,
+        workload: None,
     };
     let driver = crate::request_execution::Driver::new(runtime);
     for index in 0..saved.tasks.len() {
@@ -348,6 +362,7 @@ pub(crate) mod tests {
             limits: limits.clone(),
             approval_sha256: String::new(),
             delegation: None,
+            workload: None,
         };
         r.approval_sha256 = digest(&r).unwrap();
         r

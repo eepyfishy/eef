@@ -183,6 +183,16 @@ impl TaskPlanner {
             goal.template.clone()
         };
         let steps = eefn::request_planning::template_steps(&template)?;
+        let workload = if template == eefn::workload_leases::definition::TEMPLATE {
+            if goal.constraints.as_object().is_none_or(|v| !v.is_empty()) {
+                bail!("Workload bindings must be explicit inside its definition")
+            }
+            Some(eefn::workload_leases::definition::Template::from_params(
+                &goal.params,
+            )?)
+        } else {
+            None
+        };
         let peer = if template == "peer_transfer" {
             if goal.constraints.as_object().is_none_or(|v| !v.is_empty()) {
                 bail!("Peer bindings must be explicit inside the pair definition")
@@ -211,7 +221,9 @@ impl TaskPlanner {
                     params["resource_id"] = resource.clone();
                 }
             }
-            let constraints = if let Some(peer) = &peer {
+            let constraints = if let Some(workload) = &workload {
+                json!({"node_id":workload.executor_node,"resource_id":workload.resource_id()})
+            } else if let Some(peer) = &peer {
                 let role = if index == 0 {
                     eefn::peer::scope::Role::Source
                 } else {
@@ -234,9 +246,11 @@ impl TaskPlanner {
                 } else {
                     tasks.iter().map(|task| task.task_id.clone()).collect()
                 },
-                timeout_ms: task_timeout(),
-                retry_count: retries(),
-                retry_delay_ms: retry_delay(),
+                timeout_ms: workload
+                    .as_ref()
+                    .map_or_else(task_timeout, |w| w.limits.max_session_ms),
+                retry_count: if workload.is_some() { 0 } else { retries() },
+                retry_delay_ms: if workload.is_some() { 0 } else { retry_delay() },
                 constraints,
                 status: TaskStatus::Pending,
                 result: None,

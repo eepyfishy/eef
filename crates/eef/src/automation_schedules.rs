@@ -2918,6 +2918,7 @@ mod tests {
                         attempts: vec![],
                         abandonment: None,
                         peer: None,
+                        workload: None,
                         stop_requested_at_ms: None,
                     });
                     Ok(())

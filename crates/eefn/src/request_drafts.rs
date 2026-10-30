@@ -117,7 +117,10 @@ impl DraftRecord {
             if !crate::request_planning::METHOD_TEMPLATES.contains(&input.template.as_str())
                 && !matches!(
                     input.template.as_str(),
-                    "local_pipeline" | "conditional_pipeline" | "peer_transfer"
+                    "local_pipeline"
+                        | "conditional_pipeline"
+                        | "peer_transfer"
+                        | crate::workload_leases::definition::TEMPLATE
                 )
             {
                 bail!("Unsupported explicit one-step request template")
