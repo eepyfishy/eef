@@ -61,7 +61,9 @@ fn repeated_levels_are_suppressed_without_renumbering_source_positions() {
         serde_json::to_vec(&first).unwrap().len() + serde_json::to_vec(&changed).unwrap().len()
     );
     let value = json!(changed);
-    assert_eq!(value.as_object().unwrap().len(), 8);
+    assert_eq!(value.as_object().unwrap().len(), 9);
+    assert_eq!(value["schema_version"], 2);
+    assert_eq!(value["elapsed_ms"], 100);
     assert_eq!(value["kind"], "microphone_activity");
     assert!(value.get("data_base64").is_none());
     assert!(value.get("device").is_none());

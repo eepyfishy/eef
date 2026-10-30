@@ -1,6 +1,8 @@
 use super::*;
 use crate::workload_leases::{IssuerWindow, Query, Requests, definition::*};
 
+include!("workload_event_journal_tests.rs");
+
 #[derive(Default)]
 struct SourceEvidence {
     polled: std::sync::atomic::AtomicBool,
@@ -420,7 +422,7 @@ async fn real_journal_consumes_exact_definition_before_ack_and_preserves_legacy_
     let d = definition();
     let expected = d.scope().unwrap();
     let token = consume(&ledger, d.clone()).await.unwrap();
-    assert_eq!(version(&path), 3);
+    assert_eq!(version(&path), 4);
     let ack = token.acknowledgement().unwrap();
     ack.validate().unwrap();
     assert_eq!(ack.definition.scope().unwrap(), expected);

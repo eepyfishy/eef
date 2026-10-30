@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: bounded durable source events
+
+The [event journal draft](WORKLOAD-EVENTS.md) adds bounded event state/rows inside
+the existing grant database, atomic version-four migration, shared row/page
+reservations and strict read-only prefix inspection. Prepared sources save events
+before invoking observers under captured lease windows; cancelled writes retain
+their bounded worker slot until the worker exits. Eleven new actual-journal
+regressions cover replay/conflicts, quotas, corruption/migration and real lock
+contention. Hosted verification is pending. Final uncertainty persistence remains
+synchronous after source retirement; asynchronous final reporting, durable
+completion, public admission and physical acceptance remain required.
+
+The preceding combined source checkpoint passed all four jobs in hosted run
+`41135667950`: Windows headless ran 1,341 Rust tests plus one existing ignored test
+and all 36 native suites with the extra listener-close case. The three opt-in
+source tests used pinned Python, simulated microphone input and actual held
+Windows root/descendant handles. This proves synthetic combined-path behavior,
+not physical microphone or authenticated two-PC session acceptance.
+
 ## In development: combined prepared source native regressions
 
 Three opt-in Windows unit tests now cover the combined consumed/prepared source

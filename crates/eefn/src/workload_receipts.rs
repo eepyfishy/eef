@@ -5,12 +5,20 @@ use super::*;
 use crate::workload_leases::{Contract, LeaseProof, Policy, definition::Definition};
 
 const MAX_DEFINITION_BYTES: usize = 64 * 1024;
+#[path = "workload_event_journal.rs"]
+mod event_journal;
+pub(crate) fn event_reserved(db: &Connection) -> Result<usize> {
+    event_journal::reserved(db)
+}
+pub(crate) fn validate_event_orphans(db: &Connection) -> Result<()> {
+    event_journal::audit_orphans(db)
+}
 
 pub(crate) fn validate_schema(db: &Connection, version: i64) -> Result<()> {
     let fields = db.prepare("SELECT name,type,\"notnull\",dflt_value FROM pragma_table_info('execution_receipts') WHERE name IN ('receipt_kind','workload_definition') ORDER BY name")?
         .query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,Option<String>>(3)?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    if version == 3 {
+    if matches!(version, 3 | 4) {
         if fields
             != [
                 (
@@ -27,12 +35,12 @@ pub(crate) fn validate_schema(db: &Connection, version: i64) -> Result<()> {
     } else if !fields.is_empty() {
         bail!("Unversioned workload receipt columns; retained without migration")
     }
-    Ok(())
+    event_journal::schema(db, version)
 }
 pub(crate) fn is_workload(db: &Connection, id: &str) -> Result<bool> {
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     validate_schema(db, version)?;
-    if version != 3 {
+    if version < 3 {
         return Ok(false);
     }
     let row: Option<(String,bool)> = db.query_row(
@@ -49,8 +57,8 @@ pub(crate) fn is_workload(db: &Connection, id: &str) -> Result<bool> {
 fn upgrade(db: &Connection, node: &str) -> Result<()> {
     crate::request_receipt::validate_owner(db, node)?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if version == 3 {
-        return Ok(());
+    if matches!(version, 3 | 4) {
+        return event_journal::upgrade(db, node);
     }
     if version != 2 {
         bail!("Workload consumption requires the current grant journal")
@@ -66,7 +74,8 @@ fn upgrade(db: &Connection, node: &str) -> Result<()> {
     }
     stop::validate_all(db, node)?;
     db.execute_batch("ALTER TABLE execution_receipts ADD COLUMN receipt_kind TEXT NOT NULL DEFAULT 'operation' CHECK(receipt_kind IN ('operation','workload')); ALTER TABLE execution_receipts ADD COLUMN workload_definition TEXT; PRAGMA user_version=3;")?;
-    validate_schema(db, 3)
+    validate_schema(db, 3)?;
+    event_journal::upgrade(db, node)
 }
 
 /// Read-only consumed definition, not a running-source attestation, permission,
@@ -103,6 +112,11 @@ impl Receipt {
     }
 }
 pub(crate) fn read(db: &Connection, node: &str, issuer: Option<&str>, id: &str) -> Result<Receipt> {
+    let result = read_core(db, node, issuer, id)?;
+    event_journal::audit(db, &result)?;
+    Ok(result)
+}
+fn read_core(db: &Connection, node: &str, issuer: Option<&str>, id: &str) -> Result<Receipt> {
     crate::request_receipt::validate_owner(db, node)?;
     if !is_workload(db, id)? {
         bail!("Typed workload receipt unavailable")
@@ -157,6 +171,14 @@ impl<F> Drop for Running<F> {
     }
 }
 impl Consumption {
+    pub(crate) fn event_writer(&self) -> Result<EventWriter> {
+        let receipt = self.acknowledgement()?;
+        Ok(EventWriter {
+            ledger: self.ledger.clone(),
+            definition: receipt.definition,
+            stop: self.stop.receiver.clone(),
+        })
+    }
     #[allow(dead_code)]
     pub(crate) fn reporting_authority(&self) -> crate::workload_leases::ReportingAuthority {
         self.reporting.clone()
@@ -256,6 +278,25 @@ impl Drop for Consumption {
     }
 }
 impl GrantLedger {
+    /// Read-only bounded historical events. No live source, completion or replay
+    /// authority is reconstructed from a retained prefix.
+    pub fn workload_events(
+        &self,
+        issuer: &str,
+        id: &str,
+        after: u64,
+        limit: usize,
+    ) -> Result<Value> {
+        let db = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Grant journal unavailable"))?;
+        let tx = db.unchecked_transaction()?;
+        let receipt = read_core(&tx, &self.node_id, Some(issuer), id)?;
+        let value = event_journal::inspect(&tx, &receipt, after, limit)?;
+        tx.commit()?;
+        Ok(value)
+    }
     pub fn workload_receipt(&self, issuer: &str, id: &str) -> Result<Receipt> {
         let db = self
             .connection
@@ -301,13 +342,17 @@ impl GrantLedger {
                 &tx,
                 &self.policy,
                 definition.events.max_total_bytes,
-                encoded.len(),
+                encoded
+                    .len()
+                    .checked_add(event_journal::reservation(&tx, &definition)?)
+                    .context("Workload reservation overflow")?,
                 false,
             )?;
             initial.initial_deadline(&contract, policy)?;
             let now = i64::try_from(crate::protocol::now_ms().max(1))?;
             tx.execute("INSERT INTO execution_receipts(issuer_id,job_id,task_id,attempt,grant_id,grant_digest,state,accepted_ms,updated_ms,max_result_bytes,report,report_sha256,receipt_kind,workload_definition) VALUES(?1,?2,?3,?4,?5,?6,'accepted',?7,?7,?8,NULL,NULL,'workload',?9)",
                 params![definition.issuer_id,definition.job_id,definition.task_id,definition.attempt,definition.grant_id,contract.scope.grant_sha256,now,i64::try_from(definition.events.max_total_bytes)?,encoded])?;
+            event_journal::initialize(&tx, &definition)?;
             tx.commit()?;
         }
         let stop = match self.watch_stop_scope(&contract.scope) {
@@ -343,6 +388,47 @@ impl GrantLedger {
             params![scope.grant_id,scope.grant_sha256,i64::try_from(crate::protocol::now_ms().max(1))?])?;
         tx.commit()?;
         Ok(())
+    }
+}
+
+pub(crate) struct EventWriter {
+    ledger: Arc<GrantLedger>,
+    definition: Definition,
+    stop: tokio::sync::watch::Receiver<bool>,
+}
+impl EventWriter {
+    pub(crate) async fn append(
+        &self,
+        event: crate::workload_events::Event,
+        checkpoint: Arc<crate::workload_leases::Checkpoint>,
+    ) -> Result<event_journal::AppendReceipt> {
+        let contract = self.definition.lease_contract()?;
+        checkpoint.check(&contract)?;
+        let slot = self
+            .ledger
+            .event_workers
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| {
+                anyhow::anyhow!("Workload journal worker capacity exhausted; source must stop")
+            })?;
+        let ledger = self.ledger.clone();
+        let definition = self.definition.clone();
+        let stop = self.stop.clone();
+        let authority = checkpoint.clone();
+        let worker = tokio::task::spawn_blocking(move || {
+            // Cancellation cannot release this slot while a started SQLite save
+            // is still running. No unbounded worker queue or automatic retry.
+            let _slot = slot;
+            event_journal::append(&ledger, &definition, event, &authority, &stop)
+        });
+        checkpoint
+            .supervise(&contract, async {
+                worker
+                    .await
+                    .context("Workload journal worker unavailable")?
+            })
+            .await
     }
 }
 

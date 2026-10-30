@@ -18,6 +18,7 @@ pub(crate) struct Event {
     pub sequence: u64,
     pub source_sequence: u64,
     pub source_frames: u64,
+    pub elapsed_ms: u64,
     pub active: Option<bool>,
     pub level: Option<u16>,
     pub discontinuity: bool,
@@ -36,6 +37,7 @@ pub(crate) struct Filter {
     last_source_sequence: u64,
     last_source_frames: u64,
     last_observed_at: Option<Instant>,
+    first_observed_at: Option<Instant>,
     last_active: Option<Option<bool>>,
     last_event_at: Option<Instant>,
     events: u64,
@@ -57,6 +59,7 @@ impl Filter {
             last_source_sequence: 0,
             last_source_frames: 0,
             last_observed_at: None,
+            first_observed_at: None,
             last_active: None,
             last_event_at: None,
             events: 0,
@@ -97,6 +100,7 @@ impl Filter {
         self.last_source_sequence = observation.sequence;
         self.last_source_frames = observation.source_frames;
         self.last_observed_at = Some(now);
+        let first = *self.first_observed_at.get_or_insert(now);
         if !required {
             return Ok(None);
         }
@@ -111,11 +115,12 @@ impl Filter {
             "Workload event count exceeded; source must stop"
         );
         let event = Event {
-            schema_version: 1,
+            schema_version: 2,
             kind: Kind::MicrophoneActivity,
             sequence: self.events + 1,
             source_sequence: observation.sequence,
             source_frames: observation.source_frames,
+            elapsed_ms: u64::try_from(now.duration_since(first).as_millis())?,
             active: observation.active,
             level: observation.level,
             discontinuity: observation.discontinuity,
@@ -131,6 +136,49 @@ impl Filter {
         self.last_active = Some(event.active);
         self.last_event_at = Some(now);
         Ok(Some(event))
+    }
+}
+
+impl Event {
+    pub(crate) fn validate(&self, definition: &Definition) -> Result<()> {
+        let Source::MicrophoneEnergy { parameters, .. } = &definition.source;
+        ensure!(
+            self.schema_version == 2
+                && self.kind == Kind::MicrophoneActivity
+                && self.sequence > 0
+                && self.sequence <= definition.events.max_events
+                && self.source_sequence > 0
+                && self.source_sequence <= u64::from(parameters.max_blocks)
+                && self.source_frames == self.source_sequence * u64::from(parameters.block_frames)
+                && self.source_frames <= definition.limits.max_source_frames
+                && self.elapsed_ms <= definition.limits.max_session_ms
+                && self.level.is_none_or(|v| v <= 32768)
+                && (self.active.is_none() || self.level.is_some())
+                && (!self.discontinuity || (self.active.is_none() && self.level.is_none())),
+            "Invalid retained workload event"
+        );
+        Ok(())
+    }
+    /// Validate a retained filtered prefix, never raw observations or authority.
+    pub(crate) fn follows(&self, definition: &Definition, previous: Option<&Self>) -> Result<()> {
+        self.validate(definition)?;
+        match previous {
+            None => ensure!(
+                self.sequence == 1 && self.source_sequence == 1 && self.elapsed_ms == 0,
+                "Initial workload event position changed"
+            ),
+            Some(previous) => ensure!(
+                Some(self.sequence) == previous.sequence.checked_add(1)
+                    && self.source_sequence > previous.source_sequence
+                    && self.elapsed_ms
+                        >= previous
+                            .elapsed_ms
+                            .saturating_add(definition.events.min_interval_ms)
+                    && (self.active != previous.active || self.discontinuity),
+                "Workload event prefix, rate or transition changed"
+            ),
+        }
+        Ok(())
     }
 }
 

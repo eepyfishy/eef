@@ -115,6 +115,16 @@ async fn native_prepared_source_runs_exact_bytes_with_consumption_and_filtered_e
                 receipt.receipt.state == "accepted" && receipt.definition == definition,
                 "Events require the exact consumed source"
             );
+            let saved = ledger.workload_events(
+                &definition.issuer_id,
+                &definition.grant_id,
+                event.sequence - 1,
+                1,
+            )?;
+            anyhow::ensure!(
+                saved["durable_events"][0]["event"] == json!(event),
+                "Callback preceded exact durable event persistence"
+            );
             let sequence = event.source_sequence;
             events.lock().unwrap().push(event);
             tokio::fs::write(root.join(format!("ack-{sequence}")), b"observed").await?;
@@ -173,6 +183,11 @@ async fn native_prepared_source_runs_exact_bytes_with_consumption_and_filtered_e
         assert!(!encoded.contains(private));
     }
     native_unknown(&f, &ledger);
+    let retained = ledger
+        .workload_events(&f.definition.issuer_id, &f.definition.grant_id, 0, 128)
+        .unwrap();
+    assert_eq!(retained["event_count"], 4);
+    assert_eq!(retained["source_termination_confirmed"], false);
 }
 
 #[tokio::test]

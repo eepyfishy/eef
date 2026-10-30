@@ -503,6 +503,7 @@ pub struct GrantLedger {
     connection: Mutex<Connection>,
     policy: GrantPolicy,
     stops: Arc<stop::Registry>,
+    event_workers: Arc<tokio::sync::Semaphore>,
 }
 // Both operation and continuous receipts share attempt slots and reservation
 // accounting. Changing operation kind cannot bypass an unresolved attempt.
@@ -552,6 +553,7 @@ fn check_receipt_budget(
             .saturating_mul(page_size)
             .saturating_add(usize::try_from(reserved)?)
             .saturating_add(progress_reserved)
+            .saturating_add(workload::event_reserved(db)?)
             .saturating_add(result_bytes)
             .saturating_add(definition_bytes)
             .saturating_add(REPORT_HEADROOM)
@@ -581,10 +583,11 @@ impl GrantLedger {
             bail!("Damaged grant journal; retained for recovery")
         }
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if !matches!(version, 0 | 1 | 2 | 3) {
+        if !matches!(version, 0 | 1 | 2 | 3 | 4) {
             bail!("Unknown grant journal version; retained for recovery")
         }
         workload::validate_schema(&db, version)?;
+        workload::validate_event_orphans(&db)?;
         if crate::pipeline_progress::available(&db)? && version == 0 {
             bail!("Unversioned pipeline observation evidence; retained without initialization")
         }
@@ -673,6 +676,7 @@ impl GrantLedger {
             connection: Mutex::new(db),
             policy,
             stops: Arc::default(),
+            event_workers: Arc::new(tokio::sync::Semaphore::new(1)),
         }))
     }
     pub fn policy(&self) -> &GrantPolicy {

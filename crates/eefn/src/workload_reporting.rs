@@ -97,7 +97,7 @@ impl Checkpoint {
         );
         Ok(())
     }
-    pub(crate) async fn supervise<F, T>(self, contract: &Contract, operation: F) -> Result<T>
+    pub(crate) async fn supervise<F, T>(&self, contract: &Contract, operation: F) -> Result<T>
     where
         F: std::future::Future<Output = Result<T>>,
     {

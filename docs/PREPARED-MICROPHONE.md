@@ -114,3 +114,11 @@ These are pending hosted tests, not physical microphone/driver acceptance or
 authenticated public execution. Normal return still retains an unknown receipt
 until durable event/completion reporting is implemented. No local heavy build,
 capture, installer, model or remote-node change was run for this draft.
+
+The subsequent [event journal draft](WORKLOAD-EVENTS.md) saves useful events before
+constructing observer callbacks, with captured-window supervision of both save
+and delivery. Event schema two adds relative elapsed time and counts that field
+against the existing byte budget. The combined native test now checks that exact
+durable prefix before acknowledging a simulated observation. Event persistence
+still does not turn source return into a completion receipt; this follow-up needs
+its own hosted validation.

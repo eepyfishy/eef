@@ -127,7 +127,7 @@ impl PreparedMicrophone {
         self,
         consumed: crate::grants::workload::Consumption,
         renewals: Renewals,
-        mut observe: F,
+        observe: F,
     ) -> Result<StreamSummary>
     where
         F: FnMut(crate::workload_events::Event) -> C + Send,
@@ -158,6 +158,8 @@ impl PreparedMicrophone {
         let mut events = crate::workload_events::Filter::new(&self.definition)?;
         let reporting = consumed.reporting_authority();
         let reporting_contract = self.definition.lease_contract()?;
+        let writer = Arc::new(consumed.event_writer()?);
+        let observer = Arc::new(tokio::sync::Mutex::new(observe));
         let operation = self.python.observe_reserved_microphone(
             &self.source,
             self.params,
@@ -171,19 +173,34 @@ impl PreparedMicrophone {
                     .and_then(|event| {
                         event
                             .map(|event| {
-                                let checkpoint = reporting.checkpoint(&reporting_contract)?;
-                                Ok((checkpoint, observe(event)))
+                                let checkpoint =
+                                    Arc::new(reporting.checkpoint(&reporting_contract)?);
+                                Ok((checkpoint, event))
                             })
                             .transpose()
                     });
                 let contract = reporting_contract.clone();
+                let writer = writer.clone();
+                let observer = observer.clone();
                 async move {
                     // read_frames awaits this future before reading another
                     // observation. At most one event is pending, tighter than
                     // every valid reviewed max_pending; no detached worker or
                     // offline queue can outlive the lease/listening supervisor.
-                    if let Some((checkpoint, delivery)) = pending? {
-                        checkpoint.supervise(&contract, delivery).await?;
+                    if let Some((checkpoint, event)) = pending? {
+                        let authority = checkpoint.clone();
+                        checkpoint
+                            .supervise(&contract, async move {
+                                writer.append(event.clone(), authority).await?;
+                                // Construct the callback only AFTER durable event
+                                // persistence; FnMut itself may have sync effects.
+                                let delivery = {
+                                    let mut observer = observer.lock().await;
+                                    (&mut *observer)(event)
+                                };
+                                delivery.await
+                            })
+                            .await?;
                     }
                     Ok(())
                 }

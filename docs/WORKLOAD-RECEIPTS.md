@@ -60,6 +60,10 @@ check microphone/listening permission, acquire a resource, select source bytes,
 implement an event buffer or enforce physical CPU/device budgets. Reporting space
 is reserved conservatively using the owner journal policy; event persistence and
 delivery are still absent. There is no workload completion/output record yet.
+The follow-on [event journal draft](WORKLOAD-EVENTS.md) implements bounded event
+history in version four of the same database. Its separate checkpoint describes
+pending verification and remaining completion/final-save limitations; earlier
+version-three boundaries above are retained as historical context.
 Product admission must integrate the existing coordinator `JobStore` and
 `AttemptJournal`, persist issuance before dispatch, validate consumed ACKs on the
 authenticated session, and retain resource/permission/lease ownership before and

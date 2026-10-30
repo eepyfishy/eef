@@ -21,7 +21,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 pub mod definition;
 #[path = "workload_reporting.rs"]
 mod reporting;
-pub(crate) use reporting::ReportingAuthority;
+pub(crate) use reporting::{Checkpoint, ReportingAuthority};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
