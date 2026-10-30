@@ -76,10 +76,7 @@ fn approved(engine: &TaskEngine) -> (Plan, ApprovalCommand) {
         plan_sha256: plan.planning.as_ref().unwrap().plan_sha256.clone(),
         valid_for_ms: 120000,
     };
-    (
-        approve(&engine.store, &command, &"a".repeat(64)).unwrap(),
-        command,
-    )
+    (approve(engine, &command, &"a".repeat(64)).unwrap(), command)
 }
 fn execute(plan: &Plan) -> ExecuteCommand {
     ExecuteCommand {
@@ -150,7 +147,7 @@ fn existing_job_store_persists_review_approval_definition_and_ack_before_renewal
     let (approved, approval) = approved(&engine);
     assert_eq!(approved.approval.as_ref().unwrap().schema_version, 2);
     assert_eq!(
-        json!(approve(&store, &approval, &"a".repeat(64)).unwrap()),
+        json!(approve(&engine, &approval, &"a".repeat(64)).unwrap()),
         json!(approved),
         "retry is read-only, not renewal"
     );
@@ -491,4 +488,83 @@ async fn source_planning_cannot_checkpoint_after_engine_shutdown() {
     engine.shutdown().await;
     assert!(compile(&engine, &command).is_err());
     assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), json!(plan));
+}
+
+#[tokio::test]
+async fn session_approval_obeys_shutdown_but_exact_receipt_inspection_stays_read_only() {
+    let engine = TaskEngine::new(EventBus::new(20));
+    let (pending, _) = planned(&engine);
+    let command = ApprovalCommand {
+        id: pending.plan_id.clone(),
+        expected_revision: pending.revision,
+        operation_id: uuid::Uuid::new_v4().to_string(),
+        plan_sha256: pending.planning.as_ref().unwrap().plan_sha256.clone(),
+        valid_for_ms: 120000,
+    };
+    let (retained, retained_command) = approved(&engine);
+    engine.shutdown().await;
+    assert!(approve(&engine, &command, &"a".repeat(64)).is_err());
+    assert_eq!(
+        json!(engine.store.get(&command.id).unwrap()),
+        json!(pending)
+    );
+    assert_eq!(
+        json!(approve(&engine, &retained_command, &"a".repeat(64)).unwrap()),
+        json!(retained)
+    );
+    let mut conflict = retained_command.clone();
+    conflict.operation_id = uuid::Uuid::new_v4().to_string();
+    assert!(approve(&engine, &conflict, &"a".repeat(64)).is_err());
+    assert_eq!(
+        json!(engine.store.get(&retained.plan_id).unwrap()),
+        json!(retained)
+    );
+}
+
+#[test]
+fn session_owner_report_requires_exact_durable_approval_and_never_claims_dispatch() {
+    let engine = TaskEngine::new(EventBus::new(20));
+    let (plan, command) = approved(&engine);
+    let runtime = uuid::Uuid::new_v4().to_string();
+    let value = json!({"schema_version":2,"report_type":"workload_approval","success":true,
+        "runtime_id":runtime,"id":command.id,"operation_id":command.operation_id,
+        "plan":plan,"reused":false,"persisted":true,"execution_authorized":false,
+        "dispatched":false,"automatically_retried":false});
+    assert!(crate::workload_approval::confirmed(
+        &value, &runtime, &command
+    ));
+    for key in [
+        "execution_authorized",
+        "dispatched",
+        "automatically_retried",
+    ] {
+        let mut changed = value.clone();
+        changed[key] = json!(true);
+        assert!(!crate::workload_approval::confirmed(
+            &changed, &runtime, &command
+        ));
+    }
+    for key in ["persisted", "success"] {
+        let mut changed = value.clone();
+        changed[key] = json!(false);
+        assert!(!crate::workload_approval::confirmed(
+            &changed, &runtime, &command
+        ));
+    }
+    let mut changed = value.clone();
+    changed["plan"]["approval"]["workload"]["limits"]["max_session_ms"] = json!(120000);
+    assert!(!crate::workload_approval::confirmed(
+        &changed, &runtime, &command
+    ));
+    let mut changed = value;
+    changed["unexpected_authority"] = json!(true);
+    assert!(!crate::workload_approval::confirmed(
+        &changed, &runtime, &command
+    ));
+    let mut malformed = command;
+    malformed.expected_revision = u64::MAX;
+    assert!(malformed.validate().is_err());
+    malformed.expected_revision = 1;
+    malformed.operation_id = uuid::Uuid::nil().to_string();
+    assert!(malformed.validate().is_err());
 }

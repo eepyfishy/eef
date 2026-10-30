@@ -164,6 +164,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
         .route("/api/status", get(status))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/commands/requests/planning", post(request_planning))
+        .route(
+            "/api/commands/requests/approve-session",
+            post(workload_approval).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
         .route("/api/commands/automations", post(automation_command))
         .route(
             "/api/commands/automation-schedules",
@@ -319,6 +323,12 @@ async fn request_planning(
     Json(request): Json<crate::request_planning::PlanningRequest>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.planning_command(request).await?))
+}
+async fn workload_approval(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::workload_approval::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.workload_approval(request).await?))
 }
 
 #[derive(serde::Deserialize)]

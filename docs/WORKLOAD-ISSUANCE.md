@@ -6,9 +6,10 @@ identities, not a second job database or a separate timer-loop recording system.
 A shared exact template carries the source/resource/adapter pins and all session,
 memory, source-frame and event limits before a grant ID or node session exists.
 
-Internal checkpoint APIs compile that template as one continuous task, save a
-distinct schema-two owner approval, and store the full issued definition before
-returning an issuer token. The existing v1 scope/start paths refuse that approval.
+Owner command APIs compile that template as one continuous task and save a
+distinct schema-two conditional approval. The internal issuance API stores the
+full issued definition before returning an issuer token; it still has no product
+execution caller. The existing v1 scope/start paths refuse session approval.
 Legacy records omit the new optional fields and retain their original serialized
 definitions and approval hashes. Old readers cannot interpret the new records as
 v1 execution authority; do not downgrade journals containing them.

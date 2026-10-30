@@ -913,6 +913,23 @@ delegated owner approval and the complete non-coder workflow remain later work.
 
 ## Bounded owner request approval (unreleased after alpha.6)
 
+Continuous session plans use the separate version-two command:
+
+```powershell
+eef requests approve-session DRAFT_ID --revision 5 --digest PLAN_SHA256 --valid-for-ms 120000 --operation-id OPERATION_UUID --json
+```
+
+Use the inspected continuous plan's exact ID, revision, digest and a new UUID.
+Validity must cover its reviewed session ceiling and cannot exceed 24 hours.
+All source, memory, event and session limits come from that exact plan; approval
+cannot widen them. Keep the operation UUID for read-only receipt recovery after
+an uncertain response. The owner API is `POST /api/commands/requests/approve-session`
+with `schema_version: 2`, `expected_runtime_id` and the exact `command`
+(`id`, `expected_revision`, `operation_id`, `plan_sha256`, `valid_for_ms`).
+Fresh authenticated source pins are required for a new approval. Local listening
+and microphone consent remain separate; approval starts no capture. Continuous
+execution is still unavailable. See [source workflow](WORKLOAD-SOURCES.md).
+
 After inspecting the exact private plan, the local eef owner can retain a
 conditional approval without a browser:
 

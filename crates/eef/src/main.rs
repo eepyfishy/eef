@@ -1933,6 +1933,42 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             .await);
         }
         Command::Requests { command } => {
+            if let eef::request_planning::PlanningAction::ApproveSession {
+                id,
+                revision,
+                digest,
+                valid_for_ms,
+                operation_id,
+            } = command
+            {
+                let command = eef::workload_jobs::ApprovalCommand {
+                    id: id.clone(),
+                    expected_revision: *revision,
+                    operation_id: operation_id
+                        .clone()
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    plan_sha256: digest.clone(),
+                    valid_for_ms: *valid_for_ms,
+                };
+                command.validate()?;
+                let state =
+                    command_response(client.get(format!("{base}/api/diagnostics")).send().await?)
+                        .await?;
+                let runtime = state["runtime_id"]
+                    .as_str()
+                    .context("Missing coordinator runtime ID")?;
+                let exchange = async {
+                    let value = command_response(client.post(format!("{base}/api/commands/requests/approve-session"))
+                        .json(&json!({"schema_version":2,"expected_runtime_id":runtime,"command":command})).send().await?).await?;
+                    if !eef::workload_approval::confirmed(&value, runtime, &command) { bail!("Unconfirmed session approval receipt") }
+                    Ok::<_, anyhow::Error>(value)
+                }.await;
+                return Ok(exchange.unwrap_or_else(|_|json!({"schema_version":2,"report_type":"workload_approval","success":false,
+                    "id":command.id,"operation_id":command.operation_id,"outcome_unknown":true,
+                    "execution_authorized":false,"dispatched":false,"automatically_retried":false,
+                    "error_code":"session_approval_unconfirmed",
+                    "note":"Inspect requests inspect with this ID and retain the operation receipt before retrying. Approval may have been saved; no capture was requested."})));
+            }
             if let eef::request_planning::PlanningAction::Abandon {
                 id,
                 revision,
@@ -2082,6 +2118,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     "error_code":"execution_unconfirmed","note":"Inspect the request/job and receipts before retrying; no fallback, replay or automatic renewal."})));
             }
             let command = match command {
+                eef::request_planning::PlanningAction::ApproveSession { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::RecoverResult { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Abandon { .. } => unreachable!(),
                 eef::request_planning::PlanningAction::Receipt { .. } => unreachable!(),

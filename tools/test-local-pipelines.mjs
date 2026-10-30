@@ -194,9 +194,30 @@ def handle(action,params):
   assert.equal(plan.bindings[0].node_id,origin.id);assert.equal(plan.bindings[0].resource_id,selected.resource_id);
   const retained=await review.inspect(plan.id);assert.equal(retained.planning.schema_version,2);
   assert(!retained.approval);assert(!retained.execution);
+  const approvalCommand={id:plan.id,expected_revision:retained.revision,operation_id:randomUUID(),plan_sha256:retained.planning.plan_sha256,valid_for_ms:120000};
+  const runtime=(await json(eef+'/api/diagnostics')).runtime_id;
+  for(const body of [
+   {schema_version:1,expected_runtime_id:runtime,command:approvalCommand},
+   {schema_version:2,expected_runtime_id:randomUUID(),command:approvalCommand},
+   {schema_version:2,expected_runtime_id:runtime,command:{...approvalCommand,plan_sha256:'0'.repeat(64)}}
+  ]){
+   const response=await fetch(eef+'/api/commands/requests/approve-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+   assert.equal(response.status,400);await response.json();
+   assert.deepEqual(await review.inspect(plan.id),retained,'rejected approval never changes the journal');
+  }
+  const approvalArgs=['requests','approve-session',plan.id,'--revision',String(retained.revision),'--digest',retained.planning.plan_sha256,'--valid-for-ms','120000','--operation-id',approvalCommand.operation_id];
+  const approved=await owner(approvalArgs);assert.equal(approved.success,true);assert.equal(approved.schema_version,2);
+  assert.equal(approved.plan.status,'approved');assert.equal(approved.plan.approval.schema_version,2);assert.equal(approved.reused,false);
+  assert.deepEqual(approved.plan.approval.workload,workload);assert.equal(approved.execution_authorized,false);assert.equal(approved.dispatched,false);
+  assert(!approved.plan.execution);assert.equal(approved.plan.revision,retained.revision+1);
+  const repeated=await owner(approvalArgs);assert.equal(repeated.reused,true);assert.deepEqual(repeated.plan,approved.plan);
+  const conflict=await fetch(eef+'/api/commands/requests/approve-session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schema_version:2,expected_runtime_id:runtime,command:{...approvalCommand,operation_id:randomUUID()}}),signal:AbortSignal.timeout(15000)});
+  assert.equal(conflict.status,400);await conflict.json();assert.deepEqual(await review.inspect(plan.id),approved.plan);
+  const legacy=await fetch(eef+'/api/commands/requests/planning',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schema_version:1,expected_runtime_id:runtime,command:{operation:'approve',...approvalCommand,limits:{max_execution_ms:10000,max_result_bytes:65536}}}),signal:AbortSignal.timeout(15000)});
+  assert.equal(legacy.status,400);await legacy.json();assert.deepEqual(await review.inspect(plan.id),approved.plan);
   assert.deepEqual(await readFile(origin.config),savedBefore);assert.equal(await exists(join(scratch,'audio-captured.json')),capturedBefore);
   assert.equal(calls.length,0,'source inspection/review must never invoke a model');
-  await writeFile(join(scratch,'continuous-source-results.json'),JSON.stringify({passed:true,local_cli:true,authenticated_owner_cli:true,normal_origin_submission_and_compilation:true,current_source_pins:true,no_private_bindings:true,no_capture:true,no_model_calls:true,execution_authorized:false,physical_capture:false},null,2));
+  await writeFile(join(scratch,'continuous-source-results.json'),JSON.stringify({passed:true,local_cli:true,authenticated_owner_cli:true,normal_origin_submission_and_compilation:true,current_source_pins:true,no_private_bindings:true,owner_session_approval:true,exact_approval_retry_read_only:true,conflicting_approval_rejected:true,stale_runtime_and_digest_rejected:true,legacy_approval_refused:true,no_capture:true,no_model_calls:true,execution_authorized:false,physical_capture:false},null,2));
  }
  async function progressReceipt(id,grantId){
   const before=await readFile(executor.config+'.grant-receipts.sqlite3');

@@ -386,6 +386,19 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum PlanningAction {
+    /// Save conditional owner approval for an exact continuous session; never starts capture.
+    ApproveSession {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        digest: String,
+        #[arg(long)]
+        valid_for_ms: u64,
+        /// Reuse this exact receipt after an uncertain reply; never renews authority.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Reconcile one uncertain attempt from authenticated retained completion; never resume.
     RecoverResult {
         id: String,

@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: owner approval for reviewed continuous sessions
+
+`eef requests approve-session` and its version-two owner API retain exact
+source/session approval in the existing job journal. Fresh source pins and pinned
+authentication are checked before saving; the engine shutdown gate excludes new
+checkpoints. Exact retries inspect the original receipt without renewal. Legacy
+operation approval still refuses continuous plans. Approval does not enable local
+listening or start capture. Hosted validation is pending; admitted source execution,
+renewable leases, durable events and observed termination remain incomplete.
+
 ## In development: authenticated continuous source planning
 
 [Source inspection](WORKLOAD-SOURCES.md) adds local/owner CLI and API operations

@@ -1,6 +1,6 @@
 //! Reviewed session issuance in the existing JobStore/AttemptJournal model.
-//! These internal checkpoint APIs have no product/network caller yet. Callers
-//! must authenticate the owner/peer and verify live resource/runtime support.
+//! Planning and conditional approval have owner command callers. Issuance remains
+//! internal until authenticated source execution and termination are admitted.
 use crate::{
     jobs::{Assignment, JobStore},
     request_approval::ApprovalRecord,
@@ -31,6 +31,28 @@ pub struct ApprovalCommand {
     pub operation_id: String,
     pub plan_sha256: String,
     pub valid_for_ms: u64,
+}
+impl ApprovalCommand {
+    pub fn validate(&self) -> Result<()> {
+        eefn::request_drafts::validate_id(&self.id)?;
+        eefn::automation_occurrence::uuid(&self.operation_id)?;
+        ensure!(
+            self.expected_revision > 0
+                && self.expected_revision < u64::MAX
+                && hex(&self.plan_sha256)
+                && (1..=crate::request_approval::MAX_APPROVAL_VALIDITY_MS)
+                    .contains(&self.valid_for_ms),
+            "Invalid exact session approval revision, digest or validity"
+        );
+        Ok(())
+    }
+    pub(crate) fn confirms(&self, approval: &ApprovalRecord) -> bool {
+        approval.schema_version == 2
+            && approval.operation_id == self.operation_id
+            && approval.source_revision == self.expected_revision
+            && approval.plan_sha256 == self.plan_sha256
+            && approval.valid_for_ms == self.valid_for_ms
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -317,24 +339,17 @@ pub(crate) fn compile(
         },
     )
 }
-#[allow(dead_code)]
 pub(crate) fn approve(
-    store: &Arc<JobStore>,
+    engine: &crate::task::TaskEngine,
     command: &ApprovalCommand,
     issuer: &str,
 ) -> Result<Plan> {
-    eefn::request_drafts::validate_id(&command.id)?;
-    eefn::automation_occurrence::uuid(&command.operation_id)?;
-    let saved = store.get(&command.id)?;
+    command.validate()?;
+    let saved = engine.store.get(&command.id)?;
     let w = template(&saved)?;
     if let Some(a) = &saved.approval {
         ensure!(
-            a.schema_version == 2
-                && a.operation_id == command.operation_id
-                && a.source_revision == command.expected_revision
-                && a.plan_sha256 == command.plan_sha256
-                && a.valid_for_ms == command.valid_for_ms
-                && a.issuer_id == issuer,
+            command.confirms(a) && a.issuer_id == issuer,
             "Conflicting workload approval; no implicit renewal"
         );
         return Ok(saved);
@@ -370,7 +385,7 @@ pub(crate) fn approve(
         workload: Some(w),
     };
     a.approval_sha256 = crate::request_approval::digest(&a)?;
-    store.change(
+    engine.edit_review_checkpoint(
         &command.id,
         "Explicit workload session approval saved; no issuance",
         |plan| {
@@ -386,7 +401,7 @@ pub(crate) fn approve(
             );
             plan.approval = Some(a);
             plan.status = PlanStatus::Approved;
-            Ok(())
+            Ok(true)
         },
     )
 }

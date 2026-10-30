@@ -1,4 +1,4 @@
-# Continuous source inspection and planning
+# Continuous source inspection, planning and conditional approval
 
 `eefn workloads sources` inspects the running local node. The coordinator owner
 can inspect the same node with `eef node workload-sources --node NODE_ID`.
@@ -32,6 +32,23 @@ Its checkpoint shares the existing task engine's shutdown gate. Retained retries
 are read-only; compilation creates no approval, session offer or capture. The
 node-facing planning view validates the exact nested source and task binding.
 Legacy operation approval continues to refuse session plans.
+
+After inspecting the retained plan, its owner can use
+`eef requests approve-session ID --revision REVISION --digest PLAN_SHA256 --valid-for-ms MILLISECONDS --operation-id UUID`.
+The distinct version-two operation saves approval for the exact source and all
+reviewed limits through the same engine shutdown gate. It checks a fresh source
+snapshot and independently authenticated pinned session before saving. A changed
+source, pending resource binding, stale runtime or conflicting receipt is refused.
+An exact retained retry is read-only, including offline or after shutdown, expiry
+or cancellation; it cannot extend approval validity or modify the source.
+
+Approval is conditional authority for later explicit admission. It does not turn
+on listening, change microphone permission, install an interpreter, start a source
+or issue a lease. Local consent may still be off at approval time. Admission must
+check current local consent, permission epochs, source ownership and quotas before
+any effects. The response explicitly reports no dispatch or execution authority.
+Only the local coordinator-owner API exposes approval; node-origin planning has
+no approval variant.
 
 Session execution remains unavailable. The compiled-in adapter bytes provide
 the intended source identity; actual execution still needs a separately admitted
