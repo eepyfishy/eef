@@ -9,6 +9,7 @@ import {hostname} from 'node:os';
 assert.equal(process.platform,'win32');
 const root=resolve(import.meta.dirname,'..'),bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const scratch=await mkdtemp(join(root,'.validation/first-run-')),children=[],links=[];
+const cleanup=[];let result;
 const cwd=join(scratch,"unrelated working directory 'owner'");await mkdir(cwd);
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),
  HTTP_PROXY:'',HTTPS_PROXY:'',ALL_PROXY:'',NO_PROXY:'127.0.0.1,localhost,::1',
@@ -26,6 +27,18 @@ async function cli(exe,args,code=0){const r=await once(exe,args,args.includes('-
 async function json(url){const r=await fetch(url,{signal:AbortSignal.timeout(5000)});assert(r.ok);return r.json();}
 async function until(fn,label){const end=Date.now()+60000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('Timeout: '+label);}
 async function exists(path){return readFile(path).then(()=>true,()=>false);}
+async function unlinkOwned(path){
+ assert(resolve(path).startsWith(resolve(scratch)+sep));
+ const deadline=performance.now()+5000;let busy=0;
+ for(;;){try{await unlink(path);cleanup.push({path,busy_observations:busy,removed:true});return;}
+  catch(error){
+   // Process close was already observed. Windows may retain an image lock
+   // briefly afterwards. Retry only this cleanup, never launch/setup/enrollment.
+   if(error.code!=='EBUSY'||performance.now()>=deadline){cleanup.push({path,busy_observations:busy,removed:false,code:error.code});throw error;}
+   busy++;await new Promise(r=>setTimeout(r,50));
+  }
+ }
+}
 const privateSecret=bytes=>{const m=bytes.toString().match(/^\s+psk:\s*['"]?([a-f0-9]{64})['"]?\s*$/m);assert(m,'New configuration needs its own saved credential');return m[1];};
 async function noDefaultPortCollision(){const probes=[];try{
  for(const port of [51334,51335,51336]){const s=createServer();probes.push(s);await new Promise((r,j)=>{s.once('error',j);s.listen({port,host:'0.0.0.0',exclusive:true},r);});}
@@ -78,14 +91,16 @@ try{
  for(const c of children)for(const key of [secret,otherSecret,privateSecret(initialized),paired.psk]){
   assert(typeof key==='string'&&key.length>=12);assert(!(c.logs().out+c.logs().err).includes(key),'Commands/services must never log generated credentials');
  }
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,managed_default_paths:true,unrelated_cwd_untouched:true,
+ result={passed:true,managed_default_paths:true,unrelated_cwd_untouched:true,
   offline_initialize:true,missing_selected_package_not_executed:true,idempotent:true,existing_owner_bytes_preserved:true,no_generated_credentials_logged:true,
   invalid_configuration_preserved:true,invalid_legacy_secret_not_rotated:true,distinct_saved_credentials:true,
   normal_coordinator_first_creation:true,normal_node_first_creation:true,automatic_initial_registration:true,detected_hostname:true,stable_node_identity:true,
   explicit_private_enrollment:true,both_runtime_restarts_observed:true,permissions_and_models_preserved:true,duplicate_launch_preserved:true,
   default_ports_required:true,model_downloads:false,model_inference:false,automatic_private_enrollment:false,
-  automatic_model_onboarding:false,physical_two_pc:false,msi_installation:false,stable_release_accepted:false},null,2));
- console.log('Managed first-run backend checks passed: '+scratch);
+  automatic_model_onboarding:false,physical_two_pc:false,msi_installation:false,stable_release_accepted:false};
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}
 finally{for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));
- for(const path of links){assert(resolve(path).startsWith(resolve(scratch)+sep));await unlink(path);}}
+ try{for(const path of links)await unlinkOwned(path);}
+ finally{await writeFile(join(scratch,'cleanup-results.json'),JSON.stringify({process_close_observed:true,links:cleanup},null,2));}}
+await writeFile(join(scratch,'results.json'),JSON.stringify({...result,owned_processes_closed:true,temporary_links_removed:true},null,2));
+console.log('Managed first-run backend checks passed: '+scratch);
