@@ -3,7 +3,7 @@ use crate::{
     NodeService,
     python::{
         PythonRuntime,
-        stream::{PinnedStreamSource, StreamBounds, StreamObservation, StreamSummary},
+        stream::{PinnedStreamSource, StreamBounds, StreamSummary},
     },
     workload_leases::{Renewals, definition::Definition},
 };
@@ -127,10 +127,10 @@ impl PreparedMicrophone {
         self,
         consumed: crate::grants::workload::Consumption,
         renewals: Renewals,
-        observe: F,
+        mut observe: F,
     ) -> Result<StreamSummary>
     where
-        F: FnMut(StreamObservation) -> C + Send,
+        F: FnMut(crate::workload_events::Event) -> C + Send,
         C: Future<Output = Result<()>> + Send,
     {
         let receipt = consumed.acknowledgement()?;
@@ -155,6 +155,7 @@ impl PreparedMicrophone {
             events: self.definition.events.clone(),
         })?;
         let deadline = tokio::time::Instant::from_std(consumed.session_deadline()?);
+        let mut events = crate::workload_events::Filter::new(&self.definition)?;
         let operation = self.python.observe_reserved_microphone(
             &self.source,
             self.params,
@@ -162,7 +163,21 @@ impl PreparedMicrophone {
             self.bounds,
             deadline,
             self.reservation,
-            observe,
+            move |observation| {
+                let pending = events
+                    .observe(observation, std::time::Instant::now())
+                    .map(|event| event.map(&mut observe));
+                async move {
+                    // read_frames awaits this future before reading another
+                    // observation. At most one event is pending, tighter than
+                    // every valid reviewed max_pending; no detached worker or
+                    // offline queue can outlive the lease/listening supervisor.
+                    if let Some(delivery) = pending? {
+                        delivery.await?;
+                    }
+                    Ok(())
+                }
+            },
         );
         consumed
             .supervise(

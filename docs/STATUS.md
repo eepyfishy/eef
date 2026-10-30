@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: bounded microphone activity events
+
+The internal [prepared source](PREPARED-MICROPHONE.md#activity-event-filtering-draft)
+filters repeated state while retaining initial state, transitions and explicit
+gaps as typed metadata. It checks exact source positions and reviewed monotonic
+rate, event count and encoded byte budgets before delivery. Overflow stops instead
+of losing a required transition; unknown never becomes fabricated inactivity.
+The existing awaited callback bounds pending events to one under lease/consent
+supervision. Eight added regressions cover the filter; hosted checks are pending.
+This does not add durable event/completion receipts, public launch or long-session
+transport, and does not change ordinary Python limits or enable capture at startup.
+
 ## In development: source retirement before configuration waits
 
 Runtime retirement now latches listening denial before waiting on the binding

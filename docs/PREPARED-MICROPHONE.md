@@ -34,7 +34,7 @@ The checked configured interpreter is retained independently of optional plugin
 registration. That does not grant a permission or assert device availability.
 Prepared job commit memory is the tighter local/reviewed ceiling. The ordinary
 Python timeout, output and observation limits remain: long-session streaming,
-useful event filtering, durable events/completion and authenticated public launch
+durable events/completion and authenticated public launch
 are still required before full continuous-workload acceptance.
 
 Four new ownership regressions include a Windows owned root/descendant test with
@@ -50,3 +50,33 @@ cannot retire or unbind a replacement even if its UUID was reused. Completion is
 also checked after a source's final poll. Three added regressions hold the actual
 binding mutex while retiring/replacing guards and exercise final-poll revocation.
 This follow-up still requires hosted validation before promotion.
+
+## Activity event filtering draft
+
+The internal prepared runner now delivers typed `microphone_activity` metadata
+instead of forwarding every energy observation. It emits the first observed state,
+changes between active/inactive/unknown, and every explicit discontinuity. Repeated
+state and level-only changes are suppressed. Unknown remains unknown, and a gap is
+never fabricated as inactivity. Event sequence and original source sequence/frame
+position are separate; suppressing a repeated state never renumbers source history.
+The metadata contains no audio, private device selection, transcript or path.
+
+The existing reviewed `min_interval_ms` is a hard bound between useful events on
+the node's monotonic clock, not a promise that it will debounce or discard rapid
+transitions. A required event arriving earlier stops the source under the reviewed
+`overflow: stop` policy. Count and canonical encoded-event byte limits are checked
+before delivery; a too-small event budget can refuse the first event. Malformed,
+skipped, oversized or over-budget input latches failure. It cannot resume later
+by silently discarding the required transition or gap. A future smoothing policy
+would need its own reviewed semantics.
+
+The transport awaits each event callback before reading the next observation.
+There is at most one pending event, tighter than every allowed `max_pending` value,
+and no detached reporter/offline queue. A stalled sink remains inside the existing
+lease, stop and consent supervision. Source transport bytes still have their own
+unchanged aggregate bound, including suppressed observations; this does not yet
+solve long sessions. Callback delivery and a returned transport summary are not
+durable evidence. Event persistence, receipt deduplication and observed completion
+remain required before public execution. Eight filter regressions cover uncertainty,
+sequence positions, exact rate/count/byte boundaries and permanent overflow refusal;
+hosted verification is pending.
