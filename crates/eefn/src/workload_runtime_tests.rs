@@ -11,6 +11,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new(local_memory: Option<u64>) -> Self {
+        Self::with_python(local_memory, None)
+    }
+    fn with_python(local_memory: Option<u64>, python: Option<PythonRuntime>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let resource: crate::context::Resource = serde_json::from_value(json!({"id":"mic","capability":"audio.capture","parameters":{"device":"PRIVATE_DEVICE"}})).unwrap();
         let metadata = crate::context::NodeMetadata {
@@ -22,12 +25,14 @@ impl Fixture {
         let service = NodeService::new(path, "node".into());
         let mut policy = crate::NodePolicy::default();
         policy.media.microphone = true;
-        // This deliberately missing interpreter must never run during preparation
-        // or the rejected handoff cases. It is configuration, not availability.
+        // Default refusal/preparation fixtures use a deliberately missing
+        // interpreter. Explicit native tests supply their pinned test runtime.
         let mut limits = crate::python::BridgeLimits::default();
         limits.max_job_memory_mib = local_memory;
-        let python = PythonRuntime::discover(Some(dir.path().join("not-executed-python.exe")))
-            .unwrap()
+        let python = python
+            .unwrap_or_else(|| {
+                PythonRuntime::discover(Some(dir.path().join("not-executed-python.exe"))).unwrap()
+            })
             .with_limits(limits)
             .unwrap();
         let engine = Arc::new(
@@ -140,6 +145,11 @@ impl Fixture {
             .unwrap();
     }
 }
+
+// These opt-in tests use the same private preparation helpers and real host/job
+// path. Default/local tests require no Python, capture hardware or dependency.
+#[cfg(feature = "native-test-fixtures")]
+include!("workload_runtime_native_tests.rs");
 async fn consume(
     f: &Fixture,
     d: Definition,

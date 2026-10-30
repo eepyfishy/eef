@@ -10,6 +10,15 @@ assert.match(firewall,/^        shell: powershell$/m);
 assert.match(firewall,/& \.\/tools\/test-windows-firewall\.ps1/);
 assert.match(tests,/^        id: workspace_tests$/m);assert.match(build,/^        id: native_build$/m);
 assert.match(tests,/cargo test --workspace --all-targets @features --locked --offline --quiet -j2\n          exit \$LASTEXITCODE/);
+assert.match(tests,/if \('\$\{\{ matrix.os \}\}' -eq 'windows-2025' -and '\$\{\{ matrix.mode \}\}' -eq 'headless'\) \{\n            \$env:EEF_TEST_PYTHON = \(Get-Command python.exe -ErrorAction Stop\).Source\n            \$features \+= @\('--features', 'eefn\/native-test-fixtures'\)\n          \}/);
+assert.match(workflow,/uses: actions\/setup-python@[0-9a-f]+\n        if: matrix.os == 'windows-2025' && matrix.mode == 'headless'\n        with:\n          python-version: '3\.11\.9'/);
+const cargo=await readFile(new URL('../crates/eefn/Cargo.toml',import.meta.url),'utf8');
+assert.match(cargo,/^default = \["dashboard"\]$/m,'Synthetic native fixtures must remain opt-in');
+const python=(await readFile(new URL('../crates/eefn/src/python.rs',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
+assert.match(python,/#\[cfg\(all\(test, windows, feature = "native-test-fixtures"\)\)\]\n    stream_test_prelude: Option<String>/);
+assert.match(python,/#\[cfg\(all\(test, windows, feature = "native-test-fixtures"\)\)\]\n    pub\(crate\) fn with_stream_test_prelude/);
+const stream=(await readFile(new URL('../crates/eefn/src/python_stream.rs',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
+assert.match(stream,/#\[cfg\(not\(all\(test, windows, feature = "native-test-fixtures"\)\)\)\]\n        let host = HOST;/,'Every shipping build must select the unchanged host');
 assert.match(build,/cargo build --workspace --bins --examples --no-default-features --locked --offline --quiet -j2\n          exit \$LASTEXITCODE/);
 assert(!/^\s*continue-on-error\s*:/m.test(workflow),'No failure gate may be converted to success');
 function condition(block,expected){

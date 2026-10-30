@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: combined prepared source native regressions
+
+Three opt-in Windows unit tests now cover the combined consumed/prepared source
+with pinned real Python, exact compiled adapter bytes, simulated device input,
+filtered activity events and actual owned root/descendant processes. Consent
+revocation and whole-future cancellation must stop a blocked read before resource
+reuse. The private prelude exists only in explicit Windows test builds; shipping
+builds retain the unchanged host without a selector. CI enables it only in the
+Windows headless job with the existing pinned interpreter; other jobs and all
+native command gates remain. Hosted validation is pending. This does not implement
+durable event/completion reporting, physical device or public-session acceptance.
+
 ## In development: consumed reporting lifetime and bounded callbacks
 
 The [reporting lifetime draft](WORKLOAD-LEASES.md#reporting-lifetime-draft) binds

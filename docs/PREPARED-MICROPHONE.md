@@ -88,3 +88,29 @@ after expiry or retiring its own runner in the final poll. Cancellation retires
 reporting before the existing final journal save can block. This does not add
 event storage or turn callback delivery into a durable completion receipt; see
 [reporting lifetime](WORKLOAD-LEASES.md#reporting-lifetime-draft).
+
+## Combined native source tests in development
+
+An explicit Windows `native-test-fixtures` unit-test feature supplies simulated
+sounddevice input to the same Python host, without changing the reviewed compiled
+microphone bytes. Only `cfg(test)` Windows builds contain the private prelude
+field/method; shipping builds, including builds selecting that Cargo feature,
+always use the unchanged host and have no configuration/command/wire selector.
+Default developer tests do not require Python or device hardware. Explicit native
+mode requires the pinned test interpreter and fails if it is missing.
+
+GitHub's Windows headless Rust-test step selects that mode using the existing
+official Python 3.11.9 setup. Other jobs retain the default test set; all previous
+native command gates remain. Three additional tests use actual consumed grant
+receipts, prepared resource/consent checks, pinned source execution, filtered
+callbacks and owned Windows jobs. A finite source must emit the exact initial,
+transition and gap metadata with no private device data or raw samples. Local
+consent revocation and whole-future cancellation interrupt a blocked simulated
+read. Each source spawns an actual descendant, and tests hold real root/descendant
+handles; microphone reuse requires both to have exited. Test pacing preserves the
+approved event rate instead of relaxing it for a buffered fixture.
+
+These are pending hosted tests, not physical microphone/driver acceptance or
+authenticated public execution. Normal return still retains an unknown receipt
+until durable event/completion reporting is implemented. No local heavy build,
+capture, installer, model or remote-node change was run for this draft.

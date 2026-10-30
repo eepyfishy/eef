@@ -403,7 +403,16 @@ impl PythonRuntime {
             }
         }
         let mut command = self.command();
-        command.arg("-c").arg(HOST);
+        #[cfg(all(test, windows, feature = "native-test-fixtures"))]
+        let host = self
+            .stream_test_prelude
+            .as_ref()
+            .map(|prelude| format!("{prelude}\n{HOST}"));
+        #[cfg(all(test, windows, feature = "native-test-fixtures"))]
+        let host = host.as_deref().unwrap_or(HOST);
+        #[cfg(not(all(test, windows, feature = "native-test-fixtures")))]
+        let host = HOST;
+        command.arg("-c").arg(host);
         match &source {
             Source::Path(path) => {
                 command.arg(path);

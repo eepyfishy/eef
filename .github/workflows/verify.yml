@@ -112,6 +112,10 @@ jobs:
         run: |
           $features = @()
           if ('${{ matrix.mode }}' -eq 'headless') { $features += '--no-default-features' }
+          if ('${{ matrix.os }}' -eq 'windows-2025' -and '${{ matrix.mode }}' -eq 'headless') {
+            $env:EEF_TEST_PYTHON = (Get-Command python.exe -ErrorAction Stop).Source
+            $features += @('--features', 'eefn/native-test-fixtures')
+          }
           cargo test --workspace --all-targets @features --locked --offline --quiet -j2
           exit $LASTEXITCODE
       - name: Build Windows command services and isolated helpers

@@ -197,6 +197,8 @@ pub struct PythonPlugin {
 pub struct PythonRuntime {
     executable: PathBuf,
     limits: BridgeLimits,
+    #[cfg(all(test, windows, feature = "native-test-fixtures"))]
+    stream_test_prelude: Option<String>,
 }
 
 impl PythonRuntime {
@@ -229,6 +231,8 @@ impl PythonRuntime {
         Some(Self {
             executable,
             limits: BridgeLimits::default(),
+            #[cfg(all(test, windows, feature = "native-test-fixtures"))]
+            stream_test_prelude: None,
         })
     }
 
@@ -242,6 +246,12 @@ impl PythonRuntime {
     }
     pub fn limits(&self) -> &BridgeLimits {
         &self.limits
+    }
+
+    #[cfg(all(test, windows, feature = "native-test-fixtures"))]
+    pub(crate) fn with_stream_test_prelude(mut self, prelude: String) -> Self {
+        self.stream_test_prelude = Some(prelude);
+        self
     }
 
     fn command(&self) -> Command {

@@ -9,6 +9,8 @@ description = "Native eef node runtime and coordinator gateway"
 [features]
 default = ["dashboard"]
 dashboard = []
+# Explicit synthetic native unit tests only; shipping builds contain no hook.
+native-test-fixtures = []
 
 [dependencies]
 aes-gcm.workspace = true
