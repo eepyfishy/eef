@@ -119,3 +119,20 @@ and cancellation while the actual existing journal mutex blocks final persistenc
 Existing real-receipt stop/cancellation/result tests also verify handle retirement.
 Hosted verification is pending; these are backend/synthetic-source checks, not
 physical source, network or release acceptance.
+
+## Historical finish boundary draft
+
+The private prepared completion path uses the same supervisor to seal a local
+contract digest, final sequence and monotonic finish-before-deadline fact after
+the operation's final poll and reporting check. No boundary is returned for an
+error, expiry or final-poll reporting retirement. Dropping the supervisor still
+retires reporting before final storage. Public `supervise` retains its existing
+result type and grants no new completion or execution authority.
+
+This opaque boundary is historical metadata, not a lease or renewal handle. It
+can confirm the original finish after time passes, but can never activate a
+reporter or source again. The [completion draft](WORKLOAD-COMPLETION.md) requires
+the independent owned-source and filter evidence before using that fact in the
+existing journal. A valid boundary alone cannot mark a generic operation complete.
+Two added regressions check post-expiry historical validation without reporter
+revival and refusal after final-poll retirement; hosted validation is pending.

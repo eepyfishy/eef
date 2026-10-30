@@ -588,7 +588,7 @@ impl GrantLedger {
             bail!("Damaged grant journal; retained for recovery")
         }
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if !matches!(version, 0 | 1 | 2 | 3 | 4) {
+        if !matches!(version, 0 | 1 | 2 | 3 | 4 | 5) {
             bail!("Unknown grant journal version; retained for recovery")
         }
         workload::validate_schema(&db, version)?;

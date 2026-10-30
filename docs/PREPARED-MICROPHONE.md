@@ -186,3 +186,11 @@ The checks use Microsoft's documented [job lifetime accounting](https://learn.mi
 and [process termination signalling](https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process).
 Job accounting and best-effort process notifications alone are not used as a
 replacement for the retained process-handle observations.
+
+The subsequent [durable completion draft](WORKLOAD-COMPLETION.md) pairs this owned
+source evidence with its final filter seal inside the prepared runner. It keeps
+the same source/listening/lease supervision, retires the source before the bounded
+save, and validates the exact durable prefix before recording historical completion
+in the existing journal. The combined native test requires that record; generic
+results and cancellation still cannot manufacture completion. This follow-up also
+requires its own hosted acceptance.

@@ -3,6 +3,28 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: durable prepared-source completion
+
+The [completion draft](WORKLOAD-COMPLETION.md) requires the exact prepared owned
+source outcome, final filter seal and supervisor's validated finish boundary.
+The bounded final worker audits the durable prefix and stores historical completion
+in the existing journal with an atomic version-five marker and existing report
+headroom. Reopen validates the record without restoring execution. Generic results,
+failed sources and unsealed cancellations still retain uncertainty. Twelve added
+shared Rust regressions and the updated combined native source test require hosted
+validation. Public admission, long sessions, physical and stable acceptance remain
+open; the preceding Windows exit-accounting failure remains retained.
+
+## Accepted development checkpoint: responsive final workload reporting
+
+Run `41142764069` passed all four hosted jobs, 1,358 Windows headless Rust tests
+plus one existing ignored test, and all 36 native suites with the extra listener
+close case. The final-reporting stack is on main at `20c74e8`. The first run's
+immediate-read failure is retained; it was corrected by waiting for the actual
+durable result through both raced handles, with production behavior and one-winner,
+one-row and uncertain-state assertions preserved. This acceptance does not include
+the later owned-exit or completion changes.
+
 ## In development: typed owned-source exit evidence
 
 The private prepared source now returns opaque local process-exit evidence with

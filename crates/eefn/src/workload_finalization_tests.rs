@@ -1,11 +1,11 @@
 // Included in the existing real-journal tests. All locks are actual SQLite
 // connection mutexes; there is a finite fallback if an assertion regresses.
-struct FinalBlocker {
+pub(super) struct FinalBlocker {
     release: Option<std::sync::mpsc::Sender<()>>,
     worker: Option<std::thread::JoinHandle<(bool, String)>>,
 }
 impl FinalBlocker {
-    async fn hold(ledger: &Arc<GrantLedger>, definition: &Definition) -> Self {
+    pub(super) async fn hold(ledger: &Arc<GrantLedger>, definition: &Definition) -> Self {
         let ledger = ledger.clone();
         let id = definition.grant_id.clone();
         let (release, wait) = std::sync::mpsc::channel();
@@ -30,7 +30,7 @@ impl FinalBlocker {
             worker: Some(worker),
         }
     }
-    fn release(mut self) -> (bool, String) {
+    pub(super) fn release(mut self) -> (bool, String) {
         let _ = self.release.take().unwrap().send(());
         self.worker.take().unwrap().join().unwrap()
     }

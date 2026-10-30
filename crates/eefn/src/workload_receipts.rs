@@ -5,10 +5,13 @@ use super::*;
 use crate::workload_leases::{Contract, LeaseProof, Policy, definition::Definition};
 
 const MAX_DEFINITION_BYTES: usize = 64 * 1024;
+#[path = "workload_completion.rs"]
+mod completion;
 #[path = "workload_event_journal.rs"]
 mod event_journal;
 #[path = "workload_finalization.rs"]
 mod finalization;
+pub use completion::Report as CompletionReport;
 pub(crate) fn event_reserved(db: &Connection) -> Result<usize> {
     event_journal::reserved(db)
 }
@@ -20,7 +23,7 @@ pub(crate) fn validate_schema(db: &Connection, version: i64) -> Result<()> {
     let fields = db.prepare("SELECT name,type,\"notnull\",dflt_value FROM pragma_table_info('execution_receipts') WHERE name IN ('receipt_kind','workload_definition') ORDER BY name")?
         .query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,Option<String>>(3)?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    if matches!(version, 3 | 4) {
+    if matches!(version, 3 | 4 | 5) {
         if fields
             != [
                 (
@@ -59,7 +62,7 @@ pub(crate) fn is_workload(db: &Connection, id: &str) -> Result<bool> {
 fn upgrade(db: &Connection, node: &str) -> Result<()> {
     crate::request_receipt::validate_owner(db, node)?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if matches!(version, 3 | 4) {
+    if matches!(version, 3 | 4 | 5) {
         return event_journal::upgrade(db, node);
     }
     if version != 2 {
@@ -90,12 +93,22 @@ pub struct Receipt {
     pub definition: Definition,
     pub execution_authorized: bool,
     pub restart_authorized: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<CompletionReport>,
 }
 impl Receipt {
     pub fn validate(&self) -> Result<()> {
         self.receipt.validate()?;
         let scope = self.definition.scope()?;
-        if self.schema_version != 2
+        let outcome_valid = match (&self.completion, self.receipt.state.as_str()) {
+            (None, "accepted" | "unknown") => self.schema_version == 2,
+            (Some(report), "completed") => {
+                report.validate(self)?;
+                self.schema_version == 3
+            }
+            _ => false,
+        };
+        if !outcome_valid
             || self.execution_authorized
             || self.restart_authorized
             || self.receipt.node_id != scope.executor_node
@@ -106,7 +119,6 @@ impl Receipt {
             || self.receipt.task_id != scope.task_id
             || self.receipt.attempt != scope.attempt
             || self.receipt.pipeline_progress.is_some()
-            || !matches!(self.receipt.state.as_str(), "accepted" | "unknown")
         {
             bail!("Damaged workload consumption evidence; no recovery or replay")
         }
@@ -124,11 +136,11 @@ fn read_core(db: &Connection, node: &str, issuer: Option<&str>, id: &str) -> Res
         bail!("Typed workload receipt unavailable")
     }
     let receipt = crate::request_receipt::read_consumed(db, node, issuer, id)?;
-    let (size,raw,limit,empty_report): (i64,Option<String>,i64,bool) = db.query_row(
-        "SELECT length(CAST(workload_definition AS BLOB)),CASE WHEN length(CAST(workload_definition AS BLOB))<=?2 THEN workload_definition ELSE NULL END,max_result_bytes,report IS NULL AND report_sha256 IS NULL FROM execution_receipts WHERE grant_id=?1",
-        params![id,i64::try_from(MAX_DEFINITION_BYTES)?], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+    let (size,raw,limit): (i64,Option<String>,i64) = db.query_row(
+        "SELECT length(CAST(workload_definition AS BLOB)),CASE WHEN length(CAST(workload_definition AS BLOB))<=?2 THEN workload_definition ELSE NULL END,max_result_bytes FROM execution_receipts WHERE grant_id=?1",
+        params![id,i64::try_from(MAX_DEFINITION_BYTES)?], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
     )?;
-    if !(1..=MAX_DEFINITION_BYTES as i64).contains(&size) || !empty_report {
+    if !(1..=MAX_DEFINITION_BYTES as i64).contains(&size) {
         bail!("Damaged or oversized workload receipt; retained without repair")
     }
     let raw = raw.context("Workload definition unavailable")?;
@@ -138,12 +150,14 @@ fn read_core(db: &Connection, node: &str, issuer: Option<&str>, id: &str) -> Res
     {
         bail!("Workload definition or reporting reservation changed")
     }
+    let completion = completion::decode(db, id, &receipt.state)?;
     let result = Receipt {
-        schema_version: 2,
+        schema_version: if completion.is_some() { 3 } else { 2 },
         receipt,
         definition,
         execution_authorized: false,
         restart_authorized: false,
+        completion,
     };
     result.validate()?;
     Ok(result)
@@ -241,6 +255,44 @@ impl Consumption {
     where
         F: std::future::Future<Output = Result<T>>,
     {
+        let (consumed, finished) = self.drive(renewals, operation).await?;
+        consumed.retire().await?;
+        Ok(finished.value)
+    }
+    pub(crate) async fn supervise_observed<F>(
+        self,
+        renewals: crate::workload_leases::Renewals,
+        operation: F,
+    ) -> Result<Receipt>
+    where
+        F: std::future::Future<Output = Result<crate::workload_runtime::ObservedWorkload>>,
+    {
+        let (mut consumed, finished) = self.drive(renewals, operation).await?;
+        let evidence = completion::Evidence::from_observed(
+            consumed.contract.clone(),
+            finished.boundary,
+            finished.value,
+        )?;
+        consumed.reporting.retire();
+        let slot = consumed
+            .final_slot
+            .take()
+            .context("Workload final checkpoint already delegated")?;
+        let stopped = consumed.stop.receiver.clone();
+        finalization::start_with(&consumed.ledger, slot, move |journal| {
+            completion::save(journal, evidence, stopped)
+        })?
+        .wait()
+        .await?
+    }
+    async fn drive<F, T>(
+        self,
+        renewals: crate::workload_leases::Renewals,
+        operation: F,
+    ) -> Result<(Self, crate::workload_leases::Finished<T>)>
+    where
+        F: std::future::Future<Output = Result<T>>,
+    {
         let mut running = Running {
             operation: Some(Box::pin(operation)),
             consumption: Some(self),
@@ -255,7 +307,7 @@ impl Consumption {
             let contract = consumed.contract.clone();
             let policy = consumed.policy.clone();
             let mut stop = consumed.stop.receiver.clone();
-            let operation = crate::workload_leases::supervise_reporting(
+            let operation = crate::workload_leases::supervise_finished(
                 &contract,
                 &policy,
                 initial,
@@ -282,13 +334,13 @@ impl Consumption {
         };
         // Drop the exact source and reporting window before starting any save.
         drop(running.operation.take());
-        let retired = running.consumption.take().unwrap().retire().await;
+        let consumed = running.consumption.take().unwrap();
         match result {
-            Err(error) => Err(error),
-            Ok(value) => {
-                retired?;
-                Ok(value)
+            Err(error) => {
+                let _ = consumed.retire().await;
+                Err(error)
             }
+            Ok(finished) => Ok((consumed, finished)),
         }
     }
 }

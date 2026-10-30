@@ -2,6 +2,62 @@ use super::*;
 use serde_json::json;
 use std::time::Duration;
 
+#[test]
+fn final_filter_seal_counts_quiet_tail_and_cannot_be_reused() {
+    let mut filter = Filter::new(&definition()).unwrap();
+    let start = Instant::now();
+    let first = filter
+        .observe(observation(1, Some(false)), start)
+        .unwrap()
+        .unwrap();
+    assert!(
+        filter
+            .observe(observation(2, Some(false)), at(start, 1))
+            .unwrap()
+            .is_none()
+    );
+    let summary = crate::python::stream::StreamSummary {
+        stream_id: uuid::Uuid::new_v4().to_string(),
+        observations: 2,
+        source_frames: 160,
+    };
+    let seal = filter.seal(&summary).unwrap();
+    assert!(seal.confirms(1, serde_json::to_vec(&first).unwrap().len(), &first));
+    assert!(!seal.confirms(2, serde_json::to_vec(&first).unwrap().len(), &first));
+    assert!(filter.seal(&summary).is_err());
+    assert!(
+        filter
+            .observe(observation(3, Some(false)), at(start, 2))
+            .is_err()
+    );
+}
+#[test]
+fn missing_observations_or_failed_filter_cannot_be_sealed_as_completed() {
+    let mut filter = Filter::new(&definition()).unwrap();
+    filter
+        .observe(observation(1, Some(false)), Instant::now())
+        .unwrap();
+    let mut summary = crate::python::stream::StreamSummary {
+        stream_id: uuid::Uuid::new_v4().to_string(),
+        observations: 2,
+        source_frames: 160,
+    };
+    assert!(filter.seal(&summary).is_err());
+    summary.observations = 1;
+    summary.source_frames = 80;
+    assert!(
+        filter.seal(&summary).is_err(),
+        "An invalid finish cannot retry a retired filter"
+    );
+    let mut filter = Filter::new(&definition()).unwrap();
+    assert!(
+        filter
+            .observe(observation(2, Some(false)), Instant::now())
+            .is_err()
+    );
+    assert!(filter.seal(&summary).is_err());
+}
+
 fn definition() -> Definition {
     serde_json::from_value(json!({
         "schema_version":2,"grant_id":uuid::Uuid::new_v4().to_string(),

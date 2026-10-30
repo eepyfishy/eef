@@ -132,7 +132,7 @@ pub(crate) fn validate_owner(db: &rusqlite::Connection, node: &str) -> Result<()
         [],
         |r| r.get(0),
     )?;
-    if !matches!(version, 1 | 2 | 3 | 4) || owner != node {
+    if !matches!(version, 1 | 2 | 3 | 4 | 5) || owner != node {
         bail!("Receipt journal version/owner changed")
     }
     crate::grants::workload::validate_schema(db, version)?;

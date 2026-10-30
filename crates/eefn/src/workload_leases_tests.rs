@@ -1,5 +1,54 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[tokio::test]
+async fn sealed_finish_is_historical_and_never_restores_reporting_after_lease_expiry() {
+    let c = contract();
+    let reporting = ReportingAuthority::new(&c).unwrap();
+    let (_sender, renewals) = renewal_channel();
+    let finished = supervise_finished(
+        &c,
+        &policy(),
+        proof(&c, 1, 900, 40_000),
+        renewals,
+        async { Ok(7) },
+        reporting.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(finished.value, 7);
+    finished.boundary.validate(&c).unwrap();
+    let mut other = c.clone();
+    other.scope.job_id = "e".repeat(32);
+    assert!(finished.boundary.validate(&other).is_err());
+    assert!(reporting.checkpoint(&c).is_err());
+    tokio::time::sleep_until(tokio::time::Instant::from_std(finished.boundary.deadline)).await;
+    finished.boundary.validate(&c).unwrap();
+    assert!(reporting.checkpoint(&c).is_err());
+}
+#[tokio::test]
+async fn final_poll_retirement_cannot_mint_a_finished_boundary() {
+    let c = contract();
+    let reporting = ReportingAuthority::new(&c).unwrap();
+    let retire = reporting.clone();
+    let (_sender, renewals) = renewal_channel();
+    assert!(
+        supervise_finished(
+            &c,
+            &policy(),
+            proof(&c, 1, 900, 40_000),
+            renewals,
+            async move {
+                retire.retire();
+                Ok(7)
+            },
+            reporting.clone()
+        )
+        .await
+        .is_err()
+    );
+    assert!(reporting.checkpoint(&c).is_err());
+}
 fn contract() -> Contract {
     Contract {
         schema_version: 2,

@@ -474,7 +474,13 @@ pub fn supervise<F, T>(
 where
     F: Future<Output = Result<T>>,
 {
-    supervise_inner(contract, policy, initial, renewals, operation, None)
+    async move {
+        Ok(
+            supervise_inner(contract, policy, initial, renewals, operation, None)
+                .await?
+                .value,
+        )
+    }
 }
 
 pub(crate) fn supervise_reporting<F, T>(
@@ -488,6 +494,54 @@ pub(crate) fn supervise_reporting<F, T>(
 where
     F: Future<Output = Result<T>>,
 {
+    async move {
+        Ok(
+            supervise_finished(contract, policy, initial, renewals, operation, reporting)
+                .await?
+                .value,
+        )
+    }
+}
+
+/// Local historical boundary, never a lease, renewal or restart handle. Only
+/// the supervisor can seal it after its operation's final validated poll.
+pub(crate) struct FinishBoundary {
+    digest: String,
+    sequence: u64,
+    finished_at: Instant,
+    deadline: Instant,
+}
+impl FinishBoundary {
+    pub(crate) fn validate(&self, contract: &Contract) -> Result<()> {
+        ensure!(
+            self.digest == contract.digest()?
+                && self.sequence > 0
+                && self.finished_at < self.deadline,
+            "Finished workload boundary differs from its contract"
+        );
+        // Historical persistence may finish later. This value authorizes no
+        // source work and has no method that renews or reconstructs a lease.
+        Ok(())
+    }
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+pub(crate) struct Finished<T> {
+    pub(crate) value: T,
+    pub(crate) boundary: FinishBoundary,
+}
+pub(crate) async fn supervise_finished<F, T>(
+    contract: &Contract,
+    policy: &Policy,
+    initial: LeaseProof,
+    renewals: Renewals,
+    operation: F,
+    reporting: ReportingAuthority,
+) -> Result<Finished<T>>
+where
+    F: Future<Output = Result<T>>,
+{
     supervise_inner(
         contract,
         policy,
@@ -496,6 +550,7 @@ where
         operation,
         Some(reporting),
     )
+    .await
 }
 
 async fn supervise_inner<F, T>(
@@ -505,10 +560,11 @@ async fn supervise_inner<F, T>(
     mut renewals: Renewals,
     operation: F,
     reporting: Option<ReportingAuthority>,
-) -> Result<T>
+) -> Result<Finished<T>>
 where
     F: Future<Output = Result<T>>,
 {
+    let active_reporting = reporting.clone();
     let mut window = Window::new_with_reporting(contract, policy, initial, reporting)?;
     let mut closed = false;
     tokio::pin!(operation);
@@ -518,7 +574,19 @@ where
             biased;
             _=tokio::time::sleep_until(tokio::time::Instant::from_std(window.deadline.min(window.session_deadline)))=>return Err(anyhow::anyhow!("Workload lease expired")),
             proof=renewals.0.recv(),if !closed=>match proof {Some(proof)=>window.advance(proof)?,None=>closed=true},
-            value=&mut operation=>{window.live()?;return value},
+            value=&mut operation=>{
+                window.live()?;
+                if let Some(reporting) = &active_reporting {
+                    reporting.checkpoint(contract)?.check(contract)?;
+                }
+                let value = value?;
+                let boundary = FinishBoundary {
+                    digest: window.digest.clone(), sequence: window.sequence,
+                    finished_at: Instant::now(), deadline: window.deadline.min(window.session_deadline),
+                };
+                boundary.validate(contract)?;
+                return Ok(Finished { value, boundary });
+            },
         }
     }
 }

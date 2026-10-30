@@ -4,8 +4,9 @@ The version-three sections below describe the original consumption checkpoint.
 The current internal path adds [version-four durable events](WORKLOAD-EVENTS.md)
 and bounded asynchronous final uncertainty saves. Its prepared source also returns
 [opaque local job-exit evidence](PREPARED-MICROPHONE.md#typed-owned-source-exit-evidence-in-development).
-These follow-ups still do not persist a completed workload or expose public
-session admission; their own hosted-validation boundaries apply.
+The subsequent [completion draft](WORKLOAD-COMPLETION.md) adds version-five
+historical completion only for the fully witnessed prepared path. Public session
+admission remains absent; each follow-up's own hosted-validation boundary applies.
 
 The node journal draft extends the existing `GrantLedger` and
 `execution_receipts` table. It does not add another job database. Operations and

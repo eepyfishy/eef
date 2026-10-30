@@ -43,6 +43,20 @@ pub(crate) struct Filter {
     events: u64,
     bytes: usize,
     failed: bool,
+    last_event: Option<Event>,
+}
+
+/// Exact final filtered metadata, local and single-use. A transport summary
+/// alone cannot construct it or attest that all required events were saved.
+pub(crate) struct EventSeal {
+    count: u64,
+    bytes: usize,
+    last: Event,
+}
+impl EventSeal {
+    pub(crate) fn confirms(&self, count: u64, bytes: usize, last: &Event) -> bool {
+        self.count == count && self.bytes == bytes && self.last == *last
+    }
 }
 impl Filter {
     pub(crate) fn new(definition: &Definition) -> Result<Self> {
@@ -65,6 +79,27 @@ impl Filter {
             events: 0,
             bytes: 0,
             failed: false,
+            last_event: None,
+        })
+    }
+
+    pub(crate) fn seal(
+        &mut self,
+        summary: &crate::python::stream::StreamSummary,
+    ) -> Result<EventSeal> {
+        let valid = !self.failed
+            && summary.observations == self.last_source_sequence
+            && summary.source_frames == self.last_source_frames
+            && self.events > 0;
+        self.failed = true;
+        ensure!(valid, "Finished stream differs from filtered observations");
+        Ok(EventSeal {
+            count: self.events,
+            bytes: self.bytes,
+            last: self
+                .last_event
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("No final filtered event"))?,
         })
     }
 
@@ -135,6 +170,7 @@ impl Filter {
         self.bytes += bytes;
         self.last_active = Some(event.active);
         self.last_event_at = Some(now);
+        self.last_event = Some(event.clone());
         Ok(Some(event))
     }
 }

@@ -76,13 +76,13 @@ fn source_retired_before_uncertainty(evidence: &SourceEvidence) {
     );
 }
 
-fn policy() -> Policy {
+pub(super) fn policy() -> Policy {
     Policy {
         enabled: true,
         ..Default::default()
     }
 }
-fn definition() -> Definition {
+pub(super) fn definition() -> Definition {
     let g = crate::grants::tests::grant();
     Definition {
         schema_version: 2,
@@ -126,7 +126,7 @@ fn definition() -> Definition {
         },
     }
 }
-async fn proof_for(d: &Definition, remaining_ms: u64) -> LeaseProof {
+pub(super) async fn proof_for(d: &Definition, remaining_ms: u64) -> LeaseProof {
     let c = d.lease_contract().unwrap();
     let mut issuer = IssuerWindow::new(
         c.clone(),
@@ -148,7 +148,7 @@ async fn proof_for(d: &Definition, remaining_ms: u64) -> LeaseProof {
         .await
         .unwrap()
 }
-async fn consume(ledger: &Arc<GrantLedger>, d: Definition) -> Result<Consumption> {
+pub(super) async fn consume(ledger: &Arc<GrantLedger>, d: Definition) -> Result<Consumption> {
     let proof = proof_for(&d, 50_000).await;
     let (issuer, session, node) = (
         d.issuer_id.clone(),

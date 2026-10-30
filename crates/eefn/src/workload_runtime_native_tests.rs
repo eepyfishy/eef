@@ -142,17 +142,22 @@ async fn native_prepared_source_runs_exact_bytes_with_consumption_and_filtered_e
     tokio::fs::write(trace.path().join("observed"), b"held handles")
         .await
         .unwrap();
-    let observed = tokio::time::timeout(std::time::Duration::from_secs(15), &mut run)
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(15), &mut run)
         .await
         .unwrap()
         .unwrap();
-    let summary = observed.summary();
+    assert_eq!(completed.receipt.state, "completed");
+    assert_eq!(completed.definition, f.definition);
+    assert!(!completed.execution_authorized && !completed.restart_authorized);
+    let report = completed.completion.as_ref().unwrap();
     assert_eq!(
-        observed.source_digest(),
+        report.adapter_sha256,
         crate::workload_sources::microphone_adapter_digest()
     );
-    assert_eq!(summary.stream_id, f.definition.grant_id);
-    assert_eq!((summary.observations, summary.source_frames), (5, 400));
+    assert_eq!(completed.receipt.grant_id, f.definition.grant_id);
+    assert_eq!((report.source_observations, report.source_frames), (5, 400));
+    assert!(report.owned_process_exit_observed && !report.physical_effects_stopped);
+    assert_eq!(report.event_count, 4);
     assert!(
         processes.exited_now(),
         "Normal return requires owned root and descendant exit"
@@ -188,11 +193,15 @@ async fn native_prepared_source_runs_exact_bytes_with_consumption_and_filtered_e
     ] {
         assert!(!encoded.contains(private));
     }
-    native_unknown(&f, &ledger).await;
+    let reopened = crate::grants::GrantLedger::open(&f.dir.path().join("receipts.db"), Default::default(), "node").unwrap();
+    let durable = reopened.workload_receipt(&f.definition.issuer_id, &f.definition.grant_id).unwrap();
+    assert_eq!(json!(durable), json!(completed));
     let retained = ledger
         .workload_events(&f.definition.issuer_id, &f.definition.grant_id, 0, 128)
         .unwrap();
     assert_eq!(retained["event_count"], 4);
+    assert_eq!(retained["state"], "completed");
+    assert_eq!(retained["owned_process_exit_observed"], true);
     assert_eq!(retained["source_termination_confirmed"], false);
 }
 

@@ -24,6 +24,17 @@ pub(crate) struct PreparedMicrophone {
     bounds: StreamBounds,
     reservation: crate::capture_ownership::Reservation,
 }
+/// Only the exact prepared path can pair owned source exit with its filter seal.
+/// This is local, single-use evidence, never a serializable network parameter.
+pub(crate) struct ObservedWorkload {
+    source: ObservedStream,
+    events: crate::workload_events::EventSeal,
+}
+impl ObservedWorkload {
+    pub(crate) fn into_parts(self) -> (ObservedStream, crate::workload_events::EventSeal) {
+        (self.source, self.events)
+    }
+}
 impl NodeService {
     #[allow(dead_code)]
     pub(crate) fn prepare_microphone(
@@ -128,7 +139,7 @@ impl PreparedMicrophone {
         consumed: crate::grants::workload::Consumption,
         renewals: Renewals,
         observe: F,
-    ) -> Result<ObservedStream>
+    ) -> Result<crate::grants::workload::Receipt>
     where
         F: FnMut(crate::workload_events::Event) -> C + Send,
         C: Future<Output = Result<()>> + Send,
@@ -155,7 +166,10 @@ impl PreparedMicrophone {
             events: self.definition.events.clone(),
         })?;
         let deadline = tokio::time::Instant::from_std(consumed.session_deadline()?);
-        let mut events = crate::workload_events::Filter::new(&self.definition)?;
+        let events = Arc::new(std::sync::Mutex::new(crate::workload_events::Filter::new(
+            &self.definition,
+        )?));
+        let completed_events = events.clone();
         let reporting = consumed.reporting_authority();
         let reporting_contract = self.definition.lease_contract()?;
         let writer = Arc::new(consumed.event_writer()?);
@@ -169,7 +183,9 @@ impl PreparedMicrophone {
             self.reservation,
             move |observation| {
                 let pending = events
-                    .observe(observation, std::time::Instant::now())
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("Workload filter unavailable"))
+                    .and_then(|mut events| events.observe(observation, std::time::Instant::now()))
                     .and_then(|event| {
                         event
                             .map(|event| {
@@ -206,8 +222,16 @@ impl PreparedMicrophone {
                 }
             },
         );
+        let operation = async move {
+            let source = operation.await?;
+            let events = completed_events
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Workload filter unavailable"))?
+                .seal(source.summary())?;
+            Ok(ObservedWorkload { source, events })
+        };
         consumed
-            .supervise(
+            .supervise_observed(
                 renewals,
                 self.service.supervise_listening_epoch(
                     &self.runtime_id,

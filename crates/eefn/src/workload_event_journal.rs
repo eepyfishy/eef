@@ -35,7 +35,7 @@ pub(super) fn schema(db: &Connection, version: i64) -> Result<()> {
         ),
     ];
     ensure!(
-        if version == 4 {
+        if matches!(version, 4 | 5) {
             found == expected
         } else {
             found.is_empty()
@@ -91,7 +91,7 @@ pub(super) fn initialize(db: &Connection, definition: &Definition) -> Result<()>
 pub(super) fn upgrade(db: &Connection, node: &str) -> Result<()> {
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     schema(db, version)?;
-    if version == 4 {
+    if matches!(version, 4 | 5) {
         return Ok(());
     }
     ensure!(
@@ -235,7 +235,29 @@ pub(super) fn audit(db: &Connection, receipt: &Receipt) -> Result<()> {
         prefix == saved.prefix && bytes == saved.bytes,
         "Workload event summary changed"
     );
-    Ok(())
+    super::completion::audit_prefix(db, receipt)
+}
+pub(super) fn completion_prefix(
+    db: &Connection,
+    receipt: &Receipt,
+) -> Result<(u64, usize, String, Event, u64)> {
+    let saved = state(db, &receipt.definition)?;
+    ensure!(
+        saved.count > 0,
+        "Finished workload has no retained initial event"
+    );
+    let last = row(db, receipt, saved.count)?;
+    ensure!(
+        last.prefix == saved.prefix,
+        "Finished workload event tail changed"
+    );
+    Ok((
+        saved.count,
+        saved.bytes,
+        saved.prefix,
+        last.record.event,
+        last.record.lease_sequence,
+    ))
 }
 pub(super) fn audit_orphans(db: &Connection) -> Result<()> {
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -400,6 +422,7 @@ pub(super) fn inspect(
     Ok(
         json!({"schema_version":1,"grant_id":receipt.definition.grant_id,"grant_sha256":receipt.definition.scope()?.grant_sha256,
         "state":receipt.receipt.state,"durable_events":records,"event_count":count,"event_bytes":saved.as_ref().map_or(0,|s|s.bytes),
-        "next_sequence":end,"more":end<count,"execution_authorized":false,"restart_authorized":false,"source_termination_confirmed":false}),
+        "next_sequence":end,"more":end<count,"execution_authorized":false,"restart_authorized":false,"source_termination_confirmed":false,
+        "owned_process_exit_observed":receipt.completion.as_ref().is_some_and(|report|report.owned_process_exit_observed)}),
     )
 }
