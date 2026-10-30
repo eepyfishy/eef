@@ -187,6 +187,13 @@ and [process termination signalling](https://learn.microsoft.com/en-us/windows/w
 Job accounting and best-effort process notifications alone are not used as a
 replacement for the retained process-handle observations.
 
+Strict lifetime coverage applies to reserved captures and opaque source outcomes.
+Ordinary Python calls and public transport summaries without a microphone
+reservation retain their prior cleanup semantics and cannot mint owned-source
+evidence. A native metadata regression includes an already exited descendant to
+keep that distinction explicit; no reserved source falls back to the ordinary
+path when its handle coverage is incomplete.
+
 The subsequent [durable completion draft](WORKLOAD-COMPLETION.md) pairs this owned
 source evidence with its final filter seal inside the prepared runner. It keeps
 the same source/listening/lease supervision, retires the source before the bounded

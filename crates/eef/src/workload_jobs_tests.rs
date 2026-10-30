@@ -121,6 +121,7 @@ fn synthetic_ack(d: &Definition) -> eefn::grants::workload::Receipt {
         definition: d.clone(),
         execution_authorized: false,
         restart_authorized: false,
+        completion: None,
         receipt: eefn::request_receipt::ConsumedReceipt {
             schema_version: 1,
             node_id: d.executor_node.clone(),

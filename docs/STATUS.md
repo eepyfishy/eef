@@ -5,6 +5,21 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: durable prepared-source completion
 
+The first completion candidate `0d9b083` failed compilation in run `41145734973`
+because the coordinator's synthetic acknowledgement fixture omitted the new
+optional `completion` field. The follow-up explicitly sets it to `None`, keeping
+that fixture an accepted-only acknowledgement. The failed run remains retained.
+
+The owned-exit correction `8ae92f6` passed all Rust cases, including the held-handle
+and missed-descendant tests, but its native bundled-plugin startup gate failed
+with a retained `other` failure; the exact cause is unproven. Review also found
+that strict source witnesses were being required for ordinary Python calls without
+a microphone reservation. The follow-up keeps strict proof on reserved sources and
+restores the previous cleanup boundary for ordinary transport summaries. An added
+native bundle case requires successful metadata inspection after a short-lived
+owned child has already exited. Original startup assertions stay intact; fresh
+full validation is required.
+
 The [completion draft](WORKLOAD-COMPLETION.md) requires the exact prepared owned
 source outcome, final filter seal and supervisor's validated finish boundary.
 The bounded final worker audits the durable prefix and stores historical completion

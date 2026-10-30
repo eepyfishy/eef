@@ -487,10 +487,14 @@ impl PythonRuntime {
                     let status = child.wait().await.context("Stream child wait failed")?;
                     #[cfg(windows)]
                     {
-                        let exit = tree.terminate_and_witness_until(deadline).await?;
                         if let Some(capture) = &mut capture {
+                            let exit = tree.terminate_and_witness_until(deadline).await?;
                             capture.observed_exit(&exit)?;
                             owned_exit = Some(exit);
+                        } else {
+                            // Public transport summaries retain their existing
+                            // cleanup boundary; they cannot mint ObservedStream.
+                            tree.terminate_and_observe_until(deadline).await?;
                         }
                     }
                     Ok::<_, anyhow::Error>(status)

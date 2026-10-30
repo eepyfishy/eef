@@ -22,13 +22,14 @@ async function json(url){const r=await fetch(url,{signal:AbortSignal.timeout(100
 async function setupText(f){const c=start(join(bin,'eefn.exe'),['--config',f.config,'setup']);const timer=setTimeout(()=>c.kill(),30000);try{const result=await c.result;assert.equal(result.code,0,'Setup check failed; private evidence '+scratch);return result.out;}finally{clearTimeout(timer);}}
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 async function plugin(directory,marker,label){await mkdir(owned(directory),{recursive:true});await writeFile(owned(join(directory,'audio_output.py')),`from pathlib import Path\nPath(${JSON.stringify(marker)}).write_text(${JSON.stringify(label)}, encoding='utf-8')\nCAPABILITY='audio.play'\nACTIONS=['play','stop']\nPARAMS_SCHEMA={}\ndef handle(action, params):\n    raise RuntimeError('Synthetic metadata only; media invocation forbidden')\n`);}
-async function fixture(name,{versioned=true,missingPlugin=false,missingPython=false,relativePython=false,refusingPython=false,brokenPlugin=false,llama=false,custom=false}={}){
+async function fixture(name,{versioned=true,missingPlugin=false,missingPython=false,relativePython=false,refusingPython=false,brokenPlugin=false,finishedDescendant=false,llama=false,custom=false}={}){
  const install=owned(join(scratch,name)),bundle=versioned?join(install,'versions',version):install;await mkdir(bundle,{recursive:true});
  const exe=join(bundle,'eefn.exe');await alias(join(bin,'eefn.exe'),exe);
  await writeFile(owned(join(bundle,'bundle.json')),JSON.stringify({name:'eefn',version}));
  const oldMarker=join(install,'old-plugin.marker'),currentMarker=join(install,'current-plugin.marker'),pathMarker=join(install,'path-python.marker');
  if(versioned)await plugin(join(install,'python/plugins'),oldMarker,'old root must not run');
  if(!missingPlugin)await plugin(join(bundle,'python/plugins'),currentMarker,'current bundle');
+ if(finishedDescendant){const path=owned(join(bundle,'python/plugins/audio_output.py'));await writeFile(path,"import subprocess, sys\nsubprocess.run([sys.executable, '-I', '-B', '-c', 'pass'], check=True)\n"+await readFile(path,'utf8'));}
  if(brokenPlugin)await writeFile(owned(join(bundle,'python/plugins/audio_output.py')),"raise RuntimeError('PRIVATE plugin startup output sentinel')\n");
  const aliasDir=join(install,'path-bin');await alias(join(bin,'examples/component-fixture.exe'),join(aliasDir,'python.exe'));
  const config=join(install,'node.json'),api=await port(),url=`http://127.0.0.1:${api}`;
@@ -68,6 +69,10 @@ try{
  assert(await exists(current.currentMarker),'Selected version must inspect its own bundled plugin, not the old installation root');
  assert(!(await exists(current.oldMarker)),'Old root plugin must not execute');const currentStatus=await current.status();assert.equal(currentStatus.python_bridge.enabled,true);
  assert.deepEqual(currentStatus.python_startup,{complete:true,interpreter:{state:'available'},builtin_plugins:{requested:1,loaded:1,failed:0,last_failure:null},custom_plugins:{requested:0,loaded:0,failed:0,last_failure:null}});await current.stop();
+ const metadataChild=await fixture('metadata-child',{finishedDescendant:true});
+ assert(await exists(metadataChild.currentMarker),'Ordinary metadata inspection must run its selected plugin after its owned short-lived child exits');
+ assert.deepEqual((await metadataChild.status()).python_startup,{complete:true,interpreter:{state:'available'},builtin_plugins:{requested:1,loaded:1,failed:0,last_failure:null},custom_plugins:{requested:0,loaded:0,failed:0,last_failure:null}});
+ assert(!(await exists(metadataChild.oldMarker)));assert(!(await exists(metadataChild.pathMarker)));await metadataChild.stop();
  const missing=await fixture('missing-plugin',{missingPlugin:true});
  assert((await missing.status()).startup_issues.includes('builtin_plugin_unavailable'));assert(!(await exists(missing.oldMarker)),'Missing selected plugin must not borrow old root or CWD');
  assert((await setupText(missing)).includes('Repair this node package'));await missing.stop();

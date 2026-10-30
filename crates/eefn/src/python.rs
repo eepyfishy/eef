@@ -479,9 +479,13 @@ impl PythonRuntime {
                 let status = child.wait().await.context("Python child wait failed")?;
                 #[cfg(windows)]
                 {
-                    let exit = tree.terminate_and_witness_until(deadline).await?;
                     if let Some(capture) = &mut capture {
+                        let exit = tree.terminate_and_witness_until(deadline).await?;
                         capture.observed_exit(&exit)?;
+                    } else {
+                        // Ordinary bridge calls reserve no microphone and make
+                        // no typed owned-source completion claim.
+                        tree.terminate_and_observe_until(deadline).await?;
                     }
                 }
                 Ok(status)
