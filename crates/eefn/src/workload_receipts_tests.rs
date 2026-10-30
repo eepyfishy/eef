@@ -572,6 +572,10 @@ async fn independent_handles_can_consume_one_attempt_only_once() {
     );
     drop(a);
     drop(b);
+    // Both raced handles must observe the winner's actual final save, rather
+    // than treating nonblocking Drop as synchronous persistence.
+    wait_unknown(&one, &d).await;
+    wait_unknown(&two, &d).await;
     assert_eq!(
         one.workload_receipt(&d.issuer_id, &d.grant_id)
             .unwrap()

@@ -15,6 +15,14 @@ tests require responsive shutdown while storage is blocked. Hosted validation of
 this change is pending; durable completion, authenticated public admission,
 long-session transport and physical acceptance remain open.
 
+The first asynchronous-finalization run `41142312081` exposed an immediate-read
+assumption in the independent-handle race regression: consumption was fenced to
+one winner, but its dropped token's queued final save had not finished at the
+`unknown` assertion. The follow-up awaits the same durable result through both
+handles. The one-winner, one-row and uncertain-state assertions remain. This is
+a test synchronization correction; the original run is retained as failed and
+the unchanged source requires a new hosted validation with that correction.
+
 ## Accepted development checkpoint: bounded durable source events
 
 The [event journal draft](WORKLOAD-EVENTS.md) adds bounded event state/rows inside
