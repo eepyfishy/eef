@@ -1,6 +1,39 @@
 use super::*;
 use tokio::io::AsyncWriteExt;
 
+#[test]
+fn pinned_source_owns_exact_utf8_bytes_without_reopening_or_serializing_paths() {
+    let mut bytes = b"def stream(action, params):\n    yield params\n".to_vec();
+    let digest = hex::encode(Sha256::digest(&bytes));
+    let source = PinnedStreamSource::new(&bytes, &digest).unwrap();
+    bytes.fill(b'x');
+    assert_eq!(source.digest(), digest);
+    assert_eq!(
+        hex::encode(Sha256::digest(source.source_utf8.as_bytes())),
+        digest
+    );
+    assert!(!source.source_utf8.contains('x'));
+    assert!(PinnedStreamSource::new(&bytes, &digest).is_err());
+}
+
+#[test]
+fn pinned_source_rejects_bad_digest_encoding_and_size_before_a_process_can_start() {
+    for bytes in [vec![], vec![b'x'; 48 * 1024 + 1], vec![0], vec![255]] {
+        let digest = hex::encode(Sha256::digest(&bytes));
+        assert!(PinnedStreamSource::new(&bytes, &digest).is_err());
+    }
+    let bytes = b"def stream(action, params):\n    yield params\n";
+    let digest = hex::encode(Sha256::digest(bytes));
+    for changed in [
+        digest.to_uppercase(),
+        "a".repeat(63),
+        "g".repeat(64),
+        "0".repeat(64),
+    ] {
+        assert!(PinnedStreamSource::new(bytes, &changed).is_err());
+    }
+}
+
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }

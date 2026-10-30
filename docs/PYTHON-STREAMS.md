@@ -6,7 +6,16 @@ Python bridge. An explicitly selected trusted plugin implements
 observation to its caller while the source is still running, rather than
 buffering a complete recording before returning.
 
-Each invocation has a fresh canonical stream ID and an absolute caller deadline,
+The trusted-library `observe_pinned_stream` counterpart accepts an immutable
+`PinnedStreamSource`, constructed from UTF-8 bytes and their expected SHA-256.
+It executes those bytes directly instead of opening a plugin path. Both Rust
+and Python check source identity before the module can run. Encoded source bytes
+count against the existing request limit, with a 48 KiB source ceiling. The
+original path-based API remains available for trusted extensions. Neither path
+is a network code-submission interface or a workload authorization mechanism.
+Pinned module bytes do not pin imported packages or attest physical hardware.
+
+Each invocation, including pinned execution, has a fresh canonical stream ID and an absolute caller deadline,
 tightened by the existing local Python timeout. The protocol requires one ready
 frame, ordered observations and one matching end frame followed by clean EOF and
 a successful process exit. Readiness confirms the transport, not a device opening.
@@ -30,6 +39,14 @@ job. This does not establish that effects in shared services, network peers or
 other external systems stopped, and it provides no rollback guarantee.
 
 ## Validation and remaining integration
+
+The pinned-source development increment adds two Rust identity/input-bound
+regressions. The native microphone-stream fixture now also executes the actual
+energy iterator from reviewed bytes with a fake device, replaces/deletes a
+nearby source path, and checks digest/schema/request-budget rejection before
+source effects. Its ten cases retain the original three file-based checks.
+Hosted compilation and native acceptance for this increment are pending; no
+local heavy build or physical microphone test has been run.
 
 Eight Rust tests cover framing, scope/order, limits, uncertainty, observer failure
 and backpressure. `tools/test-python-stream.mjs` additionally uses an existing

@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: execute reviewed streaming source bytes
+
+The trusted Python stream bridge gains an immutable source object and a pinned
+execution path. Rust and Python validate its digest before module effects; encoded
+source bytes consume the existing request budget. Existing path-based extensions,
+timeouts, output limits and owned Windows job handling are retained. Two new Rust
+regressions and expanded native fake-device tests cover byte ownership, changed or
+missing files, invalid digests/schema and request limits. Hosted checks are pending.
+This closes a source substitution gap in the library; admitted continuous work,
+renewal, resource accounting and durable event transport remain incomplete.
+
 ## In development: owner approval for reviewed continuous sessions
 
 `eef requests approve-session` and its version-two owner API retain exact

@@ -6,20 +6,35 @@ protocol readiness only. This host is not called by node startup or ordinary RPC
 """
 import contextlib
 import importlib.util
+import hashlib
 import json
 import pathlib
 import sys
+import types
 import uuid
 
 
 def main():
     request = json.load(sys.stdin)
+    pinned = sys.argv[1:] == ["--pinned-source-v1", "--reviewed-bytes"]
+    fields = {"schema_version", "stream_id", "action", "params", "bounds"}
+    if pinned:
+        fields |= {"source_utf8", "source_sha256"}
     if (not isinstance(request, dict)
-            or set(request) != {"schema_version", "stream_id", "action", "params", "bounds"}
-            or type(request["schema_version"]) is not int or request["schema_version"] != 1
+            or set(request) != fields
+            or type(request["schema_version"]) is not int
+            or request["schema_version"] != (2 if pinned else 1)
             or not isinstance(request["params"], dict)
             or not isinstance(request["action"], str)):
         raise ValueError("stream request")
+    if pinned:
+        source, digest = request["source_utf8"], request["source_sha256"]
+        if (not isinstance(source, str) or not source or "\0" in source
+                or len(source.encode("utf8")) > 48 * 1024
+                or not isinstance(digest, str) or len(digest) != 64
+                or any(c not in "0123456789abcdef" for c in digest)
+                or hashlib.sha256(source.encode("utf8")).hexdigest() != digest):
+            raise ValueError("stream source")
     stream_id = request["stream_id"]
     parsed = uuid.UUID(stream_id)
     if str(parsed) != stream_id or not parsed.int:
@@ -46,14 +61,21 @@ def main():
         wire.write(encoded)
         wire.flush()
 
-    spec = importlib.util.spec_from_file_location("eef_stream_plugin", pathlib.Path(sys.argv[1]).resolve())
-    if spec is None or spec.loader is None:
-        raise ValueError("stream module")
-    module = importlib.util.module_from_spec(spec)
+    if pinned:
+        module = types.ModuleType("eef_stream_plugin")
+        module.__file__ = "<eef-pinned-stream>"
+    else:
+        spec = importlib.util.spec_from_file_location("eef_stream_plugin", pathlib.Path(sys.argv[1]).resolve())
+        if spec is None or spec.loader is None:
+            raise ValueError("stream module")
+        module = importlib.util.module_from_spec(spec)
     iterator = None
     try:
         with contextlib.redirect_stdout(sys.stderr):
-            spec.loader.exec_module(module)
+            if pinned:
+                exec(compile(source, "<eef-pinned-stream>", "exec"), module.__dict__)
+            else:
+                spec.loader.exec_module(module)
             handler = getattr(module, "stream", None)
             if not callable(handler):
                 raise ValueError("stream handler")

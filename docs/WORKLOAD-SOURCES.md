@@ -57,3 +57,9 @@ resource/process quotas, bounded durable events and observed termination. The
 ordinary Python streaming bridge still opens plugin paths and retains its
 existing duration limit; this change does not make that API a pinned workload
 runtime or silently extend it.
+
+The separate [pinned streaming counterpart](PYTHON-STREAMS.md) is in development.
+It accepts owned, digest-checked trusted source bytes and avoids reopening a
+mutable plugin path. It retains the ordinary bridge deadline and memory/output
+limits. Wiring the compiled-in source to durable workload consumption, current
+consent and leases remains required; the new primitive alone enables no capture.

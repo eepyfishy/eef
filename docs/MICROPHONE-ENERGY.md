@@ -43,5 +43,14 @@ the sounddevice package.
 `tools/test-microphone-stream.mjs` separately checks the actual source through the
 production Rust/Python stream transport with a fake audio device. Normal energy,
 overflow uncertainty and a malformed block retain exact requests and process
-outcomes. All three cases observe one input context opening and closing. This is
-synthetic source/transport integration, not physical microphone acceptance.
+outcomes. The three original file-based cases observe one input context opening
+and closing. This is synthetic source/transport integration, not physical
+microphone acceptance.
+
+The pinned-source development cases embed the reviewed energy bytes in an
+immutable trusted source, then replace or delete the nearby plugin file before
+execution. The runtime executes the owned bytes without reopening that path.
+Independent Rust/Python digest checks and the encoded request budget apply before
+source effects. This closes the source-file substitution gap for that API; it
+does not add durable session admission, lease renewal or physical-device proof.
+Hosted validation for the new cases is pending.

@@ -1,6 +1,9 @@
 //! Synthetic native streaming-bridge probe. Never installed or work authority.
 use anyhow::{Context, Result, bail, ensure};
-use eefn::python::{BridgeFailure, BridgeLimits, PythonPlugin, stream::StreamBounds};
+use eefn::python::{
+    BridgeFailure, BridgeLimits, PythonPlugin,
+    stream::{PinnedStreamSource, StreamBounds},
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -21,6 +24,13 @@ struct Input {
     execution_ms: u64,
     cancel_marker: Option<PathBuf>,
     observer_rejection_marker: Option<PathBuf>,
+    pinned_source: Option<PinnedInput>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinnedInput {
+    source_utf8: String,
+    source_sha256: String,
 }
 
 async fn marker(path: PathBuf, expected: &'static [u8]) -> Result<()> {
@@ -59,33 +69,55 @@ async fn main() -> Result<()> {
     // Actual future is scoped here so cancellation retires it before reporting.
     let result = {
         let reject = input.observer_rejection_marker;
-        let operation = runtime.observe_stream(
-            &plugin,
-            "observe",
-            input.params,
-            &input.stream_id,
-            input.bounds,
-            tokio::time::Instant::now() + Duration::from_millis(input.execution_ms),
-            move |observation| {
-                let reject = reject.clone();
-                async move {
-                    {
-                        let mut out = std::io::stdout().lock();
-                        writeln!(
-                            out,
-                            "{}",
-                            json!({"event_type":"observation","observation":observation})
-                        )?;
-                        out.flush()?;
-                    }
-                    if let Some(path) = reject {
-                        marker(path, b"reject").await?;
-                        bail!("PRIVATE_OBSERVER_FAILURE");
-                    }
-                    Ok(())
+        let observe = move |observation| {
+            let reject = reject.clone();
+            async move {
+                {
+                    let mut out = std::io::stdout().lock();
+                    writeln!(
+                        out,
+                        "{}",
+                        json!({"event_type":"observation","observation":observation})
+                    )?;
+                    out.flush()?;
                 }
-            },
-        );
+                if let Some(path) = reject {
+                    marker(path, b"reject").await?;
+                    bail!("PRIVATE_OBSERVER_FAILURE");
+                }
+                Ok(())
+            }
+        };
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(input.execution_ms);
+        let operation = async {
+            if let Some(source) = input.pinned_source {
+                let pinned =
+                    PinnedStreamSource::new(source.source_utf8.as_bytes(), &source.source_sha256)?;
+                runtime
+                    .observe_pinned_stream(
+                        &pinned,
+                        "observe",
+                        input.params,
+                        &input.stream_id,
+                        input.bounds,
+                        deadline,
+                        observe,
+                    )
+                    .await
+            } else {
+                runtime
+                    .observe_stream(
+                        &plugin,
+                        "observe",
+                        input.params,
+                        &input.stream_id,
+                        input.bounds,
+                        deadline,
+                        observe,
+                    )
+                    .await
+            }
+        };
         tokio::pin!(operation);
         if let Some(path) = input.cancel_marker {
             tokio::select! {
