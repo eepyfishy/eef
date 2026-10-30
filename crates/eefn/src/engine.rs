@@ -377,6 +377,9 @@ impl NodeEngine {
     pub(crate) fn applied_resources(&self) -> &[crate::context::Resource] {
         &self.resources
     }
+    pub(crate) fn python_configured(&self) -> bool {
+        self.python.is_some()
+    }
     fn media_allowed(&self, capability: &str) -> bool {
         match capability {
             "audio.capture" => self.policy.media.microphone,

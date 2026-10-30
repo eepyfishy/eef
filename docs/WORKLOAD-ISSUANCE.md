@@ -41,13 +41,17 @@ the existing restart handling and never reconstructs the token or resends work.
 These are tracking/authority guarantees, not proof a node or physical device
 stopped. There is no workload completion record or strong stop ACK yet.
 
-These APIs remain internal and have no product/network caller. They do not
-authenticate an owner or peer, verify live disclosed runtime/resource metadata,
-check listening/microphone permission or execute a source. Product integration
+The existing request compiler now calls the review checkpoint after a fresh
+authenticated [source inspection](WORKLOAD-SOURCES.md) and origin/disclosure
+checks, under the engine shutdown gate. Approval and issuance remain internal
+and have no product/network caller. Those persistence helpers do not by themselves
+authenticate an owner or peer, check listening/microphone permission or execute
+a source. Execution integration
 must hold existing engine admission/quiescence gates, obtain identities and ACKs
 through pinned authenticated sessions, and verify the node's actual support.
-The normal runtime compiler still refuses continuous workloads. A schema-valid
-template or synthetic receipt is not permission to capture. Model-based method
+The normal runtime compiler can retain an exact continuous source plan, but
+ordinary operation approval still refuses it. A schema-valid template or
+synthetic receipt is not permission to capture. Model-based method
 authoring does not advertise this new template. No default listening, model,
 permission, updater or installer behavior changes.
 

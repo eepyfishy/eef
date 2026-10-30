@@ -106,6 +106,11 @@ enum Commands {
         #[command(subcommand)]
         command: eefn::listening::Action,
     },
+    /// Inspect node-owned continuous source bindings; never start capture.
+    Workloads {
+        #[command(subcommand)]
+        command: eefn::workload_sources::Action,
+    },
     /// Configure finite audio relay resources; never enable permissions or execute.
     Relay {
         #[command(subcommand)]
@@ -2107,6 +2112,53 @@ async fn execute_listening(
 }
 
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::Workloads { .. } = command {
+        if eefn::setup::instance_lock(&args.config)?.is_some() {
+            bail!("Start this node first; source inspection never launches a runtime")
+        }
+        let file = load_file(&args.config)?;
+        let local = file.dashboard.unwrap_or_default();
+        let address = eefn::local_commands::endpoint(
+            &args.config,
+            &file.node_id,
+            &local.host,
+            local.port,
+            local.enabled,
+        )?;
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(10))
+            .build()?;
+        let diagnostics = client
+            .get(format!("http://{address}/api/diagnostics"))
+            .send()
+            .await?
+            .error_for_status()?;
+        let diagnostics = eefn::model_manager::bounded_json(diagnostics).await?;
+        if diagnostics["success"] != true || diagnostics["node_id"] != file.node_id {
+            bail!("Unconfirmed source runtime")
+        }
+        let request = eefn::workload_sources::Request {
+            schema_version: 2,
+            expected_node_id: file.node_id,
+            expected_runtime_id: diagnostics["runtime_id"]
+                .as_str()
+                .context("Source runtime unavailable")?
+                .into(),
+        };
+        request.validate()?;
+        let response = client
+            .post(format!("http://{address}/api/commands/workload-sources"))
+            .json(&request)
+            .send()
+            .await?
+            .error_for_status()?;
+        let value = eefn::model_manager::bounded_json(response).await?;
+        let report: eefn::workload_sources::Report = serde_json::from_value(value.clone())?;
+        report.validate(&request)?;
+        return Ok(value);
+    }
     if let Commands::Listening { command } = command {
         return execute_listening(args, command).await;
     }
@@ -2912,6 +2964,8 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                             "Python policy outcome was not confirmed. Inspect python show; no retry, permission change, restart or workload was sent."
                         );
                     }
+                } else if matches!(command, Commands::Workloads { .. }) {
+                    print!("{}", eefn::workload_sources::render(&value)?);
                 } else if matches!(command, Commands::Listening { .. }) {
                     if value["success"] == true {
                         print!("{}", eefn::listening::render(&value["result"])?);

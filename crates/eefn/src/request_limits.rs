@@ -88,6 +88,7 @@ impl RequestBudget {
                         | "model_lifecycle_policy_status"
                         | "permission_status"
                         | "python_policy_status"
+                        | "workload_sources"
                 ));
         self.admit_class(control)
     }

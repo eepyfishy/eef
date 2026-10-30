@@ -155,6 +155,11 @@ enum NodeCommand {
         #[command(subcommand)]
         command: eefn::python_policy::Action,
     },
+    /// Inspect a node's continuous source bindings; never start capture.
+    WorkloadSources {
+        #[arg(long)]
+        node: String,
+    },
     /// Configure finite relay resources with current local node-owner approval.
     Relay {
         #[arg(long)]
@@ -2401,6 +2406,25 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             command: NodeCommand::Python { node, command },
         } => return remote_python_policy_cli(&client, &base, node, command).await,
         Command::Node {
+            command: NodeCommand::WorkloadSources { node },
+        } => {
+            eefn::network::validate_remote_node_id(node)?;
+            let response = client
+                .post(format!("{base}/api/commands/node/workload-sources"))
+                .timeout(std::time::Duration::from_secs(10))
+                .json(&json!({"schema_version":2,"node_id":node}))
+                .send()
+                .await?;
+            let value = command_response(response).await?;
+            let report: eefn::workload_sources::Report = serde_json::from_value(value.clone())?;
+            report.validate(&eefn::workload_sources::Request {
+                schema_version: 2,
+                expected_node_id: node.clone(),
+                expected_runtime_id: report.runtime_id.clone(),
+            })?;
+            return Ok(value);
+        }
+        Command::Node {
             command: NodeCommand::ModelBootstrapPolicy { node, command },
         } => return Box::pin(remote_model_bootstrap_cli(&client, &base, node, command)).await,
         Command::Node {
@@ -2749,6 +2773,15 @@ async fn main() -> Result<()> {
                             "Bootstrap preferences unconfirmed. Inspect this node with model-bootstrap-policy show; no retry, download or restart was requested."
                         );
                     }
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::WorkloadSources { .. }
+                        }
+                    )
+                {
+                    print!("{}", eefn::workload_sources::render(&value)?);
                 } else if !args.json
                     && matches!(
                         command,

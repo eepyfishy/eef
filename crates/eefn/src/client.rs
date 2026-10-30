@@ -1004,6 +1004,16 @@ impl NodeClient {
                 .unwrap_or("run")
                 .to_owned();
             let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
+            if capability == "node.configure"
+                && action == "workload_sources"
+                && (grant_issuer.is_none() || grant_session.is_none())
+            {
+                let response = json!({"type":"response","id":request_id,"success":false,
+                    "error_type":"PinnedSessionRequired","not_started":true,
+                    "error":"Source inspection requires an independent credential and pinned issuer session"});
+                write_session_frame(&self.crypto, &writer, &output_write_failed, &response).await?;
+                continue;
+            }
             if !crate::execution_boundary::ordinary_control(&capability) {
                 let response = json!({"type":"response","id":request_id,"success":false,
                     "error":"Workload execution requires a reviewed execution grant; no fallback was attempted",
@@ -1456,6 +1466,18 @@ mod tests {
         })
         .await
         .unwrap();
+        let rejected = server
+            .invoke_remote(
+                "probe-test",
+                "node.configure",
+                "workload_sources",
+                json!({}),
+                Duration::from_secs(2),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rejected["success"], false);
+        assert_eq!(rejected["error_type"], "PinnedSessionRequired");
         server.stop().await;
         assert!(
             timeout(Duration::from_secs(5), task)

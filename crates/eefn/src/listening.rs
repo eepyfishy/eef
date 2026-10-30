@@ -74,6 +74,10 @@ impl Default for Gate {
     }
 }
 impl Gate {
+    pub(crate) fn snapshot(&self) -> (u64, bool) {
+        let state = self.state();
+        (state.epoch, state.blocked)
+    }
     pub(crate) fn deny(&self) {
         self.0.send_if_modified(|state| {
             if state.blocked {

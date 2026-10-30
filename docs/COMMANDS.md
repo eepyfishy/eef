@@ -10,6 +10,16 @@ package command exit codes. Background service launch/console ownership remains
 separate. Its local and published-source regressions pass; existing published
 installers are unchanged and stable-release acceptance remains separate.
 
+## Continuous source inspection (in development)
+
+    eefn workloads sources
+    eef node workload-sources --node NODE_ID
+
+These inspect applied microphone resources and source pins without capture or
+model calls. Remote inspection requires an independently authenticated, pinned
+node session. Permission/listening snapshots and configured Python are not
+physical readiness or execution permission. See [source planning](WORKLOAD-SOURCES.md).
+
 ## Coordinator first initialization (unreleased after alpha.6)
 
     eef initialize

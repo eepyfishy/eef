@@ -173,6 +173,33 @@ impl EnergyParameters {
         )
     }
 }
+/// Private adapter bindings are checked only on their owning node. Other peers
+/// receive this digest, never the device setting or other private properties.
+pub fn microphone_resource_digest(resource: &crate::context::Resource) -> Result<String> {
+    crate::context::NodeMetadata {
+        resources: vec![resource.clone()],
+        ..Default::default()
+    }
+    .validate()?;
+    ensure!(
+        resource.capability == "audio.capture" && resource.parameters.keys().all(|k| k == "device"),
+        "Unsupported microphone resource binding"
+    );
+    let device = resource
+        .parameters
+        .get("device")
+        .cloned()
+        .unwrap_or_default();
+    ensure!(
+        device.is_null()
+            || device.as_u64().is_some_and(|n| n <= 1023)
+            || device.as_str().is_some_and(|s| !s.trim().is_empty()
+                && s.len() <= 256
+                && !s.chars().any(char::is_control)),
+        "Invalid private microphone device binding"
+    );
+    crate::grants::definition_digest(&json!(resource))
+}
 impl Definition {
     pub fn validate(&self) -> Result<()> {
         ensure!(
@@ -297,11 +324,6 @@ impl Definition {
         adapter_source: &[u8],
     ) -> Result<serde_json::Value> {
         self.validate()?;
-        crate::context::NodeMetadata {
-            resources: vec![resource.clone()],
-            ..Default::default()
-        }
-        .validate()?;
         let Source::MicrophoneEnergy {
             resource_id,
             resource_sha256,
@@ -310,11 +332,9 @@ impl Definition {
         } = &self.source;
         ensure!(
             resource.available
-                && resource.capability == "audio.capture"
                 && *resource_id == crate::context::resource_id(&self.executor_node, &resource.id)
-                && *resource_sha256 == crate::grants::definition_digest(&json!(resource))?
-                && *adapter_sha256 == hex::encode(Sha256::digest(adapter_source))
-                && resource.parameters.keys().all(|key| key == "device"),
+                && *resource_sha256 == microphone_resource_digest(resource)?
+                && *adapter_sha256 == hex::encode(Sha256::digest(adapter_source)),
             "Local workload resource binding or source bytes changed"
         );
         let device = resource
@@ -322,14 +342,6 @@ impl Definition {
             .get("device")
             .cloned()
             .unwrap_or_default();
-        ensure!(
-            device.is_null()
-                || device.as_u64().is_some_and(|value| value <= 1023)
-                || device.as_str().is_some_and(|value| !value.trim().is_empty()
-                    && value.len() <= 256
-                    && !value.chars().any(char::is_control)),
-            "Invalid private microphone device binding"
-        );
         let mut request = parameters.python_parameters()?;
         request["device"] = device;
         Ok(request)

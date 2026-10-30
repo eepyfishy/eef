@@ -997,6 +997,9 @@ impl NodeService {
     }
 
     pub async fn remote(self: &Arc<Self>, action: &str, params: Value) -> Result<Value> {
+        if action == "workload_sources" {
+            return self.workload_sources(serde_json::from_value(params)?);
+        }
         if action == "prepare_model_verification" {
             return self
                 .prepare_model_verification(serde_json::from_value(params)?, true)

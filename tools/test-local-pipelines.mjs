@@ -169,6 +169,35 @@ def handle(action,params):
  }
  for(const base of [eef,...nodes.map(n=>n.url)])assert.equal((await fetch(base+'/')).status,404);
  const review=reviewedFixture(eef,origin.url,origin.id);
+ if(python){
+  checkpoint('continuous-source-inspection');
+  const savedBefore=await readFile(origin.config),capturedBefore=await exists(join(scratch,'audio-captured.json'));
+  const localSources=await local(origin,['workloads','sources']);
+  const remoteSources=await owner(['node','workload-sources','--node',origin.id]);
+  assert.deepEqual(remoteSources,localSources,'owner inspection uses the same pinned runtime/source snapshot');
+  assert.equal(localSources.success,true);assert.equal(localSources.local_bindings_current,true);
+  assert.equal(localSources.capture_started,false);assert.equal(localSources.execution_available,false);
+  assert.equal(localSources.execution_authorized,false);assert.equal(localSources.listening_enabled,false);
+  assert(localSources.resources.length>0);
+  for(const row of localSources.resources){assert(!('parameters' in row));assert(!('properties' in row));}
+  const selected=localSources.resources.find(r=>r.available&&r.resource_sha256);assert(selected);
+  const workload={schema_version:2,executor_node:origin.id,priority:0,
+   source:{kind:'microphone_energy',resource_id:selected.resource_id,resource_sha256:selected.resource_sha256,adapter_sha256:localSources.adapter_sha256,
+    parameters:{sample_rate:16000,channels:1,block_frames:80,max_blocks:100,activation_level:1000,deactivation_level:500}},
+   limits:{max_session_ms:60000,max_lease_ms:10000,max_job_memory_mib:128,max_source_frames:8000},
+   events:{mode:'activity_transitions',min_interval_ms:100,max_events:100,max_event_bytes:1024,max_total_bytes:65536,max_pending:4,overflow:'stop'}};
+  const input={schema_version:1,template:'continuous_workload',constraints:{},params:{workload}},file=join(scratch,'source-review.json');await writeFile(file,JSON.stringify(input));
+  const submitted=await local(origin,['requests','submit','--text','Review the selected microphone energy source.','--title','Continuous source review','--file',file]);
+  assert.equal(submitted.success,true);assert.equal(submitted.execution_authorized,false);assert.equal(submitted.dispatched,false);
+  const plan=submitted.result.plan;assert.equal(plan.status,'awaiting_approval');assert.equal(plan.tasks.length,1);
+  assert.equal(plan.tasks[0].capability,'workload.session');assert.deepEqual(plan.input,input);
+  assert.equal(plan.bindings[0].node_id,origin.id);assert.equal(plan.bindings[0].resource_id,selected.resource_id);
+  const retained=await review.inspect(plan.id);assert.equal(retained.planning.schema_version,2);
+  assert(!retained.approval);assert(!retained.execution);
+  assert.deepEqual(await readFile(origin.config),savedBefore);assert.equal(await exists(join(scratch,'audio-captured.json')),capturedBefore);
+  assert.equal(calls.length,0,'source inspection/review must never invoke a model');
+  await writeFile(join(scratch,'continuous-source-results.json'),JSON.stringify({passed:true,local_cli:true,authenticated_owner_cli:true,normal_origin_submission_and_compilation:true,current_source_pins:true,no_private_bindings:true,no_capture:true,no_model_calls:true,execution_authorized:false,physical_capture:false},null,2));
+ }
  async function progressReceipt(id,grantId){
   const before=await readFile(executor.config+'.grant-receipts.sqlite3');
   const localReceipt=(await local(executor,['grants','receipt','--id',grantId])).receipt;

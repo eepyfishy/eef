@@ -65,7 +65,7 @@ fn planned(engine: &TaskEngine) -> (Plan, PlanningCommand) {
         operation_id: uuid::Uuid::new_v4().to_string(),
         input,
     };
-    (compile(&engine.store, &command).unwrap(), command)
+    (compile(engine, &command).unwrap(), command)
 }
 fn approved(engine: &TaskEngine) -> (Plan, ApprovalCommand) {
     let (plan, _) = planned(engine);
@@ -476,4 +476,19 @@ fn quota_failure_keeps_the_approved_plan_without_issuance_or_lease_authority() {
         .is_err()
     );
     assert_eq!(json!(store.get(&plan.plan_id).unwrap()), json!(plan));
+}
+
+#[tokio::test]
+async fn source_planning_cannot_checkpoint_after_engine_shutdown() {
+    let engine = TaskEngine::new(EventBus::new(20));
+    let (plan, input) = review(&engine);
+    let command = PlanningCommand::Compile {
+        id: plan.plan_id.clone(),
+        expected_revision: plan.revision,
+        operation_id: uuid::Uuid::new_v4().to_string(),
+        input,
+    };
+    engine.shutdown().await;
+    assert!(compile(&engine, &command).is_err());
+    assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), json!(plan));
 }

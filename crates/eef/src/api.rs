@@ -227,6 +227,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(node_permissions).layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
         .route(
+            "/api/commands/node/workload-sources",
+            post(node_workload_sources).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/commands/node/relay",
             post(node_relay).layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
@@ -517,6 +521,25 @@ async fn node_relay(
     Ok(Json(
         crate::node_relay::command(&runtime.node_server, request).await?,
     ))
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NodeSourceRequest {
+    schema_version: u32,
+    node_id: String,
+}
+async fn node_workload_sources(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<NodeSourceRequest>,
+) -> ApiResult<Value> {
+    if request.schema_version != 2 {
+        return Err(anyhow::anyhow!("Unsupported source inspection schema").into());
+    }
+    let report = runtime
+        .node_server
+        .workload_sources(&request.node_id, 5)
+        .await?;
+    Ok(Json(serde_json::json!(report)))
 }
 async fn node_permissions(
     State(runtime): State<Arc<Runtime>>,

@@ -65,9 +65,27 @@ impl crate::Runtime {
             matches_source(&saved, &input, source.as_ref())?;
             (saved, true)
         } else {
-            let capabilities = self
+            let mut capabilities = self
                 .disclosed_interpretation_capabilities(context.origin_node())
                 .await?;
+            // This wrapper is a concrete reviewed template, not a node's
+            // executable capability or a semantic method advertised to a model.
+            if input.input.template == eefn::workload_leases::definition::TEMPLATE {
+                let template =
+                    eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
+                if !capabilities.iter().any(|c| c == "audio.capture")
+                    || !self
+                        .disclosed_planning_nodes(context.origin_node())
+                        .await?
+                        .contains(&template.executor_node)
+                {
+                    bail!("Continuous source capability/node unavailable or not disclosed")
+                }
+                let wrapper = eefn::workload_leases::definition::CAPABILITY.to_owned();
+                if !capabilities.contains(&wrapper) {
+                    capabilities.push(wrapper);
+                }
+            }
             let proposal = input.proposal()?;
             eefn::interpretation::validate_concrete(&input, &capabilities)?;
             let draft = eefn::request_drafts::DraftRecord {

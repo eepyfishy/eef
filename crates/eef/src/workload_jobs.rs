@@ -232,11 +232,11 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
 
 /// Internal review compiler only. Actual runtime compilation must additionally
 /// verify disclosed, fresh authenticated node/resource metadata before using it.
-#[allow(dead_code)]
 pub(crate) fn compile(
-    store: &Arc<JobStore>,
+    engine: &crate::task::TaskEngine,
     command: &crate::request_planning::PlanningCommand,
 ) -> Result<Plan> {
+    let store = &engine.store;
     use crate::request_planning::{PlannedBinding, PlanningCommand, PlanningRecord};
     let PlanningCommand::Compile {
         id,
@@ -298,7 +298,7 @@ pub(crate) fn compile(
     };
     record.plan_sha256 = crate::request_planning::digest(&compiled, &record)?;
     compiled.planning = Some(record);
-    store.change(
+    engine.edit_review_checkpoint(
         id,
         "Exact continuous source plan retained; no approval or dispatch",
         |plan| {
@@ -313,7 +313,7 @@ pub(crate) fn compile(
             plan.tasks = compiled.tasks;
             plan.planning = compiled.planning;
             plan.status = PlanStatus::AwaitingApproval;
-            Ok(())
+            Ok(true)
         },
     )
 }

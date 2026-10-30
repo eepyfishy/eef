@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: authenticated continuous source planning
+
+[Source inspection](WORKLOAD-SOURCES.md) adds local/owner CLI and API operations
+that expose exact source/private-binding digests without returning private device
+settings. The existing request compiler checks live pinned sessions, runtime,
+origin disclosure and current source bindings before retaining a continuous
+plan through the engine shutdown gate. Inspection and compilation start no
+capture, approval or lease. Current changes are undergoing focused and command
+regressions; authenticated execution and bounded event delivery remain open.
+
 ## In development: reviewed continuous coordinator issuance
 
 The [coordinator issuance draft](WORKLOAD-ISSUANCE.md) extends the existing

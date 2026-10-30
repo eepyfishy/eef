@@ -499,6 +499,31 @@ pub fn confirmed(value: &Value, node: &str, receipt: &str, command: &PlanningCom
                     }
                 }
             }
+            if input.template == crate::workload_leases::definition::TEMPLATE {
+                let Ok(w) =
+                    crate::workload_leases::definition::Template::from_params(&input.params)
+                else {
+                    return false;
+                };
+                if view.tasks.len() != 1 || view.bindings.len() != 1 {
+                    return false;
+                }
+                let t = &view.tasks[0];
+                let b = &view.bindings[0];
+                if t.capability != crate::workload_leases::definition::CAPABILITY
+                    || t.action != "run"
+                    || t.params != input.params
+                    || !t.dependencies.is_empty()
+                    || t.constraints
+                        != json!({"node_id":w.executor_node,"resource_id":w.resource_id()})
+                    || b.node_id != w.executor_node
+                    || b.resource_id.as_deref() != Some(w.resource_id())
+                    || b.model_id.is_some()
+                    || b.backend.is_some()
+                {
+                    return false;
+                }
+            }
             let mut ids = std::collections::BTreeSet::new();
             for (task, binding) in view.tasks.iter().zip(&view.bindings) {
                 if crate::request_drafts::validate_id(&task.task_id).is_err()
@@ -552,7 +577,13 @@ pub fn confirmed(value: &Value, node: &str, receipt: &str, command: &PlanningCom
                         .as_ref()
                         .is_some_and(|b| task.constraints["backend"] != *b)
                     || binding.resource_id.as_ref().is_some_and(|r| {
-                        task.params["resource_id"] != *r || task.constraints["resource_id"] != *r
+                        let resource =
+                            if task.capability == crate::workload_leases::definition::CAPABILITY {
+                                &task.params["workload"]["source"]["resource_id"]
+                            } else {
+                                &task.params["resource_id"]
+                            };
+                        *resource != *r || task.constraints["resource_id"] != *r
                     })
                 {
                     return false;

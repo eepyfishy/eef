@@ -688,6 +688,27 @@ impl crate::Runtime {
         if draft.current().needs_clarification {
             bail!("Resolve clarification through an explicit proposal revision before planning")
         }
+        if input.template == eefn::workload_leases::definition::TEMPLATE {
+            if preparation.is_some()
+                || draft.current().workload != eefn::interpretation::Workload::Continuous
+            {
+                bail!("Continuous planning requires its exact reviewed template")
+            }
+            let template = eefn::workload_leases::definition::Template::from_params(&input.params)?;
+            if let Some(origin) = origin {
+                let permitted = self.disclosed_planning_nodes(origin).await?;
+                if !permitted.contains(&template.executor_node) {
+                    bail!("Source node is not disclosed to this origin")
+                }
+            }
+            let snapshot = self
+                .node_server
+                .workload_sources(&template.executor_node, 5)
+                .await?;
+            snapshot.confirms_template(&template)?;
+            let plan = crate::workload_jobs::compile(&self.engine, &request.command)?;
+            return Ok(report(plan, &request.command, &self.instance_id, false));
+        }
         if draft.current().workload != eefn::interpretation::Workload::OneShot {
             bail!("Continuous/unknown workloads require the future local pipeline compiler")
         }
