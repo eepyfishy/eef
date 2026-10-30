@@ -33,9 +33,23 @@ live source. Reading or reopening the journal never restores a lease or starts
 work. These receipts do not prove that OS, device, backend or external effects
 stopped.
 
+The consumed-runner development path transfers the original non-cloneable initial
+proof once into the existing renewal supervisor. It rechecks the retained receipt
+before polling one prepared source future and observes the existing stop watcher.
+It never constructs a replacement source on renewal, changes the absolute session
+end or replays consumed authority. An explicit destruction guard drops that future
+before final synchronous uncertainty persistence, including cancellation of the
+entire task. A source result alone still cannot create a completion receipt.
+
+Five new real-journal regressions cover stop, whole-task cancellation, retirement
+before the first source poll, missing renewal and the absence of false durable
+completion. Their source is a synthetic pending future whose destructor reads the
+actual SQLite receipt; this verifies future/persistence ordering, not physical
+process or device termination. Hosted validation is pending.
+
 This remains an internal persistence boundary. No command, startup, registration
 or authenticated network handler invokes the mutator. It does not issue a grant,
-check microphone/listening permission, acquire a resource, execute source bytes,
+check microphone/listening permission, acquire a resource, select source bytes,
 implement an event buffer or enforce physical CPU/device budgets. Reporting space
 is reserved conservatively using the owner journal policy; event persistence and
 delivery are still absent. There is no workload completion/output record yet.

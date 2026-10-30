@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: consumed source lifetime and receipt ordering
+
+The internal consumed-workload runner drives one prepared future under the exact
+initial proof, existing short renewals and stop watch. It rechecks durable evidence
+before the first poll and drops the source future before final journal writes,
+including whole-task cancellation. Five new actual SQLite regressions exercise
+those paths and prevent treating a source return as durable completion. Hosted
+validation is pending. This is not product admission: compiled source binding,
+ongoing listening/runtime permission, shared resource ownership, durable events,
+authenticated launch and observed process/device termination remain required.
+
 ## In development: execute reviewed streaming source bytes
 
 The trusted Python stream bridge gains an immutable source object and a pinned

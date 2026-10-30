@@ -138,14 +138,30 @@ pub(crate) fn read(db: &Connection, node: &str, issuer: Option<&str>, id: &str) 
 pub struct Consumption {
     contract: Contract,
     policy: Policy,
-    initial: LeaseProof,
+    initial: Option<LeaseProof>,
     ledger: Arc<GrantLedger>,
     stop: stop::Watch,
 }
+
+// Explicit destruction order also covers cancellation of the whole async task.
+// Final synchronous journal I/O must never keep an owned source future alive.
+struct Running<F> {
+    operation: Option<std::pin::Pin<Box<F>>>,
+    consumption: Option<Consumption>,
+}
+impl<F> Drop for Running<F> {
+    fn drop(&mut self) {
+        drop(self.operation.take());
+        drop(self.consumption.take());
+    }
+}
 impl Consumption {
     pub fn acknowledgement(&self) -> Result<Receipt> {
-        self.initial
-            .initial_deadline(&self.contract, &self.policy)?;
+        let initial = self
+            .initial
+            .as_ref()
+            .context("Initial workload authority already transferred")?;
+        initial.initial_deadline(&self.contract, &self.policy)?;
         if *self.stop.receiver.borrow() {
             bail!("Workload stop already requested")
         }
@@ -156,12 +172,63 @@ impl Consumption {
         if result.receipt.state != "accepted" || result.definition.scope()? != self.contract.scope {
             bail!("Workload consumption changed before acknowledgement")
         }
-        self.initial
-            .initial_deadline(&self.contract, &self.policy)?;
+        initial.initial_deadline(&self.contract, &self.policy)?;
         if *self.stop.receiver.borrow() {
             bail!("Workload stop requested during acknowledgement")
         }
         Ok(result)
+    }
+
+    /// Drive one lazy, already-prepared source after the authenticated caller
+    /// writes the consumed ACK. This does not acquire resources, check listening
+    /// or prepare/authorize source code; typed source admission must do those.
+    /// An operation result is not a durable completion receipt. Drop still marks
+    /// uncertainty until bounded event/completion persistence is integrated.
+    #[allow(dead_code)]
+    pub(crate) async fn supervise<F, T>(
+        self,
+        renewals: crate::workload_leases::Renewals,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: std::future::Future<Output = Result<T>>,
+    {
+        let mut running = Running {
+            operation: Some(Box::pin(operation)),
+            consumption: Some(self),
+        };
+        let consumed = running.consumption.as_mut().unwrap();
+        consumed.acknowledgement()?;
+        let initial = consumed
+            .initial
+            .take()
+            .context("Workload authority already transferred")?;
+        let contract = consumed.contract.clone();
+        let policy = consumed.policy.clone();
+        let mut stop = consumed.stop.receiver.clone();
+        let operation = crate::workload_leases::supervise(
+            &contract,
+            &policy,
+            initial,
+            renewals,
+            running.operation.as_mut().unwrap().as_mut(),
+        );
+        tokio::pin!(operation);
+        loop {
+            if *stop.borrow() {
+                bail!("Workload stop requested")
+            }
+            tokio::select! {
+                biased;
+                changed=stop.changed()=> {
+                    changed.context("Workload stop control unavailable")?;
+                },
+                result=&mut operation=> {
+                    if *stop.borrow() { bail!("Workload stop requested before result"); }
+                    return result;
+                },
+            }
+        }
     }
 }
 impl Drop for Consumption {
@@ -235,7 +302,7 @@ impl GrantLedger {
         let consumed = Consumption {
             contract,
             policy: policy.clone(),
-            initial,
+            initial: Some(initial),
             ledger: self.clone(),
             stop,
         };

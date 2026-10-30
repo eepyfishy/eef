@@ -1,6 +1,78 @@
 use super::*;
 use crate::workload_leases::{IssuerWindow, Query, Requests, definition::*};
 
+#[derive(Default)]
+struct SourceEvidence {
+    polled: std::sync::atomic::AtomicBool,
+    dropped: std::sync::atomic::AtomicBool,
+    receipt_accepted_at_drop: std::sync::atomic::AtomicBool,
+}
+struct PendingSource {
+    ledger: Arc<GrantLedger>,
+    definition: Definition,
+    evidence: Arc<SourceEvidence>,
+    started: Option<tokio::sync::oneshot::Sender<()>>,
+}
+impl std::future::Future for PendingSource {
+    type Output = Result<()>;
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.evidence
+            .polled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(started) = self.started.take() {
+            let _ = started.send(());
+        }
+        std::task::Poll::Pending
+    }
+}
+impl Drop for PendingSource {
+    fn drop(&mut self) {
+        let accepted = self
+            .ledger
+            .workload_receipt(&self.definition.issuer_id, &self.definition.grant_id)
+            .is_ok_and(|r| r.receipt.state == "accepted");
+        self.evidence
+            .receipt_accepted_at_drop
+            .store(accepted, std::sync::atomic::Ordering::SeqCst);
+        self.evidence
+            .dropped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+fn pending_source(
+    ledger: &Arc<GrantLedger>,
+    definition: &Definition,
+) -> (
+    PendingSource,
+    tokio::sync::oneshot::Receiver<()>,
+    Arc<SourceEvidence>,
+) {
+    let evidence = Arc::new(SourceEvidence::default());
+    let (started, receiver) = tokio::sync::oneshot::channel();
+    (
+        PendingSource {
+            ledger: ledger.clone(),
+            definition: definition.clone(),
+            evidence: evidence.clone(),
+            started: Some(started),
+        },
+        receiver,
+        evidence,
+    )
+}
+fn source_retired_before_uncertainty(evidence: &SourceEvidence) {
+    use std::sync::atomic::Ordering::SeqCst;
+    assert!(evidence.polled.load(SeqCst));
+    assert!(evidence.dropped.load(SeqCst));
+    assert!(
+        evidence.receipt_accepted_at_drop.load(SeqCst),
+        "Source Drop precedes final journal retirement"
+    );
+}
+
 fn policy() -> Policy {
     Policy {
         enabled: true,
@@ -87,6 +159,147 @@ fn version(path: &Path) -> i64 {
         .unwrap()
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap()
+}
+
+#[tokio::test]
+async fn consumed_runner_stop_drops_source_before_final_real_journal_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger =
+        GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
+    let d = definition();
+    let consumed = consume(&ledger, d.clone()).await.unwrap();
+    consumed.acknowledgement().unwrap();
+    let (source, started, evidence) = pending_source(&ledger, &d);
+    let (_sender, renewals) = crate::workload_leases::renewal_channel();
+    let run = consumed.supervise(renewals, source);
+    tokio::pin!(run);
+    tokio::select! {value=started=>value.unwrap(), result=&mut run=>panic!("Source ended before stop: {result:?}")};
+    let stop = ledger
+        .request_stop_scope(
+            &d.scope().unwrap(),
+            &d.issuer_id,
+            &d.session_id,
+            &d.executor_node,
+        )
+        .unwrap();
+    assert!(stop.cancellation_signalled);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(3), &mut run)
+            .await
+            .unwrap()
+            .is_err()
+    );
+    source_retired_before_uncertainty(&evidence);
+    assert_eq!(
+        ledger
+            .workload_receipt(&d.issuer_id, &d.grant_id)
+            .unwrap()
+            .receipt
+            .state,
+        "unknown"
+    );
+}
+
+#[tokio::test]
+async fn cancelling_whole_consumed_task_drops_source_before_persisting_uncertainty() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger =
+        GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
+    let d = definition();
+    let consumed = consume(&ledger, d.clone()).await.unwrap();
+    let (source, started, evidence) = pending_source(&ledger, &d);
+    let (_sender, renewals) = crate::workload_leases::renewal_channel();
+    {
+        let run = consumed.supervise(renewals, source);
+        tokio::pin!(run);
+        tokio::select! {value=started=>value.unwrap(), result=&mut run=>panic!("Source ended before cancellation: {result:?}")};
+        // Drop the actual future at scope exit, not just a Pin reference to it.
+    }
+    source_retired_before_uncertainty(&evidence);
+    assert_eq!(
+        ledger
+            .workload_receipt(&d.issuer_id, &d.grant_id)
+            .unwrap()
+            .receipt
+            .state,
+        "unknown"
+    );
+}
+
+#[tokio::test]
+async fn retired_consumption_never_polls_a_prepared_source_again() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let dir = tempfile::tempdir().unwrap();
+    let ledger =
+        GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
+    let d = definition();
+    let consumed = consume(&ledger, d.clone()).await.unwrap();
+    let (source, _started, evidence) = pending_source(&ledger, &d);
+    ledger.mark_workload_unknown(&d.scope().unwrap()).unwrap();
+    let (_sender, renewals) = crate::workload_leases::renewal_channel();
+    assert!(consumed.supervise(renewals, source).await.is_err());
+    assert!(!evidence.polled.load(SeqCst));
+    assert!(evidence.dropped.load(SeqCst));
+    assert!(
+        consume(&ledger, d).await.is_err(),
+        "Consumed uncertainty is never replayable"
+    );
+}
+
+#[tokio::test]
+async fn source_result_alone_cannot_mark_a_consumed_session_completed() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger =
+        GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
+    let d = definition();
+    let consumed = consume(&ledger, d.clone()).await.unwrap();
+    let (_sender, renewals) = crate::workload_leases::renewal_channel();
+    assert_eq!(
+        consumed.supervise(renewals, async { Ok(7) }).await.unwrap(),
+        7
+    );
+    let retained = ledger.workload_receipt(&d.issuer_id, &d.grant_id).unwrap();
+    assert_eq!(retained.receipt.state, "unknown");
+    assert!(!retained.execution_authorized && !retained.restart_authorized);
+}
+
+#[tokio::test]
+async fn consumed_runner_uses_original_lease_and_drops_source_on_missing_renewal() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger =
+        GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
+    let d = definition();
+    let proof = proof_for(&d, 3000).await;
+    let consumed = ledger
+        .consume_workload(
+            d.clone(),
+            &policy(),
+            proof,
+            &d.issuer_id,
+            &d.session_id,
+            &d.executor_node,
+        )
+        .unwrap();
+    let (source, started, evidence) = pending_source(&ledger, &d);
+    let (sender, renewals) = crate::workload_leases::renewal_channel();
+    drop(sender);
+    let run = consumed.supervise(renewals, source);
+    tokio::pin!(run);
+    tokio::select! {value=started=>value.unwrap(), result=&mut run=>panic!("Source ended before first poll: {result:?}")};
+    let error = tokio::time::timeout(Duration::from_secs(5), &mut run)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(error.to_string().contains("expired"));
+    source_retired_before_uncertainty(&evidence);
+    assert_eq!(
+        ledger
+            .workload_receipt(&d.issuer_id, &d.grant_id)
+            .unwrap()
+            .receipt
+            .state,
+        "unknown"
+    );
 }
 
 #[tokio::test]
