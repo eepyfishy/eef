@@ -3,7 +3,7 @@ use crate::{
     NodeService,
     python::{
         PythonRuntime,
-        stream::{PinnedStreamSource, StreamBounds, StreamSummary},
+        stream::{ObservedStream, PinnedStreamSource, StreamBounds},
     },
     workload_leases::{Renewals, definition::Definition},
 };
@@ -128,7 +128,7 @@ impl PreparedMicrophone {
         consumed: crate::grants::workload::Consumption,
         renewals: Renewals,
         observe: F,
-    ) -> Result<StreamSummary>
+    ) -> Result<ObservedStream>
     where
         F: FnMut(crate::workload_events::Event) -> C + Send,
         C: Future<Output = Result<()>> + Send,

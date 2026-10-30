@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: typed owned-source exit evidence
+
+The private prepared source now returns opaque local process-exit evidence with
+its stream summary and exact adapter digest. Its job witness can only be created
+after observing that exact owned Windows job empty within the existing deadline.
+Reservation release verifies job identity and refuses repeated release. Public
+transport summary types and budgets remain unchanged. Two actual Windows
+root/descendant regressions and one unsupported-platform pre-start regression
+are added; the combined native source test checks the opaque result. Hosted
+validation is pending. The journal still records uncertainty: durable completion,
+authenticated public execution and physical acceptance remain incomplete.
+
 ## In development: responsive final workload reporting
 
 Final uncertainty persistence now uses the bounded native journal worker after

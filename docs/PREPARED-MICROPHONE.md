@@ -122,3 +122,35 @@ against the existing byte budget. The combined native test now checks that exact
 durable prefix before acknowledging a simulated observation. Event persistence
 still does not turn source return into a completion receipt; this follow-up needs
 its own hosted validation.
+
+## Typed owned-source exit evidence in development
+
+The private reserved-source path now returns an opaque `ObservedStream`, rather
+than the public serializable `StreamSummary`. It requires successful transport,
+validated EOF/end counts, a successful root exit and positive observation of the
+exact owned Windows job having no active processes within the existing deadline.
+Its private fields bind the stream ID/counts, reviewed adapter digest and a local
+non-cloneable job-exit witness. No deserialized summary, root status or termination
+request can construct that witness. Public transport APIs still return the same
+summary type; they acquire no workload or completion authority.
+
+Microphone reservation release now consumes evidence matched to its exact owned
+job. A witness for a different job or an already retired capture is refused.
+Failed or expired observation retains the reservation until independently observed
+cleanup, or quarantines it as before. The unsupported-platform reserved path refuses
+before starting an interpreter. Neither ordinary Python budgets nor source,
+permission, consent, lease or session bounds are extended by this change.
+
+Two Windows regressions hold real root/descendant handles to check cross-job witness
+rejection, repeated release refusal and expired observation of a still-live capture.
+A non-Windows regression requires refusal before interpreter startup. The combined
+native source test now receives the opaque result, checks its adapter digest and
+still requires both held processes to have exited and the exact event history to
+be durable. Hosted validation is pending; no physical capture was started locally.
+
+This is local process evidence, not a physical microphone/driver guarantee or a
+durable completion record. The consumed runner still persists uncertainty. The
+next completion path must validate the exact consumed definition, final event
+prefix, lease/consent/stop boundary and this owned evidence together before saving
+completion in the existing journal. It must retain bounded final reporting and
+must not infer completion from a summary or saved event prefix alone.

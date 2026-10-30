@@ -1,6 +1,40 @@
 use super::*;
 use tokio::io::AsyncWriteExt;
 
+#[cfg(not(windows))]
+#[tokio::test]
+async fn reserved_source_refuses_unsupported_exit_observation_before_starting_an_interpreter() {
+    let runtime = PythonRuntime {
+        executable: std::path::PathBuf::from("PRIVATE-interpreter-must-not-start"),
+        limits: BridgeLimits::default(),
+    };
+    let bytes = b"def stream(action, params):\n    yield params\n";
+    let source = PinnedStreamSource::new(bytes, &hex::encode(Sha256::digest(bytes))).unwrap();
+    let pool = crate::capture_ownership::Pool::default();
+    let error = runtime
+        .observe_reserved_microphone(
+            &source,
+            json!({}),
+            &id(),
+            StreamBounds::default(),
+            Instant::now() + Duration::from_secs(5),
+            pool.reserve().unwrap(),
+            |_| async {
+                panic!("Unsupported capture cannot emit observations");
+                #[allow(unreachable_code)]
+                Ok(())
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("unsupported on this platform"));
+    assert!(!error.to_string().contains("PRIVATE"));
+    assert!(
+        pool.reserve().is_ok(),
+        "No process was bound to the reservation"
+    );
+}
+
 #[test]
 fn pinned_source_owns_exact_utf8_bytes_without_reopening_or_serializing_paths() {
     let mut bytes = b"def stream(action, params):\n    yield params\n".to_vec();

@@ -104,6 +104,28 @@ pub struct StreamSummary {
     pub source_frames: u64,
 }
 
+/// Private local evidence from a reserved pinned source, successful transport
+/// and an observed empty owned Windows job. A plain stream summary cannot mint
+/// this value. It is not a durable completion receipt or physical-device proof.
+#[derive(Debug)]
+pub(crate) struct ObservedStream {
+    summary: StreamSummary,
+    source_sha256: String,
+    _exit: crate::process_lifetime::ObservedExit,
+}
+impl ObservedStream {
+    pub(crate) fn summary(&self) -> &StreamSummary {
+        &self.summary
+    }
+    pub(crate) fn source_digest(&self) -> &str {
+        &self.source_sha256
+    }
+}
+struct StreamOutcome {
+    summary: StreamSummary,
+    owned_exit: Option<crate::process_lifetime::ObservedExit>,
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum Frame {
@@ -293,6 +315,7 @@ impl PythonRuntime {
             None,
         )
         .await
+        .map(|outcome| outcome.summary)
     }
 
     /// Trusted-library counterpart that executes the reviewed bytes directly.
@@ -332,6 +355,7 @@ impl PythonRuntime {
             None,
         )
         .await
+        .map(|outcome| outcome.summary)
     }
 
     pub(crate) async fn observe_reserved_microphone<F, C>(
@@ -343,22 +367,33 @@ impl PythonRuntime {
         execution_deadline: Instant,
         reservation: crate::capture_ownership::Reservation,
         observe: F,
-    ) -> Result<StreamSummary>
+    ) -> Result<ObservedStream>
     where
         F: FnMut(StreamObservation) -> C + Send,
         C: Future<Output = Result<()>> + Send,
     {
-        self.observe_stream_source(
-            Source::Pinned(source),
-            "energy",
-            params,
-            stream_id,
-            bounds,
-            execution_deadline,
-            observe,
-            Some(reservation),
-        )
-        .await
+        if !cfg!(windows) {
+            bail!("Owned microphone exit observation is unsupported on this platform");
+        }
+        let outcome = self
+            .observe_stream_source(
+                Source::Pinned(source),
+                "energy",
+                params,
+                stream_id,
+                bounds,
+                execution_deadline,
+                observe,
+                Some(reservation),
+            )
+            .await?;
+        Ok(ObservedStream {
+            summary: outcome.summary,
+            source_sha256: source.digest().into(),
+            _exit: outcome
+                .owned_exit
+                .context("Owned source exit was not observed")?,
+        })
     }
 
     async fn observe_stream_source<F, C>(
@@ -371,7 +406,7 @@ impl PythonRuntime {
         execution_deadline: Instant,
         observe: F,
         reservation: Option<crate::capture_ownership::Reservation>,
-    ) -> Result<StreamSummary>
+    ) -> Result<StreamOutcome>
     where
         F: FnMut(StreamObservation) -> C + Send,
         C: Future<Output = Result<()>> + Send,
@@ -437,6 +472,8 @@ impl PythonRuntime {
         let stdin = child.stdin.take().context("Stream stdin unavailable")?;
         let stdout = child.stdout.take().context("Stream stdout unavailable")?;
         let stderr = child.stderr.take().context("Stream stderr unavailable")?;
+        #[allow(unused_mut)]
+        let mut owned_exit = None;
         let outcome = timeout_at(deadline, async {
             let (_, summary, _, status) = tokio::try_join!(
                 super::send_input(stdin, &input),
@@ -450,9 +487,10 @@ impl PythonRuntime {
                     let status = child.wait().await.context("Stream child wait failed")?;
                     #[cfg(windows)]
                     {
-                        tree.terminate_and_observe_until(deadline).await?;
+                        let exit = tree.terminate_and_witness_until(deadline).await?;
                         if let Some(capture) = &mut capture {
-                            capture.observed_empty();
+                            capture.observed_exit(&exit)?;
+                            owned_exit = Some(exit);
                         }
                     }
                     Ok::<_, anyhow::Error>(status)
@@ -479,7 +517,10 @@ impl PythonRuntime {
             let _ = child.start_kill();
             let _ = timeout(Duration::from_secs(1), child.wait()).await;
         }
-        outcome
+        outcome.map(|summary| StreamOutcome {
+            summary,
+            owned_exit,
+        })
     }
 }
 

@@ -1,6 +1,6 @@
 //! One node-owned microphone reservation, held through observed Windows job exit.
 //! This excludes our competing sources, not other applications or device drivers.
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -52,12 +52,21 @@ impl Reservation {
     }
 }
 impl OwnedCapture {
-    /// Caller has just observed this exact job empty, not merely a root exit.
-    #[cfg(windows)]
-    pub(crate) fn observed_empty(&mut self) {
-        if let Some(reservation) = self.reservation.take() {
-            reservation.release_after_observation();
-        }
+    /// A witness for another job, or an already released capture, cannot release
+    /// this reservation. Only process_lifetime can construct the local witness.
+    pub(crate) fn observed_exit(
+        &mut self,
+        exit: &crate::process_lifetime::ObservedExit,
+    ) -> Result<()> {
+        ensure!(
+            exit.belongs_to(&self.tree),
+            "Source exit belongs to another owned job"
+        );
+        self.reservation
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Source reservation already retired"))?
+            .release_after_observation();
+        Ok(())
     }
     pub(crate) async fn retire(&mut self) -> Result<()> {
         if self.reservation.is_none() {
@@ -65,15 +74,15 @@ impl OwnedCapture {
         }
         #[cfg(windows)]
         {
-            self.tree.request_termination()?;
             // Cleanup observes already-retired authority. This never extends a
             // source's execution deadline or permits further source work.
-            self.tree
-                .observe_empty_until(
+            let exit = self
+                .tree
+                .terminate_and_witness_until(
                     tokio::time::Instant::now() + std::time::Duration::from_secs(3),
                 )
                 .await?;
-            self.observed_empty();
+            self.observed_exit(&exit)?;
             Ok(())
         }
         #[cfg(not(windows))]
@@ -178,6 +187,94 @@ mod tests {
         })
         .await
         .unwrap();
+        child.wait().await.unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn exit_witness_cannot_release_another_capture_or_be_reused() {
+        use crate::process_lifetime::{
+            spawn,
+            tests::{Processes, args},
+        };
+        let first_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let mut first_command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        first_command
+            .args(args("loop", first_dir.path()))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let mut second_command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        second_command
+            .args(args("loop", second_dir.path()))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let (mut first_child, first_tree) = spawn(&mut first_command).unwrap();
+        let (mut second_child, second_tree) = spawn(&mut second_command).unwrap();
+        let first_tree = Arc::new(first_tree);
+        let second_tree = Arc::new(second_tree);
+        let first_pool = Pool::default();
+        let second_pool = Pool::default();
+        let mut first = first_pool.reserve().unwrap().bind(first_tree.clone());
+        let mut second = second_pool.reserve().unwrap().bind(second_tree.clone());
+        let first_processes = Processes::observe(first_dir.path()).await;
+        let second_processes = Processes::observe(second_dir.path()).await;
+        first_processes.alive();
+        second_processes.alive();
+        let first_exit = first_tree
+            .terminate_and_witness_until(
+                tokio::time::Instant::now() + std::time::Duration::from_secs(3),
+            )
+            .await
+            .unwrap();
+        assert!(first_processes.exited_now());
+        assert!(first_exit.belongs_to(&first_tree));
+        assert!(!first_exit.belongs_to(&second_tree));
+        assert!(second.observed_exit(&first_exit).is_err());
+        assert!(second_pool.reserve().is_err());
+        second_processes.alive();
+        first.observed_exit(&first_exit).unwrap();
+        assert!(first_pool.reserve().is_ok());
+        assert!(first.observed_exit(&first_exit).is_err());
+        second.retire().await.unwrap();
+        assert!(second_processes.exited_now());
+        assert!(second_pool.reserve().is_ok());
+        first_child.wait().await.unwrap();
+        second_child.wait().await.unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn expired_exit_observation_cannot_mint_evidence_or_release_a_live_capture() {
+        use crate::process_lifetime::{
+            spawn,
+            tests::{Processes, args},
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(args("loop", dir.path()))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let (mut child, tree) = spawn(&mut command).unwrap();
+        let tree = Arc::new(tree);
+        let pool = Pool::default();
+        let mut capture = pool.reserve().unwrap().bind(tree.clone());
+        let processes = Processes::observe(dir.path()).await;
+        processes.alive();
+        assert!(
+            tree.terminate_and_witness_until(tokio::time::Instant::now())
+                .await
+                .is_err()
+        );
+        processes.alive();
+        assert!(pool.reserve().is_err());
+        capture.retire().await.unwrap();
+        assert!(processes.exited_now());
+        assert!(pool.reserve().is_ok());
         child.wait().await.unwrap();
     }
 }

@@ -1,5 +1,12 @@
 # Durable workload consumption
 
+The version-three sections below describe the original consumption checkpoint.
+The current internal path adds [version-four durable events](WORKLOAD-EVENTS.md)
+and bounded asynchronous final uncertainty saves. Its prepared source also returns
+[opaque local job-exit evidence](PREPARED-MICROPHONE.md#typed-owned-source-exit-evidence-in-development).
+These follow-ups still do not persist a completed workload or expose public
+session admission; their own hosted-validation boundaries apply.
+
 The node journal draft extends the existing `GrantLedger` and
 `execution_receipts` table. It does not add another job database. Operations and
 workloads share grant IDs, issuer/job/task/attempt slots, stop intent, receipt

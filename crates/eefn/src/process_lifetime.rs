@@ -14,6 +14,22 @@ pub(crate) use windows::ProcessTree;
 #[cfg(not(windows))]
 pub(crate) struct ProcessTree;
 
+/// Local evidence of an observed empty owned job. Not serializable, cloneable,
+/// process success, device-driver completion or execution/restart authority.
+pub(crate) struct ObservedExit {
+    tree: std::sync::Arc<ProcessTree>,
+}
+impl ObservedExit {
+    pub(crate) fn belongs_to(&self, tree: &std::sync::Arc<ProcessTree>) -> bool {
+        std::sync::Arc::ptr_eq(&self.tree, tree)
+    }
+}
+impl std::fmt::Debug for ObservedExit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObservedExit").finish_non_exhaustive()
+    }
+}
+
 #[cfg(not(windows))]
 impl ProcessTree {
     pub(crate) fn accounting(&self) -> crate::job_accounting::JobAccounting {
@@ -207,6 +223,15 @@ mod windows {
             }
             self.request_termination()?;
             self.observe_empty_until(deadline).await
+        }
+        /// Mint evidence only after querying this exact contained job empty
+        /// within the caller's existing deadline. A root exit alone cannot mint it.
+        pub(crate) async fn terminate_and_witness_until(
+            self: &std::sync::Arc<Self>,
+            deadline: tokio::time::Instant,
+        ) -> Result<ObservedExit> {
+            self.terminate_and_observe_until(deadline).await?;
+            Ok(ObservedExit { tree: self.clone() })
         }
         /// Read-only cleanup observation of this owned job. It issues no new
         /// execution/termination request and grants no additional source time.

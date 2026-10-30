@@ -142,10 +142,15 @@ async fn native_prepared_source_runs_exact_bytes_with_consumption_and_filtered_e
     tokio::fs::write(trace.path().join("observed"), b"held handles")
         .await
         .unwrap();
-    let summary = tokio::time::timeout(std::time::Duration::from_secs(15), &mut run)
+    let observed = tokio::time::timeout(std::time::Duration::from_secs(15), &mut run)
         .await
         .unwrap()
         .unwrap();
+    let summary = observed.summary();
+    assert_eq!(
+        observed.source_digest(),
+        crate::workload_sources::microphone_adapter_digest()
+    );
     assert_eq!(summary.stream_id, f.definition.grant_id);
     assert_eq!((summary.observations, summary.source_frames), (5, 400));
     assert!(

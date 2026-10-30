@@ -479,9 +479,9 @@ impl PythonRuntime {
                 let status = child.wait().await.context("Python child wait failed")?;
                 #[cfg(windows)]
                 {
-                    tree.terminate_and_observe_until(deadline).await?;
+                    let exit = tree.terminate_and_witness_until(deadline).await?;
                     if let Some(capture) = &mut capture {
-                        capture.observed_empty();
+                        capture.observed_exit(&exit)?;
                     }
                 }
                 Ok(status)
