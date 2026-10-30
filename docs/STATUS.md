@@ -15,6 +15,14 @@ are added; the combined native source test checks the opaque result. Hosted
 validation is pending. The journal still records uncertainty: durable completion,
 authenticated public execution and physical acceptance remain incomplete.
 
+The first typed-exit candidate's two new Windows held-handle assertions failed in
+run `41143002837`. Zero active job accounting was insufficient. The follow-up
+retains the exact root before resume, captures job members before termination,
+requires unique held identities to cover the entire lifetime count, and waits for
+all their handles to be signalled. Original assertions stay intact; a third actual
+process test requires quarantine when a transient descendant's handle was missed.
+This correction and its bounded 128-handle tracking need fresh hosted validation.
+
 ## In development: responsive final workload reporting
 
 Final uncertainty persistence now uses the bounded native journal worker after

@@ -102,7 +102,7 @@ impl Drop for OwnedCapture {
                 let tree = self.tree.clone();
                 runtime.spawn(async move {
                     if tree
-                        .observe_empty_until(
+                        .observe_owned_exit_until(
                             tokio::time::Instant::now() + std::time::Duration::from_secs(3),
                         )
                         .await
@@ -276,5 +276,44 @@ mod tests {
         assert!(processes.exited_now());
         assert!(pool.reserve().is_ok());
         child.wait().await.unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn missed_descendant_handle_cannot_be_replaced_by_empty_job_accounting() {
+        use crate::process_lifetime::{spawn, tests::args};
+        let dir = tempfile::tempdir().unwrap();
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(args("missed-child", dir.path()))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let (mut child, tree) = spawn(&mut command).unwrap();
+        let tree = Arc::new(tree);
+        let pool = Pool::default();
+        let capture = pool.reserve().unwrap().bind(tree.clone());
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !dir.path().join("child-finished").is_file() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let error = tree
+            .terminate_and_witness_until(
+                tokio::time::Instant::now() + std::time::Duration::from_secs(3),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("coverage is incomplete"));
+        child.wait().await.unwrap();
+        assert!(pool.reserve().is_err());
+        drop(capture);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            pool.reserve().is_err(),
+            "Unobserved lifetime membership must stay quarantined"
+        );
     }
 }

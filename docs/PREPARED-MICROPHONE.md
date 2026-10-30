@@ -154,3 +154,35 @@ next completion path must validate the exact consumed definition, final event
 prefix, lease/consent/stop boundary and this owned evidence together before saving
 completion in the existing journal. It must retain bounded final reporting and
 must not infer completion from a summary or saved event prefix alone.
+
+### Lifetime handle coverage follow-up
+
+The first owned-exit candidate failed its two new Windows tests in hosted run
+`41143002837`: a zero job active count was observed before held root/descendant
+handles were signalled. The original failed run is retained. Waiting longer in
+the test would hide the production gap, so its immediate held-handle assertions
+remain unchanged.
+
+The follow-up retains a duplicate of the exact root handle before resume and
+captures bounded current members of the exact unnamed job before requesting
+termination. Lookup PIDs are hints only: each retained handle must still belong
+to that job, and kernel-object comparison deduplicates identities. Positive exit
+requires the job active count to be zero, the lifetime total to equal the number
+of unique held process handles, and every held handle to be signalled before the
+existing deadline. There is no whole-PC enumeration, PID-based termination,
+uncontained fallback, privilege change, completion-port delivery assumption or
+execution budget increase.
+
+The source tracker holds at most 128 process identities. A missed transient
+descendant, failed lookup, excess lifetime count or failed wait cannot produce
+evidence or release the microphone reservation. Unconfirmed cleanup remains
+quarantined, with a new actual-process regression for a child that exited before
+its handle could be captured. A process lookup race can therefore deny reuse;
+it is not automatically repaired or treated as complete. The drop observer uses
+the same stronger check. This change requires fresh hosted validation.
+
+The checks use Microsoft's documented [job lifetime accounting](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_accounting_information),
+[kernel-object handle comparison](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-compareobjecthandles)
+and [process termination signalling](https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process).
+Job accounting and best-effort process notifications alone are not used as a
+replacement for the retained process-handle observations.

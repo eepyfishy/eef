@@ -5,6 +5,9 @@ use anyhow::Result;
 use tokio::process::{Child, Command};
 
 #[cfg(windows)]
+#[path = "process_exit.rs"]
+mod process_exit;
+#[cfg(windows)]
 #[path = "process_thread.rs"]
 mod process_thread;
 
@@ -151,7 +154,7 @@ mod windows {
         },
     };
 
-    pub(crate) struct ProcessTree(OwnedHandle);
+    pub(crate) struct ProcessTree(OwnedHandle, super::process_exit::Tracker);
     fn owned(raw: HANDLE, operation: &str) -> Result<OwnedHandle> {
         if raw.is_null() || raw == INVALID_HANDLE_VALUE {
             return Err(std::io::Error::last_os_error()).context(operation.to_owned());
@@ -161,6 +164,10 @@ mod windows {
     }
     impl ProcessTree {
         pub(crate) fn request_termination(&self) -> Result<()> {
+            // Retain current members before asking them to terminate. A failed
+            // lookup cannot prevent containment, but cannot later count as exit
+            // proof either: the full lifetime count must match held identities.
+            let _ = self.1.capture_members(self.0.as_raw_handle());
             // SAFETY: this live handle belongs exclusively to our contained tree.
             if unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) } == 0 {
                 return Err(std::io::Error::last_os_error())
@@ -230,8 +237,34 @@ mod windows {
             self: &std::sync::Arc<Self>,
             deadline: tokio::time::Instant,
         ) -> Result<ObservedExit> {
-            self.terminate_and_observe_until(deadline).await?;
+            if tokio::time::Instant::now() >= deadline {
+                bail!("Process tree observation deadline expired");
+            }
+            self.request_termination()?;
+            self.observe_owned_exit_until(deadline).await?;
             Ok(ObservedExit { tree: self.clone() })
+        }
+        pub(crate) async fn observe_owned_exit_until(
+            &self,
+            deadline: tokio::time::Instant,
+        ) -> Result<()> {
+            loop {
+                if tokio::time::Instant::now() >= deadline {
+                    bail!("Owned process exit unconfirmed before deadline");
+                }
+                let observed = self.1.observed_all(self.0.as_raw_handle())?;
+                if tokio::time::Instant::now() >= deadline {
+                    bail!("Owned process exit observation completed after deadline");
+                }
+                if observed {
+                    return Ok(());
+                }
+                tokio::time::sleep_until(
+                    deadline
+                        .min(tokio::time::Instant::now() + std::time::Duration::from_millis(10)),
+                )
+                .await;
+            }
         }
         /// Read-only cleanup observation of this owned job. It issues no new
         /// execution/termination request and grants no additional source time.
@@ -299,7 +332,7 @@ mod windows {
             {
                 return Err(std::io::Error::last_os_error()).context("Set process tree lifetime");
             }
-            let tree = Self(job);
+            let tree = Self(job, Default::default());
             let actual = tree.memory_information()?;
             if actual.BasicLimitInformation.LimitFlags != limits.BasicLimitInformation.LimitFlags
                 || actual.JobMemoryLimit != limits.JobMemoryLimit
@@ -343,6 +376,7 @@ mod windows {
             if unsafe { AssignProcessToJobObject(self.0.as_raw_handle(), process) } == 0 {
                 return Err(std::io::Error::last_os_error()).context("Contain suspended child");
             }
+            self.1.hold_root(self.0.as_raw_handle(), process)?;
             // The live, suspended child is already contained. Enumerate only
             // its thread IDs, not all threads on the PC. No fallback on refusal.
             super::process_thread::resume(child, pid, before_resume)
@@ -447,6 +481,25 @@ pub(crate) mod tests {
             return;
         };
         let (mode, root): (String, PathBuf) = serde_json::from_str(&raw).unwrap();
+        if mode == "exit-child-once" {
+            return;
+        }
+        if mode == "missed-child" {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(args("exit-child-once", &root))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success());
+            std::fs::write(root.join("child-finished"), b"observed child exit").unwrap();
+            let end = std::time::Instant::now() + Duration::from_secs(30);
+            while std::time::Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            return;
+        }
         if mode == "memory-root" {
             let status = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(args("memory-leaf", &root))
