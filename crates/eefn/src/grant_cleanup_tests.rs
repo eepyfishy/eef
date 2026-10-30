@@ -268,6 +268,69 @@ fn grant_cleanup_clock_jump_retires_before_blocked_final_checkpoint() {
 }
 
 #[tokio::test]
+async fn completed_result_crossing_original_deadline_stays_unknown_and_never_replays() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = crate::NodeEngine::new(false, vec![], dir.path().into()).unwrap();
+    let ledger =
+        GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner").unwrap();
+    let g = super::tests::grant();
+    assert_eq!(g.limits.max_execution_ms, 5000);
+    let accepted = AcceptedGrant::prepare(
+        g.clone(),
+        ledger.clone(),
+        &engine,
+        &g.issuer_id,
+        &g.session_id,
+        &g.executor_node,
+    )
+    .unwrap();
+    let clock = ControlledClock::at(&accepted);
+    let completion_clock = clock.clone();
+    let deadline = accepted.deadline;
+    let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mark = ran.clone();
+    let report = accepted
+        .run_operation_with_clock(
+            &engine,
+            async move {
+                mark.store(true, std::sync::atomic::Ordering::SeqCst);
+                completion_clock.advance_to(deadline);
+                Ok(json!({"private":"PRIVATE_LATE_OUTPUT"}))
+            },
+            clock,
+        )
+        .await;
+    assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(report.state, ReceiptState::Unknown);
+    assert_eq!(
+        report.error_code.as_deref(),
+        Some("completion_after_deadline")
+    );
+    assert!(!report.success && report.persisted && report.confirms(&g));
+    assert!(report.data.is_null());
+    let result = ledger
+        .result(
+            &g.issuer_id,
+            &g.grant_id,
+            &definition_digest(&json!(g)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(result["report"], json!(report));
+    assert!(!result.to_string().contains("PRIVATE_LATE_OUTPUT"));
+    assert!(
+        AcceptedGrant::prepare(
+            g.clone(),
+            ledger,
+            &engine,
+            &g.issuer_id,
+            &g.session_id,
+            &g.executor_node
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
 async fn controlled_clock_notification_before_sleep_cannot_lose_deadline() {
     let now = Instant::now();
     let clock = ControlledClock {

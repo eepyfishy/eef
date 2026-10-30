@@ -335,16 +335,20 @@ pub struct PreviewGuard {
     runtime: Arc<PreviewRuntime>,
     runtime_id: String,
     listening: Arc<crate::listening::Gate>,
+    listening_generation: u64,
 }
 impl Drop for PreviewGuard {
     fn drop(&mut self) {
+        // Latch before a slow preparation/config read can hold this lock. A
+        // stale guard cannot retire a replacement, even with a reused UUID.
+        self.listening.retire_generation(self.listening_generation);
         let mut binding = self.runtime.binding.lock().unwrap();
         if binding
             .as_ref()
             .is_some_and(|b| b.runtime_id == self.runtime_id)
+            && self.listening.runtime_generation() == self.listening_generation
         {
             *binding = None;
-            self.listening.retire_runtime();
             self.runtime.generation.send_replace(None);
         }
     }
@@ -796,11 +800,13 @@ impl NodeService {
         input_policy: crate::request_input::InputPolicy,
     ) -> PreviewGuard {
         let runtime = self.preview.clone();
+        if self.listening_gate.runtime_generation() > 0 {
+            self.listening_gate.retire_runtime();
+        }
+        let listening_generation;
         {
             let mut binding = runtime.binding.lock().unwrap();
-            if binding.is_some() {
-                self.listening_gate.retire_runtime();
-            }
+            listening_generation = self.listening_gate.bind_runtime();
             *binding = Some(Binding {
                 runtime_id: runtime_id.clone(),
                 engine: Arc::downgrade(engine),
@@ -812,6 +818,7 @@ impl NodeService {
             runtime,
             runtime_id,
             listening: self.listening_gate.clone(),
+            listening_generation,
         }
     }
 
@@ -1032,6 +1039,66 @@ fn interpreter_setup_hint(code: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn runtime_guard_latches_listening_retirement_before_a_blocked_binding_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = NodeService::new(dir.path().join("node.json"), "node".into());
+        let engine = Arc::new(NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        let guard = service.attach_preview_runtime(&engine, "runtime".into());
+        let before = service.listening_gate.snapshot();
+        let binding = service.preview.binding.lock().unwrap();
+        let retiring = std::thread::spawn(move || drop(guard));
+        let latched = tokio::time::timeout(Duration::from_secs(5), async {
+            while service.listening_gate.snapshot().0 == before.0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            assert!(service.listening_gate.snapshot().1);
+        })
+        .await;
+        drop(binding);
+        retiring.join().unwrap();
+        latched.unwrap();
+        assert!(
+            service
+                .with_permission_runtime("runtime", |_| Ok(()))
+                .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn replacement_latches_before_lock_and_stale_same_uuid_guard_cannot_retire_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = NodeService::new(dir.path().join("node.json"), "node".into());
+        let engine = Arc::new(NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        let old = service.attach_preview_runtime(&engine, "runtime".into());
+        let before = service.listening_gate.snapshot();
+        let binding = service.preview.binding.lock().unwrap();
+        let target = service.clone();
+        let next_engine = engine.clone();
+        let replacing = std::thread::spawn(move || {
+            target.attach_preview_runtime(&next_engine, "runtime".into())
+        });
+        let latched = tokio::time::timeout(Duration::from_secs(5), async {
+            while service.listening_gate.snapshot().0 == before.0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            assert!(service.listening_gate.snapshot().1);
+        })
+        .await;
+        drop(binding);
+        let next = replacing.join().unwrap();
+        latched.unwrap();
+        let rebound = service.listening_gate.snapshot();
+        assert!(!rebound.1);
+        drop(old);
+        assert_eq!(service.listening_gate.snapshot(), rebound);
+        assert!(
+            service
+                .with_permission_runtime("runtime", |_| Ok(()))
+                .is_ok()
+        );
+        drop(next);
+        assert!(service.listening_gate.snapshot().1);
+    }
     #[test]
     fn completion_diagnostics_preserve_generic_failure_and_never_publish_model_text() {
         use crate::model_response::IncompleteReason;

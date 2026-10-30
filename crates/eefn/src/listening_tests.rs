@@ -220,11 +220,26 @@ async fn runtime_retirement_invalidates_existing_listening_without_granting_cons
         .is_err()
     );
     assert!(!polled.load(Ordering::SeqCst));
+    assert!(gate.snapshot().1);
+    gate.bind_runtime();
     assert!(!gate.snapshot().1);
     gate.deny();
     gate.retire_runtime();
+    gate.bind_runtime();
     assert!(gate.snapshot().1);
     assert!(gate.permit().is_err());
+}
+#[tokio::test]
+async fn source_result_cannot_hide_consent_revocation_during_its_final_poll() {
+    let gate = Gate::default();
+    let permit = gate.permit().unwrap();
+    let result = permit
+        .supervise(async {
+            gate.deny();
+            Ok(7)
+        })
+        .await;
+    assert!(result.is_err());
 }
 #[tokio::test]
 async fn runtime_guard_replacement_cancels_only_its_original_listening_generation() {

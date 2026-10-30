@@ -42,3 +42,11 @@ held process handles. Eight preparation/handoff tests use a deliberately absent
 interpreter, verifying that preparation and rejected handoffs execute no source.
 Two consent tests cover runtime generation retirement. Hosted compilation/native
 validation is pending; no heavy local Rust build or physical capture was run.
+
+The follow-up retirement fence latches source denial before waiting on a runtime
+binding/configuration lock. Runtime generations are separate from user consent:
+rebinding clears retirement while preserving a local denial, and a stale guard
+cannot retire or unbind a replacement even if its UUID was reused. Completion is
+also checked after a source's final poll. Three added regressions hold the actual
+binding mutex while retiring/replacing guards and exercise final-poll revocation.
+This follow-up still requires hosted validation before promotion.

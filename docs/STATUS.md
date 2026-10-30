@@ -3,6 +3,24 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: source retirement before configuration waits
+
+Runtime retirement now latches listening denial before waiting on the binding
+lock used by source preparation. A separate generation token prevents a late old
+guard from retiring/unbinding its replacement, including a reused UUID. Rebinding
+preserves local user denial, and source completion checks the latest epoch after
+its final poll. Two actual blocked-mutex regressions and one final-poll test cover
+the gap identified after the first prepared-source draft. Hosted validation is
+pending; public continuous launch and release acceptance remain incomplete.
+
+The previous Windows dashboard run observed `completion_after_deadline` after
+6,558 ms with a 5,000 ms pipeline grant; returning uncertainty was correct. The
+positive dataflow fixture now mints an explicit existing-limit 30-second grant
+after journal setup. A separate controlled-clock regression keeps the five-second
+boundary and requires a late completed result to remain private, durably unknown
+and non-replayable. Production budgets/expiry handling and native assertions are
+unchanged. CI already runs Rust tests serially; no concurrency setting was changed.
+
 ## In development: prepared microphone source and shared owned reservation
 
 [Prepared microphone sources](PREPARED-MICROPHONE.md) bind compiled bytes and local

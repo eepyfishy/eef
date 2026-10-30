@@ -776,10 +776,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("source.txt"), "owned synthetic input").unwrap();
         let engine = engine(dir.path(), true);
-        let g = grant(copy_steps(dir.path()), 2048);
         let ledger =
             GrantLedger::open(&dir.path().join("receipts.db"), Default::default(), "owner")
                 .unwrap();
+        // This case checks dataflow/receipt integrity, not a five-second disk
+        // latency promise. Use a valid explicitly bounded grant after startup;
+        // deadline boundary behavior has its own deterministic regression.
+        let mut g = grant(copy_steps(dir.path()), 2048);
+        g.limits.max_execution_ms = crate::grants::MAX_DURATION_MS;
+        g.expires_at_ms = g.issued_at_ms + crate::grants::MAX_DURATION_MS;
         let accepted = AcceptedGrant::prepare(
             g.clone(),
             ledger.clone(),

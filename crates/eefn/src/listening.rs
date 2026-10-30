@@ -66,6 +66,8 @@ pub(crate) fn preserve_revision(old: &Value, next: &mut Value, local_enable: boo
 struct State {
     epoch: u64,
     blocked: bool,
+    runtime_generation: u64,
+    runtime_retired: bool,
 }
 pub(crate) struct Gate(watch::Sender<State>);
 impl Default for Gate {
@@ -76,7 +78,7 @@ impl Default for Gate {
 impl Gate {
     pub(crate) fn snapshot(&self) -> (u64, bool) {
         let state = self.state();
-        (state.epoch, state.blocked)
+        (state.epoch, state.blocked || state.runtime_retired)
     }
     pub(crate) fn deny(&self) {
         self.0.send_if_modified(|state| {
@@ -90,6 +92,7 @@ impl Gate {
     }
     pub(crate) fn retire_runtime(&self) {
         self.0.send_modify(|state| {
+            state.runtime_retired = true;
             if let Some(epoch) = state.epoch.checked_add(1) {
                 state.epoch = epoch;
             } else {
@@ -97,10 +100,40 @@ impl Gate {
             }
         });
     }
+    pub(crate) fn runtime_generation(&self) -> u64 {
+        self.state().runtime_generation
+    }
+    pub(crate) fn bind_runtime(&self) -> u64 {
+        let mut generation = 0;
+        self.0.send_modify(|state| {
+            if state.runtime_generation == u64::MAX || state.epoch == u64::MAX {
+                state.blocked = true;
+                state.runtime_retired = true;
+            } else {
+                if state.runtime_generation > 0 {
+                    state.epoch += 1;
+                }
+                state.runtime_generation += 1;
+                state.runtime_retired = false;
+            }
+            generation = state.runtime_generation;
+        });
+        generation
+    }
+    pub(crate) fn retire_generation(&self, expected: u64) {
+        self.0.send_if_modified(|state| {
+            if state.runtime_generation != expected || state.runtime_retired {
+                return false;
+            }
+            state.epoch = state.epoch.saturating_add(1);
+            state.runtime_retired = true;
+            true
+        });
+    }
     fn allow(&self) -> Result<()> {
         let mut exhausted = false;
         self.0.send_if_modified(|state| {
-            if state.epoch == u64::MAX {
+            if state.epoch == u64::MAX || state.runtime_generation == u64::MAX {
                 exhausted = true;
                 return false;
             }
@@ -119,7 +152,10 @@ impl Gate {
     fn permit(&self) -> Result<Permit> {
         let receiver = self.0.subscribe();
         let state = *receiver.borrow();
-        ensure!(!state.blocked, "Listening consent revoked in this runtime");
+        ensure!(
+            !state.blocked && !state.runtime_retired,
+            "Listening consent revoked or runtime is retiring"
+        );
         Ok(Permit {
             receiver,
             epoch: state.epoch,
@@ -141,7 +177,7 @@ impl Permit {
             tokio::pin!(operation);
             loop {
                 let state = *self.receiver.borrow_and_update();
-                if state.blocked || state.epoch != self.epoch {
+                if state.blocked || state.runtime_retired || state.epoch != self.epoch {
                     break Err(anyhow::anyhow!("Local listening consent revoked"));
                 }
                 tokio::select! {
@@ -149,7 +185,13 @@ impl Permit {
                     changed=self.receiver.changed()=> {
                         if changed.is_err() { break Err(anyhow::anyhow!("Listening control unavailable")); }
                     },
-                    result=&mut operation=>break result,
+                    result=&mut operation=> {
+                        let current = *self.receiver.borrow();
+                        if current.blocked || current.runtime_retired || current.epoch != self.epoch {
+                            break Err(anyhow::anyhow!("Local listening authority changed before result"));
+                        }
+                        break result;
+                    },
                 }
             }
         };
@@ -319,7 +361,7 @@ impl crate::NodeService {
                     consent,
                     revision: current_revision,
                     runtime_epoch: state.epoch,
-                    runtime_blocked: state.blocked,
+                    runtime_blocked: state.blocked || state.runtime_retired,
                     saved_microphone_permission: config.pointer("/permissions/media/microphone")
                         == Some(&json!(true)),
                     applied_microphone_permission: engine.applied_permissions().media.microphone,
