@@ -228,16 +228,49 @@ async fn persistent_event_count_individual_and_total_bytes_enforce_reviewed_boun
                 d.events.max_event_bytes = 512;
             }
         }
-        let consumed = consume(&ledger, d.clone()).await.unwrap();
+        // This quota test performs several real disk checkpoints. Use actual
+        // sequential renewals from ONE original issuer, rather than requiring
+        // the entire test to fit one unrenewed ten-second lease. Production
+        // lease/session limits and the original fifty-second horizon stay put.
+        let contract = d.lease_contract().unwrap();
+        let mut issuer = IssuerWindow::new(
+            contract.clone(),
+            &policy(),
+            Instant::now() + Duration::from_secs(50),
+        )
+        .unwrap();
+        let requests = Arc::new(Requests::default());
+        let initial = event_quota_proof(&mut issuer, &requests, &d, 1).await;
+        let consumed = ledger
+            .consume_workload(
+                d.clone(),
+                &policy(),
+                initial,
+                &d.issuer_id,
+                &d.session_id,
+                &d.executor_node,
+            )
+            .unwrap();
+        issuer.acknowledge_consumed(&d.scope().unwrap()).unwrap();
         let writer = consumed.event_writer().unwrap();
         let reporting = consumed.reporting_authority();
-        let contract = d.lease_contract().unwrap();
-        let (_sender, renewals) = crate::workload_leases::renewal_channel();
+        let (sender, renewals) = crate::workload_leases::renewal_channel();
         consumed
             .supervise(renewals, async {
                 let mut count = 0;
                 let mut bytes = 0;
                 for sequence in 1..=8 {
+                    let lease_sequence = sequence + 1;
+                    sender
+                        .send(event_quota_proof(&mut issuer, &requests, &d, lease_sequence).await)
+                        .await
+                        .unwrap();
+                    // The supervising runner must consume the proof before the
+                    // source uses that reporting window. Yield without forging
+                    // a clock or moving an existing checkpoint's deadline.
+                    while reporting.checkpoint(&contract)?.sequence() < lease_sequence {
+                        tokio::task::yield_now().await;
+                    }
                     let event = stored_event(sequence, sequence, Some(sequence % 2 == 0));
                     let size = serde_json::to_vec(&event)?.len();
                     let expected = sequence <= d.events.max_events
@@ -247,6 +280,7 @@ async fn persistent_event_count_individual_and_total_bytes_enforce_reviewed_boun
                         .append(event, Arc::new(reporting.checkpoint(&contract)?))
                         .await;
                     assert_eq!(result.is_ok(), expected, "{mode}:{sequence}");
+                    reporting.checkpoint(&contract)?.check(&contract)?;
                     if expected {
                         count += 1;
                         bytes += size;
@@ -263,6 +297,31 @@ async fn persistent_event_count_individual_and_total_bytes_enforce_reviewed_boun
             .await
             .unwrap();
     }
+}
+
+async fn event_quota_proof(
+    issuer: &mut IssuerWindow,
+    requests: &Arc<Requests>,
+    definition: &Definition,
+    sequence: u64,
+) -> LeaseProof {
+    let manager = requests.clone();
+    requests
+        .request(&definition.lease_contract().unwrap(), sequence, |value| {
+            let query: Query = serde_json::from_value(value).unwrap();
+            let reply = issuer
+                .reply(
+                    &query,
+                    &definition.issuer_id,
+                    &definition.session_id,
+                    &definition.executor_node,
+                )
+                .unwrap();
+            manager.complete(json!(reply));
+            async { Ok(()) }
+        })
+        .await
+        .unwrap()
 }
 
 #[tokio::test]

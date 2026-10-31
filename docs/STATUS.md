@@ -3,6 +3,24 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: lease-correct journal quota verification
+
+Run `41193793243` passed native background-service startup, bundled inspection,
+request commands and process lifetime checks, then failed finite audio completion.
+It also failed the event quota regression when its single unrenewed lease expired
+during real disk checkpoints. The quota case now requests sequential proofs from
+one original issuer, acknowledges consumption before renewal, and waits for the
+supervisor to apply each proof before writing. The original session horizon,
+lease limits and quota assertions remain unchanged; a post-write live-check also
+prevents a lease failure from passing as a quota refusal. Shipping runtime code
+and the dedicated expiration/blocked-storage tests are unchanged.
+
+The finite audio diagnostic had read `report.error` instead of `report.error_code`.
+It now reads the actual field through a closed code list and records bounded
+synthetic capture/playback call counts. Its completion/evidence assertions and
+execution budgets remain unchanged. The interruption's cause is still unproven;
+the failed run is retained and fresh hosted verification is required.
+
 ## In development: combined workload receipt command acceptance
 
 A new combined integration regression exercises the real loopback owner HTTP
