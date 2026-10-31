@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: combined workload receipt command acceptance
+
+A new combined integration regression exercises the real loopback owner HTTP
+endpoint and two authenticated running origin nodes against a synthetic executor
+receipt responder. It requires identical owner/rightful-origin history, rejection
+of the other origin before executor access, and an unchanged issued coordinator
+job and revision. This verifies existing command and submission wiring without
+starting a source, model or dashboard; node journal reads remain separately tested.
+Hosted acceptance is pending, and physical two-PC/source acceptance remains open.
+
 ## In development: workload history through existing receipt commands
 
 The existing owner and origin-node `requests receipt` services now select a typed

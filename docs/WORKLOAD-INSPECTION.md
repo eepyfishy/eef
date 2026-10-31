@@ -58,3 +58,11 @@ and origin scoping with reopened coordinator history, and strict report/authorit
 validation through the existing command confirmation. Journal creation/consumption
 and completion fixtures are synthetic; they do not prove capture or two-PC
 acceptance. Fresh hosted compilation and native acceptance remain required.
+
+A separate command integration case adds the real owner HTTP endpoint, real
+coordinator submission handling, and two independently authenticated running
+origin connections. Its executor is explicitly a synthetic receipt responder.
+The owner and rightful origin must receive identical typed history; the other
+origin must be refused before an executor read. The coordinator job must remain
+issued, with its original revision, even when the node reports acceptance. This
+checks command wiring and origin fencing without pretending to launch a source.

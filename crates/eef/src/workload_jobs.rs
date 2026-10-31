@@ -735,4 +735,4 @@ pub(crate) fn issue(
 
 #[cfg(test)]
 #[path = "workload_jobs_tests.rs"]
-mod tests;
+pub(crate) mod tests;

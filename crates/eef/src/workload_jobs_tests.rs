@@ -60,7 +60,7 @@ fn review(engine: &TaskEngine) -> (Plan, PlanInput) {
         input,
     )
 }
-fn planned(engine: &TaskEngine) -> (Plan, PlanningCommand) {
+pub(crate) fn planned(engine: &TaskEngine) -> (Plan, PlanningCommand) {
     let (review, input) = review(engine);
     let command = PlanningCommand::Compile {
         id: review.plan_id,
@@ -81,7 +81,7 @@ fn approved(engine: &TaskEngine) -> (Plan, ApprovalCommand) {
     };
     (approve(engine, &command, &"a".repeat(64)).unwrap(), command)
 }
-fn execute(plan: &Plan) -> ExecuteCommand {
+pub(crate) fn execute(plan: &Plan) -> ExecuteCommand {
     ExecuteCommand {
         id: plan.plan_id.clone(),
         expected_revision: plan.revision,
@@ -89,7 +89,7 @@ fn execute(plan: &Plan) -> ExecuteCommand {
         approval_sha256: plan.approval.as_ref().unwrap().approval_sha256.clone(),
     }
 }
-fn policy() -> Policy {
+pub(crate) fn policy() -> Policy {
     Policy {
         enabled: true,
         ..Default::default()
@@ -117,7 +117,7 @@ fn lease(issued: &mut Issued, sequence: u64) -> Result<Reply> {
         &d.executor_node,
     )
 }
-fn synthetic_ack(d: &Definition) -> eefn::grants::workload::Receipt {
+pub(crate) fn synthetic_ack(d: &Definition) -> eefn::grants::workload::Receipt {
     let scope = d.scope().unwrap();
     eefn::grants::workload::Receipt {
         schema_version: 2,

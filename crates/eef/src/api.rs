@@ -889,3 +889,13 @@ async fn update_apply(State(runtime): State<Arc<Runtime>>) -> ApiResult<Value> {
 
 #[allow(dead_code)]
 fn _assert_result_send(_: Result<()>) {}
+
+#[cfg(test)]
+mod workload_receipt_tests {
+    use super::*;
+    use crate::workload_jobs::{
+        ApprovalCommand, approve, issue,
+        tests::{execute, planned, policy, synthetic_ack},
+    };
+    include!("workload_command_acceptance_tests.rs");
+}
