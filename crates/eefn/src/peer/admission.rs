@@ -2,7 +2,7 @@
 //! Not a producer/sink permission. Native socket ownership uses the same lease
 //! and permission watcher, including readiness and pending connect/accept.
 use super::{
-    PeerEndpoint, Recipient, SealedMaterial,
+    Failure, PeerEndpoint, Recipient, SealedMaterial,
     scope::{Limits, Role, Scope},
 };
 use crate::grants::{AcceptedGrant, ExecutionGrant, GrantLedger, GrantReport};
@@ -390,18 +390,23 @@ impl AdmittedPeer {
             // No caller-provided route or DNS resolution. The numeric endpoint
             // is signed, scoped and checked against the runtime's local binding.
             super::plan::validate_address(scope.destination_address)?;
-            validate_payload(role, &definition, source_payload.as_deref())?;
+            validate_payload(role, &definition, source_payload.as_deref())
+                .context(Failure::Payload)?;
             let stream = if role == Role::Destination {
-                let listener = tokio::net::TcpListener::bind(scope.destination_address).await?;
-                ready(acknowledgement).await?;
-                let (stream, _) = listener.accept().await?;
+                let listener = tokio::net::TcpListener::bind(scope.destination_address)
+                    .await
+                    .context(Failure::Listen)?;
+                ready(acknowledgement).await.context(Failure::Readiness)?;
+                let (stream, _) = listener.accept().await.context(Failure::Connect)?;
                 // One admitted connection only. An unauthenticated connection
                 // cannot cause retries or acquire another grant/session slot.
                 drop(listener);
                 stream
             } else {
-                ready(acknowledgement).await?;
-                tokio::net::TcpStream::connect(scope.destination_address).await?
+                ready(acknowledgement).await.context(Failure::Readiness)?;
+                tokio::net::TcpStream::connect(scope.destination_address)
+                    .await
+                    .context(Failure::Connect)?
             };
             if definition.audio.is_some() {
                 super::audio_runtime::transfer(
@@ -455,36 +460,39 @@ async fn transfer<S: crate::tls::NodeIo + 'static>(
     stream: S,
     source_payload: Option<Arc<[u8]>>,
 ) -> Result<Value> {
-    validate_payload(role, &definition, source_payload.as_deref())?;
+    validate_payload(role, &definition, source_payload.as_deref()).context(Failure::Payload)?;
     let frames = definition
         .payload_bytes
         .div_ceil(u64::from(definition.limits.max_frame_bytes)) as u32;
     if role == Role::Source {
         let bytes = source_payload.expect("validated source payload");
-        let mut channel = endpoint.connect(stream).await?;
+        let mut channel = endpoint.connect(stream).await.context(Failure::Channel)?;
         for frame in bytes.chunks(definition.limits.max_frame_bytes as usize) {
-            channel.send_data(frame).await?;
-            channel.receive_acknowledgement().await?;
+            channel.send_data(frame).await.context(Failure::Transfer)?;
+            channel
+                .receive_acknowledgement()
+                .await
+                .context(Failure::Transfer)?;
         }
     } else {
-        let mut channel = endpoint.accept(stream).await?;
+        let mut channel = endpoint.accept(stream).await.context(Failure::Channel)?;
         let mut received = 0u64;
         let mut hash = Sha256::new();
         for index in 0..frames {
-            let bytes = channel.receive_data().await?;
+            let bytes = channel.receive_data().await.context(Failure::Transfer)?;
             let expected = (definition.payload_bytes - received)
                 .min(u64::from(definition.limits.max_frame_bytes));
             if bytes.len() as u64 != expected {
-                bail!("Peer frame differs from approved finite layout")
+                return Err(Failure::Payload.into());
             }
             received += bytes.len() as u64;
             hash.update(&bytes);
             if index + 1 == frames
                 && Some(hex::encode(hash.clone().finalize())) != definition.payload_sha256
             {
-                bail!("Received bytes differ from approved manifest")
+                return Err(Failure::Payload.into());
             }
-            channel.acknowledge().await?;
+            channel.acknowledge().await.context(Failure::Transfer)?;
         }
     }
     Ok(json!(TransferReceipt {

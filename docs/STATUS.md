@@ -3,6 +3,24 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: retained finite peer failure categories
+
+Finite peer operations now attach [fixed failure context](PEER-FAILURE-CODES.md)
+to the existing consumed report, identifying listener/connection/readiness,
+authenticated channel, bounded payload, capture and playback failures. Nested
+Python codes and existing stop/deadline/policy outcomes keep priority. Unknown
+state, no-replay fencing, frame/schema compatibility and production budgets are
+unchanged. Three new native/duplex regressions cover occupied listeners, failed
+readiness with private errors/Python categories and invalid handshakes; existing
+substituted-payload checks retain their assertions and add exact failure codes.
+
+Run `41194413553` passed all 1,385 Windows headless Rust cases plus the existing
+ignored test and the other three jobs, including workload receipt/reconnect
+tests. Its native finite audio completion gate still failed. The combined command
+candidate passed both Linux jobs; full Windows and corrected diagnostic runs
+remain pending. Neither failure categories nor focused Rust acceptance establish
+stable release or physical media acceptance.
+
 ## In development: lease-correct journal quota verification
 
 Run `41193793243` passed native background-service startup, bundled inspection,

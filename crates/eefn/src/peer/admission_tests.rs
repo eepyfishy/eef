@@ -560,6 +560,7 @@ async fn substituted_payloads_fail_without_emitting_a_successful_transport_recei
     let (a, mut b) = tokio::io::duplex(1024);
     let report = source.run(&engine, a, Some(vec![1])).await;
     assert_eq!(report.state, ReceiptState::Unknown);
+    assert_eq!(report.error_code.as_deref(), Some("peer_payload_invalid"));
     let mut buf = [0; 16];
     assert_eq!(
         tokio::io::AsyncReadExt::read(&mut b, &mut buf)
@@ -599,6 +600,7 @@ async fn substituted_payloads_fail_without_emitting_a_successful_transport_recei
     };
     let (_, received) = tokio::join!(malicious, destination.run(&engine, b, None));
     assert_eq!(received.state, ReceiptState::Unknown);
+    assert_eq!(received.error_code.as_deref(), Some("peer_payload_invalid"));
     assert!(
         !received.success && received.persisted && received.confirms(f.grant(Role::Destination))
     );
@@ -849,5 +851,144 @@ fn tcp_system_clock_wrapper_does_not_duplicate_large_readiness_future() {
     assert_eq!(
         normal, direct,
         "TCP wrapper must not store a duplicate large async frame"
+    );
+}
+
+#[tokio::test]
+async fn occupied_native_listener_has_a_retained_closed_failure_before_readiness() {
+    let mut f = Fixture::new();
+    let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = occupied.local_addr().unwrap();
+    f.transport.scope.destination_address = address;
+    f.transport.reseal();
+    let engine = f.engine(Role::Destination, true);
+    let ledger = f.ledger(Role::Destination);
+    let admitted = f
+        .prepare(Role::Destination, &engine, ledger.clone(), 10000)
+        .await
+        .unwrap();
+    let report = admitted
+        .run_tcp(&engine, None, |_| async {
+            panic!("Listener failure cannot reach readiness");
+            #[allow(unreachable_code)]
+            Ok(())
+        })
+        .await;
+    assert_eq!(
+        report.error_code.as_deref(),
+        Some("peer_listener_unavailable")
+    );
+    assert_eq!(report.state, ReceiptState::Unknown);
+    assert!(report.persisted && !report.success && report.data.is_null());
+    assert!(report.confirms(f.grant(Role::Destination)));
+    assert!(engine.peer_slot().is_ok());
+    assert_eq!(occupied.local_addr().unwrap(), address);
+    let retained = ledger
+        .result(
+            &f.grant(Role::Destination).issuer_id,
+            &f.grant(Role::Destination).grant_id,
+            &definition_digest(&json!(f.grant(Role::Destination))).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        retained["report"]["error_code"],
+        "peer_listener_unavailable"
+    );
+    assert!(
+        f.prepare(Role::Destination, &engine, ledger, 10000)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn failed_native_readiness_keeps_python_codes_and_never_exposes_private_errors() {
+    for bridge in [false, true] {
+        let mut f = Fixture::new();
+        let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = probe.local_addr().unwrap();
+        drop(probe);
+        f.transport.scope.destination_address = address;
+        f.transport.reseal();
+        let engine = f.engine(Role::Destination, true);
+        let ledger = f.ledger(Role::Destination);
+        let admitted = f
+            .prepare(Role::Destination, &engine, ledger.clone(), 10000)
+            .await
+            .unwrap();
+        let report = admitted
+            .run_tcp(&engine, None, |_| async move {
+                assert!(tokio::net::TcpListener::bind(address).await.is_err());
+                let error = if bridge {
+                    anyhow::Error::new(crate::python::BridgeFailure::Deadline)
+                } else {
+                    anyhow::anyhow!("PRIVATE_PEER_READINESS_PATH_AND_SECRET")
+                };
+                Err(error.context("PRIVATE_PEER_CALLBACK_DETAIL"))
+            })
+            .await;
+        assert_eq!(
+            report.error_code.as_deref(),
+            Some(if bridge {
+                "python_exchange_deadline"
+            } else {
+                "peer_readiness_unavailable"
+            })
+        );
+        assert_eq!(report.state, ReceiptState::Unknown);
+        assert!(report.persisted && !report.success && report.data.is_null());
+        assert!(
+            !serde_json::to_string(&report)
+                .unwrap()
+                .contains("PRIVATE_PEER_")
+        );
+        let _released = tokio::net::TcpListener::bind(address).await.unwrap();
+        assert!(engine.peer_slot().is_ok());
+        assert!(
+            f.prepare(Role::Destination, &engine, ledger, 10000)
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn invalid_peer_handshake_is_uncertain_and_retains_no_untrusted_bytes() {
+    use tokio::io::AsyncWriteExt;
+    let f = Fixture::new();
+    let engine = f.engine(Role::Source, true);
+    let ledger = f.ledger(Role::Source);
+    let admitted = f
+        .prepare(Role::Source, &engine, ledger.clone(), 10000)
+        .await
+        .unwrap();
+    let (input, mut attacker) = tokio::io::duplex(65536);
+    attacker
+        .write_all(b"PRIVATE_PEER_HANDSHAKE_BYTES")
+        .await
+        .unwrap();
+    attacker.shutdown().await.unwrap();
+    let report = tokio::time::timeout(
+        Duration::from_secs(3),
+        admitted.run(&engine, input, Some(f.bytes.clone())),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        report.error_code.as_deref(),
+        Some("peer_channel_unavailable")
+    );
+    assert_eq!(report.state, ReceiptState::Unknown);
+    assert!(report.persisted && !report.success && report.data.is_null());
+    assert!(
+        !serde_json::to_string(&report)
+            .unwrap()
+            .contains("PRIVATE_PEER_")
+    );
+    assert!(engine.peer_slot().is_ok());
+    assert!(
+        f.prepare(Role::Source, &engine, ledger, 10000)
+            .await
+            .is_err()
     );
 }

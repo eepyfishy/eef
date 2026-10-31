@@ -1042,7 +1042,9 @@ impl AcceptedGrant {
                         Ok(_)=>GrantReport::new(g,ReceiptState::Completed,Value::Null,Some("result_too_large")),
                         Err(error)=>GrantReport::new(g,ReceiptState::Unknown,Value::Null,Some(
                             if process_stopping { "grant_stop_requested_effects_unknown" } else {
-                            error.downcast_ref::<crate::python::BridgeFailure>().map(|failure|failure.code()).unwrap_or("execution_failed_effects_unknown") })),
+                            error.downcast_ref::<crate::python::BridgeFailure>().map(|failure|failure.code())
+                                .or_else(||error.downcast_ref::<crate::peer::Failure>().map(|failure|failure.code()))
+                                .unwrap_or("execution_failed_effects_unknown") })),
                     }
                 }
             }

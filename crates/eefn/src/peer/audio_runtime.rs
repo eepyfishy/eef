@@ -1,7 +1,7 @@
 //! Called only inside an existing consumed AdmittedPeer operation. No separate
 //! receipt, permissions, task ownership, sockets, restart or automatic retry.
 use super::{
-    PeerEndpoint,
+    Failure, PeerEndpoint,
     admission::{Definition, TransferReceipt},
     scope::{Role, Scope},
 };
@@ -36,7 +36,7 @@ pub(super) async fn transfer<S: crate::tls::NodeIo + 'static>(
         .context("Missing approved audio operation")?;
     let maximum_encoded = usize::try_from(definition.payload_bytes.div_ceil(3) * 4 + 1024)?;
     let (manifest, frames) = if role == Role::Source {
-        let mut channel = endpoint.connect(stream).await?;
+        let mut channel = endpoint.connect(stream).await.context(Failure::Channel)?;
         engine.check_grant_policy(g)?;
         let (cap, action, params) = audio.operation(role);
         let output = engine
@@ -47,74 +47,88 @@ pub(super) async fn transfer<S: crate::tls::NodeIo + 'static>(
                 Some(maximum_encoded),
                 Some(execution_deadline),
             )
-            .await?;
-        let encoded = output["data_base64"]
-            .as_str()
-            .context("Audio capture returned no bounded WAV")?;
-        if encoded.len() > maximum_encoded
-            || output["mime_type"] != "audio/wav"
-            || output["sample_rate"] != audio.sample_rate
-            || output["channels"] != audio.channels
-        {
-            bail!("Audio capture differs from approved format")
-        }
-        let bytes = STANDARD
-            .decode(encoded)
-            .context("Audio capture returned invalid encoding")?;
-        let bytes = audio.canonicalize(bytes)?;
+            .await
+            .context(Failure::Capture)?;
+        let bytes = (|| -> Result<Vec<u8>> {
+            let encoded = output["data_base64"]
+                .as_str()
+                .context("Audio capture returned no bounded WAV")?;
+            if encoded.len() > maximum_encoded
+                || output["mime_type"] != "audio/wav"
+                || output["sample_rate"] != audio.sample_rate
+                || output["channels"] != audio.channels
+            {
+                bail!("Audio capture differs from approved format")
+            }
+            let bytes = STANDARD
+                .decode(encoded)
+                .context("Audio capture returned invalid encoding")?;
+            audio.canonicalize(bytes)
+        })()
+        .context(Failure::CaptureFormat)?;
         engine.check_grant_policy(g)?;
         let manifest = Manifest {
             schema_version: 2,
             payload_bytes: bytes.len() as u64,
             payload_sha256: hex::encode(Sha256::digest(&bytes)),
         };
-        channel.send_data(&serde_json::to_vec(&manifest)?).await?;
-        channel.receive_acknowledgement().await?;
+        channel
+            .send_data(&serde_json::to_vec(&manifest)?)
+            .await
+            .context(Failure::Transfer)?;
+        channel
+            .receive_acknowledgement()
+            .await
+            .context(Failure::Transfer)?;
         for chunk in bytes.chunks(definition.limits.max_frame_bytes as usize) {
-            channel.send_data(chunk).await?;
-            channel.receive_acknowledgement().await?;
+            channel.send_data(chunk).await.context(Failure::Transfer)?;
+            channel
+                .receive_acknowledgement()
+                .await
+                .context(Failure::Transfer)?;
         }
         let frames = 1 + manifest
             .payload_bytes
             .div_ceil(u64::from(definition.limits.max_frame_bytes)) as u32;
         (manifest, frames)
     } else {
-        let mut channel = endpoint.accept(stream).await?;
-        let encoded = channel.receive_data().await?;
+        let mut channel = endpoint.accept(stream).await.context(Failure::Channel)?;
+        let encoded = channel.receive_data().await.context(Failure::Transfer)?;
         if encoded.len() > 512 {
-            bail!("Audio manifest exceeds its bound")
+            return Err(Failure::Manifest.into());
         }
-        let manifest: Manifest =
-            serde_json::from_slice(&encoded).context("Invalid scoped audio manifest")?;
+        let manifest: Manifest = serde_json::from_slice(&encoded).context(Failure::Manifest)?;
         if manifest.schema_version != 2
             || manifest.payload_bytes < audio.minimum_bytes()
             || manifest.payload_bytes > definition.payload_bytes
             || !crate::request_result::valid_digest(&manifest.payload_sha256)
         {
-            bail!("Audio manifest differs from approved bounds")
+            return Err(Failure::Manifest.into());
         }
-        channel.acknowledge().await?;
+        channel.acknowledge().await.context(Failure::Transfer)?;
         let count = manifest
             .payload_bytes
             .div_ceil(u64::from(definition.limits.max_frame_bytes));
         let mut bytes = Vec::new();
         bytes.try_reserve_exact(manifest.payload_bytes as usize)?;
         for index in 0..count {
-            let chunk = channel.receive_data().await?;
+            let chunk = channel.receive_data().await.context(Failure::Transfer)?;
             let expected = (manifest.payload_bytes - bytes.len() as u64)
                 .min(u64::from(definition.limits.max_frame_bytes));
             if chunk.len() as u64 != expected {
-                bail!("Audio frame differs from bounded manifest")
+                return Err(Failure::Payload.into());
             }
             bytes.extend_from_slice(&chunk);
             if index + 1 < count {
-                channel.acknowledge().await?;
+                channel.acknowledge().await.context(Failure::Transfer)?;
             }
         }
         if hex::encode(Sha256::digest(&bytes)) != manifest.payload_sha256 {
-            bail!("Audio payload digest differs")
+            return Err(Failure::Payload.into());
         }
-        audio.validate_transport_wav(&bytes)?;
+        audio
+            .validate_transport_wav(&bytes)
+            .context(Failure::Payload)?;
         engine.check_grant_policy(g)?;
         let (cap, action, mut params) = audio.operation(role);
         params["data_base64"] = json!(STANDARD.encode(&bytes));
@@ -126,14 +140,15 @@ pub(super) async fn transfer<S: crate::tls::NodeIo + 'static>(
                 Some(g.limits.max_result_bytes),
                 Some(execution_deadline),
             )
-            .await?;
+            .await
+            .context(Failure::Playback)?;
         if played["played"] != true || played["bytes"] != manifest.payload_bytes {
-            bail!("Audio sink did not report exact playback completion")
+            return Err(Failure::Playback.into());
         }
         engine.check_grant_policy(g)?;
         // Final ACK is deliberately withheld until the approved sink returns.
         // This is an endpoint report, not proof of physical sound or rollback.
-        channel.acknowledge().await?;
+        channel.acknowledge().await.context(Failure::Transfer)?;
         (manifest, 1 + count as u32)
     };
     Ok(json!(TransferReceipt {
