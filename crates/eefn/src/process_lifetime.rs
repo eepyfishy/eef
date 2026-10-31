@@ -662,7 +662,7 @@ pub(crate) mod tests {
         let mut released = false;
         loop {
             tokio::select! {
-                status=&mut wait=>{assert!(released,"Root cannot exit before both owned identities are held");assert!(status.unwrap().success());break;},
+                status=&mut wait=>{assert!(released,"Root wait completed before fixture release: retained={}, status={status:?}",tree.retained_process_count().unwrap());assert!(status.unwrap().success());break;},
                 _=tokio::time::sleep(Duration::from_millis(10)),if !released=>{
                     if tree.retained_process_count().unwrap()==2 {std::fs::write(dir.path().join("release"),b"release").unwrap();released=true;}
                 },
