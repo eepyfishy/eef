@@ -1,6 +1,9 @@
 //! Deterministic pipe bounds, not device/Python acceptance.
 use super::*;
 
+#[cfg(all(windows, feature = "native-test-fixtures"))]
+include!("python_reserved_capture_native_tests.rs");
+
 #[test]
 fn start_expiry_is_classified_without_private_spawn_error_text() {
     let error = anyhow::Error::from(crate::process_lifetime::StartDeadlineElapsed)

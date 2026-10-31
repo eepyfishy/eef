@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: reserved one-shot capture component acceptance
+
+An opt-in Windows regression exercises the shipping one-shot Python host with a
+synthetic WAV producer, the actual owned job and microphone reservation. It repeats
+the bounded exchange and requires immediate reservation reuse only after observed
+owned-job exit, exact WAV length/headers and exclusion of competing sources. Its
+bridge limits and six-second parent bound match the finite audio fixture; it opens
+no sound driver, peer socket or dashboard. This isolates reserved capture from the
+larger relay test without claiming its interruption is fixed. Hosted execution is
+required; ordinary builds gain no fixture hook or additional source authority.
+
 ## In development: retained finite peer failure categories
 
 Finite peer operations now attach [fixed failure context](PEER-FAILURE-CODES.md)
