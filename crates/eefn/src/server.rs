@@ -696,6 +696,27 @@ impl NodeServer {
         }
         Ok(result)
     }
+    /// Historical evidence, independently correlated to the current pinned node
+    /// session. Never restores the session stored in the original definition.
+    pub async fn inspect_workload_receipt(
+        &self,
+        definition: &crate::workload_leases::definition::Definition,
+    ) -> Result<crate::grants::workload::Receipt> {
+        let scope = definition.scope()?;
+        let response = self.invoke_message(&definition.executor_node,
+            json!({"type":"workload_receipt","scope":scope,"expected_node_id":definition.executor_node,"expected_issuer_id":definition.issuer_id}),
+            Duration::from_secs(10), None, None, None).await?;
+        if response["success"] != true {
+            bail!("Workload evidence unavailable; no ordinary grant fallback")
+        }
+        let receipt: crate::grants::workload::Receipt =
+            serde_json::from_value(response["data"].clone())?;
+        receipt.validate()?;
+        if receipt.definition != *definition {
+            bail!("Workload evidence differs from exact issued definition")
+        }
+        Ok(receipt)
+    }
     async fn invoke_message(
         &self,
         node_id: &str,
@@ -734,8 +755,31 @@ impl NodeServer {
             || message["type"] == "grant_result"
             || message["type"] == "stop_grant"
             || message["type"] == "inspect_grant_stop"
+            || message["type"] == "workload_receipt"
         {
             self.check_grant_connection(&connection)?;
+            if message["type"] == "workload_receipt" {
+                let support: crate::workload_inspection::Advertisement = serde_json::from_value(
+                    connection
+                        .state
+                        .as_ref()
+                        .context("Workload inspection registration unavailable")?
+                        .registration["workload_receipts"]
+                        .clone(),
+                )?;
+                support.validate()?;
+                if !support.available {
+                    bail!("Node does not advertise workload inspection; no fallback")
+                }
+                let scope: crate::grants::stop::Scope =
+                    serde_json::from_value(message["scope"].clone())?;
+                scope.validate()?;
+                if message["expected_issuer_id"] != scope.issuer_id
+                    || scope.executor_node != node_id
+                {
+                    bail!("Workload inspection scope differs from issuer/node")
+                }
+            }
             if message["type"] == "inspect_grant_stop" {
                 let support: crate::grants::stop::inspection::Advertisement =
                     serde_json::from_value(
@@ -815,7 +859,10 @@ impl NodeServer {
             if message["expected_issuer_id"] != issuer || message["expected_node_id"] != node_id {
                 bail!("Receipt issuer or node changed; use local owner inspection")
             }
-            if message["type"] == "stop_grant" || message["type"] == "inspect_grant_stop" {
+            if message["type"] == "stop_grant"
+                || message["type"] == "inspect_grant_stop"
+                || message["type"] == "workload_receipt"
+            {
                 message.as_object_mut().unwrap().remove("expected_node_id");
                 message
                     .as_object_mut()
@@ -1312,6 +1359,14 @@ impl NodeServer {
                         }
                     }
                     let advertisement = crate::network::PeerRecord::from_registration(&message)?;
+                    if let Some(value) = message.get("workload_receipts") {
+                        let support: crate::workload_inspection::Advertisement =
+                            serde_json::from_value(value.clone())?;
+                        support.validate()?;
+                        if support.available && message["execution_grants"]["available"] != true {
+                            bail!("Workload inspection requires a grant receipt journal")
+                        }
+                    }
                     if let Some(value) = message.get("peer_transfer") {
                         let support: crate::peer::plan::Advertisement =
                             serde_json::from_value(value.clone())?;
@@ -1374,6 +1429,7 @@ impl NodeServer {
                                     "peer_transfer",
                                     "grant_stop",
                                     "grant_stop_read",
+                                    "workload_receipts",
                                 ],
                                 received_at_ms,
                             ),

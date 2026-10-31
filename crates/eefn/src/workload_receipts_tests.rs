@@ -3,6 +3,7 @@ use crate::workload_leases::{IssuerWindow, Query, Requests, definition::*};
 
 include!("workload_event_journal_tests.rs");
 include!("workload_finalization_tests.rs");
+include!("workload_inspection_tests.rs");
 
 #[derive(Default)]
 struct SourceEvidence {

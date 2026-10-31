@@ -8,6 +8,7 @@ use eefn::{
 };
 
 include!("workload_job_completion_tests.rs");
+include!("workload_job_inspection_tests.rs");
 
 fn template_input() -> PlanInput {
     PlanInput {

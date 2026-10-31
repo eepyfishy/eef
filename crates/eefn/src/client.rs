@@ -27,6 +27,8 @@ use crate::session_output::send_reply as write_reply_frame;
 mod peer_delivery;
 #[path = "client_stop_inspection.rs"]
 mod stop_inspection;
+#[path = "client_workload_inspection.rs"]
+mod workload_inspection;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SelectedModel {
@@ -221,6 +223,10 @@ impl NodeClient {
 
     pub fn with_status(mut self, status: Arc<std::sync::Mutex<Value>>) -> Self {
         self.status = status;
+        self.status.lock().expect("status")["workload_receipts"] =
+            json!(crate::workload_inspection::Advertisement::new(
+                self.grant_ledger.is_some() && self.tls_config.is_some()
+            ));
         self.status.lock().expect("status")["grant_stop_read"] =
             json!(crate::grants::stop::inspection::Advertisement::new(
                 self.grant_ledger.is_some() && self.tls_config.is_some()
@@ -391,6 +397,9 @@ impl NodeClient {
             self.grant_ledger.is_some() && self.tls_config.is_some()
         ));
         message["grant_stop_read"] = json!(crate::grants::stop::inspection::Advertisement::new(
+            self.grant_ledger.is_some() && self.tls_config.is_some()
+        ));
+        message["workload_receipts"] = json!(crate::workload_inspection::Advertisement::new(
             self.grant_ledger.is_some() && self.tls_config.is_some()
         ));
         message
@@ -734,6 +743,17 @@ impl NodeClient {
             }
             if message["type"] == "inspect_grant_stop" {
                 Box::pin(self.dispatch_stop_inspection(
+                    message,
+                    &writer,
+                    &output_write_failed,
+                    &mut tasks,
+                    grant_issuer.as_deref(),
+                ))
+                .await?;
+                continue;
+            }
+            if message["type"] == "workload_receipt" {
+                Box::pin(self.dispatch_workload_inspection(
                     message,
                     &writer,
                     &output_write_failed,

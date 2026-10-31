@@ -103,6 +103,7 @@ pub mod submission;
 pub mod tls;
 pub mod updater;
 mod workload_events;
+pub mod workload_inspection;
 pub mod workload_leases;
 mod workload_runtime;
 pub mod workload_sources;

@@ -962,6 +962,13 @@ impl crate::Runtime {
         origin: Option<&str>,
     ) -> Result<Value> {
         let plan = self.engine.store.get(&command.id)?;
+        if plan
+            .execution
+            .as_ref()
+            .is_some_and(|e| e.workload.is_some())
+        {
+            return self.inspect_workload_receipt(&plan, &command, origin).await;
+        }
         let attempt = receipt_attempt(&plan, &command, origin)?;
         let receipt = self
             .node_server

@@ -267,6 +267,9 @@ pub fn confirmed(
     origin: Option<&str>,
     runtime: Option<&str>,
 ) -> bool {
+    if value["schema_version"] == 2 {
+        return crate::workload_inspection::confirmed(value, cmd, origin, runtime);
+    }
     let Ok(r) = serde_json::from_value::<ReceiptReport>(value.clone()) else {
         return false;
     };

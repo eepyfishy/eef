@@ -3,6 +3,23 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: workload history through existing receipt commands
+
+The existing owner and origin-node `requests receipt` services now select a typed
+workload read when the saved job contains a version-two workload. The
+[inspection contract](WORKLOAD-INSPECTION.md) requires the current pinned TLS and
+node credential, separate read-only support, exact original scope/definition and
+the existing bounded controls. Historical sessions can be inspected after reconnect
+without restoring an issuer, source or lease. Ordinary schema-one reports remain
+unchanged; workload reports use a strict schema-two envelope. Reads never reconcile
+jobs or claim physical termination.
+
+Five new regressions include real loopback TLS and journal reads with synthetic
+consumption, disabled/legacy refusal, reconnect, unchanged coordinator revisions,
+origin fencing and strict typed confirmation. Hosted verification is pending.
+Authenticated source admission/execution, long sessions, physical two-PC testing,
+installer acceptance and the remaining stable roadmap are still incomplete.
+
 ## In development: native background-startup investigation
 
 Run `41192772099` passed all 1,380 Windows headless Rust cases plus the existing
