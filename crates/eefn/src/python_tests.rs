@@ -5,6 +5,23 @@ use super::*;
 include!("python_reserved_capture_native_tests.rs");
 
 #[test]
+fn tracked_wait_expiry_keeps_the_existing_bridge_deadline_category() {
+    let error = anyhow::Error::from(crate::process_lifetime::WaitDeadlineElapsed)
+        .context("PRIVATE-native-wait-path");
+    let mapped = bridge_wait_failure(error);
+    assert_eq!(
+        mapped.downcast_ref::<BridgeFailure>(),
+        Some(&BridgeFailure::Deadline)
+    );
+    assert!(!mapped.to_string().contains("PRIVATE"));
+    let error = anyhow::anyhow!("PRIVATE-owned-handle-failure");
+    assert_eq!(
+        bridge_wait_failure(error).to_string(),
+        "PRIVATE-owned-handle-failure"
+    );
+}
+
+#[test]
 fn start_expiry_is_classified_without_private_spawn_error_text() {
     let error = anyhow::Error::from(crate::process_lifetime::StartDeadlineElapsed)
         .context("PRIVATE-interpreter-path-token");

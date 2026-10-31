@@ -56,6 +56,10 @@ pub(crate) fn spawn_with_job_memory_limit(
 #[error("owned process start deadline elapsed")]
 pub(crate) struct StartDeadlineElapsed;
 
+#[derive(Debug, thiserror::Error)]
+#[error("owned process wait deadline elapsed")]
+pub(crate) struct WaitDeadlineElapsed;
+
 pub(crate) fn intersect_deadline(
     local: tokio::time::Instant,
     parent: Option<tokio::time::Instant>,
@@ -163,6 +167,42 @@ mod windows {
         Ok(unsafe { OwnedHandle::from_raw_handle(raw) })
     }
     impl ProcessTree {
+        /// Retain live descendants while the original root is running. Waiting
+        /// until after root exit loses short-lived interpreter helpers. This
+        /// observes only our job, issues no termination and grants no new time.
+        pub(crate) async fn wait_root_with_coverage_until(
+            &self,
+            child: &mut Child,
+            deadline: tokio::time::Instant,
+        ) -> Result<std::process::ExitStatus> {
+            let wait = child.wait();
+            tokio::pin!(wait);
+            loop {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(super::WaitDeadlineElapsed.into());
+                }
+                // A raced lookup is never evidence. Keep observing remaining
+                // members; final lifetime/handle accounting still decides proof.
+                let _ = self.1.capture_members(self.0.as_raw_handle());
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(super::WaitDeadlineElapsed.into());
+                }
+                tokio::select! {
+                    biased;
+                    _=tokio::time::sleep_until(deadline)=>return Err(super::WaitDeadlineElapsed.into()),
+                    status=&mut wait=>{
+                        let status=status.context("Wait for tracked owned root")?;
+                        if tokio::time::Instant::now() >= deadline { return Err(super::WaitDeadlineElapsed.into()); }
+                        return Ok(status);
+                    },
+                    _=tokio::time::sleep_until(deadline.min(tokio::time::Instant::now()+std::time::Duration::from_millis(10)))=>{},
+                }
+            }
+        }
+        #[cfg(test)]
+        pub(crate) fn retained_process_count(&self) -> Result<usize> {
+            self.1.retained_count()
+        }
         pub(crate) fn request_termination(&self) -> Result<()> {
             // Retain current members before asking them to terminate. A failed
             // lookup cannot prevent containment, but cannot later count as exit
@@ -481,6 +521,32 @@ pub(crate) mod tests {
             return;
         };
         let (mode, root): (String, PathBuf) = serde_json::from_str(&raw).unwrap();
+        if mode == "tracked-proxy-root" {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(args("tracked-proxy-child", &root))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            std::fs::write(
+                root.join("pids.json"),
+                serde_json::to_vec(&json!({"root":std::process::id(),"child":child.id()})).unwrap(),
+            )
+            .unwrap();
+            assert!(child.wait().unwrap().success());
+            return;
+        }
+        if mode == "tracked-proxy-child" {
+            let end = std::time::Instant::now() + Duration::from_secs(30);
+            while std::time::Instant::now() < end {
+                if root.join("release").is_file() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            panic!("Synthetic proxy child was not released");
+        }
         if mode == "exit-child-once" {
             return;
         }
@@ -576,6 +642,64 @@ pub(crate) mod tests {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         cmd
+    }
+
+    #[tokio::test]
+    async fn live_root_wait_retains_a_helper_before_root_and_helper_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let (mut child, tree) = spawn_with_job_memory_limit_before(
+            &mut command("tracked-proxy-root", dir.path()),
+            None,
+            deadline,
+        )
+        .unwrap();
+        let tree = std::sync::Arc::new(tree);
+        let processes = Processes::observe_until(dir.path(), deadline).await;
+        processes.alive();
+        let wait = tree.wait_root_with_coverage_until(&mut child, deadline);
+        tokio::pin!(wait);
+        let mut released = false;
+        loop {
+            tokio::select! {
+                status=&mut wait=>{assert!(released,"Root cannot exit before both owned identities are held");assert!(status.unwrap().success());break;},
+                _=tokio::time::sleep(Duration::from_millis(10)),if !released=>{
+                    if tree.retained_process_count().unwrap()==2 {std::fs::write(dir.path().join("release"),b"release").unwrap();released=true;}
+                },
+            }
+        }
+        assert_eq!(tree.retained_process_count().unwrap(), 2);
+        let exit = tree.terminate_and_witness_until(deadline).await.unwrap();
+        assert!(exit.belongs_to(&tree));
+        assert!(
+            processes.exited_now(),
+            "Both held kernel process identities must signal"
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_live_root_wait_returns_without_extending_or_terminating_source_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut child, tree) = spawn(&mut command("loop", dir.path())).unwrap();
+        let tree = std::sync::Arc::new(tree);
+        let processes = Processes::observe(dir.path()).await;
+        processes.alive();
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            tree.wait_root_with_coverage_until(&mut child, tokio::time::Instant::now()),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(error.is::<WaitDeadlineElapsed>());
+        processes.alive();
+        // Cleanup is distinct from execution authority, using the existing owned
+        // job termination path; the expired wait never signalled another source.
+        tree.terminate_and_witness_until(tokio::time::Instant::now() + Duration::from_secs(3))
+            .await
+            .unwrap();
+        child.wait().await.unwrap();
+        assert!(processes.exited_now());
     }
     pub(crate) struct Processes(Vec<OwnedHandle>);
     impl Processes {

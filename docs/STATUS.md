@@ -3,6 +3,22 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: live capture-job member observation
+
+Isolated hosted runs `41197726372` and `41198310676` confirmed the one-shot
+capture failure: two lifetime processes, only one retained handle, and no active
+members when cleanup inspected the job. The [observation correction](OWNED-SOURCE-OBSERVATION.md)
+retains members during reserved capture's original bounded root wait, before a
+helper can disappear from the final member list. The strict all-lifetime/unique
+handle/signalled-exit criterion and 128-handle limit are unchanged. Missed members
+still refuse completion; no timeout, coverage fallback or permission is widened.
+
+Three new regressions cover a live native proxy/helper exit, expired root wait
+and the existing bridge deadline category. The unchanged opt-in reserved one-shot
+and finite audio cases require fresh hosted validation. The preceding full
+`3d208117` run failed the new one-shot case and native audio; its failures remain
+retained. Stable, physical and public continuous-execution acceptance remain open.
+
 ## In development: reserved one-shot capture component acceptance
 
 An opt-in Windows regression exercises the shipping one-shot Python host with a

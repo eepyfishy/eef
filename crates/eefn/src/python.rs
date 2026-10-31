@@ -476,6 +476,15 @@ impl PythonRuntime {
             self.limits.max_stderr_bytes,
             deadline,
             async {
+                #[cfg(windows)]
+                let status = if capture.is_some() {
+                    tree.wait_root_with_coverage_until(&mut child, deadline)
+                        .await
+                        .map_err(bridge_wait_failure)?
+                } else {
+                    child.wait().await.context("Python child wait failed")?
+                };
+                #[cfg(not(windows))]
                 let status = child.wait().await.context("Python child wait failed")?;
                 #[cfg(windows)]
                 {
@@ -537,6 +546,14 @@ fn availability_spawn_failure(error: &anyhow::Error) -> AvailabilityFailure {
 
 fn bridge_spawn_failure(error: anyhow::Error) -> anyhow::Error {
     if error.is::<crate::process_lifetime::StartDeadlineElapsed>() {
+        BridgeFailure::Deadline.into()
+    } else {
+        error
+    }
+}
+
+fn bridge_wait_failure(error: anyhow::Error) -> anyhow::Error {
+    if error.is::<crate::process_lifetime::WaitDeadlineElapsed>() {
         BridgeFailure::Deadline.into()
     } else {
         error

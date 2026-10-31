@@ -88,26 +88,45 @@ impl Tracker {
                 && bytes as usize >= 8 + members.listed as usize * std::mem::size_of::<usize>(),
             "Incomplete owned job member list"
         );
+        let mut first_error = None;
         for pid in &members.ids[..members.listed as usize] {
-            let pid = u32::try_from(*pid)?;
-            // This list belongs only to our exact unnamed job. A PID is only a
-            // lookup hint: membership and kernel-object identity are checked
-            // before retaining/waiting, never PID-based termination.
-            let raw = unsafe {
-                OpenProcess(
-                    PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-                    0,
-                    pid,
-                )
-            };
-            ensure!(!raw.is_null(), "Owned process handle could not be retained");
-            // SAFETY: OpenProcess returned a new owned handle, wrapped once.
-            let process = unsafe {
-                <OwnedHandle as std::os::windows::io::FromRawHandle>::from_raw_handle(raw)
-            };
-            self.hold(job, process)?;
+            let result = (|| -> Result<()> {
+                let pid = u32::try_from(*pid)?;
+                // This list belongs only to our exact unnamed job. A PID is only a
+                // lookup hint: membership and kernel-object identity are checked
+                // before retaining/waiting, never PID-based termination.
+                let raw = unsafe {
+                    OpenProcess(
+                        PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                        0,
+                        pid,
+                    )
+                };
+                ensure!(!raw.is_null(), "Owned process handle could not be retained");
+                // SAFETY: OpenProcess returned a new owned handle, wrapped once.
+                let process = unsafe {
+                    <OwnedHandle as std::os::windows::io::FromRawHandle>::from_raw_handle(raw)
+                };
+                self.hold(job, process)
+            })();
+            if let Err(error) = result {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
         }
         Ok(())
+    }
+    #[cfg(test)]
+    pub(super) fn retained_count(&self) -> Result<usize> {
+        Ok(self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Owned process coverage unavailable"))?
+            .len())
     }
     pub(super) fn observed_all(&self, job: HANDLE) -> Result<bool> {
         // A raced/missed lookup cannot be promoted into proof. The independent
@@ -141,7 +160,10 @@ impl Tracker {
         }
         ensure!(
             accounting.TotalProcesses as usize == held.len() && !held.is_empty(),
-            "Owned process lifetime handle coverage is incomplete; exit unconfirmed"
+            "Owned process lifetime handle coverage is incomplete (total={}, held={}, active={}); exit unconfirmed",
+            accounting.TotalProcesses,
+            held.len(),
+            accounting.ActiveProcesses
         );
         for process in held.iter() {
             match unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } {

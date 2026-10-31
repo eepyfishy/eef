@@ -484,6 +484,15 @@ impl PythonRuntime {
                     BridgeFailure::StderrLimit
                 ),
                 async {
+                    #[cfg(windows)]
+                    let status = if capture.is_some() {
+                        tree.wait_root_with_coverage_until(&mut child, deadline)
+                            .await
+                            .map_err(super::bridge_wait_failure)?
+                    } else {
+                        child.wait().await.context("Stream child wait failed")?
+                    };
+                    #[cfg(not(windows))]
                     let status = child.wait().await.context("Stream child wait failed")?;
                     #[cfg(windows)]
                     {
