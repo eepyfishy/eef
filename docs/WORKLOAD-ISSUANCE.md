@@ -1,5 +1,10 @@
 # Reviewed continuous job issuance
 
+The later [coordinator completion draft](WORKLOAD-JOB-COMPLETION.md) extends this
+checkpoint with an immutable terminal receipt and additional pre-offer storage
+reservation. It does not add public execution, historical reconciliation or
+restart authority. The original issuance boundaries below remain historical.
+
 The coordinator draft extends the existing review, concrete planning, approval
 and `Plan.execution` records. It uses the existing `JobStore` and task assignment
 identities, not a second job database or a separate timer-loop recording system.

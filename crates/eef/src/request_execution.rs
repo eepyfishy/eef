@@ -180,8 +180,12 @@ pub(crate) fn reserved_bytes(plan: &Plan) -> usize {
                 .definition
                 .events
                 .max_total_bytes
-                .saturating_add(2 * 65536 + 8192),
-            AttemptState::Accepted => w.definition.events.max_total_bytes.saturating_add(8192),
+                .saturating_add(2 * 65536 + 8192 + crate::workload_jobs::COMPLETION_RESERVE),
+            AttemptState::Accepted => w
+                .definition
+                .events
+                .max_total_bytes
+                .saturating_add(8192 + crate::workload_jobs::COMPLETION_RESERVE),
             _ => 0,
         };
     }
@@ -203,7 +207,9 @@ pub(crate) fn reserved_bytes(plan: &Plan) -> usize {
 pub(crate) fn interrupt(plan: &mut Plan) {
     if let Some(e) = &mut plan.execution {
         if let Some(w) = &mut e.workload {
-            w.state = AttemptState::Unknown;
+            if matches!(w.state, AttemptState::Issued | AttemptState::Accepted) {
+                w.state = AttemptState::Unknown;
+            }
         }
         for a in &mut e.attempts {
             if matches!(a.state, AttemptState::Issued | AttemptState::Accepted) {

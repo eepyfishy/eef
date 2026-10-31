@@ -337,3 +337,27 @@ async fn wait_retired(ledger: &crate::grants::GrantLedger, definition: &Definiti
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn prepared_runner_future_is_bounded_before_poll_and_unused_drop_stays_uncertain() {
+    let f = Fixture::new(None);
+    let source = f.prepare().unwrap();
+    let (ledger, consumed) = consume(&f, f.definition.clone()).await;
+    let (_sender, renewals) = crate::workload_leases::renewal_channel();
+    let run = source.run(consumed, renewals, |_| std::future::ready(Ok(())));
+    assert!(
+        std::mem::size_of_val(&run) <= 64 * 1024,
+        "Prepared runner must not embed nested transport/control frames"
+    );
+    // Never poll it: no interpreter, import or capture can start in this case.
+    drop(run);
+    assert!(f.service.microphone_pool.reserve().is_ok());
+    wait_retired(&ledger, &f.definition).await;
+    assert!(
+        ledger
+            .workload_receipt(&f.definition.issuer_id, &f.definition.grant_id)
+            .unwrap()
+            .completion
+            .is_none()
+    );
+}

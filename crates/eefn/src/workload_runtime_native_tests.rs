@@ -93,6 +93,7 @@ async fn native_prepared_source_runs_exact_bytes_with_consumption_and_filtered_e
         "Preparation must not open a source"
     );
     let (ledger, consumed) = consume(&f, f.definition.clone()).await;
+    let observation_deadline = tokio::time::Instant::from_std(consumed.session_deadline().unwrap());
     let ack = consumed.acknowledgement().unwrap();
     assert_eq!(ack.receipt.state, "accepted");
     assert!(
@@ -132,9 +133,10 @@ async fn native_prepared_source_runs_exact_bytes_with_consumption_and_filtered_e
             Ok(())
         }
     });
+    assert!(std::mem::size_of_val(&run) <= 64 * 1024, "Prepared runner embeds oversized transport/control frames");
     tokio::pin!(run);
     let processes = tokio::select! {
-        processes=crate::process_lifetime::tests::Processes::observe(trace.path())=>processes,
+        processes=crate::process_lifetime::tests::Processes::observe_until(trace.path(), observation_deadline)=>processes,
         result=&mut run=>panic!("Source ended before real process observation: {result:?}"),
     };
     processes.alive();
@@ -210,6 +212,7 @@ async fn native_prepared_consent_revocation_retires_actual_root_and_descendant()
     let (f, trace) = native_fixture("blocked");
     let source = f.prepare().unwrap();
     let (ledger, consumed) = consume(&f, f.definition.clone()).await;
+    let observation_deadline = tokio::time::Instant::from_std(consumed.session_deadline().unwrap());
     let (_sender, renewals) = crate::workload_leases::renewal_channel();
     let run = source.run(consumed, renewals, |_| async {
         panic!("Blocked device emitted no observation");
@@ -218,7 +221,7 @@ async fn native_prepared_consent_revocation_retires_actual_root_and_descendant()
     });
     tokio::pin!(run);
     let processes = tokio::select! {
-        processes=crate::process_lifetime::tests::Processes::observe(trace.path())=>processes,
+        processes=crate::process_lifetime::tests::Processes::observe_until(trace.path(), observation_deadline)=>processes,
         result=&mut run=>panic!("Source ended before real process observation: {result:?}"),
     };
     processes.alive();
@@ -254,6 +257,7 @@ async fn native_prepared_whole_future_drop_retires_actual_owned_source() {
     let (f, trace) = native_fixture("blocked");
     let source = f.prepare().unwrap();
     let (ledger, consumed) = consume(&f, f.definition.clone()).await;
+    let observation_deadline = tokio::time::Instant::from_std(consumed.session_deadline().unwrap());
     let (_sender, renewals) = crate::workload_leases::renewal_channel();
     let processes;
     {
@@ -264,7 +268,7 @@ async fn native_prepared_whole_future_drop_retires_actual_owned_source() {
         });
         tokio::pin!(run);
         processes = tokio::select! {
-            processes=crate::process_lifetime::tests::Processes::observe(trace.path())=>processes,
+            processes=crate::process_lifetime::tests::Processes::observe_until(trace.path(), observation_deadline)=>processes,
             result=&mut run=>panic!("Source ended before real process observation: {result:?}"),
         };
         processes.alive();

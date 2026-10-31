@@ -1,5 +1,11 @@
 # Durable prepared-workload completion draft
 
+The follow-on [coordinator checkpoint](WORKLOAD-JOB-COMPLETION.md) records this
+node receipt in the existing reviewed job, with ACK/issued-sequence/session fences
+and terminal immutability. It also addresses the observed prepared-runner stack
+overflow through bounded future composition. Fresh hosted validation is required;
+neither the node nor coordinator draft establishes public session acceptance.
+
 The internal prepared microphone path now distinguishes confirmed finite source
 completion from a generic operation result. It extends the existing grant journal
 and final worker; it adds no second job database, dashboard controller, public

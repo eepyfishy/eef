@@ -3,6 +3,24 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: coordinator completion and bounded prepared runner frames
+
+The [coordinator completion draft](WORKLOAD-JOB-COMPLETION.md) saves a compact
+validated node receipt in the existing job, closes its original issuer before
+storage, and preserves terminal state without reviving unknown work. Issuance
+reserves completion space within the existing quota. Six new coordinator journal
+tests cover ACK/sequence/session fences, duplicate/immutable completion, failed
+writes, reopening and corruption. Public authenticated dispatch remains absent.
+
+The preceding `271f45c` passed both Linux jobs and Windows dashboard tests, but
+Windows headless failed a prepared-source stack overflow and a separate finite
+audio pipeline result. The candidate boxes production future composition and
+adds a Windows future-frame/unused-drop regression; native assertions, thread
+stacks and production budgets remain unchanged. Startup observation now follows
+the existing supervised session horizon while still racing source failure/expiry.
+The earlier failures and the unexplained native audio interruption remain retained;
+fresh full hosted validation is required before promotion.
+
 ## In development: durable prepared-source completion
 
 The first completion candidate `0d9b083` failed compilation in run `41145734973`

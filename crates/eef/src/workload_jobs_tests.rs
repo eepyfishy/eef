@@ -7,6 +7,8 @@ use eefn::{
     workload_leases::definition::*,
 };
 
+include!("workload_job_completion_tests.rs");
+
 fn template_input() -> PlanInput {
     PlanInput {
         schema_version: 1,

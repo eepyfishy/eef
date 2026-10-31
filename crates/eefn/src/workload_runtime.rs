@@ -174,7 +174,10 @@ impl PreparedMicrophone {
         let reporting_contract = self.definition.lease_contract()?;
         let writer = Arc::new(consumed.event_writer()?);
         let observer = Arc::new(tokio::sync::Mutex::new(observe));
-        let operation = self.python.observe_reserved_microphone(
+        // Keep transport and each supervisory layer out of its parent's async
+        // state. Debug Windows threads have bounded stacks; growing the final
+        // receipt must not multiply nested transport/control frames.
+        let operation = Box::pin(self.python.observe_reserved_microphone(
             &self.source,
             self.params,
             &self.definition.grant_id,
@@ -221,26 +224,22 @@ impl PreparedMicrophone {
                     Ok(())
                 }
             },
-        );
-        let operation = async move {
+        ));
+        let operation = Box::pin(async move {
             let source = operation.await?;
             let events = completed_events
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Workload filter unavailable"))?
                 .seal(source.summary())?;
             Ok(ObservedWorkload { source, events })
-        };
-        consumed
-            .supervise_observed(
-                renewals,
-                self.service.supervise_listening_epoch(
-                    &self.runtime_id,
-                    deadline,
-                    Some(self.listening_epoch),
-                    operation,
-                ),
-            )
-            .await
+        });
+        let controlled = Box::pin(self.service.supervise_listening_epoch(
+            &self.runtime_id,
+            deadline,
+            Some(self.listening_epoch),
+            operation,
+        ));
+        Box::pin(consumed.supervise_observed(renewals, controlled)).await
     }
 }
 

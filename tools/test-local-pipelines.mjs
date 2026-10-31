@@ -341,6 +341,11 @@ def handle(action,params):
   assert.deepEqual(await audioCounts(),noAudioBefore);
   }
   const completed=await audioStart();await review.wait(completed.id);const audioPlan=await review.inspect(completed.id);
+  if(audioPlan.status!=='completed'){
+   const known=new Set(['issued','accepted','rejected','completed','unknown','interrupted','execution_failed_effects_unknown','grant_deadline_exceeded','completion_after_deadline','grant_runtime_dropped_effects_unknown','grant_stop_requested_effects_unknown','python_request_byte_limit','python_stdout_byte_limit','python_stderr_byte_limit','python_exchange_deadline','python_process_failed','python_invalid_reply','python_invalid_metadata']);
+   const code=value=>known.has(value)?value:'unclassified';
+   console.error('Finite audio outcome observations: '+JSON.stringify({status:code(audioPlan.status),attempts:(audioPlan.execution?.attempts||[]).map(a=>({state:code(a.state),report_state:code(a.report?.state),success:a.report?.success===true,error_code:code(a.report?.error),data_error_code:code(a.report?.data?.error_code)}))}));
+  }
   assert.equal(audioPlan.status,'completed');assert.equal(audioPlan.execution.attempts.length,2);
   const reports=audioPlan.execution.attempts.map(a=>a.report);assert(reports.every(r=>r.success&&r.persisted));
   assert.equal(reports[0].data.payload_sha256,reports[1].data.payload_sha256);assert.equal(reports[0].data.payload_bytes,16044);

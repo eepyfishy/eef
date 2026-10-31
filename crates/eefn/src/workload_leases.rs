@@ -173,6 +173,26 @@ impl IssuerWindow {
     pub fn stop(&mut self) {
         self.stopped = true;
     }
+    /// Close the original issuer after an authenticated completion report. This
+    /// only confirms an issued sequence; source/receipt validation belongs to
+    /// the existing coordinator journal. It never reconstructs a live window.
+    pub fn close_after_report(
+        &mut self,
+        scope: &crate::grants::stop::Scope,
+        sequence: u64,
+    ) -> Result<u64> {
+        ensure!(
+            !self.stopped
+                && self.consumed
+                && Instant::now() < self.deadline
+                && *scope == self.contract.scope
+                && sequence > 0
+                && sequence < self.next_sequence,
+            "Completion differs from the consumed issuer or its issued lease sequence"
+        );
+        self.stopped = true;
+        Ok(self.next_sequence - 1)
+    }
     pub fn reply(
         &mut self,
         query: &Query,

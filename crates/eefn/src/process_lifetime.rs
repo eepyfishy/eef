@@ -580,7 +580,10 @@ pub(crate) mod tests {
     pub(crate) struct Processes(Vec<OwnedHandle>);
     impl Processes {
         pub(crate) async fn observe(root: &Path) -> Self {
-            tokio::time::timeout(Duration::from_secs(5), async {
+            Self::observe_until(root, tokio::time::Instant::now() + Duration::from_secs(5)).await
+        }
+        pub(crate) async fn observe_until(root: &Path, deadline: tokio::time::Instant) -> Self {
+            tokio::time::timeout_at(deadline, async {
                 loop {
                     if let Ok(bytes) = std::fs::read(root.join("pids.json")) {
                         if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {

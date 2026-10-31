@@ -22,6 +22,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+#[path = "workload_job_completion.rs"]
+mod completion;
+pub use completion::Completion;
+pub(crate) const COMPLETION_RESERVE: usize = 16 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -61,10 +65,13 @@ pub struct Execution {
     pub issued_at_ms: u64,
     pub state: AttemptState,
     pub acknowledgement: Option<eefn::grants::workload::Receipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<Completion>,
 }
 pub(crate) struct Snapshot {
     immutable: serde_json::Value,
     acknowledgement: Option<serde_json::Value>,
+    completion: Option<serde_json::Value>,
     state: AttemptState,
 }
 pub(crate) fn snapshot(plan: &Plan) -> Option<Snapshot> {
@@ -74,6 +81,7 @@ pub(crate) fn snapshot(plan: &Plan) -> Option<Snapshot> {
         immutable: json!({"definition":w.definition,"issued_at_ms":w.issued_at_ms,
         "command":e.command,"started_at_ms":e.started_at_ms}),
         acknowledgement: w.acknowledgement.as_ref().map(|a| json!(a)),
+        completion: w.completion.as_ref().map(|c| json!(c)),
         state: w.state,
     })
 }
@@ -82,8 +90,9 @@ pub(crate) fn preserve(old: &Option<Snapshot>, plan: &Plan) -> Result<()> {
     let new = snapshot(plan).context("Retained workload issuance cannot be erased")?;
     ensure!(
         old.immutable == new.immutable
-            && (old.acknowledgement.is_none() || old.acknowledgement == new.acknowledgement),
-        "Retained workload identity/ACK is immutable"
+            && (old.acknowledgement.is_none() || old.acknowledgement == new.acknowledgement)
+            && (old.completion.is_none() || old.completion == new.completion),
+        "Retained workload identity/ACK/completion is immutable"
     );
     ensure!(
         match old.state {
@@ -91,9 +100,12 @@ pub(crate) fn preserve(old: &Option<Snapshot>, plan: &Plan) -> Result<()> {
                 new.state,
                 AttemptState::Issued | AttemptState::Accepted | AttemptState::Unknown
             ),
-            AttemptState::Accepted =>
-                matches!(new.state, AttemptState::Accepted | AttemptState::Unknown),
+            AttemptState::Accepted => matches!(
+                new.state,
+                AttemptState::Accepted | AttemptState::Completed | AttemptState::Unknown
+            ),
             AttemptState::Unknown => new.state == AttemptState::Unknown,
+            AttemptState::Completed => new.state == AttemptState::Completed,
             _ => false,
         },
         "Retired workload cannot return to active state"
@@ -183,8 +195,9 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
     w.definition.validate()?;
     e.command.validate()?;
     unique_operation(plan, &e.command.operation_id)?;
+    let expected_schema = if w.completion.is_some() { 3 } else { 2 };
     ensure!(
-        e.schema_version == 2
+        e.schema_version == expected_schema
             && e.attempts.is_empty()
             && e.peer.is_none()
             && e.abandonment.is_none()
@@ -233,21 +246,43 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
             "Wrong workload consumption ACK"
         );
     }
+    if let Some(completion) = &w.completion {
+        ensure!(
+            completion.recorded_at_ms <= plan.updated_at_ms,
+            "Completion is newer than its coordinator checkpoint"
+        );
+        completion.validate(
+            &w.definition,
+            w.acknowledgement
+                .as_ref()
+                .context("Completion lacks consumed ACK")?,
+            w.issued_at_ms,
+        )?;
+    }
     ensure!(
         match w.state {
             AttemptState::Issued =>
                 w.acknowledgement.is_none()
+                    && w.completion.is_none()
                     && plan.status == PlanStatus::Running
                     && task.status == TaskStatus::Running,
             AttemptState::Accepted =>
                 w.acknowledgement.is_some()
+                    && w.completion.is_none()
                     && plan.status == PlanStatus::Running
                     && task.status == TaskStatus::Running,
             AttemptState::Unknown =>
-                plan.status == PlanStatus::Interrupted && task.status == TaskStatus::Interrupted,
+                w.completion.is_none()
+                    && plan.status == PlanStatus::Interrupted
+                    && task.status == TaskStatus::Interrupted,
+            AttemptState::Completed =>
+                w.acknowledgement.is_some()
+                    && w.completion.is_some()
+                    && plan.status == PlanStatus::Completed
+                    && task.status == TaskStatus::Completed,
             _ => false,
         },
-        "Invalid workload lifecycle; completion/resume are not implemented"
+        "Invalid workload lifecycle; retained evidence cannot resume work"
     );
     Ok(())
 }
@@ -659,6 +694,7 @@ pub(crate) fn issue(
                     issued_at_ms: now,
                     state: AttemptState::Issued,
                     acknowledgement: None,
+                    completion: None,
                 }),
             });
             plan.status = PlanStatus::Running;
