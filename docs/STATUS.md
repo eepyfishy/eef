@@ -3,6 +3,23 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: native background-startup investigation
+
+Run `41192772099` passed all 1,380 Windows headless Rust cases plus the existing
+ignored case, and both Linux and Windows dashboard jobs. Its native command gate
+stopped at the quiet eef startup check, before the later source/audio suites ran.
+The earlier stack-overflow and audio failures remain retained; passing the Rust
+source regressions does not establish complete native command acceptance.
+
+The shell fixture now replaces coordinator ports by YAML section, avoiding chained
+replacement collisions, and assigns distinct API and gateway ports. Twenty-two
+pure cases cover swapped/overlapping values, line endings and malformed inputs.
+Its hidden-launch observer retains the actual process handle and reports whether
+the service exited or remained live, without redirecting console handles, extending
+startup limits or weakening the live-service/no-console assertions. The exact cause
+of the previous timeout remains unproven. Fresh hosted acceptance is required;
+main, installed apps, physical nodes and release feeds are unchanged.
+
 ## In development: coordinator completion and bounded prepared runner frames
 
 The [coordinator completion draft](WORKLOAD-JOB-COMPLETION.md) saves a compact

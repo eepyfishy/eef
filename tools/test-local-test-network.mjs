@@ -1,7 +1,7 @@
 // Pure fixture isolation checks. No app, listener, firewall mutation or elevation.
 import assert from 'node:assert/strict';
 import {readFile,readdir} from 'node:fs/promises';
-import {loopbackCoordinatorTemplate,readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
+import {loopbackCoordinatorTemplate,readLoopbackCoordinatorTemplate,coordinatorTemplatePorts} from './local-test-network.mjs';
 
 const original=await readFile(new URL('../config/default_identity.yaml',import.meta.url),'utf8');
 const local=await readLoopbackCoordinatorTemplate();
@@ -32,6 +32,28 @@ for(const newline of ['\n','\r\n']){
  for(const value of bad){assert.throws(()=>loopbackCoordinatorTemplate(value));rejected++;}
 }
 assert.throws(()=>loopbackCoordinatorTemplate(null),TypeError);rejected++;
+// Exercise exact replacement collisions without opening sockets or starting apps.
+let portCases=0;
+for(const newline of ['\n','\r\n']){
+ const source=original.replace(/\r?\n/g,newline);
+ for(const [web,node] of [[51335,51334],[51335,60123],[60123,51334],[51334,51335]]){
+  const actual=coordinatorTemplatePorts(source,web,node);
+  const expected=loopbackCoordinatorTemplate(source).split('\n');
+  let section;
+  for(let i=0;i<expected.length;i++){
+   if(/^[a-z_]+:/.test(expected[i]))section=expected[i].split(':')[0];
+   if((section==='web'||section==='node')&&/^  port:/.test(expected[i]))
+    expected[i]='  port: '+(section==='web'?web:node)+(expected[i].endsWith('\r')?'\r':'');
+  }
+  assert.equal(actual,expected.join('\n'));portCases++;
+ }
+ for(const [web,node] of [[0,51335],[51334,65536],[51335,51335],[1.5,2],['51334',51335]]){
+  assert.throws(()=>coordinatorTemplatePorts(source,web,node));portCases++;
+ }
+ for(const bad of [source.replace('  port: 51334','  port: "51334"'),source.replace('  port: 51335','  port: 51335'+newline+'  port: 51336')]){
+  assert.throws(()=>coordinatorTemplatePorts(bad,60123,60124));portCases++;
+ }
+}
 // Guard the migrated read sites; genuine no-config first initialization and
 // deliberately exposed owner-API rejection tests remain separate unchanged gates.
 let migrated=0;
@@ -42,4 +64,4 @@ for(const name of await readdir(new URL('.',import.meta.url))){
  if(source.includes("from './local-test-network.mjs'"))migrated++;
 }
 assert(migrated>=36,'All existing template-based same-PC fixtures must be isolated');
-console.log(`Local test network validation passed: ${accepted} newline cases, ${rejected} refusals, ${migrated} fixture readers; production networking unchanged`);
+console.log(`Local test network validation passed: ${accepted} newline cases, ${rejected} refusals, ${portCases} port assignment cases, ${migrated} fixture readers; production networking unchanged`);

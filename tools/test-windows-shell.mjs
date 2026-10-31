@@ -1,5 +1,5 @@
 // Real PowerShell command I/O/exit propagation, including selected-package handoff.
-import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
+import {readLoopbackCoordinatorTemplate,coordinatorTemplatePorts} from './local-test-network.mjs';
 // Isolated services only: no browser, model, owner config or physical node.
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile,link,unlink,open} from 'node:fs/promises';
@@ -20,6 +20,7 @@ function launch(exe,args){const c=spawn(exe,args,{cwd:scratch,env,windowsHide:tr
  c.stdout.on('data',b=>out=(out+b).slice(-1048576));c.stderr.on('data',b=>err=(err+b).slice(-1048576));c.logs=()=>({out,err});
  c.result=new Promise((r,j)=>{c.on('error',j);c.on('close',code=>r({code,out,err}));});children.push(c);return c;}
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
+async function endpoints(){const api=await port();let gateway;do{gateway=await port();}while(gateway===api);return {api,gateway};}
 async function text(path){const b=await readFile(path);return b[0]===255&&b[1]===254?b.subarray(2).toString('utf16le'):b.toString('utf8').replace(/^\uFEFF/,'');}
 async function json(url){const r=await fetch(url,{signal:AbortSignal.timeout(8000)});assert(r.ok);return r.json();}
 async function until(fn,label){const end=Date.now()+30000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('Timeout: '+label);}
@@ -36,16 +37,21 @@ async function processes(stop=false){const prefix=literal(resolve(scratch)+sep);
  const select=`Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('eef.exe','eefn.exe') -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith(${prefix},[StringComparison]::OrdinalIgnoreCase) }`;
  const script=stop?`${select} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop }`:`$items=@(${select} | Select-Object ProcessId,ExecutablePath); ConvertTo-Json -InputObject $items -Compress`;
  const r=await launch('powershell.exe',['-NoProfile','-NonInteractive','-Command',script]).result;assert.equal(r.code,0);return stop?[]:JSON.parse(r.out);}
-async function quietService(role,source,oldApi,oldGateway){
+async function quietService(role,source){
  const install=join(scratch,role+'-quiet'),exe=join(install,role+'.exe');await alias(join(bin,role+'.exe'),exe);
- const api=await port(),config=join(install,role==='eef'?'quiet.yaml':'quiet.json');
- if(role==='eef')await writeFile(config,source.toString().replace('port: '+oldApi,'port: '+api).replace('port: '+oldGateway,'port: '+await port()));
+ const {api,gateway}=await endpoints(),config=join(install,role==='eef'?'quiet.yaml':'quiet.json');
+ if(role==='eef')await writeFile(config,coordinatorTemplatePorts(source.toString(),api,gateway));
  else{const value=JSON.parse(source.toString());value.dashboard.port=api;await writeFile(config,JSON.stringify(value));}
  const args=['--config','"'+config+'"','--no-ui',...(role==='eef'?['--no-brain','--database','"'+join(install,'quiet.db')+'"']:[])];
- const pidFile=join(install,'process.json'),probeFile=join(install,'console.json');
- const start=`$p=Start-Process -FilePath ${literal(exe)} -ArgumentList @(${args.map(literal).join(',')}) -WorkingDirectory ${literal(install)} -WindowStyle Hidden -PassThru; [ordered]@{id=$p.Id} | ConvertTo-Json -Compress | Out-File -LiteralPath ${literal(pidFile)} -Encoding utf8`;
- const started=await launch('powershell.exe',['-NoProfile','-NonInteractive','-Command',start]).result;assert.equal(started.code,0);
- const pid=JSON.parse(await text(pidFile)).id;assert(Number.isInteger(pid)&&pid>0);
+ const pidFile=join(install,'process.json'),probeFile=join(install,'console.json'),exitFile=join(install,'exit.json'),monitorDone=join(install,'monitor.done');
+ // Keep the actual Process handle to distinguish a failed launch from a live
+ // service that never became ready. Do not redirect handles: that would change
+ // the console ownership behavior this native test must verify.
+ const start=`$ErrorActionPreference='Stop'; $p=Start-Process -FilePath ${literal(exe)} -ArgumentList @(${args.map(literal).join(',')}) -WorkingDirectory ${literal(install)} -WindowStyle Hidden -PassThru; [ordered]@{id=$p.Id} | ConvertTo-Json -Compress | Out-File -LiteralPath ${literal(pidFile)} -Encoding utf8; while(-not $p.WaitForExit(100)){if(Test-Path -LiteralPath ${literal(monitorDone)}){break}}; $p.Refresh(); $exitCode=$null; if($p.HasExited){$p.WaitForExit(); $exitCode=$p.ExitCode}; [ordered]@{observed_exit=$p.HasExited;exit_code=$exitCode} | ConvertTo-Json -Compress | Out-File -LiteralPath ${literal(exitFile)} -Encoding utf8`;
+ const started=launch('powershell.exe',['-NoProfile','-NonInteractive','-Command',start]);
+ let pid;
+ try{
+ await until(async()=>{pid=JSON.parse(await text(pidFile)).id;return Number.isInteger(pid)&&pid>0;},role+' quiet process handle');
  await until(async()=>!!(await json(`http://127.0.0.1:${api}/api/diagnostics`)).runtime_id,role+' quiet service');
  const code='using System; using System.Runtime.InteropServices; public static class ConsoleProbe { [DllImport("kernel32.dll",SetLastError=true)] public static extern bool FreeConsole(); [DllImport("kernel32.dll",SetLastError=true)] public static extern bool AttachConsole(uint processId); }';
  const probe=`Add-Type -TypeDefinition ${literal(code)}; [ConsoleProbe]::FreeConsole() | Out-Null; $attached=[ConsoleProbe]::AttachConsole(${pid}); $errorCode=[Runtime.InteropServices.Marshal]::GetLastWin32Error(); if($attached){[ConsoleProbe]::FreeConsole() | Out-Null}; [ordered]@{attached=$attached;error_code=$errorCode} | ConvertTo-Json -Compress | Out-File -LiteralPath ${literal(probeFile)} -Encoding utf8`;
@@ -53,16 +59,23 @@ async function quietService(role,source,oldApi,oldGateway){
  const result=JSON.parse(await text(probeFile));assert.equal(result.attached,false,'Background service must not keep an allocated console');
  assert.equal(result.error_code,6,'The verified live service has no console; a missing/exited process is not a pass');
  assert((await processes()).some(p=>p.ProcessId===pid),'The quiet service must still be running');
- quietCases.push({role,live_service_without_console:true});await processes(true);
+ quietCases.push({role,live_service_without_console:true});
+ }catch(error){
+  let exit;try{exit=JSON.parse(await text(exitFile));}catch{}
+  const observation={role,process_live:!!pid&&(await processes()).some(p=>p.ProcessId===pid),launcher_exit_code:started.exitCode,service_exit:exit??null,distinct_endpoint_ports:api!==gateway};
+  await writeFile(join(install,'PRIVATE-startup-observation.json'),JSON.stringify(observation,null,2));
+  console.error('Quiet service startup observation: '+JSON.stringify(observation));throw error;
+ }finally{
+  await writeFile(monitorDone,'done');const result=await started.result;assert.equal(result.code,0,'Quiet process observer must complete');await processes(true);
+ }
 }
 try {
  for(const role of ['eef','eefn']){
   const install=join(scratch,role),exe=join(install,role+'.exe');await alias(join(bin,role+'.exe'),exe);
   assert.equal(await subsystem(exe),3,'The public command entrypoint must use the Windows console subsystem');
-  const api=await port(),config=join(install,role==="eef"?"owner config 'shell'.yaml":"node config 'shell'.json"),base=`http://127.0.0.1:${api}`;
-  let gateway;
+  const {api,gateway}=await endpoints(),config=join(install,role==="eef"?"owner config 'shell'.yaml":"node config 'shell'.json"),base=`http://127.0.0.1:${api}`;
   if(role==='eef'){
-   gateway=await port();const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${api}`).replace('port: 51335',`port: ${gateway}`).replaceAll('host: 0.0.0.0','host: 127.0.0.1').replace('policy: prompt','policy: off');await writeFile(config,yaml);
+   const yaml=coordinatorTemplatePorts(await readLoopbackCoordinatorTemplate(),api,gateway).replace('policy: prompt','policy: off');await writeFile(config,yaml);
   }else{
    const value=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
    Object.assign(value,{node_id:'shell-fixture',name:'Shell fixture',connection_enabled:false,auto_local:false,local_pairing:false,endpoints:[],psk:'',
@@ -100,7 +113,7 @@ try {
    assert.deepEqual(await readFile(config),before,'Read/help/error/invalid invitation must not change configuration');
   }
   await processes(true);
-  await quietService(role,before,api,gateway);
+  await quietService(role,before);
  }
  assert.equal(cases.length,24);
  assert.equal(quietCases.length,2);

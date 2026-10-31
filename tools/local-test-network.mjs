@@ -26,3 +26,22 @@ export function loopbackCoordinatorTemplate(source){
 export async function readLoopbackCoordinatorTemplate(){
  return loopbackCoordinatorTemplate(await readFile(new URL('../config/default_identity.yaml',import.meta.url),'utf8'));
 }
+
+// Replace both endpoints by their section, in one pass. Chained text replacement
+// can rewrite the newly inserted web port when it equals the old node port.
+export function coordinatorTemplatePorts(source,webPort,nodePort){
+ const local=loopbackCoordinatorTemplate(source),lines=local.split('\n');
+ if(![webPort,nodePort].every(p=>Number.isInteger(p)&&p>0&&p<=65535)||webPort===nodePort)
+  throw Error('Local fixture endpoints require distinct valid ports');
+ for(const [section,port] of [['web',webPort],['node',nodePort]]){
+  const start=lines.findIndex(line=>line.replace(/\r$/,'')===section+':');
+  let end=start+1;
+  while(end<lines.length&&(/^[ \t]/.test(lines[end])||/^\s*$/.test(lines[end])||/^#/.test(lines[end])))end++;
+  const ports=[];
+  for(let i=start+1;i<end;i++)if(/^[ \t]*port\s*:/.test(lines[i]))ports.push(i);
+  if(ports.length!==1||!/^  port: [0-9]+\r?$/.test(lines[ports[0]]))throw Error('Unexpected '+section+' port in local fixture');
+  const newline=lines[ports[0]].endsWith('\r')?'\r':'';
+  lines[ports[0]]='  port: '+port+newline;
+ }
+ return lines.join('\n');
+}
