@@ -141,7 +141,10 @@ impl Tracker {
         }
         ensure!(
             accounting.TotalProcesses as usize == held.len() && !held.is_empty(),
-            "Owned process lifetime handle coverage is incomplete; exit unconfirmed"
+            "Owned process lifetime handle coverage is incomplete (total={}, held={}, active={}); exit unconfirmed",
+            accounting.TotalProcesses,
+            held.len(),
+            accounting.ActiveProcesses
         );
         for process in held.iter() {
             match unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } {
