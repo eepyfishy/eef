@@ -1546,6 +1546,7 @@ mod tests {
             _file_lock: None,
             max_count: 0,
             max_bytes: 0,
+            reads: Default::default(),
             retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         };
         for _ in 0..3 {

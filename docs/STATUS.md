@@ -5,6 +5,12 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: bounded coordinator evidence reads
 
+The first hosted candidate `51ef0a86` failed test compilation because an existing
+ignored schedule benchmark constructed `JobStore` directly without the new read
+queue. That fixture now initializes the same default queue. Its benchmark,
+ignore marker and production behavior are unchanged; failed run `41841502803`
+remains retained and the corrected source requires a fresh hosted run.
+
 The existing receipt, result and stop-receipt commands now use a bounded native
 worker to read the same coordinator journal. Four admitted reads, including
 blocked/queued operations, retain their slots until the actual work ends even
