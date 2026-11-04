@@ -3,6 +3,19 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: bounded coordinator evidence reads
+
+The existing receipt, result and stop-receipt commands now use a bounded native
+worker to read the same coordinator journal. Four admitted reads, including
+blocked/queued operations, retain their slots until the actual work ends even
+after caller cancellation. The original command deadline also bounds the
+subsequent executor read. No source, lease or mutator enters this worker.
+Four new real-journal regressions cover history/corruption, timer responsiveness,
+capacity after cancellation, expiry and shutdown/retirement ownership; another
+guards the original executor-inspection deadline before and after polling. See the
+[read contract and remaining write integration](COORDINATOR-JOURNAL-READS.md).
+Fresh hosted acceptance is required; public continuous launch remains incomplete.
+
 ## In development: proxy fixture process identities
 
 The [live observation follow-up](OWNED-SOURCE-OBSERVATION.md#identity-based-proxy-fixture-follow-up)

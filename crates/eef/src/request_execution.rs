@@ -961,19 +961,26 @@ impl crate::Runtime {
         command: eefn::request_receipt::ReceiptCommand,
         origin: Option<&str>,
     ) -> Result<Value> {
-        let plan = self.engine.store.get(&command.id)?;
+        command.validate()?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let plan = self.engine.store.get_before(&command.id, deadline).await?;
         if plan
             .execution
             .as_ref()
             .is_some_and(|e| e.workload.is_some())
         {
-            return self.inspect_workload_receipt(&plan, &command, origin).await;
+            return inspect_before(
+                deadline,
+                self.inspect_workload_receipt(&plan, &command, origin),
+            )
+            .await;
         }
         let attempt = receipt_attempt(&plan, &command, origin)?;
-        let receipt = self
-            .node_server
-            .inspect_grant_receipt(&attempt.grant)
-            .await?;
+        let receipt = inspect_before(
+            deadline,
+            self.node_server.inspect_grant_receipt(&attempt.grant),
+        )
+        .await?;
         let coordinator_attempt_state = serde_json::to_value(attempt.state)?
             .as_str()
             .unwrap()
@@ -1008,9 +1015,15 @@ impl crate::Runtime {
         command: eefn::request_stop_receipt::Command,
         origin: Option<&str>,
     ) -> Result<Value> {
-        let plan = self.engine.store.get(&command.id)?;
+        command.validate()?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let plan = self.engine.store.get_before(&command.id, deadline).await?;
         let attempt = receipt_attempt(&plan, &command, origin)?;
-        let inspection = self.node_server.inspect_grant_stop(&attempt.grant).await?;
+        let inspection = inspect_before(
+            deadline,
+            self.node_server.inspect_grant_stop(&attempt.grant),
+        )
+        .await?;
         let coordinator_attempt_state = serde_json::to_value(attempt.state)?
             .as_str()
             .unwrap()
@@ -1056,12 +1069,15 @@ impl crate::Runtime {
         command: eefn::request_result::ResultCommand,
         origin: Option<&str>,
     ) -> Result<Value> {
-        let plan = self.engine.store.get(&command.id)?;
+        command.validate()?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let plan = self.engine.store.get_before(&command.id, deadline).await?;
         let attempt = receipt_attempt(&plan, &command, origin)?;
-        let result = self
-            .node_server
-            .inspect_grant_result(&attempt.grant)
-            .await?;
+        let result = inspect_before(
+            deadline,
+            self.node_server.inspect_grant_result(&attempt.grant),
+        )
+        .await?;
         let state = serde_json::to_value(attempt.state)?
             .as_str()
             .unwrap()
@@ -1139,6 +1155,21 @@ impl crate::Runtime {
         report(self, &saved, false)
     }
 }
+async fn inspect_before<T>(
+    deadline: tokio::time::Instant,
+    read: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    if tokio::time::Instant::now() >= deadline {
+        bail!("Executor evidence deadline elapsed before inspection")
+    }
+    let value = tokio::time::timeout_at(deadline, read)
+        .await
+        .context("Executor evidence inspection exceeded its original deadline")??;
+    if tokio::time::Instant::now() >= deadline {
+        bail!("Executor evidence arrived after its original deadline")
+    }
+    Ok(value)
+}
 fn report(runtime: &crate::Runtime, p: &Plan, reused: bool) -> Result<Value> {
     let e = p.execution.as_ref().context("No execution receipt")?;
     Ok(json!(ExecuteReport {schema_version:1,report_type:"coordinator_request_execution".into(),success:true,runtime_id:runtime.instance_id.clone(),
@@ -1151,6 +1182,31 @@ fn report(runtime: &crate::Runtime, p: &Plan, reused: bool) -> Result<Value> {
 pub(crate) mod tests {
     use super::*;
     use crate::{event::EventBus, request_approval::tests as approval};
+    #[tokio::test]
+    async fn executor_inspection_keeps_its_original_deadline_before_poll_and_after_ready() {
+        let polls = std::sync::atomic::AtomicUsize::new(0);
+        let never_started = inspect_before(tokio::time::Instant::now(), async {
+            polls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await
+        .unwrap_err();
+        assert!(never_started.to_string().contains("before inspection"));
+        assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let original_end = tokio::time::Instant::now() + Duration::from_secs(1);
+        let late = inspect_before(original_end, async {
+            // Deliberately ready only after the bound: Tokio's timeout may poll
+            // its inner future before the timer, so the post-read gate matters.
+            std::thread::sleep(
+                original_end.saturating_duration_since(tokio::time::Instant::now())
+                    + Duration::from_millis(1),
+            );
+            Ok(())
+        })
+        .await
+        .unwrap_err();
+        assert!(late.to_string().contains("after its original deadline"));
+    }
     fn abandonment_command(p: &Plan) -> eefn::request_abandon::AbandonCommand {
         eefn::request_abandon::AbandonCommand {
             id: p.plan_id.clone(),
