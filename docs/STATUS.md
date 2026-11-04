@@ -3,6 +3,23 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: proxy fixture process identities
+
+The [live observation follow-up](OWNED-SOURCE-OBSERVATION.md#identity-based-proxy-fixture-follow-up)
+corrects the new regression's assumption that its owned job contains exactly two
+processes. Diagnostic `41199617600` retained three before the fixture's original
+deadline expired, so its equality gate never released the intended helper. The
+test now checks both held kernel identities instead, including a negative check
+before polling the observer. Strict production all-lifetime coverage and
+signalled-handle completion remain mandatory, with no new time or authority.
+
+The unchanged reserved one-shot component passed diagnostic `41198928428`.
+Full `41198879726` passed both Linux jobs, all 36 native suites and the separate
+pre-registration-close regression, including finite audio and listening controls.
+Its Windows Rust suites failed the proxy fixture and remain failed. The fixture
+correction needs fresh complete validation; public continuous execution,
+physical two-PC operation and stable release acceptance remain incomplete.
+
 ## In development: live capture-job member observation
 
 Isolated hosted runs `41197726372` and `41198310676` confirmed the one-shot

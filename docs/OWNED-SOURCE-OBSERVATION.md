@@ -45,6 +45,30 @@ by explicit existing cleanup. A shared mapper case preserves the bridge's public
 deadline category through private error context. Existing coverage, missed-child,
 source cancellation, budget and finite audio completion checks remain required.
 
-These changes need fresh hosted component and complete native acceptance. The
-diagnostic side branches retain their failures and are not release acceptance.
-Physical two-PC and stable release requirements remain outstanding.
+## Identity-based proxy fixture follow-up
+
+The unchanged reserved one-shot case passed in isolated hosted run `41198928428`.
+Full run `41198879726` also passed all 36 native suites and the separate
+pre-registration-close case, including finite audio and listening revocation.
+Both Linux jobs passed. Both Windows Rust suites failed the new proxy fixture,
+so this is not accepted full-source validation.
+
+Diagnostic run `41199617600` kept that fixture's release predicate and deadline
+unchanged and recorded three retained processes before the original ten-second
+wait expired. The fixture incorrectly waited for exactly two, despite the owned
+job containing another member. This result does not establish the third member's
+executable or role.
+
+The fixture now uses read-only, test-only kernel-handle identity comparisons to
+confirm the intended root and helper are both retained before releasing the
+helper. Before polling the live observer it requires this condition to be false;
+after exit it requires it to remain true. No process-count threshold can substitute
+for either identity. The final production witness still requires complete
+lifetime coverage and every retained handle, including additional members, to
+signal under the original deadline. No shipping runtime behavior, execution time,
+permission, source budget, or fixture fallback time changes.
+
+Fresh full-source hosted validation is required for this correction. Earlier
+failed runs and diagnostic side branches remain retained; component diagnostics
+are not release acceptance. Physical two-PC and stable release requirements
+remain outstanding.

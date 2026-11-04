@@ -128,6 +128,17 @@ impl Tracker {
             .map_err(|_| anyhow::anyhow!("Owned process coverage unavailable"))?
             .len())
     }
+    #[cfg(test)]
+    pub(super) fn retains_process_identity(&self, process: &OwnedHandle) -> Result<bool> {
+        let held = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Owned process coverage unavailable"))?;
+        // SAFETY: both sides retain their handles for the complete comparison.
+        Ok(held.iter().any(|old| unsafe {
+            CompareObjectHandles(old.as_raw_handle(), process.as_raw_handle()) != 0
+        }))
+    }
     pub(super) fn observed_all(&self, job: HANDLE) -> Result<bool> {
         // A raced/missed lookup cannot be promoted into proof. The independent
         // lifetime count below must exactly match unique held identities.

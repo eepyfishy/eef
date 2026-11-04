@@ -203,6 +203,10 @@ mod windows {
         pub(crate) fn retained_process_count(&self) -> Result<usize> {
             self.1.retained_count()
         }
+        #[cfg(test)]
+        pub(crate) fn retains_process_identity(&self, process: &OwnedHandle) -> Result<bool> {
+            self.1.retains_process_identity(process)
+        }
         pub(crate) fn request_termination(&self) -> Result<()> {
             // Retain current members before asking them to terminate. A failed
             // lookup cannot prevent containment, but cannot later count as exit
@@ -657,18 +661,26 @@ pub(crate) mod tests {
         let tree = std::sync::Arc::new(tree);
         let processes = Processes::observe_until(dir.path(), deadline).await;
         processes.alive();
+        // Only the root has been retained before the live observer is polled.
+        // A count alone cannot establish the intended helper's identity, and a
+        // job can legitimately contain additional contained members.
+        assert!(!processes.retained_by(&tree));
         let wait = tree.wait_root_with_coverage_until(&mut child, deadline);
         tokio::pin!(wait);
         let mut released = false;
         loop {
             tokio::select! {
-                status=&mut wait=>{assert!(released,"Root cannot exit before both owned identities are held");assert!(status.unwrap().success());break;},
+                status=&mut wait=>{
+                    let status=status.unwrap_or_else(|error|panic!("Owned fixture wait failed: retained={}, released={released}, error={error:#}",tree.retained_process_count().unwrap()));
+                    assert!(released,"Root cannot exit before both owned identities are held");
+                    assert!(status.success());break;
+                },
                 _=tokio::time::sleep(Duration::from_millis(10)),if !released=>{
-                    if tree.retained_process_count().unwrap()==2 {std::fs::write(dir.path().join("release"),b"release").unwrap();released=true;}
+                    if processes.retained_by(&tree) {std::fs::write(dir.path().join("release"),b"release").unwrap();released=true;}
                 },
             }
         }
-        assert_eq!(tree.retained_process_count().unwrap(), 2);
+        assert!(processes.retained_by(&tree));
         let exit = tree.terminate_and_witness_until(deadline).await.unwrap();
         assert!(exit.belongs_to(&tree));
         assert!(
@@ -703,6 +715,11 @@ pub(crate) mod tests {
     }
     pub(crate) struct Processes(Vec<OwnedHandle>);
     impl Processes {
+        fn retained_by(&self, tree: &ProcessTree) -> bool {
+            self.0
+                .iter()
+                .all(|process| tree.retains_process_identity(process).unwrap())
+        }
         pub(crate) async fn observe(root: &Path) -> Self {
             Self::observe_until(root, tokio::time::Instant::now() + Duration::from_secs(5)).await
         }
