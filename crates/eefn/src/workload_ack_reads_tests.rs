@@ -1,10 +1,11 @@
 // Real grant journals and original lease proofs; no source process or device.
 async fn ack_reader_entered(ledger: &GrantLedger) {
+    // Admission itself now performs the first bounded ACK read.
     tokio::time::timeout(Duration::from_secs(2), async {
         while ledger
             .ack_reads_started
             .load(std::sync::atomic::Ordering::SeqCst)
-            == 0
+            < 2
         {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
@@ -74,7 +75,7 @@ async fn cancelled_ack_read_closes_the_kept_consumption_and_retains_actual_read_
         ledger
             .ack_reads_started
             .load(std::sync::atomic::Ordering::SeqCst),
-        1
+        2
     );
     consumed.retire().await.unwrap();
     wait_unknown(&ledger, &d).await;
@@ -101,7 +102,9 @@ async fn caller_and_original_lease_deadlines_both_bound_node_ack_inspection() {
                 &d.issuer_id,
                 &d.session_id,
                 "owner",
+                admission_end(),
             )
+            .await
             .unwrap();
         let blocker = FinalBlocker::hold(&ledger, &d).await;
         let end = if original_lease {

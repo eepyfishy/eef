@@ -25,7 +25,9 @@ async fn fixture(
             &d.issuer_id,
             &d.session_id,
             &d.executor_node,
+            super::super::tests::admission_end(),
         )
+        .await
         .unwrap();
     let writer = consumed.event_writer().unwrap();
     let reporting = consumed.reporting_authority();

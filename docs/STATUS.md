@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: bounded asynchronous node consumption admission
+
+Node consumption now awaits its existing bounded journal worker with an explicit
+caller deadline clamped to the original initial lease. The original proof stays
+on the caller. Native persistence owns metadata and the original final reporting
+reservation; an abandoned committed reply retires to `unknown`. Cancellation,
+storage contention, stop intent and late observation cannot refresh authority or
+start a source. The caller then awaits the existing exact saved-ACK inspection.
+Eight real-journal regressions cover admission loss, deadlines, teardown, rollback
+and damaged evidence; existing admission/source fixtures await the same API.
+Changed-source hosted verification is pending. See
+[node admission](WORKLOAD-NODE-ADMISSION.md).
+
+The preceding transport candidate `2dbb451` passed run `42095342427` across all
+four hosted jobs, including Rust1440+1ignored and the complete native Windows
+gates. That source pass does not resolve the existing main capture deadline
+failure. The actual node dispatcher and owner start/stop command path remain
+unfinished; execution support is not newly advertised and main is not promoted.
+
 ## In development: authenticated workload transport integration
 
 The coordinator now has a typed session/runtime-bound workload offer and framed

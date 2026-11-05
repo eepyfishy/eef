@@ -249,7 +249,9 @@ async fn persistent_event_count_individual_and_total_bytes_enforce_reviewed_boun
                 &d.issuer_id,
                 &d.session_id,
                 &d.executor_node,
+                admission_end(),
             )
+            .await
             .unwrap();
         issuer.acknowledge_consumed(&d.scope().unwrap()).unwrap();
         let writer = consumed.event_writer().unwrap();

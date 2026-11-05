@@ -195,7 +195,9 @@ async fn consume(
             &d.issuer_id,
             &d.session_id,
             &d.executor_node,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(10),
         )
+        .await
         .unwrap();
     (ledger, token)
 }

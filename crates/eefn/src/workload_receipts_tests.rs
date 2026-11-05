@@ -5,6 +5,7 @@ include!("workload_event_journal_tests.rs");
 include!("workload_finalization_tests.rs");
 include!("workload_inspection_tests.rs");
 include!("workload_ack_reads_tests.rs");
+include!("workload_admission_tests.rs");
 
 #[derive(Default)]
 struct SourceEvidence {
@@ -157,7 +158,17 @@ pub(super) async fn consume(ledger: &Arc<GrantLedger>, d: Definition) -> Result<
         d.session_id.clone(),
         d.executor_node.clone(),
     );
-    ledger.consume_workload(d, &policy(), proof, &issuer, &session, &node)
+    ledger
+        .consume_workload(
+            d,
+            &policy(),
+            proof,
+            &issuer,
+            &session,
+            &node,
+            admission_end(),
+        )
+        .await
 }
 async fn wait_unknown(ledger: &GrantLedger, definition: &Definition) {
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -416,7 +427,9 @@ async fn consumed_runner_uses_original_lease_and_drops_source_on_missing_renewal
             &d.issuer_id,
             &d.session_id,
             &d.executor_node,
+            admission_end(),
         )
+        .await
         .unwrap();
     let (source, started, evidence) = pending_source(&ledger, &d);
     let (sender, renewals) = crate::workload_leases::renewal_channel();
@@ -544,26 +557,29 @@ async fn independent_handles_can_consume_one_attempt_only_once() {
     let d = definition();
     let p1 = proof_for(&d, 50_000).await;
     let p2 = proof_for(&d, 50_000).await;
-    let barrier = std::sync::Barrier::new(2);
-    let (a, b) = std::thread::scope(|scope| {
-        let start = |ledger: Arc<GrantLedger>, d: Definition, proof| {
-            let barrier = &barrier;
-            move || {
-                barrier.wait();
-                ledger.consume_workload(
-                    d.clone(),
-                    &policy(),
-                    proof,
-                    &d.issuer_id,
-                    &d.session_id,
-                    &d.executor_node,
-                )
-            }
-        };
-        let a = scope.spawn(start(one.clone(), d.clone(), p1));
-        let b = scope.spawn(start(two.clone(), d.clone(), p2));
-        (a.join().unwrap(), b.join().unwrap())
-    });
+    // Both async admissions dispatch onto their independent native workers.
+    // Neither blocks this current-thread observer runtime on SQLite.
+    let policy = policy();
+    let (a, b) = tokio::join!(
+        one.consume_workload(
+            d.clone(),
+            &policy,
+            p1,
+            &d.issuer_id,
+            &d.session_id,
+            &d.executor_node,
+            admission_end(),
+        ),
+        two.consume_workload(
+            d.clone(),
+            &policy,
+            p2,
+            &d.issuer_id,
+            &d.session_id,
+            &d.executor_node,
+            admission_end(),
+        ),
+    );
     assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
     assert_eq!(
         Connection::open(&path)
@@ -650,8 +666,10 @@ async fn disabled_policy_wrong_session_and_shared_quota_denials_leave_no_upgrade
                 p,
                 &d.issuer_id,
                 &d.session_id,
-                "owner"
+                "owner",
+                admission_end(),
             )
+            .await
             .is_err()
     );
     let p = proof_for(&d, 50_000).await;
@@ -663,8 +681,10 @@ async fn disabled_policy_wrong_session_and_shared_quota_denials_leave_no_upgrade
                 p,
                 &d.issuer_id,
                 &uuid::Uuid::new_v4().to_string(),
-                "owner"
+                "owner",
+                admission_end(),
             )
+            .await
             .is_err()
     );
     assert_eq!(version(&path), 2);
@@ -674,7 +694,16 @@ async fn disabled_policy_wrong_session_and_shared_quota_denials_leave_no_upgrade
     parameters.activation_level += 1;
     assert!(
         ledger
-            .consume_workload(changed, &policy(), p, &d.issuer_id, &d.session_id, "owner")
+            .consume_workload(
+                changed,
+                &policy(),
+                p,
+                &d.issuer_id,
+                &d.session_id,
+                "owner",
+                admission_end()
+            )
+            .await
             .is_err()
     );
     assert_eq!(version(&path), 2);
@@ -723,12 +752,15 @@ async fn sqlite_lock_wait_spends_original_lease_and_rolls_back_schema_and_consum
                 p,
                 &d.issuer_id,
                 &d.session_id,
-                "owner"
+                "owner",
+                admission_end(),
             )
+            .await
             .is_err()
     );
     assert!(start.elapsed() >= Duration::from_secs(1));
     release.join().unwrap();
+    admission_released(&ledger).await;
     assert_eq!(version(&path), 2);
     assert_eq!(
         Connection::open(&path)

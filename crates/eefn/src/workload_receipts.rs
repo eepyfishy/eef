@@ -8,6 +8,8 @@ use anyhow::ensure;
 const MAX_DEFINITION_BYTES: usize = 64 * 1024;
 #[path = "workload_ack_reads.rs"]
 mod ack_reads;
+#[path = "workload_admission.rs"]
+mod admission;
 #[path = "workload_completion.rs"]
 mod completion;
 #[path = "workload_event_journal.rs"]
@@ -407,95 +409,6 @@ impl GrantLedger {
         let result = read(&tx, &self.node_id, Some(issuer), id)?;
         tx.commit()?;
         Ok(result)
-    }
-    /// Reserved for the eventual authenticated node admission path. This writes
-    /// consumption only: it does not check microphone consent/permissions or
-    /// acquire resources. The caller must do those before admission/effects.
-    #[allow(dead_code)]
-    pub(crate) fn consume_workload(
-        self: &Arc<Self>,
-        definition: Definition,
-        policy: &Policy,
-        initial: LeaseProof,
-        issuer: &str,
-        session: &str,
-        node: &str,
-    ) -> Result<Consumption> {
-        let contract = definition.lease_contract()?;
-        let reporting = crate::workload_leases::ReportingAuthority::new(&contract)?;
-        if self
-            .final_reporting_failed
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
-            bail!(
-                "Workload final reporting failed; restart and inspect the journal before admission"
-            )
-        }
-        if node != self.node_id || !contract.scope.matches_session(issuer, session, node) {
-            bail!("Workload consumption differs from pinned session/node")
-        }
-        initial.initial_deadline(&contract, policy)?;
-        if definition.events.max_total_bytes > self.policy.max_result_bytes {
-            return Err(GrantDenied("grant_owner_limits_exceeded").into());
-        }
-        if self.final_slots.available_permits() == 0 {
-            bail!("Workload final reporting capacity is busy; no consumption")
-        }
-        let encoded = serde_json::to_string(&definition)?;
-        let final_slot;
-        {
-            let mut db = self
-                .connection
-                .lock()
-                .map_err(|_| anyhow::anyhow!("Grant journal unavailable"))?;
-            let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            check_attempt_slot(&tx, &contract.scope)?;
-            upgrade(&tx, &self.node_id)?;
-            check_receipt_budget(
-                &tx,
-                &self.policy,
-                definition.events.max_total_bytes,
-                encoded
-                    .len()
-                    .checked_add(event_journal::reservation(&tx, &definition)?)
-                    .context("Workload reservation overflow")?,
-                false,
-            )?;
-            final_slot = self.final_slots.clone().try_acquire_owned().map_err(|_| {
-                anyhow::anyhow!("Workload final reporting capacity is busy; no consumption")
-            })?;
-            if self
-                .final_reporting_failed
-                .load(std::sync::atomic::Ordering::Acquire)
-            {
-                bail!("Workload final reporting failed before admission")
-            }
-            initial.initial_deadline(&contract, policy)?;
-            let now = i64::try_from(crate::protocol::now_ms().max(1))?;
-            tx.execute("INSERT INTO execution_receipts(issuer_id,job_id,task_id,attempt,grant_id,grant_digest,state,accepted_ms,updated_ms,max_result_bytes,report,report_sha256,receipt_kind,workload_definition) VALUES(?1,?2,?3,?4,?5,?6,'accepted',?7,?7,?8,NULL,NULL,'workload',?9)",
-                params![definition.issuer_id,definition.job_id,definition.task_id,definition.attempt,definition.grant_id,contract.scope.grant_sha256,now,i64::try_from(definition.events.max_total_bytes)?,encoded])?;
-            event_journal::initialize(&tx, &definition)?;
-            tx.commit()?;
-        }
-        let stop = match self.watch_stop_scope(&contract.scope) {
-            Ok(watch) => watch,
-            Err(error) => {
-                let _ = finalization::start(self, contract.scope.clone(), final_slot);
-                return Err(error);
-            }
-        };
-        let consumed = Consumption {
-            contract,
-            policy: policy.clone(),
-            initial: Some(initial),
-            ledger: self.clone(),
-            stop,
-            reporting,
-            final_slot: Some(final_slot),
-        };
-        // I/O/stop registration consumes the original lease; no deadline reset.
-        consumed.acknowledgement()?;
-        Ok(consumed)
     }
     fn mark_workload_unknown(&self, scope: &stop::Scope) -> Result<()> {
         let db = self
