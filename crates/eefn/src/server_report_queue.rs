@@ -121,12 +121,16 @@ mod tests {
             json!({"x":"ไทย\n\"\\"}),
             json!([1, true, {"x":2}]),
         ] {
-            let mut size = Size { bytes: 0 };
+            let mut size = Size {
+                bytes: 0,
+                limit: crate::protocol::MAX_WIRE_LINE,
+            };
             serde_json::to_writer(&mut size, &value).unwrap();
             assert_eq!(size.bytes, serde_json::to_vec(&value).unwrap().len());
         }
         let mut size = Size {
             bytes: crate::protocol::MAX_WIRE_LINE,
+            limit: crate::protocol::MAX_WIRE_LINE,
         };
         assert!(io::Write::write(&mut size, b"x").is_err());
     }

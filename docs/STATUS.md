@@ -15,6 +15,12 @@ admission/dispatcher and runtime/CLI path are connected; no new execution suppor
 is advertised. Full hosted and final main acceptance are required. See
 [network transport](WORKLOAD-NETWORK-TRANSPORT.md).
 
+Initial transport run `42093987281` failed compilation on two old size-counter
+fixture initializers and a simulated receipt's byte-count type. Both original
+counter bounds and every assertion are retained in the correction; shipping code
+is unchanged. The failure is retained and corrected-source full validation is
+required.
+
 The preceding node ACK-read candidate `9b8af0e` passed source run `42087047588`
 across all four jobs, Rust1430+1ignored and the complete native Windows gates.
 The existing main capture deadline failure remains unresolved; this source pass

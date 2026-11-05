@@ -145,7 +145,7 @@ fn complete(d: &Definition, count: u64) -> Value {
         source_observations: 100,
         source_frames: 8000,
         event_count: count,
-        event_bytes: count * 300,
+        event_bytes: usize::try_from(count).unwrap().checked_mul(300).unwrap(),
         event_prefix_sha256: "f".repeat(64),
         lease_sequence: 1,
         recorded_at_ms: 2,

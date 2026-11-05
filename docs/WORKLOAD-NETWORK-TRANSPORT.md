@@ -78,3 +78,11 @@ commands still must be connected and validated together. Only then may actual
 execution support be advertised. No camera/audio relay, physical two-PC or stable
 v0.4.0 acceptance is implied. Heavy local builds/runtime tests are not used; full
 changed-source hosted and final main-ref acceptance remain required.
+
+Initial hosted run `42093987281` caught two old size-counter fixture initializers
+missing the newly explicit limit and one simulated completion using `u64` where
+the existing receipt requires `usize`. The correction supplies the original wire
+bound in both old fixtures and uses checked conversion/multiplication in the
+simulated receipt. Shipping behavior, assertions, limits and test selection are
+unchanged by this correction. The failed run remains evidence; the corrected
+source requires fresh full hosted validation.
