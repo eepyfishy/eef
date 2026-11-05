@@ -14,6 +14,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 mod workload_acks;
 #[path = "job_workload_completion.rs"]
 mod workload_completion;
+#[path = "job_workload_issuance.rs"]
+mod workload_issuance;
+pub(crate) use workload_issuance::CommittedIssue;
 
 const MAX_FINALIZATIONS: usize = 64;
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -31,6 +34,8 @@ pub(super) struct Queue {
     pending: Arc<(Mutex<usize>, std::sync::Condvar)>,
     #[cfg(test)]
     started: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    issuance_started: std::sync::atomic::AtomicUsize,
 }
 impl std::fmt::Debug for Queue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -48,7 +53,7 @@ impl Default for Queue {
     }
 }
 impl Queue {
-    pub(super) fn for_acknowledgements(max_count: usize, max_bytes: usize) -> Self {
+    pub(super) fn for_workload_writes(max_count: usize, max_bytes: usize) -> Self {
         Self::new(max_count.min(4), max_bytes)
     }
     pub(super) fn new(max_count: usize, max_bytes: usize) -> Self {
@@ -66,6 +71,8 @@ impl Queue {
             pending: Default::default(),
             #[cfg(test)]
             started: Default::default(),
+            #[cfg(test)]
+            issuance_started: Default::default(),
         }
     }
     fn submit(&self, job: Job) -> Result<()> {

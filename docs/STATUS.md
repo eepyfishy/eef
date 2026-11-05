@@ -3,6 +3,20 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: asynchronous workload issuance
+
+Internal issuance now uses bounded native reads/writes with an explicit original
+caller deadline. Its original monotonic issuer window remains caller-owned; the
+native worker receives metadata only. Issuance shares the existing ACK write
+budget, while the original reporting reservation survives cancellation, a lost
+committed reply and post-commit inspection. Unclaimed successful saves retire to
+`Unknown`; uncertain unreadable writes deny new authority without evidence repair
+or automatic retry. Eight real-SQLite coordinator regressions cover these
+boundaries, including runtime destruction and actual journal ownership. Existing
+issuance callers await the same internal API; public continuous execution remains
+unavailable. Changed-source hosted acceptance and final main-ref acceptance are
+still required. See [issuance persistence](WORKLOAD-ISSUANCE-PERSISTENCE.md).
+
 ## In development: historical completion fixture staging
 
 Diagnostic run `42046011083` failed a separate completion test before it reached

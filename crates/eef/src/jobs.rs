@@ -23,6 +23,7 @@ mod automations;
 mod job_finalizations;
 #[path = "job_reads.rs"]
 mod job_reads;
+pub(crate) use job_finalizations::CommittedIssue;
 pub(crate) use job_finalizations::Slot as WorkloadFinalSlot;
 #[path = "model_verification_intents.rs"]
 mod model_verification_intents;
@@ -74,7 +75,7 @@ pub struct JobStore {
     max_bytes: usize,
     reads: job_reads::Queue,
     finalizations: job_finalizations::Queue,
-    acknowledgements: job_finalizations::Queue,
+    workload_writes: job_finalizations::Queue,
     // Must remain after connection and file lock: field drop order releases
     // both before announcing retirement. The receiver owns no journal/lease.
     retired: RetirementSignal,
@@ -251,7 +252,7 @@ impl JobStore {
             max_bytes,
             reads: Default::default(),
             finalizations: job_finalizations::Queue::new(max_count, max_bytes),
-            acknowledgements: job_finalizations::Queue::for_acknowledgements(max_count, max_bytes),
+            workload_writes: job_finalizations::Queue::for_workload_writes(max_count, max_bytes),
             retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         });
         store.validate_automations()?;

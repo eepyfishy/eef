@@ -2,9 +2,9 @@
 //! Planning and conditional approval have owner command callers. Issuance remains
 //! internal until authenticated source execution and termination are admitted.
 use crate::{
-    jobs::{Assignment, JobStore},
+    jobs::JobStore,
     request_approval::ApprovalRecord,
-    request_execution::{AttemptState, ExecutionRecord},
+    request_execution::AttemptState,
     task::{Plan, PlanStatus, TaskStatus},
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -528,13 +528,6 @@ impl Issued {
             self.store.deny_workload_reporting();
         }
     }
-    fn checked_live(&mut self) -> Result<Plan> {
-        let result = self.live();
-        if result.is_err() {
-            self.retire();
-        }
-        result
-    }
     fn local_live(&self) -> Result<()> {
         ensure!(!self.retired, "Workload issuer permanently retired");
         self.store.require_workload_reporting()?;
@@ -562,27 +555,26 @@ impl Issued {
         );
         Ok(())
     }
-    fn live(&self) -> Result<Plan> {
-        self.local_live()?;
-        let saved = self.store.get(&self.definition.job_id)?;
-        self.validate_live(&saved)?;
-        Ok(saved)
-    }
 }
 /// Internal issuance only. Product callers must hold the existing engine's
 /// admission/quiescence gate and verify current authenticated node capabilities.
 /// No route invokes this API yet and it sends no grant/probe by itself.
 #[allow(dead_code)]
-pub(crate) fn issue(
+pub(crate) async fn issue(
     store: &Arc<JobStore>,
     command: &ExecuteCommand,
     session: &str,
     policy: &Policy,
+    observation_deadline: tokio::time::Instant,
 ) -> Result<Issued> {
     command.validate()?;
     eefn::automation_occurrence::uuid(session)?;
+    ensure!(
+        tokio::time::Instant::now() < observation_deadline,
+        "Workload issuance observation deadline elapsed before admission"
+    );
     let final_slot = store.reserve_workload_finalization()?;
-    let saved = store.get(&command.id)?;
+    let saved = store.get_before(&command.id, observation_deadline).await?;
     let w = template(&saved)?;
     let a = saved
         .approval
@@ -627,62 +619,31 @@ pub(crate) fn issue(
         limits: w.limits.clone(),
         events: w.events.clone(),
     };
-    let contract = definition.lease_contract()?;
-    // Validate policy before any durable mutation; keep the ORIGINAL deadline.
-    let _ = IssuerWindow::new(contract.clone(), policy, deadline)?;
-    store.change(
-        &command.id,
-        "Exact workload definition issued durably before any network offer",
-        |plan| {
-            ensure!(
-                plan.status == PlanStatus::Approved
-                    && plan.execution.is_none()
-                    && plan.revision == command.expected_revision
-                    && plan
-                        .approval
-                        .as_ref()
-                        .is_some_and(|r| r.approval_sha256 == command.approval_sha256),
-                "Concurrent workload issuance/source change"
-            );
-            plan.execution = Some(ExecutionRecord {
-                schema_version: 2,
-                command: command.clone(),
-                started_at_ms: now,
-                attempts: vec![],
-                abandonment: None,
-                peer: None,
-                stop_requested_at_ms: None,
-                workload: Some(Execution {
-                    definition: definition.clone(),
-                    issued_at_ms: now,
-                    state: AttemptState::Issued,
-                    acknowledgement: None,
-                    completion: None,
-                }),
-            });
-            plan.status = PlanStatus::Running;
-            let task = &mut plan.tasks[0];
-            task.status = TaskStatus::Running;
-            task.attempts = 1;
-            task.assignments.push(Assignment {
-                attempt: 1,
-                node_id: w.executor_node.clone(),
-                resource_id: Some(w.resource_id().into()),
-                model_id: None,
-                backend: None,
-                assigned_at_ms: now,
-            });
-            Ok(())
-        },
-    )?;
-    let window = match IssuerWindow::new(contract, policy, deadline) {
-        Ok(window) => window,
-        Err(error) => {
-            let _ = store.queue_workload_unknown(definition, final_slot);
-            return Err(error);
-        }
-    };
-    let mut token = Issued {
+    // Keep this one original window on the caller, including across native
+    // persistence and post-commit inspection. Journal bytes cannot recreate it.
+    let window = IssuerWindow::new(definition.lease_contract()?, policy, deadline)?;
+    let observed_until = observation_deadline.min(tokio::time::Instant::from_std(deadline));
+    let mut checkpoint: crate::jobs::CommittedIssue = store
+        .checkpoint_workload_issue_before(
+            command.clone(),
+            definition.clone(),
+            now,
+            final_slot,
+            observed_until,
+        )
+        .await?;
+    // The historical packet still owns retirement throughout this await. A
+    // cancelled/expired caller cannot abandon a committed row or get a token.
+    let current = store.get_before(&definition.job_id, observed_until).await?;
+    ensure!(
+        current
+            .execution
+            .as_ref()
+            .and_then(|e| e.workload.as_ref())
+            .is_some_and(|w| w.state == AttemptState::Issued && w.acknowledgement.is_none()),
+        "Workload changed before original issuer delivery"
+    );
+    let token = Issued {
         definition,
         store: store.clone(),
         window,
@@ -691,9 +652,13 @@ pub(crate) fn issue(
         deadline,
         acknowledged: false,
         retired: false,
-        final_slot: Some(final_slot),
+        final_slot: Some(checkpoint.take_slot()),
     };
-    token.checked_live()?;
+    token.validate_live(&current)?;
+    ensure!(
+        tokio::time::Instant::now() < observed_until,
+        "Workload issuance observation deadline elapsed before token delivery"
+    );
     Ok(token)
 }
 

@@ -139,8 +139,10 @@ async fn failed_completion_and_uncertainty_checkpoint_deny_new_authority_without
             &store,
             &execute(&before),
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
 }
@@ -196,8 +198,10 @@ fn runtime_drop_preserves_completion_writer_ownership_until_the_actual_save_ends
             &reopened,
             &execute(&saved),
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
 }

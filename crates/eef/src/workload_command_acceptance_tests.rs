@@ -100,7 +100,9 @@ async fn owner_http_and_running_origin_receipt_commands_share_workload_history_w
         &execute(&approved),
         auth["grant_session_id"].as_str().unwrap(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     let d = issued.definition().clone();
     let receipt = synthetic_ack(&d);

@@ -46,7 +46,9 @@ async fn completed_fixture(
         &execute(&plan),
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     lease(&mut issued, 1).await.unwrap();
     let ack = synthetic_ack(issued.definition());
@@ -108,8 +110,10 @@ async fn completed_workload_is_durable_idempotent_terminal_and_never_restores_an
             &reopened,
             &execute(&done),
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
 }
@@ -123,7 +127,9 @@ async fn completion_requires_consumed_ack_and_a_lease_sequence_that_was_actually
         &execute(&plan),
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     let ack = synthetic_ack(issued.definition());
     let receipt = completed_receipt(issued.definition(), &ack, 1);
