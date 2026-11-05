@@ -11,6 +11,13 @@ The subsequent owner-requested two-PC test release is tracked separately in
 [v0.4.0a2](RELEASE-0.4.0a2.md), internal version `0.4.0-alpha.2`. It packages the
 completed increments and explicit diagnostics, not the full roadmap.
 
+## v0.5 evaluation list
+
+The owner requested that OpenClaw, OpenTela, HTCondor, Kalavai, BOINC and Ray remain
+under consideration for v0.5. See [related projects and evaluation questions](V0.5-CONSIDERATIONS.md).
+No integration or replacement is selected; this does not add dependencies or
+change the current stable v0.4.0 implementation and acceptance requirements.
+
 ## Direction and policy changes
 
 The [conditional-stage increment](CONDITIONAL-PIPELINES.md) is in development as
