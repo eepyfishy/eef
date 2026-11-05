@@ -46,7 +46,7 @@ impl Queue {
         // owner's quota. Never allocate a channel from an unbounded config value.
         let capacity = max_count
             .min(max_bytes / crate::workload_jobs::COMPLETION_RESERVE)
-            .clamp(1, MAX_FINALIZATIONS);
+            .min(MAX_FINALIZATIONS);
         Self {
             sender: Mutex::new(None),
             slots: Arc::new(Semaphore::new(capacity)),

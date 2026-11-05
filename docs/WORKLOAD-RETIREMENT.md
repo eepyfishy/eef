@@ -18,6 +18,9 @@ completion reservations that fit the existing byte quota, with an internal ceili
 of 64. This bounds active issuers plus their queued/running final checkpoints.
 It does not increase the existing job/storage quotas, source limits or node
 concurrency. No public configuration or workload execution command is added.
+When the byte quota cannot fit even one completion reservation, reporting
+capacity is zero and issuance refuses before waiting for the journal. This is
+a quota refusal, not a failed-checkpoint latch.
 
 ## Retire before persistence
 
@@ -69,6 +72,8 @@ with continuing journal ownership; and successful completion releasing capacity
 without restoring execution authority. Existing drop/clock/completion tests now
 wait for the actual checkpoint before inspecting its durable result. Tests start
 no node, source, interpreter, model or media device and change no OS clock.
+An additional real-journal regression holds a 1 KiB journal's mutex and requires
+the zero-capacity refusal without touching that mutex or latching reporting failure.
 
 Fresh hosted compilation and complete acceptance are required. This change moves
 retirement and failed-completion uncertainty persistence off the caller. Initial

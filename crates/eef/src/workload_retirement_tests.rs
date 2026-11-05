@@ -1,5 +1,39 @@
 // Included with the existing workload fixture helpers. These never launch a
 // source, connect a node, infer a model or change the system clock.
+#[tokio::test]
+async fn insufficient_completion_quota_refuses_before_waiting_for_the_journal() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = new_store(&dir.path().join("small-journal.db"), 1024);
+    assert_eq!(store.workload_finalization_available(), 0);
+    let command = ExecuteCommand {
+        id: uuid::Uuid::new_v4().simple().to_string(),
+        expected_revision: 1,
+        operation_id: uuid::Uuid::new_v4().to_string(),
+        approval_sha256: "a".repeat(64),
+    };
+    let (held, ready) = hold_workload_journal(store.clone());
+    ready.await.unwrap();
+    let started = Instant::now();
+    let result = issue(
+        &store,
+        &command,
+        &uuid::Uuid::new_v4().to_string(),
+        &policy(),
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let error = match result {
+        Ok(_) => panic!("Insufficient completion quota must refuse before issuance"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("reporting capacity unavailable"));
+    assert!(
+        store.require_workload_reporting().is_ok(),
+        "Quota refusal is not a failed checkpoint"
+    );
+    drop(held);
+    assert!(store.list().unwrap().is_empty());
+}
+
 struct HeldWorkloadJournal {
     release: Option<std::sync::mpsc::SyncSender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,

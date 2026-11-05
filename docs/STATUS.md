@@ -18,6 +18,12 @@ write integration](WORKLOAD-RETIREMENT.md). Issuance/ACK/normal completion still
 need broader asynchronous integration, and public continuous execution remains
 unavailable. No source, model, permission, lease or storage budget is widened.
 
+A follow-up removes the internal one-slot floor when the owner's byte quota
+cannot fit completion headroom. A sixth real-journal test holds an undersized
+journal and requires immediate quota refusal before any read or issuance.
+Reporting remains healthy after that refusal. The corrected source requires its
+own hosted acceptance; the first retirement candidate remains separately recorded.
+
 ## In development: bounded coordinator evidence reads
 
 The first hosted candidate `51ef0a86` failed test compilation because an existing
