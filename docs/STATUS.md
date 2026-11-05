@@ -3,6 +3,15 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: model setup fixture wait observations
+
+Main run `42039659527` failed three model-setup activity waits under their original
+three-second bound. The full passing `9b637b06` source does not prove a causal fix.
+The shared test helper now reports bounded phase/counter/worker observations only
+after the same wait fails, preserving its timeout, polling, worker and assertions.
+See [failed-run evidence and diagnostic limits](MODEL-SETUP-WAIT-OBSERVATION.md).
+No production behavior changes; the failure cause and release gate remain open.
+
 ## In development: asynchronous workload lease inspection
 
 The existing issuer now awaits its bounded journal reader under the original probe

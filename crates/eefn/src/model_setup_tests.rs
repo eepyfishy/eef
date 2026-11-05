@@ -187,7 +187,7 @@ async fn owner_setup_stop_during_provider_inspection_blocks_late_admission() {
     let runtime = f.runtime.clone();
     let task =
         tokio::spawn(async move { tick(service.clone(), &runtime, &Journal::new(&service)).await });
-    wait_count(&f.tags_started).await;
+    wait_count(&f, &f.tags_started, &task).await;
     let record = f.record();
     let before = std::fs::read(&f.service.config_path).unwrap();
     f.stop(&record.id).unwrap();
@@ -213,7 +213,7 @@ async fn owner_setup_stop_during_transfer_preserves_stop_after_provider_finishes
     let runtime = f.runtime.clone();
     let task =
         tokio::spawn(async move { tick(service.clone(), &runtime, &Journal::new(&service)).await });
-    wait_count(&f.pulls).await;
+    wait_count(&f, &f.pulls, &task).await;
     let record = f.record();
     assert_eq!(record.phase, Phase::Downloading);
     let before = std::fs::read(&f.service.config_path).unwrap();
@@ -436,7 +436,7 @@ async fn shared_setup_guidance_tracks_approval_retained_download_and_configurati
     let runtime = f.runtime.clone();
     let worker =
         tokio::spawn(async move { tick(service.clone(), &runtime, &Journal::new(&service)).await });
-    wait_count(&f.pulls).await;
+    wait_count(&f, &f.pulls, &worker).await;
     let config = std::fs::read(&f.service.config_path).unwrap();
     let record = serde_json::to_value(f.record()).unwrap();
     f.service.live.lock().unwrap()["pending_restart"] = json!(true);
@@ -583,7 +583,7 @@ async fn prompt_approval_revoked_during_async_inspection_never_admits_download()
     let runtime = f.runtime.clone();
     let task =
         tokio::spawn(async move { tick(service.clone(), &runtime, &Journal::new(&service)).await });
-    wait_count(&f.tags_started).await;
+    wait_count(&f, &f.tags_started, &task).await;
     let mut config = f.service.read_config().unwrap();
     config["model_bootstrap"]["automation"] = json!(false);
     f.service.save_config(config).unwrap();
@@ -677,14 +677,40 @@ async fn prompt_approval_never_repairs_unavailable_journal_or_implicitly_authori
     }
 }
 
-async fn wait_count(count: &AtomicUsize) {
-    tokio::time::timeout(Duration::from_secs(3), async {
+async fn wait_count(
+    f: &Fixture,
+    count: &AtomicUsize,
+    worker: &tokio::task::JoinHandle<Result<()>>,
+) {
+    let started = std::time::Instant::now();
+    let mut polls = 0_u64;
+    let waited = tokio::time::timeout(Duration::from_secs(3), async {
         while count.load(Ordering::SeqCst) == 0 {
+            polls += 1;
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
+    if waited.is_err() {
+        let elapsed_ms = started.elapsed().as_millis();
+        // Observe the failed original wait, never retry tick or extend consent.
+        // Print closed phase/reason types and counters, not config/URLs/secrets.
+        let retained = Journal::new(&f.service).read();
+        let journal_unavailable = retained.is_err();
+        let phase = retained.ok().flatten().map(|r| (r.phase, r.reason));
+        panic!(
+            "Model setup fixture activity deadline elapsed: elapsed_ms={} polls={} target={} tags={} pulls={} phase={phase:?} journal_unavailable={journal_unavailable} worker_finished={} server_finished={} hold_tags={} hold_pull={}",
+            elapsed_ms,
+            polls,
+            count.load(Ordering::SeqCst),
+            f.tags_started.load(Ordering::SeqCst),
+            f.pulls.load(Ordering::SeqCst),
+            worker.is_finished(),
+            f.server.is_finished(),
+            f.hold_tags.load(Ordering::SeqCst),
+            f.hold_pull.load(Ordering::SeqCst),
+        );
+    }
 }
 
 #[tokio::test]
@@ -695,7 +721,7 @@ async fn setup_revocation_during_async_provider_inspection_prevents_admission() 
     let runtime = f.runtime.clone();
     let task =
         tokio::spawn(async move { tick(service.clone(), &runtime, &Journal::new(&service)).await });
-    wait_count(&f.tags_started).await;
+    wait_count(&f, &f.tags_started, &task).await;
     let mut c = f.service.read_config().unwrap();
     c["model_bootstrap"]["automation"] = json!(false);
     f.service.save_config(c).unwrap();
@@ -720,7 +746,7 @@ async fn setup_revocation_cancels_only_its_admitted_transfer_before_selection() 
     let runtime = f.runtime.clone();
     let task =
         tokio::spawn(async move { tick(service.clone(), &runtime, &Journal::new(&service)).await });
-    wait_count(&f.pulls).await;
+    wait_count(&f, &f.pulls, &task).await;
     let id = f.record().id;
     let mut c = f.service.read_config().unwrap();
     c["model_bootstrap"]["automation"] = json!(false);
