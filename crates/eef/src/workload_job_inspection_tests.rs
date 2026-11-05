@@ -53,7 +53,7 @@ async fn workload_receipt_commands_validate_origin_and_exact_issuance_without_a_
     assert!(report(&plan, &command, None, &runtime, changed).is_err());
     assert_eq!(json!(store.get(&d.job_id).unwrap()), before);
     assert_eq!(std::fs::read(&path).unwrap(), disk);
-    let done = finish(&mut issued, receipt.clone()).unwrap();
+    let done = finish(&mut issued, receipt.clone()).await.unwrap();
     drop(issued);
     drop(store);
     let reopened = JobStore::open(&path, 20, 8 * 1024 * 1024).unwrap();

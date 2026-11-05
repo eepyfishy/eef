@@ -58,9 +58,17 @@ async fn completed_fixture(
     receipt.validate().unwrap();
     (store, issued, receipt)
 }
-fn finish(issued: &mut Issued, receipt: eefn::grants::workload::Receipt) -> Result<Plan> {
+async fn finish(issued: &mut Issued, receipt: eefn::grants::workload::Receipt) -> Result<Plan> {
     let d = issued.definition().clone();
-    issued.complete(receipt, &d.issuer_id, &d.session_id, &d.executor_node)
+    issued
+        .complete(
+            receipt,
+            &d.issuer_id,
+            &d.session_id,
+            &d.executor_node,
+            probe_deadline(),
+        )
+        .await
 }
 
 #[tokio::test]
@@ -69,7 +77,7 @@ async fn completed_workload_is_durable_idempotent_terminal_and_never_restores_an
     let path = dir.path().join("completed.db");
     let (store, mut issued, receipt) = completed_fixture(&path).await;
     lease(&mut issued, 2).await.unwrap();
-    let done = finish(&mut issued, receipt.clone()).unwrap();
+    let done = finish(&mut issued, receipt.clone()).await.unwrap();
     assert_eq!(done.status, PlanStatus::Completed);
     assert_eq!(done.tasks[0].status, TaskStatus::Completed);
     assert_eq!(done.execution.as_ref().unwrap().schema_version, 3);
@@ -84,7 +92,7 @@ async fn completed_workload_is_durable_idempotent_terminal_and_never_restores_an
     assert!(report.report.owned_process_exit_observed && !report.report.physical_effects_stopped);
     assert_eq!(crate::request_execution::reserved_bytes(&done), 0);
     assert_eq!(
-        finish(&mut issued, receipt.clone()).unwrap().revision,
+        finish(&mut issued, receipt.clone()).await.unwrap().revision,
         done.revision
     );
     assert!(lease(&mut issued, 3).await.is_err());
@@ -120,7 +128,7 @@ async fn completion_requires_consumed_ack_and_a_lease_sequence_that_was_actually
     let ack = synthetic_ack(issued.definition());
     let receipt = completed_receipt(issued.definition(), &ack, 1);
     let before = json!(engine.store.get(&plan.plan_id).unwrap());
-    assert!(finish(&mut issued, receipt.clone()).is_err());
+    assert!(finish(&mut issued, receipt.clone()).await.is_err());
     assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), before);
     lease(&mut issued, 1).await.unwrap();
     issued.acknowledge(ack, probe_deadline()).await.unwrap();
@@ -128,13 +136,13 @@ async fn completion_requires_consumed_ack_and_a_lease_sequence_that_was_actually
     assert!(crate::request_execution::reserved_bytes(&accepted) >= COMPLETION_RESERVE);
     let mut future = receipt.clone();
     future.completion.as_mut().unwrap().lease_sequence = 2;
-    assert!(finish(&mut issued, future).is_err());
+    assert!(finish(&mut issued, future).await.is_err());
     assert_eq!(
         engine.store.get(&plan.plan_id).unwrap().revision,
         accepted.revision
     );
     assert_eq!(
-        finish(&mut issued, receipt).unwrap().status,
+        finish(&mut issued, receipt).await.unwrap().status,
         PlanStatus::Completed
     );
 }
@@ -164,7 +172,8 @@ async fn wrong_peer_scope_or_consumption_timestamp_cannot_change_a_completed_che
     ] {
         assert!(
             issued
-                .complete(receipt.clone(), &issuer, &session, &node)
+                .complete(receipt.clone(), &issuer, &session, &node, probe_deadline())
+                .await
                 .is_err()
         );
         assert_eq!(json!(store.get(&d.job_id).unwrap()), before);
@@ -176,6 +185,7 @@ async fn wrong_peer_scope_or_consumption_timestamp_cannot_change_a_completed_che
             &mut issued,
             completed_receipt(&other, &synthetic_ack(&other), 1)
         )
+        .await
         .is_err()
     );
     let mut changed_ack = synthetic_ack(&d);
@@ -183,12 +193,19 @@ async fn wrong_peer_scope_or_consumption_timestamp_cannot_change_a_completed_che
     changed_ack.receipt.updated_at_ms = 99;
     let mismatch = completed_receipt(&d, &changed_ack, 1);
     mismatch.validate().unwrap();
-    assert!(finish(&mut issued, mismatch).is_err());
+    assert!(finish(&mut issued, mismatch).await.is_err());
     assert_eq!(json!(store.get(&d.job_id).unwrap()), before);
-    let done = finish(&mut issued, receipt.clone()).unwrap();
+    let done = finish(&mut issued, receipt.clone()).await.unwrap();
     assert!(
         issued
-            .complete(receipt, &d.issuer_id, &d.session_id, "another-node")
+            .complete(
+                receipt,
+                &d.issuer_id,
+                &d.session_id,
+                "another-node",
+                probe_deadline()
+            )
+            .await
             .is_err()
     );
     assert_eq!(store.get(&d.job_id).unwrap().revision, done.revision);
@@ -199,7 +216,7 @@ async fn completed_evidence_is_immutable_and_unknown_tracking_cannot_be_refined_
 {
     let dir = tempfile::tempdir().unwrap();
     let (store, mut issued, receipt) = completed_fixture(&dir.path().join("terminal.db")).await;
-    let done = finish(&mut issued, receipt.clone()).unwrap();
+    let done = finish(&mut issued, receipt.clone()).await.unwrap();
     for index in 0..3 {
         assert!(
             store
@@ -230,7 +247,7 @@ async fn completed_evidence_is_immutable_and_unknown_tracking_cannot_be_refined_
     let unknown = other.get(&receipt.definition.job_id).unwrap();
     assert_eq!(unknown.status, PlanStatus::Interrupted);
     retired.issued_wall = eefn::protocol::now_ms();
-    assert!(finish(&mut retired, receipt).is_err());
+    assert!(finish(&mut retired, receipt).await.is_err());
     assert_eq!(json!(other.get(&unknown.plan_id).unwrap()), json!(unknown));
 }
 
@@ -241,7 +258,7 @@ async fn failed_completion_storage_retires_the_issuer_and_never_retries_the_comp
     let (store, mut issued, receipt) = completed_fixture(&path).await;
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch("CREATE TRIGGER refuse_completed BEFORE UPDATE ON durable_jobs WHEN json_extract(NEW.plan_json,'$.status')='completed' BEGIN SELECT RAISE(ABORT,'synthetic completion failure'); END;").unwrap();
-    assert!(finish(&mut issued, receipt.clone()).is_err());
+    assert!(finish(&mut issued, receipt.clone()).await.is_err());
     store.wait_workload_finalizations().unwrap();
     let saved = store.get(&receipt.definition.job_id).unwrap();
     assert_eq!(saved.status, PlanStatus::Interrupted);
@@ -250,7 +267,7 @@ async fn failed_completion_storage_retires_the_issuer_and_never_retries_the_comp
     assert!(w.completion.is_none());
     assert!(issued.retired);
     db.execute_batch("DROP TRIGGER refuse_completed").unwrap();
-    assert!(finish(&mut issued, receipt).is_err());
+    assert!(finish(&mut issued, receipt).await.is_err());
     assert!(lease(&mut issued, 2).await.is_err());
     drop(issued);
     assert_eq!(store.get(&saved.plan_id).unwrap().revision, saved.revision);
@@ -262,7 +279,7 @@ async fn corrupt_coordinator_completion_is_refused_on_reopen_without_repair() {
     for index in 0..9 {
         let path = dir.path().join(format!("corrupt-{index}.db"));
         let (store, mut issued, receipt) = completed_fixture(&path).await;
-        let mut done = finish(&mut issued, receipt).unwrap();
+        let mut done = finish(&mut issued, receipt).await.unwrap();
         let e = done.execution.as_mut().unwrap();
         let w = e.workload.as_mut().unwrap();
         match index {
