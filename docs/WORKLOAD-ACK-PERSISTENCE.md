@@ -62,3 +62,9 @@ Fresh complete hosted acceptance is required. Initial issuance and normal
 completion persistence still need broader asynchronous integration. Public
 authenticated continuous execution, long-session source behavior, physical
 two-PC validation and stable release gates remain incomplete.
+
+The first hosted candidate `79a505d0` did not compile its tests because the new
+contention fixture declared `TaskEngine` instead of the constructor's existing
+`Arc<TaskEngine>` return type. The corrected declaration retains the same fixture
+ownership and all test assertions, with no production change. Failed run
+`42041575687` is retained; it does not provide runtime acceptance for these cases.

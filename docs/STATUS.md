@@ -5,6 +5,12 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: asynchronous workload consumption checkpoints
 
+The first candidate `79a505d0` failed hosted test compilation: the new SQLite
+contention fixture declared `TaskEngine` while its existing constructor returns
+`Arc<TaskEngine>`. The fixture now declares that existing ownership type. Its
+assertions and production code are unchanged; failed run `42041575687` remains
+retained, and the corrected source requires fresh complete hosted acceptance.
+
 The original issuer now awaits its durable consumption ACK through a bounded
 native queue on the existing journal. Actual writes keep their slots and store
 after caller cancellation; only the original live caller can mark its window

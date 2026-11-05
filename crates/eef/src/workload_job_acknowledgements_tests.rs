@@ -1,6 +1,8 @@
 // Actual SQLite write contention with synthetic already-issued workload metadata.
 // No node, model, interpreter, media source or OS policy is used.
-async fn busy_ack_fixture(path: &std::path::Path) -> (TaskEngine, Issued, rusqlite::Connection) {
+async fn busy_ack_fixture(
+    path: &std::path::Path,
+) -> (Arc<TaskEngine>, Issued, rusqlite::Connection) {
     let mut store = new_store(path, 8 * 1024 * 1024);
     Arc::get_mut(&mut store).unwrap().test_workload_ack_limit(1);
     let engine = TaskEngine::with_store(EventBus::new(20), store);
