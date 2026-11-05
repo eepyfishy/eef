@@ -1,5 +1,10 @@
 # First installation: eef 0.4.0a alpha
 
+This is the published alpha's dashboard-based setup flow. For the current
+development build's command-based private enrollment, permissions, model setup,
+and reviewed requests, use the [user guide](USER_GUIDE.md). Do not assume those
+newer commands are present in a published alpha installer.
+
 The alpha uses “node,” puts user input in the node app, provides feature-wide
 permission switches and Stop/Resume connection controls, and retains old scoped
 grants until explicitly changed. See [alpha release notes](RELEASE-0.4.0a.md) and

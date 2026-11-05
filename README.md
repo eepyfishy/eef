@@ -1,5 +1,9 @@
 # eef
 
+Start with the [user guide](docs/USER_GUIDE.md) for installation, node and model
+setup, a complete request walkthrough, and troubleshooting. It distinguishes
+published alpha instructions from commands available only in development builds.
+
 **0.4.0a6 alpha** (`0.4.0-alpha.6` internally) is an opt-in two-PC testing release, not
 the complete v0.4.0 roadmap. See [alpha release notes](docs/RELEASE-0.4.0a6.md) for
 what works and what is deferred. Automatic-update feeds are paused because no

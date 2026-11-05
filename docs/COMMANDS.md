@@ -1,5 +1,10 @@
 # Node commands
 
+For a shorter introduction, see the [user guide](USER_GUIDE.md), including
+[node setup](user/USING_NODES.md) and the
+[request-to-result walkthrough](user/REQUESTS.md). This reference includes both
+published commands and individually marked unreleased development features.
+
 v0.4.0a6 supports these commands without a browser. Deterministic commands need no LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.
