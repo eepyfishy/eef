@@ -1,3 +1,17 @@
+# Normalize source and documentation while keeping Windows scripts compatible.
 * text=auto eol=lf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+
+# Preserve packaged assets and model payloads without text conversion.
+*.dll binary
+*.exe binary
+*.gguf binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.msi binary
+*.png binary
+*.safetensors binary
+*.wav binary
+*.zip binary

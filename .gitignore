@@ -5,6 +5,7 @@
 /.package/
 /.gh-auth/
 /.validation/
+/data/
 *.db
 *.bootstrap.sqlite3
 *.bootstrap.sqlite3-journal
