@@ -105,6 +105,7 @@ pub mod updater;
 mod workload_events;
 pub mod workload_inspection;
 pub mod workload_leases;
+pub mod workload_network;
 mod workload_runtime;
 pub mod workload_sources;
 

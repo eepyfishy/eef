@@ -3,6 +3,23 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: authenticated workload transport integration
+
+The coordinator now has a typed session/runtime-bound workload offer and framed
+lease/ACK/event/completion route. Control bypasses bounded events; active frames
+retain byte/count ownership, terminal delivery drains prior events, and stale
+session/caller cleanup cannot affect a replacement link. Ten regressions include
+a real pinned-TLS credential-authenticated loopback challenge with simulated peer
+receipts. Source execution and owner start/stop remain unavailable until the node
+admission/dispatcher and runtime/CLI path are connected; no new execution support
+is advertised. Full hosted and final main acceptance are required. See
+[network transport](WORKLOAD-NETWORK-TRANSPORT.md).
+
+The preceding node ACK-read candidate `9b8af0e` passed source run `42087047588`
+across all four jobs, Rust1430+1ignored and the complete native Windows gates.
+The existing main capture deadline failure remains unresolved; this source pass
+does not establish its cause or fix it. Main promotion remains held.
+
 ## In development: reserved one-shot capture failure observation
 
 Main run `42084214870` failed an existing Windows synthetic reserved one-shot WAV

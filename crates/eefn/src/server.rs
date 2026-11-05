@@ -23,6 +23,9 @@ use crate::protocol::{PROTOCOL_VERSION, now_ms, read_message, write_message};
 mod report_queue;
 #[path = "server_report_workers.rs"]
 mod report_workers;
+#[path = "server_workloads.rs"]
+mod workloads;
+pub use workloads::{WorkloadFrame, WorkloadLink, WorkloadPeer};
 
 pub const DEFAULT_PORT: u16 = 51335;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
@@ -90,6 +93,7 @@ struct Inner {
     connections: RwLock<HashMap<String, Connection>>,
     routes: RwLock<HashMap<String, ConnectionInfo>>,
     pending: Mutex<HashMap<String, Pending>>,
+    workloads: Arc<workloads::Registry>,
     report_workers: Arc<report_workers::ReportWorkers>,
     report_bytes: Arc<tokio::sync::Semaphore>,
     nonces: Mutex<HashMap<(String, String), Instant>>,
@@ -203,6 +207,7 @@ impl NodeServer {
                 connections: RwLock::new(HashMap::new()),
                 routes: RwLock::new(HashMap::new()),
                 pending: Mutex::new(HashMap::new()),
+                workloads: Arc::default(),
                 report_workers: report_workers::ReportWorkers::new(MAX_REPORT_WORKERS),
                 report_bytes: Arc::new(tokio::sync::Semaphore::new(MAX_QUEUED_REPORT_BYTES)),
                 nonces: Mutex::new(HashMap::new()),
@@ -284,6 +289,7 @@ impl NodeServer {
         // Serialize stop/cleanup with start. Retain the handle if this future is
         // cancelled so a subsequent stop can still await the same generation.
         let mut gateway = self.inner.accept_task.lock().await;
+        self.inner.workloads.close_all();
         self.inner.report_workers.close();
         if let Some(task) = gateway.as_mut() {
             if let Some(stop) = task.stop.take() {
@@ -305,6 +311,9 @@ impl NodeServer {
             .drain()
             .map(|(id, _)| id)
             .collect::<Vec<_>>();
+        // An offer may have held routing read ownership when stop began. Once
+        // routing is drained no such registration can append after this clear.
+        self.inner.workloads.close_all();
         for id in disconnected {
             let _ = self.inner.events.send(NodeEvent::Down(id));
         }
@@ -1367,6 +1376,21 @@ impl NodeServer {
                             bail!("Workload inspection requires a grant receipt journal")
                         }
                     }
+                    if let Some(value) = message.get("workload_execution") {
+                        let support: crate::workload_network::Advertisement =
+                            serde_json::from_value(value.clone())?;
+                        support.validate()?;
+                        if support.available
+                            && (offered
+                                .as_ref()
+                                .is_none_or(|o| Some(&o.runtime_id) != support.runtime_id.as_ref())
+                                || !capabilities
+                                    .iter()
+                                    .any(|c| c == crate::workload_leases::definition::CAPABILITY))
+                        {
+                            bail!("Workload support lacks its exact registered runtime/capability")
+                        }
+                    }
                     if let Some(value) = message.get("peer_transfer") {
                         let support: crate::peer::plan::Advertisement =
                             serde_json::from_value(value.clone())?;
@@ -1430,6 +1454,7 @@ impl NodeServer {
                                     "grant_stop",
                                     "grant_stop_read",
                                     "workload_receipts",
+                                    "workload_execution",
                                 ],
                                 received_at_ms,
                             ),
@@ -1519,6 +1544,17 @@ impl NodeServer {
                     }
                     self.reply_grant_lease(authenticated_id, session_id, message)
                         .await?;
+                }
+                Some(
+                    "workload_probe" | "workload_ack" | "workload_event" | "workload_complete"
+                    | "workload_rejected",
+                ) => {
+                    if !registered {
+                        bail!("register before workload control")
+                    }
+                    self.inner
+                        .workloads
+                        .route(authenticated_id, session_id, message)?;
                 }
                 Some("grant_ack" | "response") => {
                     match self
@@ -1753,6 +1789,7 @@ impl NodeServer {
     }
 
     async fn fail_pending_for(&self, node_id: &str, session_id: Uuid) {
+        self.inner.workloads.disconnect(node_id, session_id);
         let mut pending = self.inner.pending.lock().await;
         let ids = pending
             .iter()
