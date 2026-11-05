@@ -66,3 +66,9 @@ public continuous execution, long-running physical source behavior, two-PC
 acceptance, installer acceptance, or a stable v0.4.0 release. No heavy local build
 or runtime test is part of this change; complete changed-source hosted validation
 and final main-ref validation remain required.
+
+Initial hosted run `42082338014` failed compilation because one migrated issuance
+call in the manual-runtime completion case still used `.await` outside an async
+block. The correction uses that case's existing observer runtime. It changes no
+shipping behavior, assertions, deadlines or test selection. The failed run remains
+evidence; a new exact source needs complete hosted acceptance.

@@ -17,6 +17,12 @@ issuance callers await the same internal API; public continuous execution remain
 unavailable. Changed-source hosted acceptance and final main-ref acceptance are
 still required. See [issuance persistence](WORKLOAD-ISSUANCE-PERSISTENCE.md).
 
+Initial hosted compilation `42082338014` caught one remaining migrated issuance
+call outside an async block in the existing manual-runtime completion case. That
+call now uses the case's existing observer runtime. No shipping code or test
+assertions changed in this correction; the failed run is retained and fresh full
+hosted validation is required.
+
 ## In development: historical completion fixture staging
 
 Diagnostic run `42046011083` failed a separate completion test before it reached
