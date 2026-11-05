@@ -74,6 +74,7 @@ pub struct JobStore {
     max_bytes: usize,
     reads: job_reads::Queue,
     finalizations: job_finalizations::Queue,
+    acknowledgements: job_finalizations::Queue,
     // Must remain after connection and file lock: field drop order releases
     // both before announcing retirement. The receiver owns no journal/lease.
     retired: RetirementSignal,
@@ -250,6 +251,7 @@ impl JobStore {
             max_bytes,
             reads: Default::default(),
             finalizations: job_finalizations::Queue::new(max_count, max_bytes),
+            acknowledgements: job_finalizations::Queue::for_acknowledgements(max_count, max_bytes),
             retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         });
         store.validate_automations()?;

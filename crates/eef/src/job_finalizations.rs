@@ -10,6 +10,9 @@ use std::sync::{
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
+#[path = "job_workload_acks.rs"]
+mod workload_acks;
+
 const MAX_FINALIZATIONS: usize = 64;
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
@@ -24,6 +27,8 @@ pub(super) struct Queue {
     failed: AtomicBool,
     #[cfg(test)]
     pending: Arc<(Mutex<usize>, std::sync::Condvar)>,
+    #[cfg(test)]
+    started: std::sync::atomic::AtomicUsize,
 }
 impl std::fmt::Debug for Queue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,6 +46,9 @@ impl Default for Queue {
     }
 }
 impl Queue {
+    pub(super) fn for_acknowledgements(max_count: usize, max_bytes: usize) -> Self {
+        Self::new(max_count.min(4), max_bytes)
+    }
     pub(super) fn new(max_count: usize, max_bytes: usize) -> Self {
         // Each issued job already reserves completion headroom in the same
         // owner's quota. Never allocate a channel from an unbounded config value.
@@ -54,6 +62,8 @@ impl Queue {
             failed: AtomicBool::new(false),
             #[cfg(test)]
             pending: Default::default(),
+            #[cfg(test)]
+            started: Default::default(),
         }
     }
     fn submit(&self, job: Job) -> Result<()> {

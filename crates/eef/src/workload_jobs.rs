@@ -22,6 +22,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+#[path = "workload_job_acknowledgements.rs"]
+mod acknowledgements;
 #[path = "workload_job_completion.rs"]
 mod completion;
 #[path = "workload_job_leases.rs"]
@@ -456,6 +458,17 @@ pub struct Issued {
     retired: bool,
     final_slot: Option<crate::jobs::WorkloadFinalSlot>,
 }
+struct IssuerOperation<'a> {
+    issued: &'a mut Issued,
+    retire: bool,
+}
+impl Drop for IssuerOperation<'_> {
+    fn drop(&mut self) {
+        if self.retire {
+            self.issued.retire();
+        }
+    }
+}
 pub(crate) fn mark_unknown(store: &JobStore, definition: &Definition) -> Result<()> {
     store.edit(
         &definition.job_id,
@@ -554,66 +567,6 @@ impl Issued {
         let saved = self.store.get(&self.definition.job_id)?;
         self.validate_live(&saved)?;
         Ok(saved)
-    }
-    /// Called only with a report received through that same authenticated node
-    /// session. Durable ACK precedes renewal authority; no broadcast event hook.
-    pub fn acknowledge(&mut self, ack: eefn::grants::workload::Receipt) -> Result<()> {
-        self.checked_live()?;
-        ack.validate()?;
-        ensure!(
-            ack.definition == self.definition && ack.receipt.state == "accepted",
-            "Wrong workload ACK scope/state"
-        );
-        if self.acknowledged {
-            let saved = self.checked_live()?;
-            ensure!(
-                saved
-                    .execution
-                    .as_ref()
-                    .unwrap()
-                    .workload
-                    .as_ref()
-                    .unwrap()
-                    .acknowledgement
-                    .as_ref()
-                    .is_some_and(|prior| json!(prior) == json!(ack)),
-                "Conflicting retained workload ACK"
-            );
-            return Ok(());
-        }
-        let result = (|| -> Result<()> {
-            self.window.check_consumed(&self.definition.scope()?)?;
-            self.store.change(
-                &self.definition.job_id,
-                "Exact workload consumption ACK saved before renewals",
-                |plan| {
-                    let w = plan
-                        .execution
-                        .as_mut()
-                        .and_then(|e| e.workload.as_mut())
-                        .context("Workload issuance missing")?;
-                    ensure!(
-                        plan.status == PlanStatus::Running
-                            && w.state == AttemptState::Issued
-                            && w.definition == self.definition
-                            && w.acknowledgement.is_none(),
-                        "Workload state changed before ACK checkpoint"
-                    );
-                    w.acknowledgement = Some(ack);
-                    w.state = AttemptState::Accepted;
-                    Ok(())
-                },
-            )?;
-            self.checked_live()?;
-            self.window
-                .acknowledge_consumed(&self.definition.scope()?)?;
-            self.acknowledged = true;
-            Ok(())
-        })();
-        if result.is_err() {
-            self.retire();
-        }
-        result
     }
 }
 /// Internal issuance only. Product callers must hold the existing engine's

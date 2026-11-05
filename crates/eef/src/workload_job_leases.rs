@@ -2,18 +2,6 @@
 //! caller owns renewal authority; a native read receives no issuer or window.
 use super::*;
 
-struct Probe<'a> {
-    issued: &'a mut Issued,
-    retire: bool,
-}
-impl Drop for Probe<'_> {
-    fn drop(&mut self) {
-        if self.retire {
-            self.issued.retire();
-        }
-    }
-}
-
 impl Issued {
     /// Identities must come from the pinned authenticated peer. The caller's
     /// original probe deadline also bounds journal admission and observation.
@@ -27,7 +15,7 @@ impl Issued {
         deadline: tokio::time::Instant,
     ) -> Result<Reply> {
         let deadline = deadline.min(tokio::time::Instant::from_std(self.deadline));
-        let mut probe = Probe {
+        let mut probe = IssuerOperation {
             issued: self,
             retire: true,
         };

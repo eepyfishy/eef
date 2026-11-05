@@ -11,6 +11,7 @@ include!("workload_job_completion_tests.rs");
 include!("workload_job_inspection_tests.rs");
 include!("workload_retirement_tests.rs");
 include!("workload_job_leases_tests.rs");
+include!("workload_job_acknowledgements_tests.rs");
 
 fn template_input() -> PlanInput {
     PlanInput {
@@ -195,7 +196,10 @@ async fn existing_job_store_persists_review_approval_definition_and_ack_before_r
     );
     lease(&mut issued, 1).await.unwrap();
     let ack = synthetic_ack(&d);
-    issued.acknowledge(ack.clone()).unwrap();
+    issued
+        .acknowledge(ack.clone(), probe_deadline())
+        .await
+        .unwrap();
     let after = store.get(&approved.plan_id).unwrap();
     assert_eq!(
         after
@@ -208,7 +212,7 @@ async fn existing_job_store_persists_review_approval_definition_and_ack_before_r
             .state,
         AttemptState::Accepted
     );
-    issued.acknowledge(ack).unwrap();
+    issued.acknowledge(ack, probe_deadline()).await.unwrap();
     assert_eq!(
         store.get(&approved.plan_id).unwrap().revision,
         after.revision
@@ -383,7 +387,7 @@ async fn wrong_ack_scope_or_expired_issuer_cannot_activate_renewals() {
     let mut wrong = synthetic_ack(issued.definition());
     wrong.receipt.node_id = "other".into();
     lease(&mut issued, 1).await.unwrap();
-    assert!(issued.acknowledge(wrong).is_err());
+    assert!(issued.acknowledge(wrong, probe_deadline()).await.is_err());
     assert!(lease(&mut issued, 2).await.is_err());
     assert_eq!(
         engine.store.get(&plan.plan_id).unwrap().status,
@@ -391,13 +395,15 @@ async fn wrong_ack_scope_or_expired_issuer_cannot_activate_renewals() {
         "A wrong peer ACK does not retire otherwise live local authority"
     );
     issued
-        .acknowledge(synthetic_ack(issued.definition()))
+        .acknowledge(synthetic_ack(issued.definition()), probe_deadline())
+        .await
         .unwrap();
     lease(&mut issued, 2).await.unwrap();
     issued.deadline = Instant::now();
     assert!(
         issued
-            .acknowledge(synthetic_ack(issued.definition()))
+            .acknowledge(synthetic_ack(issued.definition()), probe_deadline())
+            .await
             .is_err()
     );
     assert!(lease(&mut issued, 3).await.is_err());
@@ -421,7 +427,10 @@ async fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
                 lease(&mut issued, 1).await.unwrap();
             }
             if consumed {
-                issued.acknowledge(ack.clone()).unwrap();
+                issued
+                    .acknowledge(ack.clone(), probe_deadline())
+                    .await
+                    .unwrap();
             }
             let sequence = if consumed || acknowledge_entry { 2 } else { 1 };
             let original_wall = issued.issued_wall;
@@ -429,14 +438,22 @@ async fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
             // Never change the OS clock or depend on a sleep/host scheduling.
             issued.issued_wall = original_wall.saturating_sub(10_000);
             if acknowledge_entry {
-                assert!(issued.acknowledge(ack.clone()).is_err());
+                assert!(
+                    issued
+                        .acknowledge(ack.clone(), probe_deadline())
+                        .await
+                        .is_err()
+                );
             } else {
                 assert!(lease(&mut issued, sequence).await.is_err());
             }
             issued.issued_wall = original_wall;
             if acknowledge_entry {
                 assert!(
-                    issued.acknowledge(ack.clone()).is_err(),
+                    issued
+                        .acknowledge(ack.clone(), probe_deadline())
+                        .await
+                        .is_err(),
                     "Clock correction cannot restore an issuer's ACK authority"
                 );
             } else {
@@ -446,7 +463,7 @@ async fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
                 );
             }
             assert!(lease(&mut issued, sequence).await.is_err());
-            assert!(issued.acknowledge(ack).is_err());
+            assert!(issued.acknowledge(ack, probe_deadline()).await.is_err());
             engine.store.wait_workload_finalizations().unwrap();
             let retired = engine.store.get(&plan.plan_id).unwrap();
             assert_eq!(retired.status, PlanStatus::Interrupted);

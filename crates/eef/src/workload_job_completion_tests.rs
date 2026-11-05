@@ -50,7 +50,10 @@ async fn completed_fixture(
     .unwrap();
     lease(&mut issued, 1).await.unwrap();
     let ack = synthetic_ack(issued.definition());
-    issued.acknowledge(ack.clone()).unwrap();
+    issued
+        .acknowledge(ack.clone(), probe_deadline())
+        .await
+        .unwrap();
     let receipt = completed_receipt(issued.definition(), &ack, 1);
     receipt.validate().unwrap();
     (store, issued, receipt)
@@ -120,7 +123,7 @@ async fn completion_requires_consumed_ack_and_a_lease_sequence_that_was_actually
     assert!(finish(&mut issued, receipt.clone()).is_err());
     assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), before);
     lease(&mut issued, 1).await.unwrap();
-    issued.acknowledge(ack).unwrap();
+    issued.acknowledge(ack, probe_deadline()).await.unwrap();
     let accepted = engine.store.get(&plan.plan_id).unwrap();
     assert!(crate::request_execution::reserved_bytes(&accepted) >= COMPLETION_RESERVE);
     let mut future = receipt.clone();

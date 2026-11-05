@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: asynchronous workload consumption checkpoints
+
+The original issuer now awaits its durable consumption ACK through a bounded
+native queue on the existing journal. Actual writes keep their slots and store
+after caller cancellation; only the original live caller can mark its window
+consumed after persistence. A polled cancelled operation retires the kept token,
+and a late historical write cannot restore renewal authority. Four real-SQLite
+contention/failure/shutdown regressions and migrated existing ACK cases require
+fresh hosted acceptance. See [ACK persistence and remaining work](WORKLOAD-ACK-PERSISTENCE.md).
+Initial issuance/normal completion writes, public continuous admission and physical
+two-PC/stable-release acceptance remain incomplete.
+
 ## In development: asynchronous workload lease inspection
 
 The existing issuer now awaits its bounded journal reader under the original probe

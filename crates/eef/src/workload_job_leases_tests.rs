@@ -40,7 +40,12 @@ async fn cancelling_a_polled_probe_retires_the_kept_issuer_before_storage_unlock
         "Cancelling a borrowed probe must close the retained token"
     );
     assert!(lease(&mut issued, 1).await.is_err());
-    assert!(issued.acknowledge(synthetic_ack(&d)).is_err());
+    assert!(
+        issued
+            .acknowledge(synthetic_ack(&d), probe_deadline())
+            .await
+            .is_err()
+    );
     assert!(start.elapsed() < Duration::from_secs(1));
     let available = engine.store.workload_finalization_available();
     drop(held);
@@ -140,7 +145,10 @@ async fn delayed_probe_computes_remaining_budget_after_the_actual_journal_read()
         lease(&mut issued, 2).await.is_err(),
         "Durable ACK still precedes renewals"
     );
-    issued.acknowledge(synthetic_ack(&d)).unwrap();
+    issued
+        .acknowledge(synthetic_ack(&d), probe_deadline())
+        .await
+        .unwrap();
     assert_eq!(lease(&mut issued, 2).await.unwrap().sequence, 2);
     drop(issued);
     engine.store.wait_workload_finalizations().unwrap();
@@ -198,7 +206,10 @@ async fn invalid_peer_or_probe_cannot_consume_sequence_or_change_durable_history
     assert!(lease(&mut issued, 1).await.is_err());
     assert!(lease(&mut issued, 2).await.is_err());
     assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), before);
-    issued.acknowledge(synthetic_ack(&d)).unwrap();
+    issued
+        .acknowledge(synthetic_ack(&d), probe_deadline())
+        .await
+        .unwrap();
     assert_eq!(lease(&mut issued, 2).await.unwrap().sequence, 2);
     assert!(lease(&mut issued, 2).await.is_err());
     assert_eq!(lease(&mut issued, 3).await.unwrap().sequence, 3);

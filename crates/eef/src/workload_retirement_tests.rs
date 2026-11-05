@@ -96,7 +96,7 @@ async fn issuer_retirement_keeps_the_runtime_responsive_while_its_journal_is_hel
     assert!(retiring.elapsed() < Duration::from_secs(1));
     assert!(issued.retired);
     assert!(lease(&mut issued, 1).await.is_err());
-    assert!(issued.acknowledge(ack).is_err());
+    assert!(issued.acknowledge(ack, probe_deadline()).await.is_err());
     assert_eq!(store.workload_finalization_available(), available);
     tokio::time::timeout(
         Duration::from_secs(1),

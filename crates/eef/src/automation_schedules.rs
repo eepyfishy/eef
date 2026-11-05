@@ -1548,6 +1548,7 @@ mod tests {
             max_bytes: 0,
             reads: Default::default(),
             finalizations: Default::default(),
+            acknowledgements: super::job_finalizations::Queue::for_acknowledgements(0, 0),
             retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         };
         for _ in 0..3 {
