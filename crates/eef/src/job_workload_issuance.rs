@@ -203,8 +203,8 @@ impl JobStore {
             // Actual work owns capacity/store after waiter cancellation. A lost
             // successful reply drops its packet and queues historical Unknown.
             drop(slot);
-            let _ = reply.send(result);
             drop(store);
+            let _ = reply.send(result);
             #[cfg(test)]
             drop(pending);
         }))?;

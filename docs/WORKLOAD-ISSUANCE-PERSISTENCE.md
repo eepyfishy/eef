@@ -72,3 +72,10 @@ call in the manual-runtime completion case still used `.await` outside an async
 block. The correction uses that case's existing observer runtime. It changes no
 shipping behavior, assertions, deadlines or test selection. The failed run remains
 evidence; a new exact source needs complete hosted acceptance.
+
+The native handoff releases its own journal reference before waking the waiter,
+matching the existing reader/ACK ownership ordering. A successful committed
+packet keeps its separate store and reporting slot. If delivery loses that
+packet, its uncertainty submission happens before the actual issuance drain
+signals completion. The eight cases, queue budgets and original deadlines remain
+unchanged; this handoff adjustment also needs full exact-source hosted validation.

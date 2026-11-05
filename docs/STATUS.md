@@ -23,6 +23,12 @@ call now uses the case's existing observer runtime. No shipping code or test
 assertions changed in this correction; the failed run is retained and fresh full
 hosted validation is required.
 
+The issuance handoff also releases the native writer's own store reference before
+waking its waiter. A successful historical packet retains its separate exact
+store/reporting ownership; a lost packet still queues uncertainty before the
+actual issuance drain completes. This prevents an unnecessary journal ownership
+race at caller teardown. The eight added cases and production bounds are unchanged.
+
 ## In development: historical completion fixture staging
 
 Diagnostic run `42046011083` failed a separate completion test before it reached
