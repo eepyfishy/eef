@@ -19,8 +19,11 @@ mod automation_occurrences;
 pub(crate) mod automation_schedules;
 #[path = "automations.rs"]
 mod automations;
+#[path = "job_finalizations.rs"]
+mod job_finalizations;
 #[path = "job_reads.rs"]
 mod job_reads;
+pub(crate) use job_finalizations::Slot as WorkloadFinalSlot;
 #[path = "model_verification_intents.rs"]
 mod model_verification_intents;
 #[path = "setup_model_check_store.rs"]
@@ -70,6 +73,7 @@ pub struct JobStore {
     max_count: usize,
     max_bytes: usize,
     reads: job_reads::Queue,
+    finalizations: job_finalizations::Queue,
     // Must remain after connection and file lock: field drop order releases
     // both before announcing retirement. The receiver owns no journal/lease.
     retired: RetirementSignal,
@@ -245,6 +249,7 @@ impl JobStore {
             max_count,
             max_bytes,
             reads: Default::default(),
+            finalizations: job_finalizations::Queue::new(max_count, max_bytes),
             retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         });
         store.validate_automations()?;

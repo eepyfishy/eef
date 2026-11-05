@@ -452,8 +452,9 @@ pub struct Issued {
     deadline: Instant,
     acknowledged: bool,
     retired: bool,
+    final_slot: Option<crate::jobs::WorkloadFinalSlot>,
 }
-fn mark_unknown(store: &JobStore, definition: &Definition) -> Result<()> {
+pub(crate) fn mark_unknown(store: &JobStore, definition: &Definition) -> Result<()> {
     store.edit(
         &definition.job_id,
         "Workload issuer retired; effects unknown, no replay",
@@ -496,11 +497,21 @@ impl Issued {
         if self.retired {
             return;
         }
-        // Latch before synchronous persistence. A failed uncertainty checkpoint
-        // must not restore authority, and Drop must not retry that write.
+        // Retire authority synchronously; persistence cannot stall this thread
+        // or revive the original window after its caller goes away.
         self.retired = true;
         self.window.stop();
-        let _ = mark_unknown(&self.store, &self.definition);
+        self.checkpoint_unknown();
+    }
+    fn checkpoint_unknown(&mut self) {
+        if let Some(slot) = self.final_slot.take() {
+            let _ = self
+                .store
+                .queue_workload_unknown(self.definition.clone(), slot);
+        } else {
+            // No replacement reservation, retry or second checkpoint.
+            self.store.deny_workload_reporting();
+        }
     }
     fn checked_live(&mut self) -> Result<Plan> {
         let result = self.live();
@@ -511,6 +522,7 @@ impl Issued {
     }
     fn live(&self) -> Result<Plan> {
         ensure!(!self.retired, "Workload issuer permanently retired");
+        self.store.require_workload_reporting()?;
         let expected = self
             .issued_wall
             .saturating_add(self.issued.elapsed().as_millis().min(u64::MAX as u128) as u64);
@@ -619,6 +631,7 @@ pub(crate) fn issue(
 ) -> Result<Issued> {
     command.validate()?;
     eefn::automation_occurrence::uuid(session)?;
+    let final_slot = store.reserve_workload_finalization()?;
     let saved = store.get(&command.id)?;
     let w = template(&saved)?;
     let a = saved
@@ -715,7 +728,7 @@ pub(crate) fn issue(
     let window = match IssuerWindow::new(contract, policy, deadline) {
         Ok(window) => window,
         Err(error) => {
-            let _ = mark_unknown(store, &definition);
+            let _ = store.queue_workload_unknown(definition, final_slot);
             return Err(error);
         }
     };
@@ -728,6 +741,7 @@ pub(crate) fn issue(
         deadline,
         acknowledged: false,
         retired: false,
+        final_slot: Some(final_slot),
     };
     token.checked_live()?;
     Ok(token)

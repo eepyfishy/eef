@@ -115,6 +115,7 @@ fn completed_evidence_is_immutable_and_unknown_tracking_cannot_be_refined_by_a_s
     let (other, mut retired, receipt) = completed_fixture(&dir.path().join("unknown.db"));
     retired.issued_wall = retired.issued_wall.saturating_add(100_000);
     assert!(lease(&mut retired, 2).is_err());
+    other.wait_workload_finalizations().unwrap();
     let unknown = other.get(&receipt.definition.job_id).unwrap();
     assert_eq!(unknown.status, PlanStatus::Interrupted);
     retired.issued_wall = eefn::protocol::now_ms();
@@ -129,6 +130,7 @@ fn failed_completion_storage_retires_the_issuer_and_never_retries_the_completion
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch("CREATE TRIGGER refuse_completed BEFORE UPDATE ON durable_jobs WHEN json_extract(NEW.plan_json,'$.status')='completed' BEGIN SELECT RAISE(ABORT,'synthetic completion failure'); END;").unwrap();
     assert!(finish(&mut issued, receipt.clone()).is_err());
+    store.wait_workload_finalizations().unwrap();
     let saved = store.get(&receipt.definition.job_id).unwrap();
     assert_eq!(saved.status, PlanStatus::Interrupted);
     let w = saved.execution.as_ref().unwrap().workload.as_ref().unwrap();

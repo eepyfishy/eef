@@ -3,6 +3,21 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: nonblocking workload issuer retirement
+
+Internal workload issuance now reserves one reporting slot before journal mutation.
+Retirement closes the original issuer window immediately and queues one bounded
+uncertainty checkpoint on the same journal's native worker. The actual save owns
+its slot/store after caller cancellation or runtime shutdown; an unavailable
+checkpoint denies new workload authority on that handle. Success releases the
+slot after completion, and no retired token can renew or retry its checkpoint.
+
+Five new real-journal regressions and adapted durable-inspection waits require
+fresh hosted acceptance. See [retirement ordering, failure semantics and remaining
+write integration](WORKLOAD-RETIREMENT.md). Issuance/ACK/normal completion still
+need broader asynchronous integration, and public continuous execution remains
+unavailable. No source, model, permission, lease or storage budget is widened.
+
 ## In development: bounded coordinator evidence reads
 
 The first hosted candidate `51ef0a86` failed test compilation because an existing

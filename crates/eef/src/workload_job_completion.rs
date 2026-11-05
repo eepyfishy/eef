@@ -156,7 +156,10 @@ impl Issued {
         if result.is_err() {
             // Completion storage failure cannot revive renewals or rerun work.
             // One uncertainty checkpoint follows; Drop never retries it.
-            let _ = mark_unknown(&self.store, &self.definition);
+            self.checkpoint_unknown();
+        } else {
+            // A completed historical token need not retain reporting capacity.
+            drop(self.final_slot.take());
         }
         result
     }

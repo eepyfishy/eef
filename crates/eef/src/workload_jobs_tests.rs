@@ -9,6 +9,7 @@ use eefn::{
 
 include!("workload_job_completion_tests.rs");
 include!("workload_job_inspection_tests.rs");
+include!("workload_retirement_tests.rs");
 
 fn template_input() -> PlanInput {
     PlanInput {
@@ -210,6 +211,7 @@ fn existing_job_store_persists_review_approval_definition_and_ack_before_renewal
     );
     lease(&mut issued, 2).unwrap();
     drop(issued);
+    store.wait_workload_finalizations().unwrap();
     let unknown = store.get(&approved.plan_id).unwrap();
     assert_eq!(unknown.status, PlanStatus::Interrupted);
     assert_eq!(
@@ -307,6 +309,7 @@ fn restored_running_job_becomes_unknown_and_never_recreates_an_issuer() {
         .is_err()
     );
     drop(issued);
+    store.wait_workload_finalizations().unwrap();
 }
 
 #[test]
@@ -440,6 +443,7 @@ fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
             }
             assert!(lease(&mut issued, sequence).is_err());
             assert!(issued.acknowledge(ack).is_err());
+            engine.store.wait_workload_finalizations().unwrap();
             let retired = engine.store.get(&plan.plan_id).unwrap();
             assert_eq!(retired.status, PlanStatus::Interrupted);
             let workload = retired

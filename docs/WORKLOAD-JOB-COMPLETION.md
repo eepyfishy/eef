@@ -1,5 +1,10 @@
 # Coordinator workload completion draft
 
+The [retirement follow-up](WORKLOAD-RETIREMENT.md) queues failed-completion
+uncertainty on reserved native journal capacity. Normal completion remains a
+synchronous checkpoint in this draft. Queued uncertainty is not durable success,
+and no original issuer is revived while persistence is pending.
+
 The coordinator now has an internal completion checkpoint for the existing
 reviewed workload job. It uses the original `Issued` token and `JobStore`, not a
 second scheduler or a dashboard controller. Authenticated dispatch and owner

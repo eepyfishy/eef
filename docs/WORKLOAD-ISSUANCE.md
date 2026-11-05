@@ -1,5 +1,11 @@
 # Reviewed continuous job issuance
 
+The later [retirement follow-up](WORKLOAD-RETIREMENT.md) reserves reporting capacity
+before issuance and moves the final uncertainty checkpoint to a bounded native
+worker. Retired authority is immediate; its durable checkpoint can still be
+pending. Initial issuance and ACK writes below still require broader asynchronous
+integration before a public execution route is accepted.
+
 The later [coordinator completion draft](WORKLOAD-JOB-COMPLETION.md) extends this
 checkpoint with an immutable terminal receipt and additional pre-offer storage
 reservation. It does not add public execution, historical reconciliation or
