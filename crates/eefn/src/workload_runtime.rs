@@ -136,7 +136,7 @@ impl PreparedMicrophone {
     #[allow(dead_code)]
     pub(crate) async fn run<F, C>(
         self,
-        consumed: crate::grants::workload::Consumption,
+        mut consumed: crate::grants::workload::Consumption,
         renewals: Renewals,
         observe: F,
     ) -> Result<crate::grants::workload::Receipt>
@@ -144,7 +144,8 @@ impl PreparedMicrophone {
         F: FnMut(crate::workload_events::Event) -> C + Send,
         C: Future<Output = Result<()>> + Send,
     {
-        let receipt = consumed.acknowledgement()?;
+        let ack_deadline = tokio::time::Instant::from_std(consumed.session_deadline()?);
+        let receipt = Box::pin(consumed.acknowledgement_before(ack_deadline)).await?;
         ensure!(
             receipt.definition == self.definition,
             "Prepared source differs from consumed definition"
@@ -172,7 +173,7 @@ impl PreparedMicrophone {
         let completed_events = events.clone();
         let reporting = consumed.reporting_authority();
         let reporting_contract = self.definition.lease_contract()?;
-        let writer = Arc::new(consumed.event_writer()?);
+        let writer = Arc::new(consumed.event_writer_from_ack(receipt)?);
         let observer = Arc::new(tokio::sync::Mutex::new(observe));
         // Keep transport and each supervisory layer out of its parent's async
         // state. Debug Windows threads have bounded stacks; growing the final

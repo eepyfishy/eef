@@ -3,8 +3,11 @@
 //! mutator yet; authenticated admission and the coordinator journal remain open.
 use super::*;
 use crate::workload_leases::{Contract, LeaseProof, Policy, definition::Definition};
+use anyhow::ensure;
 
 const MAX_DEFINITION_BYTES: usize = 64 * 1024;
+#[path = "workload_ack_reads.rs"]
+mod ack_reads;
 #[path = "workload_completion.rs"]
 mod completion;
 #[path = "workload_event_journal.rs"]
@@ -198,8 +201,19 @@ impl Consumption {
             .wait()
             .await
     }
+    #[cfg(test)]
     pub(crate) fn event_writer(&self) -> Result<EventWriter> {
         let receipt = self.acknowledgement()?;
+        self.event_writer_from_ack(receipt)
+    }
+    pub(crate) fn event_writer_from_ack(&self, receipt: Receipt) -> Result<EventWriter> {
+        self.check_initial_ack()?;
+        receipt.validate()?;
+        ensure!(
+            receipt.receipt.state == "accepted"
+                && receipt.definition.scope()? == self.contract.scope,
+            "Workload event writer differs from consumed ACK"
+        );
         Ok(EventWriter {
             ledger: self.ledger.clone(),
             definition: receipt.definition,
@@ -299,7 +313,8 @@ impl Consumption {
         };
         let result = {
             let consumed = running.consumption.as_mut().unwrap();
-            consumed.acknowledgement()?;
+            let deadline = tokio::time::Instant::from_std(consumed.session_deadline()?);
+            Box::pin(consumed.acknowledgement_before(deadline)).await?;
             let initial = consumed
                 .initial
                 .take()

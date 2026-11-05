@@ -3,6 +3,20 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: bounded node ACK inspection before source execution
+
+The prepared microphone runner and consumed-source supervisor now await saved ACK
+inspection through the existing bounded node journal worker. Original consumption
+and lease proof remain on the caller. Cancellation/failure closes that proof;
+source destruction still precedes uncertainty submission using the original final
+reservation. A post-read stop, original deadline, damaged ACK or lost waiter cannot
+start/restart a source. Actual reads retain capacity/journal through runtime loss.
+The event writer reuses checked metadata; durable event authority is unchanged.
+Six real-journal regressions are added. Full hosted/native and final main acceptance
+are still required. Native consumption and public execution/stop integration remain
+unfinished; execution support is not newly advertised. See
+[node ACK reads](WORKLOAD-NODE-ACK-READS.md).
+
 ## In development: asynchronous workload issuance
 
 Internal issuance now uses bounded native reads/writes with an explicit original
