@@ -23,7 +23,7 @@ impl Completion {
             restart_authorized: false,
         }
     }
-    pub(super) fn validate(
+    pub(crate) fn validate(
         &self,
         definition: &Definition,
         ack: &NodeReceipt,
@@ -53,12 +53,13 @@ impl Completion {
 impl Issued {
     /// Inputs must come from the original pinned authenticated session, never
     /// from the receipt body. This does not authenticate a transport by itself.
-    pub fn complete(
+    pub async fn complete(
         &mut self,
         receipt: NodeReceipt,
         issuer: &str,
         session: &str,
         node: &str,
+        deadline: tokio::time::Instant,
     ) -> Result<Plan> {
         receipt.validate()?;
         ensure!(
@@ -70,7 +71,10 @@ impl Issued {
             "Workload completion differs from its authenticated session or consumed definition"
         );
         if self.retired {
-            let saved = self.store.get(&self.definition.job_id)?;
+            let saved = self
+                .store
+                .get_before(&self.definition.job_id, deadline)
+                .await?;
             let completed = saved
                 .execution
                 .as_ref()
@@ -83,84 +87,92 @@ impl Issued {
             );
             return Ok(saved);
         }
-        let saved = self.checked_live()?;
-        ensure!(
-            self.acknowledged,
-            "Completion requires the durable consumed ACK"
-        );
-        let ack = saved
-            .execution
-            .as_ref()
-            .unwrap()
-            .workload
-            .as_ref()
-            .unwrap()
-            .acknowledgement
-            .as_ref()
-            .context("Completion lacks consumed ACK")?;
-        // Validate before closing the original window; malformed/wrong-session
-        // data cannot change durable state or manufacture a completion record.
-        let report = receipt
-            .completion
-            .as_ref()
-            .context("Missing typed node completion")?;
-        let candidate = Completion {
-            schema_version: 1,
-            receipt: receipt.receipt.clone(),
-            report: report.clone(),
-            last_issued_lease_sequence: report.lease_sequence,
-            recorded_at_ms: eefn::protocol::now_ms().max(saved.updated_at_ms),
+        let deadline = deadline.min(tokio::time::Instant::from_std(self.deadline));
+        let mut pending = IssuerOperation {
+            issued: self,
+            retire: true,
         };
-        candidate.validate(&self.definition, ack, self.issued_wall)?;
-        let last = self
-            .window
-            .close_after_report(&self.definition.scope()?, report.lease_sequence)?;
-        self.retired = true;
-        let mut completed = candidate;
-        completed.last_issued_lease_sequence = last;
-        let result = self.store.change(
-            &self.definition.job_id,
-            "Authenticated node source completion saved; no execution or replay authority",
-            |plan| {
-                let execution = plan
-                    .execution
-                    .as_mut()
-                    .context("Missing workload execution")?;
-                let w = execution
-                    .workload
-                    .as_mut()
-                    .context("Missing workload issuance")?;
-                ensure!(
-                    plan.status == PlanStatus::Running
-                        && w.state == AttemptState::Accepted
-                        && w.definition == self.definition
-                        && w.completion.is_none(),
-                    "Workload changed before completion checkpoint"
-                );
-                completed.validate(
-                    &w.definition,
-                    w.acknowledgement
-                        .as_ref()
-                        .context("Completion lacks consumed ACK")?,
-                    w.issued_at_ms,
-                )?;
-                plan.updated_at_ms = plan.updated_at_ms.max(completed.recorded_at_ms);
-                w.completion = Some(completed);
-                w.state = AttemptState::Completed;
-                execution.schema_version = 3;
-                plan.status = PlanStatus::Completed;
-                plan.tasks[0].status = TaskStatus::Completed;
-                Ok(())
-            },
+        pending.issued.local_live()?;
+        let saved = pending
+            .issued
+            .store
+            .get_before(&pending.issued.definition.job_id, deadline)
+            .await?;
+        pending.issued.validate_live(&saved)?;
+        let candidate = (|| -> Result<Completion> {
+            ensure!(
+                pending.issued.acknowledged,
+                "Completion requires the durable consumed ACK"
+            );
+            let ack = saved
+                .execution
+                .as_ref()
+                .unwrap()
+                .workload
+                .as_ref()
+                .unwrap()
+                .acknowledgement
+                .as_ref()
+                .context("Completion lacks consumed ACK")?;
+            // Validate before closing the original window; malformed/wrong-session
+            // data cannot change durable state or manufacture a completion record.
+            let report = receipt
+                .completion
+                .as_ref()
+                .context("Missing typed node completion")?;
+            let candidate = Completion {
+                schema_version: 1,
+                receipt: receipt.receipt.clone(),
+                report: report.clone(),
+                last_issued_lease_sequence: report.lease_sequence,
+                recorded_at_ms: eefn::protocol::now_ms().max(saved.updated_at_ms),
+            };
+            candidate.validate(&pending.issued.definition, ack, pending.issued.issued_wall)?;
+            Ok(candidate)
+        })();
+        pending.issued.local_live()?;
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "Workload completion deadline elapsed before window close"
         );
-        if result.is_err() {
-            // Completion storage failure cannot revive renewals or rerun work.
-            // One uncertainty checkpoint follows; Drop never retries it.
-            self.checkpoint_unknown();
-        } else {
-            // A completed historical token need not retain reporting capacity.
-            drop(self.final_slot.take());
-        }
+        let mut completed = match candidate {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                pending.retire = false;
+                return Err(error);
+            }
+        };
+        let last = match pending.issued.window.close_after_report(
+            &pending.issued.definition.scope()?,
+            completed.report.lease_sequence,
+        ) {
+            Ok(last) => last,
+            Err(error) => {
+                pending.retire = false;
+                return Err(error);
+            }
+        };
+        pending.issued.retired = true;
+        completed.last_issued_lease_sequence = last;
+        let Some(slot) = pending.issued.final_slot.take() else {
+            pending.issued.store.deny_workload_reporting();
+            bail!("Workload completion lacks its original reporting reservation")
+        };
+        let receiver = pending.issued.store.queue_workload_completion(
+            pending.issued.definition.clone(),
+            completed,
+            slot,
+        )?;
+        // Only observation is timed. Actual historical persistence owns the
+        // original reservation after cancellation and cannot issue any lease.
+        let result = tokio::time::timeout_at(deadline, receiver)
+            .await
+            .context("Workload completion deadline elapsed; inspect retained history")?
+            .context("Workload completion worker unavailable; inspect retained history")?;
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "Workload completion saved after observation deadline"
+        );
         result
     }
 }

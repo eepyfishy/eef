@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: asynchronous workload completion persistence
+
+Normal completion now uses the existing native journal queue and reporting slot
+reserved before issuance. The original window closes before submission; actual
+historical persistence retains its slot/store after timeout or cancellation.
+Failure attempts one uncertainty checkpoint on the same worker, with reporting
+denial if that also fails. Identical terminal history stays read-only without
+reconstructing the old issuer. Four shared real-SQLite regressions and migrated
+existing cases require fresh hosted acceptance. See [completion persistence](WORKLOAD-COMPLETION-PERSISTENCE.md).
+Initial issuance and other legacy writes, public continuous admission, physical
+two-PC validation and stable release acceptance remain incomplete.
+
 ## In development: asynchronous workload consumption checkpoints
 
 The first candidate `79a505d0` failed hosted test compilation: the new SQLite

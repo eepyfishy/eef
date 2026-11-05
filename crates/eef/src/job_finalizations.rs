@@ -1,4 +1,4 @@
-//! Admission-reserved uncertainty checkpoints in the existing JobStore. Native
+//! Admission-reserved historical checkpoints in the existing JobStore. Native
 //! work holds metadata and journal ownership, never an issuer, lease or source.
 use super::JobStore;
 use anyhow::{Context, Result, ensure};
@@ -12,6 +12,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[path = "job_workload_acks.rs"]
 mod workload_acks;
+#[path = "job_workload_completion.rs"]
+mod workload_completion;
 
 const MAX_FINALIZATIONS: usize = 64;
 type Job = Box<dyn FnOnce() + Send + 'static>;

@@ -280,9 +280,12 @@ async fn successful_completion_releases_its_slot_without_recreating_execution_au
     let dir = tempfile::tempdir().unwrap();
     let (store, mut issued, receipt) = completed_fixture(&dir.path().join("completed.db")).await;
     let available = store.workload_finalization_available();
-    let done = finish(&mut issued, receipt.clone()).unwrap();
+    let done = finish(&mut issued, receipt.clone()).await.unwrap();
     assert_eq!(store.workload_finalization_available(), available + 1);
-    assert_eq!(json!(finish(&mut issued, receipt).unwrap()), json!(done));
+    assert_eq!(
+        json!(finish(&mut issued, receipt).await.unwrap()),
+        json!(done)
+    );
     assert!(lease(&mut issued, 2).await.is_err());
     drop(issued);
     store.wait_workload_finalizations().unwrap();
