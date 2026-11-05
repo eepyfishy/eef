@@ -259,8 +259,19 @@ async fn failed_completion_commit_rolls_back_version_report_and_state_without_re
 async fn blocked_historical_completion_is_bounded_without_retaining_source_authority() {
     let dir = tempfile::tempdir().unwrap();
     let (ledger, consumed, evidence, d) =
-        fixture(&dir.path().join("receipts.db"), 3000, false).await;
+        fixture(&dir.path().join("receipts.db"), 50_000, false).await;
+    // Finish the actual journal-backed fixture under the same existing contract
+    // as the other completion cases. Test historical persistence only AFTER
+    // its original lease expires, without renewing or mutating that boundary.
+    let original_deadline = evidence.boundary.original_deadline();
+    tokio::time::sleep_until(tokio::time::Instant::from_std(original_deadline)).await;
+    assert!(Instant::now() >= original_deadline);
+    evidence
+        .boundary
+        .validate(&d.lease_contract().unwrap())
+        .unwrap();
     let reporting = consumed.reporting_authority();
+    assert!(reporting.checkpoint(&d.lease_contract().unwrap()).is_err());
     let blocker = FinalBlocker::hold(&ledger, &d).await;
     let pending = tokio::time::timeout(Duration::from_secs(4), persist(consumed, evidence))
         .await

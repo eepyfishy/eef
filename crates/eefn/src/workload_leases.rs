@@ -546,6 +546,10 @@ impl FinishBoundary {
     pub(crate) fn sequence(&self) -> u64 {
         self.sequence
     }
+    #[cfg(test)]
+    pub(crate) fn original_deadline(&self) -> Instant {
+        self.deadline
+    }
 }
 pub(crate) struct Finished<T> {
     pub(crate) value: T,
