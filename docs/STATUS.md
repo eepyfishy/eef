@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: reserved one-shot capture failure observation
+
+Main run `42084214870` failed an existing Windows synthetic reserved one-shot WAV
+case because the Python bridge exceeded its original execution deadline. Other
+node cases and the independent native gates completed; the main run remains
+failed. The case now captures the existing numeric bridge timing event through a
+future-local test subscriber and reports iteration/elapsed time on failure. Its
+six-second deadline, two iterations, exact WAV/owned-exit assertions and shipping
+code are unchanged. Cause remains unproven; this is not a claimed fix, retry or
+accepted release. See [capture observation](RESERVED-CAPTURE-OBSERVATION.md).
+
 ## In development: bounded node ACK inspection before source execution
 
 The prepared microphone runner and consumed-source supervisor now await saved ACK
