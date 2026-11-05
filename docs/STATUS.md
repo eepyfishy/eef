@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: historical completion fixture staging
+
+Diagnostic run `42046011083` failed a separate completion test before it reached
+historical persistence: its synthetic source lease expired during journal-backed
+fixture setup. That case now finishes under the existing completion-fixture
+contract, then explicitly waits for its original sealed lease deadline to expire
+before blocking the historical save. The read-only deadline accessor is test-only;
+production lease limits and final-save waits are unchanged. All existing assertions
+and live-expiry refusals remain. See [the separate failure and validation boundary](MODEL-SETUP-WAIT-OBSERVATION.md#independent-historical-completion-fixture-failure).
+Fresh hosted acceptance is required; the model-setup wait cause remains open.
+
 ## In development: model setup fixture wait observations
 
 Main run `42039659527` failed three model-setup activity waits under their original
