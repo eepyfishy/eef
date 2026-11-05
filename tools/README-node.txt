@@ -1,4 +1,4 @@
-eefn node for Windows
+eef node (eefn) for Windows
 
 v0.4.0a6 backend alpha. See TWO_PC_TEST.md. Use eefn.exe network diagnose
 --json for a minimal local report, or network show/set/peers for network commands.

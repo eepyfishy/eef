@@ -5,6 +5,10 @@ the beginning of sentences. Apply this to documentation, comments, command
 messages, UI text, installer branding, and generated display names. Never
 automatically capitalize these names or apply uppercase styling to them.
 
+`eefn` means `eef node`. Use `eef node` for the role in prose and display names;
+keep `eefn` for the process, executable, package and compatible machine identifiers.
+Avoid appending the word `node` to `eefn`.
+
 Keep existing machine interfaces compatible: environment-variable identifiers,
 wire-format magic, signed/hash-bound verification prefixes, and legacy package
 recognition are not display branding. Changing those requires an explicit

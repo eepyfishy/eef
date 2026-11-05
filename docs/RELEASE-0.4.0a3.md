@@ -1,7 +1,7 @@
 # eef v0.4.0a3 — command-first backend alpha
 
 Internal version: `0.4.0-alpha.3`. Opt-in Windows x86-64 prerelease; not the
-completed roadmap. Two EXE installers: eef coordinator and independent eefn node.
+completed roadmap. Two EXE installers: eef coordinator and independent eef node.
 MSI, default LM bootstrap, interpretation, execution leases, continuous workloads,
 direct peer media and coordinator clustering remain pending.
 

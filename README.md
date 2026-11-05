@@ -27,7 +27,7 @@ The builds are unsigned. Both v0.3.2 installers have unresolved Defender reports
 on a second PC; see [the investigation](docs/ANTIVIRUS.md). A passing local scan
 is not a Microsoft false-positive verdict. Do not bypass antivirus detections.
 
-Native Rust implementation of the eef coordinator and eefn node, with bundled
+Native Rust implementation of the eef coordinator and eef node (`eefn`), with bundled
 CPython for optional plugins. The transport, crypto, routing, memory, task
 engine, model routing, dashboard/API, firmware generation, and updates are
 implemented in Rust. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the

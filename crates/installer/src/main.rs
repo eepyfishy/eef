@@ -209,7 +209,7 @@ fn product(name: &str) -> Result<&'static Product> {
         startup_name: "eef Coordinator",
     };
     static NODE_PRODUCT: Product = Product {
-        display: "eefn node",
+        display: "eef node",
         directory: "eefn",
         executable: "eefn.exe",
         config: "config.json",
