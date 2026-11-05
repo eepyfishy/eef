@@ -47,6 +47,15 @@ independent handles, owner/quota/stop checks, source retirement and completion.
 The ACK reader fixtures now account for the first read performed by admission.
 No source, microphone, model or installed node is launched by the new cases.
 
+Initial run `42132439721` caught the older SQLite lock-wait case asserting at
+least one second elapsed on the caller. Its original one-second issuer horizon
+already produces a shorter proof through the existing conservative margin.
+The synchronous API used to wait for later native lock release; the async API
+correctly ends its wait at the captured original proof deadline. The fixture now
+asserts that exact unchanged deadline, then waits for actual native rollback before
+checking schema version and zero consumed rows. No production deadline, margin,
+busy wait, rollback assertion or source authorization rule is relaxed.
+
 Formatting and source checks run locally; compilation/runtime verification runs
 on GitHub. Full changed-source hosted and final main acceptance are required.
 The authenticated node dispatcher, owner start/stop route, physical two-PC and

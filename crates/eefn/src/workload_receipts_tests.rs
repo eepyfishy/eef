@@ -739,11 +739,13 @@ async fn sqlite_lock_wait_spends_original_lease_and_rolls_back_schema_and_consum
     blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
     let d = definition();
     let p = proof_for(&d, 1000).await;
+    let original_end = p
+        .initial_deadline(&d.lease_contract().unwrap(), &policy())
+        .unwrap();
     let release = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(1250));
         blocker.execute_batch("COMMIT").unwrap();
     });
-    let start = Instant::now();
     assert!(
         ledger
             .consume_workload(
@@ -758,7 +760,9 @@ async fn sqlite_lock_wait_spends_original_lease_and_rolls_back_schema_and_consum
             .await
             .is_err()
     );
-    assert!(start.elapsed() >= Duration::from_secs(1));
+    // The async waiter returns at the ORIGINAL conservative proof deadline,
+    // not the later SQLite release. Native rollback is observed separately.
+    assert!(Instant::now() >= original_end);
     release.join().unwrap();
     admission_released(&ledger).await;
     assert_eq!(version(&path), 2);

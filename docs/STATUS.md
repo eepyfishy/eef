@@ -16,6 +16,14 @@ and damaged evidence; existing admission/source fixtures await the same API.
 Changed-source hosted verification is pending. See
 [node admission](WORKLOAD-NODE-ADMISSION.md).
 
+Initial admission run `42132439721` exposed an old lock-wait fixture assumption:
+it required a full second on the calling thread, whereas the async waiter now
+ends at its original conservative proof deadline. The fixture now captures and
+asserts that exact original deadline, then drains native rollback before checking
+the unchanged schema/no-consumption assertions. Production code, proof margins,
+busy timeout and all eight new regressions are unchanged. The failed run is
+retained; corrected-source full verification is required.
+
 The preceding transport candidate `2dbb451` passed run `42095342427` across all
 four hosted jobs, including Rust1440+1ignored and the complete native Windows
 gates. That source pass does not resolve the existing main capture deadline
