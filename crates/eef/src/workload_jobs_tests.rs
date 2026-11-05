@@ -10,6 +10,7 @@ use eefn::{
 include!("workload_job_completion_tests.rs");
 include!("workload_job_inspection_tests.rs");
 include!("workload_retirement_tests.rs");
+include!("workload_job_leases_tests.rs");
 
 fn template_input() -> PlanInput {
     PlanInput {
@@ -109,14 +110,17 @@ fn query(issued: &Issued, sequence: u64) -> Query {
         sequence,
     }
 }
-fn lease(issued: &mut Issued, sequence: u64) -> Result<Reply> {
+async fn lease(issued: &mut Issued, sequence: u64) -> Result<Reply> {
     let d = issued.definition().clone();
-    issued.lease(
-        &query(issued, sequence),
-        &d.issuer_id,
-        &d.session_id,
-        &d.executor_node,
-    )
+    issued
+        .lease(
+            &query(issued, sequence),
+            &d.issuer_id,
+            &d.session_id,
+            &d.executor_node,
+            tokio::time::Instant::now() + Duration::from_secs(2),
+        )
+        .await
 }
 pub(crate) fn synthetic_ack(d: &Definition) -> eefn::grants::workload::Receipt {
     let scope = d.scope().unwrap();
@@ -143,8 +147,8 @@ pub(crate) fn synthetic_ack(d: &Definition) -> eefn::grants::workload::Receipt {
     }
 }
 
-#[test]
-fn existing_job_store_persists_review_approval_definition_and_ack_before_renewals() {
+#[tokio::test]
+async fn existing_job_store_persists_review_approval_definition_and_ack_before_renewals() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("jobs.db");
     let store = new_store(&path, 8 * 1024 * 1024);
@@ -186,10 +190,10 @@ fn existing_job_store_persists_review_approval_definition_and_ack_before_renewal
         d
     );
     assert!(
-        lease(&mut issued, 2).is_err(),
+        lease(&mut issued, 2).await.is_err(),
         "No renewal before consumed ACK"
     );
-    lease(&mut issued, 1).unwrap();
+    lease(&mut issued, 1).await.unwrap();
     let ack = synthetic_ack(&d);
     issued.acknowledge(ack.clone()).unwrap();
     let after = store.get(&approved.plan_id).unwrap();
@@ -209,7 +213,7 @@ fn existing_job_store_persists_review_approval_definition_and_ack_before_renewal
         store.get(&approved.plan_id).unwrap().revision,
         after.revision
     );
-    lease(&mut issued, 2).unwrap();
+    lease(&mut issued, 2).await.unwrap();
     drop(issued);
     store.wait_workload_finalizations().unwrap();
     let unknown = store.get(&approved.plan_id).unwrap();
@@ -312,8 +316,8 @@ fn restored_running_job_becomes_unknown_and_never_recreates_an_issuer() {
     store.wait_workload_finalizations().unwrap();
 }
 
-#[test]
-fn retired_or_changed_issuance_cannot_renew_and_generic_edits_cannot_rebind_it() {
+#[tokio::test]
+async fn retired_or_changed_issuance_cannot_renew_and_generic_edits_cannot_rebind_it() {
     let engine = TaskEngine::new(EventBus::new(20));
     let (plan, _) = approved(&engine);
     let mut issued = issue(
@@ -345,7 +349,7 @@ fn retired_or_changed_issuance_cannot_renew_and_generic_edits_cannot_rebind_it()
         json!(before)
     );
     engine.store.interrupt(&plan.plan_id).unwrap();
-    assert!(lease(&mut issued, 1).is_err());
+    assert!(lease(&mut issued, 1).await.is_err());
     assert!(
         engine
             .store
@@ -365,8 +369,8 @@ fn retired_or_changed_issuance_cannot_renew_and_generic_edits_cannot_rebind_it()
     );
 }
 
-#[test]
-fn wrong_ack_scope_or_expired_issuer_cannot_activate_renewals() {
+#[tokio::test]
+async fn wrong_ack_scope_or_expired_issuer_cannot_activate_renewals() {
     let engine = TaskEngine::new(EventBus::new(20));
     let (plan, _) = approved(&engine);
     let mut issued = issue(
@@ -378,9 +382,9 @@ fn wrong_ack_scope_or_expired_issuer_cannot_activate_renewals() {
     .unwrap();
     let mut wrong = synthetic_ack(issued.definition());
     wrong.receipt.node_id = "other".into();
-    lease(&mut issued, 1).unwrap();
+    lease(&mut issued, 1).await.unwrap();
     assert!(issued.acknowledge(wrong).is_err());
-    assert!(lease(&mut issued, 2).is_err());
+    assert!(lease(&mut issued, 2).await.is_err());
     assert_eq!(
         engine.store.get(&plan.plan_id).unwrap().status,
         PlanStatus::Running,
@@ -389,18 +393,18 @@ fn wrong_ack_scope_or_expired_issuer_cannot_activate_renewals() {
     issued
         .acknowledge(synthetic_ack(issued.definition()))
         .unwrap();
-    lease(&mut issued, 2).unwrap();
+    lease(&mut issued, 2).await.unwrap();
     issued.deadline = Instant::now();
     assert!(
         issued
             .acknowledge(synthetic_ack(issued.definition()))
             .is_err()
     );
-    assert!(lease(&mut issued, 3).is_err());
+    assert!(lease(&mut issued, 3).await.is_err());
 }
 
-#[test]
-fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
+#[tokio::test]
+async fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
     for acknowledge_entry in [false, true] {
         for consumed in [false, true] {
             let engine = TaskEngine::new(EventBus::new(20));
@@ -414,7 +418,7 @@ fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
             .unwrap();
             let ack = synthetic_ack(issued.definition());
             if consumed || acknowledge_entry {
-                lease(&mut issued, 1).unwrap();
+                lease(&mut issued, 1).await.unwrap();
             }
             if consumed {
                 issued.acknowledge(ack.clone()).unwrap();
@@ -427,7 +431,7 @@ fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
             if acknowledge_entry {
                 assert!(issued.acknowledge(ack.clone()).is_err());
             } else {
-                assert!(lease(&mut issued, sequence).is_err());
+                assert!(lease(&mut issued, sequence).await.is_err());
             }
             issued.issued_wall = original_wall;
             if acknowledge_entry {
@@ -437,11 +441,11 @@ fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
                 );
             } else {
                 assert!(
-                    lease(&mut issued, sequence).is_err(),
+                    lease(&mut issued, sequence).await.is_err(),
                     "Clock correction cannot restore an issuer's lease authority"
                 );
             }
-            assert!(lease(&mut issued, sequence).is_err());
+            assert!(lease(&mut issued, sequence).await.is_err());
             assert!(issued.acknowledge(ack).is_err());
             engine.store.wait_workload_finalizations().unwrap();
             let retired = engine.store.get(&plan.plan_id).unwrap();

@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: asynchronous workload lease inspection
+
+The existing issuer now awaits its bounded journal reader under the original probe
+and issuer deadlines. Cancelling a polled probe retires the original token even
+when its caller retains it; a native read owns no lease or issuer window. Remaining
+reply budgets are computed after the read, preserving sequence and durable-ACK
+requirements. Four new shared real-journal regressions and migrated existing cases
+require fresh hosted acceptance. See [lease reads and remaining integration](WORKLOAD-LEASE-READS.md).
+Issuance, ACK/normal completion writes, public continuous admission and physical
+two-PC/stable-release acceptance remain incomplete.
+
 ## In development: nonblocking workload issuer retirement
 
 Internal workload issuance now reserves one reporting slot before journal mutation.

@@ -91,6 +91,9 @@ impl JobStore {
                 .unwrap_or_else(|_| Err(anyhow::anyhow!("Journal read failed; evidence retained")));
             // Do not free capacity when only the network waiter goes away.
             drop(slot);
+            // A delivered snapshot no longer needs journal ownership. Release
+            // it before waking a caller that may retire/reopen this journal.
+            drop(store);
             let _ = reply.send(result);
         }))?;
         let result = tokio::time::timeout_at(deadline, receiver)

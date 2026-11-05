@@ -95,7 +95,7 @@ async fn issuer_retirement_keeps_the_runtime_responsive_while_its_journal_is_hel
     issued.retire();
     assert!(retiring.elapsed() < Duration::from_secs(1));
     assert!(issued.retired);
-    assert!(lease(&mut issued, 1).is_err());
+    assert!(lease(&mut issued, 1).await.is_err());
     assert!(issued.acknowledge(ack).is_err());
     assert_eq!(store.workload_finalization_available(), available);
     tokio::time::timeout(
@@ -186,8 +186,8 @@ async fn reporting_slot_precedes_issuance_and_remains_owned_through_the_actual_s
     store.wait_workload_finalizations().unwrap();
 }
 
-#[test]
-fn failed_retirement_checkpoint_denies_new_authority_without_retry_or_evidence_rewrite() {
+#[tokio::test]
+async fn failed_retirement_checkpoint_denies_new_authority_without_retry_or_evidence_rewrite() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("checkpoint-failure.db");
     let store = new_store(&path, 8 * 1024 * 1024);
@@ -200,7 +200,7 @@ fn failed_retirement_checkpoint_denies_new_authority_without_retry_or_evidence_r
     issued.retire();
     store.wait_workload_finalizations().unwrap();
     assert!(issued.retired);
-    assert!(lease(&mut issued, 1).is_err());
+    assert!(lease(&mut issued, 1).await.is_err());
     assert!(store.require_workload_reporting().is_err());
     assert_eq!(json!(store.get(&plan.plan_id).unwrap()), before);
     db.execute_batch("DROP TRIGGER refuse_uncertainty").unwrap();
@@ -275,15 +275,15 @@ fn runtime_drop_does_not_join_retirement_or_release_a_still_owned_journal() {
     );
 }
 
-#[test]
-fn successful_completion_releases_its_slot_without_recreating_execution_authority() {
+#[tokio::test]
+async fn successful_completion_releases_its_slot_without_recreating_execution_authority() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, mut issued, receipt) = completed_fixture(&dir.path().join("completed.db"));
+    let (store, mut issued, receipt) = completed_fixture(&dir.path().join("completed.db")).await;
     let available = store.workload_finalization_available();
     let done = finish(&mut issued, receipt.clone()).unwrap();
     assert_eq!(store.workload_finalization_available(), available + 1);
     assert_eq!(json!(finish(&mut issued, receipt).unwrap()), json!(done));
-    assert!(lease(&mut issued, 2).is_err());
+    assert!(lease(&mut issued, 2).await.is_err());
     drop(issued);
     store.wait_workload_finalizations().unwrap();
     assert_eq!(json!(store.get(&done.plan_id).unwrap()), json!(done));

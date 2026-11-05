@@ -1,9 +1,9 @@
-#[test]
-fn workload_receipt_commands_validate_origin_and_exact_issuance_without_a_job_write() {
+#[tokio::test]
+async fn workload_receipt_commands_validate_origin_and_exact_issuance_without_a_job_write() {
     use crate::workload_job_inspection::{report, retained};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("receipt.db");
-    let (store, mut issued, receipt) = completed_fixture(&path);
+    let (store, mut issued, receipt) = completed_fixture(&path).await;
     let d = issued.definition().clone();
     let plan = store.get(&d.job_id).unwrap();
     let command = eefn::request_receipt::ReceiptCommand {
@@ -65,10 +65,10 @@ fn workload_receipt_commands_validate_origin_and_exact_issuance_without_a_job_wr
     assert_eq!(std::fs::read(&path).unwrap(), disk);
 }
 
-#[test]
-fn typed_workload_receipts_reject_authority_scope_corruption_and_ordinary_reinterpretation() {
+#[tokio::test]
+async fn typed_workload_receipts_reject_authority_scope_corruption_and_ordinary_reinterpretation() {
     let dir = tempfile::tempdir().unwrap();
-    let (store, issued, receipt) = completed_fixture(&dir.path().join("corrupt.db"));
+    let (store, issued, receipt) = completed_fixture(&dir.path().join("corrupt.db")).await;
     let d = issued.definition();
     let plan = store.get(&d.job_id).unwrap();
     let command = eefn::request_receipt::ReceiptCommand {

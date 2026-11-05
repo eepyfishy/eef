@@ -24,6 +24,8 @@ use std::{
 };
 #[path = "workload_job_completion.rs"]
 mod completion;
+#[path = "workload_job_leases.rs"]
+mod leases;
 pub use completion::Completion;
 pub(crate) const COMPLETION_RESERVE: usize = 16 * 1024;
 
@@ -520,7 +522,7 @@ impl Issued {
         }
         result
     }
-    fn live(&self) -> Result<Plan> {
+    fn local_live(&self) -> Result<()> {
         ensure!(!self.retired, "Workload issuer permanently retired");
         self.store.require_workload_reporting()?;
         let expected = self
@@ -530,7 +532,10 @@ impl Issued {
             Instant::now() < self.deadline && eefn::protocol::now_ms().abs_diff(expected) <= 1000,
             "Workload issuer expired or local clock changed"
         );
-        let saved = self.store.get(&self.definition.job_id)?;
+        Ok(())
+    }
+    fn validate_live(&self, saved: &Plan) -> Result<()> {
+        self.local_live()?;
         let w = saved
             .execution
             .as_ref()
@@ -542,21 +547,13 @@ impl Issued {
                 && w.definition == self.definition,
             "Workload issuance retired or changed"
         );
-        Ok(saved)
+        Ok(())
     }
-    /// The caller must supply identities from the pinned authenticated peer,
-    /// not from fields copied out of this untrusted probe.
-    pub fn lease(
-        &mut self,
-        query: &Query,
-        issuer: &str,
-        session: &str,
-        node: &str,
-    ) -> Result<Reply> {
-        self.checked_live()?;
-        let reply = self.window.reply(query, issuer, session, node)?;
-        self.checked_live()?;
-        Ok(reply)
+    fn live(&self) -> Result<Plan> {
+        self.local_live()?;
+        let saved = self.store.get(&self.definition.job_id)?;
+        self.validate_live(&saved)?;
+        Ok(saved)
     }
     /// Called only with a report received through that same authenticated node
     /// session. Durable ACK precedes renewal authority; no broadcast event hook.
