@@ -174,23 +174,21 @@ impl SourceAdmission {
 async fn continuous_origin_mailbox_confirms_the_coordinator_result_without_hiding_rejection() {
     let f = SourceAdmission::new().await;
     let input = f.input().await;
-    let command = ConcreteCommand {
-        operation_id: uuid::Uuid::new_v4().to_string(),
-        request: input,
-    };
     // This is the same running-origin mailbox used by concrete_request. The
     // synthetic fixture retains a backend rejection in test output instead of
     // replacing it with the public wrapper's conservative unconfirmed report.
     let reply = f
         .service
         .submissions
-        .request_correlated(
-            "requests.concrete",
-            json!(command.request),
-            Some(command.operation_id.clone()),
-        )
+        .request("requests.concrete", json!(input))
         .await
         .expect("Synthetic continuous origin admission was rejected by the coordinator");
+    // The public mailbox API chooses a fresh transport correlation. Validate
+    // the returned durable operation ID through the same strict receipt checks.
+    let command = ConcreteCommand {
+        operation_id: reply["operation_id"].as_str().unwrap().into(),
+        request: input,
+    };
     assert!(
         eefn::request_submission::confirmed(&reply, "origin", &command),
         "Synthetic coordinator receipt failed confirmation: {reply}"

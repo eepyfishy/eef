@@ -12,3 +12,8 @@ requires a valid confirmed coordinator receipt and no approval/execution on succ
 The existing end-to-end node wrapper and source admission tests remain unchanged.
 No production code, authority, deadline, retry, permission, assertion or CI gate is
 weakened. This is diagnostic evidence collection, not a proven fix or release.
+
+The initial diagnostic source `439e7ab` incorrectly used a crate-private node
+method from the coordinator test. The follow-up uses the existing public mailbox
+request and validates its returned durable operation ID. Production APIs and all
+original tests remain unchanged; the earlier source and its CI result are retained.
