@@ -457,6 +457,7 @@ pub struct Issued {
     acknowledged: bool,
     retired: bool,
     final_slot: Option<crate::jobs::WorkloadFinalSlot>,
+    ownership: Option<crate::task::WorkloadJob>,
 }
 struct IssuerOperation<'a> {
     issued: &'a mut Issued,
@@ -529,6 +530,13 @@ impl Issued {
         }
     }
     fn local_live(&self) -> Result<()> {
+        self.check_clock()?;
+        if let Some(owner) = &self.ownership {
+            owner.check(&self.definition.job_id)?;
+        }
+        Ok(())
+    }
+    fn check_clock(&self) -> Result<()> {
         ensure!(!self.retired, "Workload issuer permanently retired");
         self.store.require_workload_reporting()?;
         let expected = self
@@ -539,6 +547,19 @@ impl Issued {
             "Workload issuer expired or local clock changed"
         );
         Ok(())
+    }
+    /// Enqueue one already validated lease under the same in-memory gate as
+    /// owner stop/shutdown. Never await or read storage inside this callback.
+    pub(crate) fn deliver(&self, send: impl FnOnce() -> Result<()>) -> Result<()> {
+        if let Some(owner) = &self.ownership {
+            owner.deliver(&self.definition.job_id, || {
+                self.check_clock()?;
+                send()
+            })
+        } else {
+            self.check_clock()?;
+            send()
+        }
     }
     fn validate_live(&self, saved: &Plan) -> Result<()> {
         self.local_live()?;
@@ -556,10 +577,32 @@ impl Issued {
         Ok(())
     }
 }
-/// Internal issuance only. Product callers must hold the existing engine's
-/// admission/quiescence gate and verify current authenticated node capabilities.
-/// No route invokes this API yet and it sends no grant/probe by itself.
+/// Product issuance reserves an engine lifetime BEFORE any asynchronous storage.
+/// Current authenticated node/source checks remain the runtime caller's job.
+/// This never dispatches a grant/probe or reconstructs authority from a row.
 #[allow(dead_code)]
+pub(crate) async fn issue_owned(
+    engine: &crate::task::TaskEngine,
+    command: &ExecuteCommand,
+    session: &str,
+    policy: &Policy,
+    observation_deadline: tokio::time::Instant,
+) -> Result<Issued> {
+    command.validate()?;
+    let owner = engine.claim_workload(&command.id)?;
+    issue_inner(
+        &engine.store,
+        command,
+        session,
+        policy,
+        observation_deadline,
+        Some(owner),
+    )
+    .await
+}
+// Existing isolated journal/window tests do not claim a product runtime. There
+// is no shipping unowned constructor; product integration must use issue_owned.
+#[cfg(test)]
 pub(crate) async fn issue(
     store: &Arc<JobStore>,
     command: &ExecuteCommand,
@@ -567,7 +610,20 @@ pub(crate) async fn issue(
     policy: &Policy,
     observation_deadline: tokio::time::Instant,
 ) -> Result<Issued> {
+    issue_inner(store, command, session, policy, observation_deadline, None).await
+}
+async fn issue_inner(
+    store: &Arc<JobStore>,
+    command: &ExecuteCommand,
+    session: &str,
+    policy: &Policy,
+    observation_deadline: tokio::time::Instant,
+    ownership: Option<crate::task::WorkloadJob>,
+) -> Result<Issued> {
     command.validate()?;
+    if let Some(owner) = &ownership {
+        owner.check(&command.id)?;
+    }
     eefn::automation_occurrence::uuid(session)?;
     ensure!(
         tokio::time::Instant::now() < observation_deadline,
@@ -653,6 +709,7 @@ pub(crate) async fn issue(
         acknowledged: false,
         retired: false,
         final_slot: Some(checkpoint.take_slot()),
+        ownership,
     };
     token.validate_live(&current)?;
     ensure!(

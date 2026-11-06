@@ -109,6 +109,12 @@ impl JournalRetirement {
     }
 }
 
+impl JobStore {
+    pub(crate) fn workload_lifetime_capacity(&self) -> usize {
+        self.finalizations.capacity()
+    }
+}
+
 #[cfg(test)]
 impl JobStore {
     pub(crate) fn with_test_journal_lock<T>(&self, check: impl FnOnce(&Connection) -> T) -> T {

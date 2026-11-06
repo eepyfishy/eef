@@ -3,6 +3,27 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: coordinator ownership during asynchronous workload issuance
+
+Product issuance now reserves an engine-owned workload lifetime before awaiting
+storage. Duplicate starts and ordinary runners cannot share that job identity.
+Stop and shutdown revoke its in-memory control gate before journal work; control
+enqueue shares that gate, so it cannot race past revocation. The original issuer
+keeps the lifetime through ACK/lease/completion. Dropping registration does not
+wait on SQLite; original reserved finalization still retains the journal and
+uncertainty. Pending pre-issuance stop can cancel a plan without inventing an
+execution. Existing low-level journal tests retain a test-only unowned constructor;
+there is no shipping unowned constructor. Nine new lifecycle regressions await
+hosted verification. See [engine ownership](WORKLOAD-ENGINE-OWNERSHIP.md).
+
+Execution source `3cd98c6` passed all four jobs in run `42137156813`, including
+Rust1465+1ignored and the complete native Windows gates. The coordinator policy
+candidate `f6edf0f` also passed all four GitHub jobs in run `42138453629`, with
+Rust1469+1ignored and the complete native Windows gates checked in the raw record. These source
+passes do not resolve the earlier main capture deadline failure or establish
+physical two-PC/stable release acceptance. Owner start/stop integration and public
+execution advertising remain open.
+
 ## In development: coordinator commands for node workload policy
 
 `eef node workload-policy --node NODE_ID show|enable|disable` now uses the same

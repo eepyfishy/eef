@@ -53,6 +53,9 @@ impl Default for Queue {
     }
 }
 impl Queue {
+    pub(super) fn capacity(&self) -> usize {
+        self.capacity
+    }
     pub(super) fn for_workload_writes(max_count: usize, max_bytes: usize) -> Self {
         Self::new(max_count.min(4), max_bytes)
     }
