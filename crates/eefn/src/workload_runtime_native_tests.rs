@@ -1,5 +1,5 @@
 // Included only by the opt-in Windows unit-test module, never a shipping hook.
-fn native_fixture(mode: &str) -> (Fixture, tempfile::TempDir) {
+pub(crate) fn native_fixture(mode: &str) -> (Fixture, tempfile::TempDir) {
     let trace = tempfile::tempdir().unwrap();
     let executable = std::path::PathBuf::from(std::env::var_os("EEF_TEST_PYTHON").expect(
         "native-test-fixtures requires the explicitly pinned test Python; no skipped pass",
@@ -133,7 +133,10 @@ async fn native_prepared_source_runs_exact_bytes_with_consumption_and_filtered_e
             Ok(())
         }
     });
-    assert!(std::mem::size_of_val(&run) <= 64 * 1024, "Prepared runner embeds oversized transport/control frames");
+    assert!(
+        std::mem::size_of_val(&run) <= 64 * 1024,
+        "Prepared runner embeds oversized transport/control frames"
+    );
     tokio::pin!(run);
     let processes = tokio::select! {
         processes=crate::process_lifetime::tests::Processes::observe_until(trace.path(), observation_deadline)=>processes,
@@ -195,8 +198,15 @@ async fn native_prepared_source_runs_exact_bytes_with_consumption_and_filtered_e
     ] {
         assert!(!encoded.contains(private));
     }
-    let reopened = crate::grants::GrantLedger::open(&f.dir.path().join("receipts.db"), Default::default(), "node").unwrap();
-    let durable = reopened.workload_receipt(&f.definition.issuer_id, &f.definition.grant_id).unwrap();
+    let reopened = crate::grants::GrantLedger::open(
+        &f.dir.path().join("receipts.db"),
+        Default::default(),
+        "node",
+    )
+    .unwrap();
+    let durable = reopened
+        .workload_receipt(&f.definition.issuer_id, &f.definition.grant_id)
+        .unwrap();
     assert_eq!(json!(durable), json!(completed));
     let retained = ledger
         .workload_events(&f.definition.issuer_id, &f.definition.grant_id, 0, 128)

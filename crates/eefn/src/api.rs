@@ -132,6 +132,10 @@ impl NodeService {
                 post(workload_sources).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
             .route(
+                "/api/commands/workload-policy",
+                post(workload_policy).layer(axum::extract::DefaultBodyLimit::max(4096)),
+            )
+            .route(
                 "/api/commands/permissions",
                 post(permission_command).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
@@ -311,6 +315,12 @@ async fn workload_sources(
     Json(request): Json<crate::workload_sources::Request>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.workload_sources(request)?))
+}
+async fn workload_policy(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::workload_policy::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.workload_policy_command(request, false)?))
 }
 
 async fn model_bootstrap_policy(

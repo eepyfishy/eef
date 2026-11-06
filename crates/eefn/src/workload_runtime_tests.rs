@@ -1,12 +1,12 @@
 use super::*;
 use crate::workload_leases::{IssuerWindow, Policy, Query, Requests, definition::*};
 
-struct Fixture {
-    dir: tempfile::TempDir,
-    service: Arc<NodeService>,
-    runtime: String,
-    definition: Definition,
-    engine: Arc<crate::NodeEngine>,
+pub(crate) struct Fixture {
+    pub(crate) dir: tempfile::TempDir,
+    pub(crate) service: Arc<NodeService>,
+    pub(crate) runtime: String,
+    pub(crate) definition: Definition,
+    pub(crate) engine: Arc<crate::NodeEngine>,
     guard: Option<crate::request_preview::PreviewGuard>,
 }
 impl Fixture {

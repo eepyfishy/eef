@@ -440,6 +440,40 @@ async fn malformed_workload_scope_events_and_unreviewed_media_retire_only_the_ow
 }
 
 #[tokio::test]
+async fn workload_rejection_bypasses_queued_observations_and_retires_further_lease_delivery() {
+    let (server, d, _output) = fixture().await;
+    let bytes = server.inner.report_bytes.available_permits();
+    let mut link = server.open_workload(d.clone(), deadline()).await.unwrap();
+    route(&server, &d, acknowledgement(&d));
+    drop(link.next().await.unwrap());
+    route(&server, &d, event(&d, 1));
+    route(&server, &d, event(&d, 2));
+    route(
+        &server,
+        &d,
+        json!({"type":"workload_rejected","schema_version":2,"id":d.grant_id,"code":"source_unconfirmed"}),
+    );
+    let stopped = link.next().await.unwrap();
+    assert_eq!(stopped.message()["type"], "workload_rejected");
+    assert!(link.next().await.is_err());
+    let q = query(&d, 1);
+    let mut issuer = crate::workload_leases::IssuerWindow::new(
+        d.lease_contract().unwrap(),
+        &policy(),
+        Instant::now() + Duration::from_secs(50),
+    )
+    .unwrap();
+    let reply = issuer
+        .reply(&q, &d.issuer_id, &d.session_id, &d.executor_node)
+        .unwrap();
+    assert!(link.reply_lease(&q, reply).is_err());
+    assert!(server.inner.connections.read().await.contains_key("owner"));
+    drop(stopped);
+    drop(link);
+    assert_eq!(server.inner.report_bytes.available_permits(), bytes);
+}
+
+#[tokio::test]
 async fn control_and_events_share_bytes_through_active_processing_without_borrowing_count_slots() {
     let (mut server, d, _output) = fixture().await;
     let ack = acknowledgement(&d);

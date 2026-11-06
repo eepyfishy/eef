@@ -284,6 +284,24 @@ pub struct NodeEngine {
 }
 
 impl NodeEngine {
+    pub(crate) fn prepare_workload(
+        &self,
+        runtime: &str,
+        definition: crate::workload_leases::definition::Definition,
+    ) -> Result<(
+        crate::workload_leases::Policy,
+        crate::workload_policy::Permit,
+        crate::workload_runtime::PreparedMicrophone,
+    )> {
+        let service = self
+            .service
+            .as_ref()
+            .context("Node workload service unavailable")?;
+        let (policy, permit) = service.workload_policy_permit(runtime, &definition)?;
+        let source = service.prepare_microphone(runtime, definition)?;
+        Ok((policy, permit, source))
+    }
+
     pub fn new(
         allow_write: bool,
         allowed_roots: Vec<PathBuf>,

@@ -472,4 +472,4 @@ impl EventWriter {
 
 #[cfg(test)]
 #[path = "workload_receipts_tests.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -289,9 +289,16 @@ impl WorkloadLink {
                 frame = self.control.recv() => frame.context("Workload control retired")?,
                 frame = self.events.recv() => frame.context("Workload events retired")?,
             };
-            if envelope.message["type"] == "workload_complete"
-                || envelope.message["type"] == "workload_rejected"
-            {
+            if envelope.message["type"] == "workload_rejected" {
+                // Revocation/failure must reach the original issuer before
+                // queued observations. These are not a successful final prefix.
+                self.finished = true;
+                return Ok(WorkloadFrame {
+                    envelope,
+                    peer: self.peer.clone(),
+                });
+            }
+            if envelope.message["type"] == "workload_complete" {
                 // The TCP reader queued earlier events before this terminal
                 // frame. Lease/ACK control bypasses slow events; terminal output
                 // cannot discard their already received bounded prefix.

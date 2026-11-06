@@ -21,6 +21,7 @@ pub enum StartupIssue {
 pub struct NodeService {
     pub(crate) microphone_pool: crate::capture_ownership::Pool,
     pub(crate) listening_gate: Arc<crate::listening::Gate>,
+    pub(crate) workload_gate: Arc<crate::workload_policy::Gate>,
     pub(crate) config_path: PathBuf,
     pub(crate) node_id: String,
     pub live: Arc<std::sync::Mutex<Value>>,
@@ -121,6 +122,7 @@ impl NodeService {
         Arc::new(Self {
             microphone_pool: Default::default(),
             listening_gate: Arc::new(crate::listening::Gate::default()),
+            workload_gate: Arc::new(crate::workload_policy::Gate::default()),
             config_path,
             node_id,
             model_runtime: Arc::new(std::sync::Mutex::new(None)),
@@ -172,20 +174,24 @@ impl NodeService {
     }
 
     pub(crate) fn save_config_locked(&self, value: Value) -> Result<()> {
-        self.save_config_inner(value, false, false)
+        self.save_config_inner(value, false, false, false)
     }
     /// Only the runtime/CAS-checked bootstrap command may enable a new auto epoch.
     pub(crate) fn save_bootstrap_config_locked(&self, value: Value) -> Result<()> {
-        self.save_config_inner(value, true, false)
+        self.save_config_inner(value, true, false, false)
     }
     pub(crate) fn save_listening_config_locked(&self, value: Value) -> Result<()> {
-        self.save_config_inner(value, false, true)
+        self.save_config_inner(value, false, true, false)
+    }
+    pub(crate) fn save_workload_config_locked(&self, value: Value) -> Result<()> {
+        self.save_config_inner(value, false, false, true)
     }
     fn save_config_inner(
         &self,
         mut value: Value,
         bootstrap_authorized: bool,
         listening_authorized: bool,
+        workload_authorized: bool,
     ) -> Result<()> {
         if !value.is_object() {
             bail!("node configuration must be a JSON object")
@@ -195,6 +201,7 @@ impl NodeService {
         // typed policy command. Content rollback must not revive an old CAS.
         crate::model_bootstrap::preserve_revision(&old, &mut value, bootstrap_authorized)?;
         crate::listening::preserve_revision(&old, &mut value, listening_authorized)?;
+        crate::workload_policy::preserve(&old, &mut value, workload_authorized)?;
         let previous_policy =
             crate::model_lifecycle_policy::ModelLifecyclePolicy::from_config(&old)?;
         let incoming_policy =
@@ -245,6 +252,13 @@ impl NodeService {
         validate_config_shape(&value)?;
         validate_model_references(&value, &old, &self.config_path)?;
         let bytes = serde_json::to_vec_pretty(&value)?;
+        let workload_policy = crate::workload_policy::from_config(&value)?;
+        if !workload_policy.enabled || workload_policy != crate::workload_policy::from_config(&old)?
+        {
+            // Retire original policy permits before storage, even on save failure.
+            // Only a fresh typed owner command may clear this runtime latch.
+            self.workload_gate.deny();
+        }
         // Revocation precedes storage, including a failed save. Only an explicit
         // fresh local enable clears this latch; generic saves cannot revive it.
         if !crate::listening::Consent::from_config(&value)?.enabled
@@ -1027,6 +1041,16 @@ impl NodeService {
             .and_then(Value::as_bool)
             == Some(true);
         match action {
+            "workload_policy" => {
+                self.workload_policy_command(serde_json::from_value(params)?, true)
+            }
+            "workload_policy_status" => {
+                let request: crate::workload_policy::Request = serde_json::from_value(params)?;
+                if !matches!(request.command, crate::workload_policy::Command::Show {}) {
+                    bail!("Reserved workload policy status action mismatch")
+                }
+                self.workload_policy_command(request, true)
+            }
             "bootstrap_policy" => {
                 self.model_bootstrap_policy(serde_json::from_value(params)?, true)
             }
@@ -1139,6 +1163,8 @@ impl NodeService {
 fn validate_config_shape(value: &Value) -> Result<()> {
     crate::listening::Consent::from_config(value)?;
     crate::listening::revision(value)?;
+    crate::workload_policy::from_config(value)?;
+    crate::workload_policy::revision(value)?;
     if value.get("management").is_some_and(|v| !v.is_object())
         || ["allow_remote", "allow_remote_repair_setup_policy"]
             .iter()

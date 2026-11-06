@@ -25,6 +25,24 @@ model calls. Remote inspection requires an independently authenticated, pinned
 node session. Permission/listening snapshots and configured Python are not
 physical readiness or execution permission. See [source planning](WORKLOAD-SOURCES.md).
 
+## Continuous-workload policy (in development)
+
+    eefn workload-policy show
+    eefn workload-policy enable --max-session-ms 60000 --max-lease-ms 10000
+    eefn workload-policy disable
+
+Run these against the already running local node. They inspect or save its
+workload admission preference; they never start capture, enable permissions or
+restart an app. Omitted limit flags preserve the inspected limits. The policy
+defaults off. Disable and limit changes revoke original policy permits before
+storage; a fresh explicit enable is required after a failed revoking save.
+After an uncertain result, inspect `show` before deciding what to do.
+
+Listening consent, microphone permission, exact source bindings and owner-approved
+work remain required. The coordinator start/stop command path and complete network
+execution acceptance are still in development, so enabling this preference does
+not make continuous capture publicly available. See [node execution](WORKLOAD-NODE-EXECUTION.md).
+
 ## Coordinator first initialization (unreleased after alpha.6)
 
     eef initialize

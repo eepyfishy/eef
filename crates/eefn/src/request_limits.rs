@@ -89,6 +89,8 @@ impl RequestBudget {
                         | "permission_status"
                         | "python_policy_status"
                         | "workload_sources"
+                        | "workload_policy_status"
+                        | "workload_policy"
                 ));
         self.admit_class(control)
     }

@@ -27,6 +27,8 @@ use crate::session_output::send_reply as write_reply_frame;
 mod peer_delivery;
 #[path = "client_stop_inspection.rs"]
 mod stop_inspection;
+#[path = "client_workload.rs"]
+mod workload_delivery;
 #[path = "client_workload_inspection.rs"]
 mod workload_inspection;
 
@@ -144,6 +146,8 @@ fn default_ollama_url() -> String {
 }
 
 pub struct NodeClient {
+    #[cfg(test)]
+    source_prepare_started: Arc<std::sync::atomic::AtomicUsize>,
     peer_runtime: Option<Arc<crate::peer::runtime::FiniteRuntime>>,
     registration_runtime: Option<String>,
     grant_ledger: Option<Arc<crate::grants::GrantLedger>>,
@@ -207,6 +211,8 @@ impl NodeClient {
             }
         }
         Ok(Self {
+            #[cfg(test)]
+            source_prepare_started: Arc::default(),
             peer_runtime: None,
             registration_runtime: None,
             grant_ledger: None,
@@ -637,6 +643,7 @@ impl NodeClient {
 
         let mut tasks = tokio::task::JoinSet::new();
         let lease_requests = Arc::new(crate::grant_time::LeaseRequests::default());
+        let workload_requests = Arc::new(crate::workload_leases::Requests::default());
         let mut local = self.install_submission_channel(&endpoint.address);
         if let Some(offer) = &receipt_offer {
             self.status.lock().expect("registration status")["registration_observation"] =
@@ -722,6 +729,27 @@ impl NodeClient {
             }
             if message["type"] == "grant_lease" {
                 lease_requests.complete(message);
+                continue;
+            }
+            if message["type"] == "workload_lease" {
+                // Correlation belongs only to this actual credential/TLS session.
+                // Reconnect constructs a new manager; payloads cannot pick one.
+                if grant_issuer.is_some() && grant_session.is_some() {
+                    workload_requests.complete(message);
+                }
+                continue;
+            }
+            if message["type"] == "execute_workload" {
+                Box::pin(self.dispatch_workload(
+                    message,
+                    &writer,
+                    &output_write_failed,
+                    &mut tasks,
+                    grant_issuer.as_deref(),
+                    grant_session.as_deref(),
+                    workload_requests.clone(),
+                ))
+                .await?;
                 continue;
             }
             if message["type"] == "submission_result" {

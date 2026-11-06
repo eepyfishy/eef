@@ -246,4 +246,4 @@ impl PreparedMicrophone {
 
 #[cfg(all(test, windows))]
 #[path = "workload_runtime_tests.rs"]
-mod tests;
+pub(crate) mod tests;

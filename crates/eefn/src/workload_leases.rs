@@ -23,7 +23,7 @@ pub mod definition;
 mod reporting;
 pub(crate) use reporting::{Checkpoint, ReportingAuthority};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
     pub enabled: bool,
@@ -78,7 +78,7 @@ impl Contract {
         self.validate()?;
         crate::grants::definition_digest(&json!(self))
     }
-    fn permitted(&self, policy: &Policy) -> Result<()> {
+    pub(crate) fn permitted(&self, policy: &Policy) -> Result<()> {
         self.validate()?;
         policy.validate()?;
         ensure!(
@@ -295,6 +295,10 @@ impl LeaseProof {
     }
     pub fn session_deadline(&self) -> Instant {
         self.session_deadline
+    }
+    /// Read-only scheduling bound, never renewal or source authority.
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline.min(self.session_deadline)
     }
     pub(crate) fn initial_deadline(&self, contract: &Contract, policy: &Policy) -> Result<Instant> {
         contract.permitted(policy)?;

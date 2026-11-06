@@ -85,7 +85,7 @@ pub(super) fn policy() -> Policy {
         ..Default::default()
     }
 }
-pub(super) fn definition() -> Definition {
+pub(crate) fn definition() -> Definition {
     let g = crate::grants::tests::grant();
     Definition {
         schema_version: 2,

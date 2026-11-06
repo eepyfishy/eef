@@ -3,6 +3,32 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: node workload delivery and owner policy commands
+
+The node connection now dispatches exact schema-two offers and correlates leases
+only within its original authenticated session. It prepares the pinned source,
+awaits durable consumption, flushes the consumed ACK, and then owns one source
+and renewal loop together. Events follow durable appends; terminal completion
+requires the existing observed-source receipt. Stop/failure rejection bypasses
+queued observations and prevents further lease delivery. No public execution
+advertisement is enabled yet: the coordinator owner start/stop route and complete
+credential/TLS execution acceptance remain open.
+
+`eefn workload-policy show|enable|disable` configures the backend policy without
+JSON or a browser. It defaults off; limits, revision/runtime checks and a sticky
+revocation epoch apply. Permission and local listening consent remain independent.
+Remote policy adapters require node-owner management consent; policy revocation
+uses reserved control capacity. New policy, dispatch and opt-in Windows source
+tests await full changed-source hosted verification. See
+[node execution and remaining acceptance](WORKLOAD-NODE-EXECUTION.md).
+
+Admission v2 run `42133115874` passed both Linux jobs but failed an unrelated
+Windows historical-receipt fixture while its two-second live issuance setup
+expired. That fixture now stages explicit historical metadata in the real job
+journal without creating live issuance authority. Its command, origin isolation,
+read-only history and no-execution assertions remain. Runtime deadlines are
+unchanged. Old negative runs remain retained; no main or release is accepted.
+
 ## In development: bounded asynchronous node consumption admission
 
 Node consumption now awaits its existing bounded journal worker with an explicit

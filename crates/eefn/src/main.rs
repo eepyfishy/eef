@@ -111,6 +111,11 @@ enum Commands {
         #[command(subcommand)]
         command: eefn::workload_sources::Action,
     },
+    /// Configure continuous-workload admission limits; never start a source.
+    WorkloadPolicy {
+        #[command(subcommand)]
+        command: eefn::workload_policy::Action,
+    },
     /// Configure finite audio relay resources; never enable permissions or execute.
     Relay {
         #[command(subcommand)]
@@ -2111,7 +2116,118 @@ async fn execute_listening(
     )
 }
 
+async fn execute_workload_policy(
+    args: &Args,
+    action: &eefn::workload_policy::Action,
+) -> Result<serde_json::Value> {
+    use eefn::workload_policy::{Action, Command, Request};
+    use serde_json::{Value, json};
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start this node first; workload policy commands never launch a runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    let mutation = !matches!(action, Action::Show);
+    let mut sending = false;
+    let mut requested = Value::Null;
+    let result = async {
+        let response = client
+            .get(format!("http://{address}/api/diagnostics"))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Node diagnostics unavailable")
+        }
+        let diagnostics = eefn::model_manager::bounded_json(response).await?;
+        if diagnostics["success"] != true || diagnostics["node_id"] != file.node_id {
+            bail!("Unconfirmed node diagnostics")
+        }
+        let mut request = Request {
+            schema_version: 1,
+            expected_node_id: file.node_id.clone(),
+            expected_runtime_id: diagnostics["runtime_id"]
+                .as_str()
+                .context("Node runtime unavailable")?
+                .into(),
+            command: Command::Show {},
+        };
+        request.validate()?;
+        let url = format!("http://{address}/api/commands/workload-policy");
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Workload policy inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::workload_policy::confirmed(&inspected, &request) {
+            bail!("Unconfirmed workload policy inspection")
+        }
+        let mut policy: eefn::workload_leases::Policy =
+            serde_json::from_value(inspected["policy"].clone())?;
+        match action {
+            Action::Show => return Ok::<_, anyhow::Error>(inspected),
+            Action::Disable => policy.enabled = false,
+            Action::Enable {
+                max_session_ms,
+                max_lease_ms,
+            } => {
+                policy.enabled = true;
+                if let Some(value) = max_session_ms {
+                    policy.max_session_ms = *value;
+                }
+                if let Some(value) = max_lease_ms {
+                    policy.max_lease_ms = *value;
+                }
+            }
+        }
+        policy.validate()?;
+        request.command = Command::Set {
+            policy,
+            expected_revision: inspected["revision"]
+                .as_u64()
+                .context("Workload policy revision unavailable")?,
+            expected_epoch: inspected["runtime_epoch"]
+                .as_u64()
+                .context("Workload policy epoch unavailable")?,
+        };
+        request.validate()?;
+        requested = json!(request.command);
+        sending = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Workload policy save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::workload_policy::confirmed(&saved, &request) {
+            bail!("Unconfirmed workload policy save")
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(
+        json!({"schema_version":1,"report_type":"node_workload_policy_command","node_id":file.node_id,
+        "success":result.is_ok(),"mutation_requested":mutation,"sending_attempted":sending,
+        "outcome_unknown":result.is_err()&&sending,"command":requested,"result":result.ok(),
+        "execution_authorized":false,"capture_started":false,"restart_requested":false,"automatically_retried":false,
+        "note":"Inspect workload-policy show after uncertainty; no retry, source, permission change or restart was requested."}),
+    )
+}
+
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
+    if let Commands::WorkloadPolicy { command } = command {
+        return execute_workload_policy(args, command).await;
+    }
     if let Commands::Workloads { .. } = command {
         if eefn::setup::instance_lock(&args.config)?.is_some() {
             bail!("Start this node first; source inspection never launches a runtime")
@@ -2962,6 +3078,14 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     } else {
                         println!(
                             "Python policy outcome was not confirmed. Inspect python show; no retry, permission change, restart or workload was sent."
+                        );
+                    }
+                } else if matches!(command, Commands::WorkloadPolicy { .. }) {
+                    if value["success"] == true {
+                        print!("{}", eefn::workload_policy::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Workload policy outcome unconfirmed. Inspect workload-policy show before deciding what to do."
                         );
                     }
                 } else if matches!(command, Commands::Workloads { .. }) {
@@ -3928,6 +4052,35 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn workload_policy_cli_has_owner_limits_without_source_or_permission_options() {
+        use clap::Parser;
+        for action in ["show", "disable", "enable"] {
+            let args = super::Args::try_parse_from(["eefn", "workload-policy", action]).unwrap();
+            assert!(matches!(
+                args.command,
+                Some(super::Commands::WorkloadPolicy { .. })
+            ));
+        }
+        assert!(
+            super::Args::try_parse_from([
+                "eefn",
+                "workload-policy",
+                "enable",
+                "--max-session-ms",
+                "60000",
+                "--max-lease-ms",
+                "10000"
+            ])
+            .is_ok()
+        );
+        for flag in ["--grant", "--microphone", "--start-source", "--restart"] {
+            assert!(
+                super::Args::try_parse_from(["eefn", "workload-policy", "enable", flag]).is_err()
+            );
+        }
+    }
+
     #[test]
     fn listening_cli_is_local_consent_with_no_workload_options() {
         use clap::Parser;
