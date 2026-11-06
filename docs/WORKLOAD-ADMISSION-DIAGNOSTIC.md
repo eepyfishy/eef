@@ -25,3 +25,13 @@ the original correlated admission failure. The next follow-up makes the existing
 correlated mailbox method public for backend clients and preserves the original
 explicit operation ID. Its method body, validation, queue limits and authorization
 are unchanged. All original node-wrapper and admission assertions remain required.
+
+The correlated diagnostic `e86ec21` identifies the actual failure: the immutable
+continuous template describes both `workload.session` and `audio.capture`, but
+admission added only the session wrapper after validating the built-in source.
+The strict interpretation validator therefore refused its microphone suggestion.
+The fix adds the template's complete source-scoped review capability set only
+after the existing authenticated source/binding and disclosure checks. It neither
+advertises a one-shot plugin nor changes execution permissions, global interpreter
+vocabulary, template hashes, validators or stored receipt formats. Full changed-source
+verification remains required; the old failures and diagnostic mistakes stay retained.

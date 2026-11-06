@@ -94,9 +94,13 @@ impl crate::Runtime {
                 {
                     bail!("Continuous source disclosure changed during inspection")
                 }
-                let wrapper = eefn::workload_leases::definition::CAPABILITY.to_owned();
-                if !capabilities.contains(&wrapper) {
-                    capabilities.push(wrapper);
+                // The retained review describes both the session wrapper and
+                // its microphone operation. This source-scoped vocabulary is
+                // justified by the snapshot above, not the one-shot plugin.
+                for capability in eefn::request_planning::concrete_capabilities(&input.input)? {
+                    if !capabilities.contains(&capability) {
+                        capabilities.push(capability);
+                    }
                 }
             }
             let proposal = input.proposal()?;

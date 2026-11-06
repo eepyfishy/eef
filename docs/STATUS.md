@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: complete capability vocabulary for continuous source review
+
+The origin-admission run `42224709777` failed its positive mailbox case. Correlated
+diagnostic `e86ec21` in run `42227421006` identified the strict capability rejection:
+the retained template describes both the session wrapper and microphone operation,
+but admission added only the wrapper. After the existing authenticated binding and
+disclosure checks, admission now adds that exact template's complete review set.
+The validator, global node/plugin vocabulary, permissions and execution gates remain
+unchanged. Existing positive and refusal assertions and the mailbox diagnostic await
+fresh full hosted verification. See [diagnosis](WORKLOAD-ADMISSION-DIAGNOSTIC.md).
+
 ## In development: origin admission independent of the one-shot media plugin
 
 New continuous-source reviews now bind a fresh authenticated disclosed node source
