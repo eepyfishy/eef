@@ -3,6 +3,28 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: bounded camera motion producer and owned transport checks
+
+A lazy single-open webcam/RTSP motion producer samples tiny grayscale images and
+emits bounded metadata only. It validates actual geometry/types/bytes, limits
+sampling and local duration, resets uncertainty on resolution change and fails
+read loss without reopening. OpenCV transforms use one source-process thread;
+decoder/driver resources remain separate. Nineteen fake-device cases and three
+pinned-source cases through the existing owned streaming bridge are added to the
+required native source suite, with prior microphone cases unchanged. No local
+Python/media runtime testing or package installation is used. Full hosted
+verification is pending. This is a producer increment; camera admission, leases,
+resource ownership/revocation, command authoring, VLM triggers, relays and physical
+acceptance remain open. See [camera motion](CAMERA-MOTION.md).
+
+The ACK correction `dfbdfd6` and microphone executable acceptance `6a1c83d` passed
+all four jobs in runs `42236696813` and `42237532926`, respectively. Each retained
+raw Windows record contains Rust1518+1ignored across 17 groups, all 36 native
+suites and completed prefix/firewall/listening/first-run gates. This verifies
+those exact increments, including actual command/refusal/receipt behavior. It
+does not accept the later saved-compilation or camera source changes, physical
+devices, final main or the stable release.
+
 ## In development: explicit compilation of retained concrete input
 
 `eefn requests compile-saved JOB_ID --revision REVISION` asks the coordinator to
