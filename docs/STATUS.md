@@ -22,6 +22,12 @@ uses reserved control capacity. New policy, dispatch and opt-in Windows source
 tests await full changed-source hosted verification. See
 [node execution and remaining acceptance](WORKLOAD-NODE-EXECUTION.md).
 
+Initial node execution run `42136710696` failed compilation because the historical
+fixture referenced `AttemptState` from the node crate instead of the coordinator
+crate. The correction changes only that fixture path and this status note;
+production code, assertions and all new tests are unchanged. The failed run is
+retained, and fresh full changed-source verification remains required.
+
 Admission v2 run `42133115874` passed both Linux jobs but failed an unrelated
 Windows historical-receipt fixture while its two-second live issuance setup
 expired. That fixture now stages explicit historical metadata in the real job

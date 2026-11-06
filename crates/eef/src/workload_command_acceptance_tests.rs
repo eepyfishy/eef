@@ -137,7 +137,7 @@ async fn owner_http_and_running_origin_receipt_commands_share_workload_history_w
                     workload: Some(crate::workload_jobs::Execution {
                         definition: d.clone(),
                         issued_at_ms: now,
-                        state: eefn::request_execution::AttemptState::Issued,
+                        state: crate::request_execution::AttemptState::Issued,
                         acknowledgement: None,
                         completion: None,
                     }),
