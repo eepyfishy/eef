@@ -94,7 +94,8 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
             policy: Some(policy()),
             source_kind: "microphone_energy".into(),
             event_delivery: "bounded_metadata".into(),
-            restart_authorized: false
+            restart_authorized: false,
+            completion_payload_prefix: true
         });
         write_message(&crypto, &mut output, &registration)
             .await
@@ -221,14 +222,15 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
                             receipt.receipt.state = "completed".into();
                             receipt.receipt.updated_at_ms += 1;
                             receipt.completion = Some(eefn::grants::workload::CompletionReport {
-                                schema_version: 1,
+                                schema_version: 2,
                                 grant_sha256: d.scope().unwrap().grant_sha256,
                                 adapter_sha256: "e".repeat(64),
                                 source_observations: 100,
                                 source_frames: 8000,
                                 event_count: summary.count,
                                 event_bytes: summary.bytes,
-                                event_prefix_sha256: summary.prefix_sha256,
+                                event_prefix_sha256: "f".repeat(64),
+                                event_payload_prefix_sha256: Some(summary.prefix_sha256),
                                 lease_sequence: 2,
                                 recorded_at_ms: receipt.receipt.updated_at_ms,
                                 owned_process_exit_observed: true,

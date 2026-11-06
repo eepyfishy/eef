@@ -392,8 +392,8 @@ impl NodeServer {
             serde_json::from_value(registered["grant_stop"].clone())?;
         stop.validate()?;
         ensure!(
-            support.available && stop.available,
-            "Node does not advertise workload execution and stop support"
+            support.available && stop.available && support.completion_payload_prefix,
+            "Node does not advertise compatible workload completion and stop support"
         );
         let runtime = support.runtime_id.context("Workload runtime unavailable")?;
         let policy = support.policy.context("Workload policy unavailable")?;

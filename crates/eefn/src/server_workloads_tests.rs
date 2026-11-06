@@ -64,6 +64,7 @@ fn support(runtime: &str) -> Advertisement {
         source_kind: "microphone_energy".into(),
         event_delivery: "bounded_metadata".into(),
         restart_authorized: false,
+        completion_payload_prefix: true,
     }
 }
 fn server() -> (NodeServer, crate::tls::CoordinatorIdentity) {
@@ -102,7 +103,7 @@ fn deadline() -> tokio::time::Instant {
 
 #[tokio::test]
 async fn workload_preflight_requires_current_runtime_policy_capability_stop_and_fresh_session() {
-    for fault in 0..5 {
+    for fault in 0..7 {
         let (server, d, mut outgoing) = fixture().await;
         {
             let mut connections = server.inner.connections.write().await;
@@ -124,7 +125,14 @@ async fn workload_preflight_requires_current_runtime_policy_capability_stop_and_
                 1 => r["workload_execution"]["policy"]["enabled"] = json!(false),
                 2 => r["capabilities"] = json!([]),
                 3 => r["grant_stop"]["available"] = json!(false),
-                _ => c.last_seen = Instant::now() - Duration::from_secs(6),
+                4 => c.last_seen = Instant::now() - Duration::from_secs(6),
+                5 => {
+                    r["workload_execution"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("completion_payload_prefix");
+                }
+                _ => r["workload_execution"]["completion_payload_prefix"] = json!(false),
             }
         }
         assert!(server.workload_session(&d.template(), 5).await.is_err());
@@ -133,6 +141,22 @@ async fn workload_preflight_requires_current_runtime_policy_capability_stop_and_
             "Inspection sends no source offer or lease"
         );
     }
+}
+
+#[test]
+fn payload_completion_capability_preserves_old_unavailable_metadata_and_defaults_to_false() {
+    let unavailable = json!(Advertisement::unavailable());
+    assert!(unavailable.get("completion_payload_prefix").is_none());
+    let mut old = json!(support(&Uuid::new_v4().to_string()));
+    old.as_object_mut()
+        .unwrap()
+        .remove("completion_payload_prefix");
+    let decoded: Advertisement = serde_json::from_value(old.clone()).unwrap();
+    decoded.validate().unwrap();
+    assert!(decoded.available && !decoded.completion_payload_prefix);
+    assert_eq!(json!(decoded), old);
+    old["completion_payload_prefix"] = json!("true");
+    assert!(serde_json::from_value::<Advertisement>(old).is_err());
 }
 
 #[tokio::test]
@@ -310,6 +334,7 @@ fn complete(d: &Definition, count: u64) -> Value {
         event_count: count,
         event_bytes: usize::try_from(count).unwrap().checked_mul(300).unwrap(),
         event_prefix_sha256: "f".repeat(64),
+        event_payload_prefix_sha256: None,
         lease_sequence: 1,
         recorded_at_ms: 2,
         owned_process_exit_observed: true,

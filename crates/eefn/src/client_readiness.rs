@@ -66,6 +66,7 @@ impl Readiness {
                 && snapshot.policy.enabled
             {
                 advertisement.available = true;
+                advertisement.completion_payload_prefix = true;
                 advertisement.runtime_id = Some(self.runtime.clone());
                 advertisement.policy = Some(snapshot.policy.clone());
             }

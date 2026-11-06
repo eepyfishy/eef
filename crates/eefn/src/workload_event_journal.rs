@@ -268,6 +268,28 @@ pub(super) fn audit_orphans(db: &Connection) -> Result<()> {
     ensure!(bad == 0, "Orphaned or cross-kind workload event evidence");
     Ok(())
 }
+pub(super) fn completion_payload_prefix(db: &Connection, receipt: &Receipt) -> Result<String> {
+    let saved = state(db, &receipt.definition)?;
+    let mut prefix = crate::workload_network::payload_prefix_seed(&receipt.definition)?;
+    let mut previous = None;
+    let mut bytes = 0usize;
+    for sequence in 1..=saved.count {
+        let row = row(db, receipt, sequence)?;
+        row.record
+            .event
+            .follows(&receipt.definition, previous.as_ref())?;
+        prefix = crate::workload_network::payload_prefix_next(&prefix, &row.record.event)?;
+        bytes = bytes
+            .checked_add(row.bytes)
+            .context("Workload payload byte count overflow")?;
+        previous = Some(row.record.event);
+    }
+    ensure!(
+        bytes == saved.bytes,
+        "Workload payload byte count differs from retained records"
+    );
+    Ok(prefix)
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct AppendReceipt {

@@ -92,7 +92,19 @@ async fn workload_event_history_is_bounded_immutable_and_completion_confirms_exa
     let report = receipt.completion.as_mut().unwrap();
     report.event_count = summary.count;
     report.event_bytes = summary.bytes;
-    report.event_prefix_sha256 = summary.prefix_sha256;
+    report.event_prefix_sha256 = summary.prefix_sha256.clone();
+    assert!(finish(&mut issued, receipt.clone()).await.is_err(),
+        "A legacy record prefix cannot stand in for payload evidence");
+    assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), json!(saved));
+    let report = receipt.completion.as_mut().unwrap();
+    report.schema_version = 2;
+    report.event_payload_prefix_sha256 = Some("a".repeat(64));
+    assert!(finish(&mut issued, receipt.clone()).await.is_err(),
+        "A validly shaped but wrong payload checksum cannot complete");
+    assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), json!(saved));
+    let report = receipt.completion.as_mut().unwrap();
+    report.event_prefix_sha256 = "f".repeat(64);
+    report.event_payload_prefix_sha256 = Some(summary.prefix_sha256);
     let completed = finish(&mut issued, receipt).await.unwrap();
     assert_eq!(completed.status, PlanStatus::Completed);
     assert_eq!(completed.execution.as_ref().unwrap().schema_version, 5);

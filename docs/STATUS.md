@@ -3,6 +3,26 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: combined owner/origin command and real node source acceptance
+
+A new opt-in Windows adapter test joins actual owner HTTP planning/approval,
+running-origin execution, the coordinator driver and a real node source over
+credential/TLS. A disposable no-pip venv supplies the synthetic microphone dependency;
+shipping source and host bytes are unchanged. Completion must match both journals'
+event evidence; stop/disconnect retain uncertainty, and a new explicit approved job
+proves reuse without replaying or rewriting old history. Existing CI gates remain
+and explicitly add the parent native-test feature. Full verification is pending.
+See [combined acceptance](WORKLOAD-FULL-COMMAND-ACCEPTANCE.md).
+
+Readiness source `82aeabe` passed both Linux jobs and Windows/dashboard in run
+`42179897667`, but Windows/headless Rust failed the new credential/TLS source
+lifecycle assertion. All 36 subsequent native scripts passed. The failure exposed
+a real completion mismatch: node journal prefixes include lease/time metadata,
+while coordinator prefixes contain event payloads only. The current unverified
+change preserves the journal checksum and adds a separately audited payload
+checksum with capability negotiation. Fresh changed-source hosted verification,
+physical testing, final main and stable release gates remain open.
+
 ## In development: node readiness and registration without reconnect
 
 The node now derives source readiness from current applied resource/permission,

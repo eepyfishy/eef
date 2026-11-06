@@ -14,6 +14,9 @@ pub struct Report {
     pub event_count: u64,
     pub event_bytes: usize,
     pub event_prefix_sha256: String,
+    /// Payload-only prefix; the existing prefix also binds node lease/time rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_payload_prefix_sha256: Option<String>,
     pub lease_sequence: u64,
     pub recorded_at_ms: u64,
     pub owned_process_exit_observed: bool,
@@ -27,8 +30,10 @@ impl Report {
             ..
         } = &receipt.definition.source;
         ensure!(
-            self.schema_version == 1
-                && self.grant_sha256 == receipt.definition.scope()?.grant_sha256
+            matches!(
+                (self.schema_version, &self.event_payload_prefix_sha256),
+                (1, None) | (2, Some(_))
+            ) && self.grant_sha256 == receipt.definition.scope()?.grant_sha256
                 && self.adapter_sha256 == *adapter_sha256
                 && self.source_observations == u64::from(parameters.max_blocks)
                 && self.source_frames
@@ -39,6 +44,10 @@ impl Report {
                 && self.event_bytes <= receipt.definition.events.max_total_bytes
                 && self.event_bytes >= usize::try_from(self.event_count)?.saturating_mul(128)
                 && crate::request_result::valid_digest(&self.event_prefix_sha256)
+                && self
+                    .event_payload_prefix_sha256
+                    .as_ref()
+                    .is_none_or(|v| crate::request_result::valid_digest(v))
                 && self.lease_sequence > 0
                 && self.owned_process_exit_observed
                 && !self.physical_effects_stopped
@@ -126,6 +135,12 @@ pub(super) fn audit_prefix(db: &Connection, receipt: &Receipt) -> Result<()> {
                 && sequence <= report.lease_sequence,
             "Workload completion differs from its retained event prefix"
         );
+        if let Some(payload) = &report.event_payload_prefix_sha256 {
+            ensure!(
+                *payload == event_journal::completion_payload_prefix(db, receipt)?,
+                "Workload payload prefix differs from retained records"
+            );
+        }
     }
     Ok(())
 }
@@ -215,7 +230,7 @@ pub(super) fn save(
     receipt.receipt.state = "completed".into();
     receipt.receipt.updated_at_ms = recorded;
     receipt.completion = Some(Report {
-        schema_version: 1,
+        schema_version: 2,
         grant_sha256: scope.grant_sha256.clone(),
         adapter_sha256: evidence.adapter_sha256,
         source_observations: evidence.observations,
@@ -223,6 +238,7 @@ pub(super) fn save(
         event_count: count,
         event_bytes: bytes,
         event_prefix_sha256: prefix,
+        event_payload_prefix_sha256: Some(event_journal::completion_payload_prefix(&tx, &receipt)?),
         lease_sequence: evidence.boundary.sequence(),
         recorded_at_ms: recorded,
         owned_process_exit_observed: true,

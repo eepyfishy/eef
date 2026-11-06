@@ -23,7 +23,9 @@ impl Completion {
             ensure!(
                 self.report.event_count == summary.count
                     && self.report.event_bytes == summary.bytes
-                    && self.report.event_prefix_sha256 == summary.prefix_sha256,
+                    && self.report.schema_version == 2
+                    && self.report.event_payload_prefix_sha256.as_deref()
+                        == Some(summary.prefix_sha256.as_str()),
                 "Workload completion differs from the retained event prefix"
             );
         }

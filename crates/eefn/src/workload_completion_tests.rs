@@ -167,6 +167,74 @@ async fn completed_source_and_prefix_reopen_without_replay_or_ordinary_output_au
 }
 
 #[tokio::test]
+async fn payload_completion_matches_retained_events_and_legacy_reports_reopen_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("payload.db");
+    let (ledger, consumed, evidence, d) = fixture(&path, 50_000, false).await;
+    let done = persist(consumed, evidence).await.unwrap();
+    let report = done.completion.as_ref().unwrap();
+    let page = ledger
+        .workload_events(&d.issuer_id, &d.grant_id, 0, 128)
+        .unwrap();
+    let events: Vec<crate::workload_network::Event> = page["durable_events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| serde_json::from_value(row["event"].clone()).unwrap())
+        .collect();
+    let summary = crate::workload_network::summarize_events(&d, &events).unwrap();
+    assert_eq!(report.schema_version, 2);
+    assert_eq!(report.event_count, summary.count);
+    assert_eq!(report.event_bytes, summary.bytes);
+    assert_eq!(
+        report.event_payload_prefix_sha256.as_deref(),
+        Some(summary.prefix_sha256.as_str())
+    );
+    assert_ne!(
+        report.event_prefix_sha256, summary.prefix_sha256,
+        "Journal rows bind lease/time metadata as well as event payloads"
+    );
+
+    // Stage the exact historical schema in a disposable journal. It must retain
+    // its original record checksum, never invent a new payload checksum on read.
+    let mut legacy = report.clone();
+    legacy.schema_version = 1;
+    legacy.event_payload_prefix_sha256 = None;
+    let raw = serde_json::to_string(&legacy).unwrap();
+    assert!(!raw.contains("event_payload_prefix_sha256"));
+    ledger
+        .connection
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE execution_receipts SET report=?1,report_sha256=?2 WHERE grant_id=?3",
+            params![raw, hex::encode(Sha256::digest(raw.as_bytes())), d.grant_id],
+        )
+        .unwrap();
+    drop(ledger);
+    let reopened = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+    let historical = reopened
+        .workload_receipt(&d.issuer_id, &d.grant_id)
+        .unwrap();
+    assert_eq!(
+        serde_json::to_string(historical.completion.as_ref().unwrap()).unwrap(),
+        raw
+    );
+    let saved: String = reopened
+        .connection
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT report FROM execution_receipts WHERE grant_id=?1",
+            [&d.grant_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(saved, raw);
+    assert!(!historical.execution_authorized && !historical.restart_authorized);
+}
+
+#[tokio::test]
 async fn missing_required_event_cannot_be_laundered_by_a_finished_source_summary() {
     let dir = tempfile::tempdir().unwrap();
     let (ledger, consumed, evidence, d) =
@@ -337,7 +405,7 @@ async fn cancelled_completion_waiter_keeps_capacity_until_actual_historical_save
 #[tokio::test]
 async fn damaged_completion_or_downgrade_is_refused_without_repair() {
     let dir = tempfile::tempdir().unwrap();
-    for index in 0..14 {
+    for index in 0..18 {
         let path = dir.path().join(format!("damaged-{index}.db"));
         let (ledger, consumed, evidence, _) = fixture(&path, 50_000, false).await;
         let done = persist(consumed, evidence).await.unwrap();
@@ -367,7 +435,11 @@ async fn damaged_completion_or_downgrade_is_refused_without_repair() {
                 10 => report.event_bytes += 1,
                 11 => report.lease_sequence = 0,
                 12 => report.owned_process_exit_observed = false,
-                _ => report.physical_effects_stopped = true,
+                13 => report.physical_effects_stopped = true,
+                14 => report.event_payload_prefix_sha256 = Some("a".repeat(64)),
+                15 => report.event_payload_prefix_sha256 = None,
+                16 => report.schema_version = 1,
+                _ => report.event_payload_prefix_sha256 = Some("broken".into()),
             }
             let raw = serde_json::to_string(&report).unwrap();
             ledger.connection.lock().unwrap().execute("UPDATE execution_receipts SET report=?1,report_sha256=?2 WHERE receipt_kind='workload'",

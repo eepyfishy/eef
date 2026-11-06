@@ -12,13 +12,24 @@ pub struct EventSummary {
     pub bytes: usize,
     pub prefix_sha256: String,
 }
+pub(crate) fn payload_prefix_seed(definition: &Definition) -> Result<String> {
+    Ok(hex::encode(Sha256::digest(
+        definition.scope()?.grant_sha256.as_bytes(),
+    )))
+}
+pub(crate) fn payload_prefix_next(previous: &str, event: &Event) -> Result<String> {
+    let row = hex::encode(Sha256::digest(serde_json::to_vec(event)?));
+    Ok(hex::encode(Sha256::digest(
+        format!("{previous}{row}").as_bytes(),
+    )))
+}
 pub fn summarize_events(definition: &Definition, events: &[Event]) -> Result<EventSummary> {
     definition.validate()?;
     ensure!(
         events.len() as u64 <= definition.events.max_events,
         "Workload event count exceeded"
     );
-    let mut prefix = hex::encode(Sha256::digest(definition.scope()?.grant_sha256.as_bytes()));
+    let mut prefix = payload_prefix_seed(definition)?;
     let mut bytes = 0usize;
     let mut previous = None;
     for event in events {
@@ -32,8 +43,7 @@ pub fn summarize_events(definition: &Definition, events: &[Event]) -> Result<Eve
                 && bytes <= definition.events.max_total_bytes,
             "Workload event metadata budget exceeded"
         );
-        let row = hex::encode(Sha256::digest(&data));
-        prefix = hex::encode(Sha256::digest(format!("{prefix}{row}").as_bytes()));
+        prefix = payload_prefix_next(&prefix, event)?;
         previous = Some(event);
     }
     Ok(EventSummary {
@@ -62,6 +72,11 @@ pub struct Advertisement {
     pub source_kind: String,
     pub event_delivery: String,
     pub restart_authorized: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub completion_payload_prefix: bool,
+}
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 impl Advertisement {
     pub fn unavailable() -> Self {
@@ -73,6 +88,7 @@ impl Advertisement {
             source_kind: "microphone_energy".into(),
             event_delivery: "bounded_metadata".into(),
             restart_authorized: false,
+            completion_payload_prefix: false,
         }
     }
     pub fn validate(&self) -> Result<()> {

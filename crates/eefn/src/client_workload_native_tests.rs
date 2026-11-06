@@ -227,7 +227,10 @@ async fn actual_credential_tls_node_source_completes_stops_and_refreshes_policy_
                     let report = receipt.completion.unwrap();
                     assert_eq!(report.event_count, summary.count);
                     assert_eq!(report.event_bytes, summary.bytes);
-                    assert_eq!(report.event_prefix_sha256, summary.prefix_sha256);
+                    assert_eq!(
+                        report.event_payload_prefix_sha256.as_deref(),
+                        Some(summary.prefix_sha256.as_str())
+                    );
                     assert!(
                         report.lease_sequence >= 2
                             && report.owned_process_exit_observed

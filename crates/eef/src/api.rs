@@ -912,3 +912,19 @@ mod workload_receipt_tests {
     include!("workload_command_acceptance_tests.rs");
     include!("workload_driver_command_tests.rs");
 }
+
+#[cfg(all(test, windows, feature = "native-test-fixtures"))]
+mod workload_full_native_acceptance {
+    use super::*;
+    use crate::{
+        request_execution::AttemptState,
+        request_planning::PlanningCommand,
+        task::{Plan, PlanStatus},
+        workload_jobs::{
+            ApprovalCommand,
+            tests::{execute, review_input, template_input},
+        },
+    };
+    use eefn::workload_leases::definition::{EnergyParameters, Source, Template};
+    include!("workload_full_native_tests.rs");
+}

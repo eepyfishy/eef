@@ -25,6 +25,7 @@ fn completed_receipt(
             event_count: 1,
             event_bytes: 200,
             event_prefix_sha256: "f".repeat(64),
+            event_payload_prefix_sha256: None,
             lease_sequence: sequence,
             recorded_at_ms: receipt.updated_at_ms,
             owned_process_exit_observed: true,

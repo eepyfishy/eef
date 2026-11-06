@@ -9,6 +9,7 @@ description = "Native eef coordinator"
 [features]
 default = ["dashboard"]
 dashboard = []
+native-test-fixtures = ["eefn/native-test-fixtures"]
 
 [dependencies]
 reqwest.workspace = true

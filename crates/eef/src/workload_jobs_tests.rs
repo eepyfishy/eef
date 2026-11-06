@@ -18,7 +18,7 @@ include!("workload_engine_ownership_tests.rs");
 include!("workload_stop_tests.rs");
 include!("workload_driver_journal_tests.rs");
 
-fn template_input() -> PlanInput {
+pub(crate) fn template_input() -> PlanInput {
     PlanInput {
         schema_version: 1,
         template: TEMPLATE.into(),
@@ -35,7 +35,7 @@ fn template_input() -> PlanInput {
 fn review(engine: &TaskEngine) -> (Plan, PlanInput) {
     review_input(engine, template_input())
 }
-fn review_input(engine: &TaskEngine, input: PlanInput) -> (Plan, PlanInput) {
+pub(crate) fn review_input(engine: &TaskEngine, input: PlanInput) -> (Plan, PlanInput) {
     let concrete = ConcreteInput {
         schema_version: 1,
         original_text: "Observe microphone energy for a bounded continuous session".into(),
