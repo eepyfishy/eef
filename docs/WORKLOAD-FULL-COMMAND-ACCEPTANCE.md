@@ -11,6 +11,13 @@ owner compilation with the actual concrete-input mailbox. Its built-in source
 needs no one-shot audio plugin. The original `480e4ad` candidate used owner HTTP
 compilation; acceptance of that checkpoint cannot establish the later input path.
 
+The later typed microphone-authoring increment uses that same backend through
+`MicrophoneRequest`, with coordinator-owned resource selection and immutable typed
+intent. It replaces the fixture's caller-authored resource/adapter digests with
+actual backend selection. Separate owner approval, origin execution and every
+completion/stop/reconnect/no-replay assertion remain required. This later source
+needs its own hosted acceptance and does not inherit a pass from older checkpoints.
+
 The test creates a disposable stdlib venv from the explicitly pinned CI interpreter
 using `--without-pip`. It installs only the existing synthetic microphone dependency
 into that environment's site-packages. No dependency is downloaded, no system Python

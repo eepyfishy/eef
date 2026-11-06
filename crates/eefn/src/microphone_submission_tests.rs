@@ -35,7 +35,10 @@ fn draft(input: &MicrophoneInput, concrete: &ConcreteInput) -> crate::request_dr
         proposals: vec![crate::request_drafts::ProposalRevision {
             operation_id: uuid::Uuid::new_v4().to_string(),
             proposal: concrete.proposal().unwrap(),
-            allowed_capabilities: vec![crate::workload_leases::definition::CAPABILITY.into(), "audio.capture".into()],
+            allowed_capabilities: vec![
+                crate::workload_leases::definition::CAPABILITY.into(),
+                "audio.capture".into(),
+            ],
             at_ms: 1,
             resolution: None,
             preparation: None,

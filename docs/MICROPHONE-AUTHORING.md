@@ -55,6 +55,7 @@ an old reader accept it. Multiple typed source intents in one review are refused
 Shared source/receipt/CLI tests and actual credential/TLS origin tests are added;
 the Windows combined source test now uses typed microphone submission before
 separate owner approval and origin execution. Runtime/hosted verification remains
-pending. The preceding admission failure is under investigation and is not claimed
-fixed by this interface. Physical audio, long sessions, two-PC acceptance,
+pending. The preceding admission failure was traced to its incomplete source
+review capability set; that separate correction also awaits full verification.
+This interface alone does not establish the fix. Physical audio, long sessions, two-PC acceptance,
 continuous relays and the remaining stable release requirements remain open.

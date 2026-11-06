@@ -14,11 +14,16 @@ edits and cannot be relabeled as a different source. Shared, CLI and actual orig
 tests and the extended Windows source test await hosted verification. See
 [microphone authoring](MICROPHONE-AUTHORING.md).
 
-The origin-admission run `42224709777` failed its positive mailbox case on both
-Linux modes and Windows/dashboard; the node wrapper retained an unconfirmed
-outcome without exposing the coordinator reason. Changed-source diagnostics keep
-the original assertions and investigate the correlated mailbox path. Its cause
-and a fix remain unproven. New authoring work does not supersede that failure.
+## In development: complete capability vocabulary for continuous source review
+
+The origin-admission run `42224709777` failed its positive mailbox case. Correlated
+diagnostic `e86ec21` in run `42227421006` identified the strict capability rejection:
+the retained template describes both the session wrapper and microphone operation,
+but admission added only the wrapper. After the existing authenticated binding and
+disclosure checks, admission now adds that exact template's complete review set.
+The validator, global node/plugin vocabulary, permissions and execution gates remain
+unchanged. Existing positive and refusal assertions and the mailbox diagnostic await
+fresh full hosted verification. See [diagnosis](WORKLOAD-ADMISSION-DIAGNOSTIC.md).
 
 ## In development: origin admission independent of the one-shot media plugin
 
@@ -52,10 +57,10 @@ Readiness source `82aeabe` passed both Linux jobs and Windows/dashboard in run
 `42179897667`, but Windows/headless Rust failed the new credential/TLS source
 lifecycle assertion. All 36 subsequent native scripts passed. The failure exposed
 a real completion mismatch: node journal prefixes include lease/time metadata,
-while coordinator prefixes contain event payloads only. The current unverified
-change preserves the journal checksum and adds a separately audited payload
-checksum with capability negotiation. Fresh changed-source hosted verification,
-physical testing, final main and stable release gates remain open.
+while coordinator prefixes contain event payloads only. The verified `480e4ad`
+follow-up preserves the journal checksum and adds a separately audited payload
+checksum with capability negotiation. Physical testing, final main and stable
+release gates remain open.
 
 ## In development: node readiness and registration without reconnect
 
