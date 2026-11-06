@@ -1,0 +1,14 @@
+# Running-origin admission failure observation
+
+The origin-admission candidate `5ee5e1d`, run `42224709777`, failed its new
+positive running-origin submission test on both Linux modes and Windows/dashboard.
+The node correctly returned an unconfirmed result, but that wrapper did not retain
+the coordinator's rejection reason in the test output. The failed evidence remains;
+other jobs and full terminal reconciliation are independent requirements.
+
+One additional test sends the same concrete request through the actual origin
+mailbox and preserves a synthetic fixture's backend rejection on failure. It
+requires a valid confirmed coordinator receipt and no approval/execution on success.
+The existing end-to-end node wrapper and source admission tests remain unchanged.
+No production code, authority, deadline, retry, permission, assertion or CI gate is
+weakened. This is diagnostic evidence collection, not a proven fix or release.

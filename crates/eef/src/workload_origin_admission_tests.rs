@@ -171,6 +171,45 @@ impl SourceAdmission {
 }
 
 #[tokio::test]
+async fn continuous_origin_mailbox_confirms_the_coordinator_result_without_hiding_rejection() {
+    let f = SourceAdmission::new().await;
+    let input = f.input().await;
+    let command = ConcreteCommand {
+        operation_id: uuid::Uuid::new_v4().to_string(),
+        request: input,
+    };
+    // This is the same running-origin mailbox used by concrete_request. The
+    // synthetic fixture retains a backend rejection in test output instead of
+    // replacing it with the public wrapper's conservative unconfirmed report.
+    let reply = f
+        .service
+        .submissions
+        .request_correlated(
+            "requests.concrete",
+            json!(command.request),
+            Some(command.operation_id.clone()),
+        )
+        .await
+        .expect("Synthetic continuous origin admission was rejected by the coordinator");
+    assert!(
+        eefn::request_submission::confirmed(&reply, "origin", &command),
+        "Synthetic coordinator receipt failed confirmation: {reply}"
+    );
+    assert!(
+        f.runtime
+            .engine
+            .store
+            .list()
+            .unwrap()
+            .iter()
+            .all(|p| p.status == PlanStatus::AwaitingApproval
+                && p.approval.is_none()
+                && p.execution.is_none())
+    );
+    f.close().await;
+}
+
+#[tokio::test]
 async fn continuous_source_origin_admission_needs_no_one_shot_plugin_or_execution_permission() {
     let mut f = SourceAdmission::new().await;
     assert!(!f.engine.capabilities().contains(&"audio.capture".into()));
