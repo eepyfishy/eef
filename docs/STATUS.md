@@ -3,6 +3,21 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: executable microphone command acceptance
+
+The existing native input suite now additionally drives `eefn requests
+submit-microphone` through its actual executable and running node API, with
+credential/TLS coordinator pairing and no dashboard pages. Passive synthetic
+resources exercise preparation without an LM or device permission, exact retained
+receipts, conflicts/refusals, human output/nonzero exits, dropped/substituted local
+replies and older API behavior. The proxy counts actual sends to reject retries;
+receipt inspection and reuse must retain job state after restart and interpreter
+withdrawal. Stopped-node preparation cannot launch a runtime or edit configuration.
+No source device is opened, and physical acceptance remains open. These added
+checks require fresh full hosted verification; syntax/source checks alone do not
+establish runtime behavior. The shipping backend and existing native gates are
+unchanged by this acceptance increment.
+
 ## In development: isolate ACK expiry from journal admission
 
 Run `42234328855` passed both Linux jobs. Windows/dashboard failed before the

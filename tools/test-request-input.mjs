@@ -1,5 +1,6 @@
 // Public-command input workflow acceptance; isolated data, fake inference,
 import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
+import {verifyMicrophoneCommands} from './microphone-command-checks.mjs';
 // explicit owner TLS pairing. No UI controller, raw RPC or workload execution.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -10,7 +11,7 @@ import {randomUUID,randomBytes} from 'node:crypto';
 const root=resolve(import.meta.dirname,'..'),scratch=await mkdtemp(join(root,'.validation/request-input-'));
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const configPath=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml'),marker=configPath+'.api.json';
-const children=[],calls=[],gates=new Set();let node='',mode='valid',proxyMode='drop';
+const children=[],calls=[],proxyCalls=[],gates=new Set();let node='',mode='valid',proxyMode='drop';
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),
  PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 function launch(name,args,extra={}) {
@@ -19,12 +20,12 @@ function launch(name,args,extra={}) {
  child.logs=()=>({role:child.diagnosticRole,out,err,exit_code:child.exitCode});
  child.result=new Promise((r,j)=>{child.on('error',j);child.on('close',code=>r({code,out,err}));});children.push(child);return child;
 }
-async function cli(name,path,args,success=true) {
- const child=launch(name,['--config',path,'--json',...args]),timer=setTimeout(()=>child.kill(),60000);
+async function cli(name,path,args,success=true,jsonOutput=true) {
+ const child=launch(name,['--config',path,...(jsonOutput?['--json']:[]),...args]),timer=setTimeout(()=>child.kill(),60000);
  try {const r=await child.result;
   if(r.code!==(success?0:1))await writeFile(join(scratch,'unexpected-cli.json'),JSON.stringify({command:args,expected_exit:success?0:1,...r,
    fixture_mode:mode,inference_calls:calls.length,runtime_logs:children.filter(c=>c.diagnosticRole).map(c=>c.logs())},null,2));
-  assert.equal(r.code,success?0:1,r.out+r.err);return JSON.parse(r.out);}finally{clearTimeout(timer);}
+  assert.equal(r.code,success?0:1,r.out+r.err);return jsonOutput?JSON.parse(r.out):r.out;}finally{clearTimeout(timer);}
 }
 const nodeCli=(args,success=true)=>cli('eefn',configPath,args,success);
 async function json(url,body,method) {
@@ -73,10 +74,12 @@ const fake=createServer(async(req,res)=>{
  res.end(JSON.stringify({message:{content:JSON.stringify(value)},done:true,done_reason:'stop'}));
 });
 const proxy=createServer(async(req,res)=>{
+ proxyCalls.push({url:req.url,mode:proxyMode});
  if(proxyMode==='old'){res.writeHead(404);return res.end('{}');}
  try {
   let body='';for await(const b of req)body+=b;
   const response=await fetch(node+req.url,{method:'POST',headers:{'Content-Type':'application/json'},body});const value=await response.json();
+  if(proxyMode==='microphone-forge'){value.command.input.title='Forged microphone title';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='corrupt'){value.result.request_context.origin_node='forged';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='lineage'){value.opening.result.draft.proposals[0].proposal.goal='Different schema-valid source goal';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='answer-lineage'){value.source.result.draft.proposals[0].proposal.goal='Different source question goal';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
@@ -89,12 +92,16 @@ try {
  const eef=`http://127.0.0.1:${webPort}`,id='input-fixture-node',secret=randomBytes(24).toString('hex');
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
  Object.assign(config,{node_id:id,name:'Input fixture',auto_local:false,local_pairing:false,psk:secret,endpoints:[`127.0.0.1:${gatewayPort}`],heartbeat_seconds:1,
-  update:{policy:'off'},dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:apiPort},metadata:{area:['Home','Office']},
+  update:{policy:'off'},dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:apiPort},metadata:{area:['Home','Office'],
+   resources:[{id:'mic',capability:'audio.capture',parameters:{device:'PRIVATE_MIC_DEVICE'}}]},
   models:{provider:'ollama',ollama:{base_url:`http://127.0.0.1:${modelPort}`,selected:[{model_id:'fixture',modality:'text',selection:{roles:['request_interpreter']}}]},llamacpp:{slots:[]}}});
  assert.equal(config.input_workflow.prepare_on_input,true);await writeFile(configPath,JSON.stringify(config));
  const before=await readFile(configPath,'utf8'),absentId=randomUUID();
  const absent=await nodeCli(['requests','input','--text','Not running','--operation-id',absentId],false);
  assert.equal(absent.error_code,'node_not_running');assert.equal(absent.request_id,absentId);assert.equal(await readFile(configPath,'utf8'),before);assert.equal(calls.length,0);
+ const absentMicrophoneId=randomUUID(),absentMicrophone=await nodeCli(['requests','submit-microphone','--operation-id',absentMicrophoneId],false);
+ assert.equal(absentMicrophone.error_code,'microphone_authoring_not_sent');assert.equal(absentMicrophone.outcome_unknown,false);
+ assert.equal(absentMicrophone.command.operation_id,absentMicrophoneId);assert.equal(await readFile(configPath,'utf8'),before);assert.equal(calls.length,0);
  const absentResponse=randomUUID(),absentJob=randomUUID().replaceAll('-','');
  const stoppedResponse=await nodeCli(['requests','respond',absentJob,'--revision','1','--text','Keep this answer','--operation-id',absentResponse],false);
  assert.equal(stoppedResponse.error_code,'node_not_running');assert.equal(stoppedResponse.command.operation_id,absentResponse);assert.equal(await readFile(configPath,'utf8'),before);assert.equal(calls.length,0);
@@ -113,6 +120,8 @@ try {
  await nodeCli(['connection','pair','--code-file',privateFile]);
  await until(async()=>await ready()&&(await json(node+'/api/status')).execution_grants.available,'pinned node runtime');
  for(const base of [node,eef])assert.equal((await fetch(base+'/')).status,404);
+ const microphone=await verifyMicrophoneCommands({nodeCli,nodeText:args=>cli('eefn',configPath,args,false,false),
+  nodeId:id,nodeUrl:node,json,configPath,marker,proxyPort,setProxyMode:value=>{proxyMode=value;},proxyCalls,inferenceCalls:calls});
  const inputUrl=node+'/api/commands/requests/input';
  const body=(text,receipt=randomUUID())=>({schema_version:1,expected_node_id:id,request_id:receipt,text});
  const input=(text,receipt=randomUUID(),success=true,budget)=>nodeCli(['requests','input','--text',text,'--operation-id',receipt,
@@ -329,6 +338,7 @@ try {
   }
  }
  await nodeCli(['models','clear-interpreter']);await nodeCli(['restart','--wait-seconds','20']);await until(ready,'withdraw interpreter');
+ await microphone.verifyRetained();
  count=calls.length;assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal((await input(lostText,lostReceipt)).status,'historical_snapshot');
  const missing=await input('New input without role',randomUUID(),false);assert.equal(missing.error_code,'interpreter_unavailable');assert(missing.setup_hint.includes('request_interpreter'));assert.equal(calls.length,count);
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal((await respond(lostAnswerSource,1,'This node',lostAnswerId)).status,'historical_snapshot');assert.equal(calls.length,count);
@@ -362,7 +372,7 @@ try {
  assert.equal(foreignAnswer.error_code,'answer_source_unconfirmed');assert.equal(foreignAnswer.source_confirmed,false);assert.equal(foreignAnswer.answer_attempted,false);assert.equal(foreignAnswer.result,null);
  assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal(calls.length,count);
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count);
- evidence={passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
+ evidence={...microphone.evidence,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
   reasoning_completion_failure_retains_source_and_answer:true,completion_diagnostics_do_not_echo_reasoning_or_replay:true,

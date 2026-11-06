@@ -88,3 +88,15 @@ The venv timeout retains its 30-second failure boundary and adds numeric setup,
 partial-file and exact-child cleanup observations only. It is not a proven timeout
 fix. These changes need fresh full hosted acceptance; the earlier failed run stays
 retained. No installed node or runtime policy is changed by these development tests.
+
+Executable-level command acceptance is being added to the existing headless input
+fixture. It uses a configured synthetic resource and separately paired credential/
+TLS processes, with both dashboard pages disabled. It checks stopped-node handling,
+preparation without an LM or microphone permission, exact receipt reuse, conflicting
+input, missing/undisclosed sources, human-readable refusal and nonzero exit status.
+A local reply proxy verifies that dropped or substituted replies remain uncertain
+and send once; an older API returns not-sent without a fallback. Explicit history
+inspection and receipt reuse must preserve the saved job, including after node
+restart and interpreter withdrawal. Configuration and private device binding checks
+remain separate from execution. These checks await hosted Windows verification;
+they neither open a real microphone nor establish physical audio acceptance.
