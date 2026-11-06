@@ -29,6 +29,7 @@ pub mod node_package_policy;
 pub mod node_python_policy;
 pub mod node_relay;
 pub mod node_setup;
+pub mod node_workload_policy;
 mod peer_jobs;
 mod pipeline_planning;
 pub mod process_stop_status;

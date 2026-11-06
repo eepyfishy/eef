@@ -227,6 +227,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(node_python_policy).layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
         .route(
+            "/api/commands/node/workload-policy",
+            post(node_workload_policy).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/commands/node/permissions",
             post(node_permissions).layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
@@ -515,6 +519,14 @@ async fn setup_model_check(
     Json(request): Json<crate::setup_model_check::Request>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.setup_model_check_command(request).await?))
+}
+async fn node_workload_policy(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::node_workload_policy::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_workload_policy::command(&runtime.node_server, request).await?,
+    ))
 }
 async fn node_python_policy(
     State(runtime): State<Arc<Runtime>>,

@@ -31,7 +31,19 @@ physical readiness or execution permission. See [source planning](WORKLOAD-SOURC
     eefn workload-policy enable --max-session-ms 60000 --max-lease-ms 10000
     eefn workload-policy disable
 
-Run these against the already running local node. They inspect or save its
+From the running coordinator, the equivalent controls are:
+
+    eef node workload-policy --node NODE_ID show
+    eef node workload-policy --node NODE_ID enable --max-session-ms 60000 --max-lease-ms 10000
+    eef node workload-policy --node NODE_ID disable
+
+Remote changes require a paired credential/TLS node and its owner's existing
+remote-management permission. Inspection precedes one conditional change using
+the exact node runtime, saved revision and runtime epoch. No automatic retry is
+made after an uncertain response. These commands do not start continuous capture.
+
+The local commands address the running node; the coordinator commands address
+the running eef service and the selected node. Both inspect or save the node's
 workload admission preference; they never start capture, enable permissions or
 restart an app. Omitted limit flags preserve the inspected limits. The policy
 defaults off. Disable and limit changes revoke original policy permits before

@@ -160,6 +160,13 @@ enum NodeCommand {
         #[arg(long)]
         node: String,
     },
+    /// Inspect or set a node's workload policy; never start capture or work.
+    WorkloadPolicy {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eefn::workload_policy::Action,
+    },
     /// Configure finite relay resources with current local node-owner approval.
     Relay {
         #[arg(long)]
@@ -479,6 +486,57 @@ mod credential_cli_tests {
         }
         assert!(Args::try_parse_from(["eef", "requests", "stop-status"]).is_err());
     }
+    #[test]
+    fn remote_workload_policy_cli_preserves_node_and_limits_without_execution_flags() {
+        use clap::Parser;
+        let args = Args::try_parse_from([
+            "eef",
+            "node",
+            "workload-policy",
+            "--node",
+            "fixture",
+            "enable",
+            "--max-session-ms",
+            "60000",
+            "--max-lease-ms",
+            "10000",
+        ])
+        .unwrap();
+        assert!(
+            matches!(args.command, Some(Command::Node { command:NodeCommand::WorkloadPolicy {
+            node, command:eefn::workload_policy::Action::Enable { max_session_ms:Some(60000), max_lease_ms:Some(10000) }
+        } }) if node=="fixture")
+        );
+        for action in ["show", "disable"] {
+            assert!(
+                Args::try_parse_from([
+                    "eef",
+                    "node",
+                    "workload-policy",
+                    "--node",
+                    "fixture",
+                    action
+                ])
+                .is_ok()
+            );
+        }
+        for flag in ["--execute", "--microphone", "--grant", "--restart"] {
+            assert!(
+                Args::try_parse_from([
+                    "eef",
+                    "node",
+                    "workload-policy",
+                    "--node",
+                    "fixture",
+                    "enable",
+                    flag
+                ])
+                .is_err()
+            );
+        }
+        assert!(Args::try_parse_from(["eef", "node", "workload-policy", "show"]).is_err());
+    }
+
     #[test]
     fn remote_python_policy_cli_preserves_explicit_budgets_without_execution_flags() {
         let args = Args::try_parse_from([
@@ -1764,6 +1822,90 @@ async fn remote_python_policy_cli(
         "error_code":"python_policy_unconfirmed","note":"Inspect this exact node with python show; no automatic retry, permission change, restart or workload was sent."})))
 }
 
+async fn remote_workload_policy_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eefn::workload_policy::Action,
+) -> Result<serde_json::Value> {
+    use eef::node_workload_policy::Request;
+    use eefn::workload_policy::{Action, Command};
+    use serde_json::json;
+    eefn::network::validate_remote_node_id(node)?;
+    let mutation = !matches!(action, Action::Show);
+    let mut sending = false;
+    let mut requested = serde_json::Value::Null;
+    let exchange = async {
+        let url = format!("{base}/api/commands/node/workload-policy");
+        let mut request = Request {
+            schema_version: 1,
+            node_id: node.into(),
+            expected_runtime_id: None,
+            command: Command::Show {},
+        };
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Workload policy inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_workload_policy::confirmed(&inspected, &request) {
+            bail!("Unconfirmed workload policy inspection")
+        }
+        let mut policy: eefn::workload_leases::Policy =
+            serde_json::from_value(inspected["result"]["policy"].clone())?;
+        match action {
+            Action::Show => return Ok::<_, anyhow::Error>(inspected),
+            Action::Disable => policy.enabled = false,
+            Action::Enable {
+                max_session_ms,
+                max_lease_ms,
+            } => {
+                policy.enabled = true;
+                if let Some(value) = max_session_ms {
+                    policy.max_session_ms = *value;
+                }
+                if let Some(value) = max_lease_ms {
+                    policy.max_lease_ms = *value;
+                }
+            }
+        }
+        policy.validate()?;
+        request.expected_runtime_id = Some(
+            inspected["result"]["runtime_id"]
+                .as_str()
+                .context("Missing node runtime")?
+                .into(),
+        );
+        request.command = Command::Set {
+            policy,
+            expected_revision: inspected["result"]["revision"]
+                .as_u64()
+                .context("Missing workload policy revision")?,
+            expected_epoch: inspected["result"]["runtime_epoch"]
+                .as_u64()
+                .context("Missing workload policy epoch")?,
+        };
+        request.validate()?;
+        requested = json!(request.command);
+        sending = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Workload policy save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_workload_policy::confirmed(&saved, &request) {
+            bail!("Unconfirmed workload policy save")
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"remote_workload_policy","node_id":node,
+        "success":false,"mutation_requested":mutation,"sending_attempted":sending,"outcome_unknown":sending,
+        "command":requested,"result":null,"execution_authorized":false,"capture_started":false,"restart_requested":false,
+        "automatically_retried":false,"error_code":"workload_policy_unconfirmed",
+        "note":"Inspect this exact node with workload-policy show before deciding what to do; no automatic retry, source, permission change or restart was requested."})))
+}
+
 async fn remote_permissions_cli(
     client: &reqwest::Client,
     base: &str,
@@ -2443,6 +2585,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             command: NodeCommand::Python { node, command },
         } => return remote_python_policy_cli(&client, &base, node, command).await,
         Command::Node {
+            command: NodeCommand::WorkloadPolicy { node, command },
+        } => return remote_workload_policy_cli(&client, &base, node, command).await,
+        Command::Node {
             command: NodeCommand::WorkloadSources { node },
         } => {
             eefn::network::validate_remote_node_id(node)?;
@@ -2819,6 +2964,21 @@ async fn main() -> Result<()> {
                     )
                 {
                     print!("{}", eefn::workload_sources::render(&value)?);
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::WorkloadPolicy { .. }
+                        }
+                    )
+                {
+                    if value["success"] == true {
+                        print!("{}", eefn::workload_policy::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Workload policy outcome unconfirmed. Inspect this exact node with workload-policy show before deciding what to do."
+                        );
+                    }
                 } else if !args.json
                     && matches!(
                         command,

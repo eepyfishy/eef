@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: coordinator commands for node workload policy
+
+`eef node workload-policy --node NODE_ID show|enable|disable` now uses the same
+typed node backend as local commands. The coordinator adapter requires an actual
+credential/TLS grant session; writes also require the node owner's existing remote
+management consent. The CLI inspects limits/runtime/revision/epoch before one
+conditional mutation and never retries an uncertain reply. Permission, listening,
+source startup and restart are unchanged. The owner API adapter is
+`/api/commands/node/workload-policy`.
+
+Four new cases cover request/receipt scope, CLI parsing and genuine pinned-TLS
+node policy control with local/remote state equality, stale-revision refusal and
+management revocation. This network case configures preferences only; it does
+not prove authenticated source execution. Hosted validation is pending. Both
+Linux jobs passed the preceding corrected execution source `3cd98c6` in run
+`42137156813`; the complete Windows/native and four-job result remains pending.
+Public execution advertising, owner start/stop integration and stable release
+acceptance remain open.
+
 ## In development: node workload delivery and owner policy commands
 
 The node connection now dispatches exact schema-two offers and correlates leases

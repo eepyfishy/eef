@@ -24,7 +24,13 @@ retain the existing absolute protocol caps. The HTTP adapter is
 `node.configure/workload_policy` only with the node owner's remote-management
 consent; `workload_policy_status` accepts inspection only. These controls use
 reserved control capacity, so revocation does not wait for a free source slot.
-The coordinator CLI adapter for this new policy remains to be added.
+The coordinator exposes the same service at
+`/api/commands/node/workload-policy` and through
+`eef node workload-policy --node NODE_ID show|enable|disable`. Remote inspection
+and changes require an independently authenticated credential/TLS node. The CLI
+inspects current state, preserves omitted limits and sends at most one conditional
+mutation. A stale or uncertain result is not automatically retried. Enabling this
+preference still does not dispatch or authorize a source.
 
 Saving changed limits or disabling revokes original policy permits before storage,
 including a failed save. A generic save/restore cannot enable the preference,
