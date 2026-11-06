@@ -134,6 +134,7 @@ impl JobStore {
                                     state: AttemptState::Issued,
                                     acknowledgement: None,
                                     completion: None,
+                                    stop: None,
                                 }),
                             });
                             plan.status = PlanStatus::Running;

@@ -140,6 +140,7 @@ async fn owner_http_and_running_origin_receipt_commands_share_workload_history_w
                         state: crate::request_execution::AttemptState::Issued,
                         acknowledgement: None,
                         completion: None,
+                        stop: None,
                     }),
                 });
                 saved.status = crate::task::PlanStatus::Running;

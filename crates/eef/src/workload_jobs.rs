@@ -71,6 +71,8 @@ pub struct Execution {
     pub acknowledgement: Option<eefn::grants::workload::Receipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion: Option<Completion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<crate::execution_stop::Delivery>,
 }
 pub(crate) struct Snapshot {
     immutable: serde_json::Value,
@@ -185,6 +187,7 @@ pub(crate) fn validate_approval(plan: &Plan) -> Result<()> {
     Ok(())
 }
 pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
+    crate::execution_stop::validate(plan)?;
     let e = plan
         .execution
         .as_ref()
@@ -199,13 +202,18 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
     w.definition.validate()?;
     e.command.validate()?;
     unique_operation(plan, &e.command.operation_id)?;
-    let expected_schema = if w.completion.is_some() { 3 } else { 2 };
+    let expected_schema = if w.stop.is_some() {
+        4
+    } else if w.completion.is_some() {
+        3
+    } else {
+        2
+    };
     ensure!(
         e.schema_version == expected_schema
             && e.attempts.is_empty()
             && e.peer.is_none()
             && e.abandonment.is_none()
-            && e.stop_requested_at_ms.is_none()
             && e.command.id == plan.plan_id
             && e.command.approval_sha256 == a.approval_sha256
             && e.command.operation_id != a.operation_id
@@ -268,12 +276,18 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
             AttemptState::Issued =>
                 w.acknowledgement.is_none()
                     && w.completion.is_none()
-                    && plan.status == PlanStatus::Running
+                    && matches!(
+                        (plan.status, e.stop_requested_at_ms),
+                        (PlanStatus::Running, None) | (PlanStatus::Stopping, Some(_))
+                    )
                     && task.status == TaskStatus::Running,
             AttemptState::Accepted =>
                 w.acknowledgement.is_some()
                     && w.completion.is_none()
-                    && plan.status == PlanStatus::Running
+                    && matches!(
+                        (plan.status, e.stop_requested_at_ms),
+                        (PlanStatus::Running, None) | (PlanStatus::Stopping, Some(_))
+                    )
                     && task.status == TaskStatus::Running,
             AttemptState::Unknown =>
                 w.completion.is_none()
@@ -282,6 +296,7 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
             AttemptState::Completed =>
                 w.acknowledgement.is_some()
                     && w.completion.is_some()
+                    && e.stop_requested_at_ms.is_none()
                     && plan.status == PlanStatus::Completed
                     && task.status == TaskStatus::Completed,
             _ => false,
@@ -489,7 +504,7 @@ pub(crate) fn mark_unknown(store: &JobStore, definition: &Definition) -> Result<
             }
             ensure!(
                 matches!(w.state, AttemptState::Issued | AttemptState::Accepted)
-                    && plan.status == PlanStatus::Running,
+                    && matches!(plan.status, PlanStatus::Running | PlanStatus::Stopping),
                 "Workload no longer owns an active issuer"
             );
             w.state = AttemptState::Unknown;

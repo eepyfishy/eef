@@ -33,6 +33,22 @@ pub(crate) fn validate(plan: &Plan) -> Result<()> {
             }
         }
     }
+    if let Some(w) = &e.workload {
+        if let Some(stop) = &w.stop {
+            if e.stop_requested_at_ms
+                .is_none_or(|t| stop.send_attempted_at_ms < t)
+                || stop.send_attempted_at_ms > i64::MAX as u64
+                || stop.outcome_unknown != stop.report.is_none()
+                || stop.report.as_ref().is_some_and(|r| {
+                    !w.definition
+                        .scope()
+                        .is_ok_and(|scope| r.confirms_scope(&scope))
+                })
+            {
+                bail!("Stop delivery differs from retained workload issuance")
+            }
+        }
+    }
     Ok(())
 }
 pub(crate) type Snapshot = (Option<u64>, BTreeMap<String, Delivery>);
@@ -45,6 +61,11 @@ pub(crate) fn snapshot(plan: &Plan) -> Snapshot {
                 e.attempts
                     .iter()
                     .filter_map(|a| a.stop.clone().map(|s| (a.grant.grant_id.clone(), s)))
+                    .chain(
+                        e.workload.iter().filter_map(|w| {
+                            w.stop.clone().map(|s| (w.definition.grant_id.clone(), s))
+                        }),
+                    )
                     .collect(),
             )
         })
@@ -68,6 +89,40 @@ pub(crate) fn preserve(old: &Snapshot, plan: &Plan) -> Result<()> {
     Ok(())
 }
 impl Driver {
+    /// One durable send reservation for the exact original definition. A lost
+    /// observer never retries, changes session or claims that effects stopped.
+    pub(crate) async fn stop_workload(
+        &self,
+        definition: &eefn::workload_leases::definition::Definition,
+        deadline: tokio::time::Instant,
+    ) -> Result<()> {
+        use crate::jobs::WorkloadStopCheckpoint;
+        let send = self
+            .engine
+            .store
+            .checkpoint_workload_stop_before(
+                definition.clone(),
+                WorkloadStopCheckpoint::Begin,
+                deadline,
+            )
+            .await?;
+        if !send {
+            return Ok(());
+        }
+        if let Ok(Ok(report)) =
+            tokio::time::timeout_at(deadline, self.server.stop_workload(definition)).await
+        {
+            self.engine
+                .store
+                .checkpoint_workload_stop_before(
+                    definition.clone(),
+                    WorkloadStopCheckpoint::Receipt(report),
+                    deadline,
+                )
+                .await?;
+        }
+        Ok(())
+    }
     pub(crate) async fn stop_issued(&self, id: &str, grants: &[ExecutionGrant]) -> Result<()> {
         match grants {
             [] => Ok(()),

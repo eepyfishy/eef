@@ -25,6 +25,7 @@ mod job_finalizations;
 mod job_reads;
 pub(crate) use job_finalizations::CommittedIssue;
 pub(crate) use job_finalizations::Slot as WorkloadFinalSlot;
+pub(crate) use job_finalizations::StopCheckpoint as WorkloadStopCheckpoint;
 #[path = "model_verification_intents.rs"]
 mod model_verification_intents;
 #[path = "setup_model_check_store.rs"]
@@ -832,12 +833,15 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
         }
         if let Some(execution) = &plan.execution {
             value["tracking_abandoned"] = json!(execution.abandonment.is_some());
-            value["remote_effects_unknown"] = json!(
-                execution
-                    .attempts
-                    .iter()
-                    .any(|a| a.state == crate::request_execution::AttemptState::Unknown)
-            );
+            let unknown = execution
+                .attempts
+                .iter()
+                .any(|a| a.state == crate::request_execution::AttemptState::Unknown)
+                || execution
+                    .workload
+                    .as_ref()
+                    .is_some_and(|w| w.state == crate::request_execution::AttemptState::Unknown);
+            value["remote_effects_unknown"] = json!(unknown);
             value["can_abandon_tracking"] = json!(
                     plan.status == PlanStatus::Interrupted
                         && execution.peer.is_none()
@@ -851,6 +855,12 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
                 if let Some(stop) = &a.stop { value["stop"] = json!(stop); }
                 value
             }).collect::<Vec<_>>());
+            if let Some(w) = &execution.workload {
+                value["workload"] = json!({"grant_id":w.definition.grant_id,
+                    "task_id":w.definition.task_id,"node_id":w.definition.executor_node,
+                    "state":w.state,"acknowledged":w.acknowledgement.is_some(),
+                    "completed":w.completion.is_some(),"stop":w.stop});
+            }
             if execution.stop_requested_at_ms.is_some() {
                 value["stop_requested"] = json!(true);
                 value["remote_stop_confirmed"] = json!(false);

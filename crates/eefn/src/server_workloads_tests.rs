@@ -99,6 +99,76 @@ async fn fixture() -> (NodeServer, Definition, mpsc::Receiver<Value>) {
 fn deadline() -> tokio::time::Instant {
     tokio::time::Instant::now() + Duration::from_secs(10)
 }
+
+#[tokio::test]
+async fn workload_stop_routes_only_exact_original_session_and_requires_intent_only_receipt() {
+    for invalid_receipt in [false, true] {
+        let (server, d, mut outgoing) = fixture().await;
+        {
+            let mut connections = server.inner.connections.write().await;
+            let registered = &mut connections
+                .get_mut("owner")
+                .unwrap()
+                .state
+                .as_mut()
+                .unwrap()
+                .registration;
+            registered["execution_grants"] = json!({"schema_version":1,"available":true});
+            registered["grant_stop"] = json!(crate::grants::stop::Advertisement::new(true));
+        }
+        let mut changed = d.clone();
+        changed.session_id = Uuid::new_v4().to_string();
+        assert!(server.stop_workload(&changed).await.is_err());
+        assert!(
+            outgoing.try_recv().is_err(),
+            "Reconnected scope cannot be retargeted"
+        );
+        let mut pending = Box::pin(server.stop_workload(&d));
+        let message = tokio::select! {
+            result=&mut pending=>panic!("Stop returned before a reply: {result:?}"),
+            value=outgoing.recv()=>value.unwrap(),
+        };
+        assert_eq!(message["type"], "stop_grant");
+        assert_eq!(message["scope"], json!(d.scope().unwrap()));
+        assert!(message.get("grant").is_none());
+        let scope = d.scope().unwrap();
+        let report = crate::grants::stop::Report {
+            schema_version: 1,
+            report_type: "grant_stop_receipt".into(),
+            grant_id: scope.grant_id,
+            grant_sha256: scope.grant_sha256,
+            issuer_id: scope.issuer_id,
+            session_id: scope.session_id,
+            executor_node: scope.executor_node,
+            job_id: scope.job_id,
+            task_id: scope.task_id,
+            attempt: scope.attempt,
+            recorded_at_ms: now_ms().max(1),
+            receipt_preexisted: true,
+            reused: false,
+            cancellation_signalled: true,
+            persisted: true,
+            stop_requested: true,
+            execution_stopped: invalid_receipt,
+            external_effects_stopped: false,
+            execution_authorized: false,
+            automatically_retried: false,
+        };
+        server
+            .resolve_response(
+                "owner",
+                Uuid::parse_str(&d.session_id).unwrap(),
+                json!({"type":"response","id":message["id"],"success":true,"data":report}),
+            )
+            .await;
+        let result = pending.await;
+        assert_eq!(result.is_ok(), !invalid_receipt);
+        assert!(
+            outgoing.try_recv().is_err(),
+            "No renewal, source command or automatic retry"
+        );
+    }
+}
 fn ack(d: &Definition) -> crate::grants::workload::Receipt {
     crate::grants::workload::Receipt {
         schema_version: 2,

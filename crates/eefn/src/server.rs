@@ -633,15 +633,30 @@ impl NodeServer {
         &self,
         grant: &crate::grants::ExecutionGrant,
     ) -> Result<crate::grants::stop::Report> {
-        grant.validate()?;
-        let response = self.invoke_message(&grant.executor_node,
-            json!({"type":"stop_grant","scope":crate::grants::stop::Scope::from_grant(grant)?,"expected_node_id":grant.executor_node,"expected_issuer_id":grant.issuer_id}),
+        self.stop_scope(crate::grants::stop::Scope::from_grant(grant)?)
+            .await
+    }
+    /// Stop only this schema-two definition on its original authenticated session.
+    /// This does not synthesize a v1 grant, renew a lease or prove source exit.
+    pub async fn stop_workload(
+        &self,
+        definition: &crate::workload_leases::definition::Definition,
+    ) -> Result<crate::grants::stop::Report> {
+        self.stop_scope(definition.scope()?).await
+    }
+    async fn stop_scope(
+        &self,
+        scope: crate::grants::stop::Scope,
+    ) -> Result<crate::grants::stop::Report> {
+        scope.validate()?;
+        let response = self.invoke_message(&scope.executor_node,
+            json!({"type":"stop_grant","scope":scope,"expected_node_id":scope.executor_node,"expected_issuer_id":scope.issuer_id}),
             Duration::from_secs(5),None,None,None).await?;
         if response["success"] != true {
             bail!("Stop intent unconfirmed; effects remain unknown")
         }
         let report: crate::grants::stop::Report = serde_json::from_value(response["data"].clone())?;
-        if !report.confirms(grant) {
+        if !report.confirms_scope(&scope) {
             bail!("Stop receipt differs from exact grant")
         }
         Ok(report)

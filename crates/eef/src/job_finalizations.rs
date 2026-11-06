@@ -14,6 +14,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 mod workload_acks;
 #[path = "job_workload_completion.rs"]
 mod workload_completion;
+#[path = "job_workload_stop.rs"]
+mod workload_stop;
+pub(crate) use workload_stop::StopCheckpoint;
 #[path = "job_workload_issuance.rs"]
 mod workload_issuance;
 pub(crate) use workload_issuance::CommittedIssue;

@@ -3,6 +3,22 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: exact durable workload stop delivery
+
+Issued workloads can now retain the existing jobs-stop intent and retire to
+unknown without losing their definition or consumed ACK. A typed driver operation
+reserves one stop send before one original-session network attempt. Its bounded
+native metadata checkpoint retains actual capacity/storage ownership after caller
+cancellation. Retained timestamps and confirmed intent-only receipts are immutable;
+old history without the optional stop field retains its existing schema. Job
+commands expose workload stop evidence and unknown effects. Eight new regressions
+await hosted verification. See [stop delivery](WORKLOAD-STOP-DELIVERY.md).
+
+Engine ownership source `9b1f880` passed all four jobs in run `42142179193`, with
+Rust1478+1ignored and the full native Windows gates checked in the raw record.
+Public owner start/stop integration, execution advertising, credential/TLS source
+acceptance, the existing main capture failure and stable release gates stay open.
+
 ## In development: coordinator ownership during asynchronous workload issuance
 
 Product issuance now reserves an engine-owned workload lifetime before awaiting
