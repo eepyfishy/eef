@@ -284,6 +284,9 @@ pub struct NodeEngine {
 }
 
 impl NodeEngine {
+    pub(crate) fn source_service(&self) -> Option<Arc<crate::NodeService>> {
+        self.service.clone()
+    }
     pub(crate) fn prepare_workload(
         &self,
         runtime: &str,

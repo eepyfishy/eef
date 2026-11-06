@@ -25,6 +25,8 @@ use crate::session_output::send_reply as write_reply_frame;
 
 #[path = "client_peer.rs"]
 mod peer_delivery;
+#[path = "client_readiness.rs"]
+mod source_readiness;
 #[path = "client_stop_inspection.rs"]
 mod stop_inspection;
 #[path = "client_workload.rs"]
@@ -601,6 +603,8 @@ impl NodeClient {
         // Subscribe before the first refresh. A startup transition that happened
         // during authentication must not be lost between snapshot and subscription.
         let mut model_changes = self.engine.model_server.as_ref().map(|s| s.subscribe());
+        let mut source_readiness = source_readiness::Readiness::new(self);
+        let mut advertised_workload = json!(crate::workload_network::Advertisement::unavailable());
         if let Some(changes) = &mut model_changes {
             changes.mark_changed();
         }
@@ -669,6 +673,19 @@ impl NodeClient {
                         bail!("Node heartbeat stopped; reconnect required; sent operations may be unconfirmed");
                     }
                     message = &mut incoming => break message?,
+                    _=source_readiness.changed()=>{
+                        let capabilities=self.session_capabilities(&models,peer_advertisement.as_ref());
+                        let registration=source_readiness.decorate(self.registration(&self.config.node_id,
+                            if self.config.name.is_empty() {&self.config.node_id} else {&self.config.name},
+                            crate::VERSION,&capabilities,&specs,&models,receipt_offer.as_ref(),peer_advertisement.as_ref()));
+                        if registration["workload_execution"]!=advertised_workload {
+                            write_session_frame(&self.crypto,&writer,&output_write_failed,&registration).await.context("source registration refresh failed")?;
+                            advertised_workload=registration["workload_execution"].clone();
+                            let mut status=self.status.lock().expect("source registration status");
+                            status["workload_execution"]=advertised_workload.clone();
+                            status["capabilities"]=registration["capabilities"].clone();
+                        }
+                    }
                     _ = async {
                         if let Some(changes) = &mut model_changes { let _ = changes.changed().await; }
                         else { std::future::pending::<()>().await; }
@@ -680,14 +697,15 @@ impl NodeClient {
                         if let Some(server) = &self.engine.model_server { updated.extend(server.models()?); }
                         if updated == models { continue; }
                         let capabilities = self.session_capabilities(&updated, peer_advertisement.as_ref());
-                        let registration = self.registration(&self.config.node_id, &self.config.name,
-                            crate::VERSION, &capabilities, &specs, &updated, receipt_offer.as_ref(), peer_advertisement.as_ref());
+                        let registration = source_readiness.decorate(self.registration(&self.config.node_id, &self.config.name,
+                            crate::VERSION, &capabilities, &specs, &updated, receipt_offer.as_ref(), peer_advertisement.as_ref()));
                         write_session_frame(&self.crypto,&writer,&output_write_failed,&registration)
                             .await.context("model registration refresh failed")?;
                         models = updated;
+                        advertised_workload=registration["workload_execution"].clone();
                         let mut status = self.status.lock().expect("status");
                         status["models"] = json!(models);
-                        status["capabilities"] = json!(capabilities);
+                        status["capabilities"] = registration["capabilities"].clone();
                     }
                     Some(command) = local.recv() => {
                         replies.retain(|_, reply| !reply.is_closed());

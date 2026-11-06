@@ -106,7 +106,11 @@ impl Report {
                     && !self.listening_blocked
                     && self.saved_microphone_permission
                     && self.applied_microphone_permission
-                    && self.python_configured,
+                    && self.python_configured
+                    && self
+                        .resources
+                        .iter()
+                        .any(|r| r.available && r.resource_sha256.is_some()),
                 "Executable source snapshot lacks current local readiness"
             );
         }
@@ -163,59 +167,85 @@ impl crate::NodeService {
             request.expected_node_id == self.node_id,
             "Source inspection targets another node"
         );
-        self.with_permission_runtime(&request.expected_runtime_id, |engine| {
-            self.inspect_grant_configuration(|config| {
-                let saved: crate::context::NodeMetadata =
-                    serde_json::from_value(config.get("metadata").cloned().unwrap_or(json!({})))?;
-                saved.validate()?;
-                let policy: crate::NodePolicy = serde_json::from_value(
-                    config.get("permissions").cloned().unwrap_or(json!({})),
-                )?;
-                let consent = crate::listening::Consent::from_config(config)?;
-                let revision = crate::listening::revision(config)?;
-                let state = self.listening_gate.snapshot();
-                ensure!(
-                    config["node_id"] == self.node_id
-                        && self.live.lock().unwrap()["runtime_id"] == request.expected_runtime_id,
-                    "Source inspection runtime changed"
-                );
-                let report = Report {
-                    schema_version: 2,
-                    report_type: "workload_sources".into(),
-                    success: true,
-                    node_id: self.node_id.clone(),
-                    runtime_id: request.expected_runtime_id.clone(),
-                    source_kind: "microphone_energy".into(),
-                    adapter_sha256: microphone_adapter_digest(),
-                    resources: engine
-                        .applied_resources()
-                        .iter()
-                        .filter(|r| r.capability == "audio.capture")
-                        .map(|r| Resource {
-                            resource_id: crate::context::resource_id(&self.node_id, &r.id),
-                            name: r.name.clone(),
-                            area: r.area.clone(),
-                            available: r.available,
-                            resource_sha256: microphone_resource_digest(r).ok(),
-                        })
-                        .collect(),
-                    local_bindings_current: json!(saved.resources)
-                        == json!(engine.applied_resources()),
-                    listening_enabled: consent.enabled,
-                    listening_revision: revision,
-                    listening_epoch: state.0,
-                    listening_blocked: state.1,
-                    saved_microphone_permission: policy.media.microphone,
-                    applied_microphone_permission: engine.applied_permissions().media.microphone,
-                    python_configured: engine.python_configured(),
-                    capture_started: false,
-                    execution_authorized: false,
-                    execution_available: false,
-                };
-                report.validate(&request)?;
-                Ok(json!(report))
-            })
-        })
+        let version = self.source_readiness.version();
+        ensure!(version < u64::MAX, "Source readiness version exhausted");
+        let engine = self.passive_source_engine(&request.expected_runtime_id)?;
+        #[cfg(test)]
+        self.source_readiness
+            .inspecting
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let result = self.inspect_grant_configuration(|config| {
+            let saved: crate::context::NodeMetadata =
+                serde_json::from_value(config.get("metadata").cloned().unwrap_or(json!({})))?;
+            saved.validate()?;
+            let policy: crate::NodePolicy =
+                serde_json::from_value(config.get("permissions").cloned().unwrap_or(json!({})))?;
+            let consent = crate::listening::Consent::from_config(config)?;
+            let revision = crate::listening::revision(config)?;
+            let state = self.listening_gate.snapshot();
+            ensure!(
+                config["node_id"] == self.node_id
+                    && self.live.lock().unwrap()["runtime_id"] == request.expected_runtime_id,
+                "Source inspection runtime changed"
+            );
+            let workload_policy = crate::workload_policy::from_config(config)?;
+            let mut report = Report {
+                schema_version: 2,
+                report_type: "workload_sources".into(),
+                success: true,
+                node_id: self.node_id.clone(),
+                runtime_id: request.expected_runtime_id.clone(),
+                source_kind: "microphone_energy".into(),
+                adapter_sha256: microphone_adapter_digest(),
+                resources: engine
+                    .applied_resources()
+                    .iter()
+                    .filter(|r| r.capability == "audio.capture")
+                    .map(|r| Resource {
+                        resource_id: crate::context::resource_id(&self.node_id, &r.id),
+                        name: r.name.clone(),
+                        area: r.area.clone(),
+                        available: r.available,
+                        resource_sha256: microphone_resource_digest(r).ok(),
+                    })
+                    .collect(),
+                local_bindings_current: json!(saved.resources) == json!(engine.applied_resources()),
+                listening_enabled: consent.enabled,
+                listening_revision: revision,
+                listening_epoch: state.0,
+                listening_blocked: state.1,
+                saved_microphone_permission: policy.media.microphone,
+                applied_microphone_permission: engine.applied_permissions().media.microphone,
+                python_configured: engine.python_configured(),
+                capture_started: false,
+                execution_authorized: false,
+                execution_available: false,
+            };
+            if cfg!(windows)
+                && workload_policy.enabled
+                && !self.workload_gate.snapshot().1
+                && report.local_bindings_current
+                && report.listening_enabled
+                && !report.listening_blocked
+                && report.saved_microphone_permission
+                && report.applied_microphone_permission
+                && report.python_configured
+                && report
+                    .resources
+                    .iter()
+                    .any(|r| r.available && r.resource_sha256.is_some())
+            {
+                report.schema_version = 3;
+                report.execution_available = true;
+            }
+            report.validate(&request)?;
+            Ok(json!(report))
+        })?;
+        ensure!(
+            version == self.source_readiness.version(),
+            "Source configuration or runtime changed during inspection"
+        );
+        Ok(result)
     }
 }
 
@@ -316,7 +346,11 @@ pub fn render(value: &Value) -> Result<String> {
             row.resource_sha256.is_some()
         ));
     }
-    text.push_str("Configuration snapshots only. Device availability is unverified; continuous execution integration remains in development.\n");
+    text.push_str(if report.execution_available {
+        "Ready for an approved continuous workload. No capture has started; device access is checked when work begins.\n"
+    } else {
+        "Continuous input is not ready. Check microphone permission, local listening consent, workload policy and applied source settings.\n"
+    });
     Ok(text)
 }
 

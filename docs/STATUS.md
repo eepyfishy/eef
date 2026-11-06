@@ -3,6 +3,21 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: node readiness and registration without reconnect
+
+The node now derives source readiness from current applied resource/permission,
+local listening, configured Python, workload policy and runtime state. A bounded
+passive worker coalesces metadata updates without holding the live binding across
+storage. Configuration and gate changes invalidate cached readiness before I/O;
+the existing connection updates its registration in place. Three shared cases
+and one new opt-in Windows credential/TLS running-node source case await hosted
+verification. See [node readiness](WORKLOAD-NODE-READINESS.md).
+
+Command-driver source `392a53d` passed all four jobs in run `42176299981`, with
+Rust1494+1ignored and complete native Windows gates checked in the raw record.
+That confirms its synthetic peer command scope, not combined real-node source,
+physical two-PC, final main or stable release acceptance. Those gates remain open.
+
 ## In development: reviewed workload execution through owner commands
 
 The existing execute backend now branches to an engine-owned workload driver.

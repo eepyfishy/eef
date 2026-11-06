@@ -60,6 +60,10 @@ impl Default for Gate {
     }
 }
 impl Gate {
+    pub(crate) fn snapshot(&self) -> (u64, bool) {
+        let state = *self.0.borrow();
+        (state.epoch, state.blocked)
+    }
     pub(crate) fn deny(&self) {
         self.0.send_if_modified(|state| {
             if state.blocked {
@@ -261,6 +265,7 @@ impl crate::NodeService {
                     changed = policy != *next;
                     if !next.enabled {
                         self.workload_gate.deny();
+                        self.source_readiness.invalidate();
                     }
                     if changed {
                         let mut value = config.clone();
@@ -273,6 +278,7 @@ impl crate::NodeService {
                     }
                     if next.enabled {
                         self.workload_gate.allow()?;
+                        self.source_readiness.invalidate();
                     }
                 }
                 let state = *self.workload_gate.0.borrow();

@@ -6,6 +6,7 @@ use std::future::Future;
 use tokio::sync::watch;
 
 const NOTE: &str = "Local ambient-input consent only. Microphone permission and an admitted workload are still required; no capture, workload, model, restart or retry was started. Capture integration is not available yet. Revoking a supervised future is not proof that external effects stopped.";
+const SOURCE_NOTE: &str = "Local ambient-input consent only. Microphone permission, enabled workload policy, current source readiness and an admitted workload are still required; no capture, workload, model, restart or retry was started. Revoking a supervised future is not proof that external effects stopped.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -271,7 +272,10 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
         return false;
     };
     request.validate().is_ok()
-        && r.schema_version == 1
+        && matches!(
+            (r.schema_version, r.capture_integration_available),
+            (1, false) | (2, _)
+        )
         && r.report_type == "node_listening_consent"
         && r.node_id == request.expected_node_id
         && r.runtime_id == request.expected_runtime_id
@@ -279,12 +283,16 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
         && value.pointer("/consent/enabled").and_then(Value::as_bool) == Some(r.consent.enabled)
         && r.success
         && r.revision <= i64::MAX as u64
-        && !r.capture_integration_available
         && !r.capture_started
         && !r.execution_authorized
         && !r.restart_requested
         && !r.automatically_retried
-        && r.note == NOTE
+        && r.note
+            == if r.schema_version == 2 {
+                SOURCE_NOTE
+            } else {
+                NOTE
+            }
         && match request.command {
             Command::Show {} => !r.changed,
             Command::Set {
@@ -338,6 +346,7 @@ impl crate::NodeService {
                     changed = consent.enabled != enabled;
                     if !enabled {
                         self.listening_gate.deny();
+                        self.source_readiness.invalidate();
                     }
                     if changed {
                         let mut next = config.clone();
@@ -348,11 +357,16 @@ impl crate::NodeService {
                     }
                     if enabled {
                         self.listening_gate.allow()?;
+                        self.source_readiness.invalidate();
                     }
                 }
                 let state = self.listening_gate.state();
+                let source_supported = cfg!(windows) && engine.python_configured();
+                let integrated = source_supported
+                    && crate::workload_policy::from_config(config)?.enabled
+                    && !self.workload_gate.snapshot().1;
                 let report = json!(Report {
-                    schema_version: 1,
+                    schema_version: if source_supported { 2 } else { 1 },
                     report_type: "node_listening_consent".into(),
                     node_id: self.node_id.clone(),
                     runtime_id: request.expected_runtime_id.clone(),
@@ -366,12 +380,16 @@ impl crate::NodeService {
                         == Some(&json!(true)),
                     applied_microphone_permission: engine.applied_permissions().media.microphone,
                     changed,
-                    capture_integration_available: false,
+                    capture_integration_available: integrated,
                     capture_started: false,
                     execution_authorized: false,
                     restart_requested: false,
                     automatically_retried: false,
-                    note: NOTE.into(),
+                    note: if source_supported {
+                        SOURCE_NOTE.into()
+                    } else {
+                        NOTE.into()
+                    },
                 });
                 ensure!(
                     confirmed(&report, &request),

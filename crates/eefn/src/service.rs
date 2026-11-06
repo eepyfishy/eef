@@ -22,6 +22,7 @@ pub struct NodeService {
     pub(crate) microphone_pool: crate::capture_ownership::Pool,
     pub(crate) listening_gate: Arc<crate::listening::Gate>,
     pub(crate) workload_gate: Arc<crate::workload_policy::Gate>,
+    pub(crate) source_readiness: Arc<crate::workload_readiness::State>,
     pub(crate) config_path: PathBuf,
     pub(crate) node_id: String,
     pub live: Arc<std::sync::Mutex<Value>>,
@@ -123,6 +124,7 @@ impl NodeService {
             microphone_pool: Default::default(),
             listening_gate: Arc::new(crate::listening::Gate::default()),
             workload_gate: Arc::new(crate::workload_policy::Gate::default()),
+            source_readiness: Default::default(),
             config_path,
             node_id,
             model_runtime: Arc::new(std::sync::Mutex::new(None)),
@@ -252,6 +254,10 @@ impl NodeService {
         validate_config_shape(&value)?;
         validate_model_references(&value, &old, &self.config_path)?;
         let bytes = serde_json::to_vec_pretty(&value)?;
+        let source_changed = crate::workload_readiness::source_config_changed(&old, &value);
+        if source_changed {
+            self.source_readiness.invalidate();
+        }
         let workload_policy = crate::workload_policy::from_config(&value)?;
         if !workload_policy.enabled || workload_policy != crate::workload_policy::from_config(&old)?
         {
@@ -273,6 +279,9 @@ impl NodeService {
             )?;
         }
         crate::atomic_file::write(&self.config_path, &bytes)?;
+        if source_changed {
+            self.source_readiness.invalidate();
+        }
         self.setup_changed.notify_one();
         Ok(())
     }

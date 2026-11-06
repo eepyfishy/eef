@@ -336,12 +336,14 @@ pub struct PreviewGuard {
     runtime_id: String,
     listening: Arc<crate::listening::Gate>,
     listening_generation: u64,
+    source_readiness: Arc<crate::workload_readiness::State>,
 }
 impl Drop for PreviewGuard {
     fn drop(&mut self) {
         // Latch before a slow preparation/config read can hold this lock. A
         // stale guard cannot retire a replacement, even with a reused UUID.
         self.listening.retire_generation(self.listening_generation);
+        self.source_readiness.invalidate();
         let mut binding = self.runtime.binding.lock().unwrap();
         if binding
             .as_ref()
@@ -814,11 +816,13 @@ impl NodeService {
             });
             runtime.generation.send_replace(Some(runtime_id.clone()));
         }
+        self.source_readiness.invalidate();
         PreviewGuard {
             runtime,
             runtime_id,
             listening: self.listening_gate.clone(),
             listening_generation,
+            source_readiness: self.source_readiness.clone(),
         }
     }
 
@@ -867,6 +871,22 @@ impl NodeService {
             .upgrade()
             .ok_or_else(|| anyhow::anyhow!("Node runtime unavailable"))?;
         inspect(&engine)
+    }
+
+    /// Passive metadata inspection must not hold the live binding across I/O.
+    /// Its caller fences the source-readiness version before using the result.
+    pub(crate) fn passive_source_engine(&self, expected: &str) -> anyhow::Result<Arc<NodeEngine>> {
+        let binding = self.preview.binding.lock().unwrap();
+        let bound = binding
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Node runtime unavailable"))?;
+        if bound.runtime_id != expected {
+            anyhow::bail!("Node source runtime changed");
+        }
+        bound
+            .engine
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("Node runtime unavailable"))
     }
 
     pub(crate) fn input_workflow_permit(

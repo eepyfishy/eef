@@ -118,7 +118,7 @@ fn executable_snapshot_requires_explicit_new_schema_and_all_current_readiness_wi
     ready.applied_microphone_permission = true;
     ready.python_configured = true;
     ready.validate(&f.request()).unwrap();
-    for fault in 0..9 {
+    for fault in 0..10 {
         let mut wrong = ready.clone();
         match fault {
             0 => wrong.schema_version = 2,
@@ -129,7 +129,8 @@ fn executable_snapshot_requires_explicit_new_schema_and_all_current_readiness_wi
             5 => wrong.saved_microphone_permission = false,
             6 => wrong.applied_microphone_permission = false,
             7 => wrong.python_configured = false,
-            _ => wrong.execution_authorized = true,
+            8 => wrong.execution_authorized = true,
+            _ => wrong.resources.clear(),
         }
         assert!(wrong.validate(&f.request()).is_err());
     }

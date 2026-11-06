@@ -107,6 +107,7 @@ pub mod workload_inspection;
 pub mod workload_leases;
 pub mod workload_network;
 pub mod workload_policy;
+mod workload_readiness;
 mod workload_runtime;
 pub mod workload_sources;
 
