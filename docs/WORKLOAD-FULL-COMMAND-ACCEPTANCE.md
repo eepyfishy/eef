@@ -1,10 +1,15 @@
 # Combined workload command and source acceptance
 
-The new opt-in Windows test joins the complete runtime path: owner HTTP compile
-and conditional approval, input through the already running origin node, the
+The new opt-in Windows test joins the complete runtime path: explicit submission
+and compilation through the already running origin node, owner HTTP conditional approval, the
 coordinator's original engine-owned issuer/driver, credential-authenticated pinned
 TLS, the actual NodeClient/NodeService/GrantLedger, and the shipping source adapter.
 No dashboard, language model or physical microphone participates.
+
+The origin-admission follow-up replaces direct test-helper review creation and
+owner compilation with the actual concrete-input mailbox. Its built-in source
+needs no one-shot audio plugin. The original `480e4ad` candidate used owner HTTP
+compilation; acceptance of that checkpoint cannot establish the later input path.
 
 The test creates a disposable stdlib venv from the explicitly pinned CI interpreter
 using `--without-pip`. It installs only the existing synthetic microphone dependency
@@ -53,7 +58,11 @@ builds retain their existing defaults. The strict CI guard verifies both opt-in
 features and the adapter-test placement; all original native suites, failure gates,
 source-host restrictions, deadlines and dependency locks remain required.
 
-Full changed-source hosted verification is pending. This is a synthetic device
+Candidate `480e4ad` passed all four jobs in hosted run `42184728406`, including
+Rust1501+1ignored across 17 Windows groups and every required native suite/gate.
+That checkpoint verifies the separate payload checksum and the combined workflow
+using owner compilation. The later origin-admission/mailbox follow-up requires
+its own changed-source hosted verification. This is a synthetic device
 workflow with a normal temporary Python environment, not evidence for a physical
 microphone, packaged installer, long source, partition behavior or two physical PCs.
 The earlier main capture deadline failure and remaining stable v0.4.0 implementation

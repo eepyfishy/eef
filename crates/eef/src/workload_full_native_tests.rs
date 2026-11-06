@@ -63,7 +63,12 @@ async fn full_source_post(
     assert!(status.is_success(), "Command {path} failed: {value}");
     value
 }
-async fn full_source_plan(runtime: &crate::Runtime, client: &reqwest::Client, base: &str) -> Plan {
+async fn full_source_plan(
+    runtime: &crate::Runtime,
+    service: &eefn::NodeService,
+    client: &reqwest::Client,
+    base: &str,
+) -> Plan {
     let source = runtime
         .node_server
         .workload_sources("origin", 5)
@@ -88,26 +93,36 @@ async fn full_source_plan(runtime: &crate::Runtime, client: &reqwest::Client, ba
     };
     template.limits.max_source_frames = 400;
     input.params = json!({"workload":template});
-    let (review, input) = review_input(&runtime.engine, input);
-    let compile = PlanningCommand::Compile {
-        id: review.plan_id.clone(),
-        expected_revision: review.revision,
+    let submission = eefn::request_submission::ConcreteCommand {
         operation_id: uuid::Uuid::new_v4().to_string(),
-        input,
+        request: eefn::request_submission::ConcreteInput {
+            schema_version: 1,
+            original_text:
+                "Observe the explicitly selected microphone source for a bounded session".into(),
+            title: "Bounded microphone source".into(),
+            input,
+        },
     };
-    let result = full_source_post(
-        client,
-        base,
-        "/api/commands/requests/planning",
-        json!({"schema_version":1,"expected_runtime_id":runtime.runtime_id(),"command":compile}),
-    )
-    .await;
-    assert!(crate::request_planning::confirmed_report(
-        &result,
-        runtime.runtime_id(),
-        &compile
+    let result = service
+        .concrete_request(eefn::request_submission::ConcreteRequest {
+            schema_version: 1,
+            expected_node_id: "origin".into(),
+            command: submission.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        result["success"], true,
+        "Origin submission failed: {result}"
+    );
+    assert!(eefn::request_submission::confirmed(
+        &result["result"],
+        "origin",
+        &submission
     ));
-    let planned: Plan = serde_json::from_value(result["plan"].clone()).unwrap();
+    let id = result["result"]["plan"]["id"].as_str().unwrap();
+    let planned = runtime.engine.store.get(id).unwrap();
+    assert!(planned.approval.is_none() && planned.execution.is_none());
     let approval = ApprovalCommand {
         id: planned.plan_id.clone(),
         expected_revision: planned.revision,
@@ -317,7 +332,11 @@ async fn real_workload_commands_origin_tls_source_completion_stop_and_reconnect_
         let app = super::router_with_ui(runtime.clone(), false)
             .into_make_service_with_connect_info::<std::net::SocketAddr>();
         let api = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let plan = full_source_plan(&runtime, &http, &base).await;
+        assert!(
+            !engine.capabilities().contains(&"audio.capture".into()),
+            "Built-in source admission must not depend on the one-shot plugin"
+        );
+        let plan = full_source_plan(&runtime, &service, &http, &base).await;
         let command = execute(&plan);
         assert!(
             !trace.join("pids.json").exists(),
@@ -468,7 +487,7 @@ async fn real_workload_commands_origin_tls_source_completion_stop_and_reconnect_
             let next_trace = dir.path().join("next-trace");
             std::fs::create_dir(&next_trace).unwrap();
             full_source_dependency(&python, &next_trace, "finite");
-            let next = full_source_plan(&runtime, &http, &base).await;
+            let next = full_source_plan(&runtime, &service, &http, &base).await;
             let next_command = execute(&next);
             full_source_post(&http,&base,"/api/commands/requests/execute",json!({"schema_version":1,"expected_runtime_id":runtime.runtime_id(),"command":next_command})).await;
             let completed = full_source_finish(&runtime, &next, &next_trace).await;

@@ -918,11 +918,10 @@ mod workload_full_native_acceptance {
     use super::*;
     use crate::{
         request_execution::AttemptState,
-        request_planning::PlanningCommand,
         task::{Plan, PlanStatus},
         workload_jobs::{
             ApprovalCommand,
-            tests::{execute, review_input, template_input},
+            tests::{execute, template_input},
         },
     };
     use eefn::workload_leases::definition::{EnergyParameters, Source, Template};

@@ -73,13 +73,26 @@ impl crate::Runtime {
             if input.input.template == eefn::workload_leases::definition::TEMPLATE {
                 let template =
                     eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
-                if !capabilities.iter().any(|c| c == "audio.capture")
-                    || !self
-                        .disclosed_planning_nodes(context.origin_node())
-                        .await?
-                        .contains(&template.executor_node)
+                if !self
+                    .disclosed_planning_nodes(context.origin_node())
+                    .await?
+                    .contains(&template.executor_node)
                 {
-                    bail!("Continuous source capability/node unavailable or not disclosed")
+                    bail!("Continuous source node unavailable or not disclosed")
+                }
+                // This built-in source is independent of the one-shot audio
+                // plugin. Review binds its own authenticated passive snapshot;
+                // permission/listening/policy and live execution stay separate.
+                self.node_server
+                    .workload_sources(&template.executor_node, 5)
+                    .await?
+                    .confirms_template(&template)?;
+                if !self
+                    .disclosed_planning_nodes(context.origin_node())
+                    .await?
+                    .contains(&template.executor_node)
+                {
+                    bail!("Continuous source disclosure changed during inspection")
                 }
                 let wrapper = eefn::workload_leases::definition::CAPABILITY.to_owned();
                 if !capabilities.contains(&wrapper) {
@@ -163,6 +176,7 @@ mod tests {
         event::EventBus,
         task::{PlanStatus, TaskEngine},
     };
+    include!("workload_origin_admission_tests.rs");
     fn input() -> ConcreteInput {
         ConcreteInput {
             schema_version: 1,

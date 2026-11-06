@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: origin admission independent of the one-shot media plugin
+
+New continuous-source reviews now bind a fresh authenticated disclosed node source
+snapshot instead of requiring the separate one-shot audio plugin. Resource/adapter
+digests and disclosure are checked before saving review; execution permissions and
+owner approval remain separate. Exact retained receipts avoid current provider
+lookup. Two shared credential/TLS origin-mailbox tests and the extended Windows
+combined source test await changed-source hosted verification. See
+[origin admission](WORKLOAD-ORIGIN-ADMISSION.md).
+
 ## In development: combined owner/origin command and real node source acceptance
 
 A new opt-in Windows adapter test joins actual owner HTTP planning/approval,
@@ -13,6 +23,13 @@ event evidence; stop/disconnect retain uncertainty, and a new explicit approved 
 proves reuse without replaying or rewriting old history. Existing CI gates remain
 and explicitly add the parent native-test feature. Full verification is pending.
 See [combined acceptance](WORKLOAD-FULL-COMMAND-ACCEPTANCE.md).
+
+Candidate `480e4ad` passed all four hosted jobs in run `42184728406`.
+The raw Windows record contains Rust1501+1ignored across 17 groups, all 36 native
+suites and the completed pre-registration-close, firewall63, listening and first-run
+gates. This verifies the distinct payload checksum and that checkpoint's synthetic
+device command/source workflow. It does not establish the later origin-admission
+change, physical devices, final main or stable release acceptance.
 
 Readiness source `82aeabe` passed both Linux jobs and Windows/dashboard in run
 `42179897667`, but Windows/headless Rust failed the new credential/TLS source
