@@ -1119,6 +1119,9 @@ impl crate::Runtime {
             bail!("Exact owner approval/revision is not active")
         }
         let driver = Driver::new(self);
+        if p.goal.template == eefn::workload_leases::definition::TEMPLATE {
+            return self.execute_workload(&p, &command, origin).await;
+        }
         for index in 0..p.tasks.len() {
             let s = driver.session(&p, index).await?;
             if s["issuer_id"] != json!(approval.issuer_id) {
@@ -1170,7 +1173,7 @@ async fn inspect_before<T>(
     }
     Ok(value)
 }
-fn report(runtime: &crate::Runtime, p: &Plan, reused: bool) -> Result<Value> {
+pub(crate) fn report(runtime: &crate::Runtime, p: &Plan, reused: bool) -> Result<Value> {
     let e = p.execution.as_ref().context("No execution receipt")?;
     Ok(json!(ExecuteReport {schema_version:1,report_type:"coordinator_request_execution".into(),success:true,runtime_id:runtime.instance_id.clone(),
         id:p.plan_id.clone(),operation_id:e.command.operation_id.clone(),source_revision:e.command.expected_revision,approval_sha256:e.command.approval_sha256.clone(),

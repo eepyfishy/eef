@@ -3,6 +3,22 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: reviewed workload execution through owner commands
+
+The existing execute backend now branches to an engine-owned workload driver.
+It checks fresh credential/TLS source/runtime/policy readiness, serializes offer
+and lease enqueue with stop, and retains the original issuer through bounded
+authenticated frames. Events save through the existing journal writer while
+control remains serviceable; completion checks the durable definition-bound
+prefix. Per-job cancellation interrupts the driver, which retires authority
+before the exact one-attempt stop path. Eight new journal/transport/owner-HTTP
+cases await hosted verification. See [command driver](WORKLOAD-COMMAND-DRIVER.md).
+
+The stop candidate `c61d7cc` passed both Linux jobs and Windows/dashboard in run
+`42173890650`; Windows/headless native checks remain pending. Production node
+execution advertising, full credential/TLS NodeClient source acceptance, the
+existing main capture failure, physical testing and stable release remain open.
+
 ## In development: exact durable workload stop delivery
 
 Issued workloads can now retain the existing jobs-stop intent and retire to

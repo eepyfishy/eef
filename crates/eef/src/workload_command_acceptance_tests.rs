@@ -141,6 +141,7 @@ async fn owner_http_and_running_origin_receipt_commands_share_workload_history_w
                         acknowledgement: None,
                         completion: None,
                         stop: None,
+                        observations: vec![],
                     }),
                 });
                 saved.status = crate::task::PlanStatus::Running;

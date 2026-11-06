@@ -49,6 +49,7 @@ pub mod update;
 #[cfg(feature = "dashboard")]
 mod web_ui;
 pub mod workload_approval;
+mod workload_driver;
 mod workload_job_inspection;
 pub mod workload_jobs;
 pub mod world;

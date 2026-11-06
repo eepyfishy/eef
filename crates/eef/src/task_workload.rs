@@ -9,6 +9,7 @@ use std::sync::{
 pub(super) struct State {
     active: AtomicBool,
     live: Mutex<bool>,
+    cancelled: tokio::sync::watch::Sender<bool>,
 }
 impl State {
     pub(super) fn active(&self) -> bool {
@@ -18,6 +19,7 @@ impl State {
         if let Ok(mut live) = self.live.lock() {
             *live = false;
         }
+        self.cancelled.send_replace(true);
     }
 }
 pub(crate) struct WorkloadJob {
@@ -25,6 +27,9 @@ pub(crate) struct WorkloadJob {
     state: Arc<State>,
 }
 impl WorkloadJob {
+    pub(crate) fn stop_receiver(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.state.cancelled.subscribe()
+    }
     pub(crate) fn check(&self, id: &str) -> Result<()> {
         if self.id != id
             || !self.state.active()
@@ -86,6 +91,7 @@ impl TaskEngine {
         let state = Arc::new(State {
             active: AtomicBool::new(true),
             live: Mutex::new(true),
+            cancelled: tokio::sync::watch::channel(false).0,
         });
         active.workloads.insert(id.into(), state.clone());
         Ok(WorkloadJob {

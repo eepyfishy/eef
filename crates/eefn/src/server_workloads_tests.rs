@@ -101,6 +101,99 @@ fn deadline() -> tokio::time::Instant {
 }
 
 #[tokio::test]
+async fn workload_preflight_requires_current_runtime_policy_capability_stop_and_fresh_session() {
+    for fault in 0..5 {
+        let (server, d, mut outgoing) = fixture().await;
+        {
+            let mut connections = server.inner.connections.write().await;
+            let c = connections.get_mut("owner").unwrap();
+            let r = &mut c.state.as_mut().unwrap().registration;
+            r["execution_grants"] =
+                json!({"schema_version":1,"available":true,"timing_mode":crate::grant_time::MODE});
+            r["grant_stop"] = json!(crate::grants::stop::Advertisement::new(true));
+        }
+        let current = server.workload_session(&d.template(), 5).await.unwrap();
+        assert_eq!(current.session, d.session_id);
+        assert_eq!(current.issuer, d.issuer_id);
+        {
+            let mut connections = server.inner.connections.write().await;
+            let c = connections.get_mut("owner").unwrap();
+            let r = &mut c.state.as_mut().unwrap().registration;
+            match fault {
+                0 => r["registration_receipt"]["runtime_id"] = json!(Uuid::new_v4().to_string()),
+                1 => r["workload_execution"]["policy"]["enabled"] = json!(false),
+                2 => r["capabilities"] = json!([]),
+                3 => r["grant_stop"]["available"] = json!(false),
+                _ => c.last_seen = Instant::now() - Duration::from_secs(6),
+            }
+        }
+        assert!(server.workload_session(&d.template(), 5).await.is_err());
+        assert!(
+            outgoing.try_recv().is_err(),
+            "Inspection sends no source offer or lease"
+        );
+    }
+}
+
+#[tokio::test]
+async fn preparing_workload_sends_nothing_and_dispatch_is_once_on_its_original_session() {
+    for cancelled in [false, true] {
+        let (server, d, mut outgoing) = fixture().await;
+        let mut link = server
+            .prepare_workload(d.clone(), deadline())
+            .await
+            .unwrap();
+        assert!(outgoing.try_recv().is_err());
+        if cancelled {
+            server
+                .fail_pending_for("owner", Uuid::parse_str(&d.session_id).unwrap())
+                .await;
+            assert!(link.dispatch_offer().is_err());
+        } else {
+            link.dispatch_offer().unwrap();
+            let offer = outgoing.recv().await.unwrap();
+            assert_eq!(offer["definition"], json!(d));
+            assert!(link.dispatch_offer().is_err());
+        }
+        assert!(outgoing.try_recv().is_err());
+        drop(link);
+        assert!(server.inner.workloads.0.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn workload_event_summary_binds_exact_definition_and_refuses_changed_prefix_or_budget() {
+    let d = definition(&"a".repeat(64), &Uuid::new_v4().to_string());
+    let event: crate::workload_network::Event =
+        serde_json::from_value(event(&d, 1)["event"].clone()).unwrap();
+    let summary =
+        crate::workload_network::summarize_events(&d, std::slice::from_ref(&event)).unwrap();
+    assert_eq!(summary.count, 1);
+    assert_eq!(summary.bytes, serde_json::to_vec(&event).unwrap().len());
+    let mut changed = d.clone();
+    changed.session_id = Uuid::new_v4().to_string();
+    assert_ne!(
+        summary.prefix_sha256,
+        crate::workload_network::summarize_events(&changed, std::slice::from_ref(&event))
+            .unwrap()
+            .prefix_sha256
+    );
+    assert!(
+        crate::workload_network::summarize_events(&d, &[event.clone(), event.clone()]).is_err()
+    );
+    let mut wrong = event;
+    wrong.source_sequence = 2;
+    wrong.source_frames = 160;
+    assert!(crate::workload_network::summarize_events(&d, &[wrong]).is_err());
+    let mut tight = d.clone();
+    tight.events.max_event_bytes = 128;
+    tight.validate().unwrap();
+    let sample: crate::workload_network::Event =
+        serde_json::from_value(self::event(&d, 1)["event"].clone()).unwrap();
+    assert!(crate::workload_network::summarize_events(&tight, &[sample]).is_err());
+}
+
+#[tokio::test]
 async fn workload_stop_routes_only_exact_original_session_and_requires_intent_only_receipt() {
     for invalid_receipt in [false, true] {
         let (server, d, mut outgoing) = fixture().await;

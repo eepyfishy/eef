@@ -1,6 +1,6 @@
 //! Reviewed session issuance in the existing JobStore/AttemptJournal model.
-//! Planning and conditional approval have owner command callers. Issuance remains
-//! internal until authenticated source execution and termination are admitted.
+//! Planning, approval and execution share owner command callers. Production
+//! nodes still advertise no execution until full source integration is accepted.
 use crate::{
     jobs::JobStore,
     request_approval::ApprovalRecord,
@@ -73,12 +73,15 @@ pub struct Execution {
     pub completion: Option<Completion>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop: Option<crate::execution_stop::Delivery>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observations: Vec<eefn::workload_network::Event>,
 }
 pub(crate) struct Snapshot {
     immutable: serde_json::Value,
     acknowledgement: Option<serde_json::Value>,
     completion: Option<serde_json::Value>,
     state: AttemptState,
+    observations: Vec<eefn::workload_network::Event>,
 }
 pub(crate) fn snapshot(plan: &Plan) -> Option<Snapshot> {
     let e = plan.execution.as_ref()?;
@@ -89,11 +92,18 @@ pub(crate) fn snapshot(plan: &Plan) -> Option<Snapshot> {
         acknowledgement: w.acknowledgement.as_ref().map(|a| json!(a)),
         completion: w.completion.as_ref().map(|c| json!(c)),
         state: w.state,
+        observations: w.observations.clone(),
     })
 }
 pub(crate) fn preserve(old: &Option<Snapshot>, plan: &Plan) -> Result<()> {
     let Some(old) = old else { return Ok(()) };
     let new = snapshot(plan).context("Retained workload issuance cannot be erased")?;
+    ensure!(
+        new.observations.starts_with(&old.observations)
+            && (matches!(old.state, AttemptState::Issued | AttemptState::Accepted)
+                || new.observations == old.observations),
+        "Retained workload observations cannot be erased, replaced or extended after retirement"
+    );
     ensure!(
         old.immutable == new.immutable
             && (old.acknowledgement.is_none() || old.acknowledgement == new.acknowledgement)
@@ -202,7 +212,10 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
     w.definition.validate()?;
     e.command.validate()?;
     unique_operation(plan, &e.command.operation_id)?;
-    let expected_schema = if w.stop.is_some() {
+    eefn::workload_network::summarize_events(&w.definition, &w.observations)?;
+    let expected_schema = if !w.observations.is_empty() {
+        5
+    } else if w.stop.is_some() {
         4
     } else if w.completion.is_some() {
         3
@@ -259,6 +272,7 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
         );
     }
     if let Some(completion) = &w.completion {
+        completion.validate_events(&w.definition, &w.observations)?;
         ensure!(
             completion.recorded_at_ms <= plan.updated_at_ms,
             "Completion is newer than its coordinator checkpoint"
@@ -275,6 +289,7 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
         match w.state {
             AttemptState::Issued =>
                 w.acknowledgement.is_none()
+                    && w.observations.is_empty()
                     && w.completion.is_none()
                     && matches!(
                         (plan.status, e.stop_requested_at_ms),
@@ -521,10 +536,20 @@ impl Drop for Issued {
     }
 }
 impl Issued {
+    pub(crate) fn deadline(&self) -> tokio::time::Instant {
+        self.deadline.into()
+    }
+    pub(crate) fn stop_receiver(&self) -> Result<tokio::sync::watch::Receiver<bool>> {
+        Ok(self
+            .ownership
+            .as_ref()
+            .context("Workload driver requires original engine ownership")?
+            .stop_receiver())
+    }
     pub fn definition(&self) -> &Definition {
         &self.definition
     }
-    fn retire(&mut self) {
+    pub(crate) fn retire(&mut self) {
         if self.retired {
             return;
         }
@@ -595,7 +620,6 @@ impl Issued {
 /// Product issuance reserves an engine lifetime BEFORE any asynchronous storage.
 /// Current authenticated node/source checks remain the runtime caller's job.
 /// This never dispatches a grant/probe or reconstructs authority from a row.
-#[allow(dead_code)]
 pub(crate) async fn issue_owned(
     engine: &crate::task::TaskEngine,
     command: &ExecuteCommand,

@@ -12,7 +12,7 @@ use std::time::Instant;
 /// in the original stream. None remains uncertainty, never inferred inactivity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Event {
+pub struct Event {
     pub schema_version: u32,
     pub kind: Kind,
     pub sequence: u64,
@@ -25,7 +25,7 @@ pub(crate) struct Event {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Kind {
+pub enum Kind {
     MicrophoneActivity,
 }
 
@@ -176,7 +176,7 @@ impl Filter {
 }
 
 impl Event {
-    pub(crate) fn validate(&self, definition: &Definition) -> Result<()> {
+    pub fn validate(&self, definition: &Definition) -> Result<()> {
         let Source::MicrophoneEnergy { parameters, .. } = &definition.source;
         ensure!(
             self.schema_version == 2
@@ -196,7 +196,7 @@ impl Event {
         Ok(())
     }
     /// Validate a retained filtered prefix, never raw observations or authority.
-    pub(crate) fn follows(&self, definition: &Definition, previous: Option<&Self>) -> Result<()> {
+    pub fn follows(&self, definition: &Definition, previous: Option<&Self>) -> Result<()> {
         self.validate(definition)?;
         match previous {
             None => ensure!(

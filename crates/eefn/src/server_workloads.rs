@@ -251,6 +251,7 @@ pub struct WorkloadLink {
     deadline: tokio::time::Instant,
     completion: Option<report_queue::Envelope>,
     finished: bool,
+    offer: Option<Offer>,
 }
 impl Drop for WorkloadLink {
     fn drop(&mut self) {
@@ -258,6 +259,24 @@ impl Drop for WorkloadLink {
     }
 }
 impl WorkloadLink {
+    /// Queue the prepared offer once. The coordinator serializes this call
+    /// under its original engine control gate; preparing alone sends nothing.
+    pub fn dispatch_offer(&mut self) -> Result<()> {
+        ensure!(
+            !self.finished
+                && !*self.cancelled.borrow()
+                && tokio::time::Instant::now() < self.deadline,
+            "Workload offer belongs to a retired route"
+        );
+        let offer = self
+            .offer
+            .take()
+            .context("Workload offer already consumed; no retry")?;
+        self.sender
+            .try_send(json!(offer))
+            .context("Workload offer not queued; no retry")?;
+        Ok(())
+    }
     pub fn peer(&self) -> &WorkloadPeer {
         &self.peer
     }
@@ -340,9 +359,83 @@ impl WorkloadLink {
 }
 
 impl NodeServer {
+    /// Current trusted connection metadata only; not approval or a lease.
+    pub async fn workload_session(
+        &self,
+        template: &crate::workload_leases::definition::Template,
+        freshness_seconds: u64,
+    ) -> Result<crate::workload_network::Session> {
+        template.validate()?;
+        ensure!(
+            (1..=300).contains(&freshness_seconds),
+            "Invalid workload registration freshness"
+        );
+        let connections = self.inner.connections.read().await;
+        let c = connections
+            .get(&template.executor_node)
+            .context("Workload node is not connected")?;
+        self.check_grant_connection(c)?;
+        self.check_lease_connection(c)?;
+        ensure!(
+            c.last_seen.elapsed() < Duration::from_secs(freshness_seconds),
+            "Workload registration is stale"
+        );
+        let registered = &c
+            .state
+            .as_ref()
+            .context("Workload registration unavailable")?
+            .registration;
+        let support: Advertisement =
+            serde_json::from_value(registered["workload_execution"].clone())?;
+        support.validate()?;
+        let stop: crate::grants::stop::Advertisement =
+            serde_json::from_value(registered["grant_stop"].clone())?;
+        stop.validate()?;
+        ensure!(
+            support.available && stop.available,
+            "Node does not advertise workload execution and stop support"
+        );
+        let runtime = support.runtime_id.context("Workload runtime unavailable")?;
+        let policy = support.policy.context("Workload policy unavailable")?;
+        ensure!(
+            registered["registration_receipt"]["runtime_id"] == runtime
+                && registered["capabilities"]
+                    .as_array()
+                    .is_some_and(|caps| caps
+                        .iter()
+                        .any(|v| v == crate::workload_leases::definition::CAPABILITY))
+                && template.limits.max_session_ms <= policy.max_session_ms
+                && template.limits.max_lease_ms <= policy.max_lease_ms,
+            "Workload runtime, capability or policy bounds changed"
+        );
+        let issuer = self
+            .inner
+            .authentication
+            .tls
+            .as_ref()
+            .context("Workload issuer TLS unavailable")?
+            .fingerprint()?;
+        Ok(crate::workload_network::Session {
+            node: c.info.node_id.clone(),
+            issuer,
+            session: c.session_id.to_string(),
+            runtime,
+            policy,
+        })
+    }
     /// Callers must first retain reviewed issuance with its original monotonic
     /// authority. This opens only a typed route; it grants no lease by itself.
     pub async fn open_workload(
+        &self,
+        definition: Definition,
+        deadline: tokio::time::Instant,
+    ) -> Result<WorkloadLink> {
+        let mut link = self.prepare_workload(definition, deadline).await?;
+        link.dispatch_offer()?;
+        Ok(link)
+    }
+    /// Prepare a bounded session route without sending an execution offer.
+    pub async fn prepare_workload(
         &self,
         definition: Definition,
         deadline: tokio::time::Instant,
@@ -480,13 +573,10 @@ impl NodeServer {
             deadline,
             completion: None,
             finished: false,
+            offer: Some(offer),
         };
-        connection
-            .sender
-            .try_send(json!(offer))
-            .context("Workload offer not queued; no retry")?;
-        // Keep routing read ownership until the exact waiter AND offer exist.
-        // Connection cleanup cannot drain before this insertion completes.
+        // Keep routing read ownership through route insertion. A later dispatch
+        // checks its session cancellation; it never looks up a replacement node.
         Ok(link)
     }
 }

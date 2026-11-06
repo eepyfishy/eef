@@ -859,7 +859,12 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
                 value["workload"] = json!({"grant_id":w.definition.grant_id,
                     "task_id":w.definition.task_id,"node_id":w.definition.executor_node,
                     "state":w.state,"acknowledged":w.acknowledgement.is_some(),
-                    "completed":w.completion.is_some(),"stop":w.stop});
+                    "completed":w.completion.is_some(),"stop":w.stop,"event_count":w.observations.len()});
+                if details {
+                    let first = w.observations.len().saturating_sub(8);
+                    value["workload"]["events"] = json!(&w.observations[first..]);
+                    value["workload"]["events_truncated"] = json!(first != 0);
+                }
             }
             if execution.stop_requested_at_ms.is_some() {
                 value["stop_requested"] = json!(true);

@@ -910,4 +910,5 @@ mod workload_receipt_tests {
         tests::{execute, planned, policy, synthetic_ack},
     };
     include!("workload_command_acceptance_tests.rs");
+    include!("workload_driver_command_tests.rs");
 }

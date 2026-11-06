@@ -135,6 +135,7 @@ impl JobStore {
                                     acknowledgement: None,
                                     completion: None,
                                     stop: None,
+                                    observations: vec![],
                                 }),
                             });
                             plan.status = PlanStatus::Running;

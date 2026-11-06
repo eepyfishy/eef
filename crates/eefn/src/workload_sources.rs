@@ -83,7 +83,10 @@ impl Report {
         request.validate()?;
         ensure!(
             self.success
-                && self.schema_version == 2
+                && matches!(
+                    (self.schema_version, self.execution_available),
+                    (2, false) | (3, true)
+                )
                 && self.report_type == "workload_sources"
                 && self.node_id == request.expected_node_id
                 && self.runtime_id == request.expected_runtime_id
@@ -91,12 +94,22 @@ impl Report {
                 && digest(&self.adapter_sha256)
                 && !self.capture_started
                 && !self.execution_authorized
-                && !self.execution_available
                 && self.listening_revision <= i64::MAX as u64
                 && self.resources.len() <= 128
                 && serde_json::to_vec(self)?.len() <= 256 * 1024,
             "Unconfirmed source snapshot or unsupported execution claim"
         );
+        if self.execution_available {
+            ensure!(
+                self.local_bindings_current
+                    && self.listening_enabled
+                    && !self.listening_blocked
+                    && self.saved_microphone_permission
+                    && self.applied_microphone_permission
+                    && self.python_configured,
+                "Executable source snapshot lacks current local readiness"
+            );
+        }
         let prefix = format!("{}::", self.node_id);
         let mut ids = HashSet::new();
         for row in &self.resources {

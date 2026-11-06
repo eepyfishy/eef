@@ -106,6 +106,39 @@ fn stale_runtime_and_malformed_claims_fail_without_a_fallback() {
     assert!(duplicated.validate(&f.request()).is_err());
 }
 #[test]
+fn executable_snapshot_requires_explicit_new_schema_and_all_current_readiness_without_authority() {
+    let f = Fixture::new();
+    let mut ready = f.inspect();
+    ready.schema_version = 3;
+    ready.execution_available = true;
+    ready.local_bindings_current = true;
+    ready.listening_enabled = true;
+    ready.listening_blocked = false;
+    ready.saved_microphone_permission = true;
+    ready.applied_microphone_permission = true;
+    ready.python_configured = true;
+    ready.validate(&f.request()).unwrap();
+    for fault in 0..9 {
+        let mut wrong = ready.clone();
+        match fault {
+            0 => wrong.schema_version = 2,
+            1 => wrong.execution_available = false,
+            2 => wrong.local_bindings_current = false,
+            3 => wrong.listening_enabled = false,
+            4 => wrong.listening_blocked = true,
+            5 => wrong.saved_microphone_permission = false,
+            6 => wrong.applied_microphone_permission = false,
+            7 => wrong.python_configured = false,
+            _ => wrong.execution_authorized = true,
+        }
+        assert!(wrong.validate(&f.request()).is_err());
+    }
+    let current = f.inspect();
+    assert_eq!(current.schema_version, 2);
+    assert!(!current.execution_available);
+    assert!(!current.capture_started && !current.execution_authorized);
+}
+#[test]
 fn pending_binding_edits_and_local_revocation_are_visible_without_exporting_new_private_values() {
     let f = Fixture::new();
     let original = f.inspect();

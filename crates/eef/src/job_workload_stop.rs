@@ -99,7 +99,8 @@ impl JobStore {
                                         report: None,
                                         outcome_unknown: true,
                                     });
-                                    execution.schema_version = 4;
+                                    execution.schema_version =
+                                        if w.observations.is_empty() { 4 } else { 5 };
                                 }
                                 StopCheckpoint::Receipt(report) => {
                                     let saved = w

@@ -1,8 +1,56 @@
 //! Typed connection metadata for the continuous workload route. These values
 //! cannot create a lease proof, consume a grant or authorize a source by itself.
+pub use crate::workload_events::{Event, Kind as EventKind};
 use crate::workload_leases::{Policy, definition::Definition};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+/// Historical metadata only. Hashes and event rows cannot mint source/exit evidence.
+pub struct EventSummary {
+    pub count: u64,
+    pub bytes: usize,
+    pub prefix_sha256: String,
+}
+pub fn summarize_events(definition: &Definition, events: &[Event]) -> Result<EventSummary> {
+    definition.validate()?;
+    ensure!(
+        events.len() as u64 <= definition.events.max_events,
+        "Workload event count exceeded"
+    );
+    let mut prefix = hex::encode(Sha256::digest(definition.scope()?.grant_sha256.as_bytes()));
+    let mut bytes = 0usize;
+    let mut previous = None;
+    for event in events {
+        event.follows(definition, previous)?;
+        let data = serde_json::to_vec(event)?;
+        bytes = bytes
+            .checked_add(data.len())
+            .ok_or_else(|| anyhow::anyhow!("Workload event bytes overflow"))?;
+        ensure!(
+            data.len() <= definition.events.max_event_bytes
+                && bytes <= definition.events.max_total_bytes,
+            "Workload event metadata budget exceeded"
+        );
+        let row = hex::encode(Sha256::digest(&data));
+        prefix = hex::encode(Sha256::digest(format!("{prefix}{row}").as_bytes()));
+        previous = Some(event);
+    }
+    Ok(EventSummary {
+        count: events.len() as u64,
+        bytes,
+        prefix_sha256: prefix,
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Session {
+    pub node: String,
+    pub issuer: String,
+    pub session: String,
+    pub runtime: String,
+    pub policy: Policy,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
