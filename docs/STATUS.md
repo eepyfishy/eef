@@ -3,6 +3,27 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: explicit microphone preparation outcomes
+
+Confirmed refusals before this attempt's review checkpoint now carry bounded,
+identity-checked reason codes and actionable source/resource guidance. Storage,
+reply or compilation failure after entering authoring remains unconfirmed; a
+refusal never claims that earlier/concurrent jobs or effects are absent. Exact
+reuse of a retained uncompiled typed review now inspects its incomplete status
+without retrying compilation or requiring a live source. Three shared report/
+compatibility/rendering tests and one actual journal/credential-TLS partial-save
+case await hosted verification. See [outcome semantics](MICROPHONE-AUTHORING.md).
+
+Authoring source `b05e5a2` passed Linux but failed both Windows jobs in run
+`42228933980`: the dashboard parser overflowed the existing one-MiB stack guard,
+the headless source test exceeded its original 30-second disposable venv setup
+budget, and the first native registration script timed out. The new microphone
+parser now uses boxed flattened argument groups and a boxed variant; flags/defaults
+are preserved and the same stack guard additionally parses the new command. The
+venv fixture records bounded numeric setup/cleanup observations while retaining its
+original deadline and failed outcome. The venv timeout's cause remains unproven.
+Full changed-source Windows/native verification is still required.
+
 ## In development: typed microphone request authoring without JSON
 
 The running node now has `requests submit-microphone` and a matching API adapter.
@@ -24,6 +45,12 @@ disclosure checks, admission now adds that exact template's complete review set.
 The validator, global node/plugin vocabulary, permissions and execution gates remain
 unchanged. Existing positive and refusal assertions and the mailbox diagnostic await
 fresh full hosted verification. See [diagnosis](WORKLOAD-ADMISSION-DIAGNOSTIC.md).
+
+The corrected admission source `855d131` passed all four jobs in run `42228100201`,
+including Rust1504+1ignored across 17 Windows groups and every native suite/gate in
+the raw record. This accepts the exact source-scoped capability correction and
+running-origin synthetic source workflow, not later microphone authoring, physical
+devices, final main or stable release acceptance.
 
 ## In development: origin admission independent of the one-shot media plugin
 

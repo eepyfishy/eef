@@ -17,14 +17,46 @@ async fn full_source_venv(root: &std::path::Path) -> std::path::PathBuf {
         .stderr(std::process::Stdio::null())
         .creation_flags(0x0800_0000)
         .kill_on_drop(true);
-    assert!(
-        tokio::time::timeout(Duration::from_secs(30), command.status())
-            .await
-            .unwrap()
-            .unwrap()
-            .success(),
-        "Disposable stdlib venv setup failed"
-    );
+    let started = std::time::Instant::now();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut child = command.spawn().unwrap_or_else(|error| {
+        panic!(
+            "Disposable stdlib venv spawn failed: kind={:?}",
+            error.kind()
+        )
+    });
+    let spawn_ms = started.elapsed().as_millis();
+    let result = tokio::time::timeout_at(deadline, child.wait()).await;
+    match result {
+        Ok(Ok(status)) => assert!(
+            status.success(),
+            "Disposable stdlib venv exited unsuccessfully: code={:?}, spawn_ms={spawn_ms}, elapsed_ms={}",
+            status.code(),
+            started.elapsed().as_millis()
+        ),
+        Ok(Err(error)) => panic!(
+            "Disposable stdlib venv wait failed: kind={:?}, spawn_ms={spawn_ms}, elapsed_ms={}",
+            error.kind(),
+            started.elapsed().as_millis()
+        ),
+        Err(_) => {
+            // Observation only; an expired setup remains failed even if its
+            // exact owned child finishes during the bounded failure cleanup.
+            let elapsed_ms = started.elapsed().as_millis();
+            let exited_before_kill = child.try_wait().ok().flatten().is_some();
+            let _ = child.start_kill();
+            let cleanup_observed = matches!(
+                tokio::time::timeout(Duration::from_secs(3), child.wait()).await,
+                Ok(Ok(_))
+            );
+            panic!(
+                "Disposable stdlib venv setup deadline expired: original_budget_ms=30000, elapsed_ms={elapsed_ms}, spawn_ms={spawn_ms}, config_present={}, executable_present={}, site_packages_present={}, exited_before_kill={exited_before_kill}, cleanup_observed={cleanup_observed}",
+                target.join("pyvenv.cfg").is_file(),
+                target.join("Scripts/python.exe").is_file(),
+                target.join("Lib/site-packages").is_dir()
+            );
+        }
+    }
     let executable = target.join("Scripts/python.exe");
     assert!(executable.is_file());
     executable

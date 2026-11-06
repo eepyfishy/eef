@@ -9,6 +9,9 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+#[path = "microphone_outcomes.rs"]
+pub mod outcomes;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MicrophoneInput {
@@ -146,10 +149,9 @@ impl MicrophoneInput {
             expected_node_id: node.into(),
             expected_runtime_id: snapshot.runtime_id.clone(),
         })?;
-        ensure!(
-            snapshot.local_bindings_current,
-            "Microphone bindings require an applied current configuration"
-        );
+        if !snapshot.local_bindings_current {
+            return Err(outcomes::RefusalReason::BindingNotApplied.into());
+        }
         let wanted = self
             .microphone
             .as_deref()
@@ -164,10 +166,12 @@ impl MicrophoneInput {
                     && wanted.as_ref().is_none_or(|id| *id == r.resource_id)
             })
             .collect::<Vec<_>>();
-        ensure!(
-            choices.len() == 1,
-            "Microphone resource unavailable or ambiguous; inspect workloads sources and select an exact resource"
-        );
+        if choices.is_empty() {
+            return Err(outcomes::RefusalReason::ResourceUnavailable.into());
+        }
+        if choices.len() != 1 {
+            return Err(outcomes::RefusalReason::ResourceAmbiguous.into());
+        }
         let selected = choices[0];
         let template = self.template(
             node,
@@ -200,6 +204,22 @@ pub struct MicrophoneRequest {
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct MicrophoneSubmission {
+    #[command(flatten)]
+    pub source: Box<MicrophoneSourceOptions>,
+    #[command(flatten)]
+    pub capture: Box<MicrophoneCaptureOptions>,
+    #[command(flatten)]
+    pub limits: Box<MicrophoneLimitOptions>,
+    #[command(flatten)]
+    pub events: Box<MicrophoneEventOptions>,
+    /// Preserve this receipt after uncertainty; never generate another to retry.
+    #[arg(long)]
+    pub operation_id: Option<String>,
+}
+// Separate flattened groups bound each derive parser's stack frame while keeping
+// the same flat CLI flags and the existing one-MiB Windows parser requirement.
+#[derive(Clone, Debug, clap::Args)]
+pub struct MicrophoneSourceOptions {
     /// Defaults to this node; another source must be disclosed to this origin.
     #[arg(long)]
     pub source_node: Option<String>,
@@ -212,6 +232,9 @@ pub struct MicrophoneSubmission {
     pub title: String,
     #[arg(long, default_value_t = 0)]
     pub priority: i32,
+}
+#[derive(Clone, Debug, clap::Args)]
+pub struct MicrophoneCaptureOptions {
     #[arg(long, default_value_t = 16000)]
     pub sample_rate: u32,
     #[arg(long, default_value_t = 1)]
@@ -224,12 +247,18 @@ pub struct MicrophoneSubmission {
     pub activation_level: u32,
     #[arg(long, default_value_t = 500)]
     pub deactivation_level: u32,
+}
+#[derive(Clone, Debug, clap::Args)]
+pub struct MicrophoneLimitOptions {
     #[arg(long, default_value_t = 60000)]
     pub max_session_ms: u64,
     #[arg(long, default_value_t = 10000)]
     pub max_lease_ms: u64,
     #[arg(long, default_value_t = 128)]
     pub max_job_memory_mib: u64,
+}
+#[derive(Clone, Debug, clap::Args)]
+pub struct MicrophoneEventOptions {
     #[arg(long, default_value_t = 100)]
     pub min_interval_ms: u64,
     #[arg(long, default_value_t = 1000)]
@@ -240,25 +269,26 @@ pub struct MicrophoneSubmission {
     pub max_total_bytes: usize,
     #[arg(long, default_value_t = 4)]
     pub max_pending: usize,
-    /// Preserve this receipt after uncertainty; never generate another to retry.
-    #[arg(long)]
-    pub operation_id: Option<String>,
 }
 impl MicrophoneSubmission {
     pub fn command(&self) -> Result<MicrophoneCommand> {
+        let source = &self.source;
+        let capture = &self.capture;
+        let limits = &self.limits;
+        let events = &self.events;
         let command = MicrophoneCommand {operation_id:self.operation_id.clone().unwrap_or_else(||uuid::Uuid::new_v4().to_string()),
             input:MicrophoneInput {schema_version:1,
-                original_text:self.text.clone().unwrap_or_else(||format!(
+                original_text:source.text.clone().unwrap_or_else(||format!(
                     "Review {} microphone activity blocks from {} at {} Hz, {} frames per block.",
-                    self.blocks,self.source_node.as_deref().unwrap_or("this node"),self.sample_rate,self.block_frames)),
-                title:self.title.clone(), source_node:self.source_node.clone(), microphone:self.microphone.clone(), priority:self.priority,
-                parameters:EnergyParameters {sample_rate:self.sample_rate,channels:self.channels,block_frames:self.block_frames,
-                    max_blocks:self.blocks,activation_level:self.activation_level,deactivation_level:self.deactivation_level},
-                limits:Limits {max_session_ms:self.max_session_ms,max_lease_ms:self.max_lease_ms,
-                    max_job_memory_mib:self.max_job_memory_mib,
-                    max_source_frames:u64::from(self.blocks)*u64::from(self.block_frames)},
-                events:Events {mode:EventMode::ActivityTransitions,min_interval_ms:self.min_interval_ms,max_events:self.max_events,
-                    max_event_bytes:self.max_event_bytes,max_total_bytes:self.max_total_bytes,max_pending:self.max_pending,overflow:Overflow::Stop} }};
+                    capture.blocks,source.source_node.as_deref().unwrap_or("this node"),capture.sample_rate,capture.block_frames)),
+                title:source.title.clone(), source_node:source.source_node.clone(), microphone:source.microphone.clone(), priority:source.priority,
+                parameters:EnergyParameters {sample_rate:capture.sample_rate,channels:capture.channels,block_frames:capture.block_frames,
+                    max_blocks:capture.blocks,activation_level:capture.activation_level,deactivation_level:capture.deactivation_level},
+                limits:Limits {max_session_ms:limits.max_session_ms,max_lease_ms:limits.max_lease_ms,
+                    max_job_memory_mib:limits.max_job_memory_mib,
+                    max_source_frames:u64::from(capture.blocks)*u64::from(capture.block_frames)},
+                events:Events {mode:EventMode::ActivityTransitions,min_interval_ms:events.min_interval_ms,max_events:events.max_events,
+                    max_event_bytes:events.max_event_bytes,max_total_bytes:events.max_total_bytes,max_pending:events.max_pending,overflow:Overflow::Stop} }};
         command.validate()?;
         Ok(command)
     }
@@ -309,6 +339,7 @@ pub fn confirmed(value: &Value, node: &str, command: &MicrophoneCommand) -> bool
         )
 }
 const NOTE: &str = "Microphone intent saved/resolved/compiled only. Separate owner approval and explicit execution are required. After uncertainty inspect jobs find with this operation ID, then requests plan. Retained choices are never automatically re-resolved or replayed; no capture, permission, inference or retry fallback.";
+const REFUSAL_NOTE: &str = "The coordinator refused this attempt before entering the review checkpoint. Earlier or concurrent requests may still exist. Inspect the operation receipt; no automatic retry, capture, permission, approval or execution was requested.";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NodeReport {
@@ -321,6 +352,8 @@ struct NodeReport {
     outcome_unknown: bool,
     result: Option<Value>,
     error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refusal: Option<outcomes::Refusal>,
     execution_authorized: bool,
     dispatched: bool,
     automatically_retried: bool,
@@ -340,8 +373,20 @@ pub fn confirmed_node(value: &Value, node: &str, command: &MicrophoneCommand) ->
         && !r.execution_authorized
         && !r.dispatched
         && !r.automatically_retried
-        && r.note == NOTE
-        && if r.success {
+        && r.note
+            == (if r.refusal.is_some() {
+                REFUSAL_NOTE
+            } else {
+                NOTE
+            })
+        && if let Some(refusal) = &r.refusal {
+            !r.success
+                && r.coordinator_acknowledged
+                && !r.outcome_unknown
+                && r.result.is_none()
+                && r.error_code.as_deref() == Some(refusal.reason.code())
+                && outcomes::confirmed(&json!(refusal), node, command)
+        } else if r.success {
             r.coordinator_acknowledged
                 && !r.outcome_unknown
                 && r.error_code.is_none()
@@ -369,6 +414,7 @@ pub fn unavailable(node: &str, command: MicrophoneCommand, unknown: bool) -> Val
         coordinator_acknowledged: false,
         outcome_unknown: unknown,
         result: None,
+        refusal: None,
         error_code: Some(
             if unknown {
                 "microphone_authoring_unconfirmed"
@@ -409,11 +455,31 @@ impl crate::NodeService {
                 outcome_unknown: false,
                 result: Some(value),
                 error_code: None,
+                refusal: None,
                 execution_authorized: false,
                 dispatched: false,
                 automatically_retried: false,
                 note: NOTE.into()
             }),
+            Ok(value) if outcomes::confirmed(&value, &self.node_id, &request.command) => {
+                let refusal: outcomes::Refusal = serde_json::from_value(value)?;
+                json!(NodeReport {
+                    schema_version: 1,
+                    report_type: "node_microphone_request".into(),
+                    node_id: self.node_id.clone(),
+                    command: request.command.clone(),
+                    success: false,
+                    coordinator_acknowledged: true,
+                    outcome_unknown: false,
+                    result: None,
+                    error_code: Some(refusal.reason.code().into()),
+                    refusal: Some(refusal),
+                    execution_authorized: false,
+                    dispatched: false,
+                    automatically_retried: false,
+                    note: REFUSAL_NOTE.into()
+                })
+            }
             Err(error)
                 if matches!(
                     error.downcast_ref::<crate::submission::SubmissionFailure>(),
@@ -437,7 +503,15 @@ pub fn render_node(value: &Value) -> Result<String> {
         confirmed_node(value, &r.node_id, &r.command),
         "Unconfirmed microphone authoring report"
     );
-    if let Some(result) = r.result {
+    if let Some(refusal) = r.refusal {
+        Ok(format!(
+            "Microphone preparation refused\n{}\nSource node: {}\n{}\nThis attempt did not enter the review checkpoint. An earlier or concurrent request may still exist.\nInspect receipt: eefn jobs find --operation-id {}\nNo automatic retry, approval or execution was requested.\n",
+            refusal.reason,
+            r.command.input.source(&r.node_id),
+            refusal.reason.guidance(),
+            r.command.operation_id
+        ))
+    } else if let Some(result) = r.result {
         let report: MicrophoneReport = serde_json::from_value(result)?;
         let template = Template::from_params(&report.concrete.input.params)?;
         let id = report.result["plan"]["id"]

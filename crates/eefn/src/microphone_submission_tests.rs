@@ -204,3 +204,96 @@ async fn microphone_authoring_offline_is_not_sent_and_never_creates_a_runtime() 
             .is_err()
     );
 }
+
+#[test]
+fn microphone_refusal_binds_origin_intent_operation_and_pre_checkpoint_boundary() {
+    use outcomes::{Refusal, RefusalReason};
+    let command = command();
+    let refusal = Refusal::new("origin", &command, RefusalReason::ResourceUnavailable).unwrap();
+    let value = json!(refusal);
+    assert!(outcomes::confirmed(&value, "origin", &command));
+    assert!(!outcomes::confirmed(&value, "other", &command));
+    for pointer in [
+        "/review_checkpoint_attempted",
+        "/execution_authorized",
+        "/dispatched",
+        "/automatically_retried",
+    ] {
+        let mut changed = value.clone();
+        *changed.pointer_mut(pointer).unwrap() = json!(true);
+        assert!(!outcomes::confirmed(&changed, "origin", &command));
+    }
+    for (field, invalid) in [
+        ("operation_id", json!(uuid::Uuid::new_v4().to_string())),
+        ("origin_node", json!("other")),
+        ("reason", json!("PRIVATE_DRIVER_ERROR")),
+    ] {
+        let mut changed = value.clone();
+        changed[field] = invalid;
+        assert!(!outcomes::confirmed(&changed, "origin", &command));
+    }
+    let mut changed = command.clone();
+    changed.input.parameters.activation_level += 1;
+    assert!(!outcomes::confirmed(&value, "origin", &changed));
+}
+#[test]
+fn microphone_refusal_render_gives_specific_guidance_without_claiming_global_absence() {
+    use outcomes::{Refusal, RefusalReason};
+    let command = command();
+    for reason in [
+        RefusalReason::SourceUnavailable,
+        RefusalReason::SourceUnavailableOrNotDisclosed,
+        RefusalReason::ResourceUnavailable,
+        RefusalReason::ResourceAmbiguous,
+        RefusalReason::BindingNotApplied,
+        RefusalReason::IntentConflict,
+        RefusalReason::PreparationIncomplete,
+    ] {
+        let refusal = Refusal::new("origin", &command, reason).unwrap();
+        let report = json!(NodeReport {
+            schema_version: 1,
+            report_type: "node_microphone_request".into(),
+            node_id: "origin".into(),
+            command: command.clone(),
+            success: false,
+            coordinator_acknowledged: true,
+            outcome_unknown: false,
+            result: None,
+            error_code: Some(reason.code().into()),
+            refusal: Some(refusal),
+            execution_authorized: false,
+            dispatched: false,
+            automatically_retried: false,
+            note: REFUSAL_NOTE.into()
+        });
+        assert!(confirmed_node(&report, "origin", &command));
+        let text = render_node(&report).unwrap();
+        assert!(text.starts_with("Microphone preparation refused"));
+        assert!(text.contains(reason.guidance()) && text.contains(&command.operation_id));
+        assert!(text.contains("earlier or concurrent request may still exist"));
+        for (field, invalid) in [
+            ("success", true),
+            ("coordinator_acknowledged", false),
+            ("outcome_unknown", true),
+        ] {
+            let mut changed = report.clone();
+            changed[field] = json!(invalid);
+            assert!(!confirmed_node(&changed, "origin", &command));
+            assert!(render_node(&changed).is_err());
+        }
+    }
+}
+#[test]
+fn legacy_microphone_unknown_and_not_sent_reports_keep_their_shape_and_cannot_acknowledge_refusal()
+{
+    let command = command();
+    for unknown in [false, true] {
+        let report = unavailable("origin", command.clone(), unknown);
+        assert!(report.get("refusal").is_none());
+        assert_eq!(report["schema_version"], 1);
+        assert!(confirmed_node(&report, "origin", &command));
+        let mut substituted = report;
+        substituted["coordinator_acknowledged"] = json!(true);
+        assert!(!confirmed_node(&substituted, "origin", &command));
+    }
+}

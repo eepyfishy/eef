@@ -67,7 +67,7 @@ pub enum RequestAction {
     /// Prepare an explicit finite microphone relay without JSON or model inference; never execute.
     SubmitAudio(crate::audio_submission::AudioSubmission),
     /// Prepare a bounded microphone activity request without JSON or a model; never execute.
-    SubmitMicrophone(crate::microphone_submission::MicrophoneSubmission),
+    SubmitMicrophone(Box<crate::microphone_submission::MicrophoneSubmission>),
     /// Propose and save a source-bound method or clarification; never approve/execute.
     Prepare {
         #[command(flatten)]

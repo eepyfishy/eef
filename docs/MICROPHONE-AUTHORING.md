@@ -44,6 +44,26 @@ microphone, recompiles different input, renews approval, retries capture or resu
 old work. Changed input with the same operation ID is a conflict. A new request
 requires a new explicit operation ID and separate review/approval.
 
+The outcome follow-up distinguishes confirmed preflight refusal from an unconfirmed
+reply. A refusal explains unavailable/disclosed source selection, missing or
+ambiguous microphones, unapplied resource settings, conflicting input, or an
+existing uncompiled review. It supplies a stable reason code and specific next
+steps. Source availability and disclosure may be reported together: the response
+does not reveal whether an undisclosed node exists.
+
+Confirmed refusal means this attempt did not enter the review checkpoint. It does
+not prove that earlier or concurrent requests do not exist, reserve an operation
+ID, or prove that old effects stopped. A refusal without saved history is not a
+durable job receipt. Any later explicit fresh preparation rechecks current source
+settings; the backend never retries it automatically. Inspect the operation ID
+before deciding what to do.
+
+If review persistence or compilation has already been attempted, a failed reply
+remains unconfirmed even when a saved review exists. Reusing exact typed input
+with a saved uncompiled review returns its incomplete status without querying a
+provider or continuing compilation. Further planning or cancellation must be
+explicit. Completed compilation receipts still return their original choices.
+
 The node API adapter is `POST /api/commands/requests/microphone`; its typed body is
 `MicrophoneRequest`. CLI, API and future UI clients share the node service and
 coordinator authoring backend. The dashboard controls no background lifecycle.
@@ -59,3 +79,12 @@ pending. The preceding admission failure was traced to its incomplete source
 review capability set; that separate correction also awaits full verification.
 This interface alone does not establish the fix. Physical audio, long sessions, two-PC acceptance,
 continuous relays and the remaining stable release requirements remain open.
+
+Windows run `42228933980` failed the new CLI's one-MiB parser guard, a disposable
+venv setup deadline, and native registration. The parser follow-up keeps the same
+flat command/flags with smaller boxed argument groups; it does not increase the
+Windows stack requirement. The same guard now parses the microphone command too.
+The venv timeout retains its 30-second failure boundary and adds numeric setup,
+partial-file and exact-child cleanup observations only. It is not a proven timeout
+fix. These changes need fresh full hosted acceptance; the earlier failed run stays
+retained. No installed node or runtime policy is changed by these development tests.

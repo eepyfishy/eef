@@ -4589,6 +4589,20 @@ mod tests {
                     vec!["eefn", "connection", "pair-stdin"],
                     vec!["eefn", "models", "show"],
                     vec!["eefn", "requests", "plan", "request-id"],
+                    vec!["eefn", "requests", "submit-microphone"],
+                    vec![
+                        "eefn",
+                        "requests",
+                        "submit-microphone",
+                        "--source-node",
+                        "living-room",
+                        "--microphone",
+                        "mic",
+                        "--blocks",
+                        "25",
+                        "--max-session-ms",
+                        "60000",
+                    ],
                 ] {
                     Args::try_parse_from(args).unwrap();
                 }
