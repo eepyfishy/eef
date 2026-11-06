@@ -83,8 +83,8 @@ async fn cancelled_ack_read_closes_the_kept_consumption_and_retains_actual_read_
 }
 
 #[tokio::test]
-async fn caller_and_original_lease_deadlines_both_bound_node_ack_inspection() {
-    for original_lease in [false, true] {
+async fn caller_lease_and_session_deadlines_bound_ack_inspection_after_admission() {
+    for bound in ["caller", "lease", "session"] {
         let dir = tempfile::tempdir().unwrap();
         let ledger = GrantLedger::open(
             &dir.path().join("deadline-read.db"),
@@ -93,7 +93,10 @@ async fn caller_and_original_lease_deadlines_both_bound_node_ack_inspection() {
         )
         .unwrap();
         let d = definition();
-        let proof = proof_for(&d, if original_lease { 1000 } else { 50000 }).await;
+        // Real admission retains its existing proof and ten-second budget.
+        // Start the short ACK test only after admission and the blocker are
+        // ready, so slow initial SQLite writes cannot consume its precondition.
+        let proof = proof_for(&d, 50000).await;
         let mut consumed = ledger
             .consume_workload(
                 d.clone(),
@@ -107,10 +110,31 @@ async fn caller_and_original_lease_deadlines_both_bound_node_ack_inspection() {
             .await
             .unwrap();
         let blocker = FinalBlocker::hold(&ledger, &d).await;
-        let end = if original_lease {
-            ack_observation_end()
-        } else {
+        let proof = consumed.initial.as_mut().unwrap();
+        let original_end = proof.deadline();
+        if bound != "caller" {
+            let short_end = Instant::now() + Duration::from_millis(985);
+            assert!(short_end < original_end);
+            proof.restrict_deadlines_for_test(
+                if bound == "lease" {
+                    short_end
+                } else {
+                    original_end
+                },
+                if bound == "session" {
+                    short_end
+                } else {
+                    original_end
+                },
+            );
+            assert_eq!(proof.deadline(), short_end);
+        }
+        let end = if bound == "caller" {
             tokio::time::Instant::now() + Duration::from_millis(500)
+        } else {
+            let end = ack_observation_end();
+            assert!(end.into_std() > proof.deadline());
+            end
         };
         let mut pending = Box::pin(consumed.acknowledgement_before(end));
         tokio::select! {
@@ -118,18 +142,26 @@ async fn caller_and_original_lease_deadlines_both_bound_node_ack_inspection() {
             result = &mut pending => panic!("Read must enter before the deadline: {}", result.is_ok()),
             _ = ack_reader_entered(&ledger) => {}
         }
+        let error = tokio::time::timeout(Duration::from_secs(2), pending)
+            .await
+            .unwrap()
+            .unwrap_err();
         assert!(
-            tokio::time::timeout(Duration::from_secs(2), pending)
-                .await
-                .unwrap()
-                .is_err()
+            error
+                .to_string()
+                .contains("Workload ACK observation deadline elapsed; no source authority"),
+            "Unexpected ACK failure for {bound}: {error:#}"
         );
+        if bound != "caller" {
+            assert!(tokio::time::Instant::now() < end);
+        }
         assert!(consumed.initial.is_none());
         assert_eq!(ledger.event_workers.available_permits(), 0);
         assert!(blocker.release().0);
         ack_reader_released(&ledger).await;
         consumed.retire().await.unwrap();
         wait_unknown(&ledger, &d).await;
+        assert!(consume(&ledger, d).await.is_err());
     }
 }
 

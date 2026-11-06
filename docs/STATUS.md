@@ -3,6 +3,26 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: isolate ACK expiry from journal admission
+
+Run `42234328855` passed both Linux jobs. Windows/dashboard failed before the
+CLI tests: a one-second lease in the ACK inspection fixture expired during
+real journal admission, at `workload_ack_reads_tests.rs:108`. The headless Rust
+step passed; its native regressions are still running. These separate results
+do not establish a full Windows pass or final acceptance of the parser change.
+
+The ACK fixture now completes ordinary real admission and acquires its real
+journal blocker before imposing a shorter test-only lease or session deadline
+on that same proof. The helper only removes time and is absent from shipping
+builds; a regression checks that it cannot restore time or change identity.
+The 985-ms conservative lease window, 500-ms caller window and two-second
+observation budget remain. The fixture requires the specific deadline error,
+retained worker ownership, retirement to unknown and refusal to replay. It
+also covers session expiry separately. Real short-proof admission and lease
+challenge/expiry tests remain unchanged. This corrects a test precondition;
+production deadlines, storage and authority checks are unchanged. Full hosted
+verification of this follow-up is required, and earlier failures remain failed.
+
 ## In development: explicit microphone preparation outcomes
 
 Confirmed refusals before this attempt's review checkpoint now carry bounded,
