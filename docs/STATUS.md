@@ -3,6 +3,23 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: typed microphone request authoring without JSON
+
+The running node now has `requests submit-microphone` and a matching API adapter.
+The coordinator selects a fresh disclosed source, retains immutable typed intent
+and resolved bindings in the existing journal, and compiles without approving or
+executing. Exact receipt reuse checks retained choices before provider lookup.
+Historical records omit the new optional field; typed history is frozen across
+edits and cannot be relabeled as a different source. Shared, CLI and actual origin
+tests and the extended Windows source test await hosted verification. See
+[microphone authoring](MICROPHONE-AUTHORING.md).
+
+The origin-admission run `42224709777` failed its positive mailbox case on both
+Linux modes and Windows/dashboard; the node wrapper retained an unconfirmed
+outcome without exposing the coordinator reason. Changed-source diagnostics keep
+the original assertions and investigate the correlated mailbox path. Its cause
+and a fix remain unproven. New authoring work does not supersede that failure.
+
 ## In development: origin admission independent of the one-shot media plugin
 
 New continuous-source reviews now bind a fresh authenticated disclosed node source

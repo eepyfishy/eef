@@ -198,6 +198,39 @@ pub fn confirmed_with_source(
     command: &ConcreteCommand,
     source: Option<&crate::audio_submission::AudioInput>,
 ) -> bool {
+    confirmed_with_sources(value, node, command, source, None)
+}
+pub fn confirmed_with_workload(
+    value: &Value,
+    node: &str,
+    command: &ConcreteCommand,
+    source: &crate::microphone_submission::MicrophoneInput,
+) -> bool {
+    confirmed_with_sources(value, node, command, None, Some(source))
+}
+fn confirmed_with_sources(
+    value: &Value,
+    node: &str,
+    command: &ConcreteCommand,
+    source: Option<&crate::audio_submission::AudioInput>,
+    workload: Option<&crate::microphone_submission::MicrophoneInput>,
+) -> bool {
+    if source.is_some() && workload.is_some() {
+        return false;
+    }
+    if let Some(source) = workload {
+        let Ok(template) = crate::workload_leases::definition::Template::from_params(
+            &command.request.input.params,
+        ) else {
+            return false;
+        };
+        if !source
+            .concrete(&template, Some(node))
+            .is_ok_and(|v| v == command.request)
+        {
+            return false;
+        }
+    }
     if let Some(source) = source {
         let Ok(pair) = crate::peer::plan::Pair::from_params(&command.request.input.params) else {
             return false;
@@ -239,6 +272,7 @@ pub fn confirmed_with_source(
         && r.plan.draft.original_text == command.request.original_text
         && r.plan.draft.concrete_input.as_ref() == Some(&command.request.input)
         && r.plan.draft.audio_source.as_ref() == source
+        && r.plan.draft.workload_source.as_ref() == workload
         && r.plan.draft.proposals.len() == 1
         && r.plan.draft.answers.is_empty()
         && r.plan.draft.proposals[0].proposal == proposal
@@ -327,6 +361,7 @@ mod tests {
             original_text: request.original_text,
             concrete_input: Some(request.input),
             audio_source: None,
+            workload_source: None,
             answers: vec![],
             proposals: vec![crate::request_drafts::ProposalRevision {
                 operation_id: uuid::Uuid::new_v4().to_string(),

@@ -82,6 +82,9 @@ pub struct DraftRecord {
     /// Immutable typed audio intent; concrete bindings are retained separately.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_source: Option<crate::audio_submission::AudioInput>,
+    /// Immutable microphone intent; resolved source digests remain in concrete input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload_source: Option<crate::microphone_submission::MicrophoneInput>,
     pub proposals: Vec<ProposalRevision>,
     pub answers: Vec<ClarificationAnswer>,
 }
@@ -96,6 +99,25 @@ impl DraftRecord {
             bail!("durable request review exceeds bounds")
         }
         let mut receipts = std::collections::HashSet::new();
+        if self.audio_source.is_some() && self.workload_source.is_some() {
+            bail!("A review cannot contain multiple typed source intents")
+        }
+        if let Some(source) = &self.workload_source {
+            let input = self.concrete_input.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("Microphone intent requires retained concrete input")
+            })?;
+            let template =
+                crate::workload_leases::definition::Template::from_params(&input.params)?;
+            let expected = source.concrete(&template, None)?;
+            if self.proposals.len() != 1
+                || !self.answers.is_empty()
+                || *input != expected.input
+                || self.original_text != expected.original_text
+                || self.proposals[0].proposal != expected.proposal()?
+            {
+                bail!("Immutable microphone intent differs from its reviewed choices")
+            }
+        }
         if let Some(source) = &self.audio_source {
             let input = self
                 .concrete_input
@@ -170,6 +192,7 @@ impl DraftRecord {
                     original_text: self.original_text.clone(),
                     concrete_input: self.concrete_input.clone(),
                     audio_source: self.audio_source.clone(),
+                    workload_source: self.workload_source.clone(),
                     proposals: self.proposals[..index].to_vec(),
                     answers: self.answers[..evidence.source_answer_count].to_vec(),
                 };
@@ -205,6 +228,7 @@ impl DraftRecord {
                     original_text: self.original_text.clone(),
                     concrete_input: self.concrete_input.clone(),
                     audio_source: self.audio_source.clone(),
+                    workload_source: self.workload_source.clone(),
                     proposals: self.proposals[..source.proposal_count].to_vec(),
                     answers: self.answers[..index].to_vec(),
                 };
@@ -247,6 +271,7 @@ impl DraftRecord {
         self.original_text == other.original_text
             && self.concrete_input == other.concrete_input
             && self.audio_source == other.audio_source
+            && self.workload_source == other.workload_source
             && self.proposals.first().map(|p| &p.proposal)
                 == other.proposals.first().map(|p| &p.proposal)
     }

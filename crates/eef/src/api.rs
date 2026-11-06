@@ -924,6 +924,6 @@ mod workload_full_native_acceptance {
             tests::{execute, template_input},
         },
     };
-    use eefn::workload_leases::definition::{EnergyParameters, Source, Template};
+    use eefn::workload_leases::definition::{EnergyParameters, Template};
     include!("workload_full_native_tests.rs");
 }

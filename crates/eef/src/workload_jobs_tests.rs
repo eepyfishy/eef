@@ -53,6 +53,7 @@ pub(crate) fn review_input(engine: &TaskEngine, input: PlanInput) -> (Plan, Plan
         original_text: concrete.original_text.clone(),
         concrete_input: Some(input.clone()),
         audio_source: None,
+        workload_source: None,
         proposals: vec![ProposalRevision {
             operation_id: context.request_id().into(),
             proposal: concrete.proposal().unwrap(),

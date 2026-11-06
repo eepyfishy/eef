@@ -10,6 +10,7 @@ fn matches_source(
     plan: &crate::task::Plan,
     input: &ConcreteInput,
     source: Option<&eefn::audio_submission::AudioInput>,
+    workload: Option<&eefn::microphone_submission::MicrophoneInput>,
 ) -> Result<()> {
     let draft = plan
         .request_review
@@ -18,6 +19,7 @@ fn matches_source(
     if draft.original_text != input.original_text
         || draft.concrete_input.as_ref() != Some(&input.input)
         || draft.audio_source.as_ref() != source
+        || draft.workload_source.as_ref() != workload
         || draft.proposals.len() != 1
         || !draft.answers.is_empty()
         || draft.proposals[0].proposal != input.proposal()?
@@ -41,7 +43,27 @@ impl crate::Runtime {
         context: &RequestContext,
         source: Option<eefn::audio_submission::AudioInput>,
     ) -> Result<Value> {
+        self.origin_concrete_request_with_sources(input, context, source, None)
+            .await
+    }
+    pub(crate) async fn origin_concrete_request_with_sources(
+        &self,
+        input: ConcreteInput,
+        context: &RequestContext,
+        source: Option<eefn::audio_submission::AudioInput>,
+        workload: Option<eefn::microphone_submission::MicrophoneInput>,
+    ) -> Result<Value> {
+        if source.is_some() && workload.is_some() {
+            bail!("Multiple typed request sources")
+        }
         input.validate()?;
+        if let Some(source) = &workload {
+            let template =
+                eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
+            if source.concrete(&template, Some(context.origin_node()))? != input {
+                bail!("Typed microphone intent differs from concrete input")
+            }
+        }
         if let Some(source) = &source {
             let pair = eefn::peer::plan::Pair::from_params(&input.input.params)?;
             if source.concrete(&pair, Some(context.origin_node()))? != input {
@@ -62,7 +84,7 @@ impl crate::Runtime {
         }
         let (saved, creation_reused) = if let Some(saved) = previous {
             crate::jobs::validate_retained_review(&saved)?;
-            matches_source(&saved, &input, source.as_ref())?;
+            matches_source(&saved, &input, source.as_ref(), workload.as_ref())?;
             (saved, true)
         } else {
             let mut capabilities = self
@@ -94,9 +116,13 @@ impl crate::Runtime {
                 {
                     bail!("Continuous source disclosure changed during inspection")
                 }
-                let wrapper = eefn::workload_leases::definition::CAPABILITY.to_owned();
-                if !capabilities.contains(&wrapper) {
-                    capabilities.push(wrapper);
+                // The retained review describes both the session wrapper and
+                // its microphone operation. This source-scoped vocabulary is
+                // justified by the snapshot above, not the one-shot plugin.
+                for capability in eefn::request_planning::concrete_capabilities(&input.input)? {
+                    if !capabilities.contains(&capability) {
+                        capabilities.push(capability);
+                    }
                 }
             }
             let proposal = input.proposal()?;
@@ -106,6 +132,7 @@ impl crate::Runtime {
                 original_text: input.original_text.clone(),
                 concrete_input: Some(input.input.clone()),
                 audio_source: source.clone(),
+                workload_source: workload.clone(),
                 proposals: vec![eefn::request_drafts::ProposalRevision {
                     operation_id: context.request_id().into(),
                     proposal,
@@ -139,7 +166,7 @@ impl crate::Runtime {
             .origin_planning_command(command, &compile_context)
             .await?;
         let plan = self.engine.store.get(&saved.plan_id)?;
-        matches_source(&plan, &input, source.as_ref())?;
+        matches_source(&plan, &input, source.as_ref(), workload.as_ref())?;
         let result = json!(ConcreteReport {
             schema_version: 1,
             report_type: "coordinator_concrete_request".into(),
@@ -152,15 +179,26 @@ impl crate::Runtime {
             dispatched: false,
             automatically_retried: false
         });
-        if !eefn::request_submission::confirmed_with_source(
-            &result,
-            context.origin_node(),
-            &ConcreteCommand {
-                operation_id: context.request_id().into(),
-                request: input,
-            },
-            source.as_ref(),
-        ) {
+        let command = ConcreteCommand {
+            operation_id: context.request_id().into(),
+            request: input,
+        };
+        let confirmed = if let Some(workload) = &workload {
+            eefn::request_submission::confirmed_with_workload(
+                &result,
+                context.origin_node(),
+                &command,
+                workload,
+            )
+        } else {
+            eefn::request_submission::confirmed_with_source(
+                &result,
+                context.origin_node(),
+                &command,
+                source.as_ref(),
+            )
+        };
+        if !confirmed {
             bail!(
                 "Concrete request checkpoint changed or failed confirmation; inspect retained history"
             )
@@ -177,6 +215,7 @@ mod tests {
         task::{PlanStatus, TaskEngine},
     };
     include!("workload_origin_admission_tests.rs");
+    include!("workload_microphone_authoring_tests.rs");
     fn input() -> ConcreteInput {
         ConcreteInput {
             schema_version: 1,
@@ -196,6 +235,7 @@ mod tests {
             original_text: input.original_text.clone(),
             concrete_input: Some(input.input.clone()),
             audio_source: None,
+            workload_source: None,
             proposals: vec![eefn::request_drafts::ProposalRevision {
                 operation_id: context.request_id().into(),
                 proposal: input.proposal().unwrap(),
@@ -223,7 +263,7 @@ mod tests {
         let input = input();
         let saved = crate::request_drafts::store_review(&engine, draft(&input, &context), &context)
             .unwrap();
-        matches_source(&saved.plan, &input, None).unwrap();
+        matches_source(&saved.plan, &input, None, None).unwrap();
         assert_eq!(saved.plan.status, PlanStatus::Review);
         assert_eq!(saved.plan.revision, 1);
         assert!(saved.plan.tasks.is_empty());
@@ -245,7 +285,7 @@ mod tests {
             crate::request_drafts::store_review(&engine, draft(&changed, &context), &context)
                 .is_err()
         );
-        assert!(matches_source(&saved.plan, &changed, None).is_err());
+        assert!(matches_source(&saved.plan, &changed, None, None).is_err());
         engine.shutdown().await;
         drop(engine);
         drop(store);
@@ -283,7 +323,7 @@ mod tests {
             review.proposals[0].allowed_capabilities =
                 eefn::request_planning::concrete_capabilities(&input.input).unwrap();
             let saved = crate::request_drafts::store_review(&engine, review, &context).unwrap();
-            matches_source(&saved.plan, &input, None).unwrap();
+            matches_source(&saved.plan, &input, None, None).unwrap();
             assert_eq!(saved.plan.status, PlanStatus::Review);
             assert!(saved.plan.approval.is_none());
             assert!(saved.plan.execution.is_none());

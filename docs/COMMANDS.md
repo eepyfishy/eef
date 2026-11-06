@@ -17,6 +17,17 @@ installers are unchanged and stable-release acceptance remains separate.
 
 ## Continuous source inspection (in development)
 
+Prepare a bounded microphone activity request without JSON or a model:
+
+    eefn requests submit-microphone
+    eefn requests submit-microphone --source-node NODE_ID --microphone RESOURCE_ID --blocks 100
+
+The coordinator resolves and retains the source choice for review. This does not
+enable permissions, approve work or start capture. Keep the returned operation/job
+IDs, inspect `eefn requests plan JOB_ID`, and obtain separate owner approval before
+explicit execution. Exact receipt reuse preserves old choices. See
+[microphone authoring, limits and verification status](MICROPHONE-AUTHORING.md).
+
     eefn workloads sources
     eef node workload-sources --node NODE_ID
 

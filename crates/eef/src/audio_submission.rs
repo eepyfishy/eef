@@ -131,6 +131,7 @@ mod tests {
             original_text: concrete.original_text.clone(),
             concrete_input: Some(concrete.input.clone()),
             audio_source: Some(input),
+            workload_source: None,
             proposals: vec![eefn::request_drafts::ProposalRevision {
                 operation_id: context.request_id().into(),
                 proposal: concrete.proposal().unwrap(),

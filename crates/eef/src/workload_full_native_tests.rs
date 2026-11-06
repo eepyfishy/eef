@@ -69,42 +69,31 @@ async fn full_source_plan(
     client: &reqwest::Client,
     base: &str,
 ) -> Plan {
-    let source = runtime
-        .node_server
-        .workload_sources("origin", 5)
-        .await
-        .unwrap();
-    assert!(source.execution_available);
-    let mut input = template_input();
-    let mut template = Template::from_params(&input.params).unwrap();
-    template.executor_node = "origin".into();
-    template.source = Source::MicrophoneEnergy {
-        resource_id: "origin::mic".into(),
-        resource_sha256: source.resources[0].resource_sha256.clone().unwrap(),
-        adapter_sha256: source.adapter_sha256,
-        parameters: EnergyParameters {
-            sample_rate: 16000,
-            channels: 1,
-            block_frames: 80,
-            max_blocks: 5,
-            activation_level: 1000,
-            deactivation_level: 500,
-        },
-    };
+    let mut template = Template::from_params(&template_input().params).unwrap();
     template.limits.max_source_frames = 400;
-    input.params = json!({"workload":template});
-    let submission = eefn::request_submission::ConcreteCommand {
+    let submission = eefn::microphone_submission::MicrophoneCommand {
         operation_id: uuid::Uuid::new_v4().to_string(),
-        request: eefn::request_submission::ConcreteInput {
+        input: eefn::microphone_submission::MicrophoneInput {
             schema_version: 1,
-            original_text:
-                "Observe the explicitly selected microphone source for a bounded session".into(),
+            original_text: "Observe microphone activity for an explicitly bounded session".into(),
             title: "Bounded microphone source".into(),
-            input,
+            source_node: None,
+            microphone: None,
+            priority: 0,
+            parameters: EnergyParameters {
+                sample_rate: 16000,
+                channels: 1,
+                block_frames: 80,
+                max_blocks: 5,
+                activation_level: 1000,
+                deactivation_level: 500,
+            },
+            limits: template.limits,
+            events: template.events,
         },
     };
     let result = service
-        .concrete_request(eefn::request_submission::ConcreteRequest {
+        .microphone_request(eefn::microphone_submission::MicrophoneRequest {
             schema_version: 1,
             expected_node_id: "origin".into(),
             command: submission.clone(),
@@ -115,12 +104,12 @@ async fn full_source_plan(
         result["success"], true,
         "Origin submission failed: {result}"
     );
-    assert!(eefn::request_submission::confirmed(
-        &result["result"],
+    assert!(eefn::microphone_submission::confirmed_node(
+        &result,
         "origin",
         &submission
     ));
-    let id = result["result"]["plan"]["id"].as_str().unwrap();
+    let id = result["result"]["result"]["plan"]["id"].as_str().unwrap();
     let planned = runtime.engine.store.get(id).unwrap();
     assert!(planned.approval.is_none() && planned.execution.is_none());
     let approval = ApprovalCommand {

@@ -445,10 +445,10 @@ impl JobStore {
         let mut plan = read(&connection, id)?;
         let old_stop = crate::execution_stop::snapshot(&plan);
         let old_workload = crate::workload_jobs::snapshot(&plan);
-        let frozen_audio = plan
+        let frozen_source = plan
             .request_review
             .as_ref()
-            .filter(|draft| draft.audio_source.is_some())
+            .filter(|draft| draft.audio_source.is_some() || draft.workload_source.is_some())
             .map(|draft| (json!(draft), json!(plan.goal.request_context)));
         let uncompiled = plan.planning.is_none();
         if let Some((runtime, issuer)) = fence {
@@ -465,11 +465,11 @@ impl JobStore {
         }
         crate::execution_stop::preserve(&old_stop, &plan)?;
         crate::workload_jobs::preserve(&old_workload, &plan)?;
-        if frozen_audio.as_ref().is_some_and(|(draft, context)| {
+        if frozen_source.as_ref().is_some_and(|(draft, context)| {
             *draft != json!(plan.request_review) || *context != json!(plan.goal.request_context)
         }) {
             bail!(
-                "Typed audio intent, resource choices and origin are immutable; create a new reviewed request"
+                "Typed source intent, resource choices and origin are immutable; create a new reviewed request"
             )
         }
         if uncompiled && plan.planning.is_some() {
@@ -671,6 +671,20 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
             let pair = eefn::peer::plan::Pair::from_params(&input.params)?;
             if source.concrete(&pair, Some(context.origin_node()))?.input != *input {
                 bail!("Retained audio origin differs from its typed source")
+            }
+        }
+        if let Some(source) = &draft.workload_source {
+            let input = draft
+                .concrete_input
+                .as_ref()
+                .context("Missing retained microphone input")?;
+            let template = eefn::workload_leases::definition::Template::from_params(&input.params)?;
+            if source
+                .concrete(&template, Some(context.origin_node()))?
+                .input
+                != *input
+            {
+                bail!("Retained microphone origin differs from its typed intent")
             }
         }
         if (plan.execution.is_none() && !plan.results.is_empty())

@@ -48,6 +48,7 @@ pub fn open(
         original_text: input.original_text,
         concrete_input: None,
         audio_source: None,
+        workload_source: None,
         proposals: vec![ProposalRevision {
             operation_id: context.request_id().into(),
             proposal: input.proposal,

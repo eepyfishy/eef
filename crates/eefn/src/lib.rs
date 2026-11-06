@@ -41,6 +41,7 @@ pub mod listening;
 pub mod local_commands;
 pub mod local_enrollment;
 pub mod local_setup;
+pub mod microphone_submission;
 pub mod model_activation;
 pub mod model_bootstrap;
 pub mod model_cli;

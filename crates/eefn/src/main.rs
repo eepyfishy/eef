@@ -906,6 +906,53 @@ async fn execute_audio_command(
     Ok(exchange.unwrap_or_else(|_| unavailable(&file.node_id, command, true)))
 }
 
+async fn execute_microphone_command(
+    args: &Args,
+    command: eefn::microphone_submission::MicrophoneCommand,
+) -> Result<serde_json::Value> {
+    use eefn::microphone_submission::{MicrophoneRequest, confirmed_node, unavailable};
+    command.validate()?;
+    let file = load_file(&args.config)?;
+    eefn::network::validate_remote_node_id(&file.node_id)?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        return Ok(unavailable(&file.node_id, command, false));
+    }
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!("http://{address}/api/commands/requests/microphone"))
+            .timeout(Duration::from_secs(150))
+            .json(&MicrophoneRequest {
+                schema_version: 1,
+                expected_node_id: file.node_id.clone(),
+                command: command.clone(),
+            })
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(unavailable(&file.node_id, command.clone(), false));
+        }
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok || !confirmed_node(&value, &file.node_id, &command) {
+            bail!("Unconfirmed microphone submission reply")
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| unavailable(&file.node_id, command, true)))
+}
+
 async fn execute_concrete_command(
     args: &Args,
     command: eefn::request_submission::ConcreteCommand,
@@ -2680,6 +2727,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
             eefn::request_preview::RequestAction::SubmitAudio(input) => {
                 execute_audio_command(args, input.command()?).await
             }
+            eefn::request_preview::RequestAction::SubmitMicrophone(input) => {
+                execute_microphone_command(args, input.command()?).await
+            }
             eefn::request_preview::RequestAction::Submit {
                 text,
                 title,
@@ -3064,6 +3114,13 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     }
                 ) {
                     print!("{}", eefn::audio_submission::render_node(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::SubmitMicrophone(_)
+                    }
+                ) {
+                    print!("{}", eefn::microphone_submission::render_node(&value)?);
                 } else if matches!(command, Commands::ModelBootstrapPolicy { .. }) {
                     if value["success"] == true {
                         print!("{}", eefn::model_bootstrap::render(&value["result"])?);
@@ -4403,6 +4460,53 @@ mod tests {
                 .is_err()
             );
         }
+    }
+    #[test]
+    fn submit_microphone_cli_needs_no_file_model_or_authority_flags() {
+        let args = Args::try_parse_from([
+            "eefn",
+            "requests",
+            "submit-microphone",
+            "--source-node",
+            "living-room",
+            "--microphone",
+            "mic",
+            "--blocks",
+            "25",
+            "--operation-id",
+            "11111111-1111-4111-8111-111111111111",
+        ])
+        .unwrap();
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::SubmitMicrophone(source),
+        }) = args.command
+        else {
+            panic!("Wrong microphone authoring adapter")
+        };
+        let command = source.command().unwrap();
+        assert_eq!(command.input.source_node.as_deref(), Some("living-room"));
+        assert_eq!(command.input.parameters.max_blocks, 25);
+        assert_eq!(command.input.limits.max_source_frames, 40_000);
+        for flag in [
+            "--execute",
+            "--approve",
+            "--permissions",
+            "--restart",
+            "--file",
+            "--force",
+            "--retry",
+            "--model",
+        ] {
+            assert!(Args::try_parse_from(["eefn", "requests", "submit-microphone", flag]).is_err());
+        }
+        let defaults = Args::try_parse_from(["eefn", "requests", "submit-microphone"]).unwrap();
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::SubmitMicrophone(source),
+        }) = defaults.command
+        else {
+            panic!("Wrong default microphone authoring adapter")
+        };
+        assert!(source.command().unwrap().input.microphone.is_none());
     }
     #[test]
     fn relay_setup_cli_preserves_explicit_roles_without_json_or_authority_flags() {

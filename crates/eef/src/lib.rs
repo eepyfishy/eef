@@ -20,6 +20,7 @@ pub mod firmware;
 pub mod initialization;
 pub mod jobs;
 pub mod memory;
+pub mod microphone_submission;
 pub mod model;
 pub mod model_inventory;
 pub mod model_verification;
