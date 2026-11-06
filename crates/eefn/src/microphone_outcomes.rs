@@ -58,7 +58,7 @@ impl RefusalReason {
                 "Inspect the original receipt. Changed settings require a separately intended new request and operation ID."
             }
             Self::PreparationIncomplete => {
-                "Receipt reuse does not continue compilation. Inspect the saved request before explicitly planning or cancelling it."
+                "Receipt reuse does not continue compilation. Inspect the saved job, then explicitly prepare it with eefn requests compile-saved JOB_ID --revision REVISION or cancel it."
             }
         }
     }

@@ -16,6 +16,180 @@ async fn microphone_input(f: &SourceAdmission) -> eefn::microphone_submission::M
         events: template.events,
     }
 }
+
+async fn retained_incomplete_microphone() -> (
+    SourceAdmission,
+    eefn::microphone_submission::MicrophoneCommand,
+    crate::task::Plan,
+) {
+    use eefn::microphone_submission::{MicrophoneCommand, MicrophoneRequest};
+    let f = SourceAdmission::new().await;
+    let command = MicrophoneCommand {
+        operation_id: uuid::Uuid::new_v4().to_string(),
+        input: microphone_input(&f).await,
+    };
+    let db = rusqlite::Connection::open(f._dir.path().join("owner.db")).unwrap();
+    db.execute_batch(r#"CREATE TRIGGER refuse_saved_compile BEFORE UPDATE ON durable_jobs
+        WHEN NEW.plan_json LIKE '%"planning":{%' BEGIN SELECT RAISE(ABORT,'synthetic saved compile failure'); END;"#).unwrap();
+    let result = f
+        .service
+        .microphone_request(MicrophoneRequest {
+            schema_version: 1,
+            expected_node_id: "origin".into(),
+            command: command.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(result["success"], false);
+    assert_eq!(result["outcome_unknown"], true);
+    let mut saved = f.runtime.engine.store.list().unwrap();
+    assert_eq!(saved.len(), 1);
+    let saved = saved.pop().unwrap();
+    assert_eq!(saved.status, PlanStatus::Review);
+    assert!(saved.planning.is_none());
+    db.execute_batch("DROP TRIGGER refuse_saved_compile")
+        .unwrap();
+    drop(db);
+    (f, command, saved)
+}
+
+#[tokio::test]
+async fn explicit_saved_compilation_preserves_original_microphone_receipt_and_requires_origin() {
+    use eefn::request_planning::{PlanningCommand, PlanningRequest};
+    let (f, opening, saved) = retained_incomplete_microphone().await;
+    let id = saved.plan_id.clone();
+    let original = json!(saved);
+    let command = PlanningCommand::CompileSaved {
+        id: id.clone(),
+        expected_revision: 1,
+    };
+    let foreign =
+        RequestContext::new(uuid::Uuid::new_v4().to_string(), "other".into(), vec![]).unwrap();
+    assert!(
+        f.runtime
+            .origin_planning_command(command.clone(), &foreign)
+            .await
+            .is_err()
+    );
+    assert_eq!(json!(f.runtime.engine.store.get(&id).unwrap()), original);
+    let stale = f
+        .service
+        .planning_request(PlanningRequest {
+            schema_version: 1,
+            expected_node_id: "origin".into(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            command: PlanningCommand::CompileSaved {
+                id: id.clone(),
+                expected_revision: 2,
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(stale["success"], false);
+    assert!(stale.get("result").is_none());
+    assert_eq!(json!(f.runtime.engine.store.get(&id).unwrap()), original);
+    let transport = uuid::Uuid::new_v4().to_string();
+    let prepared = f
+        .service
+        .planning_request(PlanningRequest {
+            schema_version: 1,
+            expected_node_id: "origin".into(),
+            request_id: transport.clone(),
+            command: command.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        prepared["success"], true,
+        "Saved compilation failed: {prepared}"
+    );
+    assert!(eefn::request_planning::confirmed(
+        &prepared["result"],
+        "origin",
+        &transport,
+        &command
+    ));
+    let compiled = f.runtime.engine.store.get(&id).unwrap();
+    assert_eq!(compiled.status, PlanStatus::AwaitingApproval);
+    assert_eq!(compiled.revision, 2);
+    assert_eq!(json!(compiled.request_review), json!(saved.request_review));
+    assert_eq!(compiled.goal.request_context, saved.goal.request_context);
+    assert!(compiled.approval.is_none() && compiled.execution.is_none());
+    assert_eq!(
+        compiled.planning.as_ref().unwrap().operation_id,
+        eefn::request_submission::compilation_receipt("origin", &opening.operation_id, &id)
+            .unwrap()
+    );
+    let snapshot = json!(compiled);
+    let reused = f
+        .service
+        .planning_request(PlanningRequest {
+            schema_version: 1,
+            expected_node_id: "origin".into(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+            command: command.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(reused["success"], true);
+    assert_eq!(reused["result"]["reused"], true);
+    let original_receipt = f
+        .service
+        .microphone_request(eefn::microphone_submission::MicrophoneRequest {
+            schema_version: 1,
+            expected_node_id: "origin".into(),
+            command: opening.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(original_receipt["success"], true);
+    assert_eq!(
+        original_receipt["result"]["result"]["creation_reused"],
+        true
+    );
+    assert_eq!(json!(f.runtime.engine.store.get(&id).unwrap()), snapshot);
+    let mut f = f;
+    f.disconnect().await;
+    let context =
+        RequestContext::new(uuid::Uuid::new_v4().to_string(), "origin".into(), vec![]).unwrap();
+    let offline = f
+        .runtime
+        .origin_planning_command(command.clone(), &context)
+        .await
+        .unwrap();
+    assert!(eefn::request_planning::confirmed(
+        &offline,
+        "origin",
+        context.request_id(),
+        &command
+    ));
+    assert_eq!(offline["reused"], true);
+    assert_eq!(json!(f.runtime.engine.store.get(&id).unwrap()), snapshot);
+    f.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn saved_compilation_cannot_finish_an_uncompiled_source_after_provider_disconnect() {
+    let (mut f, _, saved) = retained_incomplete_microphone().await;
+    f.disconnect().await;
+    let context =
+        RequestContext::new(uuid::Uuid::new_v4().to_string(), "origin".into(), vec![]).unwrap();
+    let command = eefn::request_planning::PlanningCommand::CompileSaved {
+        id: saved.plan_id.clone(),
+        expected_revision: 1,
+    };
+    assert!(
+        f.runtime
+            .origin_planning_command(command, &context)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        json!(f.runtime.engine.store.get(&saved.plan_id).unwrap()),
+        json!(saved)
+    );
+    f.runtime.shutdown().await;
+}
 #[tokio::test]
 async fn typed_microphone_origin_request_retains_choices_and_receipt_without_provider_rebinding() {
     use eefn::microphone_submission::{MicrophoneCommand, MicrophoneRequest};

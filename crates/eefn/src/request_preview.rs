@@ -80,6 +80,12 @@ pub enum RequestAction {
     },
     /// Inspect this origin's retained concrete plan without contacting an executor.
     Plan { id: String },
+    /// Explicitly compile an exact saved concrete request without recreating JSON; never execute.
+    CompileSaved {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+    },
     /// Ask eef to compile a reviewed request; separate owner approval is required.
     Compile {
         id: String,

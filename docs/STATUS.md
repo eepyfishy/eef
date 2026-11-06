@@ -3,6 +3,31 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: explicit compilation of retained concrete input
+
+`eefn requests compile-saved JOB_ID --revision REVISION` asks the coordinator to
+compile the exact saved concrete review without recreating JSON. It resolves
+input on the coordinator and reuses the original deterministic compilation
+receipt, then delegates to the existing origin-scoped compiler. Current provider,
+revision and immutable binding checks still apply. A matching compiled receipt
+returns history before provider lookup; ordinary microphone receipt reuse remains
+inspection-only. Semantic reviews without original concrete intent are refused.
+The existing typed planning API and running-node service expose the same operation;
+no dashboard controller, approval, execution or new persistence format is added.
+Two shared contract/view cases, one CLI case, two actual credential/TLS partial-save
+cases and the extended native executable fixture require hosted verification.
+
+The ACK isolation source `dfbdfd6` passed Windows/dashboard in run `42236696813`:
+raw output records Rust1510+1ignored across 17 groups, including all 34 CLI cases
+at that checkpoint. Both Linux jobs passed; Windows/headless
+remains in progress. This is partial evidence only, not full source acceptance.
+
+The earlier outcome run `42234328855` is terminal failure because of its dashboard
+ACK test precondition. Independently, its headless job passed Rust1517+1ignored,
+all 36 native suites, the completed pre-registration-close case, firewall mocks,
+listening and first-run gates. The failed overall result remains retained; later
+sources still require their own full verification.
+
 ## In development: executable microphone command acceptance
 
 The existing native input suite now additionally drives `eefn requests

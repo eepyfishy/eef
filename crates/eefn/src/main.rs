@@ -2496,6 +2496,16 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
+            eefn::request_preview::RequestAction::CompileSaved { id, revision } => {
+                execute_node_planning_command(
+                    args,
+                    eefn::request_planning::PlanningCommand::CompileSaved {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                    },
+                )
+                .await
+            }
             eefn::request_preview::RequestAction::Compile {
                 id,
                 revision,
@@ -4462,6 +4472,44 @@ mod tests {
         }
     }
     #[test]
+    fn compile_saved_cli_requires_an_exact_revision_without_json_or_authority_flags() {
+        let job = uuid::Uuid::new_v4().simple().to_string();
+        let args =
+            Args::try_parse_from(["eefn", "requests", "compile-saved", &job, "--revision", "1"])
+                .unwrap();
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::CompileSaved { id, revision },
+        }) = args.command
+        else {
+            panic!("Wrong saved compilation adapter")
+        };
+        assert_eq!(id, job);
+        assert_eq!(revision, 1);
+        assert!(Args::try_parse_from(["eefn", "requests", "compile-saved", &job]).is_err());
+        for flag in [
+            "--file",
+            "--template",
+            "--model",
+            "--approve",
+            "--execute",
+            "--retry",
+            "--force",
+        ] {
+            assert!(
+                Args::try_parse_from([
+                    "eefn",
+                    "requests",
+                    "compile-saved",
+                    &job,
+                    "--revision",
+                    "1",
+                    flag
+                ])
+                .is_err()
+            );
+        }
+    }
+    #[test]
     fn submit_microphone_cli_needs_no_file_model_or_authority_flags() {
         let args = Args::try_parse_from([
             "eefn",
@@ -4590,6 +4638,14 @@ mod tests {
                     vec!["eefn", "models", "show"],
                     vec!["eefn", "requests", "plan", "request-id"],
                     vec!["eefn", "requests", "submit-microphone"],
+                    vec![
+                        "eefn",
+                        "requests",
+                        "compile-saved",
+                        "request-id",
+                        "--revision",
+                        "1",
+                    ],
                     vec![
                         "eefn",
                         "requests",

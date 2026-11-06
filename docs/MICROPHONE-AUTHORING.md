@@ -64,6 +64,29 @@ with a saved uncompiled review returns its incomplete status without querying a
 provider or continuing compilation. Further planning or cancellation must be
 explicit. Completed compilation receipts still return their original choices.
 
+To explicitly finish a saved concrete review after inspecting it, use its exact
+review revision:
+
+```text
+eefn requests plan JOB_ID
+eefn requests compile-saved JOB_ID --revision 1
+```
+
+`compile-saved` is a separate preparation command. The coordinator loads the
+retained concrete input and preserves the original compilation receipt; no JSON
+file, model inference or device selection is required. It rechecks origin ownership,
+revision and current source bindings before saving. A stale revision, unavailable
+source or changed binding refuses compilation. An already matching compiled receipt
+returns its historical result without contacting the source or changing the job.
+The original `submit-microphone --operation-id` receipt remains usable afterward.
+Semantic reviews without exact concrete input still need their normal explicit
+preparation. This command does not approve, execute, replay or enable permissions.
+After an unconfirmed response, inspect the saved job before deciding what to do.
+Keep the job ID and original review revision. Repeating the exact command reads
+a matching compilation if it was already retained; the backend never retries it
+automatically.
+Older versions may refuse this new planning operation; no fallback is attempted.
+
 The node API adapter is `POST /api/commands/requests/microphone`; its typed body is
 `MicrophoneRequest`. CLI, API and future UI clients share the node service and
 coordinator authoring backend. The dashboard controls no background lifecycle.

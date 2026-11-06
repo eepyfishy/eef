@@ -39,6 +39,12 @@ export async function verifyMicrophoneCommands(f) {
   assert.equal(f.inferenceCalls.length,prior,'receipt inspection cannot invoke an interpreter');
  };
  await verifyRetained();
+ const compiledAgain=await f.nodeCli(['requests','compile-saved',job,'--revision','1']);noEffects(compiledAgain);
+ assert.equal(compiledAgain.success,true);assert.equal(compiledAgain.result.reused,true);
+ assert.equal(compiledAgain.result.planning_operation_id,result.compilation_operation_id);
+ assert.deepEqual(await inspect(job),saved);
+ const staleCompilation=await f.nodeCli(['requests','compile-saved',job,'--revision','2'],false);noEffects(staleCompilation);
+ assert.equal(staleCompilation.success,false);assert.deepEqual(await inspect(job),saved);
  const conflict=await submit(operation,['--blocks','25'],false);noEffects(conflict);
  assert.equal(conflict.coordinator_acknowledged,true);assert.equal(conflict.outcome_unknown,false);
  assert.equal(conflict.error_code,'microphone_intent_conflict');assert.equal(conflict.refusal.review_checkpoint_attempted,false);

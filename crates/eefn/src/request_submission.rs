@@ -175,6 +175,45 @@ pub fn compilation_receipt(origin: &str, opening: &str, job: &str) -> Result<Str
     Ok(uuid::Uuid::from_bytes(bytes).to_string())
 }
 
+/// Resolve an explicit saved-input compilation, not an automatic continuation.
+/// Only immutable concrete intent is eligible; semantic reviews still require
+/// their separate source-bound preparation. The existing compiler rechecks the
+/// journal revision, live providers, bindings and durable receipt before saving.
+pub fn saved_compile_command(
+    draft: &crate::request_drafts::DraftRecord,
+    context: &crate::context::RequestContext,
+    id: &str,
+    expected_revision: u64,
+) -> Result<PlanningCommand> {
+    draft.validate()?;
+    if draft.proposals.len() != 1
+        || !draft.answers.is_empty()
+        || draft.proposals[0].operation_id != context.request_id()
+    {
+        bail!("Saved compilation requires the original exact concrete review")
+    }
+    let input = draft.concrete_input.clone().ok_or_else(|| {
+        anyhow::anyhow!("No retained concrete input; prepare this review explicitly")
+    })?;
+    let concrete = ConcreteInput {
+        schema_version: 1,
+        original_text: draft.original_text.clone(),
+        title: draft.current().goal.clone(),
+        input: input.clone(),
+    };
+    if concrete.proposal()? != draft.proposals[0].proposal {
+        bail!("Saved input differs from the original concrete proposal")
+    }
+    let command = PlanningCommand::Compile {
+        id: id.into(),
+        expected_revision,
+        operation_id: compilation_receipt(context.origin_node(), context.request_id(), id)?,
+        input,
+    };
+    command.validate()?;
+    Ok(command)
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConcreteReport {
@@ -559,6 +598,95 @@ mod tests {
                 "execution_authorized":false,"dispatched":false,"automatically_retried":false},
             "job":{"id":job,"status":"awaiting_approval","revision":2,"request_context":context,"can_resume":false,"task_count":1}});
         (value, command)
+    }
+    #[test]
+    fn saved_compilation_uses_exact_retained_input_and_original_durable_receipt() {
+        let (value, original) = fixture();
+        let draft = serde_json::from_value::<crate::request_drafts::DraftRecord>(
+            value["plan"]["draft"].clone(),
+        )
+        .unwrap();
+        let context = serde_json::from_value::<crate::context::RequestContext>(
+            value["plan"]["request_context"].clone(),
+        )
+        .unwrap();
+        let id = value["plan"]["id"].as_str().unwrap();
+        let command = saved_compile_command(&draft, &context, id, 1).unwrap();
+        assert_eq!(
+            json!(command),
+            json!({"operation":"compile","id":id,"expected_revision":1,
+            "operation_id":value["compilation_operation_id"],"input":original.request.input})
+        );
+        assert_eq!(
+            command,
+            saved_compile_command(&draft, &context, id, 1).unwrap()
+        );
+        let mut semantic = draft.clone();
+        semantic.concrete_input = None;
+        assert!(saved_compile_command(&semantic, &context, id, 1).is_err());
+        let mut altered = draft.clone();
+        altered.proposals[0].proposal.complexity = Complexity::Simple;
+        assert!(saved_compile_command(&altered, &context, id, 1).is_err());
+        let wrong_context = crate::context::RequestContext::new(
+            uuid::Uuid::new_v4().to_string(),
+            "owner".into(),
+            vec![],
+        )
+        .unwrap();
+        assert!(saved_compile_command(&draft, &wrong_context, id, 1).is_err());
+        for revision in [0, u64::MAX] {
+            assert!(saved_compile_command(&draft, &context, id, revision).is_err());
+        }
+        let saved = PlanningCommand::CompileSaved {
+            id: id.into(),
+            expected_revision: 1,
+        };
+        assert!(saved.mutates());
+        saved.validate().unwrap();
+        for field in ["input", "approved", "execute", "operation_id"] {
+            let mut bad = json!(saved);
+            bad[field] = json!(true);
+            assert!(serde_json::from_value::<PlanningCommand>(bad).is_err());
+        }
+    }
+    #[test]
+    fn saved_compilation_views_bind_transport_and_original_receipts_without_execution() {
+        let (value, _) = fixture();
+        let mut view = value["plan"].clone();
+        let transport = uuid::Uuid::new_v4().to_string();
+        view["operation_id"] = json!(transport);
+        let command = PlanningCommand::CompileSaved {
+            id: view["id"].as_str().unwrap().into(),
+            expected_revision: 1,
+        };
+        assert_ne!(view["planning_operation_id"], view["operation_id"]);
+        assert!(crate::request_planning::confirmed(
+            &view, "owner", &transport, &command
+        ));
+        for (pointer, replacement) in [
+            ("/planning_operation_id", json!(transport)),
+            ("/draft/concrete_input", Value::Null),
+            ("/source_revision", json!(2)),
+            ("/dispatched", json!(true)),
+            ("/execution_authorized", json!(true)),
+            ("/automatically_retried", json!(true)),
+            ("/operation_id", json!(uuid::Uuid::new_v4().to_string())),
+        ] {
+            let mut bad = view.clone();
+            *bad.pointer_mut(pointer).unwrap() = replacement;
+            assert!(
+                !crate::request_planning::confirmed(&bad, "owner", &transport, &command),
+                "{pointer}"
+            );
+        }
+        let mut reused = view.clone();
+        reused["reused"] = json!(true);
+        assert!(crate::request_planning::confirmed(
+            &reused, "owner", &transport, &command
+        ));
+        assert!(!crate::request_planning::confirmed(
+            &view, "other", &transport, &command
+        ));
     }
     #[test]
     fn explicit_input_is_bounded_and_deterministic_not_model_attribution_or_authority() {
