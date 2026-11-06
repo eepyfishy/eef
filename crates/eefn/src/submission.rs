@@ -67,7 +67,7 @@ impl SubmissionMailbox {
 
     /// Correlation is separate from the fresh transport ID: reusing a receipt
     /// must never route a late reply to a different waiter. This is not deduplication.
-    pub(crate) async fn request_correlated(
+    pub async fn request_correlated(
         self: &Arc<Self>,
         kind: &str,
         payload: Value,
