@@ -73,6 +73,20 @@ pub struct Definition {
 
 /// Reviewed metadata-producing sources, not arbitrary extension entry points.
 /// No arbitrary plugin path, code, command, model or raw media destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    MicrophoneEnergy,
+    CameraMotion,
+}
+impl SourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MicrophoneEnergy => "microphone_energy",
+            Self::CameraMotion => "camera_motion",
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Source {
@@ -92,9 +106,12 @@ pub enum Source {
 
 impl Source {
     pub fn kind(&self) -> &'static str {
+        self.source_kind().as_str()
+    }
+    pub fn source_kind(&self) -> SourceKind {
         match self {
-            Self::MicrophoneEnergy { .. } => "microphone_energy",
-            Self::CameraMotion { .. } => "camera_motion",
+            Self::MicrophoneEnergy { .. } => SourceKind::MicrophoneEnergy,
+            Self::CameraMotion { .. } => SourceKind::CameraMotion,
         }
     }
     pub fn resource_id(&self) -> &str {

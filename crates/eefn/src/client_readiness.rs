@@ -61,14 +61,13 @@ impl Readiness {
     pub(super) fn decorate(&self, mut message: Value) -> Value {
         let mut advertisement = crate::workload_network::Advertisement::unavailable();
         if let (Some(service), Some(snapshot)) = (&self.service, &self.snapshot) {
-            if snapshot.current(service, &self.runtime)
-                && snapshot.report.execution_available
-                && snapshot.policy.enabled
-            {
-                advertisement.available = true;
-                advertisement.completion_payload_prefix = true;
-                advertisement.runtime_id = Some(self.runtime.clone());
-                advertisement.policy = Some(snapshot.policy.clone());
+            let kinds = snapshot.supported_sources(service, &self.runtime);
+            if let Ok(current) = crate::workload_network::Advertisement::for_sources(
+                &self.runtime,
+                snapshot.policy.clone(),
+                kinds,
+            ) {
+                advertisement = current;
             }
         }
         let caps = message["capabilities"]

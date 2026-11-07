@@ -153,6 +153,10 @@ driver release, camera workload stop and RTSP acceptance remain unverified.
 
 ## Source-specific coordinator preflight in development
 
+This checkpoint describes the earlier microphone-only advertisement. The later
+network integration below adds explicit camera negotiation without changing that
+version-two wire shape.
+
 The coordinator now compares the reviewed source kind with the authenticated
 peer's validated workload advertisement in both session preflight and direct route
 creation. Generic workload or one-shot camera capability is insufficient. The
@@ -169,6 +173,9 @@ camera advertisement, lease, authority, fallback or automatic retry; actual came
 negotiation must be added together with its supported runner and readiness path.
 
 ## Passive camera inspection commands in development
+
+The initial inspection checkpoint uses version one with execution unavailable.
+The later network integration below introduces a separately validated ready report.
 
 `eefn workloads camera-sources` inspects the running local node;
 `eef node camera-workload-sources --node NODE_ID` reads it through the coordinator.
@@ -241,3 +248,36 @@ continue to refuse camera workloads. The passive camera report still says execut
 unavailable. Supported camera negotiation/readiness and explicit command authoring
 must be integrated before the public lifecycle may use this runner. VLM triggers,
 relays, aggregate quotas and physical two-PC/webcam/RTSP acceptance remain open.
+
+## Source-specific network integration in development
+
+The node now selects the reviewed camera or microphone factory only after its
+existing workload-policy permit. A camera-ready peer advertises a closed
+version-three list of supported source kinds; microphone-only registration keeps
+the exact version-two shape. Unknown kinds, duplicates, unordered lists, mismatched
+versions and unsupported substitutions are refused before route admission.
+
+The existing bounded readiness observer reads both independent source snapshots
+under one version covering configuration, both consent gates and workload policy.
+Camera inspection reports version two only when applied camera ownership, current
+bindings, saved/applied permission, local consent, Python configuration and enabled
+policy agree. This is configuration readiness, not an OpenCV/driver/endpoint probe
+or execution authority. Withdrawals refresh the same authenticated connection.
+Compilation, approval and the coordinator driver inspect only the reviewed kind;
+current runtime/session, origin/disclosure and admission checks remain required.
+
+Local listening reports include the camera's independent epoch when camera
+settings are present. Enabling requires that freshly inspected epoch as well as
+the existing revision and microphone epoch. A camera denial revokes before storage;
+neither a stale request nor an older request missing the camera epoch can clear
+that denial after persistence fails. A fresh local decision can permit new work
+without reviving prepared work from the old epoch. Remote changes remain refused.
+
+New hosted coverage includes a real credential/pinned-TLS camera route using the
+compiled motion producer with the existing fake device API, durable events before
+delivery, completion seals and actual owned-process exit, plus blocked-read scoped
+stop and same-connection readiness withdrawal/restoration without source replay.
+The full candidate requires fresh hosted verification. This is not physical camera,
+RTSP, two-PC or stable-release acceptance. Command-based camera resource setup and
+request authoring, complete coordinator command lifecycle acceptance, event-triggered
+VLM, relays and aggregate quotas remain required.

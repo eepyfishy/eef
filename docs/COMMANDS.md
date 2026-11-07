@@ -45,8 +45,13 @@ The unreleased camera inspection path has separate camera permission fields:
 These read configured webcam/RTSP resources, source digests and camera consent
 from the running node without opening a camera, contacting an RTSP endpoint or
 calling a model. Private endpoints remain local. Saved/applied differences mean
-the running settings differ from the saved settings. This protocol reports camera
-workload execution unavailable; inspection cannot enable a feature or start work.
+the running settings differ from the saved settings. A version-one report remains
+unavailable; a version-two report can indicate configured camera workload readiness
+when applied permissions, consent, policy and bindings agree. This does not prove
+OpenCV, a webcam or an RTSP endpoint works. Inspection cannot enable a feature or
+start work. Local `eefn listening show` also reports the camera's independent
+revocation epoch when camera settings are present; enabling consent uses that
+fresh epoch and refuses stale decisions, including after a failed permission save.
 See [camera integration status](CAMERA-MOTION.md).
 
 ## Continuous-workload policy (in development)

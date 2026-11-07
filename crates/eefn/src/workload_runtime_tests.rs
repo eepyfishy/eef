@@ -138,6 +138,9 @@ impl Fixture {
                         enabled,
                         expected_revision: shown["revision"].as_u64().unwrap(),
                         expected_epoch: shown["runtime_epoch"].as_u64().unwrap(),
+                        expected_camera_epoch: shown
+                            .pointer("/camera/runtime_epoch")
+                            .and_then(Value::as_u64),
                     },
                 },
                 false,

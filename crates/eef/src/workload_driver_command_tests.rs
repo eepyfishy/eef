@@ -95,7 +95,8 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
             source_kind: "microphone_energy".into(),
             event_delivery: "bounded_metadata".into(),
             restart_authorized: false,
-            completion_payload_prefix: true
+            completion_payload_prefix: true,
+            source_kinds: Vec::new()
         });
         write_message(&crypto, &mut output, &registration)
             .await

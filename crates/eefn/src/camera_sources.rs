@@ -33,8 +33,10 @@ impl Report {
     pub fn validate(&self, request: &Request) -> Result<()> {
         request.validate()?;
         ensure!(
-            self.schema_version == 1
-                && self.report_type == "camera_workload_sources"
+            matches!(
+                (self.schema_version, self.execution_available),
+                (1, false) | (2, true)
+            ) && self.report_type == "camera_workload_sources"
                 && self.success
                 && self.node_id == request.expected_node_id
                 && self.runtime_id == request.expected_runtime_id
@@ -43,11 +45,25 @@ impl Report {
                 && self.listening_revision <= i64::MAX as u64
                 && !self.capture_started
                 && !self.execution_authorized
-                && !self.execution_available
                 && self.resources.len() <= 128
                 && serde_json::to_vec(self)?.len() <= 256 * 1024,
             "Unconfirmed camera source snapshot or unsupported execution claim"
         );
+        if self.execution_available {
+            ensure!(
+                self.local_bindings_current
+                    && self.listening_enabled
+                    && !self.listening_blocked
+                    && self.saved_camera_permission
+                    && self.applied_camera_permission
+                    && self.python_configured
+                    && self
+                        .resources
+                        .iter()
+                        .any(|r| r.available && r.resource_sha256.is_some()),
+                "Executable camera snapshot lacks current local readiness"
+            );
+        }
         crate::workload_sources::validate_resources(&self.node_id, &self.resources)
     }
     /// Exact current binding for review, never permission or workload readiness.
@@ -109,7 +125,8 @@ impl crate::NodeService {
             );
             let consent = crate::listening::Consent::from_config(config)?;
             let state = self.camera_listening_gate.snapshot();
-            let report = Report {
+            let policy = crate::workload_policy::from_config(config)?;
+            let mut report = Report {
                 schema_version: 1,
                 report_type: "camera_workload_sources".into(),
                 success: true,
@@ -141,6 +158,26 @@ impl crate::NodeService {
                 execution_authorized: false,
                 execution_available: false,
             };
+            if cfg!(windows)
+                && policy.enabled
+                && !self.workload_gate.snapshot().1
+                && report.local_bindings_current
+                && report.listening_enabled
+                && !report.listening_blocked
+                && report.saved_camera_permission
+                && report.applied_camera_permission
+                && report.python_configured
+                && engine
+                    .camera_runtime(&self.node_id, &self.camera_pool)
+                    .is_ok()
+                && report
+                    .resources
+                    .iter()
+                    .any(|r| r.available && r.resource_sha256.is_some())
+            {
+                report.schema_version = 2;
+                report.execution_available = true;
+            }
             report.validate(&request)?;
             Ok(json!(report))
         })?;
@@ -256,7 +293,11 @@ pub fn render(value: &Value) -> Result<String> {
             row.resource_sha256.is_some()
         ));
     }
-    text.push_str("Camera workload execution is not available in this protocol. This inspection opened no device and granted no work.\n");
+    text.push_str(if report.execution_available {
+        "Ready for an approved camera workload. Device access is checked when work begins; this inspection opened no device and granted no work.\n"
+    } else {
+        "Camera workload execution is not available with these applied settings. Check camera permission, local listening consent, workload policy and source configuration. This inspection opened no device and granted no work.\n"
+    });
     Ok(text)
 }
 

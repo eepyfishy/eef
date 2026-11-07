@@ -1,12 +1,12 @@
 use super::*;
 use crate::workload_leases::{IssuerWindow, Policy, Query, Requests, definition::*};
 
-struct Fixture {
-    dir: tempfile::TempDir,
-    service: Arc<NodeService>,
-    runtime: String,
-    definition: Definition,
-    engine: Arc<crate::NodeEngine>,
+pub(crate) struct Fixture {
+    pub(crate) dir: tempfile::TempDir,
+    pub(crate) service: Arc<NodeService>,
+    pub(crate) runtime: String,
+    pub(crate) definition: Definition,
+    pub(crate) engine: Arc<crate::NodeEngine>,
     _guard: crate::request_preview::PreviewGuard,
 }
 impl Fixture {
@@ -113,6 +113,9 @@ impl Fixture {
                         enabled,
                         expected_revision: current["revision"].as_u64().unwrap(),
                         expected_epoch: current["runtime_epoch"].as_u64().unwrap(),
+                        expected_camera_epoch: current
+                            .pointer("/camera/runtime_epoch")
+                            .and_then(Value::as_u64),
                     },
                     ..request
                 },
@@ -228,6 +231,55 @@ fn camera_preparation_pins_source_and_private_binding_with_only_its_own_reservat
     assert!(f.service.microphone_pool.reserve().is_ok());
     assert_eq!(f.config(), before);
     assert!(!f.dir.path().join("pids.json").exists());
+    drop(source);
+    assert!(f.service.camera_pool.reserve().is_ok());
+}
+
+#[test]
+fn network_preparation_selects_camera_only_after_the_existing_workload_policy_permit() {
+    let f = Fixture::new(None);
+    assert!(
+        f.engine
+            .prepare_workload(&f.runtime, f.definition.clone())
+            .is_err()
+    );
+    assert!(f.service.camera_pool.reserve().is_ok());
+    let request = crate::workload_policy::Request {
+        schema_version: 1,
+        expected_node_id: "node".into(),
+        expected_runtime_id: f.runtime.clone(),
+        command: crate::workload_policy::Command::Show {},
+    };
+    let current = f
+        .service
+        .workload_policy_command(request.clone(), false)
+        .unwrap();
+    f.service
+        .workload_policy_command(
+            crate::workload_policy::Request {
+                command: crate::workload_policy::Command::Set {
+                    policy: Policy {
+                        enabled: true,
+                        ..Default::default()
+                    },
+                    expected_revision: current["revision"].as_u64().unwrap(),
+                    expected_epoch: current["runtime_epoch"].as_u64().unwrap(),
+                },
+                ..request
+            },
+            false,
+        )
+        .unwrap();
+    let (_policy, _permit, source) = f
+        .engine
+        .prepare_workload(&f.runtime, f.definition.clone())
+        .unwrap();
+    assert_eq!(
+        source.source.digest(),
+        crate::workload_sources::camera_adapter_digest()
+    );
+    assert!(f.service.camera_pool.reserve().is_err());
+    assert!(f.service.microphone_pool.reserve().is_ok());
     drop(source);
     assert!(f.service.camera_pool.reserve().is_ok());
 }

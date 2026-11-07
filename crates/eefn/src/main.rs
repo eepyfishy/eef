@@ -2143,6 +2143,9 @@ async fn execute_listening(
             expected_epoch: inspected["runtime_epoch"]
                 .as_u64()
                 .context("Listening runtime epoch unavailable")?,
+            expected_camera_epoch: inspected
+                .pointer("/camera/runtime_epoch")
+                .and_then(Value::as_u64),
         };
         request.validate()?;
         requested = json!(request.command);

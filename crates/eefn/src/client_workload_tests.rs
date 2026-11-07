@@ -205,6 +205,9 @@ async fn default_disabled_owner_policy_refuses_before_a_lease_probe_or_consumpti
 #[cfg(all(windows, feature = "native-test-fixtures"))]
 include!("client_workload_native_tests.rs");
 
+#[cfg(all(windows, feature = "native-test-fixtures"))]
+include!("client_camera_workload_native_tests.rs");
+
 #[test]
 fn cancelled_preparation_retains_actual_capacity_without_holding_runtime_shutdown() {
     let f = Fixture::new(true);

@@ -714,11 +714,7 @@ impl crate::Runtime {
                     bail!("Source node is not disclosed to this origin")
                 }
             }
-            let snapshot = self
-                .node_server
-                .workload_sources(&template.executor_node, 5)
-                .await?;
-            snapshot.confirms_template(&template)?;
+            self.node_server.workload_source(&template, 5).await?;
             let plan = crate::workload_jobs::compile(&self.engine, &request.command)?;
             return Ok(report(plan, &request.command, &self.instance_id, false));
         }

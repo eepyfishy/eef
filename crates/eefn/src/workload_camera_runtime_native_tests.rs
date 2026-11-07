@@ -1,6 +1,6 @@
 // Included only by Windows native-test-fixtures; no shipping hook or hardware.
 use futures_util::FutureExt;
-fn native_fixture(mode: &str) -> (Fixture, tempfile::TempDir) {
+pub(crate) fn native_fixture(mode: &str) -> (Fixture, tempfile::TempDir) {
     let trace = tempfile::tempdir().unwrap();
     let executable = std::path::PathBuf::from(
         std::env::var_os("EEF_TEST_PYTHON")

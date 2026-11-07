@@ -302,7 +302,14 @@ impl NodeEngine {
             .as_ref()
             .context("Node workload service unavailable")?;
         let (policy, permit) = service.workload_policy_permit(runtime, &definition)?;
-        let source = service.prepare_microphone(runtime, definition)?;
+        let source = match definition.source.source_kind() {
+            crate::workload_leases::definition::SourceKind::MicrophoneEnergy => {
+                service.prepare_microphone(runtime, definition)?
+            }
+            crate::workload_leases::definition::SourceKind::CameraMotion => {
+                service.prepare_camera(runtime, definition)?
+            }
+        };
         Ok((policy, permit, source))
     }
 

@@ -3,6 +3,35 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: source-specific camera network admission
+
+The coordinator's compiler, conditional approval and explicit driver now select
+the reviewed camera or microphone snapshot. Camera-capable nodes advertise an
+explicit version-three source list; microphone-only registration retains its old
+version-two serialization. The coalesced readiness observer checks both independent
+consent gates, and the node selects its source factory only after the existing
+policy permit. Camera readiness is configuration evidence, never device health or
+a grant. Local consent enabling checks the fresh camera epoch too, preventing a
+stale decision from clearing denial after a failed permission save.
+
+New source-negotiation, readiness, consent and policy tests accompany a native
+credential/pinned-TLS camera workload case with actual compiled source bytes,
+durable metadata, observed process exit, scoped stop and live readiness refresh.
+Fresh complete hosted acceptance is required. Camera resource setup/authoring
+without JSON, full coordinator command lifecycle acceptance, VLM triggers, relays,
+aggregate quotas and physical two-PC acceptance remain open.
+
+The preceding passive-inspection source `a500c0a` and private-runner source
+`9871f37` passed all four jobs in runs
+[42339783078](https://github.com/eepyfishy/eef/actions/runs/42339783078) and
+[42340544812](https://github.com/eepyfishy/eef/actions/runs/42340544812).
+Their retained headless records contain 1558/1567 passing Rust cases plus one
+ignored case across 17 groups, all 36 native suites, completed pre-registration
+close coverage, firewall mocks, listening and first-run gates. The failed initial
+inspection run `42339206757` remains retained; its two incorrect new fixture
+assertions were corrected in `a500c0a`. These records accept their exact synthetic
+scope, not the network changes above, physical capture or stable release.
+
 ## In development: prepared camera source and owned workload runner
 
 Private camera preparation now binds the exact applied camera resource, compiled

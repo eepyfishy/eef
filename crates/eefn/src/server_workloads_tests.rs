@@ -65,6 +65,7 @@ fn support(runtime: &str) -> Advertisement {
         event_delivery: "bounded_metadata".into(),
         restart_authorized: false,
         completion_payload_prefix: true,
+        source_kinds: Vec::new(),
     }
 }
 fn server() -> (NodeServer, crate::tls::CoordinatorIdentity) {

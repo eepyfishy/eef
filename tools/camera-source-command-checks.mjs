@@ -14,6 +14,11 @@ export async function verifyCameraSourceCommands(f) {
  assert.equal(report.saved_camera_permission,false);assert.equal(report.applied_camera_permission,false);
  assert.equal(report.capture_started,false);assert.equal(report.execution_authorized,false);assert.equal(report.execution_available,false);
  assert.equal(report.local_bindings_current,true);assert.equal(report.resources.length,1);
+ const consent=await f.nodeCli(['listening','show']);
+ assert.equal(consent.success,true);assert.equal(consent.result.schema_version,3);
+ assert.equal(consent.result.camera.saved_permission,false);assert.equal(consent.result.camera.applied_permission,false);
+ const consentText=await f.nodeText(['listening','show'],true);
+ assert(consentText.includes('Camera permission (saved/applied): false/false'));
  assert.equal(report.resources[0].resource_id,f.nodeId+'::camera');assert.match(report.resources[0].resource_sha256,/^[0-9a-f]{64}$/);
  assert(!JSON.stringify(report).includes('PRIVATE_CAMERA'));assert(!JSON.stringify(report).includes('rtsp://'));
  const text=await f.nodeText(command,true);

@@ -309,4 +309,4 @@ pub(crate) mod tests;
 
 #[cfg(all(test, windows))]
 #[path = "workload_camera_runtime_tests.rs"]
-mod camera_tests;
+pub(crate) mod camera_tests;

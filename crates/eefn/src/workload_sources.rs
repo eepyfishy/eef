@@ -262,6 +262,28 @@ impl crate::NodeService {
 }
 
 impl crate::NodeServer {
+    /// Select only the reviewed source's independently authenticated snapshot.
+    /// There is no fallback to another source kind or provider after refusal.
+    pub async fn workload_source(
+        &self,
+        template: &crate::workload_leases::definition::Template,
+        freshness_seconds: u64,
+    ) -> Result<SourceSnapshot> {
+        use crate::workload_leases::definition::SourceKind;
+        template.validate()?;
+        let snapshot = match template.source.source_kind() {
+            SourceKind::MicrophoneEnergy => SourceSnapshot::Microphone(
+                self.workload_sources(&template.executor_node, freshness_seconds)
+                    .await?,
+            ),
+            SourceKind::CameraMotion => SourceSnapshot::Camera(
+                self.camera_workload_sources(&template.executor_node, freshness_seconds)
+                    .await?,
+            ),
+        };
+        snapshot.confirms_template(template)?;
+        Ok(snapshot)
+    }
     /// Read from one independently authenticated, pinned live node session.
     /// Callers must also apply their existing origin/disclosure rules.
     pub async fn workload_sources(&self, node: &str, freshness_seconds: u64) -> Result<Report> {
@@ -321,6 +343,61 @@ impl crate::NodeServer {
             "Source runtime changed during inspection"
         );
         Ok(report)
+    }
+}
+
+/// Local typed result, never another serializable execution authority.
+pub enum SourceSnapshot {
+    Microphone(Report),
+    Camera(crate::camera_sources::Report),
+}
+impl SourceSnapshot {
+    pub fn runtime_id(&self) -> &str {
+        match self {
+            Self::Microphone(report) => &report.runtime_id,
+            Self::Camera(report) => &report.runtime_id,
+        }
+    }
+    pub fn confirms_template(
+        &self,
+        template: &crate::workload_leases::definition::Template,
+    ) -> Result<()> {
+        match self {
+            Self::Microphone(report) => report.confirms_template(template),
+            Self::Camera(report) => report.confirms_template(template),
+        }
+    }
+    pub fn confirms_execution(
+        &self,
+        template: &crate::workload_leases::definition::Template,
+        runtime: &str,
+    ) -> Result<()> {
+        self.confirms_template(template)?;
+        let ready = match self {
+            Self::Microphone(r) => {
+                r.schema_version == 3
+                    && r.execution_available
+                    && r.listening_enabled
+                    && !r.listening_blocked
+                    && r.saved_microphone_permission
+                    && r.applied_microphone_permission
+                    && r.python_configured
+            }
+            Self::Camera(r) => {
+                r.schema_version == 2
+                    && r.execution_available
+                    && r.listening_enabled
+                    && !r.listening_blocked
+                    && r.saved_camera_permission
+                    && r.applied_camera_permission
+                    && r.python_configured
+            }
+        };
+        ensure!(
+            ready && self.runtime_id() == runtime,
+            "Workload source requires its applied feature permission, local listening consent, configured Python and current runtime"
+        );
+        Ok(())
     }
 }
 

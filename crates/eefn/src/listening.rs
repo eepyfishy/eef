@@ -7,6 +7,7 @@ use tokio::sync::watch;
 
 const NOTE: &str = "Local ambient-input consent only. Microphone permission and an admitted workload are still required; no capture, workload, model, restart or retry was started. Capture integration is not available yet. Revoking a supervised future is not proof that external effects stopped.";
 const SOURCE_NOTE: &str = "Local ambient-input consent only. Microphone permission, enabled workload policy, current source readiness and an admitted workload are still required; no capture, workload, model, restart or retry was started. Revoking a supervised future is not proof that external effects stopped.";
+const SOURCES_NOTE: &str = "Local ambient-input consent only. Each source requires its own feature permission, enabled workload policy, current readiness and an admitted workload. No capture, workload, model, restart or retry was started. Revoking a supervised future is not proof that external effects stopped.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -214,6 +215,8 @@ pub enum Command {
         enabled: bool,
         expected_revision: u64,
         expected_epoch: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_camera_epoch: Option<u64>,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -246,6 +249,14 @@ impl Request {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CameraStatus {
+    runtime_epoch: u64,
+    runtime_blocked: bool,
+    saved_permission: bool,
+    applied_permission: bool,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Report {
     schema_version: u32,
     report_type: String,
@@ -259,6 +270,8 @@ struct Report {
     runtime_blocked: bool,
     saved_microphone_permission: bool,
     applied_microphone_permission: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    camera: Option<CameraStatus>,
     changed: bool,
     capture_integration_available: bool,
     capture_started: bool,
@@ -274,8 +287,9 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
     request.validate().is_ok()
         && matches!(
             (r.schema_version, r.capture_integration_available),
-            (1, false) | (2, _)
+            (1, false) | (2, _) | (3, _)
         )
+        && confirmed_camera(&r, request)
         && r.report_type == "node_listening_consent"
         && r.node_id == request.expected_node_id
         && r.runtime_id == request.expected_runtime_id
@@ -288,7 +302,9 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
         && !r.restart_requested
         && !r.automatically_retried
         && r.note
-            == if r.schema_version == 2 {
+            == if r.schema_version == 3 {
+                SOURCES_NOTE
+            } else if r.schema_version == 2 {
                 SOURCE_NOTE
             } else {
                 NOTE
@@ -299,6 +315,7 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
                 enabled,
                 expected_revision,
                 expected_epoch,
+                ..
             } => {
                 r.consent.enabled == enabled
                     && r.revision == expected_revision.saturating_add(u64::from(r.changed))
@@ -311,6 +328,33 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
                     }
             }
         }
+}
+fn confirmed_camera(report: &Report, request: &Request) -> bool {
+    match (&report.camera, &request.command) {
+        (
+            None,
+            Command::Set {
+                expected_camera_epoch: Some(_),
+                ..
+            },
+        ) => false,
+        (None, _) => report.schema_version != 3,
+        (Some(camera), command) if report.schema_version == 3 => match command {
+            Command::Show {} => true,
+            Command::Set {
+                enabled,
+                expected_camera_epoch,
+                ..
+            } => {
+                camera.runtime_blocked == !enabled
+                    && expected_camera_epoch.map_or(!enabled, |epoch| {
+                        camera.runtime_epoch == epoch
+                            || camera.runtime_epoch == epoch.saturating_add(1)
+                    })
+            }
+        },
+        _ => false,
+    }
 }
 impl crate::NodeService {
     pub fn listening_command(&self, request: Request, remote: bool) -> Result<Value> {
@@ -332,10 +376,24 @@ impl crate::NodeService {
                 let mut consent = Consent::from_config(config)?;
                 let mut current_revision = revision(config)?;
                 let mut changed = false;
+                let camera_scope = engine.applied_permissions().media.camera
+                    || config.pointer("/permissions/media/camera") == Some(&json!(true))
+                    || engine
+                        .applied_resources()
+                        .iter()
+                        .any(|r| r.capability == "camera.capture")
+                    || matches!(
+                        request.command,
+                        Command::Set {
+                            expected_camera_epoch: Some(_),
+                            ..
+                        }
+                    );
                 if let Command::Set {
                     enabled,
                     expected_revision,
                     expected_epoch,
+                    expected_camera_epoch,
                 } = request.command
                 {
                     ensure!(
@@ -343,6 +401,15 @@ impl crate::NodeService {
                             && self.listening_gate.state().epoch == expected_epoch,
                         "Listening state changed; inspect before deciding what to do"
                     );
+                    if enabled {
+                        ensure!(
+                            (!camera_scope || expected_camera_epoch.is_some())
+                                && expected_camera_epoch.is_none_or(
+                                    |epoch| epoch == self.camera_listening_gate.snapshot().0
+                                ),
+                            "Camera listening state changed; inspect before deciding what to do"
+                        );
+                    }
                     changed = consent.enabled != enabled;
                     if !enabled {
                         self.listening_gate.deny();
@@ -368,7 +435,13 @@ impl crate::NodeService {
                     && crate::workload_policy::from_config(config)?.enabled
                     && !self.workload_gate.snapshot().1;
                 let report = json!(Report {
-                    schema_version: if source_supported { 2 } else { 1 },
+                    schema_version: if camera_scope {
+                        3
+                    } else if source_supported {
+                        2
+                    } else {
+                        1
+                    },
                     report_type: "node_listening_consent".into(),
                     node_id: self.node_id.clone(),
                     runtime_id: request.expected_runtime_id.clone(),
@@ -381,13 +454,27 @@ impl crate::NodeService {
                     saved_microphone_permission: config.pointer("/permissions/media/microphone")
                         == Some(&json!(true)),
                     applied_microphone_permission: engine.applied_permissions().media.microphone,
+                    camera: if camera_scope {
+                        let (epoch, blocked) = self.camera_listening_gate.snapshot();
+                        Some(CameraStatus {
+                            runtime_epoch: epoch,
+                            runtime_blocked: blocked,
+                            saved_permission: config.pointer("/permissions/media/camera")
+                                == Some(&json!(true)),
+                            applied_permission: engine.applied_permissions().media.camera,
+                        })
+                    } else {
+                        None
+                    },
                     changed,
                     capture_integration_available: integrated,
                     capture_started: false,
                     execution_authorized: false,
                     restart_requested: false,
                     automatically_retried: false,
-                    note: if source_supported {
+                    note: if camera_scope {
+                        SOURCES_NOTE.into()
+                    } else if source_supported {
                         SOURCE_NOTE.into()
                     } else {
                         NOTE.into()
@@ -518,15 +605,26 @@ pub fn render(value: &Value) -> Result<String> {
         ),
         "Unconfirmed listening report"
     );
-    Ok(format!(
-        "Node {} ambient-input consent: {}\nRuntime blocked: {}\nMicrophone permission (saved/applied): {}/{}\n{}\n",
+    let mut text = format!(
+        "Node {} ambient-input consent: {}\nRuntime blocked: {}\nMicrophone permission (saved/applied): {}/{}\n",
         r.node_id,
         r.consent.enabled,
         r.runtime_blocked,
         r.saved_microphone_permission,
         r.applied_microphone_permission,
-        NOTE
-    ))
+    );
+    if let Some(camera) = r.camera {
+        text.push_str(&format!(
+            "Camera permission (saved/applied): {}/{}; source epoch: {}; blocked: {}\n",
+            camera.saved_permission,
+            camera.applied_permission,
+            camera.runtime_epoch,
+            camera.runtime_blocked
+        ));
+    }
+    text.push_str(&r.note);
+    text.push('\n');
+    Ok(text)
 }
 
 #[cfg(test)]

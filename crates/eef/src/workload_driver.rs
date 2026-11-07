@@ -34,23 +34,10 @@ impl Runtime {
                 self.registry.scheduling_policy().freshness_seconds,
             )
             .await?;
-        let source = self
-            .node_server
-            .workload_sources(&template.executor_node, 5)
-            .await?;
-        source.confirms_template(&template)?;
+        let source = self.node_server.workload_source(&template, 5).await?;
+        source.confirms_execution(&template, &session.runtime)?;
         ensure!(
-            source.schema_version == 3
-                && source.execution_available
-                && source.listening_enabled
-                && !source.listening_blocked
-                && source.saved_microphone_permission
-                && source.applied_microphone_permission
-                && source.python_configured,
-            "Workload source requires applied microphone permission, local listening consent and configured Python"
-        );
-        ensure!(
-            source.runtime_id == session.runtime
+            source.runtime_id() == session.runtime
                 && saved
                     .approval
                     .as_ref()

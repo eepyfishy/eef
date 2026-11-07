@@ -105,10 +105,7 @@ impl crate::Runtime {
                 // This built-in source is independent of the one-shot audio
                 // plugin. Review binds its own authenticated passive snapshot;
                 // permission/listening/policy and live execution stay separate.
-                self.node_server
-                    .workload_sources(&template.executor_node, 5)
-                    .await?
-                    .confirms_template(&template)?;
+                self.node_server.workload_source(&template, 5).await?;
                 if !self
                     .disclosed_planning_nodes(context.origin_node())
                     .await?

@@ -74,6 +74,9 @@ pub struct Advertisement {
     pub restart_authorized: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub completion_payload_prefix: bool,
+    /// Version three explicitly names every supported source. Omitted in v2.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_kinds: Vec<crate::workload_leases::definition::SourceKind>,
 }
 fn is_false(v: &bool) -> bool {
     !*v
@@ -87,7 +90,11 @@ impl Advertisement {
     ) -> Result<()> {
         self.validate()?;
         ensure!(
-            self.source_kind == source.kind(),
+            if self.schema_version == 2 {
+                self.source_kind == source.kind()
+            } else {
+                self.source_kinds.contains(&source.source_kind())
+            },
             "Node does not advertise the reviewed workload source kind"
         );
         Ok(())
@@ -102,12 +109,42 @@ impl Advertisement {
             event_delivery: "bounded_metadata".into(),
             restart_authorized: false,
             completion_payload_prefix: false,
+            source_kinds: Vec::new(),
         }
+    }
+    pub fn for_sources(
+        runtime: &str,
+        policy: Policy,
+        kinds: Vec<crate::workload_leases::definition::SourceKind>,
+    ) -> Result<Self> {
+        use crate::workload_leases::definition::SourceKind;
+        if kinds.is_empty() {
+            return Ok(Self::unavailable());
+        }
+        let mut value = Self::unavailable();
+        value.available = true;
+        value.runtime_id = Some(runtime.into());
+        value.policy = Some(policy);
+        value.completion_payload_prefix = true;
+        if kinds != [SourceKind::MicrophoneEnergy] {
+            value.schema_version = 3;
+            value.source_kind = "reviewed_sources".into();
+            value.source_kinds = kinds;
+        }
+        value.validate()?;
+        Ok(value)
     }
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.schema_version == 2
+            ((self.schema_version == 2
                 && self.source_kind == "microphone_energy"
+                && self.source_kinds.is_empty())
+                || (self.schema_version == 3
+                    && self.source_kind == "reviewed_sources"
+                    && self.available
+                    && !self.source_kinds.is_empty()
+                    && self.source_kinds.len() <= 2
+                    && self.source_kinds.windows(2).all(|pair| pair[0] < pair[1])))
                 && self.event_delivery == "bounded_metadata"
                 && !self.restart_authorized,
             "Unsupported workload execution advertisement"
@@ -137,6 +174,10 @@ pub struct Offer {
     pub expected_runtime_id: String,
     pub definition: Definition,
 }
+
+#[cfg(test)]
+#[path = "workload_source_negotiation_tests.rs"]
+mod source_tests;
 impl Offer {
     pub fn validate(&self, issuer: &str, session: &str, node: &str, runtime: &str) -> Result<()> {
         self.definition.validate()?;

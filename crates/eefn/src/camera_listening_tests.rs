@@ -46,6 +46,11 @@ impl Fixture {
         serde_json::from_slice(&std::fs::read(self.dir.path().join("node.json")).unwrap()).unwrap()
     }
     fn change(&self, enabled: bool) -> Value {
+        self.service
+            .listening_command(self.set(enabled), false)
+            .unwrap()
+    }
+    fn set(&self, enabled: bool) -> Request {
         let show = Request {
             schema_version: 1,
             expected_node_id: "node".into(),
@@ -53,19 +58,17 @@ impl Fixture {
             command: Command::Show {},
         };
         let current = self.service.listening_command(show.clone(), false).unwrap();
-        self.service
-            .listening_command(
-                Request {
-                    command: Command::Set {
-                        enabled,
-                        expected_revision: current["revision"].as_u64().unwrap(),
-                        expected_epoch: current["runtime_epoch"].as_u64().unwrap(),
-                    },
-                    ..show
-                },
-                false,
-            )
-            .unwrap()
+        Request {
+            command: Command::Set {
+                enabled,
+                expected_revision: current["revision"].as_u64().unwrap(),
+                expected_epoch: current["runtime_epoch"].as_u64().unwrap(),
+                expected_camera_epoch: current
+                    .pointer("/camera/runtime_epoch")
+                    .and_then(Value::as_u64),
+            },
+            ..show
+        }
     }
     async fn camera(&self, epoch: Option<u64>) -> Result<()> {
         self.service
@@ -209,6 +212,8 @@ async fn failed_camera_permission_save_revokes_before_storage_and_never_replays_
     let f = Fixture::new(true, true, true);
     f.change(true);
     let before = f.config();
+    let stale_enable = f.set(true);
+    let microphone_before = f.service.listening_gate.snapshot();
     let original_epoch = f.service.camera_listening_gate.snapshot().0;
     let dropped = Arc::new(AtomicBool::new(false));
     let (started, ready) = tokio::sync::oneshot::channel();
@@ -227,6 +232,22 @@ async fn failed_camera_permission_save_revokes_before_storage_and_never_replays_
     next["permissions"]["media"]["camera"] = json!(false);
     assert!(f.service.save_configuration(next).is_err());
     assert_eq!(f.config(), before);
+    assert_eq!(f.service.listening_gate.snapshot(), microphone_before);
+    assert!(
+        f.service
+            .listening_command(stale_enable.clone(), false)
+            .is_err()
+    );
+    let mut legacy_enable = stale_enable;
+    if let Command::Set {
+        expected_camera_epoch,
+        ..
+    } = &mut legacy_enable.command
+    {
+        *expected_camera_epoch = None;
+    }
+    assert!(f.service.listening_command(legacy_enable, false).is_err());
+    assert!(f.service.camera_listening_gate.snapshot().1);
     assert!(running.await.is_err());
     assert!(dropped.load(Ordering::SeqCst));
     assert!(
@@ -237,6 +258,33 @@ async fn failed_camera_permission_save_revokes_before_storage_and_never_replays_
     assert_eq!(f.change(true)["changed"], false);
     assert!(f.camera(Some(original_epoch)).await.is_err());
     f.camera(None).await.unwrap();
+}
+
+#[test]
+fn camera_consent_confirmation_requires_its_reported_epoch_and_closed_status() {
+    let f = Fixture::new(true, true, false);
+    let request = f.set(true);
+    let report = f.service.listening_command(request.clone(), false).unwrap();
+    assert_eq!(report["schema_version"], 3);
+    assert!(confirmed(&report, &request));
+    for pointer in [
+        "/camera/runtime_blocked",
+        "/camera/runtime_epoch",
+        "/camera",
+    ] {
+        let mut forged = report.clone();
+        *forged.pointer_mut(pointer).unwrap() = match pointer {
+            "/camera/runtime_blocked" => json!(true),
+            "/camera/runtime_epoch" => {
+                json!(report["camera"]["runtime_epoch"].as_u64().unwrap() + 2)
+            }
+            _ => Value::Null,
+        };
+        assert!(!confirmed(&forged, &request), "{pointer}");
+    }
+    let mut forged = report;
+    forged["camera"]["execution_authorized"] = json!(true);
+    assert!(!confirmed(&forged, &request));
 }
 
 #[tokio::test]

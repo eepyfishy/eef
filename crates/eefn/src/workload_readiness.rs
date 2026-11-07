@@ -49,15 +49,39 @@ struct Version {
 pub(crate) struct Snapshot {
     version: Version,
     pub(crate) report: Report,
+    pub(crate) camera_report: crate::camera_sources::Report,
     pub(crate) policy: Policy,
 }
 impl Snapshot {
+    pub(crate) fn supported_sources(
+        &self,
+        service: &NodeService,
+        runtime: &str,
+    ) -> Vec<crate::workload_leases::definition::SourceKind> {
+        use crate::workload_leases::definition::SourceKind;
+        if !self.current(service, runtime) || !self.policy.enabled {
+            return Vec::new();
+        }
+        let mut kinds = Vec::new();
+        if self.report.execution_available {
+            kinds.push(SourceKind::MicrophoneEnergy);
+        }
+        if self.camera_report.execution_available {
+            kinds.push(SourceKind::CameraMotion);
+        }
+        kinds
+    }
     pub(crate) fn current(&self, service: &NodeService, runtime: &str) -> bool {
         self.version.config < u64::MAX
             && self.version == service.source_version()
             && self.report.runtime_id == runtime
+            && self.camera_report.runtime_id == runtime
     }
 }
+
+#[cfg(test)]
+#[path = "workload_camera_readiness_tests.rs"]
+mod camera_tests;
 impl NodeService {
     fn source_version(&self) -> Version {
         Version {
@@ -100,11 +124,19 @@ impl NodeService {
                                 expected_node_id: self.node_id.clone(),
                                 expected_runtime_id: runtime.clone(),
                             })?)?;
+                        ensure!(!reply.is_closed(), "Source readiness observer retired");
+                        let camera_report =
+                            serde_json::from_value(self.camera_workload_sources(Request {
+                                schema_version: 2,
+                                expected_node_id: self.node_id.clone(),
+                                expected_runtime_id: runtime.clone(),
+                            })?)?;
                         let policy =
                             self.inspect_grant_configuration(crate::workload_policy::from_config)?;
                         let snapshot = Snapshot {
                             version,
                             report,
+                            camera_report,
                             policy,
                         };
                         ensure!(
