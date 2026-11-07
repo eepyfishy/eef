@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: camera rejection and repair-wait diagnostics
+
+The isolated stop-fixture correction `77d5225` compiled, but its native camera route
+received `workload_rejected`; its headless Windows job also repeated the separate
+repair-hints implicit-approval connection timeout. Run `42360167494` remains failed.
+The camera assertion now includes the closed rejection code and source/ACK phase
+flags. The unchanged twelve-second repair wait reports only connection count,
+process exit and a validated error-code field on failure. No guard, expected
+outcome, deadline, stack limit or test is removed or relaxed. These observations
+are diagnostic evidence; neither failure cause nor a production fix is proven.
+
 ## In development: immutable camera intent and command-based request authoring
 
 `eefn requests submit-camera` now resolves a disclosed, independently authenticated

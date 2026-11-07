@@ -277,8 +277,11 @@ async fn actual_camera_workload_negotiates_exact_source_persists_events_and_with
                     break;
                 }
                 _ => panic!(
-                    "Unexpected camera workload frame: {}",
-                    frame.message()["type"]
+                    "Unexpected camera workload frame: {}; code={}; acknowledged={acknowledged}; released={released}; events={}; source_opened={}",
+                    frame.message()["type"],
+                    frame.message()["code"],
+                    events.len(),
+                    trace.path().join("pids.json").exists()
                 ),
             }
         }

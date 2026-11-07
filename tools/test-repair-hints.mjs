@@ -22,7 +22,13 @@ function launch(exe,args){const c=spawn(exe,args,{cwd:root,env,windowsHide:true,
 async function run(exe,args,code=0){const c=launch(exe,args),timer=setTimeout(()=>c.kill(),25000);try{const r=await c.result;assert.equal(r.code,code,r.out+r.err);return r;}finally{clearTimeout(timer);}}
 async function cli(exe,args,success=true,json=true){const r=await run(exe,[...(json?['--json']:[]),'repair',...args],success?0:1);return json?JSON.parse(r.out):r.out;}
 async function ps(script,args,code=0){return run('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(root,'tools',script),...args],code);}
-async function until(fn,label){const end=Date.now()+12000;while(Date.now()<end){if(await fn())return;await new Promise(r=>setTimeout(r,50));}throw Error('Timeout: '+label);}
+async function until(fn,label,observation){const end=Date.now()+12000;while(Date.now()<end){if(await fn())return;await new Promise(r=>setTimeout(r,50));}throw Error('Timeout: '+label+(observation?' '+JSON.stringify(observation()):''));}
+function commandObservation(child,baseline){
+ let report;try{report=JSON.parse(child.logs().out);}catch{}
+ const code=report?.error_code;
+ return {connections:connections-baseline,process_exit_code:child.exitCode,success:typeof report?.success==='boolean'?report.success:null,
+  error_code:typeof code==='string'&&/^[a-z0-9_]{1,80}$/.test(code)?code:null};
+}
 async function absent(path){try{await access(path);assert.fail('Unexpected file: '+path);}catch(error){if(error.code!=='ENOENT')throw error;}}
 async function stop(c){if(c.exitCode===null)c.kill();await c.result;for(const socket of sockets)socket.destroy();}
 try{
@@ -66,7 +72,7 @@ try{
   const id=randomUUID(),now=Date.now(),plan={id,program:role,version,executable_sha256:descriptor.executable_sha256,running_slot:'$root',source_url_sha256:hash(source),
    manifest_sha256:hash(descriptorBytes),artifact_sha256:descriptor.artifact.sha256,artifact_bytes:descriptor.artifact.size_bytes,allow_prerelease:true,created_at_ms:now,expires_at_ms:now+86400000};
   await writeFile(plans,JSON.stringify({schema_version:1,plans:[plan]}));const count=connections;
-  const approving=launch(exe,['--json','repair','--approve',id,'--allow-prerelease']);await until(()=>connections>count,'implicit approval metadata fetch '+role);await stop(approving);await absent(receipts);
+  const approving=launch(exe,['--json','repair','--approve',id,'--allow-prerelease']);await until(()=>connections>count,'implicit approval metadata fetch '+role,()=>commandObservation(approving,count));await stop(approving);await absent(receipts);
   await writeFile(hintPath,JSON.stringify({...hint,manifest_url:source+'/changed'}));const next=connections;
   const changed=await cli(exe,['--approve',id,'--allow-prerelease'],false);assert.equal(changed.error_code,'repair_source_url_changed');assert.equal(connections,next);
   await writeFile(hintPath,JSON.stringify({...hint,manifest_url:source+'?PRIVATE_HINT_TOKEN'}));
