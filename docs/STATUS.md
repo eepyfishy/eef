@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: native camera stop fixture correction
+
+The camera network and setup candidates `a29936b` and `5a18341` did not pass full
+hosted acceptance. Their Windows native test compilation calls a nonexistent
+`validate` method on the existing stop report. The fixture now uses that report's
+existing `confirms_scope` check against the exact reviewed workload scope, retaining
+all cancellation, receipt, process-exit and no-replay assertions. Production source
+and stop behavior are unchanged. Runs `42358859871` and `42359571446` remain
+retained; a changed-source candidate requires complete fresh hosted verification.
+
 ## In development: camera resource setup without JSON
 
 The running node now exposes `eefn camera show/configure` through its backend owner

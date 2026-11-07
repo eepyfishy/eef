@@ -217,7 +217,7 @@ async fn actual_camera_workload_negotiates_exact_source_persists_events_and_with
                             .await
                             .unwrap();
                             let stopped = server.stop_workload(&d).await.unwrap();
-                            stopped.validate(&d.scope().unwrap(), &f.runtime).unwrap();
+                            assert!(stopped.confirms_scope(&d.scope().unwrap()));
                             break;
                         }
                     }
