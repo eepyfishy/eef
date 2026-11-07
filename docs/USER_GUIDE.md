@@ -16,6 +16,7 @@ does not become available by changing an alpha install's settings.
 | Install, start, or connect your first node | [Installation and connection](user/INSTALLATION.md) |
 | Choose models, enable features, or manage another node | [Using nodes](user/USING_NODES.md) |
 | Submit a request, review it, run it, and find its result | [Requests and results](user/REQUESTS.md) |
+| Try bounded camera motion requests in a development build | [Camera motion requests](user/CAMERA.md) |
 | Fix a connection, model, permission, or command problem | [Troubleshooting](user/TROUBLESHOOTING.md) |
 | Look up advanced commands | [Command reference](COMMANDS.md) |
 

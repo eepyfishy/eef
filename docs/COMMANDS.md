@@ -17,6 +17,10 @@ installers are unchanged and stable-release acceptance remains separate.
 
 ## Continuous source inspection (in development)
 
+For the camera setup, review, approval, execution and stop sequence, see the
+[development camera walkthrough](user/CAMERA.md). Its full executable lifecycle
+and physical acceptance are still under verification.
+
 Configure a camera resource on the running node without JSON:
 
     eefn camera show
