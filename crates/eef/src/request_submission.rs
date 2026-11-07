@@ -316,7 +316,7 @@ mod tests {
         let input = input();
         let saved = crate::request_drafts::store_review(&engine, draft(&input, &context), &context)
             .unwrap();
-        matches_source(&saved.plan, &input, None, None).unwrap();
+        matches_source(&saved.plan, &input, None, None, None).unwrap();
         assert_eq!(saved.plan.status, PlanStatus::Review);
         assert_eq!(saved.plan.revision, 1);
         assert!(saved.plan.tasks.is_empty());
@@ -338,7 +338,7 @@ mod tests {
             crate::request_drafts::store_review(&engine, draft(&changed, &context), &context)
                 .is_err()
         );
-        assert!(matches_source(&saved.plan, &changed, None, None).is_err());
+        assert!(matches_source(&saved.plan, &changed, None, None, None).is_err());
         engine.shutdown().await;
         drop(engine);
         drop(store);
@@ -376,7 +376,7 @@ mod tests {
             review.proposals[0].allowed_capabilities =
                 eefn::request_planning::concrete_capabilities(&input.input).unwrap();
             let saved = crate::request_drafts::store_review(&engine, review, &context).unwrap();
-            matches_source(&saved.plan, &input, None, None).unwrap();
+            matches_source(&saved.plan, &input, None, None, None).unwrap();
             assert_eq!(saved.plan.status, PlanStatus::Review);
             assert!(saved.plan.approval.is_none());
             assert!(saved.plan.execution.is_none());

@@ -3,6 +3,14 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: camera-intent helper fixture correction
+
+The authoring candidate `515d520`/run `42381353099` failed Linux test compilation:
+three existing direct helper calls omitted the newly explicit camera-intent
+expectation. They now pass `None`, retaining the original positive and conflict
+assertions. No production behavior or test expectation changed. The candidate and
+its failure evidence remain retained; complete hosted acceptance is still required.
+
 ## In development: camera rejection and repair-wait diagnostics
 
 The isolated stop-fixture correction `77d5225` compiled, but its native camera route
