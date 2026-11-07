@@ -37,6 +37,18 @@ model calls. Remote inspection requires an independently authenticated, pinned
 node session. Permission/listening snapshots and configured Python are not
 physical readiness or execution permission. See [source planning](WORKLOAD-SOURCES.md).
 
+The unreleased camera inspection path has separate camera permission fields:
+
+    eefn workloads camera-sources
+    eef node camera-workload-sources --node NODE_ID
+
+These read configured webcam/RTSP resources, source digests and camera consent
+from the running node without opening a camera, contacting an RTSP endpoint or
+calling a model. Private endpoints remain local. Saved/applied differences mean
+the running settings differ from the saved settings. This protocol reports camera
+workload execution unavailable; inspection cannot enable a feature or start work.
+See [camera integration status](CAMERA-MOTION.md).
+
 ## Continuous-workload policy (in development)
 
     eefn workload-policy show

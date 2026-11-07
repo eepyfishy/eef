@@ -2275,7 +2275,10 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     if let Commands::WorkloadPolicy { command } = command {
         return execute_workload_policy(args, command).await;
     }
-    if let Commands::Workloads { .. } = command {
+    if let Commands::Workloads {
+        command: source_command,
+    } = command
+    {
         if eefn::setup::instance_lock(&args.config)?.is_some() {
             bail!("Start this node first; source inspection never launches a runtime")
         }
@@ -2311,15 +2314,29 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 .into(),
         };
         request.validate()?;
+        let camera = matches!(
+            source_command,
+            eefn::workload_sources::Action::CameraSources
+        );
+        let operation = if camera {
+            "camera-workload-sources"
+        } else {
+            "workload-sources"
+        };
         let response = client
-            .post(format!("http://{address}/api/commands/workload-sources"))
+            .post(format!("http://{address}/api/commands/{operation}"))
             .json(&request)
             .send()
             .await?
             .error_for_status()?;
         let value = eefn::model_manager::bounded_json(response).await?;
-        let report: eefn::workload_sources::Report = serde_json::from_value(value.clone())?;
-        report.validate(&request)?;
+        if camera {
+            let report: eefn::camera_sources::Report = serde_json::from_value(value.clone())?;
+            report.validate(&request)?;
+        } else {
+            let report: eefn::workload_sources::Report = serde_json::from_value(value.clone())?;
+            report.validate(&request)?;
+        }
         return Ok(value);
     }
     if let Commands::Listening { command } = command {
@@ -3156,7 +3173,16 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                         );
                     }
                 } else if matches!(command, Commands::Workloads { .. }) {
-                    print!("{}", eefn::workload_sources::render(&value)?);
+                    if matches!(
+                        command,
+                        Commands::Workloads {
+                            command: eefn::workload_sources::Action::CameraSources
+                        }
+                    ) {
+                        print!("{}", eefn::camera_sources::render(&value)?);
+                    } else {
+                        print!("{}", eefn::workload_sources::render(&value)?);
+                    }
                 } else if matches!(command, Commands::Listening { .. }) {
                     if value["success"] == true {
                         print!("{}", eefn::listening::render(&value["result"])?);
@@ -4119,6 +4145,30 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn camera_source_cli_is_a_read_without_capture_permission_or_execution_options() {
+        use clap::Parser;
+        let args = super::Args::try_parse_from(["eefn", "workloads", "camera-sources"]).unwrap();
+        assert!(!args.is_service());
+        assert!(matches!(
+            args.command,
+            Some(super::Commands::Workloads {
+                command: eefn::workload_sources::Action::CameraSources
+            })
+        ));
+        for flag in [
+            "--allow",
+            "--device",
+            "--execute",
+            "--restart",
+            "--grant",
+            "--file",
+        ] {
+            assert!(
+                super::Args::try_parse_from(["eefn", "workloads", "camera-sources", flag]).is_err()
+            );
+        }
+    }
     #[test]
     fn workload_policy_cli_has_owner_limits_without_source_or_permission_options() {
         use clap::Parser;

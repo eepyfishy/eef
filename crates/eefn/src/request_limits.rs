@@ -89,6 +89,7 @@ impl RequestBudget {
                         | "permission_status"
                         | "python_policy_status"
                         | "workload_sources"
+                        | "camera_workload_sources"
                         | "workload_policy_status"
                         | "workload_policy"
                 ));
@@ -250,6 +251,28 @@ mod tests {
         drop(read);
         assert!(budget.admit("node.configure", "bootstrap_policy").is_none());
         assert!(budget.admit("node.configure", "setup_check").is_some());
+        drop(work);
+    }
+    #[test]
+    fn camera_source_reads_share_bounded_control_capacity_without_consuming_work() {
+        let budget = RequestBudget::new(&RequestLimits {
+            work: 1,
+            control: 1,
+        })
+        .unwrap();
+        let work = budget.admit("llm.infer", "run").unwrap();
+        let read = budget
+            .admit("node.configure", "camera_workload_sources")
+            .unwrap();
+        assert!(
+            budget
+                .admit("node.configure", "camera_workload_sources")
+                .is_none()
+        );
+        assert!(budget.admit("node.configure", "workload_sources").is_none());
+        drop(read);
+        assert!(budget.admit("node.configure", "workload_sources").is_some());
+        assert!(budget.admit("llm.infer", "run").is_none());
         drop(work);
     }
     #[test]

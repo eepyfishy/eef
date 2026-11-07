@@ -1071,7 +1071,10 @@ impl NodeClient {
                 .to_owned();
             let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
             if capability == "node.configure"
-                && action == "workload_sources"
+                && matches!(
+                    action.as_str(),
+                    "workload_sources" | "camera_workload_sources"
+                )
                 && (grant_issuer.is_none() || grant_session.is_none())
             {
                 let response = json!({"type":"response","id":request_id,"success":false,
@@ -1532,18 +1535,20 @@ mod tests {
         })
         .await
         .unwrap();
-        let rejected = server
-            .invoke_remote(
-                "probe-test",
-                "node.configure",
-                "workload_sources",
-                json!({}),
-                Duration::from_secs(2),
-            )
-            .await
-            .unwrap();
-        assert_eq!(rejected["success"], false);
-        assert_eq!(rejected["error_type"], "PinnedSessionRequired");
+        for action in ["workload_sources", "camera_workload_sources"] {
+            let rejected = server
+                .invoke_remote(
+                    "probe-test",
+                    "node.configure",
+                    action,
+                    json!({}),
+                    Duration::from_secs(2),
+                )
+                .await
+                .unwrap();
+            assert_eq!(rejected["success"], false);
+            assert_eq!(rejected["error_type"], "PinnedSessionRequired");
+        }
         server.stop().await;
         assert!(
             timeout(Duration::from_secs(5), task)

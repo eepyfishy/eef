@@ -97,6 +97,12 @@ Ten shared regressions cover binding/limits, event/prefix behavior, durable hist
 reopen/no replay, old microphone shape and those refusal boundaries. Hosted
 verification is pending; no installer, installed node or runtime policy is changed.
 
+The exact definition/filter/history source `f2df98e` subsequently passed all four
+jobs in [run 42336088398](https://github.com/eepyfishy/eef/actions/runs/42336088398),
+including Rust1534+1ignored across 17 groups, all 36 native suites, camera19+3
+and the complete prefix/firewall/listening/first-run gates. This verifies that
+synthetic source revision, without accepting later integration or physical devices.
+
 ## Independent ambient consent lifetime in development
 
 The local listening preference governs both ambient camera and microphone work;
@@ -161,3 +167,39 @@ refusal without capacity consumption or outbound traffic. Microphone routing mus
 still work afterward. Hosted verification is required. This check introduces no
 camera advertisement, lease, authority, fallback or automatic retry; actual camera
 negotiation must be added together with its supported runner and readiness path.
+
+## Passive camera inspection commands in development
+
+`eefn workloads camera-sources` inspects the running local node;
+`eef node camera-workload-sources --node NODE_ID` reads it through the coordinator.
+Both use backend operations with separate closed camera reports, including saved
+and applied camera permission, camera consent epoch, public resources and private
+binding/adapter digests. A configured Python interpreter is not an OpenCV, driver
+or endpoint readiness claim. No device is imported, opened, contacted or scanned;
+there are no preference writes, grants, model calls, restarts or automatic retries.
+This report protocol explicitly refuses any claim of camera workload execution.
+
+Private resource parameters/properties and RTSP credentials/endpoints are omitted.
+Pending saved edits do not substitute an applied source: their differing binding
+status is visible, and exact reviewed-template confirmation refuses the mismatch.
+Runtime replacement, including reuse of its ID during a blocked config read,
+invalidates the old result. Camera permission changes and camera epochs invalidate
+source-readiness snapshots; an initial denial also wakes the existing readiness
+observer, so unrelated saves cannot silently strand microphone readiness.
+
+Remote reads require independently authenticated pinned sessions, fresh
+registration and stable session/runtime identities before and after the request.
+Legacy shared-secret channels are refused, and both source reads share the existing
+bounded control lane. Local HTTP/CLI adapters validate the exact requested camera
+report; older APIs and lost/substituted replies cause errors without microphone
+fallback or retry. The coordinator command reads the same node-owned snapshot.
+
+Ten new Rust regressions and additional mandatory native executable checks require
+hosted verification. Coverage includes privacy, malformed/scoped reports, exact
+camera template matching, pending edits/revocation, blocked inspection replacement,
+actual pinned TLS reads, readiness notifications, control capacity and both CLI
+parsers. Executable checks run both commands with no dashboard pages, then test
+human output, malformed requests and old/forged/lost replies. They use configured
+synthetic resources without Python, OpenCV, cameras or models. Camera resource
+configuration/authoring, admission/runner, compatible execution negotiation,
+event-triggered VLM, relays and physical acceptance remain required.

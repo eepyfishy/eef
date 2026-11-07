@@ -21,6 +21,8 @@ pub fn microphone_adapter_digest() -> String {
 pub enum Action {
     /// Inspect configured microphone resources without opening a device.
     Sources,
+    /// Inspect configured camera resources without opening a device.
+    CameraSources,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -76,11 +78,30 @@ pub struct Report {
     pub execution_authorized: bool,
     pub execution_available: bool,
 }
-fn digest(value: &str) -> bool {
+pub(crate) fn digest(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+pub(crate) fn validate_resources(node: &str, resources: &[Resource]) -> Result<()> {
+    let prefix = format!("{node}::");
+    let mut ids = HashSet::new();
+    for row in resources {
+        let local = row.resource_id.strip_prefix(&prefix).unwrap_or("");
+        ensure!(
+            !local.is_empty()
+                && local.len() <= 100
+                && local
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+                && ids.insert(&row.resource_id)
+                && row.resource_sha256.as_deref().is_none_or(digest),
+            "Invalid source resource snapshot"
+        );
+        crate::context::validate_area(&row.area)?;
+    }
+    Ok(())
 }
 impl Report {
     pub fn validate(&self, request: &Request) -> Result<()> {
@@ -118,23 +139,7 @@ impl Report {
                 "Executable source snapshot lacks current local readiness"
             );
         }
-        let prefix = format!("{}::", self.node_id);
-        let mut ids = HashSet::new();
-        for row in &self.resources {
-            let local = row.resource_id.strip_prefix(&prefix).unwrap_or("");
-            ensure!(
-                !local.is_empty()
-                    && local.len() <= 100
-                    && local
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-                    && ids.insert(&row.resource_id)
-                    && row.resource_sha256.as_deref().is_none_or(digest),
-                "Invalid source resource snapshot"
-            );
-            crate::context::validate_area(&row.area)?;
-        }
-        Ok(())
+        validate_resources(&self.node_id, &self.resources)
     }
     pub fn confirms_template(
         &self,

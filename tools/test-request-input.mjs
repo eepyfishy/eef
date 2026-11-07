@@ -1,6 +1,7 @@
 // Public-command input workflow acceptance; isolated data, fake inference,
 import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import {verifyMicrophoneCommands} from './microphone-command-checks.mjs';
+import {verifyCameraSourceCommands} from './camera-source-command-checks.mjs';
 // explicit owner TLS pairing. No UI controller, raw RPC or workload execution.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -75,10 +76,15 @@ const fake=createServer(async(req,res)=>{
 });
 const proxy=createServer(async(req,res)=>{
  proxyCalls.push({url:req.url,mode:proxyMode});
+ if(proxyMode.startsWith('camera-')&&req.url==='/api/diagnostics'){
+  const response=await fetch(node+req.url);res.writeHead(response.status,{'Content-Type':'application/json'});return res.end(await response.text());
+ }
+ if(proxyMode==='camera-old'){res.writeHead(404);return res.end('{}');}
  if(proxyMode==='old'){res.writeHead(404);return res.end('{}');}
  try {
   let body='';for await(const b of req)body+=b;
   const response=await fetch(node+req.url,{method:'POST',headers:{'Content-Type':'application/json'},body});const value=await response.json();
+  if(proxyMode==='camera-forge'){value.source_kind='microphone_energy';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='microphone-forge'){value.command.input.title='Forged microphone title';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='corrupt'){value.result.request_context.origin_node='forged';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='lineage'){value.opening.result.draft.proposals[0].proposal.goal='Different schema-valid source goal';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
@@ -93,7 +99,8 @@ try {
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));
  Object.assign(config,{node_id:id,name:'Input fixture',auto_local:false,local_pairing:false,psk:secret,endpoints:[`127.0.0.1:${gatewayPort}`],heartbeat_seconds:1,
   update:{policy:'off'},dashboard:{enabled:true,ui_enabled:false,host:'127.0.0.1',port:apiPort},metadata:{area:['Home','Office'],
-   resources:[{id:'mic',capability:'audio.capture',parameters:{device:'PRIVATE_MIC_DEVICE'}}]},
+   resources:[{id:'mic',capability:'audio.capture',parameters:{device:'PRIVATE_MIC_DEVICE'}},
+    {id:'camera',capability:'camera.capture',parameters:{device:'rtsp://owner:PRIVATE_CAMERA_PASSWORD@camera.invalid:554/live'}}]},
   models:{provider:'ollama',ollama:{base_url:`http://127.0.0.1:${modelPort}`,selected:[{model_id:'fixture',modality:'text',selection:{roles:['request_interpreter']}}]},llamacpp:{slots:[]}}});
  assert.equal(config.input_workflow.prepare_on_input,true);await writeFile(configPath,JSON.stringify(config));
  const before=await readFile(configPath,'utf8'),absentId=randomUUID();
@@ -122,6 +129,9 @@ try {
  for(const base of [node,eef])assert.equal((await fetch(base+'/')).status,404);
  const microphone=await verifyMicrophoneCommands({nodeCli,nodeText:args=>cli('eefn',configPath,args,false,false),
   nodeId:id,nodeUrl:node,json,configPath,marker,proxyPort,setProxyMode:value=>{proxyMode=value;},proxyCalls,inferenceCalls:calls});
+ const cameraSources=await verifyCameraSourceCommands({nodeCli,nodeText:(args,success)=>cli('eefn',configPath,args,success,false),
+  coordinatorCli:args=>cli('eef',eefConfig,args),
+  nodeId:id,nodeUrl:node,configPath,marker,proxyPort,setProxyMode:value=>{proxyMode=value;},proxyCalls,inferenceCalls:calls});
  const inputUrl=node+'/api/commands/requests/input';
  const body=(text,receipt=randomUUID())=>({schema_version:1,expected_node_id:id,request_id:receipt,text});
  const input=(text,receipt=randomUUID(),success=true,budget)=>nodeCli(['requests','input','--text',text,'--operation-id',receipt,
@@ -372,7 +382,7 @@ try {
  assert.equal(foreignAnswer.error_code,'answer_source_unconfirmed');assert.equal(foreignAnswer.source_confirmed,false);assert.equal(foreignAnswer.answer_attempted,false);assert.equal(foreignAnswer.result,null);
  assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal(calls.length,count);
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count);
- evidence={...microphone.evidence,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
+ evidence={...microphone.evidence,...cameraSources,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
   reasoning_completion_failure_retains_source_and_answer:true,completion_diagnostics_do_not_echo_reasoning_or_replay:true,

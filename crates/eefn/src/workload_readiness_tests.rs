@@ -178,3 +178,51 @@ fn source_config_invalidation_tracks_source_inputs_without_following_unrelated_s
     limits["workload_policy"]["max_lease_ms"] = json!(1000);
     assert!(source_config_changed(&old, &limits));
 }
+
+#[tokio::test]
+async fn camera_permission_changes_and_camera_epoch_retire_passive_readiness_without_starting_work()
+{
+    let f = Fixture::new();
+    let original = f
+        .service
+        .clone()
+        .inspect_source_readiness(f.runtime.clone())
+        .await
+        .unwrap();
+    let changes = f.service.source_readiness.subscribe();
+    let mut unrelated = f.service.read_config().unwrap();
+    unrelated["name"] = json!("Friendly node");
+    f.service.save_configuration(unrelated).unwrap();
+    assert!(!original.current(&f.service, &f.runtime));
+    assert!(
+        changes.has_changed().unwrap(),
+        "Initial camera denial must wake readiness, including unrelated saves"
+    );
+    let refreshed = f
+        .service
+        .clone()
+        .inspect_source_readiness(f.runtime.clone())
+        .await
+        .unwrap();
+    assert!(refreshed.current(&f.service, &f.runtime));
+    assert_eq!(
+        refreshed.report.execution_available,
+        cfg!(windows),
+        "Camera denial cannot remove microphone readiness after refresh"
+    );
+    let mut config = f.service.read_config().unwrap();
+    config["permissions"]["media"]["camera"] = json!(true);
+    f.service.save_configuration(config).unwrap();
+    assert!(!refreshed.current(&f.service, &f.runtime));
+    let current = f
+        .service
+        .clone()
+        .inspect_source_readiness(f.runtime.clone())
+        .await
+        .unwrap();
+    assert!(current.current(&f.service, &f.runtime));
+    f.service.camera_listening_gate.retire_runtime();
+    assert!(!current.current(&f.service, &f.runtime));
+    assert_eq!(f.service.diagnostics()["success"], true);
+    assert_eq!(f.service.live.lock().unwrap()["pending_restart"], false);
+}

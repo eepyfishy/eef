@@ -43,6 +43,7 @@ impl State {
 struct Version {
     config: u64,
     listening: (u64, bool),
+    camera_listening: (u64, bool),
     workload: (u64, bool),
 }
 pub(crate) struct Snapshot {
@@ -62,6 +63,7 @@ impl NodeService {
         Version {
             config: *self.source_readiness.changes.borrow(),
             listening: self.listening_gate.snapshot(),
+            camera_listening: self.camera_listening_gate.snapshot(),
             workload: self.workload_gate.snapshot(),
         }
     }
@@ -124,6 +126,7 @@ impl NodeService {
 
 pub(crate) fn source_config_changed(old: &serde_json::Value, next: &serde_json::Value) -> bool {
     old.pointer("/permissions/media/microphone") != next.pointer("/permissions/media/microphone")
+        || old.pointer("/permissions/media/camera") != next.pointer("/permissions/media/camera")
         || [
             "metadata",
             "listening",

@@ -160,6 +160,11 @@ enum NodeCommand {
         #[arg(long)]
         node: String,
     },
+    /// Inspect camera bindings and permissions on a node; never open a device.
+    CameraWorkloadSources {
+        #[arg(long)]
+        node: String,
+    },
     /// Inspect or set a node's workload policy; never start capture or work.
     WorkloadPolicy {
         #[arg(long)]
@@ -275,6 +280,32 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn remote_camera_source_cli_needs_only_a_node_and_cannot_capture_or_change_permissions() {
+        let base = [
+            "eef",
+            "node",
+            "camera-workload-sources",
+            "--node",
+            "fixture",
+        ];
+        assert!(matches!(
+            Args::try_parse_from(base).unwrap().command,
+            Some(Command::Node {
+                command: NodeCommand::CameraWorkloadSources { .. }
+            })
+        ));
+        for flag in [
+            "--allow",
+            "--device",
+            "--execute",
+            "--restart",
+            "--grant",
+            "--file",
+        ] {
+            assert!(Args::try_parse_from(base.into_iter().chain([flag])).is_err());
+        }
+    }
     #[test]
     fn setup_check_cli_requires_exact_model_consent_and_read_commands_cannot_arm() {
         let base = ["eef", "node", "setup-model-check", "--node", "fixture"];
@@ -2607,6 +2638,25 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             return Ok(value);
         }
         Command::Node {
+            command: NodeCommand::CameraWorkloadSources { node },
+        } => {
+            eefn::network::validate_remote_node_id(node)?;
+            let response = client
+                .post(format!("{base}/api/commands/node/camera-workload-sources"))
+                .timeout(std::time::Duration::from_secs(10))
+                .json(&json!({"schema_version":2,"node_id":node}))
+                .send()
+                .await?;
+            let value = command_response(response).await?;
+            let report: eefn::camera_sources::Report = serde_json::from_value(value.clone())?;
+            report.validate(&eefn::camera_sources::Request {
+                schema_version: 2,
+                expected_node_id: node.clone(),
+                expected_runtime_id: report.runtime_id.clone(),
+            })?;
+            return Ok(value);
+        }
+        Command::Node {
             command: NodeCommand::ModelBootstrapPolicy { node, command },
         } => return Box::pin(remote_model_bootstrap_cli(&client, &base, node, command)).await,
         Command::Node {
@@ -2955,6 +3005,15 @@ async fn main() -> Result<()> {
                             "Bootstrap preferences unconfirmed. Inspect this node with model-bootstrap-policy show; no retry, download or restart was requested."
                         );
                     }
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::CameraWorkloadSources { .. }
+                        }
+                    )
+                {
+                    print!("{}", eefn::camera_sources::render(&value)?);
                 } else if !args.json
                     && matches!(
                         command,

@@ -279,7 +279,11 @@ impl NodeService {
         if !crate::listening::Consent::from_config(&value)?.enabled
             || value.pointer("/permissions/media/camera") != Some(&json!(true))
         {
+            let previous = self.camera_listening_gate.snapshot();
             self.camera_listening_gate.deny();
+            if self.camera_listening_gate.snapshot() != previous {
+                self.source_readiness.invalidate();
+            }
         }
         if self.config_path.is_file() {
             crate::atomic_file::copy(
@@ -1031,6 +1035,9 @@ impl NodeService {
     }
 
     pub async fn remote(self: &Arc<Self>, action: &str, params: Value) -> Result<Value> {
+        if action == "camera_workload_sources" {
+            return self.camera_workload_sources(serde_json::from_value(params)?);
+        }
         if action == "workload_sources" {
             return self.workload_sources(serde_json::from_value(params)?);
         }

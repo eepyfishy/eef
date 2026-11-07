@@ -3,6 +3,33 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: camera source inspection through node and coordinator commands
+
+`eefn workloads camera-sources` and `eef node camera-workload-sources --node NODE_ID`
+read the same passive node-owned camera snapshot through backend APIs. The closed
+camera report uses its own permission fields, resource digests and consent epoch;
+private webcam/RTSP parameters stay local, pending edits cannot substitute applied
+bindings, and inspection grants or opens nothing. Camera permission/epoch changes
+invalidate readiness; initial denial wakes its observer to preserve microphone
+refresh. Remote reads require fresh independently authenticated pinned sessions
+and exact runtime/session correlation. Legacy transport, older APIs and substituted
+reports have no fallback. Camera execution claims remain unavailable in this
+protocol. Ten added Rust cases and mandatory executable command checks require
+hosted verification. See [camera inspection boundaries](CAMERA-MOTION.md).
+
+The preceding definition/filter/history source `f2df98e` passed all four jobs in
+[run 42336088398](https://github.com/eepyfishy/eef/actions/runs/42336088398), with
+Rust1534+1ignored/17groups, all 36 native suites, camera19+3 and the complete
+prefix/firewall/listening/first-run gates. That accepts only the exact synthetic
+development increment; later source changes, physical capture and release remain
+separate requirements.
+
+The independent camera-consent source `5a66ba8` passed all four jobs in
+[run 42337185615](https://github.com/eepyfishy/eef/actions/runs/42337185615), with
+Rust1540+1ignored/17groups and all native gates. Its additional private named-case
+log checker assumed verbose test output and failed against the workflow's quiet
+output; that checker failure is retained separately from the successful full run.
+
 ## In development: source-specific coordinator route checks
 
 Coordinator workload preflight and direct route preparation now require the
