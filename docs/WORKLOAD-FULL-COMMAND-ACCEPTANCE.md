@@ -10,6 +10,13 @@ receipt. Exact execution reuse must not replay, new jobs need separate approval,
 and earlier input-only jobs must remain unexecuted. This extension still needs
 its own hosted acceptance and opens no physical camera.
 
+The first executable run stopped before capture because readiness was false.
+An additional startup correction recognizes explicit camera source resources
+independently of local-webcam one-shot plugin discovery. It initializes only the
+interpreter; permissions, consent and the exact approved source still control
+execution. That correction and the full executable lifecycle remain under hosted
+verification.
+
 The new opt-in Windows test joins the complete runtime path: explicit submission
 and compilation through the already running origin node, owner HTTP conditional approval, the
 coordinator's original engine-owned issuer/driver, credential-authenticated pinned

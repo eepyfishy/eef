@@ -3930,7 +3930,12 @@ async fn run_node(
         .iter()
         .filter(|(enabled, _)| *enabled)
         .count();
-    let requested = requested_builtins > 0 || !file.python_plugins.is_empty();
+    let requested = python_runtime_requested(
+        requested_builtins,
+        &file.python_plugins,
+        media.camera,
+        &file.metadata,
+    );
     let mut python_startup = PythonStartup {
         complete: !requested,
         interpreter: if requested {
@@ -4343,6 +4348,23 @@ fn resolve_relative(config: &Path, value: &Path) -> PathBuf {
         .join(value)
 }
 
+fn python_runtime_requested(
+    builtin_plugins: usize,
+    custom_plugins: &[PathBuf],
+    camera_allowed: bool,
+    metadata: &eefn::context::NodeMetadata,
+) -> bool {
+    // An owner-bound camera source can be RTSP without a local webcam. Its
+    // interpreter is independent of optional one-shot camera plugin discovery.
+    builtin_plugins > 0
+        || !custom_plugins.is_empty()
+        || (camera_allowed
+            && metadata.resources.iter().any(|resource| {
+                resource.available
+                    && eefn::workload_leases::definition::camera_resource_digest(resource).is_ok()
+            }))
+}
+
 fn python_for_startup(
     config: &Path,
     value: Option<PathBuf>,
@@ -4374,6 +4396,29 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn explicit_camera_source_requests_python_without_a_discovered_webcam_plugin() {
+        let mut metadata: eefn::context::NodeMetadata = serde_json::from_value(serde_json::json!({
+            "resources":[{"id":"camera","capability":"camera.capture","parameters":{"device":"rtsp://camera.invalid/live"}}]
+        })).unwrap();
+        assert!(super::python_runtime_requested(0, &[], true, &metadata));
+        assert!(!super::python_runtime_requested(0, &[], false, &metadata));
+        metadata.resources[0].available = false;
+        assert!(!super::python_runtime_requested(0, &[], true, &metadata));
+        metadata.resources[0].available = true;
+        metadata.resources[0].parameters["device"] = serde_json::json!("file:///not-a-camera");
+        assert!(!super::python_runtime_requested(0, &[], true, &metadata));
+        metadata.resources.clear();
+        assert!(!super::python_runtime_requested(0, &[], true, &metadata));
+        assert!(super::python_runtime_requested(1, &[], false, &metadata));
+        assert!(super::python_runtime_requested(
+            0,
+            &[std::path::PathBuf::from("custom.py")],
+            false,
+            &metadata
+        ));
+    }
+
     #[test]
     fn camera_source_cli_is_a_read_without_capture_permission_or_execution_options() {
         use clap::Parser;

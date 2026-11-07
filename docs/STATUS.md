@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: initialize Python for an explicit camera source
+
+The executable lifecycle candidate `9e7f0c4`/run `42422028965` passed all Rust
+tests and the other three jobs, but its headless command suite stopped at source
+readiness before capture. Source inspection found that interpreter startup was
+requested only by optional one-shot plugins or custom plugins. The one-shot
+camera plugin depends on local webcam inventory, so a configured RTSP source on
+a node without a discovered webcam could leave Python uninitialized.
+
+Startup now also recognizes a valid, available camera resource when the camera
+feature is allowed. The existing bounded interpreter check runs independently of
+one-shot camera discovery. It does not open the source, load a model, enable a
+permission or grant authority. Existing listening, workload policy, source pins,
+approval, lease and owned-exit gates remain unchanged. A deterministic regression
+covers source intent with zero requested plugins, denied/unavailable/invalid
+bindings, and preservation of ordinary plugin startup. The executable test also
+reports bounded prerequisite flags and typed Python startup observations if
+readiness fails again. Fresh hosted acceptance is required.
+
 ## In development: camera lifecycle through shipping command executables
 
 The fixture's independent event validator follows the source's actual `0..255`

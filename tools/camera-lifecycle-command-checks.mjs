@@ -61,7 +61,15 @@ export async function verifyCameraLifecycleCommands(f){
  const oldRuntime=(await f.json(f.nodeUrl+'/api/diagnostics')).runtime_id;
  await f.nodeCli(['restart','--wait-seconds','20']);
  await f.until(async()=>(await f.json(f.nodeUrl+'/api/diagnostics')).runtime_id!==oldRuntime&&(await f.json(f.nodeUrl+'/api/status')).connection.state==='connected','camera command runtime');
- const sources=await f.nodeCli(['workloads','camera-sources']);assert.equal(sources.execution_available,true);assert.equal(sources.capture_started,false);
+ const sources=await f.nodeCli(['workloads','camera-sources']);
+ let readiness={};if(!sources.execution_available){
+  const status=await f.json(f.nodeUrl+'/api/status'),policy=await f.nodeCli(['workload-policy','show']);
+  readiness={stage:'camera_source_readiness',bindings_current:sources.local_bindings_current,listening_enabled:sources.listening_enabled,
+   listening_blocked:sources.listening_blocked,saved_camera_permission:sources.saved_camera_permission,applied_camera_permission:sources.applied_camera_permission,
+   python_configured:sources.python_configured,resource_count:sources.resources.length,available_resources:sources.resources.filter(row=>row.available&&row.resource_sha256).length,
+   workload_enabled:policy.result.policy.enabled,workload_blocked:policy.result.runtime_blocked,python_startup:status.python_startup};
+ }
+ assert.equal(sources.execution_available,true,'Camera source prerequisites: '+JSON.stringify(readiness));assert.equal(sources.capture_started,false);
  const remoteSources=await f.coordinatorCli(['node','camera-workload-sources','--node',f.nodeId]);assert.equal(remoteSources.runtime_id,sources.runtime_id);assert.equal(remoteSources.execution_available,true);
  assert.equal(await exists(join(firstTrace,'pids.json')),false,'Startup and passive inspection cannot open the source');
  const job=async id=>f.json(f.coordinatorUrl+'/api/jobs/'+id);
