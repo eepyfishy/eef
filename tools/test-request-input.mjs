@@ -4,6 +4,7 @@ import {verifyMicrophoneCommands} from './microphone-command-checks.mjs';
 import {verifyCameraSourceCommands} from './camera-source-command-checks.mjs';
 import {verifyCameraSetupCommands} from './camera-setup-command-checks.mjs';
 import {verifyCameraAuthoringCommands} from './camera-authoring-command-checks.mjs';
+import {verifyRemoteCameraCommands} from './remote-camera-command-checks.mjs';
 // explicit owner TLS pairing. No UI controller, raw RPC or workload execution.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -395,7 +396,9 @@ try {
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count);
  const cameraSetup=await verifyCameraSetupCommands({nodeCli,nodeText:(args,success)=>cli('eefn',configPath,args,success,false),
   nodeId:id,nodeUrl:node,json,configPath,marker,proxyPort,setProxyMode:value=>{proxyMode=value;},proxyCalls,inferenceCalls:calls});
- evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
+ const remoteCamera=await verifyRemoteCameraCommands({nodeCli,coordinatorCli:(args,success=true)=>cli('eef',eefConfig,args,success),
+  coordinatorText:args=>cli('eef',eefConfig,args,true,false),nodeId:id,nodeUrl:node,json,configPath,inferenceCalls:calls});
+ evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,...remoteCamera,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
   reasoning_completion_failure_retains_source_and_answer:true,completion_diagnostics_do_not_echo_reasoning_or_replay:true,

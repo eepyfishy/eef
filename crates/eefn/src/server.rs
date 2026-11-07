@@ -133,6 +133,10 @@ struct Connection {
     state: Option<NodeStateSnapshot>,
     last_seen: Instant,
 }
+struct CameraControlBinding {
+    session_id: Uuid,
+    runtime_id: String,
+}
 
 struct Pending {
     observer: Option<Arc<dyn crate::grants::GrantObserver>>,
@@ -429,6 +433,50 @@ impl NodeServer {
     ) -> Result<Value> {
         crate::execution_boundary::require_control(capability)?;
         self.invoke_message(node_id,json!({"type":"request","capability":capability,"action":action,"params":params,"request_context":context}),wait,None,None,None).await
+    }
+
+    /// Camera setup carries private bindings: pin the exact authenticated route
+    /// before sending any parameters. This grants no execution or source access.
+    pub async fn invoke_camera_setup(
+        &self,
+        request: crate::camera_setup::Request,
+    ) -> Result<Value> {
+        request.validate()?;
+        let binding = {
+            let connections = self.inner.connections.read().await;
+            let connection = connections
+                .get(&request.expected_node_id)
+                .context("Camera node unavailable")?;
+            Self::check_camera_control(connection, &request.expected_runtime_id)?;
+            CameraControlBinding {
+                session_id: connection.session_id,
+                runtime_id: request.expected_runtime_id.clone(),
+            }
+        };
+        let action = if matches!(request.command, crate::camera_setup::Command::Show) {
+            "camera_setup_status"
+        } else {
+            "camera_setup"
+        };
+        self.invoke_message_with_camera_binding(&request.expected_node_id,
+            json!({"type":"request","capability":"node.configure","action":action,"params":request}),
+            Duration::from_secs(10),None,None,None,Some(binding)).await
+    }
+    fn check_camera_control(connection: &Connection, runtime: &str) -> Result<()> {
+        if !connection.credential_transport {
+            bail!("Camera setup requires an independently authenticated pinned connection");
+        }
+        let state = connection
+            .state
+            .as_ref()
+            .context("Camera node registration unavailable")?;
+        let offer: crate::registration::Offer =
+            serde_json::from_value(state.registration["registration_receipt"].clone())?;
+        offer.validate()?;
+        if offer.runtime_id != runtime {
+            bail!("Camera setup runtime changed; inspect before deciding what to do");
+        }
+        Ok(())
     }
 
     /// Issuer/session selection only, never an execution approval. The caller
@@ -744,11 +792,33 @@ impl NodeServer {
     async fn invoke_message(
         &self,
         node_id: &str,
+        message: Value,
+        wait: Duration,
+        grant: Option<crate::grants::ExecutionGrant>,
+        observer: Option<Arc<dyn crate::grants::GrantObserver>>,
+        lease_deadline: Option<Instant>,
+    ) -> Result<Value> {
+        self.invoke_message_with_camera_binding(
+            node_id,
+            message,
+            wait,
+            grant,
+            observer,
+            lease_deadline,
+            None,
+        )
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn invoke_message_with_camera_binding(
+        &self,
+        node_id: &str,
         mut message: Value,
         wait: Duration,
         grant: Option<crate::grants::ExecutionGrant>,
         observer: Option<Arc<dyn crate::grants::GrantObserver>>,
         lease_deadline: Option<Instant>,
+        camera: Option<CameraControlBinding>,
     ) -> Result<Value> {
         // Start before routing/queue waits. The reviewed driver also supplies
         // its mint-time monotonic deadline, before durable issuance journal I/O.
@@ -775,6 +845,12 @@ impl NodeServer {
             .get(node_id)
             .cloned()
             .ok_or_else(|| NodeOfflineError(node_id.into()))?;
+        if let Some(binding) = &camera {
+            Self::check_camera_control(&connection, &binding.runtime_id)?;
+            if connection.session_id != binding.session_id {
+                bail!("Camera setup session changed before dispatch");
+            }
+        }
         if message["type"] == "grant_receipt"
             || message["type"] == "grant_result"
             || message["type"] == "stop_grant"

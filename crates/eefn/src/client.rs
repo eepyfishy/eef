@@ -1073,13 +1073,16 @@ impl NodeClient {
             if capability == "node.configure"
                 && matches!(
                     action.as_str(),
-                    "workload_sources" | "camera_workload_sources"
+                    "workload_sources"
+                        | "camera_workload_sources"
+                        | "camera_setup"
+                        | "camera_setup_status"
                 )
                 && (grant_issuer.is_none() || grant_session.is_none())
             {
                 let response = json!({"type":"response","id":request_id,"success":false,
                     "error_type":"PinnedSessionRequired","not_started":true,
-                    "error":"Source inspection requires an independent credential and pinned issuer session"});
+                    "error":"This control requires an independent credential and pinned issuer session"});
                 write_session_frame(&self.crypto, &writer, &output_write_failed, &response).await?;
                 continue;
             }
@@ -1535,7 +1538,12 @@ mod tests {
         })
         .await
         .unwrap();
-        for action in ["workload_sources", "camera_workload_sources"] {
+        for action in [
+            "workload_sources",
+            "camera_workload_sources",
+            "camera_setup",
+            "camera_setup_status",
+        ] {
             let rejected = server
                 .invoke_remote(
                     "probe-test",

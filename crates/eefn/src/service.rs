@@ -1035,6 +1035,15 @@ impl NodeService {
     }
 
     pub async fn remote(self: &Arc<Self>, action: &str, params: Value) -> Result<Value> {
+        if matches!(action, "camera_setup" | "camera_setup_status") {
+            let request: crate::camera_setup::Request = serde_json::from_value(params)?;
+            if action == "camera_setup_status"
+                && !matches!(request.command, crate::camera_setup::Command::Show)
+            {
+                bail!("Reserved camera status action mismatch");
+            }
+            return self.camera_setup(request, true);
+        }
         if action == "camera_workload_sources" {
             return self.camera_workload_sources(serde_json::from_value(params)?);
         }

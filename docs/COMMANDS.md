@@ -24,6 +24,19 @@ Configure a camera resource on the running node without JSON:
     eefn camera configure --device 1
     eefn camera configure --resource living-room-camera --rtsp rtsp://camera-host/live
 
+The unreleased coordinator owner commands use the same node-owned backend:
+
+    eef node camera --node NODE_ID show
+    eef node camera --node NODE_ID configure --resource RESOURCE_ID --device 1
+
+Pair the node with an independent credential and pinned TLS first. On that node,
+its owner can enable `eefn permissions allow remote-management`; revoking the same
+feature takes effect for the next configuration request. Remote inspection does
+not grant management approval. Configuration pins the exact node session/runtime
+and inspected settings digest, and refuses stale or unconfirmed changes without
+retry. Reports omit private bindings, including RTSP URLs; the same command-line
+privacy consideration below applies when supplying a URL from the coordinator.
+
 These unreleased commands use the backend owner API, including when browser pages
 are disabled. With no selector, configuration preserves an existing camera binding
 or creates a default webcam resource. If several cameras exist, choose `--resource`;

@@ -25,6 +25,7 @@ pub mod microphone_submission;
 pub mod model;
 pub mod model_inventory;
 pub mod model_verification;
+pub mod node_camera;
 pub mod node_control;
 pub mod node_model_bootstrap;
 pub mod node_package_policy;

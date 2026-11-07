@@ -179,6 +179,13 @@ enum NodeCommand {
         #[command(subcommand)]
         command: eefn::relay_setup::RelayAction,
     },
+    /// Configure a camera on an authenticated node with its owner's current approval.
+    Camera {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eefn::camera_setup::Action,
+    },
     /// Inspect or allow/deny whole node features with current local node-owner approval.
     Permissions {
         #[arg(long)]
@@ -612,6 +619,60 @@ mod credential_cli_tests {
                         .into_iter()
                         .chain(extra)
                 )
+                .is_err()
+            );
+        }
+    }
+    #[test]
+    fn camera_setup_cli_selects_a_node_without_json_or_authority_flags() {
+        let args = Args::try_parse_from([
+            "eef",
+            "node",
+            "camera",
+            "--node",
+            "living-room",
+            "configure",
+            "--resource",
+            "cam",
+            "--device",
+            "1",
+        ])
+        .unwrap();
+        let Some(Command::Node {
+            command:
+                NodeCommand::Camera {
+                    node,
+                    command: eefn::camera_setup::Action::Configure(settings),
+                },
+        }) = args.command
+        else {
+            panic!("Wrong camera setup adapter")
+        };
+        assert_eq!(node, "living-room");
+        assert_eq!(settings.device, Some(1));
+        assert_eq!(settings.resource.as_deref(), Some("cam"));
+        settings.validate().unwrap();
+        assert!(
+            Args::try_parse_from(["eef", "node", "camera", "--node", "living-room", "show"])
+                .is_ok()
+        );
+        for flag in [
+            "--permission",
+            "--grant",
+            "--execute",
+            "--restart",
+            "--retry",
+        ] {
+            assert!(
+                Args::try_parse_from([
+                    "eef",
+                    "node",
+                    "camera",
+                    "--node",
+                    "living-room",
+                    "configure",
+                    flag
+                ])
                 .is_err()
             );
         }
@@ -1366,6 +1427,72 @@ async fn owner_automation_exchange(
         "outcome_unknown":!success && sending_attempted && mutation,"error_code":error_code,"result":result,
         "timers_started":false,"execution_authorized":false,"dispatched":false,"automatically_retried":false,
         "note":"Private automation checkpoints only, never timers or execution. Inspect the exact receipt after uncertainty. No new receipt, fallback or automatic retry."})
+}
+
+async fn remote_camera_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eefn::camera_setup::Action,
+) -> Result<serde_json::Value> {
+    use eef::node_camera::Request;
+    use eefn::camera_setup::{Action, Command};
+    use serde_json::json;
+    eefn::network::validate_remote_node_id(node)?;
+    if let Action::Configure(settings) = action {
+        settings.validate()?;
+    }
+    let mutation = matches!(action, Action::Configure(_));
+    let mut sending = false;
+    let exchange = async {
+        let url = format!("{base}/api/commands/node/camera");
+        let mut request = Request {
+            schema_version: 1,
+            node_id: node.into(),
+            expected_runtime_id: None,
+            command: Command::Show,
+        };
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Camera inspection unavailable");
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_camera::confirmed(&inspected, &request) {
+            bail!("Unconfirmed camera inspection");
+        }
+        let Action::Configure(settings) = action else {
+            return Ok::<_, anyhow::Error>(inspected);
+        };
+        request.expected_runtime_id = Some(
+            inspected["result"]["runtime_id"]
+                .as_str()
+                .context("Missing node runtime")?
+                .into(),
+        );
+        request.command = Command::Configure {
+            settings: settings.clone(),
+            expected_digest: inspected["result"]["saved_digest"]
+                .as_str()
+                .context("Missing camera configuration digest")?
+                .into(),
+        };
+        request.validate()?;
+        sending = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Camera save unconfirmed");
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_camera::confirmed(&saved, &request) {
+            bail!("Unconfirmed camera save");
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"remote_camera_setup","node_id":node,"success":false,
+        "mutation_requested":mutation,"sending_attempted":sending,"outcome_unknown":sending,"result":null,
+        "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "error_code":"camera_setup_unconfirmed","note":"Inspect this exact node with camera show before deciding what to do; no automatic retry, permission change, restart or workload was sent."})))
 }
 
 async fn remote_relay_cli(
@@ -2619,6 +2746,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             command: NodeCommand::WorkloadPolicy { node, command },
         } => return remote_workload_policy_cli(&client, &base, node, command).await,
         Command::Node {
+            command: NodeCommand::Camera { node, command },
+        } => return remote_camera_cli(&client, &base, node, command).await,
+        Command::Node {
             command: NodeCommand::WorkloadSources { node },
         } => {
             eefn::network::validate_remote_node_id(node)?;
@@ -2917,6 +3047,21 @@ async fn main() -> Result<()> {
                     )
                 {
                     print!("{}", eef::model_verification::render(&value));
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::Camera { .. }
+                        }
+                    )
+                {
+                    if value["success"] == true {
+                        print!("{}", eefn::camera_setup::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Camera setup outcome unconfirmed. Inspect this node with camera show; no automatic retry, permission change, restart or workload was sent."
+                        );
+                    }
                 } else if !args.json
                     && matches!(
                         command,

@@ -90,6 +90,8 @@ impl RequestBudget {
                         | "python_policy_status"
                         | "workload_sources"
                         | "camera_workload_sources"
+                        | "camera_setup_status"
+                        | "camera_setup"
                         | "workload_policy_status"
                         | "workload_policy"
                 ));

@@ -3,6 +3,21 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: node-owned camera configuration from eef
+
+The coordinator owner API and `eef node camera --node NODE_ID show/configure` now
+delegate to the node's existing typed backend. Camera settings use a pinned
+credential/TLS session and runtime, checked again while selecting the exact route
+before sending private bindings. The node checks current management approval and
+the inspected metadata digest before saving. Reports hash the request without
+echoing private arguments; inspection grants no approval, and uncertainty causes
+no retry, fallback, restart or execution.
+
+Two authenticated backend cases, a CLI parser case, expanded legacy-session
+refusals and actual executable coordinator/node checks require hosted verification.
+The separate camera-frame pacing candidate is still being verified; fresh-node
+registration and earlier repair-wait failures remain unresolved release gates.
+
 ## In development: simulated camera frame pacing
 
 Run `42381756425` at `53f4c0b` passed both Linux jobs and Windows/dashboard, but

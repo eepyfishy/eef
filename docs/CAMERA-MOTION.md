@@ -334,3 +334,28 @@ old/forged/lost replies and absence of inference or execution. The existing one-
 parser stack test now includes the camera command. Fresh full hosted verification
 is required; complete camera command review/approval/execution/event/stop acceptance,
 physical capture, VLM triggers and the broader stable-release roadmap remain open.
+
+## Camera configuration from eef in development
+
+`eef node camera --node NODE_ID show/configure` now delegates to the same node-owned
+camera configuration backend as the local command. The coordinator owner API is
+an adapter, not an additional controller or source authority. The node checks its
+current remote-management approval for every mutation, independently of the saved
+configuration digest. Read-only inspection cannot enable that approval.
+
+Private parameters use an independently authenticated pinned-TLS connection. The
+transport captures the current session/runtime and rechecks them under the route
+lock before registering the request; an older shared-secret connection is refused
+before private parameters are queued. The node also refuses these actions on an
+unpaired connection. The existing bounded control lane carries setup/status, and
+the status action refuses a substituted mutation. No execution-grant journal or
+camera permission is needed just to configure a source.
+
+Reports bind the complete request by digest rather than echoing private RTSP
+arguments. Saved/applied differences and restart needs remain visible. A missing,
+stale or substituted response never triggers automatic fallback, retry or restart.
+Two credential/TLS backend regressions, expanded legacy-session refusals, a CLI
+parser case and real coordinator/node executable checks require fresh full hosted
+verification. They exercise current owner approval/revocation, stale runtime and
+settings, private output and absence of inference/capture/restart. Physical camera,
+full workload command lifecycle and stable-release acceptance remain separate.
