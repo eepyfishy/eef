@@ -101,6 +101,99 @@ fn deadline() -> tokio::time::Instant {
     tokio::time::Instant::now() + Duration::from_secs(10)
 }
 
+fn camera_definition(mut d: Definition) -> Definition {
+    let camera = crate::workload_leases::definition::camera_tests::camera();
+    d.source = camera.source;
+    if let Source::CameraMotion { resource_id, .. } = &mut d.source {
+        *resource_id = crate::context::resource_id(&d.executor_node, "camera");
+    }
+    d.limits = camera.limits;
+    d.events = camera.events;
+    d.validate().unwrap();
+    d
+}
+
+#[test]
+fn advertised_source_kind_matches_serialization_and_never_means_all_workload_sources() {
+    let runtime = Uuid::new_v4().to_string();
+    let microphone = definition(&"a".repeat(64), &Uuid::new_v4().to_string());
+    let camera = camera_definition(microphone.clone());
+    for d in [&microphone, &camera] {
+        assert_eq!(json!(d.source)["kind"], d.source.kind());
+    }
+    let old = support(&runtime);
+    old.confirms_source(&microphone.source).unwrap();
+    assert!(old.confirms_source(&camera.source).is_err());
+    let mut forged = old.clone();
+    forged.source_kind = camera.source.kind().into();
+    assert!(
+        forged.confirms_source(&camera.source).is_err(),
+        "Changing a string cannot mint a new supported protocol"
+    );
+    let encoded = json!(old);
+    assert_eq!(encoded["schema_version"], 2);
+    assert_eq!(encoded["source_kind"], "microphone_energy");
+    let decoded: Advertisement = serde_json::from_value(encoded.clone()).unwrap();
+    assert_eq!(
+        json!(decoded),
+        encoded,
+        "Existing microphone advertisement is unchanged"
+    );
+}
+
+#[tokio::test]
+async fn workload_preflight_refuses_camera_even_when_generic_workload_and_camera_caps_are_registered()
+ {
+    let (server, d, mut outgoing) = fixture().await;
+    {
+        let mut connections = server.inner.connections.write().await;
+        let registered = &mut connections
+            .get_mut("owner")
+            .unwrap()
+            .state
+            .as_mut()
+            .unwrap()
+            .registration;
+        registered["execution_grants"] =
+            json!({"schema_version":1,"available":true,"timing_mode":crate::grant_time::MODE});
+        registered["grant_stop"] = json!(crate::grants::stop::Advertisement::new(true));
+        registered["capabilities"] = json!([CAPABILITY, "camera.capture", "audio.capture"]);
+    }
+    server.workload_session(&d.template(), 5).await.unwrap();
+    let camera = camera_definition(d);
+    let error = server
+        .workload_session(&camera.template(), 5)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("reviewed workload source kind"));
+    assert!(outgoing.try_recv().is_err());
+    assert!(server.inner.workloads.0.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn direct_camera_route_creation_refuses_before_reserving_capacity_or_sending_any_offer() {
+    for send in [false, true] {
+        let (server, d, mut outgoing) = fixture().await;
+        let camera = camera_definition(d.clone());
+        let refused = if send {
+            server.open_workload(camera, deadline()).await
+        } else {
+            server.prepare_workload(camera, deadline()).await
+        };
+        let error = refused
+            .err()
+            .expect("Microphone-only peer cannot admit a camera route");
+        assert!(error.to_string().contains("reviewed workload source kind"));
+        assert!(outgoing.try_recv().is_err());
+        assert!(server.inner.workloads.0.lock().unwrap().is_empty());
+        // Failure consumed neither the node route nor the original grant ID.
+        let microphone = server.prepare_workload(d, deadline()).await.unwrap();
+        assert!(outgoing.try_recv().is_err());
+        drop(microphone);
+        assert!(server.inner.workloads.0.lock().unwrap().is_empty());
+    }
+}
+
 #[tokio::test]
 async fn workload_preflight_requires_current_runtime_policy_capability_stop_and_fresh_session() {
     for fault in 0..7 {

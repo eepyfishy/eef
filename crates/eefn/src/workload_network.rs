@@ -79,6 +79,19 @@ fn is_false(v: &bool) -> bool {
     !*v
 }
 impl Advertisement {
+    /// A generic workload capability never implies support for every source.
+    /// New kinds need explicit compatible registration before route creation.
+    pub fn confirms_source(
+        &self,
+        source: &crate::workload_leases::definition::Source,
+    ) -> Result<()> {
+        self.validate()?;
+        ensure!(
+            self.source_kind == source.kind(),
+            "Node does not advertise the reviewed workload source kind"
+        );
+        Ok(())
+    }
     pub fn unavailable() -> Self {
         Self {
             schema_version: 2,

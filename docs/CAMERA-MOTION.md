@@ -144,3 +144,20 @@ barrier, allowing the actual engine dispatch to prove exclusion during execution
 and shared-pool reuse after observed exit in two sequential calls. Each keeps its
 six-second parent deadline. No physical device, OpenCV or model is used; physical
 driver release, camera workload stop and RTSP acceptance remain unverified.
+
+## Source-specific coordinator preflight in development
+
+The coordinator now compares the reviewed source kind with the authenticated
+peer's validated workload advertisement in both session preflight and direct route
+creation. Generic workload or one-shot camera capability is insufficient. The
+existing version-two advertisement remains microphone-only, with unchanged fields
+and serialization; forging `camera_motion` under that version fails validation.
+Camera requests are refused before allocating route capacity or sending an offer,
+including callers that bypass the normal source-inspection compiler path.
+
+Three synthetic regressions cover kind/serialization agreement, preflight with
+otherwise valid pinned session/runtime/policy/stop metadata, and direct prepare/open
+refusal without capacity consumption or outbound traffic. Microphone routing must
+still work afterward. Hosted verification is required. This check introduces no
+camera advertisement, lease, authority, fallback or automatic retry; actual camera
+negotiation must be added together with its supported runner and readiness path.

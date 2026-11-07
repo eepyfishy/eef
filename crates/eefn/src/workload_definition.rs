@@ -91,6 +91,12 @@ pub enum Source {
 }
 
 impl Source {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::MicrophoneEnergy { .. } => "microphone_energy",
+            Self::CameraMotion { .. } => "camera_motion",
+        }
+    }
     pub fn resource_id(&self) -> &str {
         match self {
             Self::MicrophoneEnergy { resource_id, .. } | Self::CameraMotion { resource_id, .. } => {

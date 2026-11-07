@@ -387,7 +387,7 @@ impl NodeServer {
             .registration;
         let support: Advertisement =
             serde_json::from_value(registered["workload_execution"].clone())?;
-        support.validate()?;
+        support.confirms_source(&template.source)?;
         let stop: crate::grants::stop::Advertisement =
             serde_json::from_value(registered["grant_stop"].clone())?;
         stop.validate()?;
@@ -478,7 +478,7 @@ impl NodeServer {
             .registration;
         let support: Advertisement =
             serde_json::from_value(registered["workload_execution"].clone())?;
-        support.validate()?;
+        support.confirms_source(&definition.source)?;
         ensure!(
             support.available,
             "Node has no authenticated workload execution support; no fallback"

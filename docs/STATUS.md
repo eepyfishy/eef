@@ -3,6 +3,19 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: source-specific coordinator route checks
+
+Coordinator workload preflight and direct route preparation now require the
+reviewed source kind to match the peer's validated execution advertisement.
+Generic `workload.session` and one-shot `camera.capture` capabilities cannot imply
+camera workload support. The current version-two advertisement remains exactly
+microphone-only; changing its source string cannot mint a compatible camera
+protocol. Unsupported camera requests fail before route capacity or any offer is
+created. Three added regressions cover serialized kind agreement, authenticated
+registration preflight and both direct prepare/open paths, including subsequent
+microphone route availability. Hosted verification is required. Compatible camera
+negotiation and a complete camera runner remain future integration work.
+
 ## In development: shared Windows camera source ownership
 
 One-shot camera dispatch now reserves a separate node-owned camera pool through
