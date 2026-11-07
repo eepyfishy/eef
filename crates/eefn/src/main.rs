@@ -16,6 +16,14 @@ use tracing::{info, warn};
 struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
+    #[command(flatten)]
+    options: ServiceOptions,
+}
+
+// Build service flags separately so their unoptimized derive temporaries do not
+// share the subcommand builder's caller frame on Windows' one-MiB main stack.
+#[derive(Debug, clap::Args)]
+struct ServiceOptions {
     #[arg(long, global = true, help = "Print command results as JSON")]
     json: bool,
     #[arg(
@@ -62,6 +70,19 @@ struct Args {
     selected_models: Vec<String>,
     #[arg(long, env = "EEF_NODE_OLLAMA")]
     ollama_url: Option<String>,
+}
+
+impl std::ops::Deref for Args {
+    type Target = ServiceOptions;
+    fn deref(&self) -> &Self::Target {
+        &self.options
+    }
+}
+
+impl std::ops::DerefMut for Args {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.options
+    }
 }
 
 impl Args {

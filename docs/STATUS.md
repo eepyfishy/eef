@@ -3,6 +3,21 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: separate service-option and command-tree construction
+
+The in-place parser candidate `255d2c2`/run `42389243153` passed both Linux jobs
+but failed both Windows jobs. The expanded parser test overflowed on its original
+one-MiB thread, and executable first-run again exited with `0xC00000FD`. Its last
+phase was `parse_build`: the derived command tree did not finish construction.
+Avoiding by-value parser forwarding did not resolve the startup failure.
+
+Root service options now form a separate flattened Clap argument group. This
+moves their derive temporaries out of the command-tree builder's caller frame.
+Original flags, defaults, subcommands and decoder are retained; field forwarding
+keeps runtime dispatch unchanged. Stack sizes, help/error checks, first-run and
+all other native acceptance assertions remain required. This is a construction-
+stack candidate, not an accepted fix; fresh full hosted verification is pending.
+
 ## In development: private workload failure categories
 
 The full camera coordinator lifecycle test in `b3885b7`/run `42388092617` passed
