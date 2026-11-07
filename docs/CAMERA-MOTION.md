@@ -63,8 +63,10 @@ through the existing Rust/Python owned streaming transport: ordinary changes,
 resolution discontinuity and read loss. Tests execute pinned reviewed source bytes
 with a replaced-path canary and check bounded metadata, one open/release, no retry,
 failure retention and no image payload. They use fake OpenCV/device APIs without
-installing OpenCV or touching a camera/network. Hosted verification is pending;
-these tests do not establish physical capture, admission or VLM/relay acceptance.
+installing OpenCV or touching a camera/network. The producer and archive-order
+source `1c7016e` passed all four jobs and complete native gates in
+[run 42334853657](https://github.com/eepyfishy/eef/actions/runs/42334853657).
+These tests do not establish physical capture, admission or VLM/relay acceptance.
 
 ## Reviewed definition and event integration in development
 
@@ -93,3 +95,26 @@ need integration before the existing command/compiler/lease path may launch one.
 Ten shared regressions cover binding/limits, event/prefix behavior, durable history
 reopen/no replay, old microphone shape and those refusal boundaries. Hosted
 verification is pending; no installer, installed node or runtime policy is changed.
+
+## Independent ambient consent lifetime in development
+
+The local listening preference governs both ambient camera and microphone work;
+each source additionally needs its own saved and applied feature permission.
+Camera supervision now has a separate revocation epoch, so disabling microphone
+permission leaves authorized camera work alone. Camera permission denial retires
+only camera consent; local listening-off retires both. Denial occurs before config
+storage, including failed writes. Restoring permission through a generic save
+cannot revive an operation or clear the runtime denial. A fresh explicit local
+listening-enable decision can clear that latch, while old prepared epochs remain
+invalid. Replacing or dropping the owning runtime also retires camera operations,
+including replacement with the same runtime ID. Stale guards cannot retire the
+replacement's consent or remove its binding.
+
+Six synthetic library-level cases cover permission separation, saved/applied/off
+checks, deadline/identity refusal before polling, owned-future drop on revocation,
+failed persistence, off/on and runtime replacement. They start no hardware capture
+or subprocess and grant no workload, resource or extra deadline. Hosted verification
+is required. The public listening report retains its existing microphone-specific
+compatibility fields; camera readiness and command exposure must be integrated
+separately before camera workload execution is advertised or launched. Existing
+one-shot capture and its permission behavior remain separate.

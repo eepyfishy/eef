@@ -3,6 +3,27 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: independent camera ambient consent lifetime
+
+Camera ambient supervision now checks saved and applied camera permission without
+requiring microphone permission. It has its own revocation epoch: microphone-off
+leaves camera consent intact, camera-off does not revoke microphone consent, and
+local listening-off retires both. Denial precedes config storage, including failed
+saves. Generic permission restoration cannot clear the denial; explicit local
+enable permits only a fresh epoch. Runtime replacement and guard retirement bind
+both input lifetimes, including a reused runtime ID. Six synthetic regressions
+exercise those boundaries without a device, process, model or admitted workload.
+Hosted verification is required. This consent wrapper grants no workload authority;
+camera readiness, resource ownership and execution remain unavailable.
+
+The camera producer/archive-order source `1c7016e` passed all four jobs in
+[run 42334853657](https://github.com/eepyfishy/eef/actions/runs/42334853657).
+The retained complete headless record contains Rust1524+1ignored across 17 groups,
+all 36 native suites, camera fake-device19+pinned-transport3 and the full
+prefix/firewall/listening/first-run gates. This accepts that exact synthetic
+development increment, without erasing the earlier archive fixture failure or
+claiming physical capture, camera admission or the later definition/consent source.
+
 ## In development: camera definitions and durable event semantics
 
 The existing workload source definition now binds exact camera motion parameters,

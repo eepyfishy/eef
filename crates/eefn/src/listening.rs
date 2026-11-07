@@ -346,6 +346,7 @@ impl crate::NodeService {
                     changed = consent.enabled != enabled;
                     if !enabled {
                         self.listening_gate.deny();
+                        self.camera_listening_gate.deny();
                         self.source_readiness.invalidate();
                     }
                     if changed {
@@ -357,6 +358,7 @@ impl crate::NodeService {
                     }
                     if enabled {
                         self.listening_gate.allow()?;
+                        self.camera_listening_gate.allow()?;
                         self.source_readiness.invalidate();
                     }
                 }
@@ -425,6 +427,36 @@ impl crate::NodeService {
     where
         F: Future<Output = Result<T>>,
     {
+        self.supervise_input_epoch(runtime_id, deadline, expected_epoch, false, operation)
+            .await
+    }
+    /// Local camera consent only, never a workload grant or source admission.
+    /// The camera runner must separately retain exact resources and original lease.
+    #[allow(dead_code)]
+    pub(crate) async fn supervise_camera_listening_epoch<F, T>(
+        &self,
+        runtime_id: &str,
+        deadline: tokio::time::Instant,
+        expected_epoch: Option<u64>,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: Future<Output = Result<T>>,
+    {
+        self.supervise_input_epoch(runtime_id, deadline, expected_epoch, true, operation)
+            .await
+    }
+    async fn supervise_input_epoch<F, T>(
+        &self,
+        runtime_id: &str,
+        deadline: tokio::time::Instant,
+        expected_epoch: Option<u64>,
+        camera: bool,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: Future<Output = Result<T>>,
+    {
         ensure!(
             tokio::time::Instant::now() < deadline,
             "Listening workload deadline expired"
@@ -436,13 +468,30 @@ impl crate::NodeService {
                         && self.live.lock().unwrap()["runtime_id"] == runtime_id,
                     "Listening runtime/identity changed"
                 );
+                let (permission, applied, gate) = if camera {
+                    (
+                        "/permissions/media/camera",
+                        engine.applied_permissions().media.camera,
+                        &self.camera_listening_gate,
+                    )
+                } else {
+                    (
+                        "/permissions/media/microphone",
+                        engine.applied_permissions().media.microphone,
+                        &self.listening_gate,
+                    )
+                };
                 ensure!(
                     Consent::from_config(config)?.enabled
-                        && config.pointer("/permissions/media/microphone") == Some(&json!(true))
-                        && engine.applied_permissions().media.microphone,
-                    "Listening requires local consent and microphone permission"
+                        && config.pointer(permission) == Some(&json!(true))
+                        && applied,
+                    if camera {
+                        "Camera listening requires local consent and camera permission"
+                    } else {
+                        "Listening requires local consent and microphone permission"
+                    }
                 );
-                let permit = self.listening_gate.permit()?;
+                let permit = gate.permit()?;
                 ensure!(
                     expected_epoch.is_none_or(|epoch| epoch == permit.epoch),
                     "Prepared source listening epoch changed"
@@ -483,3 +532,7 @@ pub fn render(value: &Value) -> Result<String> {
 #[cfg(test)]
 #[path = "listening_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "camera_listening_tests.rs"]
+mod camera_tests;

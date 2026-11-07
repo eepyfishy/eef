@@ -21,6 +21,7 @@ pub enum StartupIssue {
 pub struct NodeService {
     pub(crate) microphone_pool: crate::capture_ownership::Pool,
     pub(crate) listening_gate: Arc<crate::listening::Gate>,
+    pub(crate) camera_listening_gate: Arc<crate::listening::Gate>,
     pub(crate) workload_gate: Arc<crate::workload_policy::Gate>,
     pub(crate) source_readiness: Arc<crate::workload_readiness::State>,
     pub(crate) config_path: PathBuf,
@@ -123,6 +124,7 @@ impl NodeService {
         Arc::new(Self {
             microphone_pool: Default::default(),
             listening_gate: Arc::new(crate::listening::Gate::default()),
+            camera_listening_gate: Arc::new(crate::listening::Gate::default()),
             workload_gate: Arc::new(crate::workload_policy::Gate::default()),
             source_readiness: Default::default(),
             config_path,
@@ -271,6 +273,11 @@ impl NodeService {
             || value.pointer("/permissions/media/microphone") != Some(&json!(true))
         {
             self.listening_gate.deny();
+        }
+        if !crate::listening::Consent::from_config(&value)?.enabled
+            || value.pointer("/permissions/media/camera") != Some(&json!(true))
+        {
+            self.camera_listening_gate.deny();
         }
         if self.config_path.is_file() {
             crate::atomic_file::copy(

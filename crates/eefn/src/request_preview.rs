@@ -344,6 +344,8 @@ pub struct PreviewGuard {
     runtime_id: String,
     listening: Arc<crate::listening::Gate>,
     listening_generation: u64,
+    camera_listening: Arc<crate::listening::Gate>,
+    camera_listening_generation: u64,
     source_readiness: Arc<crate::workload_readiness::State>,
 }
 impl Drop for PreviewGuard {
@@ -351,6 +353,8 @@ impl Drop for PreviewGuard {
         // Latch before a slow preparation/config read can hold this lock. A
         // stale guard cannot retire a replacement, even with a reused UUID.
         self.listening.retire_generation(self.listening_generation);
+        self.camera_listening
+            .retire_generation(self.camera_listening_generation);
         self.source_readiness.invalidate();
         let mut binding = self.runtime.binding.lock().unwrap();
         if binding
@@ -813,10 +817,15 @@ impl NodeService {
         if self.listening_gate.runtime_generation() > 0 {
             self.listening_gate.retire_runtime();
         }
+        if self.camera_listening_gate.runtime_generation() > 0 {
+            self.camera_listening_gate.retire_runtime();
+        }
         let listening_generation;
+        let camera_listening_generation;
         {
             let mut binding = runtime.binding.lock().unwrap();
             listening_generation = self.listening_gate.bind_runtime();
+            camera_listening_generation = self.camera_listening_gate.bind_runtime();
             *binding = Some(Binding {
                 runtime_id: runtime_id.clone(),
                 engine: Arc::downgrade(engine),
@@ -830,6 +839,8 @@ impl NodeService {
             runtime_id,
             listening: self.listening_gate.clone(),
             listening_generation,
+            camera_listening: self.camera_listening_gate.clone(),
+            camera_listening_generation,
             source_readiness: self.source_readiness.clone(),
         }
     }
