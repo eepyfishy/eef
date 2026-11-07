@@ -3,6 +3,23 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: preserve answer uncertainty during restart
+
+Run `42424184808` passed the four workspace test configurations, but its
+Windows/headless native suite stopped in the answer-workflow restart check,
+before the new camera lifecycle fixture. The answer was confirmed; the expected
+uncertainty flag was false. Source inspection found that the outer answer
+workflow lacked the input workflow's final-poll runtime fence: a nested stage can
+observe retirement and return an error during the same poll as restart, bypassing
+the outer biased watch branch.
+
+Answer handling now shares the existing tested runtime fence. Retired work keeps
+its confirmed earlier checkpoints and reports uncertainty without continuing,
+retrying, approving or executing anything. The native check retains its original
+requirements and additionally requires the runtime-change code, with bounded
+stage diagnostics on failure. Fresh hosted acceptance remains required for this
+correction and the executable camera lifecycle; no physical acceptance is claimed.
+
 ## In development: initialize Python for an explicit camera source
 
 The executable lifecycle candidate `9e7f0c4`/run `42422028965` passed all Rust

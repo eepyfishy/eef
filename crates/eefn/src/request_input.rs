@@ -396,7 +396,7 @@ impl NodeService {
 // A biased select polls the watch before the operation, but an operation can
 // observe retirement and finish during that same poll. Fence the returned
 // result as well; otherwise a nested cancellation can lose its runtime scope.
-async fn within_runtime<F, T>(
+pub(crate) async fn within_runtime<F, T>(
     generation: &mut tokio::sync::watch::Receiver<Option<String>>,
     expected: &str,
     operation: F,

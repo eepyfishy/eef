@@ -318,7 +318,11 @@ try {
  }
  const restartAnswerSource=await newQuestion('Restart during answer preparation');mode='gate-method';count=calls.length;const restartAnswerId=randomUUID(),restartPending=respond(restartAnswerSource.id,1,'This node',restartAnswerId,false);
  await until(()=>gates.size===1,'gated answer preparation');await nodeCli(['restart','--wait-seconds','20']);await until(ready,'answer workflow runtime replaced');
- const restartedAnswer=await restartPending;assert.equal(restartedAnswer.success,false);assert.equal(restartedAnswer.answer_confirmed,true);assert.equal(restartedAnswer.outcome_unknown,true);
+ const restartedAnswer=await restartPending;assert.equal(restartedAnswer.success,false);assert.equal(restartedAnswer.answer_confirmed,true);
+ const restartObservation={error_code:restartedAnswer.error_code,status:restartedAnswer.status,answer_confirmed:restartedAnswer.answer_confirmed,
+  resolution_code:restartedAnswer.resolution?.error_code,preparation_code:restartedAnswer.preparation?.error_code};
+ assert.equal(restartedAnswer.outcome_unknown,true,'Restart must retain uncertainty: '+JSON.stringify(restartObservation));
+ assert.equal(restartedAnswer.error_code,'runtime_changed','Retired answer workflow: '+JSON.stringify(restartObservation));
  for(const gate of gates)gate.destroy();mode='valid';
  const restartSnapshot=await respond(restartAnswerSource.id,1,'This node',restartAnswerId);assert.equal(restartSnapshot.status,'historical_snapshot');assert.equal(restartSnapshot.result.revision,3);assert.equal(calls.length,count+2);
  mode='invalid-method';count=calls.length;const invalidId=randomUUID(),invalid=await input('Reject invented authority',invalidId,false);

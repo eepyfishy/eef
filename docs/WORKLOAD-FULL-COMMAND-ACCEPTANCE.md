@@ -17,6 +17,13 @@ interpreter; permissions, consent and the exact approved source still control
 execution. That correction and the full executable lifecycle remain under hosted
 verification.
 
+Run `42424184808` stopped earlier in the same native suite, at the answer-restart
+uncertainty assertion. All workspace configurations passed, but the executable
+camera fixture was not reached. Answer handling now shares the input workflow's
+tested final-poll runtime fence so nested cancellation cannot conceal runtime
+retirement. This correction and camera execution still require fresh hosted
+acceptance; neither is inferred from the workspace test results alone.
+
 The new opt-in Windows test joins the complete runtime path: explicit submission
 and compilation through the already running origin node, owner HTTP conditional approval, the
 coordinator's original engine-owned issuer/driver, credential-authenticated pinned
