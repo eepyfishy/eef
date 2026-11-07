@@ -3,6 +3,26 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: simulated camera frame pacing
+
+Run `42381756425` at `53f4c0b` passed both Linux jobs and Windows/dashboard, but
+Windows/headless failed. Its camera diagnostic confirms admission, source opening
+and one durable delivered event before `source_unconfirmed`. The first-read test
+barrier can delay the producer past its next sampling time; the fake device then
+returns a catch-up frame immediately. The event filter can correctly suppress
+that observation, while the fake device waits for an acknowledgement for every
+frame. The synthetic camera now paces completed frames at its reviewed 200 ms
+cadence. All five events, durable-before-delivery assertions and original source,
+lease, session, stop and process-exit limits remain required. Production source
+and filter behavior are unchanged; fresh hosted verification must confirm the fix.
+
+That run separately timed out waiting for a fresh node to register, before reaching
+later native suites. It does not resolve the earlier repair-approval timeout.
+The unchanged sixty-second registration wait now adds bounded process-exit,
+runtime-seen, connection-state and stack-overflow observations on failure. It does
+not print credentials, paths, endpoints or raw process logs, and does not restart
+or retry setup. These diagnostics are not a first-run fix or acceptance claim.
+
 ## In development: camera-intent helper fixture correction
 
 The authoring candidate `515d520`/run `42381353099` failed Linux test compilation:

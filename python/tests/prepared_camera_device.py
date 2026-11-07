@@ -49,7 +49,18 @@ class _eef_camera_Device(_eef_camera_fake.Camera):
                 raise RuntimeError("Blocked camera fixture was not cancelled")
         else:
             _eef_camera_wait("ack-" + str(self.reads))
-        return super().read()
+        # The network's first-read barrier may outlast one sampling interval.
+        # Model a camera producing frames at the reviewed 200 ms cadence: an
+        # immediate catch-up read could be filtered legitimately, then this
+        # fixture would wait for an acknowledgement for that suppressed event.
+        previous = getattr(self, "_eef_completed_at", None)
+        if previous is not None:
+            delay = 0.2 - (_eef_camera_time.monotonic() - previous)
+            if delay > 0:
+                _eef_camera_time.sleep(delay)
+        result = super().read()
+        self._eef_completed_at = _eef_camera_time.monotonic()
+        return result
 
     def release(self):
         super().release()

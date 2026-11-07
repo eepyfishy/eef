@@ -25,7 +25,7 @@ async function once(exe,args,timeout=30000){const c=launch(exe,args),timer=setTi
 async function cli(exe,args,code=0){const r=await once(exe,args,args.includes('--enroll-local')?120000:30000);
  assert.equal(r.code,code,'Command failed; inspect private fixture '+scratch);return JSON.parse(r.out);}
 async function json(url){const r=await fetch(url,{signal:AbortSignal.timeout(5000)});assert(r.ok);return r.json();}
-async function until(fn,label){const end=Date.now()+60000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('Timeout: '+label);}
+async function until(fn,label,observation){const end=Date.now()+60000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('Timeout: '+label+(observation?' '+JSON.stringify(observation()):''));}
 async function exists(path){return readFile(path).then(()=>true,()=>false);}
 async function unlinkOwned(path){
  assert(resolve(path).startsWith(resolve(scratch)+sep));
@@ -69,8 +69,13 @@ try{
  const eef='http://127.0.0.1:51334',eefn='http://127.0.0.1:51336';let eefRuntime;
  await until(async()=>{eefRuntime=(await json(eef+'/api/diagnostics')).runtime_id;return !!eefRuntime;},'fresh coordinator saved config and API');
  const initialized=await readFile(coordinatorConfig);assert.notEqual(privateSecret(initialized),secret);
- const runningNode=launch(node.exe,['--no-ui']);let nodeRuntime;
- await until(async()=>{nodeRuntime=(await json(eefn+'/api/diagnostics')).runtime_id;return !!nodeRuntime&&(await json(eefn+'/api/status')).connection.state==='connected';},'fresh node automatically registers');
+ const runningNode=launch(node.exe,['--no-ui']);let nodeRuntime,connectionState=null;
+ await until(async()=>{nodeRuntime=(await json(eefn+'/api/diagnostics')).runtime_id;
+  const state=(await json(eefn+'/api/status')).connection.state;
+  connectionState=typeof state==='string'&&/^[a-z_]{1,40}$/.test(state)?state:null;return !!nodeRuntime&&state==='connected';
+ },'fresh node automatically registers',()=>({node_exit_code:runningNode.exitCode,coordinator_exit_code:runningCoordinator.exitCode,
+  node_runtime_seen:!!nodeRuntime,connection_state:connectionState,node_stack_overflow:runningNode.logs().err.includes('has overflowed its stack'),
+  node_stderr_present:runningNode.logs().err.length>0}));
  const first=JSON.parse(await readFile(nodeConfig,'utf8'));assert.match(first.node_id,/^device-[a-f0-9-]{36}$/);
  assert.equal(first.name.toLowerCase(),(hostname().trim()||'This PC').toLowerCase());
  const permissions=structuredClone(first.permissions),models=structuredClone(first.models);
