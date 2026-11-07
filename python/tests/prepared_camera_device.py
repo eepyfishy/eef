@@ -51,8 +51,8 @@ class _eef_camera_Device(_eef_camera_fake.Camera):
             _eef_camera_wait("ack-" + str(self.reads))
         # The network's first-read barrier may outlast one sampling interval.
         # Model a camera producing frames at the reviewed 200 ms cadence: an
-        # immediate catch-up read could be filtered legitimately, then this
-        # fixture would wait for an acknowledgement for that suppressed event.
+        # immediate catch-up transition would correctly stop the source at its
+        # event-rate boundary instead of producing the required five events.
         previous = getattr(self, "_eef_completed_at", None)
         if previous is not None:
             delay = 0.2 - (_eef_camera_time.monotonic() - previous)

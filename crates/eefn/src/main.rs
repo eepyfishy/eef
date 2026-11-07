@@ -3218,6 +3218,11 @@ fn default_llama_binary() -> PathBuf {
     PathBuf::from("tools/llama-server.exe")
 }
 
+#[inline(never)]
+fn startup_phase(phase: &'static str) {
+    tracing::debug!(target: "eefn::startup", "node startup phase: {phase}");
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -3228,7 +3233,9 @@ fn main() -> Result<()> {
         .init();
     let executable = std::env::current_exe()?;
     let install_dir = eefn::updater::installation_root(&executable)?;
+    startup_phase("parse");
     let parsed = Args::try_parse();
+    startup_phase("parsed");
     let service = parsed.as_ref().is_ok_and(Args::is_service);
     if service {
         eefn::console::detach_owned_service_console();
@@ -3262,6 +3269,7 @@ fn main() -> Result<()> {
 fn run(args: Args, install_dir: PathBuf) -> Result<()> {
     // Keep the application future on the heap before polling it on Windows'
     // one-MiB main stack. The runtime and lifecycle are unchanged.
+    startup_phase("runtime_build");
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -3269,9 +3277,11 @@ fn run(args: Args, install_dir: PathBuf) -> Result<()> {
 }
 
 async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
+    startup_phase("layout");
     args.config = eefn::runtime_layout::RuntimeLayout::current()?
         .configuration(&args.config, Path::new("config.json"));
     if let Some(command) = &args.command {
+        startup_phase("command_dispatch");
         match Box::pin(execute_command(&args, command)).await {
             Ok(value) => {
                 if args.json {
@@ -3476,6 +3486,7 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
         }
         return Ok(());
     }
+    startup_phase("service_lock");
     let _instance = if args.is_service() {
         match eefn::setup::service_instance_lock(&args.config).await? {
             Some(lock) => Some(lock),
@@ -3492,15 +3503,20 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
     } else {
         None
     };
+    startup_phase("identity_initialize");
     let initial = eefn::setup::initialize_identity(&args.config)?;
+    startup_phase("local_pairing");
     let _ = eefn::setup::pair_local(&args.config)?;
+    startup_phase("configuration_load");
     let file = load_file(&args.config)?;
     let mut dashboard_config = file.dashboard.unwrap_or_default();
+    startup_phase("service_construct");
     let dashboard = NodeService::new(
         args.config.clone(),
         initial["node_id"].as_str().unwrap().into(),
     );
     let interactive = args.is_service();
+    startup_phase("api_start");
     let mut dashboard_task = if dashboard_config.enabled && interactive {
         Some(
             dashboard
@@ -3514,6 +3530,7 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
     } else {
         None
     };
+    startup_phase("api_started");
     if args.open_dashboard
         && !args.no_ui
         && dashboard_config.ui_enabled
@@ -3596,6 +3613,7 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                 }
             }
         };
+        startup_phase("runtime_start");
         let (result, reason) = supervise_runtime(
             Box::pin(run_node(
                 &args,
@@ -4943,6 +4961,16 @@ mod tests {
             .stack_size(1024 * 1024)
             .spawn(|| {
                 for args in [
+                    vec!["eefn"],
+                    vec!["eefn", "--no-ui"],
+                    vec![
+                        "eefn",
+                        "--json",
+                        "repair",
+                        "--approve",
+                        "11111111-1111-4111-8111-111111111111",
+                        "--allow-prerelease",
+                    ],
                     vec!["eefn", "connection", "pair-stdin"],
                     vec!["eefn", "models", "show"],
                     vec!["eefn", "requests", "plan", "request-id"],

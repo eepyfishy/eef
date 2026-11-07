@@ -3,6 +3,21 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: narrow Windows startup overflow observations
+
+The boxed-entrypoint candidate `5b3e3bc`/run `42385273148` passed both Linux jobs
+and Windows/dashboard, including the extended 64 KiB future-size check. Its
+headless Windows job still failed the fresh-node fixture with the same startup
+stack-overflow observation. Boxing is not a proven fix for that failure.
+
+The existing one-MiB parser test now also parses the service-start and repair-
+approval argument shapes. Fixed-name startup phase markers use the separate
+`eefn::startup` debug target; the isolated first-run fixture enables only that
+additional target and reports the last phase on its unchanged timeout. No raw
+configuration, arguments, paths or credentials enter these markers. Thread/OS
+stack sizes, test assertions and deadlines remain unchanged. The next hosted
+result must locate the failing stage before any further causal fix is claimed.
+
 ## In development: bounded node application entrypoint
 
 The frame-pacing candidate `63aff0c`/run `42383334177` passed the complete Rust
@@ -41,9 +56,9 @@ Run `42381756425` at `53f4c0b` passed both Linux jobs and Windows/dashboard, but
 Windows/headless failed. Its camera diagnostic confirms admission, source opening
 and one durable delivered event before `source_unconfirmed`. The first-read test
 barrier can delay the producer past its next sampling time; the fake device then
-returns a catch-up frame immediately. The event filter can correctly suppress
-that observation, while the fake device waits for an acknowledgement for every
-frame. The synthetic camera now paces completed frames at its reviewed 200 ms
+returns a catch-up frame immediately. The event filter correctly stops at its rate
+boundary rather than silently dropping a required transition. The synthetic
+camera now paces completed frames at its reviewed 200 ms
 cadence. All five events, durable-before-delivery assertions and original source,
 lease, session, stop and process-exit limits remain required. Production source
 and filter behavior are unchanged; fresh hosted verification must confirm the fix.

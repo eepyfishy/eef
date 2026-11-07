@@ -12,6 +12,7 @@ const scratch=await mkdtemp(join(root,'.validation/first-run-')),children=[],lin
 const cleanup=[];let result;
 const cwd=join(scratch,"unrelated working directory 'owner'");await mkdir(cwd);
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),
+ RUST_LOG:'eef=info,eefn=info,eefn::startup=debug',
  HTTP_PROXY:'',HTTPS_PROXY:'',ALL_PROXY:'',NO_PROXY:'127.0.0.1,localhost,::1',
  http_proxy:'',https_proxy:'',all_proxy:'',no_proxy:'127.0.0.1,localhost,::1',NODE_USE_ENV_PROXY:'0',
  PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
@@ -75,7 +76,8 @@ try{
   connectionState=typeof state==='string'&&/^[a-z_]{1,40}$/.test(state)?state:null;return !!nodeRuntime&&state==='connected';
  },'fresh node automatically registers',()=>({node_exit_code:runningNode.exitCode,coordinator_exit_code:runningCoordinator.exitCode,
   node_runtime_seen:!!nodeRuntime,connection_state:connectionState,node_stack_overflow:runningNode.logs().err.includes('has overflowed its stack'),
-  node_stderr_present:runningNode.logs().err.length>0}));
+  node_stderr_present:runningNode.logs().err.length>0,
+  node_startup_phase:[...runningNode.logs().err.replace(/\u001b\[[0-9;]*m/g,'').matchAll(/node startup phase: ([a-z_]+)/g)].at(-1)?.[1]??null}));
  const first=JSON.parse(await readFile(nodeConfig,'utf8'));assert.match(first.node_id,/^device-[a-f0-9-]{36}$/);
  assert.equal(first.name.toLowerCase(),(hostname().trim()||'This PC').toLowerCase());
  const permissions=structuredClone(first.permissions),models=structuredClone(first.models);
