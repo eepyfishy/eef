@@ -41,7 +41,7 @@ function verifyCompletion(job,receipt){
  for(const [index,event] of job.workload.events.entries()){
   assert.deepEqual(Object.keys(event).sort(),[...fields].sort());
   assert.equal(event.schema_version,2);assert.equal(event.kind,'camera_motion');assert.equal(event.sequence,index+1);assert.equal(event.source_sequence,index+1);assert.equal(event.source_frames,index+1);
-  assert(event.active===null||typeof event.active==='boolean');assert.equal(typeof event.discontinuity,'boolean');assert(event.level===null||(Number.isSafeInteger(event.level)&&event.level>=0&&event.level<=100));
+  assert(event.active===null||typeof event.active==='boolean');assert.equal(typeof event.discontinuity,'boolean');assert(event.level===null||(Number.isSafeInteger(event.level)&&event.level>=0&&event.level<=255));
   for(const key of ['schema_version','sequence','source_sequence','source_frames','elapsed_ms'])assert(Number.isSafeInteger(event[key])&&event[key]>=0);
   const row=JSON.stringify(Object.fromEntries(fields.map(key=>[key,event[key]])));bytes+=Buffer.byteLength(row);prefix=hash(prefix+hash(row));
  }

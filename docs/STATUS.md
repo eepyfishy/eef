@@ -5,6 +5,11 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: camera lifecycle through shipping command executables
 
+The fixture's independent event validator follows the source's actual `0..255`
+camera level range. Its post-capture isolation check reads each earlier job by
+exact ID, so adding new camera jobs cannot hide earlier rows behind a bounded
+job-list page. These test corrections retain all original success requirements.
+
 The existing input-command native suite now adds a separately approved camera
 fixture after all review-only input checks. Actual `eef` and `eefn` commands
 configure the camera, enable feature/listening/workload consent, restart the node,

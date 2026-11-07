@@ -402,9 +402,10 @@ try {
   coordinatorText:args=>cli('eef',eefConfig,args,true,false),nodeId:id,nodeUrl:node,json,configPath,inferenceCalls:calls});
  const cameraLifecycle=await verifyCameraLifecycleCommands({nodeCli,coordinatorCli:(args,success=true)=>cli('eef',eefConfig,args,success),
   nodeId:id,nodeUrl:node,coordinatorUrl:eef,json,until,root,scratch,configPath,inferenceCalls:calls});
- const originalJobs=new Set(jobs.map(job=>job.id));
- const afterCamera=(await nodeCli(['jobs','list'])).data.jobs.filter(job=>originalJobs.has(job.id));assert.equal(afterCamera.length,originalJobs.size);
- for(const job of afterCamera){assert.equal(job.review_only,true,'Camera grants cannot authorize existing input jobs');assert.equal(job.completed_tasks,0);}
+ for(const original of jobs){
+  const job=await json(eef+'/api/jobs/'+original.id);assert.equal(job.id,original.id);assert.equal(job.request_context.origin_node,id);
+  assert.equal(job.review_only,true,'Camera grants cannot authorize existing input jobs');assert.equal(job.completed_tasks,0);
+ }
  evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,...remoteCamera,...cameraLifecycle,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
