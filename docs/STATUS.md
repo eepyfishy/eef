@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: distinguish pending settings from a requested restart
+
+The inspection source `1d6e982` failed two new Linux fixture assertions after
+saving configuration. Both incorrectly expected `pending_restart=false`; the
+existing `save_configuration` contract deliberately marks saved settings as needing
+a restart. The fixtures now require that pending flag and independently poll the
+restart notification to prove no restart was requested. Both saved/applied camera
+and readiness assertions remain, with the same test count and original deadlines.
+The failed run is retained; this changed fixture source requires full hosted
+verification. Production save, inspection, permission and restart code is unchanged.
+
 ## In development: camera source inspection through node and coordinator commands
 
 `eefn workloads camera-sources` and `eef node camera-workload-sources --node NODE_ID`

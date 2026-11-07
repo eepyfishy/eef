@@ -1,5 +1,6 @@
 use super::*;
 use crate::{NodeEngine, NodePolicy};
+use futures_util::FutureExt;
 use serde_json::json;
 
 struct Fixture {
@@ -224,5 +225,9 @@ async fn camera_permission_changes_and_camera_epoch_retire_passive_readiness_wit
     f.service.camera_listening_gate.retire_runtime();
     assert!(!current.current(&f.service, &f.runtime));
     assert_eq!(f.service.diagnostics()["success"], true);
-    assert_eq!(f.service.live.lock().unwrap()["pending_restart"], false);
+    assert_eq!(f.service.live.lock().unwrap()["pending_restart"], true);
+    assert!(
+        f.service.restart.notified().now_or_never().is_none(),
+        "Readiness refresh does not request the pending restart"
+    );
 }

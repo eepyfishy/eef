@@ -1,4 +1,5 @@
 use super::*;
+use futures_util::FutureExt;
 use std::sync::Arc;
 
 struct Fixture {
@@ -202,7 +203,11 @@ fn pending_camera_binding_edits_and_revocation_are_visible_without_substituting_
         original.resources[0].resource_sha256
     );
     assert!(current.confirms_template(&f.template()).is_err());
-    assert_eq!(f.service.live.lock().unwrap()["pending_restart"], false);
+    assert_eq!(f.service.live.lock().unwrap()["pending_restart"], true);
+    assert!(
+        f.service.restart.notified().now_or_never().is_none(),
+        "Saving only marks pending settings; it must not request a restart"
+    );
 }
 
 #[tokio::test]
