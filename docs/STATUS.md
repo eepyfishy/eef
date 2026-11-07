@@ -3,6 +3,26 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: archive fixture ordering under the original short policy
+
+Camera source run `42242697692` failed two existing occurrence-archive tests in
+reservation setup: their ten-second policy preceded a later real-clock job
+compilation, leaving less than the required execution allowance. Both failures
+occurred before archive assertions at the same save helper. Production correctly
+refused the insufficient remaining time. The archive-only fixtures now prepare
+their independent job before creating the original ten-second policy, without
+changing policy validity, reservations, clocks, quota/corruption assertions or
+production code. A regression explicitly refuses insufficient remaining time,
+pre-approval time and expiry without mutation, then admits the valid original
+allowance. Full changed-source verification is required; the prior failure stays.
+
+Independently, that failed run completed all 36 native suites and the full native
+gates, including all 19 camera fake-device and three pinned-source transport cases.
+It is component evidence, not acceptance of the full camera source revision or
+physical devices. Saved compilation `a4977ab` passed all four jobs in run
+`42239571549`, with Rust1523+1ignored and the full native gates; that separate
+acceptance does not erase the later camera-run failure.
+
 ## In development: bounded camera motion producer and owned transport checks
 
 A lazy single-open webcam/RTSP motion producer samples tiny grayscale images and
