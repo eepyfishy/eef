@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: keep private environment values out of node help
+
+The pairing-key and Ollama-URL options now hide their environment values in
+Clap help while retaining the variable names. The existing managed first-run
+suite checks real executable `--help` with disposable private test values before
+starting the node: help must exit successfully, omit those values and leave node
+settings uncreated. Environment overrides are confined to that one child process.
+Normal flag parsing, node setup and the original first-run assertions and budgets
+remain required. Hosted executable verification is pending.
+
 ## In development: separate service-option and command-tree construction
 
 The in-place parser candidate `255d2c2`/run `42389243153` passed both Linux jobs

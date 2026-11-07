@@ -41,7 +41,7 @@ struct ServiceOptions {
     node_id: Option<String>,
     #[arg(long)]
     name: Option<String>,
-    #[arg(long, env = "EEF_NODE_PSK")]
+    #[arg(long, env = "EEF_NODE_PSK", hide_env_values = true)]
     psk: Option<String>,
     #[arg(long)]
     allow_write: bool,
@@ -68,7 +68,7 @@ struct ServiceOptions {
         help = "Advertise an installed Ollama model for this run; may be repeated"
     )]
     selected_models: Vec<String>,
-    #[arg(long, env = "EEF_NODE_OLLAMA")]
+    #[arg(long, env = "EEF_NODE_OLLAMA", hide_env_values = true)]
     ollama_url: Option<String>,
 }
 

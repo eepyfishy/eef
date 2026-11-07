@@ -19,10 +19,10 @@ const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DI
 const version=(await readFile(join(root,'Cargo.toml'),'utf8')).match(/^version\s*=\s*"([^"]+)"/m)[1];
 async function alias(role,name){const install=join(scratch,name),exe=join(install,role+'.exe');await mkdir(install,{recursive:true});await link(join(bin,role+'.exe'),exe);links.push(exe);
  await writeFile(join(install,'bundle.json'),JSON.stringify({name:role,version}));return {exe,install};}
-function launch(exe,args){const c=spawn(exe,args,{cwd,env,windowsHide:true,stdio:['ignore','pipe','pipe']});let out='',err='';
+function launch(exe,args,overrides={}){const c=spawn(exe,args,{cwd,env:{...env,...overrides},windowsHide:true,stdio:['ignore','pipe','pipe']});let out='',err='';
  c.stdout.on('data',b=>out=(out+b).slice(-1048576));c.stderr.on('data',b=>err=(err+b).slice(-1048576));c.logs=()=>({out,err});
  c.result=new Promise((r,j)=>{c.on('error',j);c.on('close',code=>r({code,out,err}));});children.push(c);return c;}
-async function once(exe,args,timeout=30000){const c=launch(exe,args),timer=setTimeout(()=>c.kill(),timeout);return c.result.finally(()=>clearTimeout(timer));}
+async function once(exe,args,timeout=30000,overrides={}){const c=launch(exe,args,overrides),timer=setTimeout(()=>c.kill(),timeout);return c.result.finally(()=>clearTimeout(timer));}
 async function cli(exe,args,code=0){const r=await once(exe,args,args.includes('--enroll-local')?120000:30000);
  assert.equal(r.code,code,'Command failed; inspect private fixture '+scratch);return JSON.parse(r.out);}
 async function json(url){const r=await fetch(url,{signal:AbortSignal.timeout(5000)});assert(r.ok);return r.json();}
@@ -66,6 +66,11 @@ try{
  const coordinator=await alias('eef','live-coordinator'),node=await alias('eefn','live-node');
  const coordinatorConfig=join(coordinator.install,'config/default_identity.yaml'),nodeConfig=join(node.install,'config.json');
  assert.equal(await exists(coordinatorConfig),false);assert.equal(await exists(nodeConfig),false);
+ const help=await once(node.exe,['--help'],30000,{EEF_NODE_PSK:'PRIVATE_HELP_PAIRING_KEY',EEF_NODE_OLLAMA:'http://owner:PRIVATE_HELP_PASSWORD@private.invalid:11434'});
+ assert.equal(help.code,0,'Node help must exit without starting a runtime');
+ assert(help.out.includes('EEF_NODE_PSK')&&help.out.includes('EEF_NODE_OLLAMA'),'Help must retain environment-variable names');
+ assert(!(help.out+help.err).includes('PRIVATE_HELP_')&&!(help.out+help.err).includes('private.invalid'),'Help must hide private environment values');
+ assert.equal(await exists(nodeConfig),false,'Help cannot initialize node settings');
  const runningCoordinator=launch(coordinator.exe,['--no-ui','--no-brain']);
  const eef='http://127.0.0.1:51334',eefn='http://127.0.0.1:51336';let eefRuntime;
  await until(async()=>{eefRuntime=(await json(eef+'/api/diagnostics')).runtime_id;return !!eefRuntime;},'fresh coordinator saved config and API');
@@ -101,7 +106,7 @@ try{
  result={passed:true,managed_default_paths:true,unrelated_cwd_untouched:true,
   offline_initialize:true,missing_selected_package_not_executed:true,idempotent:true,existing_owner_bytes_preserved:true,no_generated_credentials_logged:true,
   invalid_configuration_preserved:true,invalid_legacy_secret_not_rotated:true,distinct_saved_credentials:true,
-  normal_coordinator_first_creation:true,normal_node_first_creation:true,automatic_initial_registration:true,detected_hostname:true,stable_node_identity:true,
+  normal_coordinator_first_creation:true,normal_node_first_creation:true,automatic_initial_registration:true,detected_hostname:true,stable_node_identity:true,node_help_environment_values_hidden:true,
   explicit_private_enrollment:true,both_runtime_restarts_observed:true,permissions_and_models_preserved:true,duplicate_launch_preserved:true,
   default_ports_required:true,model_downloads:false,model_inference:false,automatic_private_enrollment:false,
   automatic_model_onboarding:false,physical_two_pc:false,msi_installation:false,stable_release_accepted:false};
