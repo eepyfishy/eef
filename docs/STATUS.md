@@ -3,6 +3,24 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: parse the node command tree in place
+
+The phase diagnostic `f6505fd`/run `42387553819` passed all Rust tests, both
+Linux jobs and Windows/dashboard. Windows/headless still failed first-run with
+`0xC00000FD`; the last observed phase was `parse`, before runtime construction.
+The isolated one-MiB parser cases do not reproduce the full executable's stack
+use. Earlier application-future boxing is not a proven fix for this failure.
+
+The executable now builds one Clap command tree and calls its mutable parser
+directly, avoiding the convenience methods' by-value command forwarding. The
+same derived command definitions and argument decoder remain. Additional fixed
+markers distinguish tree construction, matching and decoding without logging
+arguments. The existing one-MiB test retains all original parser calls, also
+exercises the executable's parser and compares help/version/error behavior.
+Thread/OS stack sizes, test deadlines, update handoff and command authority are unchanged.
+This is a candidate correction; fresh first-run, repair and complete hosted
+acceptance remain required before calling startup fixed.
+
 ## In development: full camera command and source lifecycle coverage
 
 The opt-in Windows coordinator lifecycle fixture now also runs with a simulated

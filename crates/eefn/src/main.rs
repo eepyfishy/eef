@@ -3223,6 +3223,21 @@ fn startup_phase(phase: &'static str) {
     tracing::debug!(target: "eefn::startup", "node startup phase: {phase}");
 }
 
+#[inline(never)]
+fn parse_args_from(
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> std::result::Result<Args, clap::Error> {
+    // Keep one command tree in place instead of forwarding it by value through
+    // Parser::try_parse and Command::try_get_matches on the Windows main stack.
+    startup_phase("parse_build");
+    let mut command = <Args as clap::CommandFactory>::command();
+    startup_phase("parse_matches");
+    let mut matches = command.try_get_matches_from_mut(arguments)?;
+    startup_phase("parse_decode");
+    <Args as clap::FromArgMatches>::from_arg_matches_mut(&mut matches)
+        .map_err(|error| error.format(&mut command))
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -3234,7 +3249,7 @@ fn main() -> Result<()> {
     let executable = std::env::current_exe()?;
     let install_dir = eefn::updater::installation_root(&executable)?;
     startup_phase("parse");
-    let parsed = Args::try_parse();
+    let parsed = parse_args_from(std::env::args_os());
     startup_phase("parsed");
     let service = parsed.as_ref().is_ok_and(Args::is_service);
     if service {
@@ -5011,7 +5026,30 @@ mod tests {
                         "60000",
                     ],
                 ] {
-                    Args::try_parse_from(args).unwrap();
+                    Args::try_parse_from(args.clone()).unwrap();
+                    parse_args_from(args.into_iter().map(std::ffi::OsString::from)).unwrap();
+                }
+                for args in [
+                    vec!["eefn", "--help"],
+                    vec!["eefn", "--version"],
+                    vec!["eefn", "requests", "submit-camera", "--help"],
+                    vec!["eefn", "requests", "submit-camera", "--execute"],
+                    vec![
+                        "eefn",
+                        "camera",
+                        "configure",
+                        "--device",
+                        "1",
+                        "--rtsp",
+                        "rtsp://example.invalid/live",
+                    ],
+                    vec!["eefn", "unknown-subcommand"],
+                ] {
+                    let expected = Args::try_parse_from(args.clone()).unwrap_err();
+                    let actual = parse_args_from(args.into_iter().map(std::ffi::OsString::from))
+                        .unwrap_err();
+                    assert_eq!(actual.kind(), expected.kind());
+                    assert_eq!(actual.to_string(), expected.to_string());
                 }
             })
             .unwrap()
