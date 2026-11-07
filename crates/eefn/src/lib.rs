@@ -13,6 +13,7 @@ pub mod automation;
 pub mod automation_occurrence;
 pub mod automation_policy;
 pub mod bundle_selection;
+pub mod camera_setup;
 pub mod camera_sources;
 mod capture_ownership;
 pub mod client;

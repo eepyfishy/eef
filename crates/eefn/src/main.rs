@@ -121,6 +121,11 @@ enum Commands {
         #[command(subcommand)]
         command: eefn::relay_setup::RelayAction,
     },
+    /// Configure camera resources without JSON; never enable permission or capture.
+    Camera {
+        #[command(subcommand)]
+        command: eefn::camera_setup::Action,
+    },
     /// Inspect or explicitly allow/deny whole features; never execute or restart.
     Permissions {
         #[command(subcommand)]
@@ -1795,6 +1800,97 @@ async fn execute_setup_check(args: &Args, local_plan: bool) -> Result<serde_json
     Ok(value)
 }
 
+async fn execute_camera_setup(
+    args: &Args,
+    action: &eefn::camera_setup::Action,
+) -> Result<serde_json::Value> {
+    use eefn::camera_setup::{Action, Command, Request};
+    use serde_json::json;
+    if let Action::Configure(settings) = action {
+        settings.validate()?;
+    }
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start this node first; camera configuration never launches a runtime");
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    let mutation = matches!(action, Action::Configure(_));
+    let mut sending_mutation = false;
+    let exchange = async {
+        let response = client
+            .get(format!("http://{address}/api/diagnostics"))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Node diagnostics unavailable");
+        }
+        let diagnostics = eefn::model_manager::bounded_json(response).await?;
+        if diagnostics["node_id"] != file.node_id || diagnostics["success"] != true {
+            bail!("Unconfirmed node diagnostics");
+        }
+        let mut request = Request {
+            schema_version: 1,
+            expected_node_id: file.node_id.clone(),
+            expected_runtime_id: diagnostics["runtime_id"]
+                .as_str()
+                .context("Node runtime unavailable")?
+                .into(),
+            command: Command::Show,
+        };
+        request.validate()?;
+        let url = format!("http://{address}/api/commands/camera-setup");
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Camera setup inspection unavailable");
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::camera_setup::confirmed(&inspected, &request) {
+            bail!("Unconfirmed camera setup inspection");
+        }
+        let Action::Configure(settings) = action else {
+            return Ok::<_, anyhow::Error>(inspected);
+        };
+        request.command = Command::Configure {
+            settings: settings.clone(),
+            expected_digest: inspected["saved_digest"]
+                .as_str()
+                .context("Camera configuration digest missing")?
+                .into(),
+        };
+        request.validate()?;
+        sending_mutation = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Camera configuration was not confirmed");
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::camera_setup::confirmed(&saved, &request) {
+            bail!("Unconfirmed camera configuration reply");
+        }
+        Ok(saved)
+    }
+    .await;
+    let success = exchange.is_ok();
+    Ok(
+        json!({"schema_version":1,"report_type":"node_camera_setup_command","node_id":file.node_id,"success":success,
+        "mutation_requested":mutation,"sending_attempted":sending_mutation,"outcome_unknown":!success && sending_mutation,"result":exchange.ok(),
+        "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "note":"Inspect camera show after uncertainty; no retry, permission change, restart or workload was sent."}),
+    )
+}
+
 async fn execute_relay_command(
     args: &Args,
     action: &eefn::relay_setup::RelayAction,
@@ -2370,6 +2466,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     }
     if let Commands::Relay { command } = command {
         return execute_relay_command(args, command).await;
+    }
+    if let Commands::Camera { command } = command {
+        return execute_camera_setup(args, command).await;
     }
     if let Commands::Permissions { command } = command {
         return execute_permission_command(args, command).await;
@@ -3192,6 +3291,14 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     } else {
                         println!(
                             "Listening consent outcome unconfirmed. Inspect `eefn listening show`; no automatic retry, workload or restart was sent."
+                        );
+                    }
+                } else if matches!(command, Commands::Camera { .. }) {
+                    if value["success"] == true {
+                        print!("{}", eefn::camera_setup::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Camera setup outcome unconfirmed. Inspect `eefn camera show` before deciding what to do; no automatic retry or restart was sent."
                         );
                     }
                 } else if matches!(command, Commands::Relay { .. }) {
@@ -4559,6 +4666,44 @@ mod tests {
                     flag
                 ])
                 .is_err()
+            );
+        }
+    }
+    #[test]
+    fn camera_setup_cli_needs_no_json_permission_or_authority_flags() {
+        let parsed = Args::try_parse_from([
+            "eefn",
+            "camera",
+            "configure",
+            "--resource",
+            "living-room",
+            "--device",
+            "2",
+        ])
+        .unwrap();
+        let Some(Commands::Camera {
+            command: eefn::camera_setup::Action::Configure(settings),
+        }) = parsed.command
+        else {
+            panic!("Wrong camera configuration adapter")
+        };
+        assert_eq!(settings.device, Some(2));
+        assert_eq!(settings.resource.as_deref(), Some("living-room"));
+        settings.validate().unwrap();
+        assert!(Args::try_parse_from(["eefn", "camera", "show"]).is_ok());
+        assert!(Args::try_parse_from(["eefn", "camera", "configure"]).is_ok());
+        for extra in [
+            vec!["--device", "1024"],
+            vec!["--device", "0", "--rtsp", "rtsp://camera.invalid/live"],
+            vec!["--permission"],
+            vec!["--grant"],
+            vec!["--start"],
+            vec!["--restart"],
+            vec!["--file", "settings.json"],
+        ] {
+            assert!(
+                Args::try_parse_from(["eefn", "camera", "configure"].into_iter().chain(extra))
+                    .is_err()
             );
         }
     }

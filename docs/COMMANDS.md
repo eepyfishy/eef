@@ -17,6 +17,28 @@ installers are unchanged and stable-release acceptance remains separate.
 
 ## Continuous source inspection (in development)
 
+Configure a camera resource on the running node without JSON:
+
+    eefn camera show
+    eefn camera configure
+    eefn camera configure --device 1
+    eefn camera configure --resource living-room-camera --rtsp rtsp://camera-host/live
+
+These unreleased commands use the backend owner API, including when browser pages
+are disabled. With no selector, configuration preserves an existing camera binding
+or creates a default webcam resource. If several cameras exist, choose `--resource`;
+an explicit unused local ID creates another resource. Other capabilities and
+disabled or unsupported camera bindings are refused rather than replaced.
+Private RTSP URLs stay in this node's saved settings and are omitted from command
+reports. A URL supplied as a command argument can also be visible in shell history
+and local process inspection; avoid putting credentials in shared command logs.
+
+Setup does not enable camera permission, local listening, workload policy or
+capture. Saved bindings need an explicit `eefn restart`; `camera show` distinguishes
+saved and applied bindings. After an unconfirmed save, inspect `camera show` before
+deciding what to do. No automatic retry, device probe, restart or model call is
+performed. Camera request authoring without JSON remains unfinished.
+
 Prepare a bounded microphone activity request without JSON or a model:
 
     eefn requests submit-microphone

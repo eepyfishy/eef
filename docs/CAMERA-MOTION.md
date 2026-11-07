@@ -281,3 +281,29 @@ The full candidate requires fresh hosted verification. This is not physical came
 RTSP, two-PC or stable-release acceptance. Command-based camera resource setup and
 request authoring, complete coordinator command lifecycle acceptance, event-triggered
 VLM, relays and aggregate quotas remain required.
+
+## Command-based camera setup in development
+
+`eefn camera show` and `eefn camera configure` now use a typed running-node backend
+operation with no browser dependency. Configure accepts a webcam `--device`, a
+private `--rtsp` URL and optional local `--resource`. It preserves the current
+binding when no source override is supplied, creates a resource when absent and
+refuses ambiguous or incompatible choices. Explicit unused IDs support multiple
+cameras. Existing metadata, unrelated resources and private properties survive.
+
+The local adapter inspects the exact live runtime and saved configuration digest
+before one conditional save. Stale state, a replaced runtime, an unsupported API
+or an unconfirmed reply is refused without fallback or retry. Reports carry a
+request digest instead of echoing private source arguments, and expose saved/applied
+resource digests, permission state and the need for an explicit restart. They
+contain no private device parameters or RTSP endpoint. Setup grants no consent or
+workload, starts no source and never restarts the node. The backend also refuses
+remote mutation without current owner management approval; a dedicated coordinator
+command adapter is not part of this setup increment.
+
+Eight backend regressions and one CLI parser case accompany actual executable/API
+checks in the existing isolated native suite. Those checks exercise webcam/RTSP
+updates, multiple resources, private output and old/forged/lost replies, retaining
+the actual save after a lost reply without retrying. Fresh hosted acceptance is
+required. JSON-free camera request authoring, full command-based review/approval/
+execution acceptance, physical sources and the remaining broader roadmap are open.

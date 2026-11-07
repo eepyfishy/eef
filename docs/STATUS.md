@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: camera resource setup without JSON
+
+The running node now exposes `eefn camera show/configure` through its backend owner
+API, including with browser pages disabled. Webcam and private RTSP bindings use
+exact runtime/configuration preconditions; ambiguous or incompatible resources and
+uncertain replies fail without automatic retry. Reports expose saved/applied
+binding digests and pending restart without echoing private URLs or granting
+permission, consent, policy, capture or work. Eight backend cases, one parser case
+and real command/API old/forged/lost-response checks require hosted verification.
+Camera request authoring, the full coordinator command lifecycle and physical
+camera/two-PC acceptance remain incomplete. See [setup commands](COMMANDS.md#continuous-source-inspection-in-development).
+
 ## In development: source-specific camera network admission
 
 The coordinator's compiler, conditional approval and explicit driver now select
