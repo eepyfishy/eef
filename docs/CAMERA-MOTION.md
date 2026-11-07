@@ -1,5 +1,14 @@
 # Camera motion source in development
 
+The development source now includes JSON-free camera setup, passive source
+inspection, bounded request submission, separate owner approval and origin-node
+execution through the existing workload lifecycle. Start with the
+[camera command walkthrough](user/CAMERA.md). Full shipping-command lifecycle
+verification and physical acceptance remain open; see [current status](STATUS.md).
+The sections below retain the earlier incremental checkpoints and their own
+verification boundaries. A feature described as unavailable at an earlier
+checkpoint is not a claim that later sections or current code omit it.
+
 `python/streams/camera_motion.py` implements a lazy, single-open motion iterator
 for later admitted camera workloads. It samples a small grayscale image, compares
 it with the preceding sample and emits only frame count, optional activity,
@@ -49,9 +58,10 @@ deadline. A blocked native open/read/release still requires the outer owned proc
 deadline, cancellation and observed termination. Timeout properties alone do not
 prove physical driver release or external effects stopped.
 
-There is no one-shot handler, startup registration, camera workload command or
-ambient capture default. Existing one-shot camera capture is unchanged. Integration
-must pin these source bytes, retain an exact camera resource/adapter definition,
+At the producer-only checkpoint there was no new one-shot handler, startup
+registration or camera workload command. Ambient capture remained off, and the
+existing one-shot camera capture was unchanged. Later integration needed to
+pin these source bytes, retain an exact camera resource/adapter definition,
 check camera permission and local listening policy, and use the existing durable
 job/grant/lease/event lifecycle. Camera events must have camera semantics, rather
 than being labeled as microphone activity. Source reservation/revocation, readiness,
@@ -87,7 +97,7 @@ RMS range and kind. Discontinuities remain unknown, invalid observations retire
 the filter, and retained camera rows confer no source/restart authority. Generic
 review capability checks now derive `camera.capture` from camera intent.
 
-This integration does not yet expose camera execution: microphone preparation,
+This definition/filter checkpoint did not expose camera execution: microphone preparation,
 microphone source inspection and typed microphone authoring explicitly refuse
 camera definitions. The camera-specific permission/listening controls and shared
 one-shot source ownership are being implemented below. Camera readiness,
