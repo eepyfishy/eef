@@ -1,7 +1,7 @@
 //! Owned streaming extension transport. This is not workload/listening authority.
 //! No node advertisement, RPC, grant renewal or ambient default enables it.
 use super::{BridgeFailure, BridgeLimits, PythonPlugin, PythonRuntime};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -372,13 +372,44 @@ impl PythonRuntime {
         F: FnMut(StreamObservation) -> C + Send,
         C: Future<Output = Result<()>> + Send,
     {
+        self.observe_reserved_capture(
+            source,
+            "energy",
+            params,
+            stream_id,
+            bounds,
+            execution_deadline,
+            reservation,
+            observe,
+        )
+        .await
+    }
+    pub(crate) async fn observe_reserved_capture<F, C>(
+        &self,
+        source: &PinnedStreamSource,
+        action: &str,
+        params: Value,
+        stream_id: &str,
+        bounds: StreamBounds,
+        execution_deadline: Instant,
+        reservation: crate::capture_ownership::Reservation,
+        observe: F,
+    ) -> Result<ObservedStream>
+    where
+        F: FnMut(StreamObservation) -> C + Send,
+        C: Future<Output = Result<()>> + Send,
+    {
+        ensure!(
+            matches!(action, "energy" | "motion"),
+            "Unsupported reserved source action"
+        );
         if !cfg!(windows) {
-            bail!("Owned microphone exit observation is unsupported on this platform");
+            bail!("Owned capture exit observation is unsupported on this platform");
         }
         let outcome = self
             .observe_stream_source(
                 Source::Pinned(source),
-                "energy",
+                action,
                 params,
                 stream_id,
                 bounds,

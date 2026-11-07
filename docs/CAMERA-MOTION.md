@@ -203,3 +203,41 @@ human output, malformed requests and old/forged/lost replies. They use configure
 synthetic resources without Python, OpenCV, cameras or models. Camera resource
 configuration/authoring, admission/runner, compatible execution negotiation,
 event-triggered VLM, relays and physical acceptance remain required.
+
+## Private prepared camera runner in development
+
+Camera preparation now checks the exact applied node/resource owner, saved/applied
+camera permission, local listening consent and camera epoch. It pins the compiled
+motion source and private bound parameters and reserves the same camera pool as
+Windows one-shot capture. Microphone capacity remains independent. Preparation
+opens no device, grants no workload and cannot replace a reviewed source. Local
+memory intersects the reviewed budget; source frames, observation count, event
+bounds and all original deadlines remain.
+
+The private admitted runner uses the existing workload consumption, original lease
+and session supervisors, reporting authority, durable event writer and filtered
+completion seal. It confirms the current camera snapshot before polling its source
+and uses the camera consent gate. No typed receipt or old epoch can invent source
+or exit evidence. Every callback follows its persisted event and completes before
+the next observation is read. Completion requires the original exact source bytes,
+matching camera metadata and observed root/descendant exit; it does not claim
+physical effects stopped. Revocation, scoped stop and whole-future cancellation
+retain uncertainty and hold the reservation until observed exit or quarantine.
+
+Six Windows unit regressions and three explicit native cases, plus one unsupported-
+platform refusal, require hosted verification. The native fixture injects only
+the fake OpenCV/device API into the actual pinned producer via the existing
+test-only prelude. It opens one simulated RTSP camera and real owned processes,
+paces five required metadata transitions from durable callback acknowledgements,
+and exercises normal completion, blocked-read revocation/scoped stop and complete
+future drop. Reopening the receipt journal must preserve history without granting
+replay. No OpenCV installation, real endpoint, webcam, model or physical driver is
+used. All existing microphone regression source remains, including bounded futures
+and original native timing limits.
+
+This is private library integration. The network driver still prepares microphone
+workloads only; current execution advertisements and coordinator source checks
+continue to refuse camera workloads. The passive camera report still says execution
+unavailable. Supported camera negotiation/readiness and explicit command authoring
+must be integrated before the public lifecycle may use this runner. VLM triggers,
+relays, aggregate quotas and physical two-PC/webcam/RTSP acceptance remain open.

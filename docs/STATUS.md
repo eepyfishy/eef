@@ -3,6 +3,37 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: prepared camera source and owned workload runner
+
+Private camera preparation now binds the exact applied camera resource, compiled
+motion adapter bytes, camera permission/consent epoch and shared camera reservation.
+It intersects local/reviewed memory and frame bounds without opening a source.
+The admitted runner shares the existing microphone grant/lease/event lifecycle:
+exact consumption match, fresh source snapshot, original deadlines, one awaited
+durable event callback, source/filter seal and observed owned-process exit before
+completion. Camera consent uses its own gate; old prepared epochs cannot revive.
+
+Six Windows unit cases, three opt-in Windows native cases and one unsupported-
+platform case require hosted verification. Native cases inject the existing fake
+camera API into the actual pinned motion source through the test-only prelude;
+real root/descendant processes prove exclusion, normal exit, revocation/scoped stop
+and whole-future cancellation. Events must be camera metadata persisted before
+callbacks; replay history carries no authority. Existing microphone tests and
+limits remain. Public camera workload negotiation, readiness and driver/authoring
+are still unwired; the camera inspection protocol continues to refuse execution
+claims. No feature permission, camera, model, update or installed node was started.
+
+The consent/ownership/preflight sources `5a66ba8`, `57036bf` and `6bef4d1` passed
+all four jobs in runs [42337185615](https://github.com/eepyfishy/eef/actions/runs/42337185615),
+[42337635066](https://github.com/eepyfishy/eef/actions/runs/42337635066) and
+[42337963600](https://github.com/eepyfishy/eef/actions/runs/42337963600). Retained
+headless records contain Rust1540/1545/1548+1ignored across 17 groups and all native
+gates. The private named-case checkers' quiet-output mismatch remains recorded;
+independent exact-source test/module and unfiltered-count reconciliation confirms
+the six/five/three added cases without rerunning or changing tests. This accepts
+those synthetic increments, not subsequent camera inspection/runner source,
+physical operation or stable release.
+
 ## In development: distinguish pending settings from a requested restart
 
 The inspection source `1d6e982` failed two new Linux fixture assertions after

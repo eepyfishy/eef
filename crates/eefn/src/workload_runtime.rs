@@ -1,4 +1,4 @@
-//! Node-owned source preparation. No startup, public command or wire launch yet.
+//! Node-owned prepared sources; admitted execution retains its original authority.
 use crate::{
     NodeService,
     python::{
@@ -13,7 +13,7 @@ use std::{future::Future, sync::Arc};
 
 /// Neither serializable nor cloneable. Owns a reservation before consumption;
 /// preparing it imports no device and opens no source.
-pub(crate) struct PreparedMicrophone {
+pub(crate) struct PreparedSource {
     service: Arc<NodeService>,
     runtime_id: String,
     listening_epoch: u64,
@@ -24,6 +24,9 @@ pub(crate) struct PreparedMicrophone {
     bounds: StreamBounds,
     reservation: crate::capture_ownership::Reservation,
 }
+// Preserve the existing microphone driver/test interface while both sources
+// share the same owned grant/lease/event lifecycle. Constructors check kind.
+pub(crate) type PreparedMicrophone = PreparedSource;
 /// Only the exact prepared path can pair owned source exit with its filter seal.
 /// This is local, single-use evidence, never a serializable network parameter.
 pub(crate) struct ObservedWorkload {
@@ -51,6 +54,34 @@ impl NodeService {
             ),
             "Camera source execution is not supported by microphone preparation"
         );
+        self.prepare_source(runtime_id, definition)
+    }
+    #[allow(dead_code)]
+    pub(crate) fn prepare_camera(
+        self: &Arc<Self>,
+        runtime_id: &str,
+        definition: Definition,
+    ) -> Result<PreparedSource> {
+        crate::automation_occurrence::uuid(runtime_id)?;
+        definition.validate()?;
+        ensure!(
+            matches!(
+                &definition.source,
+                crate::workload_leases::definition::Source::CameraMotion { .. }
+            ),
+            "Microphone source execution is not supported by camera preparation"
+        );
+        self.prepare_source(runtime_id, definition)
+    }
+    fn prepare_source(
+        self: &Arc<Self>,
+        runtime_id: &str,
+        definition: Definition,
+    ) -> Result<PreparedSource> {
+        let camera = matches!(
+            &definition.source,
+            crate::workload_leases::definition::Source::CameraMotion { .. }
+        );
         ensure!(
             definition.executor_node == self.node_id,
             "Source belongs to another node"
@@ -69,15 +100,40 @@ impl NodeService {
                     json!(saved.resources) == json!(engine.applied_resources()),
                     "Source bindings changed; restart and review required"
                 );
+                let (permission, applied, gate, pool, bytes) = if camera {
+                    (
+                        "/permissions/media/camera",
+                        engine.applied_permissions().media.camera,
+                        &self.camera_listening_gate,
+                        &self.camera_pool,
+                        crate::workload_sources::CAMERA_SOURCE,
+                    )
+                } else {
+                    (
+                        "/permissions/media/microphone",
+                        engine.applied_permissions().media.microphone,
+                        &self.listening_gate,
+                        &self.microphone_pool,
+                        crate::workload_sources::MICROPHONE_SOURCE,
+                    )
+                };
                 ensure!(
                     crate::listening::Consent::from_config(config)?.enabled
-                        && config.pointer("/permissions/media/microphone") == Some(&json!(true))
-                        && engine.applied_permissions().media.microphone,
-                    "Source requires local listening consent and microphone permission"
+                        && config.pointer(permission) == Some(&json!(true))
+                        && applied,
+                    if camera {
+                        "Source requires local listening consent and camera permission"
+                    } else {
+                        "Source requires local listening consent and microphone permission"
+                    }
                 );
-                let (listening_epoch, blocked) = self.listening_gate.snapshot();
+                let (listening_epoch, blocked) = gate.snapshot();
                 ensure!(!blocked, "Listening consent revoked in this runtime");
-                let runtime = engine.microphone_runtime(&self.node_id, &self.microphone_pool)?;
+                let runtime = if camera {
+                    engine.camera_runtime(&self.node_id, &self.camera_pool)?
+                } else {
+                    engine.microphone_runtime(&self.node_id, &self.microphone_pool)?
+                };
                 let mut limits = runtime.limits().clone();
                 limits.max_job_memory_mib = Some(
                     limits
@@ -93,10 +149,7 @@ impl NodeService {
                     .applied_resources()
                     .iter()
                     .find(|r| crate::context::resource_id(&self.node_id, &r.id) == resource_id)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Reviewed microphone resource is unavailable")
-                    })?;
-                let bytes = crate::workload_sources::MICROPHONE_SOURCE;
+                    .ok_or_else(|| anyhow::anyhow!("Reviewed source resource is unavailable"))?;
                 let params = definition.bound_python_parameters(resource, bytes)?;
                 let adapter = definition.source.adapter_sha256();
                 let source = PinnedStreamSource::new(bytes, adapter)?;
@@ -108,8 +161,8 @@ impl NodeService {
                     max_source_frames: definition.limits.max_source_frames,
                 };
                 bounds.validate(python.limits())?;
-                let reservation = self.microphone_pool.reserve()?;
-                Ok(PreparedMicrophone {
+                let reservation = pool.reserve()?;
+                Ok(PreparedSource {
                     service: self.clone(),
                     runtime_id: runtime_id.into(),
                     listening_epoch,
@@ -124,7 +177,7 @@ impl NodeService {
         })
     }
 }
-impl PreparedMicrophone {
+impl PreparedSource {
     #[allow(dead_code)]
     pub(crate) async fn run<F, C>(
         self,
@@ -142,22 +195,24 @@ impl PreparedMicrophone {
             receipt.definition == self.definition,
             "Prepared source differs from consumed definition"
         );
-        let current: crate::workload_sources::Report = serde_json::from_value(
-            self.service
-                .workload_sources(crate::workload_sources::Request {
-                    schema_version: 2,
-                    expected_node_id: self.definition.executor_node.clone(),
-                    expected_runtime_id: self.runtime_id.clone(),
-                })?,
-        )?;
-        current.confirms_template(&crate::workload_leases::definition::Template {
+        let camera = matches!(
+            &self.definition.source,
+            crate::workload_leases::definition::Source::CameraMotion { .. }
+        );
+        let request = crate::workload_sources::Request {
             schema_version: 2,
-            executor_node: self.definition.executor_node.clone(),
-            priority: self.definition.priority,
-            source: self.definition.source.clone(),
-            limits: self.definition.limits.clone(),
-            events: self.definition.events.clone(),
-        })?;
+            expected_node_id: self.definition.executor_node.clone(),
+            expected_runtime_id: self.runtime_id.clone(),
+        };
+        if camera {
+            let current: crate::camera_sources::Report =
+                serde_json::from_value(self.service.camera_workload_sources(request)?)?;
+            current.confirms_template(&self.definition.template())?;
+        } else {
+            let current: crate::workload_sources::Report =
+                serde_json::from_value(self.service.workload_sources(request)?)?;
+            current.confirms_template(&self.definition.template())?;
+        }
         let deadline = tokio::time::Instant::from_std(consumed.session_deadline()?);
         let events = Arc::new(std::sync::Mutex::new(crate::workload_events::Filter::new(
             &self.definition,
@@ -170,8 +225,9 @@ impl PreparedMicrophone {
         // Keep transport and each supervisory layer out of its parent's async
         // state. Debug Windows threads have bounded stacks; growing the final
         // receipt must not multiply nested transport/control frames.
-        let operation = Box::pin(self.python.observe_reserved_microphone(
+        let operation = Box::pin(self.python.observe_reserved_capture(
             &self.source,
+            if camera { "motion" } else { "energy" },
             self.params,
             &self.definition.grant_id,
             self.bounds,
@@ -226,12 +282,23 @@ impl PreparedMicrophone {
                 .seal(source.summary())?;
             Ok(ObservedWorkload { source, events })
         });
-        let controlled = Box::pin(self.service.supervise_listening_epoch(
-            &self.runtime_id,
-            deadline,
-            Some(self.listening_epoch),
-            operation,
-        ));
+        let controlled: std::pin::Pin<
+            Box<dyn Future<Output = Result<ObservedWorkload>> + Send + '_>,
+        > = if camera {
+            Box::pin(self.service.supervise_camera_listening_epoch(
+                &self.runtime_id,
+                deadline,
+                Some(self.listening_epoch),
+                operation,
+            ))
+        } else {
+            Box::pin(self.service.supervise_listening_epoch(
+                &self.runtime_id,
+                deadline,
+                Some(self.listening_epoch),
+                operation,
+            ))
+        };
         Box::pin(consumed.supervise_observed(renewals, controlled)).await
     }
 }
@@ -239,3 +306,7 @@ impl PreparedMicrophone {
 #[cfg(all(test, windows))]
 #[path = "workload_runtime_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(all(test, windows))]
+#[path = "workload_camera_runtime_tests.rs"]
+mod camera_tests;
