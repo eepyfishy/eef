@@ -3259,12 +3259,20 @@ fn main() -> Result<()> {
     run(args, install_dir)
 }
 
-#[tokio::main]
-async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
+fn run(args: Args, install_dir: PathBuf) -> Result<()> {
+    // Keep the application future on the heap before polling it on Windows'
+    // one-MiB main stack. The runtime and lifecycle are unchanged.
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(Box::pin(run_application(args, install_dir)))
+}
+
+async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
     args.config = eefn::runtime_layout::RuntimeLayout::current()?
         .configuration(&args.config, Path::new("config.json"));
     if let Some(command) = &args.command {
-        match execute_command(&args, command).await {
+        match Box::pin(execute_command(&args, command)).await {
             Ok(value) => {
                 if args.json {
                     println!("{}", serde_json::to_string(&value)?);
@@ -3589,14 +3597,14 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
             }
         };
         let (result, reason) = supervise_runtime(
-            run_node(
+            Box::pin(run_node(
                 &args,
                 install_dir.clone(),
                 dashboard.clone(),
                 stopped,
                 shutdown_barrier.clone(),
                 startup,
-            ),
+            )),
             signal,
             stop,
         )
@@ -4916,10 +4924,13 @@ mod tests {
                 None,
             )
         });
+        let application_args = Args::try_parse_from(["eefn", "--no-ui"]).unwrap();
+        let application = bytes(|| run_application(application_args, PathBuf::new()));
         for (name, size) in [
             ("dispatch", dispatch),
             ("pairing", pairing),
             ("runtime", runtime),
+            ("application", application),
         ] {
             assert!(size <= 64 * 1024, "{name} future grew to {size} bytes");
         }

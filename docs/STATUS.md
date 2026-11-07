@@ -3,6 +3,23 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: bounded node application entrypoint
+
+The frame-pacing candidate `63aff0c`/run `42383334177` passed the complete Rust
+test step: 1,595 passing cases and one ignored case across 17 groups, including
+the original native camera event/stop assertions. Full hosted acceptance still
+failed: the fresh-node fixture reports Windows exit `0xC00000FD`, a stack-overflow
+message, no observed node API runtime and a still-running coordinator.
+
+The node now creates the same Tokio runtime explicitly and polls a boxed
+application future. Command dispatch and the supervised node runtime also use
+boxed child futures so their storage does not enlarge the application poll state.
+The existing 64 KiB future-size test now includes the application itself. The
+one-MiB parser test, real first-run flow, original timeouts and all lifecycle/
+shutdown assertions remain. No thread/OS stack limit was increased. Fresh hosted
+verification must establish whether this fixes startup; the earlier repair
+approval timeout remains separately unproven.
+
 ## In development: node-owned camera configuration from eef
 
 The coordinator owner API and `eef node camera --node NODE_ID show/configure` now
