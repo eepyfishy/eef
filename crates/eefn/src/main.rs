@@ -911,6 +911,53 @@ async fn execute_audio_command(
     Ok(exchange.unwrap_or_else(|_| unavailable(&file.node_id, command, true)))
 }
 
+async fn execute_camera_command(
+    args: &Args,
+    command: eefn::camera_submission::CameraCommand,
+) -> Result<serde_json::Value> {
+    use eefn::camera_submission::{CameraRequest, confirmed_node, unavailable};
+    command.validate()?;
+    let file = load_file(&args.config)?;
+    eefn::network::validate_remote_node_id(&file.node_id)?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        return Ok(unavailable(&file.node_id, command, false));
+    }
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!("http://{address}/api/commands/requests/camera"))
+            .timeout(Duration::from_secs(150))
+            .json(&CameraRequest {
+                schema_version: 1,
+                expected_node_id: file.node_id.clone(),
+                command: command.clone(),
+            })
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(unavailable(&file.node_id, command.clone(), false));
+        }
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok || !confirmed_node(&value, &file.node_id, &command) {
+            bail!("Unconfirmed camera submission reply");
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| unavailable(&file.node_id, command, true)))
+}
+
 async fn execute_microphone_command(
     args: &Args,
     command: eefn::microphone_submission::MicrophoneCommand,
@@ -2859,6 +2906,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
             eefn::request_preview::RequestAction::SubmitMicrophone(input) => {
                 execute_microphone_command(args, input.command()?).await
             }
+            eefn::request_preview::RequestAction::SubmitCamera(input) => {
+                execute_camera_command(args, input.command()?).await
+            }
             eefn::request_preview::RequestAction::Submit {
                 text,
                 title,
@@ -3250,6 +3300,13 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     }
                 ) {
                     print!("{}", eefn::microphone_submission::render_node(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::SubmitCamera(_)
+                    }
+                ) {
+                    print!("{}", eefn::camera_submission::render_node(&value)?);
                 } else if matches!(command, Commands::ModelBootstrapPolicy { .. }) {
                     if value["success"] == true {
                         print!("{}", eefn::model_bootstrap::render(&value["result"])?);
@@ -4708,6 +4765,49 @@ mod tests {
         }
     }
     #[test]
+    fn submit_camera_cli_preserves_explicit_limits_without_authority_or_private_device_flags() {
+        let parsed = Args::try_parse_from([
+            "eefn",
+            "requests",
+            "submit-camera",
+            "--source-node",
+            "living-room",
+            "--camera",
+            "cam",
+            "--frames",
+            "5",
+            "--activation-level",
+            "20",
+            "--io-timeout-ms",
+            "1000",
+        ])
+        .unwrap();
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::SubmitCamera(input),
+        }) = parsed.command
+        else {
+            panic!("Wrong camera authoring adapter")
+        };
+        let command = input.command().unwrap();
+        assert_eq!(command.input.camera.as_deref(), Some("cam"));
+        assert_eq!(command.input.parameters.max_frames, 5);
+        assert_eq!(command.input.parameters.activation_level, 20);
+        assert_eq!(command.input.parameters.io_timeout_ms, 1000);
+        assert_eq!(command.input.limits.max_source_frames, 5);
+        for flag in [
+            "--grant",
+            "--approve",
+            "--execute",
+            "--device",
+            "--rtsp",
+            "--plugin",
+            "--file",
+            "--retry",
+        ] {
+            assert!(Args::try_parse_from(["eefn", "requests", "submit-camera", flag]).is_err());
+        }
+    }
+    #[test]
     fn submit_microphone_cli_needs_no_file_model_or_authority_flags() {
         let args = Args::try_parse_from([
             "eefn",
@@ -4836,6 +4936,20 @@ mod tests {
                     vec!["eefn", "models", "show"],
                     vec!["eefn", "requests", "plan", "request-id"],
                     vec!["eefn", "requests", "submit-microphone"],
+                    vec!["eefn", "requests", "submit-camera"],
+                    vec![
+                        "eefn",
+                        "requests",
+                        "submit-camera",
+                        "--camera",
+                        "camera",
+                        "--frames",
+                        "5",
+                        "--width",
+                        "640",
+                        "--max-session-ms",
+                        "60000",
+                    ],
                     vec![
                         "eefn",
                         "requests",

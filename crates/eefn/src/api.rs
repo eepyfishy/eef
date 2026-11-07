@@ -185,6 +185,10 @@ impl NodeService {
                 post(microphone_submission).layer(axum::extract::DefaultBodyLimit::max(65536)),
             )
             .route(
+                "/api/commands/requests/camera",
+                post(camera_submission).layer(axum::extract::DefaultBodyLimit::max(65536)),
+            )
+            .route(
                 "/api/commands/requests/audio",
                 post(audio_submission).layer(axum::extract::DefaultBodyLimit::max(65536)),
             )
@@ -309,6 +313,12 @@ async fn microphone_submission(
     Json(request): Json<crate::microphone_submission::MicrophoneRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.microphone_request(request).await?))
+}
+async fn camera_submission(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::camera_submission::CameraRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.camera_request(request).await?))
 }
 async fn permission_command(
     State(state): State<Arc<NodeService>>,

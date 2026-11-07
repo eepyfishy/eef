@@ -307,3 +307,30 @@ updates, multiple resources, private output and old/forged/lost replies, retaini
 the actual save after a lost reply without retrying. Fresh hosted acceptance is
 required. JSON-free camera request authoring, full command-based review/approval/
 execution acceptance, physical sources and the remaining broader roadmap are open.
+
+## Typed camera request authoring in development
+
+`eefn requests submit-camera` now prepares a bounded motion-observation request
+through the running node's origin mailbox. It exposes source/resource selection,
+motion parameters and existing session/lease/memory/event budgets as command flags.
+The coordinator resolves only a fresh independently authenticated, disclosed camera
+snapshot; ambiguous, missing or unapplied resources produce a closed refusal.
+The command accepts no private device binding, plugin, grant, approval or execution
+switch. It does not use an LM, open a source or enable any permission or policy.
+
+The journal retains a separate optional camera intent alongside the concrete
+resolved source pins. Existing microphone/audio review serialization is unchanged
+when that field is absent, and reviews refuse multiple typed source intents.
+Origin and complete intent remain immutable through edits, revision/receipt checks,
+review confirmation and saved compilation. Exact receipt reuse reads retained
+choices before provider inspection, including offline or after shutdown. It cannot
+rebind a changed camera, extend authority or finish a partial compilation. That
+requires a separate explicit `requests compile-saved` decision.
+
+Six source/receipt tests, three actual credential/TLS origin-coordinator tests and
+one CLI parser case accompany native executable checks for private bindings,
+unchanged configuration, retained and conflicting receipts, confirmed refusals,
+old/forged/lost replies and absence of inference or execution. The existing one-MiB
+parser stack test now includes the camera command. Fresh full hosted verification
+is required; complete camera command review/approval/execution/event/stop acceptance,
+physical capture, VLM triggers and the broader stable-release roadmap remain open.

@@ -85,6 +85,7 @@ impl SubmissionMailbox {
                 | "requests.concrete"
                 | "requests.audio"
                 | "requests.microphone"
+                | "requests.camera"
                 | "automations.command"
                 | "requests.review"
                 | "requests.open"

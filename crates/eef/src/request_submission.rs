@@ -11,6 +11,7 @@ fn matches_source(
     input: &ConcreteInput,
     source: Option<&eefn::audio_submission::AudioInput>,
     workload: Option<&eefn::microphone_submission::MicrophoneInput>,
+    camera: Option<&eefn::camera_submission::CameraInput>,
 ) -> Result<()> {
     let draft = plan
         .request_review
@@ -20,6 +21,7 @@ fn matches_source(
         || draft.concrete_input.as_ref() != Some(&input.input)
         || draft.audio_source.as_ref() != source
         || draft.workload_source.as_ref() != workload
+        || draft.camera_source.as_ref() != camera
         || draft.proposals.len() != 1
         || !draft.answers.is_empty()
         || draft.proposals[0].proposal != input.proposal()?
@@ -53,10 +55,42 @@ impl crate::Runtime {
         source: Option<eefn::audio_submission::AudioInput>,
         workload: Option<eefn::microphone_submission::MicrophoneInput>,
     ) -> Result<Value> {
-        if source.is_some() && workload.is_some() {
+        self.origin_concrete_request_with_all_sources(input, context, source, workload, None)
+            .await
+    }
+    pub(crate) async fn origin_concrete_request_with_camera(
+        &self,
+        input: ConcreteInput,
+        context: &RequestContext,
+        camera: eefn::camera_submission::CameraInput,
+    ) -> Result<Value> {
+        self.origin_concrete_request_with_all_sources(input, context, None, None, Some(camera))
+            .await
+    }
+    async fn origin_concrete_request_with_all_sources(
+        &self,
+        input: ConcreteInput,
+        context: &RequestContext,
+        source: Option<eefn::audio_submission::AudioInput>,
+        workload: Option<eefn::microphone_submission::MicrophoneInput>,
+        camera: Option<eefn::camera_submission::CameraInput>,
+    ) -> Result<Value> {
+        if [source.is_some(), workload.is_some(), camera.is_some()]
+            .into_iter()
+            .filter(|v| *v)
+            .count()
+            > 1
+        {
             bail!("Multiple typed request sources")
         }
         input.validate()?;
+        if let Some(source) = &camera {
+            let template =
+                eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
+            if source.concrete(&template, Some(context.origin_node()))? != input {
+                bail!("Typed camera intent differs from concrete input");
+            }
+        }
         if let Some(source) = &workload {
             let template =
                 eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
@@ -84,7 +118,13 @@ impl crate::Runtime {
         }
         let (saved, creation_reused) = if let Some(saved) = previous {
             crate::jobs::validate_retained_review(&saved)?;
-            matches_source(&saved, &input, source.as_ref(), workload.as_ref())?;
+            matches_source(
+                &saved,
+                &input,
+                source.as_ref(),
+                workload.as_ref(),
+                camera.as_ref(),
+            )?;
             (saved, true)
         } else {
             let mut capabilities = self
@@ -102,7 +142,7 @@ impl crate::Runtime {
                 {
                     bail!("Continuous source node unavailable or not disclosed")
                 }
-                // This built-in source is independent of the one-shot audio
+                // These built-in sources are independent of one-shot media
                 // plugin. Review binds its own authenticated passive snapshot;
                 // permission/listening/policy and live execution stay separate.
                 self.node_server.workload_source(&template, 5).await?;
@@ -114,7 +154,7 @@ impl crate::Runtime {
                     bail!("Continuous source disclosure changed during inspection")
                 }
                 // The retained review describes both the session wrapper and
-                // its microphone operation. This source-scoped vocabulary is
+                // its reviewed media operation. This source-scoped vocabulary is
                 // justified by the snapshot above, not the one-shot plugin.
                 for capability in eefn::request_planning::concrete_capabilities(&input.input)? {
                     if !capabilities.contains(&capability) {
@@ -130,6 +170,7 @@ impl crate::Runtime {
                 concrete_input: Some(input.input.clone()),
                 audio_source: source.clone(),
                 workload_source: workload.clone(),
+                camera_source: camera.clone(),
                 proposals: vec![eefn::request_drafts::ProposalRevision {
                     operation_id: context.request_id().into(),
                     proposal,
@@ -163,7 +204,13 @@ impl crate::Runtime {
             .origin_planning_command(command, &compile_context)
             .await?;
         let plan = self.engine.store.get(&saved.plan_id)?;
-        matches_source(&plan, &input, source.as_ref(), workload.as_ref())?;
+        matches_source(
+            &plan,
+            &input,
+            source.as_ref(),
+            workload.as_ref(),
+            camera.as_ref(),
+        )?;
         let result = json!(ConcreteReport {
             schema_version: 1,
             report_type: "coordinator_concrete_request".into(),
@@ -180,7 +227,14 @@ impl crate::Runtime {
             operation_id: context.request_id().into(),
             request: input,
         };
-        let confirmed = if let Some(workload) = &workload {
+        let confirmed = if let Some(camera) = &camera {
+            eefn::request_submission::confirmed_with_camera(
+                &result,
+                context.origin_node(),
+                &command,
+                camera,
+            )
+        } else if let Some(workload) = &workload {
             eefn::request_submission::confirmed_with_workload(
                 &result,
                 context.origin_node(),
@@ -213,6 +267,7 @@ mod tests {
     };
     include!("workload_origin_admission_tests.rs");
     include!("workload_microphone_authoring_tests.rs");
+    include!("workload_camera_authoring_tests.rs");
     fn input() -> ConcreteInput {
         ConcreteInput {
             schema_version: 1,
@@ -233,6 +288,7 @@ mod tests {
             concrete_input: Some(input.input.clone()),
             audio_source: None,
             workload_source: None,
+            camera_source: None,
             proposals: vec![eefn::request_drafts::ProposalRevision {
                 operation_id: context.request_id().into(),
                 proposal: input.proposal().unwrap(),

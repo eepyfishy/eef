@@ -237,7 +237,7 @@ pub fn confirmed_with_source(
     command: &ConcreteCommand,
     source: Option<&crate::audio_submission::AudioInput>,
 ) -> bool {
-    confirmed_with_sources(value, node, command, source, None)
+    confirmed_with_sources(value, node, command, source, None, None)
 }
 pub fn confirmed_with_workload(
     value: &Value,
@@ -245,7 +245,15 @@ pub fn confirmed_with_workload(
     command: &ConcreteCommand,
     source: &crate::microphone_submission::MicrophoneInput,
 ) -> bool {
-    confirmed_with_sources(value, node, command, None, Some(source))
+    confirmed_with_sources(value, node, command, None, Some(source), None)
+}
+pub fn confirmed_with_camera(
+    value: &Value,
+    node: &str,
+    command: &ConcreteCommand,
+    source: &crate::camera_submission::CameraInput,
+) -> bool {
+    confirmed_with_sources(value, node, command, None, None, Some(source))
 }
 fn confirmed_with_sources(
     value: &Value,
@@ -253,9 +261,28 @@ fn confirmed_with_sources(
     command: &ConcreteCommand,
     source: Option<&crate::audio_submission::AudioInput>,
     workload: Option<&crate::microphone_submission::MicrophoneInput>,
+    camera: Option<&crate::camera_submission::CameraInput>,
 ) -> bool {
-    if source.is_some() && workload.is_some() {
+    if [source.is_some(), workload.is_some(), camera.is_some()]
+        .into_iter()
+        .filter(|v| *v)
+        .count()
+        > 1
+    {
         return false;
+    }
+    if let Some(source) = camera {
+        let Ok(template) = crate::workload_leases::definition::Template::from_params(
+            &command.request.input.params,
+        ) else {
+            return false;
+        };
+        if !source
+            .concrete(&template, Some(node))
+            .is_ok_and(|v| v == command.request)
+        {
+            return false;
+        }
     }
     if let Some(source) = workload {
         let Ok(template) = crate::workload_leases::definition::Template::from_params(
@@ -312,6 +339,7 @@ fn confirmed_with_sources(
         && r.plan.draft.concrete_input.as_ref() == Some(&command.request.input)
         && r.plan.draft.audio_source.as_ref() == source
         && r.plan.draft.workload_source.as_ref() == workload
+        && r.plan.draft.camera_source.as_ref() == camera
         && r.plan.draft.proposals.len() == 1
         && r.plan.draft.answers.is_empty()
         && r.plan.draft.proposals[0].proposal == proposal
@@ -401,6 +429,7 @@ mod tests {
             concrete_input: Some(request.input),
             audio_source: None,
             workload_source: None,
+            camera_source: None,
             answers: vec![],
             proposals: vec![crate::request_drafts::ProposalRevision {
                 operation_id: uuid::Uuid::new_v4().to_string(),

@@ -3,6 +3,28 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: immutable camera intent and command-based request authoring
+
+`eefn requests submit-camera` now resolves a disclosed, independently authenticated
+camera source and prepares a durable review without JSON or inference. The journal
+retains a distinct optional camera intent and concrete source pins; existing review
+wire shapes omit the new field when unused. Origin, intent and bindings remain
+immutable. Exact receipt reuse is read-only, including after provider disconnect
+or shutdown; an incomplete review requires explicit saved compilation.
+
+Six source/receipt tests, three credential/TLS origin-coordinator cases, one CLI
+parser case and native old/forged/lost-response checks require hosted verification.
+The one-MiB parser test includes camera flags. This increment starts no capture,
+permission, consent, model, approval, execution or automatic retry. Full camera
+command lifecycle and physical/stable-release acceptance remain open.
+
+Both earlier candidates `a29936b`/run `42358859871` and `5a18341`/run `42359571446`
+finished with three passing jobs and a failed headless Windows job. Their native
+test compilation used the wrong stop-report method. The isolated correction
+`77d5225`/run `42360167494` requires its own complete acceptance. The setup run also
+timed out in the separate repair-hints fixture while waiting for an implicit
+approval metadata connection; its cause is unproven and the original bound remains.
+
 ## In development: native camera stop fixture correction
 
 The camera network and setup candidates `a29936b` and `5a18341` did not pass full

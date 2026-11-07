@@ -48,6 +48,7 @@ fn draft(input: &MicrophoneInput, concrete: &ConcreteInput) -> crate::request_dr
         concrete_input: Some(concrete.input.clone()),
         audio_source: None,
         workload_source: Some(input.clone()),
+        camera_source: None,
         proposals: vec![crate::request_drafts::ProposalRevision {
             operation_id: uuid::Uuid::new_v4().to_string(),
             proposal: concrete.proposal().unwrap(),

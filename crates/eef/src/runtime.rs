@@ -808,6 +808,14 @@ impl Runtime {
                     )),
                 }
             }
+            "requests.camera" => {
+                match serde_json::from_value::<eefn::camera_submission::CameraInput>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(input) => self.origin_camera_request(input, &context).await,
+                    Err(_) => Err(anyhow::anyhow!("Invalid typed camera source")),
+                }
+            }
             "requests.microphone" => match serde_json::from_value::<
                 eefn::microphone_submission::MicrophoneInput,
             >(message["payload"].clone())

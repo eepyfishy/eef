@@ -10,6 +10,7 @@ pub mod automation_schedule;
 mod automation_timer;
 mod automation_trigger;
 pub mod brain;
+pub mod camera_submission;
 pub mod capability;
 pub mod config;
 pub mod credentials;

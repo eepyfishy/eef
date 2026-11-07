@@ -37,7 +37,24 @@ Setup does not enable camera permission, local listening, workload policy or
 capture. Saved bindings need an explicit `eefn restart`; `camera show` distinguishes
 saved and applied bindings. After an unconfirmed save, inspect `camera show` before
 deciding what to do. No automatic retry, device probe, restart or model call is
-performed. Camera request authoring without JSON remains unfinished.
+performed.
+
+Prepare a bounded camera-motion request without JSON or a model:
+
+    eefn requests submit-camera
+    eefn requests submit-camera --source-node NODE_ID --camera RESOURCE_ID --frames 30
+    eefn requests submit-camera --width 640 --height 480 --sample-width 64 --sample-height 48 --interval-ms 200
+
+The unreleased authoring command also exposes motion thresholds, I/O timeout,
+capture duration, session/lease/memory limits and bounded event-delivery settings.
+It saves the immutable intent and exact resolved source pins for review. It does
+not probe a camera, enable permission/listening, approve work or start capture.
+Keep the operation ID after uncertainty and inspect `eefn jobs find --operation-id
+OPERATION_ID`, then `eefn requests plan JOB_ID`. Exact receipt reuse reads retained
+choices; it does not reselect a source or continue incomplete compilation. Use
+`eefn requests compile-saved JOB_ID --revision REVISION` for that separate explicit
+step. Private device indices and RTSP URLs are configured on the source node, not
+supplied to this authoring command. Hosted verification is still required.
 
 Prepare a bounded microphone activity request without JSON or a model:
 

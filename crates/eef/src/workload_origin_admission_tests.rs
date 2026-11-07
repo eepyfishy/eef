@@ -11,6 +11,10 @@ struct SourceAdmission {
 }
 impl SourceAdmission {
     async fn new() -> Self {
+        let metadata=serde_json::from_value(json!({"resources":[{"id":"mic","capability":"audio.capture","parameters":{"device":"PRIVATE_DEVICE"}}]})).unwrap();
+        Self::with_metadata(metadata).await
+    }
+    async fn with_metadata(metadata: eefn::context::NodeMetadata) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let identity = eefn::tls::CoordinatorIdentity::generate().unwrap();
         let credential = eefn::authentication::generate_credential();
@@ -32,11 +36,6 @@ impl SourceAdmission {
             false,
         )
         .await
-        .unwrap();
-        let metadata: eefn::context::NodeMetadata = serde_json::from_value(json!({
-            "resources":[{"id":"mic","capability":"audio.capture",
-                "parameters":{"device":"PRIVATE_DEVICE"}}]
-        }))
         .unwrap();
         let node_path = dir.path().join("node.json");
         std::fs::write(

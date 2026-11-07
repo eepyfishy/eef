@@ -3,6 +3,7 @@ import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
 import {verifyMicrophoneCommands} from './microphone-command-checks.mjs';
 import {verifyCameraSourceCommands} from './camera-source-command-checks.mjs';
 import {verifyCameraSetupCommands} from './camera-setup-command-checks.mjs';
+import {verifyCameraAuthoringCommands} from './camera-authoring-command-checks.mjs';
 // explicit owner TLS pairing. No UI controller, raw RPC or workload execution.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
@@ -92,6 +93,7 @@ const proxy=createServer(async(req,res)=>{
   }
   if(proxyMode==='camera-forge'){value.source_kind='microphone_energy';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='microphone-forge'){value.command.input.title='Forged microphone title';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
+  if(proxyMode==='camera-authoring-forge'){value.command.input.title='Forged camera title';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='corrupt'){value.result.request_context.origin_node='forged';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='lineage'){value.opening.result.draft.proposals[0].proposal.goal='Different schema-valid source goal';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='answer-lineage'){value.source.result.draft.proposals[0].proposal.goal='Different source question goal';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
@@ -134,6 +136,8 @@ try {
  await until(async()=>await ready()&&(await json(node+'/api/status')).execution_grants.available,'pinned node runtime');
  for(const base of [node,eef])assert.equal((await fetch(base+'/')).status,404);
  const microphone=await verifyMicrophoneCommands({nodeCli,nodeText:args=>cli('eefn',configPath,args,false,false),
+  nodeId:id,nodeUrl:node,json,configPath,marker,proxyPort,setProxyMode:value=>{proxyMode=value;},proxyCalls,inferenceCalls:calls});
+ const cameraAuthoring=await verifyCameraAuthoringCommands({nodeCli,nodeText:args=>cli('eefn',configPath,args,false,false),
   nodeId:id,nodeUrl:node,json,configPath,marker,proxyPort,setProxyMode:value=>{proxyMode=value;},proxyCalls,inferenceCalls:calls});
  const cameraSources=await verifyCameraSourceCommands({nodeCli,nodeText:(args,success)=>cli('eefn',configPath,args,success,false),
   coordinatorCli:args=>cli('eef',eefConfig,args),
@@ -355,6 +359,7 @@ try {
  }
  await nodeCli(['models','clear-interpreter']);await nodeCli(['restart','--wait-seconds','20']);await until(ready,'withdraw interpreter');
  await microphone.verifyRetained();
+ await cameraAuthoring.verifyRetained();
  count=calls.length;assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal((await input(lostText,lostReceipt)).status,'historical_snapshot');
  const missing=await input('New input without role',randomUUID(),false);assert.equal(missing.error_code,'interpreter_unavailable');assert(missing.setup_hint.includes('request_interpreter'));assert.equal(calls.length,count);
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal((await respond(lostAnswerSource,1,'This node',lostAnswerId)).status,'historical_snapshot');assert.equal(calls.length,count);
@@ -390,7 +395,7 @@ try {
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count);
  const cameraSetup=await verifyCameraSetupCommands({nodeCli,nodeText:(args,success)=>cli('eefn',configPath,args,success,false),
   nodeId:id,nodeUrl:node,json,configPath,marker,proxyPort,setProxyMode:value=>{proxyMode=value;},proxyCalls,inferenceCalls:calls});
- evidence={...microphone.evidence,...cameraSources,...cameraSetup,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
+ evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
   reasoning_completion_failure_retains_source_and_answer:true,completion_diagnostics_do_not_echo_reasoning_or_replay:true,

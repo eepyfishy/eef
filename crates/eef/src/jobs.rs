@@ -448,7 +448,11 @@ impl JobStore {
         let frozen_source = plan
             .request_review
             .as_ref()
-            .filter(|draft| draft.audio_source.is_some() || draft.workload_source.is_some())
+            .filter(|draft| {
+                draft.audio_source.is_some()
+                    || draft.workload_source.is_some()
+                    || draft.camera_source.is_some()
+            })
             .map(|draft| (json!(draft), json!(plan.goal.request_context)));
         let uncompiled = plan.planning.is_none();
         if let Some((runtime, issuer)) = fence {
@@ -671,6 +675,20 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
             let pair = eefn::peer::plan::Pair::from_params(&input.params)?;
             if source.concrete(&pair, Some(context.origin_node()))?.input != *input {
                 bail!("Retained audio origin differs from its typed source")
+            }
+        }
+        if let Some(source) = &draft.camera_source {
+            let input = draft
+                .concrete_input
+                .as_ref()
+                .context("Missing retained camera input")?;
+            let template = eefn::workload_leases::definition::Template::from_params(&input.params)?;
+            if source
+                .concrete(&template, Some(context.origin_node()))?
+                .input
+                != *input
+            {
+                bail!("Retained camera origin differs from its typed intent");
             }
         }
         if let Some(source) = &draft.workload_source {

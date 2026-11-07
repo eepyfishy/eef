@@ -68,6 +68,8 @@ pub enum RequestAction {
     SubmitAudio(crate::audio_submission::AudioSubmission),
     /// Prepare a bounded microphone activity request without JSON or a model; never execute.
     SubmitMicrophone(Box<crate::microphone_submission::MicrophoneSubmission>),
+    /// Prepare a bounded camera-motion request for review; never enable or capture.
+    SubmitCamera(Box<crate::camera_submission::CameraSubmission>),
     /// Propose and save a source-bound method or clarification; never approve/execute.
     Prepare {
         #[command(flatten)]

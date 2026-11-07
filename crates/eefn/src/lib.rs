@@ -15,6 +15,7 @@ pub mod automation_policy;
 pub mod bundle_selection;
 pub mod camera_setup;
 pub mod camera_sources;
+pub mod camera_submission;
 mod capture_ownership;
 pub mod client;
 pub mod conditional_pipeline;
