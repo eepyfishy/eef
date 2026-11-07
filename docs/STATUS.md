@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: shared Windows camera source ownership
+
+One-shot camera dispatch now reserves a separate node-owned camera pool through
+the existing owned-process bridge. Engines attached to the same node service share
+that pool, while microphone and camera capacity remain independent. A successful
+reserved bridge result already requires exact owned-job exit; failed or abandoned
+observation retains the existing quarantine. Preparation can obtain the configured
+camera runtime only with the exact service pool and resource owner. No source or
+feature permission is created by that lookup. The pool conservatively allows one
+camera source per node, including aliases; it does not lock other applications.
+
+Five new cases require hosted verification: pool separation, exact owner/service
+binding, service replacement, actual busy-camera dispatch refusal, and an opt-in
+synthetic Python camera bridge held open behind a fixture barrier. The latter
+checks exclusion during execution and reuse after observed exit twice, within each
+original six-second parent deadline, without a camera, OpenCV or model. Existing
+microphone tests and process-exit witnesses remain. Camera workload preparation,
+runner/readiness, peer negotiation and command authoring still need integration.
+
 ## In development: independent camera ambient consent lifetime
 
 Camera ambient supervision now checks saved and applied camera permission without

@@ -20,6 +20,7 @@ pub enum StartupIssue {
 #[derive(Clone)]
 pub struct NodeService {
     pub(crate) microphone_pool: crate::capture_ownership::Pool,
+    pub(crate) camera_pool: crate::capture_ownership::Pool,
     pub(crate) listening_gate: Arc<crate::listening::Gate>,
     pub(crate) camera_listening_gate: Arc<crate::listening::Gate>,
     pub(crate) workload_gate: Arc<crate::workload_policy::Gate>,
@@ -123,6 +124,7 @@ impl NodeService {
             crate::download_receipts::Journal::recover(&config_path, &node_id);
         Arc::new(Self {
             microphone_pool: Default::default(),
+            camera_pool: crate::capture_ownership::Pool::camera(),
             listening_gate: Arc::new(crate::listening::Gate::default()),
             camera_listening_gate: Arc::new(crate::listening::Gate::default()),
             workload_gate: Arc::new(crate::workload_policy::Gate::default()),

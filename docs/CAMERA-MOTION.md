@@ -89,9 +89,10 @@ review capability checks now derive `camera.capture` from camera intent.
 
 This integration does not yet expose camera execution: microphone preparation,
 microphone source inspection and typed microphone authoring explicitly refuse
-camera definitions. The camera-specific permission, listening, readiness,
-exclusive ownership, compatible peer negotiation and owned source runner still
-need integration before the existing command/compiler/lease path may launch one.
+camera definitions. The camera-specific permission/listening controls and shared
+one-shot source ownership are being implemented below. Camera readiness,
+prepared-source ownership, compatible peer negotiation and the owned source runner
+still need integration before the existing command/compiler/lease path may launch one.
 Ten shared regressions cover binding/limits, event/prefix behavior, durable history
 reopen/no replay, old microphone shape and those refusal boundaries. Hosted
 verification is pending; no installer, installed node or runtime policy is changed.
@@ -118,3 +119,28 @@ is required. The public listening report retains its existing microphone-specifi
 compatibility fields; camera readiness and command exposure must be integrated
 separately before camera workload execution is advertised or launched. Existing
 one-shot capture and its permission behavior remain separate.
+
+## Shared Windows camera source ownership in development
+
+Windows one-shot `camera.capture` now reserves the node service's camera pool
+before invoking its Python plugin. Engines belonging to the same service share
+one conservative camera reservation, independent of the microphone reservation.
+This excludes competing captures by this node across engine instances and resource
+aliases; it does not lock other applications or claim per-driver exclusivity.
+Preparing a camera runtime must match both the resource owner and this exact pool;
+attaching another service replaces both source-pool bindings.
+
+The existing reserved bridge holds the camera permit through observed owned-job
+exit, including descendants. Requesting termination does not release it; absent
+positive exit evidence, the existing quarantine remains. A library lookup or
+unarmed reservation starts no process and grants no feature/workload permission.
+Non-Windows one-shot behavior is unchanged; owned workload capture still requires
+platform support. There is no camera workload launch or new advertisement yet.
+
+Five new hosted cases cover separation, owner/service identity, replacement,
+busy dispatch before plugin/interpreter use, and synthetic one-shot execution.
+The synthetic Python fixture emits a one-pixel PNG only after a test release
+barrier, allowing the actual engine dispatch to prove exclusion during execution
+and shared-pool reuse after observed exit in two sequential calls. Each keeps its
+six-second parent deadline. No physical device, OpenCV or model is used; physical
+driver release, camera workload stop and RTSP acceptance remain unverified.
