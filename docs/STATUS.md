@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: camera lifecycle through shipping command executables
+
+The existing input-command native suite now adds a separately approved camera
+fixture after all review-only input checks. Actual `eef` and `eefn` commands
+configure the camera, enable feature/listening/workload consent, restart the node,
+submit and inspect a camera request, approve its exact plan, execute it and stop
+it or restart the node during a blocked read. Only the simulated `cv2` dependency
+is installed out of band in a disposable stdlib venv; shipping host/source bytes
+and production discovery remain unchanged.
+
+Completion requires all five durable events, a read-only real node receipt,
+matching independently reconstructed payload prefix/bytes, lease renewal and
+owned-process exit. Stop and restart must retain uncertainty; reusing the same
+execution receipt cannot replay capture. A new independently approved job proves
+source reuse. Earlier input jobs must remain review-only, and no interpreter call
+is permitted. No original test or deadline is relaxed. This additional executable
+coverage requires hosted verification; physical media and stable release remain
+unaccepted.
+
 ## Accepted development checkpoint: command startup and camera workflows
 
 Source `1943155` passes the complete [four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42391526288).

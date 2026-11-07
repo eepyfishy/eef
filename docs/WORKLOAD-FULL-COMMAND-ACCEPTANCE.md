@@ -1,5 +1,15 @@
 # Combined workload command and source acceptance
 
+An additional executable-level extension is in development in the existing
+input-command native suite. It runs shipping services and public owner/origin
+commands for camera completion, explicit stop and node restart/reconnect. Python
+dependency installation is isolated fixture setup; binding, permissions, ambient
+consent, workload limits, restart, submission, approval and execution use commands.
+Independent JavaScript event-prefix reconstruction is compared with the real node
+receipt. Exact execution reuse must not replay, new jobs need separate approval,
+and earlier input-only jobs must remain unexecuted. This extension still needs
+its own hosted acceptance and opens no physical camera.
+
 The new opt-in Windows test joins the complete runtime path: explicit submission
 and compilation through the already running origin node, owner HTTP conditional approval, the
 coordinator's original engine-owned issuer/driver, credential-authenticated pinned

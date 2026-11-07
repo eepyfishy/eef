@@ -5,7 +5,9 @@ import {verifyCameraSourceCommands} from './camera-source-command-checks.mjs';
 import {verifyCameraSetupCommands} from './camera-setup-command-checks.mjs';
 import {verifyCameraAuthoringCommands} from './camera-authoring-command-checks.mjs';
 import {verifyRemoteCameraCommands} from './remote-camera-command-checks.mjs';
-// explicit owner TLS pairing. No UI controller, raw RPC or workload execution.
+import {verifyCameraLifecycleCommands} from './camera-lifecycle-command-checks.mjs';
+// Explicit owner TLS pairing. Input stays review-only; a separate camera fixture
+// explicitly approves bounded work. No UI controller or raw workload RPC.
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
@@ -398,7 +400,12 @@ try {
   nodeId:id,nodeUrl:node,json,configPath,marker,proxyPort,setProxyMode:value=>{proxyMode=value;},proxyCalls,inferenceCalls:calls});
  const remoteCamera=await verifyRemoteCameraCommands({nodeCli,coordinatorCli:(args,success=true)=>cli('eef',eefConfig,args,success),
   coordinatorText:args=>cli('eef',eefConfig,args,true,false),nodeId:id,nodeUrl:node,json,configPath,inferenceCalls:calls});
- evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,...remoteCamera,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
+ const cameraLifecycle=await verifyCameraLifecycleCommands({nodeCli,coordinatorCli:(args,success=true)=>cli('eef',eefConfig,args,success),
+  nodeId:id,nodeUrl:node,coordinatorUrl:eef,json,until,root,scratch,configPath,inferenceCalls:calls});
+ const originalJobs=new Set(jobs.map(job=>job.id));
+ const afterCamera=(await nodeCli(['jobs','list'])).data.jobs.filter(job=>originalJobs.has(job.id));assert.equal(afterCamera.length,originalJobs.size);
+ for(const job of afterCamera){assert.equal(job.review_only,true,'Camera grants cannot authorize existing input jobs');assert.equal(job.completed_tasks,0);}
+ evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,...remoteCamera,...cameraLifecycle,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
   reasoning_completion_failure_retains_source_and_answer:true,completion_diagnostics_do_not_echo_reasoning_or_replay:true,
