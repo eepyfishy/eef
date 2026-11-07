@@ -27,6 +27,17 @@ fn rejected(id: &str, code: &str) -> Value {
     json!({"type":"workload_rejected","schema_version":2,"id":id,"code":code})
 }
 
+fn unconfirmed_status(id: &str, code: &str, error: &anyhow::Error) -> Value {
+    // Local diagnostics retain only closed bridge categories. Error contexts can
+    // contain private source bindings, interpreter output or filesystem paths.
+    let reason = error
+        .downcast_ref::<crate::python::BridgeFailure>()
+        .map(|failure| failure.code())
+        .unwrap_or("workload_unconfirmed");
+    json!({"grant_id":id,"state":"unconfirmed","code":code,
+        "reason_code":reason,"outcome_confirmed":false})
+}
+
 type Prepared = (
     crate::workload_leases::Policy,
     crate::workload_policy::Permit,
@@ -238,9 +249,9 @@ impl NodeClient {
                         "grant_id":id,"state":"completed","receipt":receipt,"outcome_confirmed":true});
                     json!({"type":"workload_complete","schema_version":2,"id":id,"receipt":receipt})
                 }
-                Err(_) => {
-                    status.lock().expect("workload status")["last_workload"] = json!({
-                        "grant_id":id,"state":"unconfirmed","code":code,"outcome_confirmed":false});
+                Err(error) => {
+                    status.lock().expect("workload status")["last_workload"] =
+                        unconfirmed_status(&id, code, &error);
                     rejected(&id, code)
                 }
             };

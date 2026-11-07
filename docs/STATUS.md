@@ -3,6 +3,30 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: private workload failure categories
+
+The full camera coordinator lifecycle test in `b3885b7`/run `42388092617` passed
+its completion, explicit-stop and reconnect cases. The overall run still failed:
+the separate node-native camera network test received all five events, then
+reported `source_unconfirmed` instead of a confirmed completion. Its underlying
+failure remains unproved; the earlier one-event pacing diagnosis does not explain
+this result. The parser candidate also needs further Windows verification.
+
+At `255d2c2`/run `42389243153`, the Windows/dashboard libraries passed but the
+expanded one-MiB parser test overflowed. That candidate is not accepted. Fixed
+case markers now bypass test-thread output capture so a process abort can still
+identify baseline versus in-place parsing and valid versus error cases without
+printing arguments. All cases and the original stack bound remain required.
+
+Local live workload status now retains a fixed `reason_code` for typed Python
+bridge failures, or `workload_unconfirmed` for unclassified failures. Error text,
+private source bindings, paths and interpreter output stay omitted. The wire
+rejection schema and original failure code are unchanged. The existing camera
+test's rejection diagnostic additionally observes owned exit, camera release,
+elapsed time and the last probe sequence; all completion, lease, source and stop
+assertions and deadlines remain required. These are observations rather than a
+camera completion fix. Fresh hosted verification is pending.
+
 ## In development: parse the node command tree in place
 
 The phase diagnostic `f6505fd`/run `42387553819` passed all Rust tests, both

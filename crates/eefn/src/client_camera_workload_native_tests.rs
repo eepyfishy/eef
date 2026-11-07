@@ -147,6 +147,7 @@ async fn actual_camera_workload_negotiates_exact_source_persists_events_and_with
             Instant::now() + Duration::from_secs(50),
         )
         .unwrap();
+        let started = Instant::now();
         let mut link = server
             .open_workload(
                 d.clone(),
@@ -158,6 +159,7 @@ async fn actual_camera_workload_negotiates_exact_source_persists_events_and_with
         let mut released = false;
         let mut processes = None;
         let mut events = Vec::new();
+        let mut last_probe = 0;
         loop {
             let frame = timeout(Duration::from_secs(10), link.next())
                 .await
@@ -169,6 +171,7 @@ async fn actual_camera_workload_negotiates_exact_source_persists_events_and_with
                 "workload_probe" => {
                     let query: crate::workload_leases::Query =
                         serde_json::from_value(frame.message()["query"].clone()).unwrap();
+                    last_probe = query.sequence;
                     if query.sequence == 1 {
                         assert!(!trace.path().join("pids.json").exists());
                     }
@@ -277,11 +280,24 @@ async fn actual_camera_workload_negotiates_exact_source_persists_events_and_with
                     break;
                 }
                 _ => panic!(
-                    "Unexpected camera workload frame: {}; code={}; acknowledged={acknowledged}; released={released}; events={}; source_opened={}",
+                    "Unexpected camera workload frame: {}; code={}; acknowledged={acknowledged}; released={released}; events={}; source_opened={}; reason_code={}; owned_exit={}; camera_closed={}; elapsed_ms={}; last_probe={last_probe}",
                     frame.message()["type"],
                     frame.message()["code"],
                     events.len(),
-                    trace.path().join("pids.json").exists()
+                    trace.path().join("pids.json").exists(),
+                    f.service
+                        .live
+                        .lock()
+                        .unwrap()
+                        .pointer("/last_workload/reason_code")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    processes.as_ref().is_some_and(|owned| owned.exited_now()),
+                    std::fs::read_to_string(trace.path().join("trace.jsonl")).is_ok_and(|raw| raw
+                        .lines()
+                        .any(|line| serde_json::from_str::<Value>(line)
+                            .is_ok_and(|row| row["kind"] == "closed"))),
+                    started.elapsed().as_millis()
                 ),
             }
         }

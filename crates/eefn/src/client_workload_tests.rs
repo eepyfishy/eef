@@ -1,6 +1,24 @@
 // Dispatch units use real encrypted framing on an in-memory stream. They do
 // not substitute for the final credential/TLS connection acceptance suite.
 use super::*;
+
+#[test]
+fn local_failure_status_retains_typed_reason_without_private_error_contexts() {
+    let typed = anyhow::Error::new(crate::python::BridgeFailure::Deadline)
+        .context("PRIVATE_DEVICE and private interpreter output");
+    let generic = anyhow::anyhow!("PRIVATE_SETTINGS_PATH and private source binding");
+    for (error, reason) in [
+        (typed, "python_exchange_deadline"),
+        (generic, "workload_unconfirmed"),
+    ] {
+        let status = unconfirmed_status("grant", "source_unconfirmed", &error);
+        assert_eq!(status["reason_code"], reason);
+        assert_eq!(status["outcome_confirmed"], false);
+        assert_eq!(status["state"], "unconfirmed");
+        let encoded = serde_json::to_string(&status).unwrap();
+        assert!(!encoded.contains("PRIVATE_") && !encoded.contains("private"));
+    }
+}
 use crate::grants::workload::tests::definition;
 
 struct Fixture {

@@ -546,6 +546,12 @@ durable evidence, or proof of all currently running effects. Use existing grant
 receipts/results for durable inspection. Legacy last-activity fields may still
 change during ordinary control activity.
 
+For continuous source sessions, an unconfirmed live workload status can include
+`reason_code`: a fixed Python bridge failure category or `workload_unconfirmed`
+when the cause is unclassified. It never includes private error text or source
+settings. This transient diagnostic does not prove completion, stop or that a
+retry is safe; retained job and grant receipts remain the durable evidence.
+
 ## Explicit interrupted-result reconciliation (unreleased after alpha.6)
 
 `eefn requests recover-result JOB_ID --revision REV --grant-id GRANT_UUID

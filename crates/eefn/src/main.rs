@@ -4971,11 +4971,18 @@ mod tests {
 
     #[test]
     fn parser_fits_the_windows_main_stack_without_a_runtime_poll_frame() {
+        #[inline(never)]
+        fn phase(kind: &'static str, case: usize) {
+            // Bypass test-thread capture so an abort still leaves a fixed,
+            // argument-free marker. Never print argv or environment values.
+            use std::io::Write;
+            let _ = writeln!(std::io::stderr().lock(), "eefn parser case: {kind} {case}");
+        }
         std::thread::Builder::new()
             .name("cli-parser-1mib".into())
             .stack_size(1024 * 1024)
             .spawn(|| {
-                for args in [
+                for (case, args) in [
                     vec!["eefn"],
                     vec!["eefn", "--no-ui"],
                     vec![
@@ -5025,11 +5032,16 @@ mod tests {
                         "--max-session-ms",
                         "60000",
                     ],
-                ] {
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    phase("valid_baseline", case);
                     Args::try_parse_from(args.clone()).unwrap();
+                    phase("valid_in_place", case);
                     parse_args_from(args.into_iter().map(std::ffi::OsString::from)).unwrap();
                 }
-                for args in [
+                for (case, args) in [
                     vec!["eefn", "--help"],
                     vec!["eefn", "--version"],
                     vec!["eefn", "requests", "submit-camera", "--help"],
@@ -5044,8 +5056,13 @@ mod tests {
                         "rtsp://example.invalid/live",
                     ],
                     vec!["eefn", "unknown-subcommand"],
-                ] {
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    phase("error_baseline", case);
                     let expected = Args::try_parse_from(args.clone()).unwrap_err();
+                    phase("error_in_place", case);
                     let actual = parse_args_from(args.into_iter().map(std::ffi::OsString::from))
                         .unwrap_err();
                     assert_eq!(actual.kind(), expected.kind());
