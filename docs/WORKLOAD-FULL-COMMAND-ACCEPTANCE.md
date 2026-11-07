@@ -4,7 +4,16 @@ The new opt-in Windows test joins the complete runtime path: explicit submission
 and compilation through the already running origin node, owner HTTP conditional approval, the
 coordinator's original engine-owned issuer/driver, credential-authenticated pinned
 TLS, the actual NodeClient/NodeService/GrantLedger, and the shipping source adapter.
-No dashboard, language model or physical microphone participates.
+No dashboard, language model, physical microphone or physical camera participates.
+
+The camera extension adds a separate Windows native test for the same three
+lifecycle scenarios. It uses typed `CameraRequest` submission and real backend
+camera selection, with only `cv2` simulated inside its disposable venv. The
+shipping source/host bytes remain unchanged. Camera completion requires five
+durable observations; the original microphone test still requires four. Both
+retain exact payload-prefix and node-receipt comparisons, lease renewal, owned
+exit, no replay after uncertainty and separately approved source reuse. Hosted
+verification of this extension is pending; no physical camera is opened.
 
 The origin-admission follow-up replaces direct test-helper review creation and
 owner compilation with the actual concrete-input mailbox. Its built-in source
@@ -19,7 +28,7 @@ completion/stop/reconnect/no-replay assertion remain required. This later source
 needs its own hosted acceptance and does not inherit a pass from older checkpoints.
 
 The test creates a disposable stdlib venv from the explicitly pinned CI interpreter
-using `--without-pip`. It installs only the existing synthetic microphone dependency
+using `--without-pip`. Each test installs only its synthetic device dependency
 into that environment's site-packages. No dependency is downloaded, no system Python
 is modified, and production adapter/host bytes and private test-hook boundaries
 remain unchanged. The normal isolated Python invocation loads the test dependency;
@@ -54,7 +63,7 @@ Stop and disconnect must preserve unknown execution and the original consumed AC
 Stop retains an exact intent-only node receipt, never a fabricated physical-stop
 claim. Reconnect must use a new authenticated session and retain the old history.
 Reusing the original command returns its receipt without executing again. A fresh,
-separately reviewed/approved workload then proves microphone reuse while the old
+separately reviewed/approved workload then proves source reuse while the old
 uncertain job remains unchanged. Fresh trace directories prevent old markers from
 releasing a later source prematurely.
 

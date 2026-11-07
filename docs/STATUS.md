@@ -3,6 +3,21 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: full camera command and source lifecycle coverage
+
+The opt-in Windows coordinator lifecycle fixture now also runs with a simulated
+camera dependency installed in its own disposable stdlib venv. A separate camera
+test follows typed origin submission, backend resource selection, owner approval,
+origin execution, the coordinator driver and the shipping camera source over
+credential-authenticated TLS. Completion requires all five durable observations,
+matching node receipt and payload prefix, lease renewal and owned-process exit.
+Explicit stop and disconnect/reconnect retain uncertainty without replay; a new
+separately approved job must prove source reuse. The microphone's original three
+scenarios and four-event assertions remain required. No shipping test hook,
+hardware access, dependency download or deadline extension was added. This new
+coverage still requires hosted execution; it does not establish physical camera
+or full stable-release acceptance.
+
 ## In development: narrow Windows startup overflow observations
 
 The boxed-entrypoint candidate `5b3e3bc`/run `42385273148` passed both Linux jobs

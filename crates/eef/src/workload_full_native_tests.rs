@@ -1,6 +1,26 @@
 // Opt-in Windows acceptance: real owner/origin commands, coordinator driver,
-// credential/TLS NodeClient and shipping source adapter. Only the microphone
-// dependency lives in a disposable venv; no production test hook or device opens.
+// credential/TLS NodeClient and shipping source adapters. Only simulated device
+// dependencies live in a disposable venv; no production test hook or device opens.
+#[derive(Clone, Copy)]
+enum FullSourceKind {
+    Microphone,
+    Camera,
+}
+impl FullSourceKind {
+    fn camera(self) -> bool {
+        matches!(self, Self::Camera)
+    }
+    fn capability(self) -> &'static str {
+        if self.camera() {
+            "camera.capture"
+        } else {
+            "audio.capture"
+        }
+    }
+    fn event_count(self) -> usize {
+        if self.camera() { 5 } else { 4 }
+    }
+}
 async fn full_source_venv(root: &std::path::Path) -> std::path::PathBuf {
     let python = std::path::PathBuf::from(
         std::env::var_os("EEF_TEST_PYTHON")
@@ -61,7 +81,12 @@ async fn full_source_venv(root: &std::path::Path) -> std::path::PathBuf {
     assert!(executable.is_file());
     executable
 }
-fn full_source_dependency(venv_python: &std::path::Path, trace: &std::path::Path, mode: &str) {
+fn full_source_dependency(
+    venv_python: &std::path::Path,
+    trace: &std::path::Path,
+    mode: &str,
+    kind: FullSourceKind,
+) {
     let site = venv_python
         .parent()
         .unwrap()
@@ -69,6 +94,18 @@ fn full_source_dependency(venv_python: &std::path::Path, trace: &std::path::Path
         .unwrap()
         .join("Lib/site-packages");
     assert!(site.is_dir());
+    if kind.camera() {
+        let source = format!(
+            "_eef_camera_root = {}\n_eef_camera_mode = {}\n_eef_camera_fake_source = {}\n{}",
+            serde_json::to_string(trace).unwrap(),
+            serde_json::to_string(mode).unwrap(),
+            serde_json::to_string(include_str!("../../../python/tests/camera_motion_fakes.py"))
+                .unwrap(),
+            include_str!("../../../python/tests/prepared_camera_device.py")
+        );
+        std::fs::write(site.join("cv2.py"), source).unwrap();
+        return;
+    }
     let source = format!(
         "_eef_fixture_root = {}\n_eef_fixture_mode = {}\n{}",
         serde_json::to_string(trace).unwrap(),
@@ -100,47 +137,95 @@ async fn full_source_plan(
     service: &eefn::NodeService,
     client: &reqwest::Client,
     base: &str,
+    kind: FullSourceKind,
 ) -> Plan {
     let mut template = Template::from_params(&template_input().params).unwrap();
     template.limits.max_source_frames = 400;
-    let submission = eefn::microphone_submission::MicrophoneCommand {
-        operation_id: uuid::Uuid::new_v4().to_string(),
-        input: eefn::microphone_submission::MicrophoneInput {
-            schema_version: 1,
-            original_text: "Observe microphone activity for an explicitly bounded session".into(),
-            title: "Bounded microphone source".into(),
-            source_node: None,
-            microphone: None,
-            priority: 0,
-            parameters: EnergyParameters {
-                sample_rate: 16000,
-                channels: 1,
-                block_frames: 80,
-                max_blocks: 5,
-                activation_level: 1000,
-                deactivation_level: 500,
+    let result = if kind.camera() {
+        let submission = eefn::camera_submission::CameraCommand {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            input: eefn::camera_submission::CameraInput {
+                schema_version: 1,
+                original_text: "Observe camera motion for an explicitly bounded session".into(),
+                title: "Bounded camera source".into(),
+                source_node: None,
+                camera: None,
+                priority: 0,
+                parameters: eefn::workload_leases::definition::MotionParameters {
+                    width: 640,
+                    height: 480,
+                    sample_width: 64,
+                    sample_height: 48,
+                    max_frames: 5,
+                    interval_ms: 200,
+                    activation_level: 15,
+                    deactivation_level: 5,
+                    io_timeout_ms: 2000,
+                    max_duration_ms: 10000,
+                },
+                limits: template.limits,
+                events: template.events,
             },
-            limits: template.limits,
-            events: template.events,
-        },
+        };
+        let result = service
+            .camera_request(eefn::camera_submission::CameraRequest {
+                schema_version: 1,
+                expected_node_id: "origin".into(),
+                command: submission.clone(),
+            })
+            .await
+            .unwrap();
+        assert!(
+            eefn::camera_submission::confirmed_node(&result, "origin", &submission),
+            "Origin camera submission failed: {result}"
+        );
+        result
+    } else {
+        let submission = eefn::microphone_submission::MicrophoneCommand {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            input: eefn::microphone_submission::MicrophoneInput {
+                schema_version: 1,
+                original_text: "Observe microphone activity for an explicitly bounded session"
+                    .into(),
+                title: "Bounded microphone source".into(),
+                source_node: None,
+                microphone: None,
+                priority: 0,
+                parameters: EnergyParameters {
+                    sample_rate: 16000,
+                    channels: 1,
+                    block_frames: 80,
+                    max_blocks: 5,
+                    activation_level: 1000,
+                    deactivation_level: 500,
+                },
+                limits: template.limits,
+                events: template.events,
+            },
+        };
+        let result = service
+            .microphone_request(eefn::microphone_submission::MicrophoneRequest {
+                schema_version: 1,
+                expected_node_id: "origin".into(),
+                command: submission.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            result["success"], true,
+            "Origin submission failed: {result}"
+        );
+        assert!(eefn::microphone_submission::confirmed_node(
+            &result,
+            "origin",
+            &submission
+        ));
+        result
     };
-    let result = service
-        .microphone_request(eefn::microphone_submission::MicrophoneRequest {
-            schema_version: 1,
-            expected_node_id: "origin".into(),
-            command: submission.clone(),
-        })
-        .await
-        .unwrap();
     assert_eq!(
         result["success"], true,
         "Origin submission failed: {result}"
     );
-    assert!(eefn::microphone_submission::confirmed_node(
-        &result,
-        "origin",
-        &submission
-    ));
     let id = result["result"]["result"]["plan"]["id"].as_str().unwrap();
     let planned = runtime.engine.store.get(id).unwrap();
     assert!(planned.approval.is_none() && planned.execution.is_none());
@@ -187,6 +272,7 @@ async fn full_source_finish(
     runtime: &crate::Runtime,
     plan: &Plan,
     trace: &std::path::Path,
+    kind: FullSourceKind,
 ) -> Plan {
     full_source_wait_plan(runtime, &plan.plan_id, |p| {
         p.execution
@@ -237,8 +323,8 @@ async fn full_source_finish(
     .unwrap();
     let w = done.execution.as_ref().unwrap().workload.as_ref().unwrap();
     let completed = w.completion.as_ref().unwrap();
-    assert_eq!(w.observations.len(), 4);
-    assert_eq!(last, 4);
+    assert_eq!(w.observations.len(), kind.event_count());
+    assert_eq!(last, kind.event_count() as u64);
     let summary = eefn::workload_network::summarize_events(&w.definition, &w.observations).unwrap();
     assert_eq!(completed.report.event_count, summary.count);
     assert_eq!(completed.report.event_bytes, summary.bytes);
@@ -264,6 +350,15 @@ async fn full_source_finish(
 #[tokio::test]
 async fn real_workload_commands_origin_tls_source_completion_stop_and_reconnect_share_durable_evidence()
  {
+    full_source_cases(FullSourceKind::Microphone).await;
+}
+
+#[tokio::test]
+async fn real_camera_commands_origin_tls_completion_stop_and_reconnect_share_durable_evidence() {
+    full_source_cases(FullSourceKind::Camera).await;
+}
+
+async fn full_source_cases(kind: FullSourceKind) {
     let fixture = tempfile::tempdir().unwrap();
     let python = full_source_venv(fixture.path()).await;
     let http = reqwest::Client::builder()
@@ -283,6 +378,7 @@ async fn real_workload_commands_origin_tls_source_completion_stop_and_reconnect_
             } else {
                 "blocked"
             },
+            kind,
         );
         let identity = eefn::tls::CoordinatorIdentity::generate().unwrap();
         let credential = eefn::authentication::generate_credential();
@@ -298,13 +394,18 @@ async fn real_workload_commands_origin_tls_source_completion_stop_and_reconnect_
         )
         .await
         .unwrap();
-        let metadata:eefn::context::NodeMetadata=serde_json::from_value(json!({"resources":[{"id":"mic","capability":"audio.capture","parameters":{"device":"PRIVATE_DEVICE"}}]})).unwrap();
+        let metadata:eefn::context::NodeMetadata=serde_json::from_value(if kind.camera() {
+            json!({"resources":[{"id":"camera","capability":"camera.capture","parameters":{"device":"rtsp://owner:PRIVATE_CAMERA_PASSWORD@camera.invalid:554/live"}}]})
+        } else {
+            json!({"resources":[{"id":"mic","capability":"audio.capture","parameters":{"device":"PRIVATE_DEVICE"}}]})
+        }).unwrap();
         let node_path = dir.path().join("node.json");
         std::fs::write(&node_path,serde_json::to_vec(&json!({"node_id":"origin","metadata":metadata,"python":python,
-            "permissions":{"media":{"microphone":true}},"listening":{"enabled":true},"workload_policy":{"enabled":true}})).unwrap()).unwrap();
+            "permissions":{"media":{"microphone":!kind.camera(),"camera":kind.camera()}},"listening":{"enabled":true},"workload_policy":{"enabled":true}})).unwrap()).unwrap();
         let service = eefn::NodeService::new(node_path, "origin".into());
         let mut policy = eefn::NodePolicy::default();
-        policy.media.microphone = true;
+        policy.media.microphone = !kind.camera();
+        policy.media.camera = kind.camera();
         let engine = Arc::new(
             eefn::NodeEngine::new(false, vec![], dir.path().into())
                 .unwrap()
@@ -354,10 +455,10 @@ async fn real_workload_commands_origin_tls_source_completion_stop_and_reconnect_
             .into_make_service_with_connect_info::<std::net::SocketAddr>();
         let api = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         assert!(
-            !engine.capabilities().contains(&"audio.capture".into()),
+            !engine.capabilities().contains(&kind.capability().into()),
             "Built-in source admission must not depend on the one-shot plugin"
         );
-        let plan = full_source_plan(&runtime, &service, &http, &base).await;
+        let plan = full_source_plan(&runtime, &service, &http, &base, kind).await;
         let command = execute(&plan);
         assert!(
             !trace.join("pids.json").exists(),
@@ -382,7 +483,7 @@ async fn real_workload_commands_origin_tls_source_completion_stop_and_reconnect_
             Some(runtime.runtime_id())
         ));
         let done = if mode == "complete" {
-            full_source_finish(&runtime, &plan, &trace).await
+            full_source_finish(&runtime, &plan, &trace, kind).await
         } else {
             full_source_wait_plan(&runtime, &plan.plan_id, |p| {
                 p.execution
@@ -493,7 +594,7 @@ async fn real_workload_commands_origin_tls_source_completion_stop_and_reconnect_
             .await
             .unwrap();
             // Existing owned-capture cleanup observes for at most three seconds.
-            // Wait independently before a NEW explicit job proves microphone reuse.
+            // Wait independently before a NEW explicit job proves source reuse.
             tokio::time::sleep(Duration::from_secs(5)).await;
             stopped
         };
@@ -507,11 +608,11 @@ async fn real_workload_commands_origin_tls_source_completion_stop_and_reconnect_
         if mode != "complete" {
             let next_trace = dir.path().join("next-trace");
             std::fs::create_dir(&next_trace).unwrap();
-            full_source_dependency(&python, &next_trace, "finite");
-            let next = full_source_plan(&runtime, &service, &http, &base).await;
+            full_source_dependency(&python, &next_trace, "finite", kind);
+            let next = full_source_plan(&runtime, &service, &http, &base, kind).await;
             let next_command = execute(&next);
             full_source_post(&http,&base,"/api/commands/requests/execute",json!({"schema_version":1,"expected_runtime_id":runtime.runtime_id(),"command":next_command})).await;
-            let completed = full_source_finish(&runtime, &next, &next_trace).await;
+            let completed = full_source_finish(&runtime, &next, &next_trace, kind).await;
             assert_ne!(
                 completed
                     .execution
