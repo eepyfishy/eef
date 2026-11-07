@@ -3,7 +3,10 @@ async fn microphone_input(f: &SourceAdmission) -> eefn::microphone_submission::M
     let template =
         eefn::workload_leases::definition::Template::from_params(&concrete.input.params).unwrap();
     let eefn::workload_leases::definition::Source::MicrophoneEnergy { parameters, .. } =
-        template.source;
+        template.source
+    else {
+        panic!("Expected microphone fixture");
+    };
     eefn::microphone_submission::MicrophoneInput {
         schema_version: 1,
         original_text: concrete.original_text,

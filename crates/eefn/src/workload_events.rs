@@ -27,6 +27,15 @@ pub struct Event {
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     MicrophoneActivity,
+    CameraMotion,
+}
+impl Kind {
+    fn source(source: &Source) -> Self {
+        match source {
+            Source::MicrophoneEnergy { .. } => Self::MicrophoneActivity,
+            Source::CameraMotion { .. } => Self::CameraMotion,
+        }
+    }
 }
 
 pub(crate) struct Filter {
@@ -34,6 +43,8 @@ pub(crate) struct Filter {
     block_frames: u64,
     max_blocks: u64,
     max_source_frames: u64,
+    kind: Kind,
+    max_level: u16,
     last_source_sequence: u64,
     last_source_frames: u64,
     last_observed_at: Option<Instant>,
@@ -64,12 +75,13 @@ impl Filter {
         match (&definition.events.mode, &definition.events.overflow) {
             (EventMode::ActivityTransitions, Overflow::Stop) => {}
         }
-        let Source::MicrophoneEnergy { parameters, .. } = &definition.source;
         Ok(Self {
             limits: definition.events.clone(),
-            block_frames: u64::from(parameters.block_frames),
-            max_blocks: u64::from(parameters.max_blocks),
+            block_frames: definition.source.frames_per_observation(),
+            max_blocks: definition.source.max_observations(),
             max_source_frames: definition.limits.max_source_frames,
+            kind: Kind::source(&definition.source),
+            max_level: definition.source.max_level(),
             last_source_sequence: 0,
             last_source_frames: 0,
             last_observed_at: None,
@@ -124,7 +136,7 @@ impl Filter {
                 && observation.sequence <= self.max_blocks
                 && observation.source_frames == self.last_source_frames + self.block_frames
                 && observation.source_frames <= self.max_source_frames
-                && observation.level.is_none_or(|v| v <= 32768)
+                && observation.level.is_none_or(|v| v <= self.max_level)
                 && (observation.active.is_none() || observation.level.is_some())
                 && (!observation.discontinuity
                     || (observation.active.is_none() && observation.level.is_none()))
@@ -151,7 +163,7 @@ impl Filter {
         );
         let event = Event {
             schema_version: 2,
-            kind: Kind::MicrophoneActivity,
+            kind: self.kind.clone(),
             sequence: self.events + 1,
             source_sequence: observation.sequence,
             source_frames: observation.source_frames,
@@ -177,18 +189,20 @@ impl Filter {
 
 impl Event {
     pub fn validate(&self, definition: &Definition) -> Result<()> {
-        let Source::MicrophoneEnergy { parameters, .. } = &definition.source;
         ensure!(
             self.schema_version == 2
-                && self.kind == Kind::MicrophoneActivity
+                && self.kind == Kind::source(&definition.source)
                 && self.sequence > 0
                 && self.sequence <= definition.events.max_events
                 && self.source_sequence > 0
-                && self.source_sequence <= u64::from(parameters.max_blocks)
-                && self.source_frames == self.source_sequence * u64::from(parameters.block_frames)
+                && self.source_sequence <= definition.source.max_observations()
+                && self.source_frames
+                    == self.source_sequence * definition.source.frames_per_observation()
                 && self.source_frames <= definition.limits.max_source_frames
                 && self.elapsed_ms <= definition.limits.max_session_ms
-                && self.level.is_none_or(|v| v <= 32768)
+                && self
+                    .level
+                    .is_none_or(|v| v <= definition.source.max_level())
                 && (self.active.is_none() || self.level.is_some())
                 && (!self.discontinuity || (self.active.is_none() && self.level.is_none())),
             "Invalid retained workload event"

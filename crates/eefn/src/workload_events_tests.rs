@@ -318,7 +318,9 @@ fn invalid_or_skipped_source_observations_stop_before_any_new_event() {
 fn repeated_state_cannot_hide_source_limit_or_monotonic_clock_failure() {
     let start = Instant::now();
     let mut d = definition();
-    let Source::MicrophoneEnergy { parameters, .. } = &mut d.source;
+    let Source::MicrophoneEnergy { parameters, .. } = &mut d.source else {
+        panic!("Expected microphone fixture");
+    };
     parameters.max_blocks = 1;
     d.limits.max_source_frames = 80;
     let mut filter = Filter::new(&d).unwrap();

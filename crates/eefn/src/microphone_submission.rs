@@ -5,7 +5,7 @@ use crate::{
         EnergyParameters, EventMode, Events, Limits, Overflow, Source, Template,
     },
 };
-use anyhow::{Result, ensure};
+use anyhow::{Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -108,7 +108,10 @@ impl MicrophoneInput {
             resource_sha256,
             adapter_sha256,
             ..
-        } = &template.source;
+        } = &template.source
+        else {
+            bail!("Microphone intent cannot bind a camera workload")
+        };
         ensure!(
             template.executor_node == node
                 && self

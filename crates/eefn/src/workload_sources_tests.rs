@@ -55,6 +55,28 @@ impl Fixture {
 }
 
 #[test]
+fn microphone_source_endpoint_does_not_claim_camera_compatibility() {
+    let f = Fixture::new();
+    let report = f.inspect();
+    let mut d = crate::workload_leases::definition::camera_tests::camera();
+    d.executor_node = f.request().expected_node_id;
+    if let crate::workload_leases::definition::Source::CameraMotion { resource_id, .. } =
+        &mut d.source
+    {
+        *resource_id = crate::context::resource_id(&d.executor_node, "camera");
+    }
+    let error = report.confirms_template(&d.template()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Camera source inspection is not supported by the microphone endpoint")
+    );
+    assert_eq!(
+        serde_json::to_value(f.inspect()).unwrap(),
+        serde_json::to_value(report).unwrap()
+    );
+}
+#[test]
 fn snapshot_keeps_private_bindings_local_and_never_writes_or_claims_capture() {
     let f = Fixture::new();
     let path = f.dir.path().join("node.json");

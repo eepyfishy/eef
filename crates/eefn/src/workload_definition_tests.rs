@@ -121,7 +121,9 @@ fn exact_definition_binds_origin_resource_source_limits_and_reporting_to_lease()
     }
     let mut changed = d.clone();
     changed.executor_node = "node-c".into();
-    let Source::MicrophoneEnergy { resource_id, .. } = &mut changed.source;
+    let Source::MicrophoneEnergy { resource_id, .. } = &mut changed.source else {
+        panic!("Expected microphone fixture");
+    };
     *resource_id = "node-c::microphone".into();
     assert_ne!(changed.scope().unwrap(), scope);
 }
@@ -236,7 +238,10 @@ fn pin(d: &mut Definition, resource: &crate::context::Resource) {
         resource_sha256,
         adapter_sha256,
         ..
-    } = &mut d.source;
+    } = &mut d.source
+    else {
+        panic!("Expected microphone fixture");
+    };
     *resource_sha256 = crate::grants::definition_digest(&json!(resource)).unwrap();
     *adapter_sha256 = hex::encode(Sha256::digest(b"reviewed adapter bytes"));
 }

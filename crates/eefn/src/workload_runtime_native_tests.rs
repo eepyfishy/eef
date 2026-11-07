@@ -15,7 +15,9 @@ pub(crate) fn native_fixture(mode: &str) -> (Fixture, tempfile::TempDir) {
         .unwrap()
         .with_stream_test_prelude(prelude);
     let mut f = Fixture::with_python(None, Some(python));
-    let Source::MicrophoneEnergy { parameters, .. } = &mut f.definition.source;
+    let Source::MicrophoneEnergy { parameters, .. } = &mut f.definition.source else {
+        panic!("Expected microphone fixture");
+    };
     parameters.max_blocks = 5;
     f.definition.limits.max_source_frames = 400;
     f.definition.validate().unwrap();

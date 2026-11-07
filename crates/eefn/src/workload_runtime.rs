@@ -45,6 +45,13 @@ impl NodeService {
         crate::automation_occurrence::uuid(runtime_id)?;
         definition.validate()?;
         ensure!(
+            matches!(
+                &definition.source,
+                crate::workload_leases::definition::Source::MicrophoneEnergy { .. }
+            ),
+            "Camera source execution is not supported by microphone preparation"
+        );
+        ensure!(
             definition.executor_node == self.node_id,
             "Source belongs to another node"
         );
@@ -81,38 +88,23 @@ impl NodeService {
                 );
                 crate::model_memory::supported(limits.max_job_memory_mib)?;
                 let python = runtime.as_ref().clone().with_limits(limits)?;
-                let resource_id = match &definition.source {
-                    crate::workload_leases::definition::Source::MicrophoneEnergy {
-                        resource_id,
-                        ..
-                    } => resource_id,
-                };
+                let resource_id = definition.source.resource_id();
                 let resource = engine
                     .applied_resources()
                     .iter()
-                    .find(|r| crate::context::resource_id(&self.node_id, &r.id) == *resource_id)
+                    .find(|r| crate::context::resource_id(&self.node_id, &r.id) == resource_id)
                     .ok_or_else(|| {
                         anyhow::anyhow!("Reviewed microphone resource is unavailable")
                     })?;
                 let bytes = crate::workload_sources::MICROPHONE_SOURCE;
                 let params = definition.bound_python_parameters(resource, bytes)?;
-                let adapter = match &definition.source {
-                    crate::workload_leases::definition::Source::MicrophoneEnergy {
-                        adapter_sha256,
-                        ..
-                    } => adapter_sha256,
-                };
+                let adapter = definition.source.adapter_sha256();
                 let source = PinnedStreamSource::new(bytes, adapter)?;
-                let blocks = match &definition.source {
-                    crate::workload_leases::definition::Source::MicrophoneEnergy {
-                        parameters,
-                        ..
-                    } => parameters.max_blocks,
-                };
+                let blocks = definition.source.max_observations();
                 let bounds = StreamBounds {
                     max_frame_bytes: 1024,
                     max_stdout_bytes: python.limits().max_stdout_bytes.min(4 * 1024 * 1024),
-                    max_observations: u64::from(blocks),
+                    max_observations: blocks,
                     max_source_frames: definition.limits.max_source_frames,
                 };
                 bounds.validate(python.limits())?;

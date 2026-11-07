@@ -65,3 +65,31 @@ with a replaced-path canary and check bounded metadata, one open/release, no ret
 failure retention and no image payload. They use fake OpenCV/device APIs without
 installing OpenCV or touching a camera/network. Hosted verification is pending;
 these tests do not establish physical capture, admission or VLM/relay acceptance.
+
+## Reviewed definition and event integration in development
+
+The existing version-two workload definition now has a closed `camera_motion`
+source with the producer's exact motion parameters, node-qualified resource ID,
+private-resource digest and adapter digest. Private webcam/RTSP selection resolves
+only on the owning node. Local source duration cannot exceed the reviewed session;
+frame count, parameter ranges and existing memory/event/lease bounds apply.
+Microphone serialization and its sample-frame meaning remain unchanged. Older
+readers reject the new source/event kind; camera history requires a compatible
+reader and must never be relabeled or stripped to make a downgrade accept it.
+
+The existing event filter, payload-prefix checks, durable event journal and
+completion metadata validation now use the definition's observation shape.
+Camera observations count one valid image each, use motion levels `0..255`, and
+produce `camera_motion` events. Microphone activity keeps its original block stride,
+RMS range and kind. Discontinuities remain unknown, invalid observations retire
+the filter, and retained camera rows confer no source/restart authority. Generic
+review capability checks now derive `camera.capture` from camera intent.
+
+This integration does not yet expose camera execution: microphone preparation,
+microphone source inspection and typed microphone authoring explicitly refuse
+camera definitions. The camera-specific permission, listening, readiness,
+exclusive ownership, compatible peer negotiation and owned source runner still
+need integration before the existing command/compiler/lease path may launch one.
+Ten shared regressions cover binding/limits, event/prefix behavior, durable history
+reopen/no replay, old microphone shape and those refusal boundaries. Hosted
+verification is pending; no installer, installed node or runtime policy is changed.

@@ -119,7 +119,10 @@ impl SourceAdmission {
             resource_sha256,
             adapter_sha256,
             ..
-        } = &mut template.source;
+        } = &mut template.source
+        else {
+            panic!("Expected microphone fixture");
+        };
         *resource_id = source.resources[0].resource_id.clone();
         *resource_sha256 = source.resources[0].resource_sha256.clone().unwrap();
         *adapter_sha256 = source.adapter_sha256;
@@ -264,7 +267,10 @@ async fn continuous_origin_admission_refuses_changed_private_binding_adapter_and
             resource_sha256,
             adapter_sha256,
             ..
-        } = &mut template.source;
+        } = &mut template.source
+        else {
+            panic!("Expected microphone fixture");
+        };
         match fault {
             0 => *resource_sha256 = "a".repeat(64),
             1 => *adapter_sha256 = "b".repeat(64),

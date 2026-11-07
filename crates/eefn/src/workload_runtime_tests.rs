@@ -203,6 +203,25 @@ async fn consume(
 }
 
 #[test]
+fn microphone_preparation_refuses_camera_definition_before_resource_or_python_use() {
+    let f = Fixture::new(None);
+    let before = f.config();
+    let mut d = crate::workload_leases::definition::camera_tests::camera();
+    d.executor_node = f.definition.executor_node.clone();
+    if let Source::CameraMotion { resource_id, .. } = &mut d.source {
+        *resource_id = crate::context::resource_id(&d.executor_node, "camera");
+    }
+    d.validate().unwrap();
+    let error = f.service.prepare_microphone(&f.runtime, d).err().unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("Camera source execution is not supported by microphone preparation")
+    );
+    assert!(f.service.microphone_pool.reserve().is_ok());
+    assert_eq!(before, f.config());
+}
+#[test]
 fn preparation_owns_compiled_bytes_and_private_binding_without_opening_a_source() {
     let f = Fixture::new(None);
     let before = f.config();

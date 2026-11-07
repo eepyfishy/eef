@@ -122,7 +122,12 @@ pub fn concrete_capabilities(input: &PlanInput) -> Result<Vec<String>> {
     let steps = template_steps(&input.template)?;
     let mut capabilities = vec![steps[0].0.to_owned()];
     if input.template == crate::workload_leases::definition::TEMPLATE {
-        capabilities.push("audio.capture".into());
+        capabilities.push(
+            crate::workload_leases::definition::Template::from_params(&input.params)?
+                .source
+                .capability()
+                .into(),
+        );
     }
     if matches!(
         input.template.as_str(),

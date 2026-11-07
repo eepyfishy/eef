@@ -690,7 +690,9 @@ async fn disabled_policy_wrong_session_and_shared_quota_denials_leave_no_upgrade
     assert_eq!(version(&path), 2);
     let p = proof_for(&d, 50_000).await;
     let mut changed = d.clone();
-    let Source::MicrophoneEnergy { parameters, .. } = &mut changed.source;
+    let Source::MicrophoneEnergy { parameters, .. } = &mut changed.source else {
+        panic!("Expected microphone fixture");
+    };
     parameters.activation_level += 1;
     assert!(
         ledger

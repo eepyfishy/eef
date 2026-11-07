@@ -1,6 +1,6 @@
 //! Node-owned source snapshots for review, never capture or execution authority.
 use crate::workload_leases::definition::microphone_resource_digest;
-use anyhow::{Result, ensure};
+use anyhow::{Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -10,6 +10,10 @@ use std::collections::HashSet;
 /// rather than reopening a path whose contents may change after inspection.
 pub(crate) const MICROPHONE_SOURCE: &[u8] =
     include_bytes!("../../../python/streams/microphone_energy.py");
+pub(crate) const CAMERA_SOURCE: &[u8] = include_bytes!("../../../python/streams/camera_motion.py");
+pub fn camera_adapter_digest() -> String {
+    hex::encode(Sha256::digest(CAMERA_SOURCE))
+}
 pub fn microphone_adapter_digest() -> String {
     hex::encode(Sha256::digest(MICROPHONE_SOURCE))
 }
@@ -147,7 +151,10 @@ impl Report {
             resource_sha256,
             adapter_sha256,
             ..
-        } = &template.source;
+        } = &template.source
+        else {
+            bail!("Camera source inspection is not supported by the microphone endpoint")
+        };
         ensure!(
             self.local_bindings_current
                 && self.adapter_sha256 == *adapter_sha256

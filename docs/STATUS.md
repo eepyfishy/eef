@@ -3,6 +3,21 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: camera definitions and durable event semantics
+
+The existing workload source definition now binds exact camera motion parameters,
+resource and adapter digests. Camera event filtering, prefix validation, journal
+history and completion metadata use a one-image observation stride and motion
+levels `0..255`, with their own event kind. Private endpoints remain node-local;
+microphone serialization/meaning and existing bounds remain. Ten new regressions
+cover private binding and limits, camera transitions/uncertainty, payload/persisted
+history, no replay and explicit refusal from microphone-only paths. Old microphone
+fixtures now assert their source variant without changing their assertions.
+Full hosted verification is required. Camera execution remains unavailable until
+permission/listening/resource ownership/readiness/peer compatibility and its owned
+runner are integrated, followed by command authoring and VLM/relay workflows.
+See [camera integration boundaries](CAMERA-MOTION.md).
+
 ## In development: archive fixture ordering under the original short policy
 
 Camera source run `42242697692` failed two existing occurrence-archive tests in

@@ -24,20 +24,16 @@ pub struct Report {
 }
 impl Report {
     pub(super) fn validate(&self, receipt: &Receipt) -> Result<()> {
-        let crate::workload_leases::definition::Source::MicrophoneEnergy {
-            parameters,
-            adapter_sha256,
-            ..
-        } = &receipt.definition.source;
         ensure!(
             matches!(
                 (self.schema_version, &self.event_payload_prefix_sha256),
                 (1, None) | (2, Some(_))
             ) && self.grant_sha256 == receipt.definition.scope()?.grant_sha256
-                && self.adapter_sha256 == *adapter_sha256
-                && self.source_observations == u64::from(parameters.max_blocks)
+                && self.adapter_sha256 == receipt.definition.source.adapter_sha256()
+                && self.source_observations == receipt.definition.source.max_observations()
                 && self.source_frames
-                    == self.source_observations * u64::from(parameters.block_frames)
+                    == self.source_observations
+                        * receipt.definition.source.frames_per_observation()
                 && self.source_frames <= receipt.definition.limits.max_source_frames
                 && self.event_count > 0
                 && self.event_count <= receipt.definition.events.max_events
@@ -208,15 +204,11 @@ pub(super) fn save(
             "Workload completion refused; inspect the retained receipt"
         )));
     }
-    let crate::workload_leases::definition::Source::MicrophoneEnergy {
-        parameters,
-        adapter_sha256,
-        ..
-    } = &receipt.definition.source;
     ensure!(
-        evidence.adapter_sha256 == *adapter_sha256
-            && evidence.observations == u64::from(parameters.max_blocks)
-            && evidence.frames == evidence.observations * u64::from(parameters.block_frames),
+        evidence.adapter_sha256 == receipt.definition.source.adapter_sha256()
+            && evidence.observations == receipt.definition.source.max_observations()
+            && evidence.frames
+                == evidence.observations * receipt.definition.source.frames_per_observation(),
         "Observed workload source differs from its consumed definition"
     );
     let (count, bytes, prefix, last, sequence) = event_journal::completion_prefix(&tx, &receipt)?;

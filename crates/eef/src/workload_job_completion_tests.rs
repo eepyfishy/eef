@@ -9,7 +9,10 @@ fn completed_receipt(
         parameters,
         adapter_sha256,
         ..
-    } = &d.source;
+    } = &d.source
+    else {
+        panic!("Expected microphone fixture");
+    };
     let mut receipt = ack.receipt.clone();
     receipt.state = "completed".into();
     receipt.updated_at_ms += 1;

@@ -13,7 +13,10 @@ async fn fixture(
     let ledger = GrantLedger::open(path, Default::default(), "owner").unwrap();
     let mut d = definition();
     let crate::workload_leases::definition::Source::MicrophoneEnergy { parameters, .. } =
-        &mut d.source;
+        &mut d.source
+    else {
+        panic!("Expected microphone fixture");
+    };
     parameters.max_blocks = 2;
     d.limits.max_source_frames = 160;
     let proof = proof_for(&d, remaining_ms).await;
@@ -67,7 +70,10 @@ async fn fixture(
         .await
         .unwrap();
     let crate::workload_leases::definition::Source::MicrophoneEnergy { adapter_sha256, .. } =
-        &d.source;
+        &d.source
+    else {
+        panic!("Expected microphone fixture");
+    };
     let evidence = Evidence {
         contract,
         boundary: finished.boundary,

@@ -16,6 +16,22 @@ fn command() -> MicrophoneCommand {
     .command()
     .unwrap()
 }
+#[test]
+fn microphone_intent_cannot_be_relabelled_as_a_camera_workload() {
+    let mut d = crate::workload_leases::definition::camera_tests::camera();
+    let input = command().input;
+    if let Source::CameraMotion { resource_id, .. } = &mut d.source {
+        *resource_id = crate::context::resource_id(&d.executor_node, "camera");
+    }
+    let error = input
+        .concrete(&d.template(), Some(&d.executor_node))
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Microphone intent cannot bind a camera workload")
+    );
+}
 fn snapshot(node: &str) -> crate::workload_sources::Report {
     serde_json::from_value(json!({"schema_version":2,"report_type":"workload_sources","success":true,
         "node_id":node,"runtime_id":uuid::Uuid::new_v4().to_string(),"source_kind":"microphone_energy",
