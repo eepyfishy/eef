@@ -12,8 +12,13 @@ camera selection, with only `cv2` simulated inside its disposable venv. The
 shipping source/host bytes remain unchanged. Camera completion requires five
 durable observations; the original microphone test still requires four. Both
 retain exact payload-prefix and node-receipt comparisons, lease renewal, owned
-exit, no replay after uncertainty and separately approved source reuse. Hosted
-verification of this extension is pending; no physical camera is opened.
+exit, no replay after uncertainty and separately approved source reuse. The
+extension passes at `1943155` in the complete
+[four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42391526288),
+including 1,600 Windows/headless Rust tests plus one ignored test, all 36 native
+suites and the original additional gates. No physical camera is opened. The
+separate five-event node-native completion rejection in `42388092617` remains
+retained; later passes do not establish its cause or general physical reliability.
 
 The origin-admission follow-up replaces direct test-helper review creation and
 owner compilation with the actual concrete-input mailbox. Its built-in source

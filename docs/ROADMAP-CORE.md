@@ -20,6 +20,19 @@ change the current stable v0.4.0 implementation and acceptance requirements.
 
 ## Direction and policy changes
 
+The command-startup and camera checkpoint `1943155` passes the complete
+[four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42391526288):
+Windows/headless ran 1,600 Rust tests plus one ignored test, 36 native suites and
+the original extra gates.
+Separately constructed service options pass the unchanged one-MiB parser and real
+first-run workflow. Camera authoring/setup and approved remote setup commands,
+plus the synthetic full coordinator/source completion, stop and reconnect path,
+pass without browser control. Private help environment values are hidden.
+See [current status](STATUS.md) for exact evidence and retained failures. This is
+development-source acceptance; physical media/two-PC, VLM triggers, relays/quotas,
+model quality/onboarding, general continuous/strong-stop, mesh/optimization/cluster
+and installer/security/stable-release requirements remain open.
+
 The [conditional-stage increment](CONDITIONAL-PIPELINES.md) is in development as
 an event-gating prerequisite. It keeps finite grant/permission/deadline rules,
 reserves every possible provider and reports explicit skips instead of running

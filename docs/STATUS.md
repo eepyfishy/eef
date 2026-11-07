@@ -3,6 +3,38 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Accepted development checkpoint: command startup and camera workflows
+
+Source `1943155` passes the complete [four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42391526288).
+The preceding construction change `166a888` also passes its
+[four-job run](https://github.com/eepyfishy/eef/actions/runs/42391002877).
+The final Windows/headless raw output reconciles 1,600 Rust tests plus one
+pre-existing ignored test across 17 groups, all 36 native suites, the extra
+connection-close case, listening, managed first-run and 63 firewall mock cases.
+
+The unchanged one-MiB parser thread completes all 11 valid cases and six
+help/version/error cases through both parsers. Actual service startup, stable
+identity/hostname, initial registration, explicit private enrollment and restart
+checks pass. Separate service-option construction resolves the reproduced
+command-tree startup overflow in these runs; earlier boxing and in-place-parser
+candidates remain failed evidence. Executable help also passes the private
+environment-value check without creating node settings.
+
+Camera authoring, passive inspection, local setup and approved remote setup
+commands pass. The full camera coordinator lifecycle test passes completion,
+explicit stop, disconnect/reconnect and separately approved reuse through the
+shipping source adapter with a simulated device dependency. Exact durable event
+prefixes, node receipts, lease renewal, owned exit and no replay remain required.
+This accepts the exact automated development source, not physical media or PCs.
+The earlier five-event camera completion rejection is retained; its underlying
+cause is not proven by subsequent passing runs.
+
+Model quality/default selection and complete onboarding, VLM triggers, relays and
+aggregate quotas, general continuous/sensor work and strong stop, mesh,
+optimization/cluster, physical acceptance, installer recovery/signing/Defender/
+firewall lifecycle and stable-release acceptance remain open. No main promotion,
+release, update feed or installed node was changed for this checkpoint.
+
 ## In development: keep private environment values out of node help
 
 The pairing-key and Ollama-URL options now hide their environment values in
