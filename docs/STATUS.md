@@ -41,21 +41,34 @@ source. Remote checks require current owner management approval and a pinned
 credential/session/runtime. Runtime retirement fences results and owned-process
 cleanup retains source ownership until observed exit.
 
-Hosted verification of this increment is pending. Its new fixtures use the
-existing hashed OpenCV/NumPy Windows lock in a disposable interpreter, a separate
-empty interpreter for missing dependencies, real shipping CLI/API commands and
-owner-limit observations. The 128 MiB default is measured separately from an
-explicit 512 MiB check; no camera workload memory default is changed. None of
-this proves physical media, real streaming decode, an installer or stable release
-acceptance. The accepted checkpoint above remains the current runtime evidence.
+Dependency-check source `d7a7f1e` passed the complete
+[four-job run](https://github.com/eepyfishy/eef/actions/runs/42460360166), independently
+reconciled as 1,611 Windows/headless Rust tests plus one ignored test, 17 unfiltered
+groups, all 37 native command suites and the existing extra gates. Actual shipping
+CLI/API checks pass with the hashed OpenCV/NumPy Windows lock and with a separate
+empty interpreter for missing dependencies. The 128 MiB default passed the small
+in-memory image check; an explicit 512 MiB check and tighter owner limits also pass.
+No camera workload memory default changes. This accepts dependency operations,
+not physical media, streaming decode, an installer or stable release acceptance.
 
 The following command-coverage increment also exercises the actual eef CLI over
 a privately paired TLS node connection with real camera dependencies and browser
 pages disabled. It requires a successful typed result and readable plain output,
 refuses the legacy connection and absent/revoked owner approval, and verifies
 that capture permission stays disabled and checks do not rewrite node settings.
-This new coverage is pending hosted verification; a backend adapter test alone
-does not establish the successful public coordinator command path.
+Its actual native command suite passed at `6faacac`, including JSON/plain output
+and current owner approval/revocation. That complete run failed the separate new
+real-decoder Rust test, so aggregate source acceptance is not established there.
+A backend adapter test alone does not establish the successful public coordinator
+command path, and a passing native suite does not override that decoder failure.
+
+The decoder failures at `3ead6df` and `6faacac` stop after encoding generated input
+and before opening the source. Review of the pinned OpenCV FFmpeg implementation
+found an unsupported `CAP_PROP_AUDIO_STREAM` open option in the producer. The
+compatibility fix removes that option while preserving video-only behavior and
+open/read timeouts; the fixture reproduces the rejected old options as a control.
+Historical source pins stay unchanged and cannot execute substituted code.
+Full hosted verification of this fix remains pending; see [camera details](CAMERA-MOTION.md).
 
 ## Native camera command lifecycle observed; full acceptance still failed
 

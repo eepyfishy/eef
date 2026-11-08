@@ -82,10 +82,12 @@ def stream(action, params):
     try:
         check_time()
         if isinstance(device, str):
+            # The selected FFmpeg backend is video-only. Its unused-parameter
+            # guard rejects CAP_PROP_AUDIO_STREAM even with the disabled value;
+            # retain its video-only default rather than sending that option.
             capture = cv2.VideoCapture(device, cv2.CAP_FFMPEG, [
                 cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, io_timeout,
-                cv2.CAP_PROP_READ_TIMEOUT_MSEC, io_timeout,
-                cv2.CAP_PROP_AUDIO_STREAM, -1])
+                cv2.CAP_PROP_READ_TIMEOUT_MSEC, io_timeout])
         else:
             capture = cv2.VideoCapture(device)
         check_time()

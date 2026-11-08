@@ -119,13 +119,13 @@ class MotionTests(unittest.TestCase):
             next(source)
         self.assertEqual(camera.closed, 1)
 
-    def test_rtsp_timeout_hints_and_audio_disable_are_supplied_once_without_fallback(self):
+    def test_rtsp_uses_supported_video_timeout_hints_once_without_fallback(self):
         camera = fake.Camera([], opened=False)
         endpoint = "rtsp://private-user:private-secret@camera.invalid/live"
         source = self.source(camera, device=endpoint)
         with self.assertRaisesRegex(RuntimeError, "camera motion unavailable"):
             next(source)
-        self.assertEqual(camera.calls, [(endpoint, 1900, [53, 2000, 54, 2000, 58, -1])])
+        self.assertEqual(camera.calls, [(endpoint, 1900, [53, 2000, 54, 2000])])
         self.assertEqual((camera.creations, camera.closed, camera.reads), (1, 1, 0))
 
     def test_parameters_are_strict_before_capture(self):

@@ -53,9 +53,22 @@ previous grayscale sample remains local; this is not an offline video cache.
 
 All parameters reject wrong types, unknown fields and invalid bounds before
 device creation. File paths and other URI protocols are refused. RTSP uses the
-explicit FFmpeg backend with open/read timeout parameters and audio disabled;
-unsupported environments fail without a fallback. See OpenCV's
-[capture parameters](https://docs.opencv.org/4.12.0/d4/d15/group__videoio__flags__base.html).
+explicit FFmpeg backend with open/read timeout parameters and its video-only
+default. Unsupported environments fail without a fallback. The pinned OpenCV
+[FFmpeg implementation](https://github.com/opencv/opencv/blob/9e2ede9628a55ec2742a1b180d3e69b0322281b9/modules/videoio/src/cap_ffmpeg_impl.hpp)
+does not consume `CAP_PROP_AUDIO_STREAM` and rejects unused open parameters.
+Supplying that option, even with `-1`, prevented opening the real decoder. The
+compatibility fix removes that unused option while retaining both timeouts and
+the video-only behavior; it adds no audio permission or processing. OpenCV's
+[property contract](https://github.com/opencv/opencv/blob/9e2ede9628a55ec2742a1b180d3e69b0322281b9/modules/videoio/include/opencv2/videoio.hpp)
+also documents audio processing as disabled by default. The generated-video
+fixture now requires the original option list to fail as a control and the
+corrected producer to decode successfully. Hosted verification of the fix is
+pending; the two earlier decoder failures remain retained.
+The source-byte fix changes the built-in adapter digest. Historical definitions
+keep their original digest and remain readable; execution still requires the
+exact reviewed source bytes. Inspect the current source and review a new request
+instead of changing an older receipt or substituting code under an old approval.
 The private endpoint must eventually come from an owner-approved resource binding,
 not an arbitrary request field passed through the coordinator.
 

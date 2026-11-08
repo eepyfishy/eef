@@ -38,14 +38,26 @@ finally:
 _eef_decode_log("encoded")
 _eef_decode_capture = _eef_decode_cv.VideoCapture
 
+# Reproduce the original failure on the same pinned backend and generated file.
+# This is a test control, not a source fallback or a second camera acquisition.
+_eef_decode_rejected = _eef_decode_capture(str(_eef_decode_video), _eef_decode_cv.CAP_FFMPEG, [
+    _eef_decode_cv.CAP_PROP_OPEN_TIMEOUT_MSEC, 2000,
+    _eef_decode_cv.CAP_PROP_READ_TIMEOUT_MSEC, 2000,
+    _eef_decode_cv.CAP_PROP_AUDIO_STREAM, -1])
+try:
+    assert not _eef_decode_rejected.isOpened(), "Review changed FFmpeg audio-option support"
+finally:
+    _eef_decode_rejected.release()
+_eef_decode_log("unsupported_audio_rejected")
+
 
 class _eef_decode_Device:
     def __init__(self, device, backend, parameters):
         assert device == "rtsp://owner:PRIVATE_CAMERA_PASSWORD@camera.invalid:554/live"
         assert backend == _eef_decode_cv.CAP_FFMPEG
         assert parameters == [_eef_decode_cv.CAP_PROP_OPEN_TIMEOUT_MSEC, 2000,
-                              _eef_decode_cv.CAP_PROP_READ_TIMEOUT_MSEC, 2000,
-                              _eef_decode_cv.CAP_PROP_AUDIO_STREAM, -1]
+                              _eef_decode_cv.CAP_PROP_READ_TIMEOUT_MSEC, 2000]
+        _eef_decode_log("parameters_validated")
         self.capture = _eef_decode_capture(str(_eef_decode_video), backend, parameters)
         assert self.capture.isOpened(), "Synthetic encoded-video decoder unavailable"
         _eef_decode_log("opened")

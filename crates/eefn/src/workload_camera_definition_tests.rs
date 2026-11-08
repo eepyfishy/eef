@@ -70,6 +70,28 @@ fn camera_definition_binds_private_source_without_advertising_endpoint_or_grant(
     );
     assert_eq!(d.source.capability(), "camera.capture");
     assert_eq!(d.source.frames_per_observation(), 1);
+    // Definitions recorded before the FFmpeg compatibility fix retain their
+    // reviewed code identity. Passive decoding is allowed; execution cannot
+    // silently substitute the new built-in producer for those old source bytes.
+    let mut historical = d.clone();
+    if let Source::CameraMotion { adapter_sha256, .. } = &mut historical.source {
+        *adapter_sha256 = "4b50d35d88497baef0158a56d9f62c41779521cdb91cbac2d7368b3529e05589".into();
+    }
+    assert_ne!(
+        historical.source.adapter_sha256(),
+        d.source.adapter_sha256()
+    );
+    let historical: Definition = serde_json::from_value(json!(historical)).unwrap();
+    historical.validate().unwrap();
+    assert_eq!(
+        historical.source.adapter_sha256(),
+        "4b50d35d88497baef0158a56d9f62c41779521cdb91cbac2d7368b3529e05589"
+    );
+    assert!(
+        historical
+            .bound_python_parameters(&r, crate::workload_sources::CAMERA_SOURCE)
+            .is_err()
+    );
     let mut disabled = r.clone();
     disabled.available = false;
     assert!(

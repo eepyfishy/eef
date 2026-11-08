@@ -125,6 +125,20 @@ async fn native_camera_real_decoder_persists_motion_and_keeps_truncated_input_un
         drop(events);
         let kinds = trace_kinds(trace.path());
         assert_eq!(kinds.iter().filter(|k| *k == "encoded").count(), 1);
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|k| *k == "unsupported_audio_rejected")
+                .count(),
+            1
+        );
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|k| *k == "parameters_validated")
+                .count(),
+            1
+        );
         assert_eq!(kinds.iter().filter(|k| *k == "opened").count(), 1);
         assert_eq!(kinds.iter().filter(|k| *k == "closed").count(), 1);
         assert_eq!(kinds.iter().filter(|k| *k == "read").count(), frames);
