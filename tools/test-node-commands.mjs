@@ -56,14 +56,18 @@ try {
   await writeFile(config,JSON.stringify(saved));
   const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
   const eefConfig=join(scratch,'eef.yaml');await writeFile(eefConfig,yaml);
-  const startCoordinator=()=>launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain'],{EEF_NODE_PSK:secret});
+  // Exercise ordinary coordinator startup with no models; model-free core
+  // acceptance must not depend on the special --no-brain troubleshooting flag.
+  const startCoordinator=()=>launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db')],{EEF_NODE_PSK:secret});
   let coordinator=startCoordinator();
   await until(async()=>(await json(eef+'/api/diagnostics')).initialized===true,'coordinator initialized before node start');
   const emptyReport=await json(eef+'/api/diagnostics');
+  assert.equal(emptyReport.brain_alive,true,'ordinary startup retains core services without a model');
   for(const field of ['node_event_loss_count','assistant_event_loss_count','world_event_loss_count'])assert.equal(emptyReport[field],0,field);
   assert(emptyReport.node_state_reconciliation_count>=1);
   assert.equal(emptyReport.world_state_may_be_stale,false);assert.equal(emptyReport.world_rules_suspended,false);
   for(const field of ['connected_node_count','registered_node_count','registration_pending_node_count','remote_provider_count','healthy_remote_provider_count','model_count'])assert.equal(emptyReport[field],0,field);
+  console.log('Model-free default coordinator startup validation passed');
   launch('eefn',['--config',config,'--no-ui']);
   await until(async()=>(await json(api+'/api/status')).connection?.state==='connected','headless node connected');
   assert.equal((await fetch(api+'/')).status,404);
