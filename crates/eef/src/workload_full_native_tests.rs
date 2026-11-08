@@ -138,12 +138,15 @@ async fn full_source_plan(
     client: &reqwest::Client,
     base: &str,
     kind: FullSourceKind,
+    phase: &str,
 ) -> Plan {
+    let started = std::time::Instant::now();
+    let operation_id = uuid::Uuid::new_v4().to_string();
     let mut template = Template::from_params(&template_input().params).unwrap();
     template.limits.max_source_frames = 400;
-    let result = if kind.camera() {
+    let (result, confirmed) = if kind.camera() {
         let submission = eefn::camera_submission::CameraCommand {
-            operation_id: uuid::Uuid::new_v4().to_string(),
+            operation_id: operation_id.clone(),
             input: eefn::camera_submission::CameraInput {
                 schema_version: 1,
                 original_text: "Observe camera motion for an explicitly bounded session".into(),
@@ -175,14 +178,11 @@ async fn full_source_plan(
             })
             .await
             .unwrap();
-        assert!(
-            eefn::camera_submission::confirmed_node(&result, "origin", &submission),
-            "Origin camera submission failed: {result}"
-        );
-        result
+        let confirmed = eefn::camera_submission::confirmed_node(&result, "origin", &submission);
+        (result, confirmed)
     } else {
         let submission = eefn::microphone_submission::MicrophoneCommand {
-            operation_id: uuid::Uuid::new_v4().to_string(),
+            operation_id: operation_id.clone(),
             input: eefn::microphone_submission::MicrophoneInput {
                 schema_version: 1,
                 original_text: "Observe microphone activity for an explicitly bounded session"
@@ -211,20 +211,45 @@ async fn full_source_plan(
             })
             .await
             .unwrap();
-        assert_eq!(
-            result["success"], true,
-            "Origin submission failed: {result}"
-        );
-        assert!(eefn::microphone_submission::confirmed_node(
+        let confirmed = eefn::microphone_submission::confirmed_node(
             &result,
             "origin",
             &submission
-        ));
-        result
+        );
+        (result, confirmed)
     };
+    let observation = if result["success"] != true || !confirmed {
+        // Failure-only, read-only inspection. Never resubmit, compile, approve,
+        // infer or inspect a device to improve a failed authoring outcome.
+        let plans = runtime.engine.store.list();
+        let store_readable = plans.is_ok();
+        let retained: Vec<_> = plans.unwrap_or_default().into_iter().filter(|p| {
+            p.goal.request_context.as_ref().is_some_and(|c| {
+                c.origin_node() == "origin" && c.request_id() == operation_id.as_str()
+            })
+        }).take(2).map(|p| json!({
+            "revision":p.revision,"status":p.status,"review_present":p.request_review.is_some(),
+            "compiled":p.planning.is_some(),"execution_present":p.execution.is_some()
+        })).collect();
+        let code = result["error_code"].as_str().filter(|code| matches!(*code,
+            "microphone_authoring_unconfirmed" | "microphone_authoring_not_sent" |
+            "camera_authoring_unconfirmed" | "camera_authoring_not_sent"
+        )).unwrap_or("other_or_missing");
+        json!({"source":if kind.camera(){"camera"}else{"microphone"},"phase":phase,
+            "elapsed_ms":started.elapsed().as_millis(),"node_error_code":code,
+            "coordinator_acknowledged":result["coordinator_acknowledged"]==true,
+            "outcome_unknown":result["outcome_unknown"]==true,"report_confirmed":confirmed,
+            "input_channel":service.submissions.state(),"store_readable":store_readable,
+            "source_snapshot_present":runtime.node_server.node_state("origin").await.is_some(),
+            "source_session_present":runtime.node_server.grant_session("origin").await.is_ok(),
+            "retained_checkpoints":retained})
+    } else {
+        serde_json::Value::Null
+    };
+    assert!(confirmed, "Origin submission report was unconfirmed: {observation}");
     assert_eq!(
         result["success"], true,
-        "Origin submission failed: {result}"
+        "Origin submission failed: {observation}"
     );
     let id = result["result"]["result"]["plan"]["id"].as_str().unwrap();
     let planned = runtime.engine.store.get(id).unwrap();
@@ -458,7 +483,7 @@ async fn full_source_cases(kind: FullSourceKind) {
             !engine.capabilities().contains(&kind.capability().into()),
             "Built-in source admission must not depend on the one-shot plugin"
         );
-        let plan = full_source_plan(&runtime, &service, &http, &base, kind).await;
+        let plan = full_source_plan(&runtime, &service, &http, &base, kind, mode).await;
         let command = execute(&plan);
         assert!(
             !trace.join("pids.json").exists(),
@@ -609,7 +634,8 @@ async fn full_source_cases(kind: FullSourceKind) {
             let next_trace = dir.path().join("next-trace");
             std::fs::create_dir(&next_trace).unwrap();
             full_source_dependency(&python, &next_trace, "finite", kind);
-            let next = full_source_plan(&runtime, &service, &http, &base, kind).await;
+            let phase = if mode == "stop" { "stop_reuse" } else { "reconnect_reuse" };
+            let next = full_source_plan(&runtime, &service, &http, &base, kind, phase).await;
             let next_command = execute(&next);
             full_source_post(&http,&base,"/api/commands/requests/execute",json!({"schema_version":1,"expected_runtime_id":runtime.runtime_id(),"command":next_command})).await;
             let completed = full_source_finish(&runtime, &next, &next_trace, kind).await;

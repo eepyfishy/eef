@@ -1,5 +1,14 @@
 # Combined workload command and source acceptance
 
+At `98b9576`, run `42429344635` passed the complete native shipping-command camera
+lifecycle and all 36 command suites plus the additional gates. The overall run
+still failed its separate Rust microphone lifecycle fixture during origin
+authoring, before execution. The three other jobs passed. Keep this failed run as
+evidence; command-level camera success does not override a workspace failure.
+Failure-only read-only checkpoint/phase diagnostics have been added to the shared
+library fixture, with its original assertions, deadlines and no-retry requirements
+unchanged. The microphone failure's underlying cause is not established.
+
 A subsequent source audit also found that the 1,000-event command default exceeded
 fresh journal capacity after conservative row/index/page reservations. The shared
 default is now 100 events; larger limits remain explicit and configurable. A real

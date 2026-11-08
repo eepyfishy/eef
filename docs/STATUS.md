@@ -3,6 +3,28 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Native camera command lifecycle observed; full acceptance still failed
+
+At `98b9576`, run `42429344635` passed all 36 Windows command suites, the additional
+connection-close case, listening and firewall mock gates. The shipping-command
+camera fixture passed owner approval, origin execution, five durable events with
+an independently reconstructed payload checksum, stop/restart uncertainty and
+separately approved source reuse without replay. It used a simulated device.
+
+The full run failed a separate Windows/headless Rust microphone integration test
+before execution: origin authoring returned an unconfirmed result. The other three
+jobs passed. That failure is retained, and this is not complete development-source,
+physical-media or stable-release acceptance. The preceding byte-limit-only source
+also failed before camera consumption, at the node's consumption stage.
+
+The shared library fixture now adds failure-only, read-only diagnostics for source
+kind and lifecycle phase, elapsed time, input-channel/session snapshots and matching
+retained review/compilation/execution checkpoint flags. It reports no private
+source binding, credential, model output, raw error or request text. Every original
+submission/approval/execution/receipt assertion and deadline remains required;
+no submission is retried. The underlying microphone failure remains unproven.
+The development camera walkthrough is now included with this source.
+
 ## In development: admit command defaults within journal reservations
 
 While the 64-KiB payload-default correction is under hosted verification, a source
