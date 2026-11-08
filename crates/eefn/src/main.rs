@@ -1026,6 +1026,60 @@ async fn execute_microphone_command(
     Ok(exchange.unwrap_or_else(|_| unavailable(&file.node_id, command, true)))
 }
 
+async fn execute_interpret_saved(
+    args: &Args,
+    command: eefn::request_interpretation::Command,
+) -> Result<serde_json::Value> {
+    command.validate()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; interpretation never launches a runtime");
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let budget = eefn::inference_budget::InferenceBudget::new(command.inference_timeout_seconds)
+        .map_err(|_| anyhow::anyhow!("Invalid interpretation timeout"))?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(budget.extend_seconds(90, 1)))
+        .build()?;
+    let runtime =
+        eefn::credential_pairing::wait_for_runtime(&client, address, &file.node_id).await?;
+    let request = eefn::request_interpretation::Request {
+        schema_version: 1,
+        expected_node_id: file.node_id,
+        expected_runtime_id: runtime,
+        command,
+    };
+    request.validate()?;
+    let exchange = async {
+        let response = client
+            .post(format!(
+                "http://{address}/api/commands/requests/interpret-saved"
+            ))
+            .json(&request)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Saved interpretation API refused or unavailable");
+        }
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::saved_input::confirmed(&value, &request) {
+            bail!("Saved interpretation reply was not confirmed");
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| eefn::saved_input::unconfirmed(&request)))
+}
+
 async fn execute_save_input(
     args: &Args,
     command: eefn::request_intent::Command,
@@ -2739,6 +2793,23 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
+            eefn::request_preview::RequestAction::InterpretSaved {
+                id,
+                operation_id,
+                inference,
+            } => {
+                execute_interpret_saved(
+                    args,
+                    eefn::request_interpretation::Command {
+                        id: id.clone(),
+                        operation_id: operation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                        inference_timeout_seconds: inference.inference_timeout_seconds,
+                    },
+                )
+                .await
+            }
             eefn::request_preview::RequestAction::SaveInput { text, operation_id } => {
                 execute_save_input(
                     args,
@@ -3431,6 +3502,13 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     print!("{}", eefn::local_setup::render(&value)?);
                 } else if matches!(command, Commands::Setup { .. }) {
                     print!("{}", eefn::setup_check::render(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::InterpretSaved { .. }
+                    }
+                ) {
+                    print!("{}", eefn::saved_input::render(&value)?);
                 } else if matches!(
                     command,
                     Commands::Requests {
@@ -5196,6 +5274,12 @@ mod tests {
                         "--text",
                         "Save before model setup",
                     ],
+                    vec![
+                        "eefn",
+                        "requests",
+                        "interpret-saved",
+                        "00112233445566778899aabbccddeeff",
+                    ],
                     vec!["eefn", "requests", "submit-microphone"],
                     vec!["eefn", "requests", "submit-camera"],
                     vec![
@@ -5329,6 +5413,45 @@ mod tests {
             supervise_runtime(async { Ok(()) }, std::future::pending(), stop).await;
         result.unwrap();
         assert_eq!(reason, None);
+    }
+    #[test]
+    fn interpret_saved_cli_pins_an_existing_job_without_json_or_execution_flags() {
+        let id = "00112233445566778899aabbccddeeff";
+        let Some(Commands::Requests {
+            command:
+                eefn::request_preview::RequestAction::InterpretSaved {
+                    id: parsed,
+                    operation_id,
+                    inference,
+                },
+        }) = Args::try_parse_from([
+            "eefn",
+            "requests",
+            "interpret-saved",
+            id,
+            "--inference-timeout-seconds",
+            "30",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("wrong saved-input command")
+        };
+        assert_eq!(parsed, id);
+        assert!(operation_id.is_none());
+        assert_eq!(inference.inference_timeout_seconds, Some(30));
+        for extra in [
+            vec!["--model", "other"],
+            vec!["--backend", "ollama"],
+            vec!["--execute"],
+            vec!["--approve"],
+            vec!["--permissions", "all"],
+            vec!["--file", "input.json"],
+        ] {
+            let mut args = vec!["eefn", "requests", "interpret-saved", id];
+            args.extend(extra);
+            assert!(Args::try_parse_from(args).is_err());
+        }
     }
     #[test]
     fn save_input_cli_cannot_select_a_model_or_authorize_work() {

@@ -34,9 +34,23 @@ If the save outcome is unknown, inspect the operation before deciding to resend;
 the command never automatically retries. JSON output and detailed job inspection
 contain the original private text, while the concise save confirmation does not.
 
-This command does not yet interpret saved input, and `requests input` still uses
-its existing selected local interpreter. Automatic network interpretation needs
-the remaining [delegation work](NETWORK-INTERPRETER.md).
+The explicit local interpretation follow-up is in development and awaiting
+hosted verification:
+
+    eefn requests interpret-saved REQUEST_ID
+    eefn requests interpret-saved REQUEST_ID --inference-timeout-seconds 30
+
+It reads and pins the saved source, then checkpoints exact local interpreter
+ownership before one bounded model call. A validated proposal becomes review
+under the same request ID. Preparation, owner approval and execution remain
+separate. Existing or uncertain attempts are inspection only, including after
+restart or model-role withdrawal. JSON contains private source/review text;
+plain output provides status and any currently unanswered question. Missing
+models leave the raw input available and do not disable core services.
+
+`requests input` still uses its existing selected local interpreter flow and is
+not yet raw-first. Automatic remote interpretation still needs the remaining
+[delegation work](NETWORK-INTERPRETER.md).
 
 ## Continuous source inspection (in development)
 

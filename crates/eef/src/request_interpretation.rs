@@ -1,58 +1,10 @@
 //! Initial interpretation ownership in the existing job journal. Never a grant.
 use crate::task::{Plan, PlanStatus};
 use anyhow::{Context, Result, ensure};
-use eefn::{context::RequestContext, interpretation::Proposal, request_intent::Input};
-use serde::{Deserialize, Serialize};
+use eefn::interpretation::Proposal;
+pub use eefn::request_interpretation::{Claim, Record, State};
 use serde_json::json;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Claim {
-    pub id: String,
-    pub expected_revision: u64,
-    pub source_sha256: String,
-    pub operation_id: String,
-    pub origin_runtime_id: String,
-}
-impl Claim {
-    fn validate(&self) -> Result<()> {
-        eefn::request_drafts::validate_id(&self.id)?;
-        eefn::job_commands::validate_operation_id(&self.operation_id)?;
-        eefn::automation_occurrence::uuid(&self.origin_runtime_id)?;
-        ensure!(
-            self.expected_revision > 0,
-            "Missing interpretation source revision"
-        );
-        ensure!(
-            self.source_sha256.len() == 64
-                && self
-                    .source_sha256
-                    .bytes()
-                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
-            "Invalid interpretation source digest"
-        );
-        Ok(())
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum State {
-    Claimed,
-    Unknown,
-    Promoted,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Record {
-    pub schema_version: u32,
-    pub claim: Claim,
-    pub input: Input,
-    pub request_context: RequestContext,
-    pub claimed_at_ms: u64,
-    pub state: State,
-    pub promoted_revision: Option<u64>,
-    pub proposal_sha256: Option<String>,
-}
 pub(crate) enum Transition {
     Claim(Claim),
     Promote {
@@ -63,11 +15,102 @@ pub(crate) enum Transition {
     Interrupt,
 }
 
+fn checkpoint(plan: &Plan, reused: bool) -> Result<serde_json::Value> {
+    let record = plan
+        .input_interpretation
+        .as_deref()
+        .context("Missing interpretation checkpoint")?
+        .clone();
+    let report = eefn::request_interpretation::Checkpoint {
+        schema_version: 1,
+        report_type: "coordinator_input_interpretation".into(),
+        success: true,
+        id: plan.plan_id.clone(),
+        revision: plan.revision,
+        status: serde_json::to_value(plan.status)?
+            .as_str()
+            .context("Invalid request status")?
+            .into(),
+        operation_id: record.claim.operation_id.clone(),
+        record: record.clone(),
+        reused,
+        draft: plan.request_review.clone(),
+        inference_authorized: false,
+        execution_authorized: false,
+        dispatched: false,
+    };
+    report.validate(&record.claim, record.request_context.origin_node())?;
+    Ok(json!(report))
+}
+fn local_binding(claim: &Claim, context: &eefn::context::RequestContext) -> Result<()> {
+    ensure!(
+        claim.operation_id == context.request_id(),
+        "Interpretation receipt differs from authenticated operation"
+    );
+    let interpreter = claim
+        .interpreter
+        .as_ref()
+        .context("Missing interpreter binding")?;
+    ensure!(
+        interpreter.node_id == context.origin_node()
+            && interpreter.runtime_id == claim.origin_runtime_id,
+        "Local interpretation must bind the originating node runtime; remote inference needs the broker grant path"
+    );
+    Ok(())
+}
+pub(crate) fn claim_command(
+    engine: &crate::task::TaskEngine,
+    payload: serde_json::Value,
+    context: &eefn::context::RequestContext,
+) -> Result<serde_json::Value> {
+    let command: eefn::request_interpretation::ClaimCommand = serde_json::from_value(payload)?;
+    command.validate()?;
+    local_binding(&command.claim, context)?;
+    let id = command.claim.id.clone();
+    let (plan, changed) = engine.transition_input_interpretation(
+        &id,
+        Transition::Claim(command.claim),
+        Some(context.origin_node()),
+        &[],
+    )?;
+    checkpoint(&plan, !changed)
+}
+pub(crate) fn promote_command(
+    engine: &crate::task::TaskEngine,
+    payload: serde_json::Value,
+    context: &eefn::context::RequestContext,
+    capabilities: &[String],
+) -> Result<serde_json::Value> {
+    let command: eefn::request_interpretation::PromotionCommand = serde_json::from_value(payload)?;
+    command.validate()?;
+    local_binding(&command.claim, context)?;
+    let id = command.claim.id.clone();
+    let (plan, changed) = engine.transition_input_interpretation(
+        &id,
+        Transition::Promote {
+            claim: command.claim,
+            expected_revision: command.expected_revision,
+            proposal: command.proposal,
+        },
+        Some(context.origin_node()),
+        capabilities,
+    )?;
+    checkpoint(&plan, !changed)
+}
+
 /// Immutable source evidence survives later review, compilation and execution.
 pub(crate) fn validate(plan: &Plan) -> Result<()> {
     let Some(record) = &plan.input_interpretation else {
         return Ok(());
     };
+    record.validate_source(
+        &plan.plan_id,
+        plan.revision,
+        plan.goal
+            .request_context
+            .as_ref()
+            .context("Interpretation source origin missing")?,
+    )?;
     record.claim.validate()?;
     record.input.validate()?;
     ensure!(
@@ -252,6 +295,7 @@ pub(crate) fn apply(
 mod tests {
     use super::*;
     use crate::{event::EventBus, jobs::JobStore, task::TaskEngine};
+    use eefn::context::RequestContext;
     use std::sync::Arc;
     fn fixture(store: Arc<JobStore>) -> (Arc<TaskEngine>, Claim) {
         let engine = TaskEngine::with_store(EventBus::new(10), store);
@@ -268,6 +312,7 @@ mod tests {
         )
         .unwrap();
         let claim = Claim {
+            interpreter: None,
             id: saved["id"].as_str().unwrap().into(),
             expected_revision: saved["revision"].as_u64().unwrap(),
             source_sha256: saved["source_sha256"].as_str().unwrap().into(),
@@ -280,6 +325,67 @@ mod tests {
         serde_json::from_value(json!({"schema_version":1,"intent":"information","goal":"Check status",
             "context_hints":["this node"],"constraints":[],"suggested_capabilities":["system.info"],
             "complexity":"simple","workload":"one_shot","needs_clarification":false,"clarification":null})).unwrap()
+    }
+    #[test]
+    fn wire_checkpoints_bind_authenticated_local_origin_without_inference_or_execution() {
+        use eefn::request_interpretation::{
+            Checkpoint, ClaimCommand, Interpreter, PromotionCommand,
+        };
+        let store = JobStore::in_memory().unwrap();
+        let (engine, mut c) = fixture(store.clone());
+        c.interpreter = Some(Interpreter {
+            node_id: "origin-node".into(),
+            backend: "ollama".into(),
+            model_id: "selected".into(),
+            runtime_id: c.origin_runtime_id.clone(),
+        });
+        let context = RequestContext::new(
+            c.operation_id.clone(),
+            "origin-node".into(),
+            vec!["moved".into()],
+        )
+        .unwrap();
+        let command = ClaimCommand {
+            schema_version: 1,
+            claim: c.clone(),
+        };
+        for mutation in 0..3 {
+            let mut invalid = command.clone();
+            match mutation {
+                0 => invalid.claim.operation_id = uuid::Uuid::new_v4().to_string(),
+                1 => invalid.claim.interpreter.as_mut().unwrap().node_id = "other-node".into(),
+                _ => {
+                    invalid.claim.interpreter.as_mut().unwrap().runtime_id =
+                        uuid::Uuid::new_v4().to_string()
+                }
+            }
+            assert!(claim_command(&engine, json!(invalid), &context).is_err());
+        }
+        assert!(store.get(&c.id).unwrap().input_interpretation.is_none());
+        let claimed: Checkpoint =
+            serde_json::from_value(claim_command(&engine, json!(command), &context).unwrap())
+                .unwrap();
+        claimed.validate(&c, "origin-node").unwrap();
+        assert!(!claimed.reused);
+        assert_eq!(
+            claimed.record.request_context.origin_area().to_vec(),
+            vec!["home".to_string(), "bedroom".to_string()]
+        );
+        let promotion = PromotionCommand {
+            schema_version: 1,
+            claim: c.clone(),
+            expected_revision: claimed.revision,
+            proposal: proposal(),
+        };
+        assert!(promote_command(&engine, json!(promotion), &context, &[]).is_err());
+        let promoted: Checkpoint = serde_json::from_value(
+            promote_command(&engine, json!(promotion), &context, &["system.info".into()]).unwrap(),
+        )
+        .unwrap();
+        promoted.validate(&c, "origin-node").unwrap();
+        assert_eq!(promoted.record.state, State::Promoted);
+        let row = store.get(&c.id).unwrap();
+        assert!(row.tasks.is_empty() && row.execution.is_none() && row.approval.is_none());
     }
     fn claim(store: &JobStore, c: &Claim) -> (Plan, bool) {
         store

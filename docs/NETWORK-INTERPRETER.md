@@ -14,10 +14,14 @@ allows inspection of the same retained input after a lost reply; changed text
 under that receipt is refused. Receipts are scoped to the authenticated origin
 and retained history. Deleting history removes that deduplication protection.
 
-This is not yet integrated into `requests input`, and saved-input interpretation
-and promotion are still required. The command currently saves and inspects only;
-it cannot resume, interpret or execute its saved input. It is not a completed
-model-free interaction workflow.
+The new explicit `eefn requests interpret-saved ID` follow-up is in development
+and awaiting hosted verification. It uses the input node's selected local
+interpreter and promotes the same request to review after a durable ownership
+checkpoint. An uncertain or already completed attempt is inspected without
+another model call. Source identity/revision/digest are read and pinned by the
+backend; the user does not need to copy JSON or hashes. Missing models leave the
+input saved. This does not yet integrate durable-first behavior into normal
+`requests input`, or supply automatic remote interpretation to model-free nodes.
 
 ## Intended user behavior
 
@@ -73,8 +77,9 @@ in-memory queue that becomes authoritative after restart.
 
 ## Owner authorization and provider selection
 
-The next journal-transition increment is in development and awaiting hosted
-verification. It adds initial interpretation ownership to the existing `Plan`
+The journal-transition increment passed all four hosted jobs at `23d7309`, with
+1,630 Windows/headless Rust tests and all 37 native suites. It adds initial
+interpretation ownership to the existing `Plan`
 record rather than introducing another job queue. The ownership record retains
 the original input/context/digest, source revision, explicit attempt ID and input
 node runtime. Repeated ownership requests inspect the existing attempt and do
@@ -89,12 +94,15 @@ no tasks, plan approval or execution grant. Ordinary journal edits cannot claim,
 erase or rewrite this ownership evidence. The claimed record reserves 128 KiB
 of journal checkpoint space; this is storage accounting, not a model memory limit.
 
-These are internal backend transitions. No public interpretation command, model
-call, network sharing permission or automatic continuation is enabled by this
-increment. Integration into `requests input`, runtime/provider authorization,
-bounded broker grants and explicit recovery remain required. A claim is never
-an inference authorization. A completed review still needs its existing separate
-preparation, owner approval and execution flow.
+The current follow-up shares versioned checkpoint types across the Rust
+workspace and binds explicit local interpretation to the selected node, model,
+backend and runtime. Its new public command and model-call path are awaiting
+hosted verification. Old records with missing provider metadata stay unknown;
+they never become an inferred model selection. This local path cannot claim a
+different node as its interpreter or authorize remote inference. Integration into
+`requests input`, remote provider authorization, bounded broker grants and
+explicit recovery remain required. A claim itself never authorizes inference.
+A completed review still needs separate preparation, owner approval and execution.
 
 Interpretation sharing must be an explicit, configurable service permission.
 The coordinator owner controls its allowed origins/providers and aggregate use;

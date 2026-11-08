@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Accepted development checkpoint: saved-input interpretation journal
+
+Source `23d7309` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42484866675), including
+1,630 Windows/headless Rust tests plus one ignored test across 17 unfiltered
+groups and all 37 native command suites with the existing additional gates.
+Internal ownership checkpoints retain raw input, context, source revision/digest
+and attempt identity. Promotion preserves the same request and creates ordinary
+review without tool execution; restart retires unfinished ownership to unknown.
+Quota and cancellation checks preserve recovery under lowered storage limits.
+
+The next explicit local `requests interpret-saved` command is in development
+and awaiting hosted verification. It uses these checkpoints and the existing
+selected interpreter, with retained-history inspection instead of replay. Its
+synthetic command tests are not physical model or two-PC acceptance. Normal input
+is not yet durable-first and automatic remote interpretation remains planned.
+These changes improve existing v0.4 request reliability; the lightweight,
+eve-independent purpose and parked v0.5 modular-engine design remain in force.
+
 ## Accepted development checkpoint: durable model-free input
 
 Source `4ef0935` passes all four jobs in the

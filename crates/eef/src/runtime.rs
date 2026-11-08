@@ -717,6 +717,26 @@ impl Runtime {
             "requests.intent" => {
                 crate::request_intent::save(&self.engine, message["payload"].clone(), &context)
             }
+            "requests.interpretation_claim" => crate::request_interpretation::claim_command(
+                &self.engine,
+                message["payload"].clone(),
+                &context,
+            ),
+            "requests.interpretation_promote" => {
+                match self
+                    .discovery
+                    .interpretation_capabilities(context.origin_node(), &self.node_server)
+                    .await
+                {
+                    Ok(capabilities) => crate::request_interpretation::promote_command(
+                        &self.engine,
+                        message["payload"].clone(),
+                        &context,
+                        &capabilities,
+                    ),
+                    Err(error) => Err(error),
+                }
+            }
             "requests.review" => {
                 match self
                     .discovery

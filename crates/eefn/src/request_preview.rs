@@ -16,6 +16,14 @@ pub enum RequestAction {
         #[arg(long)]
         operation_id: Option<String>,
     },
+    /// Interpret one saved raw input with this node's selected interpreter; never execute tools.
+    InterpretSaved {
+        #[command(flatten)]
+        inference: crate::inference_budget::InferenceOptions,
+        id: String,
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Answer an exact saved question; resolve/prepare according to applied policy, never execute.
     Respond {
         #[command(flatten)]
@@ -855,6 +863,25 @@ impl NodeService {
         }
     }
 
+    pub(crate) fn saved_interpreter_permit(
+        &self,
+    ) -> Result<tokio::sync::SemaphorePermit<'_>, &'static str> {
+        self.preview
+            .capacity
+            .try_acquire()
+            .map_err(|_| "interpreter_busy")
+    }
+    pub(crate) fn saved_interpreter_runtime(
+        &self,
+    ) -> Option<(String, Arc<NodeEngine>, watch::Receiver<Option<String>>)> {
+        let binding = self.preview.binding.lock().unwrap();
+        let value = binding.as_ref()?;
+        Some((
+            value.runtime_id.clone(),
+            value.engine.upgrade()?,
+            self.preview.generation.subscribe(),
+        ))
+    }
     pub(crate) fn input_workflow_runtime(
         &self,
     ) -> Option<(
@@ -932,7 +959,7 @@ impl NodeService {
         self.prepare_interpretation(request, false).await
     }
 
-    async fn network_interpretation_context(&self) -> Result<Vec<String>, &'static str> {
+    pub(crate) async fn network_interpretation_context(&self) -> Result<Vec<String>, &'static str> {
         let receipt = uuid::Uuid::new_v4().to_string();
         let data = tokio::time::timeout(
             Duration::from_secs(5),

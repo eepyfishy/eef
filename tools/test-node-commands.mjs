@@ -97,6 +97,14 @@ try {
   assert.equal(input.report_type,'node_request_intent');assert.equal(input.success,true);
   assert.equal(input.result.input.original_text,text);assert.equal(input.result.request_context.origin_node,id);
   assert.equal(input.result.operation_id,operation);assert.equal(input.result.status,'review');
+  const noInterpreter=await nodeCommand(['requests','interpret-saved',input.result.id],1);
+  assert.equal(noInterpreter.report_type,'node_saved_input_interpretation');assert.equal(noInterpreter.error_code,'interpreter_unavailable');
+  assert.equal(noInterpreter.claim_attempted,false);assert.equal(noInterpreter.model_inference_requested,false);
+  assert.equal(noInterpreter.source.input.original_text,text);assert.equal(noInterpreter.outcome_unknown,false);
+  const missingHint=await nodeCommand(['requests','interpret-saved',input.result.id],1,true);
+  assert.match(missingHint,/remains saved/);assert(!missingHint.includes(text));
+  const stillRaw=(await nodeCommand(['jobs','get',input.result.id])).data;
+  assert.equal(stillRaw.revision,input.result.revision);assert.equal(stillRaw.input_interpretation,undefined);
   for(const field of ['interpretation_requested','execution_authorized','dispatched','automatically_retried'])assert.equal(input[field],false,field);
   const inspect=(await nodeCommand(['jobs','get',input.result.id])).data;
   assert.equal(inspect.review_state,'awaiting_interpretation');assert.equal(inspect.proposal_count,0);

@@ -81,6 +81,8 @@ impl SubmissionMailbox {
             "message"
                 | "requests.capabilities"
                 | "requests.intent"
+                | "requests.interpretation_claim"
+                | "requests.interpretation_promote"
                 | "requests.planning"
                 | "requests.preparation_checkpoint"
                 | "requests.concrete"

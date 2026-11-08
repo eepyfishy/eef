@@ -1,5 +1,6 @@
 // Public-command input workflow acceptance; isolated data, fake inference,
 import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
+import {verifySavedInputCommands} from './saved-input-command-checks.mjs';
 import {verifyMicrophoneCommands} from './microphone-command-checks.mjs';
 import {verifyCameraSourceCommands} from './camera-source-command-checks.mjs';
 import {verifyCameraSetupCommands} from './camera-setup-command-checks.mjs';
@@ -138,6 +139,7 @@ try {
  await nodeCli(['connection','pair','--code-file',privateFile]);
  await until(async()=>await ready()&&(await json(node+'/api/status')).execution_grants.available,'pinned node runtime');
  for(const base of [node,eef])assert.equal((await fetch(base+'/')).status,404);
+ const savedInput=await verifySavedInputCommands({nodeCli,nodeText:(args,success)=>cli('eefn',configPath,args,success,false),configPath,nodeId:id,nodeUrl:node,calls,setMode:value=>{mode=value;}});
  const microphone=await verifyMicrophoneCommands({nodeCli,nodeText:args=>cli('eefn',configPath,args,false,false),
   nodeId:id,nodeUrl:node,json,configPath,marker,proxyPort,setProxyMode:value=>{proxyMode=value;},proxyCalls,inferenceCalls:calls});
  const cameraAuthoring=await verifyCameraAuthoringCommands({nodeCli,nodeText:args=>cli('eefn',configPath,args,false,false),
@@ -367,6 +369,7 @@ try {
  await nodeCli(['models','clear-interpreter']);await nodeCli(['restart','--wait-seconds','20']);await until(ready,'withdraw interpreter');
  await microphone.verifyRetained();
  await cameraAuthoring.verifyRetained();
+ await savedInput.verifyRetained();
  count=calls.length;assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal((await input(lostText,lostReceipt)).status,'historical_snapshot');
  const missing=await input('New input without role',randomUUID(),false);assert.equal(missing.error_code,'interpreter_unavailable');assert(missing.setup_hint.includes('request_interpreter'));assert.equal(calls.length,count);
  assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal((await respond(lostAnswerSource,1,'This node',lostAnswerId)).status,'historical_snapshot');assert.equal(calls.length,count);
@@ -392,6 +395,7 @@ try {
  await until(async()=>(await json(`http://127.0.0.1:${peerPort}/api/status`)).node_id===peerId,'peer local owner API');
  await cli('eefn',peerPath,['connection','pair','--code-file',peerPrivate]);
  await until(async()=>(await json(eef+'/api/diagnostics')).registered_node_count===2,'two separately authenticated logical nodes');
+ await savedInput.verifyRetained(true);
  count=calls.length;
  const foreign=await cli('eefn',peerPath,['requests','input','--text',text,'--operation-id',receipt],false);
  assert.equal(foreign.error_code,'interpreter_unavailable');assert.equal(foreign.source_confirmed,false);assert.equal(foreign.inspection,null);assert.equal(foreign.result,null);
