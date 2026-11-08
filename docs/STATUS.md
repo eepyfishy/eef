@@ -30,6 +30,12 @@ all remaining persisted plan fields separately. Within one runtime it still
 requires exact full-reply equality after peer actions. Full verification remains
 pending, with the failed source and logs preserved.
 
+Run `f900aa6` passed the complete input-workflow suite and reached native suite
+35 of 37, then failed a new startup-fixture assertion: `brain_alive` belongs to
+`/api/status`, not `/api/diagnostics`. The fixture now reads the correct status
+endpoint, requires matching initialized runtime identity and an empty model list,
+and retains the existing diagnostic checks. Its full verification is pending.
+
 ## Accepted development checkpoint: explicit saved-input interpretation
 
 Source `2a49073` passes all four jobs in the

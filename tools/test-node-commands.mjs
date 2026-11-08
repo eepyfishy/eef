@@ -62,7 +62,10 @@ try {
   let coordinator=startCoordinator();
   await until(async()=>(await json(eef+'/api/diagnostics')).initialized===true,'coordinator initialized before node start');
   const emptyReport=await json(eef+'/api/diagnostics');
-  assert.equal(emptyReport.brain_alive,true,'ordinary startup retains core services without a model');
+  const emptyStatus=await json(eef+'/api/status');
+  assert.equal(emptyStatus.brain_alive,true,'ordinary startup retains core services without a model');
+  assert.equal(emptyStatus.initialized,true);assert.equal(emptyStatus.runtime_id,emptyReport.runtime_id);
+  assert.deepEqual(emptyStatus.models,[]);
   for(const field of ['node_event_loss_count','assistant_event_loss_count','world_event_loss_count'])assert.equal(emptyReport[field],0,field);
   assert(emptyReport.node_state_reconciliation_count>=1);
   assert.equal(emptyReport.world_state_may_be_stale,false);assert.equal(emptyReport.world_rules_suspended,false);
