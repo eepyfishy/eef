@@ -1614,7 +1614,12 @@ impl NodeEngine {
         let schema = crate::interpretation::output_schema(capabilities)
             .map_err(|_| "invalid_interpreter_context")?;
         let response = self
-            .selected_interpreter_response(messages, 512, Some(schema), budget)
+            .selected_interpreter_response(
+                messages,
+                crate::interpretation::MAX_OUTPUT_TOKENS,
+                Some(schema),
+                budget,
+            )
             .await?;
         let output = response["output"]
             .as_str()
@@ -1661,7 +1666,12 @@ impl NodeEngine {
         let messages = crate::request_preparation::messages(draft, capabilities)
             .map_err(|_| "invalid_preparation_context")?;
         let response = self
-            .selected_interpreter_response(messages, 1024, None, budget)
+            .selected_interpreter_response(
+                messages,
+                crate::request_preparation::MAX_OUTPUT_TOKENS,
+                None,
+                budget,
+            )
             .await?;
         crate::request_preparation::PreparedMethod::from_selected(
             job,

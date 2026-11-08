@@ -97,8 +97,8 @@ of journal checkpoint space; this is storage accounting, not a model memory limi
 
 The current follow-up shares versioned checkpoint types across the Rust
 workspace and binds explicit local interpretation to the selected node, model,
-backend and runtime. Its new public command and model-call path are awaiting
-hosted verification. Old records with missing provider metadata stay unknown;
+backend and runtime. The explicit public command and local model-call path passed
+hosted verification at `2a49073`. Old records with missing provider metadata stay unknown;
 they never become an inferred model selection. This local path cannot claim a
 different node as its interpreter or authorize remote inference. Integration into
 `requests input`, remote provider authorization, bounded broker grants and
@@ -129,6 +129,19 @@ and concrete-method preparation. Each stage binds the exact retained source,
 revision, prior answers, disclosed capability context and prompt/schema version.
 Build or verify its prompt deterministically from those records; never accept an
 unrestricted caller-supplied system prompt under the service permission.
+
+An unreleased, data-only `eefn::interpreter_task` contract is awaiting hosted
+verification. It reconstructs all three stages through the existing shared
+prompt builders and validators, pins the retained source and inference-input
+definitions separately, and rejects changed definitions or oversized history
+instead of truncating it. It adds no dependency, background service, inference
+endpoint or automatic delegation. Existing local token ceilings remain unchanged.
+
+These digests prove self-consistency, not ownership, permission or which model
+ran. A future issuer must independently match the journal and service policy;
+the receiver must validate the exact grant, model, session and completion before
+accepting output. Validated candidates remain untrusted and cannot authorize
+tool execution. This contract alone does not implement the broker below.
 
 An owner-approved service policy must make each inference authorization durable,
 identifiable and bounded before issuance. Record that it derives from a specific

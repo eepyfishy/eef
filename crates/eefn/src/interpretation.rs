@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 pub const MAX_INPUT_BYTES: usize = 32 * 1024;
 pub const MAX_PROPOSAL_BYTES: usize = 16 * 1024;
+pub const MAX_OUTPUT_TOKENS: u64 = 512;
 const MAX_HINTS: usize = 8;
 
 /// Static validation categories only: never model text, parser excerpts or IDs.

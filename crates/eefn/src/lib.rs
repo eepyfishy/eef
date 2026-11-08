@@ -39,6 +39,7 @@ pub mod inference_budget;
 mod installed_selection;
 pub mod interpretation;
 pub mod interpreter_sampling;
+pub mod interpreter_task;
 pub mod job_accounting;
 pub mod job_commands;
 pub mod listening;

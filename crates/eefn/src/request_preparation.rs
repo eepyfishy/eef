@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 pub const MAX_PROMPT_BYTES: usize = 64 * 1024;
 pub const MAX_OUTPUT_BYTES: usize = 16 * 1024;
+pub const MAX_OUTPUT_TOKENS: u64 = 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MethodProposal {
