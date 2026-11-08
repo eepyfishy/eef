@@ -18,8 +18,8 @@ installers are unchanged and stable-release acceptance remains separate.
 ## Continuous source inspection (in development)
 
 For the camera setup, review, approval, execution and stop sequence, see the
-[development camera walkthrough](user/CAMERA.md). Its full executable lifecycle
-and physical acceptance are still under verification.
+[development camera walkthrough](user/CAMERA.md). Its simulated-device executable
+lifecycle passes hosted checks at `cf07f93`; physical acceptance remains open.
 
 Configure a camera resource on the running node without JSON:
 
@@ -71,7 +71,8 @@ OPERATION_ID`, then `eefn requests plan JOB_ID`. Exact receipt reuse reads retai
 choices; it does not reselect a source or continue incomplete compilation. Use
 `eefn requests compile-saved JOB_ID --revision REVISION` for that separate explicit
 step. Private device indices and RTSP URLs are configured on the source node, not
-supplied to this authoring command. Hosted verification is still required.
+supplied to this authoring command. Scoped simulated-device hosted checks pass at
+`cf07f93`; physical-source acceptance remains open.
 
 Prepare a bounded microphone activity request without JSON or a model:
 

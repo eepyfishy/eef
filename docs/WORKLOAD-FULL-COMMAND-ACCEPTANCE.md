@@ -1,5 +1,23 @@
 # Combined workload command and source acceptance
 
+## Accepted development source
+
+Exact source `cf07f93` passes
+[all four hosted jobs](https://github.com/eepyfishy/eef/actions/runs/42456081625).
+Independent reconciliation verifies 1,605 Windows/headless Rust tests plus one
+pre-existing ignored test across 17 unfiltered groups, all 36 ordered native
+command suites, completed connection-close coverage and the original firewall,
+listening and managed first-run gates. Both Rust source lifecycle fixtures pass,
+and the shipping-command camera extension passes completion, owner stop, node
+restart/reconnect, exact payload checksums and separately approved reuse without
+replaying uncertainty. Actual camera/microphone command defaults fit fresh node
+journal admission. Sources use simulated device dependencies; real OpenCV,
+physical media/two-PC and stable release are not accepted by this result.
+The older unconfirmed microphone failure and five-event camera rejection remain
+retained with unproven causes. Entries below preserve their checkpoint history.
+
+## Retained earlier checkpoints
+
 At `98b9576`, run `42429344635` passed the complete native shipping-command camera
 lifecycle and all 36 command suites plus the additional gates. The overall run
 still failed its separate Rust microphone lifecycle fixture during origin

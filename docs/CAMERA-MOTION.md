@@ -3,8 +3,9 @@
 The development source now includes JSON-free camera setup, passive source
 inspection, bounded request submission, separate owner approval and origin-node
 execution through the existing workload lifecycle. Start with the
-[camera command walkthrough](user/CAMERA.md). Full shipping-command lifecycle
-verification and physical acceptance remain open; see [current status](STATUS.md).
+[camera command walkthrough](user/CAMERA.md). The simulated-device shipping-command
+lifecycle passes hosted verification at `cf07f93`; physical acceptance remains
+open. See [current status](STATUS.md) for exact scope and retained failures.
 The sections below retain the earlier incremental checkpoints and their own
 verification boundaries. A feature described as unavailable at an earlier
 checkpoint is not a claim that later sections or current code omit it.

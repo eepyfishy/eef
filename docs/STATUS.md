@@ -3,6 +3,33 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Accepted development checkpoint: command-owned media workloads
+
+Product and test source `cf07f93` passes the complete
+[four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42456081625).
+Independent reconciliation verifies 1,605 Windows/headless Rust tests plus one
+pre-existing ignored test across 17 unfiltered groups, all 36 native command
+suites, the additional connection-close case, 63 firewall mock cases, listening
+and managed first-run checks.
+
+The shipping camera commands pass source setup, passive inspection, separate
+owner approval, origin execution, five durable events with an independently
+reconstructed payload checksum, lease renewal, owned exit and read-only receipt
+inspection. Stop/restart preserve uncertainty, exact execution reuse cannot replay
+capture, and a separately approved request proves source reuse. The Rust camera
+and microphone coordinator lifecycle fixtures also pass. Actual parsed command
+defaults consume within fresh node journal limits without widening owner policy.
+Command startup retains its original one-MiB thread and private help values remain
+hidden; answer restart keeps confirmed checkpoints and uncertainty.
+
+This accepts the exact automated development code with simulated device
+dependencies. The earlier microphone authoring failure and five-event camera
+rejection remain retained with unproven causes. Real OpenCV, physical media/two-PC,
+model quality/onboarding, VLM triggers, relays/aggregate quotas, general continuous
+work/strong stop, mesh/optimization/cluster, installer recovery/security and stable
+release acceptance remain open. Later documentation-only updates do not establish
+additional runtime behavior.
+
 ## Native camera command lifecycle observed; full acceptance still failed
 
 At `98b9576`, run `42429344635` passed all 36 Windows command suites, the additional

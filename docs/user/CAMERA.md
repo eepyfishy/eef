@@ -1,10 +1,9 @@
 # Camera motion requests
 
 These commands are **unreleased development features after alpha.6**. They are
-not available in the published alpha.6 installers. The complete executable camera
-lifecycle is still under hosted verification; physical webcam/RTSP acceptance is
-also unfinished. See [current status](../STATUS.md) before testing a development
-build.
+not available in the published alpha.6 installers. The simulated-device executable
+workflow passed hosted checks at `cf07f93`; physical webcam/RTSP acceptance is
+unfinished. See [current status](../STATUS.md) before testing a development build.
 
 This workflow observes image changes and reports small motion events. It does not
 identify people, send video, call a vision model, or follow you between rooms.

@@ -4,6 +4,12 @@ This command is in development and is not included in published installers.
 It prepares a bounded, metadata-only microphone activity request through the
 already running node. It needs no language model or dashboard.
 
+The exact development source `cf07f93` passes full hosted verification, including
+the Rust microphone lifecycle and real command-default journal admission. Device
+dependencies are simulated; physical audio/two-PC acceptance remains open. The
+earlier unconfirmed authoring failure retains an unproven cause. See
+[current status](STATUS.md) for the verification boundaries.
+
 ```powershell
 eefn requests submit-microphone
 eefn requests submit-microphone --source-node living-room --microphone mic --blocks 100
