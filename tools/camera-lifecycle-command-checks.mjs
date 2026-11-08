@@ -88,7 +88,15 @@ export async function verifyCameraLifecycleCommands(f){
   const args=['requests','execute',id,'--revision',String(approved.plan.revision),'--approval-digest',approved.plan.approval.approval_sha256,'--operation-id',randomUUID()];
   const executed=await f.nodeCli(args);assert.equal(executed.success,true);assert.equal(executed.result.execution_requested,true);
   let acknowledged;await f.until(async()=>{acknowledged=await job(id);return acknowledged.workload?.acknowledged===true||['failed','interrupted','cancelled','abandoned'].includes(acknowledged.status);},'camera consumed ACK');
-  assert.equal(acknowledged.workload?.acknowledged,true,'Camera execution ended without a consumed ACK; state='+acknowledged.status);
+  let admissionObservation={state:acknowledged.status};
+  if(acknowledged.workload?.acknowledged!==true){
+   const local=(await f.json(f.nodeUrl+'/api/status')).last_workload;
+   admissionObservation={...admissionObservation,matching_grant:local?.grant_id===acknowledged.workload?.grant_id,
+    local_state:['unconfirmed','consumed','completed'].includes(local?.state)?local.state:'unavailable',
+    stage:['policy_denied','consumption_unconfirmed','source_unconfirmed'].includes(local?.code)?local.code:'unavailable',
+    reason:['grant_owner_limits_exceeded','workload_unconfirmed'].includes(local?.reason_code)?local.reason_code:'other_typed_reason'};
+  }
+  assert.equal(acknowledged.workload?.acknowledged,true,'Camera execution ended without a consumed ACK: '+JSON.stringify(admissionObservation));
   return {id,args};
  }
  async function finish(run,trace){

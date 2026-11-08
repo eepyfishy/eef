@@ -28,11 +28,19 @@ fn rejected(id: &str, code: &str) -> Value {
 }
 
 fn unconfirmed_status(id: &str, code: &str, error: &anyhow::Error) -> Value {
-    // Local diagnostics retain only closed bridge categories. Error contexts can
+    // Local diagnostics retain only closed bridge/owner-limit categories. Contexts can
     // contain private source bindings, interpreter output or filesystem paths.
     let reason = error
         .downcast_ref::<crate::python::BridgeFailure>()
         .map(|failure| failure.code())
+        .or_else(|| {
+            error
+                .downcast_ref::<crate::grants::GrantDenied>()
+                .and_then(|failure| match failure.0 {
+                    "grant_owner_limits_exceeded" => Some("grant_owner_limits_exceeded"),
+                    _ => None,
+                })
+        })
         .unwrap_or("workload_unconfirmed");
     json!({"grant_id":id,"state":"unconfirmed","code":code,
         "reason_code":reason,"outcome_confirmed":false})

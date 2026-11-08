@@ -17,6 +17,19 @@ fn command() -> MicrophoneCommand {
     .unwrap()
 }
 #[test]
+fn microphone_default_event_budget_fits_fresh_node_receipts_and_remains_configurable() {
+    let policy = crate::grants::GrantPolicy::default();
+    let default = command();
+    assert!(default.input.events.max_total_bytes <= policy.max_result_bytes);
+    let larger = Args::try_parse_from(["probe", "--max-total-bytes", "262144"])
+        .unwrap()
+        .input
+        .command()
+        .unwrap();
+    assert_eq!(larger.input.events.max_total_bytes, 262144);
+    assert!(larger.input.events.max_total_bytes > policy.max_result_bytes);
+}
+#[test]
 fn microphone_intent_cannot_be_relabelled_as_a_camera_workload() {
     let mut d = crate::workload_leases::definition::camera_tests::camera();
     let input = command().input;

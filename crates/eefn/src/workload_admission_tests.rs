@@ -100,6 +100,36 @@ fn no_admission(path: &std::path::Path) {
 }
 
 #[tokio::test]
+async fn event_reservation_above_owner_limit_refuses_before_journal_then_exact_limit_consumes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("event-owner-limit.db");
+    let policy = GrantPolicy::default();
+    let ledger = GrantLedger::open(&path, policy.clone(), "owner").unwrap();
+    let mut oversized = definition();
+    oversized.events.max_total_bytes = policy.max_result_bytes + 1;
+    oversized.validate().unwrap();
+    let error = match consume(&ledger, oversized).await {
+        Ok(_) => panic!("Oversized event reservation must not consume authority"),
+        Err(error) => error,
+    };
+    assert_eq!(crate::grants::denial_code(&error), "grant_owner_limits_exceeded");
+    assert_eq!(
+        ledger.admission_started.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+    no_admission(&path);
+    let mut bounded = definition();
+    bounded.events.max_total_bytes = policy.max_result_bytes;
+    // A separately obtained proof and original admission budget, not a retry.
+    consume(&ledger, bounded).await.unwrap().retire().await.unwrap();
+    admission_released(&ledger).await;
+    assert_eq!(
+        ledger.admission_started.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+}
+
+#[tokio::test]
 async fn cancelled_native_admission_keeps_capacity_until_actual_mutex_wait_finishes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cancel-admission.db");

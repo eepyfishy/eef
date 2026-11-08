@@ -1,5 +1,14 @@
 # Combined workload command and source acceptance
 
+Run `42426249194` reached approved camera execution after passing passive readiness
+and the earlier restart checks, but the first job was interrupted before a consumed
+ACK. Source inspection found the shared camera/microphone command event reservation
+default exceeded a fresh node's receipt limit (256 KiB versus 64 KiB). The default
+now fits that limit, with explicit larger requests still configurable and refused
+when outside owner policy. Typed bounded admission diagnostics and regression
+coverage accompany the correction. The failed run did not expose its refusal code;
+fresh full hosted acceptance remains required.
+
 An additional executable-level extension is in development in the existing
 input-command native suite. It runs shipping services and public owner/origin
 commands for camera completion, explicit stop and node restart/reconnect. Python

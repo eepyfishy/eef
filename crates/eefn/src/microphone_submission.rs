@@ -268,7 +268,8 @@ pub struct MicrophoneEventOptions {
     pub max_events: u64,
     #[arg(long, default_value_t = 1024)]
     pub max_event_bytes: usize,
-    #[arg(long, default_value_t = 262144)]
+    // Fit a fresh node's receipt limit without silently raising owner policy.
+    #[arg(long, default_value_t = 65536)]
     pub max_total_bytes: usize,
     #[arg(long, default_value_t = 4)]
     pub max_pending: usize,

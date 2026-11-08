@@ -25,6 +25,9 @@ The default request observes 100 blocks of 1,600 frames at 16,000 Hz, mono:
 approximately ten seconds of source audio, with only bounded activity metadata
 reported. The maximum session budget is 60 seconds and each lease is at most ten
 seconds; these are upper bounds, not permission or a promise of completion.
+The shared camera/microphone event-byte default is 64 KiB, matching a fresh node's
+receipt limit. An explicit larger `--max-total-bytes` still needs compatible node
+owner limits; authoring or approval does not raise those limits.
 Parameters and limits remain configurable with `--sample-rate`, `--channels`,
 `--block-frames`, `--blocks`, `--activation-level`, `--deactivation-level`,
 `--max-session-ms`, `--max-lease-ms`, `--max-job-memory-mib`, `--min-interval-ms`,

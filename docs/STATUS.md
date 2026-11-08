@@ -3,6 +3,27 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: source request defaults fit node receipt limits
+
+Run `42426249194` passed all four workspace configurations and the native
+answer-restart checks, camera setup and passive camera readiness. Its first
+approved camera execution became interrupted before a consumed acknowledgment.
+That run did not report the underlying refusal code; it remains failed evidence.
+
+Source inspection found a definite default mismatch: microphone and camera
+authoring reserved 256 KiB of events while a fresh node allowed 64 KiB per receipt.
+Their shared command default now requests 64 KiB. Explicit larger budgets remain
+configurable and subject to owner policy; no owner limit or saved request is
+changed. Parser regressions cover both defaults and explicit larger values. A
+journal admission regression requires an oversized reservation to refuse before
+native saving and an exact-limit independently admitted request to consume.
+
+Local workload status now retains the closed owner-limit refusal code without
+private error context. The executable camera test reports bounded admission-stage
+observations if acknowledgment fails again. This is not proof of the previous
+run's unreported cause or full camera completion. Fresh hosted acceptance is
+required; physical media, broader roadmap and stable release remain open.
+
 ## In development: preserve answer uncertainty during restart
 
 Run `42424184808` passed the four workspace test configurations, but its

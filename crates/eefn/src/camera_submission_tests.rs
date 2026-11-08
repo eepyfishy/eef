@@ -16,6 +16,19 @@ fn command() -> CameraCommand {
     .command()
     .unwrap()
 }
+#[test]
+fn camera_default_event_budget_fits_fresh_node_receipts_and_remains_configurable() {
+    let policy = crate::grants::GrantPolicy::default();
+    let default = command();
+    assert!(default.input.events.max_total_bytes <= policy.max_result_bytes);
+    let larger = Args::try_parse_from(["probe", "--max-total-bytes", "262144"])
+        .unwrap()
+        .input
+        .command()
+        .unwrap();
+    assert_eq!(larger.input.events.max_total_bytes, 262144);
+    assert!(larger.input.events.max_total_bytes > policy.max_result_bytes);
+}
 fn snapshot() -> crate::camera_sources::Report {
     serde_json::from_value(json!({"schema_version":1,"report_type":"camera_workload_sources","success":true,
         "node_id":"origin","runtime_id":uuid::Uuid::new_v4().to_string(),"source_kind":"camera_motion","adapter_sha256":crate::workload_sources::camera_adapter_digest(),

@@ -7,9 +7,14 @@ fn local_failure_status_retains_typed_reason_without_private_error_contexts() {
     let typed = anyhow::Error::new(crate::python::BridgeFailure::Deadline)
         .context("PRIVATE_DEVICE and private interpreter output");
     let generic = anyhow::anyhow!("PRIVATE_SETTINGS_PATH and private source binding");
+    let owner = anyhow::Error::new(crate::grants::GrantDenied("grant_owner_limits_exceeded"))
+        .context("PRIVATE_JOURNAL_PATH and private source binding");
+    let unknown = anyhow::Error::new(crate::grants::GrantDenied("PRIVATE_UNKNOWN_DENIAL"));
     for (error, reason) in [
         (typed, "python_exchange_deadline"),
         (generic, "workload_unconfirmed"),
+        (owner, "grant_owner_limits_exceeded"),
+        (unknown, "workload_unconfirmed"),
     ] {
         let status = unconfirmed_status("grant", "source_unconfirmed", &error);
         assert_eq!(status["reason_code"], reason);
