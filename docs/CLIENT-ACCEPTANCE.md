@@ -1,23 +1,29 @@
 # Reviewed client acceptance (unreleased after alpha.6)
 
-Latest backend checkpoint: **631 workspace/all-target tests per feature mode**,
-including [framed-session responsiveness](GRANT-REPORT-JOURNAL.md#framed-session-responsiveness-follow-up-unreleased). Fresh public
-scheduling/recurrence/native checks pass locally; earlier failures remain
-retained and loaded-system/physical reliability and runtime/media gates remain
-open. These tests do not prove full stable-release acceptance.
+For current exact-source verification, hosted runs and remaining boundaries, see
+[the status record](STATUS.md). The checkpoints and test counts below are
+historical evidence for their stated scope; they are not the latest suite or
+blanket acceptance of subsequent source.
 
-Latest model-policy checkpoint: **571 workspace/all-target tests per feature
+Historical backend checkpoint: **631 workspace/all-target tests per feature mode**,
+including [framed-session responsiveness](GRANT-REPORT-JOURNAL.md#framed-session-responsiveness-follow-up-unreleased). Fresh public
+scheduling/recurrence/native checks passed locally at that checkpoint; earlier
+failures remain retained and loaded-system/physical reliability and runtime/media
+gates remain open. These tests do not prove full stable-release acceptance.
+
+Historical model-policy checkpoint: **571 workspace/all-target tests per feature
 mode**, with command-owned eager/manual/on-demand and idle policy,
 revision-fenced rollback, atomic request-owned load/pin handoff, failed-load
 no-retry, public lifecycle fault injection and reused-artifact real CPU
 unload/reload/demand-inference/idle acceptance, plus shared Ollama applied request
 retention preferences without service ownership. See [exact scope and evidence](MODEL-LIFECYCLE-POLICY.md#2026-10-13-shared-request-policy-verification-checkpoint).
-Earlier counts below describe their historical checkpoints, not the latest suite.
+The earlier counts below likewise describe their own historical checkpoints.
 
-This checkpoint adapts remaining protocol/browser/model fixtures to the mandatory
+These reviewed-client checkpoints adapt protocol/browser/model fixtures to the
+mandatory
 [reviewed boundary](EXECUTION-BOUNDARY.md). Both production roles remain at the
 unreleased development state after alpha.6. No published installer, update feed,
-installed runtime or physical node is changed by this checkpoint.
+installed runtime or physical node is changed by these checkpoints.
 
 The initial 2026-10-11 checkpoint passes 390 workspace/all-target Rust tests both
 with default dashboard features and with `--no-default-features`. Fresh default
