@@ -100,6 +100,65 @@ fn no_admission(path: &std::path::Path) {
 }
 
 #[tokio::test]
+async fn camera_and_microphone_command_defaults_consume_with_fresh_node_journal_limits() {
+    use clap::Parser;
+    #[derive(Parser)]
+    struct CameraArgs {
+        #[command(flatten)]
+        input: crate::camera_submission::CameraSubmission,
+    }
+    #[derive(Parser)]
+    struct MicrophoneArgs {
+        #[command(flatten)]
+        input: crate::microphone_submission::MicrophoneSubmission,
+    }
+    let input = CameraArgs::try_parse_from(["probe"])
+        .unwrap()
+        .input
+        .command()
+        .unwrap()
+        .input;
+    let mut camera = definition();
+    camera.source = Source::CameraMotion {
+        resource_id: "owner::camera".into(),
+        resource_sha256: "d".repeat(64),
+        adapter_sha256: "e".repeat(64),
+        parameters: input.parameters,
+    };
+    camera.limits = input.limits;
+    camera.events = input.events;
+    let input = MicrophoneArgs::try_parse_from(["probe"])
+        .unwrap()
+        .input
+        .command()
+        .unwrap()
+        .input;
+    let mut microphone = definition();
+    microphone.source = Source::MicrophoneEnergy {
+        resource_id: "owner::microphone".into(),
+        resource_sha256: "d".repeat(64),
+        adapter_sha256: "e".repeat(64),
+        parameters: input.parameters,
+    };
+    microphone.limits = input.limits;
+    microphone.events = input.events;
+    let dir = tempfile::tempdir().unwrap();
+    for d in [camera, microphone] {
+        d.validate().unwrap();
+        let path = dir.path().join(format!("{}-defaults.db", d.source.kind()));
+        let policy = GrantPolicy::default();
+        let ledger = GrantLedger::open(&path, policy.clone(), "owner").unwrap();
+        let reservation = event_journal::reservation(&ledger.connection.lock().unwrap(), &d).unwrap();
+        assert!(reservation < policy.max_journal_bytes);
+        // Exercise actual row/index, result and page accounting together, not
+        // just a comparison between the payload and per-receipt byte defaults.
+        consume(&ledger, d).await.unwrap().retire().await.unwrap();
+        admission_released(&ledger).await;
+        assert_eq!(ledger.admission_started.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
 async fn event_reservation_above_owner_limit_refuses_before_journal_then_exact_limit_consumes() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("event-owner-limit.db");

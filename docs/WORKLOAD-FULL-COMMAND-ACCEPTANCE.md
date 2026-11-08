@@ -1,5 +1,12 @@
 # Combined workload command and source acceptance
 
+A subsequent source audit also found that the 1,000-event command default exceeded
+fresh journal capacity after conservative row/index/page reservations. The shared
+default is now 100 events; larger limits remain explicit and configurable. A real
+journal admission regression uses both parsed command defaults, including their
+payload, event, source and session bounds. The journal formulas and owner policy
+are unchanged. Fresh hosted camera lifecycle acceptance remains required.
+
 Run `42426249194` reached approved camera execution after passing passive readiness
 and the earlier restart checks, but the first job was interrupted before a consumed
 ACK. Source inspection found the shared camera/microphone command event reservation

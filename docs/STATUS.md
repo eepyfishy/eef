@@ -3,6 +3,24 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: admit command defaults within journal reservations
+
+While the 64-KiB payload-default correction is under hosted verification, a source
+audit found that the remaining 1,000-event default reserves more than the fresh
+node's eight-MiB journal ceiling. Accounting includes conservative SQLite row,
+index and page overhead as well as payload bytes. Matching the per-receipt byte
+limit alone is insufficient.
+
+The shared camera/microphone default now allows 100 events, enough for the default
+30 camera observations or 100 microphone blocks. Explicit larger event limits
+remain configurable. Journal formulas, owner limits, admission checks, stored
+definitions and old receipts are unchanged. A new integration regression builds
+both actual command defaults and consumes them through the real SQLite/native
+admission path with a fresh node policy, then retires them without opening a
+source. Local diagnostics retain the closed receipt-quota code without private
+context. This correction still needs fresh hosted verification; it does not
+establish camera completion or physical acceptance.
+
 ## In development: source request defaults fit node receipt limits
 
 Run `42426249194` passed all four workspace configurations and the native

@@ -94,7 +94,7 @@ export async function verifyCameraLifecycleCommands(f){
    admissionObservation={...admissionObservation,matching_grant:local?.grant_id===acknowledged.workload?.grant_id,
     local_state:['unconfirmed','consumed','completed'].includes(local?.state)?local.state:'unavailable',
     stage:['policy_denied','consumption_unconfirmed','source_unconfirmed'].includes(local?.code)?local.code:'unavailable',
-    reason:['grant_owner_limits_exceeded','workload_unconfirmed'].includes(local?.reason_code)?local.reason_code:'other_typed_reason'};
+    reason:['grant_owner_limits_exceeded','grant_receipt_quota_full','workload_unconfirmed'].includes(local?.reason_code)?local.reason_code:'other_typed_reason'};
   }
   assert.equal(acknowledged.workload?.acknowledged,true,'Camera execution ended without a consumed ACK: '+JSON.stringify(admissionObservation));
   return {id,args};

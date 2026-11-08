@@ -38,6 +38,7 @@ fn unconfirmed_status(id: &str, code: &str, error: &anyhow::Error) -> Value {
                 .downcast_ref::<crate::grants::GrantDenied>()
                 .and_then(|failure| match failure.0 {
                     "grant_owner_limits_exceeded" => Some("grant_owner_limits_exceeded"),
+                    "grant_receipt_quota_full" => Some("grant_receipt_quota_full"),
                     _ => None,
                 })
         })

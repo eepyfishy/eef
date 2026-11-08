@@ -10,11 +10,14 @@ fn local_failure_status_retains_typed_reason_without_private_error_contexts() {
     let owner = anyhow::Error::new(crate::grants::GrantDenied("grant_owner_limits_exceeded"))
         .context("PRIVATE_JOURNAL_PATH and private source binding");
     let unknown = anyhow::Error::new(crate::grants::GrantDenied("PRIVATE_UNKNOWN_DENIAL"));
+    let quota = anyhow::Error::new(crate::grants::GrantDenied("grant_receipt_quota_full"))
+        .context("PRIVATE_JOURNAL_PATH and private receipt details");
     for (error, reason) in [
         (typed, "python_exchange_deadline"),
         (generic, "workload_unconfirmed"),
         (owner, "grant_owner_limits_exceeded"),
         (unknown, "workload_unconfirmed"),
+        (quota, "grant_receipt_quota_full"),
     ] {
         let status = unconfirmed_status("grant", "source_unconfirmed", &error);
         assert_eq!(status["reason_code"], reason);

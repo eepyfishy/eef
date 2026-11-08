@@ -264,7 +264,8 @@ pub struct MicrophoneLimitOptions {
 pub struct MicrophoneEventOptions {
     #[arg(long, default_value_t = 100)]
     pub min_interval_ms: u64,
-    #[arg(long, default_value_t = 1000)]
+    // Also fit conservative journal row/index reservations on a fresh node.
+    #[arg(long, default_value_t = 100)]
     pub max_events: u64,
     #[arg(long, default_value_t = 1024)]
     pub max_event_bytes: usize,
