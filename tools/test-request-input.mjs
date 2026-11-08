@@ -435,6 +435,14 @@ try {
  await cli('eefn',peerPath,['connection','pair','--code-file',peerPrivate]);
  await until(async()=>(await json(eef+'/api/diagnostics')).registered_node_count===2,'two separately authenticated logical nodes');
  await savedInput.verifyRetained(true);
+ // The durable plan survives coordinator restart; its inspection reply carries
+ // the current runtime identity, which must change and match diagnostics.
+ const sourceAfterRestart=(await plan(prepared.result.id)).result;
+ const {runtime_id:previousPlanRuntime,...savedPlan}=saved;
+ const {runtime_id:currentPlanRuntime,...restoredPlan}=sourceAfterRestart;
+ assert.notEqual(currentPlanRuntime,previousPlanRuntime);
+ assert.equal(currentPlanRuntime,(await json(eef+'/api/diagnostics')).runtime_id);
+ assert.deepEqual(restoredPlan,savedPlan);
  count=calls.length;
  const foreign=await cli('eefn',peerPath,['requests','input','--text',text,'--operation-id',receipt],false);
  assert.equal(foreign.error_code,'interpreter_unavailable');assert.equal(foreign.source_confirmed,true);assert.equal(foreign.outcome_unknown,false);
@@ -450,7 +458,7 @@ try {
  assert.equal(denied.data,undefined);assert.equal(calls.length,count);
  const ownHistory=await cli('eefn',peerPath,['requests','input','--text',text,'--operation-id',receipt]);
  assert.equal(ownHistory.status,'historical_snapshot');assert.equal(ownHistory.result.id,foreign.result.id);
- assert.deepEqual((await plan(prepared.result.id)).result,saved);assert.equal(calls.length,count);
+ assert.deepEqual((await plan(prepared.result.id)).result,sourceAfterRestart);assert.equal(calls.length,count);
  const foreignAnswer=await cli('eefn',peerPath,['requests','respond',original.id,'--revision',String(original.revision),'--text',answerText,'--operation-id',responseId],false);
  assert.equal(foreignAnswer.error_code,'answer_source_unconfirmed');assert.equal(foreignAnswer.source_confirmed,false);assert.equal(foreignAnswer.answer_attempted,false);assert.equal(foreignAnswer.result,null);
  assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal(calls.length,count);

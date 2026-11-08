@@ -22,6 +22,14 @@ refusal to read the first node's job, and an unchanged original plan. This is a
 test correction, not a change to server authorization. Full acceptance remains
 pending; the failure and complete logs are retained.
 
+The next native run at `49f0d59` passed the separate-origin assertions, then
+failed a fixture comparison of a planning reply across coordinator restart.
+The reported difference was its live `runtime_id`, which correctly changes;
+the fixture now checks that identity against the current coordinator and compares
+all remaining persisted plan fields separately. Within one runtime it still
+requires exact full-reply equality after peer actions. Full verification remains
+pending, with the failed source and logs preserved.
+
 ## Accepted development checkpoint: explicit saved-input interpretation
 
 Source `2a49073` passes all four jobs in the
