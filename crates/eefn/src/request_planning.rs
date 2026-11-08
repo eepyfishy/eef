@@ -122,7 +122,12 @@ pub fn concrete_capabilities(input: &PlanInput) -> Result<Vec<String>> {
     let steps = template_steps(&input.template)?;
     let mut capabilities = vec![steps[0].0.to_owned()];
     if input.template == crate::workload_leases::definition::TEMPLATE {
-        capabilities.push("audio.capture".into());
+        capabilities.push(
+            crate::workload_leases::definition::Template::from_params(&input.params)?
+                .source
+                .capability()
+                .into(),
+        );
     }
     if matches!(
         input.template.as_str(),
@@ -287,18 +292,32 @@ pub enum PlanningCommand {
         operation_id: String,
         input: PlanInput,
     },
+    /// Explicitly compile the retained concrete input under its original receipt.
+    /// This is not receipt inspection, owner approval or execution.
+    CompileSaved {
+        id: String,
+        expected_revision: u64,
+    },
 }
 impl PlanningCommand {
     pub fn id(&self) -> &str {
         match self {
-            Self::Inspect { id } | Self::Compile { id, .. } => id,
+            Self::Inspect { id } | Self::Compile { id, .. } | Self::CompileSaved { id, .. } => id,
         }
     }
     pub fn mutates(&self) -> bool {
-        matches!(self, Self::Compile { .. })
+        matches!(self, Self::Compile { .. } | Self::CompileSaved { .. })
     }
     pub fn validate(&self) -> Result<()> {
         crate::request_drafts::validate_id(self.id())?;
+        if let Self::CompileSaved {
+            expected_revision, ..
+        } = self
+        {
+            if *expected_revision == 0 || *expected_revision == u64::MAX {
+                bail!("Exact positive planning revision required")
+            }
+        }
         if let Self::Compile {
             expected_revision,
             operation_id,
@@ -614,6 +633,32 @@ pub fn confirmed(value: &Value, node: &str, receipt: &str, command: &PlanningCom
     }
     match command {
         PlanningCommand::Inspect { .. } => !view.reused,
+        PlanningCommand::CompileSaved {
+            id,
+            expected_revision,
+        } => {
+            let Ok(PlanningCommand::Compile {
+                operation_id,
+                input,
+                ..
+            }) = crate::request_submission::saved_compile_command(
+                &view.draft,
+                &view.request_context,
+                id,
+                *expected_revision,
+            )
+            else {
+                return false;
+            };
+            view.input.as_ref() == Some(&input)
+                && view.planning_operation_id.as_ref() == Some(&operation_id)
+                && view.source_revision == Some(*expected_revision)
+                && view.preparation.is_none()
+                && (view.reused
+                    || (view.revision == expected_revision + 1
+                        && view.status == "awaiting_approval"
+                        && view.tasks.iter().all(|t| t.status == "pending")))
+        }
         PlanningCommand::Compile {
             expected_revision,
             operation_id,

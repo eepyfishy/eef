@@ -6,7 +6,7 @@ async fn busy_ack_fixture(
     let mut store = new_store(path, 8 * 1024 * 1024);
     Arc::get_mut(&mut store).unwrap().test_workload_ack_limit(1);
     let engine = TaskEngine::with_store(EventBus::new(20), store);
-    let (_, mut issued) = unused_issuer(&engine);
+    let (_, mut issued) = unused_issuer(&engine).await;
     lease(&mut issued, 1).await.unwrap();
     let external = rusqlite::Connection::open(path).unwrap();
     external.execute_batch("BEGIN IMMEDIATE").unwrap();
@@ -127,7 +127,7 @@ async fn failed_ack_checkpoint_cannot_activate_renewals_or_retry_after_fault_rem
     let path = dir.path().join("failure.db");
     let store = new_store(&path, 8 * 1024 * 1024);
     let engine = TaskEngine::with_store(EventBus::new(20), store.clone());
-    let (_, mut issued) = unused_issuer(&engine);
+    let (_, mut issued) = unused_issuer(&engine).await;
     lease(&mut issued, 1).await.unwrap();
     let d = issued.definition().clone();
     let external = rusqlite::Connection::open(&path).unwrap();

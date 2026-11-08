@@ -25,8 +25,12 @@ use crate::session_output::send_reply as write_reply_frame;
 
 #[path = "client_peer.rs"]
 mod peer_delivery;
+#[path = "client_readiness.rs"]
+mod source_readiness;
 #[path = "client_stop_inspection.rs"]
 mod stop_inspection;
+#[path = "client_workload.rs"]
+mod workload_delivery;
 #[path = "client_workload_inspection.rs"]
 mod workload_inspection;
 
@@ -144,6 +148,8 @@ fn default_ollama_url() -> String {
 }
 
 pub struct NodeClient {
+    #[cfg(test)]
+    source_prepare_started: Arc<std::sync::atomic::AtomicUsize>,
     peer_runtime: Option<Arc<crate::peer::runtime::FiniteRuntime>>,
     registration_runtime: Option<String>,
     grant_ledger: Option<Arc<crate::grants::GrantLedger>>,
@@ -207,6 +213,8 @@ impl NodeClient {
             }
         }
         Ok(Self {
+            #[cfg(test)]
+            source_prepare_started: Arc::default(),
             peer_runtime: None,
             registration_runtime: None,
             grant_ledger: None,
@@ -595,6 +603,8 @@ impl NodeClient {
         // Subscribe before the first refresh. A startup transition that happened
         // during authentication must not be lost between snapshot and subscription.
         let mut model_changes = self.engine.model_server.as_ref().map(|s| s.subscribe());
+        let mut source_readiness = source_readiness::Readiness::new(self);
+        let mut advertised_workload = json!(crate::workload_network::Advertisement::unavailable());
         if let Some(changes) = &mut model_changes {
             changes.mark_changed();
         }
@@ -637,6 +647,7 @@ impl NodeClient {
 
         let mut tasks = tokio::task::JoinSet::new();
         let lease_requests = Arc::new(crate::grant_time::LeaseRequests::default());
+        let workload_requests = Arc::new(crate::workload_leases::Requests::default());
         let mut local = self.install_submission_channel(&endpoint.address);
         if let Some(offer) = &receipt_offer {
             self.status.lock().expect("registration status")["registration_observation"] =
@@ -662,6 +673,19 @@ impl NodeClient {
                         bail!("Node heartbeat stopped; reconnect required; sent operations may be unconfirmed");
                     }
                     message = &mut incoming => break message?,
+                    _=source_readiness.changed()=>{
+                        let capabilities=self.session_capabilities(&models,peer_advertisement.as_ref());
+                        let registration=source_readiness.decorate(self.registration(&self.config.node_id,
+                            if self.config.name.is_empty() {&self.config.node_id} else {&self.config.name},
+                            crate::VERSION,&capabilities,&specs,&models,receipt_offer.as_ref(),peer_advertisement.as_ref()));
+                        if registration["workload_execution"]!=advertised_workload {
+                            write_session_frame(&self.crypto,&writer,&output_write_failed,&registration).await.context("source registration refresh failed")?;
+                            advertised_workload=registration["workload_execution"].clone();
+                            let mut status=self.status.lock().expect("source registration status");
+                            status["workload_execution"]=advertised_workload.clone();
+                            status["capabilities"]=registration["capabilities"].clone();
+                        }
+                    }
                     _ = async {
                         if let Some(changes) = &mut model_changes { let _ = changes.changed().await; }
                         else { std::future::pending::<()>().await; }
@@ -673,14 +697,15 @@ impl NodeClient {
                         if let Some(server) = &self.engine.model_server { updated.extend(server.models()?); }
                         if updated == models { continue; }
                         let capabilities = self.session_capabilities(&updated, peer_advertisement.as_ref());
-                        let registration = self.registration(&self.config.node_id, &self.config.name,
-                            crate::VERSION, &capabilities, &specs, &updated, receipt_offer.as_ref(), peer_advertisement.as_ref());
+                        let registration = source_readiness.decorate(self.registration(&self.config.node_id, &self.config.name,
+                            crate::VERSION, &capabilities, &specs, &updated, receipt_offer.as_ref(), peer_advertisement.as_ref()));
                         write_session_frame(&self.crypto,&writer,&output_write_failed,&registration)
                             .await.context("model registration refresh failed")?;
                         models = updated;
+                        advertised_workload=registration["workload_execution"].clone();
                         let mut status = self.status.lock().expect("status");
                         status["models"] = json!(models);
-                        status["capabilities"] = json!(capabilities);
+                        status["capabilities"] = registration["capabilities"].clone();
                     }
                     Some(command) = local.recv() => {
                         replies.retain(|_, reply| !reply.is_closed());
@@ -722,6 +747,27 @@ impl NodeClient {
             }
             if message["type"] == "grant_lease" {
                 lease_requests.complete(message);
+                continue;
+            }
+            if message["type"] == "workload_lease" {
+                // Correlation belongs only to this actual credential/TLS session.
+                // Reconnect constructs a new manager; payloads cannot pick one.
+                if grant_issuer.is_some() && grant_session.is_some() {
+                    workload_requests.complete(message);
+                }
+                continue;
+            }
+            if message["type"] == "execute_workload" {
+                Box::pin(self.dispatch_workload(
+                    message,
+                    &writer,
+                    &output_write_failed,
+                    &mut tasks,
+                    grant_issuer.as_deref(),
+                    grant_session.as_deref(),
+                    workload_requests.clone(),
+                ))
+                .await?;
                 continue;
             }
             if message["type"] == "submission_result" {
@@ -1025,12 +1071,18 @@ impl NodeClient {
                 .to_owned();
             let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
             if capability == "node.configure"
-                && action == "workload_sources"
+                && matches!(
+                    action.as_str(),
+                    "workload_sources"
+                        | "camera_workload_sources"
+                        | "camera_setup"
+                        | "camera_setup_status"
+                )
                 && (grant_issuer.is_none() || grant_session.is_none())
             {
                 let response = json!({"type":"response","id":request_id,"success":false,
                     "error_type":"PinnedSessionRequired","not_started":true,
-                    "error":"Source inspection requires an independent credential and pinned issuer session"});
+                    "error":"This control requires an independent credential and pinned issuer session"});
                 write_session_frame(&self.crypto, &writer, &output_write_failed, &response).await?;
                 continue;
             }
@@ -1486,18 +1538,25 @@ mod tests {
         })
         .await
         .unwrap();
-        let rejected = server
-            .invoke_remote(
-                "probe-test",
-                "node.configure",
-                "workload_sources",
-                json!({}),
-                Duration::from_secs(2),
-            )
-            .await
-            .unwrap();
-        assert_eq!(rejected["success"], false);
-        assert_eq!(rejected["error_type"], "PinnedSessionRequired");
+        for action in [
+            "workload_sources",
+            "camera_workload_sources",
+            "camera_setup",
+            "camera_setup_status",
+        ] {
+            let rejected = server
+                .invoke_remote(
+                    "probe-test",
+                    "node.configure",
+                    action,
+                    json!({}),
+                    Duration::from_secs(2),
+                )
+                .await
+                .unwrap();
+            assert_eq!(rejected["success"], false);
+            assert_eq!(rejected["error_type"], "PinnedSessionRequired");
+        }
         server.stop().await;
         assert!(
             timeout(Duration::from_secs(5), task)

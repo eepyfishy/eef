@@ -9,7 +9,10 @@ fn completed_receipt(
         parameters,
         adapter_sha256,
         ..
-    } = &d.source;
+    } = &d.source
+    else {
+        panic!("Expected microphone fixture");
+    };
     let mut receipt = ack.receipt.clone();
     receipt.state = "completed".into();
     receipt.updated_at_ms += 1;
@@ -25,6 +28,7 @@ fn completed_receipt(
             event_count: 1,
             event_bytes: 200,
             event_prefix_sha256: "f".repeat(64),
+            event_payload_prefix_sha256: None,
             lease_sequence: sequence,
             recorded_at_ms: receipt.updated_at_ms,
             owned_process_exit_observed: true,
@@ -46,7 +50,9 @@ async fn completed_fixture(
         &execute(&plan),
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     lease(&mut issued, 1).await.unwrap();
     let ack = synthetic_ack(issued.definition());
@@ -108,8 +114,10 @@ async fn completed_workload_is_durable_idempotent_terminal_and_never_restores_an
             &reopened,
             &execute(&done),
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
 }
@@ -123,7 +131,9 @@ async fn completion_requires_consumed_ack_and_a_lease_sequence_that_was_actually
         &execute(&plan),
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     let ack = synthetic_ack(issued.definition());
     let receipt = completed_receipt(issued.definition(), &ack, 1);

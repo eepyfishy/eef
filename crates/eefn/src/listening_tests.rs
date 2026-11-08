@@ -55,6 +55,9 @@ impl Fixture {
             enabled,
             expected_revision: report["revision"].as_u64().unwrap(),
             expected_epoch: report["runtime_epoch"].as_u64().unwrap(),
+            expected_camera_epoch: report
+                .pointer("/camera/runtime_epoch")
+                .and_then(Value::as_u64),
         })
     }
     fn change(&self, enabled: bool) -> Value {

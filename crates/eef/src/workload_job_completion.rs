@@ -13,6 +13,24 @@ pub struct Completion {
     pub recorded_at_ms: u64,
 }
 impl Completion {
+    pub(crate) fn validate_events(
+        &self,
+        definition: &Definition,
+        events: &[eefn::workload_network::Event],
+    ) -> Result<()> {
+        if !events.is_empty() {
+            let summary = eefn::workload_network::summarize_events(definition, events)?;
+            ensure!(
+                self.report.event_count == summary.count
+                    && self.report.event_bytes == summary.bytes
+                    && self.report.schema_version == 2
+                    && self.report.event_payload_prefix_sha256.as_deref()
+                        == Some(summary.prefix_sha256.as_str()),
+                "Workload completion differs from the retained event prefix"
+            );
+        }
+        Ok(())
+    }
     fn node_receipt(&self, definition: &Definition) -> NodeReceipt {
         NodeReceipt {
             schema_version: 3,
@@ -128,6 +146,17 @@ impl Issued {
                 recorded_at_ms: eefn::protocol::now_ms().max(saved.updated_at_ms),
             };
             candidate.validate(&pending.issued.definition, ack, pending.issued.issued_wall)?;
+            candidate.validate_events(
+                &pending.issued.definition,
+                &saved
+                    .execution
+                    .as_ref()
+                    .unwrap()
+                    .workload
+                    .as_ref()
+                    .unwrap()
+                    .observations,
+            )?;
             Ok(candidate)
         })();
         pending.issued.local_live()?;

@@ -1,10 +1,10 @@
 //! Reviewed session issuance in the existing JobStore/AttemptJournal model.
-//! Planning and conditional approval have owner command callers. Issuance remains
-//! internal until authenticated source execution and termination are admitted.
+//! Planning, approval and execution share owner command callers. Production
+//! nodes still advertise no execution until full source integration is accepted.
 use crate::{
-    jobs::{Assignment, JobStore},
+    jobs::JobStore,
     request_approval::ApprovalRecord,
-    request_execution::{AttemptState, ExecutionRecord},
+    request_execution::AttemptState,
     task::{Plan, PlanStatus, TaskStatus},
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -71,12 +71,17 @@ pub struct Execution {
     pub acknowledgement: Option<eefn::grants::workload::Receipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion: Option<Completion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<crate::execution_stop::Delivery>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observations: Vec<eefn::workload_network::Event>,
 }
 pub(crate) struct Snapshot {
     immutable: serde_json::Value,
     acknowledgement: Option<serde_json::Value>,
     completion: Option<serde_json::Value>,
     state: AttemptState,
+    observations: Vec<eefn::workload_network::Event>,
 }
 pub(crate) fn snapshot(plan: &Plan) -> Option<Snapshot> {
     let e = plan.execution.as_ref()?;
@@ -87,11 +92,18 @@ pub(crate) fn snapshot(plan: &Plan) -> Option<Snapshot> {
         acknowledgement: w.acknowledgement.as_ref().map(|a| json!(a)),
         completion: w.completion.as_ref().map(|c| json!(c)),
         state: w.state,
+        observations: w.observations.clone(),
     })
 }
 pub(crate) fn preserve(old: &Option<Snapshot>, plan: &Plan) -> Result<()> {
     let Some(old) = old else { return Ok(()) };
     let new = snapshot(plan).context("Retained workload issuance cannot be erased")?;
+    ensure!(
+        new.observations.starts_with(&old.observations)
+            && (matches!(old.state, AttemptState::Issued | AttemptState::Accepted)
+                || new.observations == old.observations),
+        "Retained workload observations cannot be erased, replaced or extended after retirement"
+    );
     ensure!(
         old.immutable == new.immutable
             && (old.acknowledgement.is_none() || old.acknowledgement == new.acknowledgement)
@@ -185,6 +197,7 @@ pub(crate) fn validate_approval(plan: &Plan) -> Result<()> {
     Ok(())
 }
 pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
+    crate::execution_stop::validate(plan)?;
     let e = plan
         .execution
         .as_ref()
@@ -199,13 +212,21 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
     w.definition.validate()?;
     e.command.validate()?;
     unique_operation(plan, &e.command.operation_id)?;
-    let expected_schema = if w.completion.is_some() { 3 } else { 2 };
+    eefn::workload_network::summarize_events(&w.definition, &w.observations)?;
+    let expected_schema = if !w.observations.is_empty() {
+        5
+    } else if w.stop.is_some() {
+        4
+    } else if w.completion.is_some() {
+        3
+    } else {
+        2
+    };
     ensure!(
         e.schema_version == expected_schema
             && e.attempts.is_empty()
             && e.peer.is_none()
             && e.abandonment.is_none()
-            && e.stop_requested_at_ms.is_none()
             && e.command.id == plan.plan_id
             && e.command.approval_sha256 == a.approval_sha256
             && e.command.operation_id != a.operation_id
@@ -251,6 +272,7 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
         );
     }
     if let Some(completion) = &w.completion {
+        completion.validate_events(&w.definition, &w.observations)?;
         ensure!(
             completion.recorded_at_ms <= plan.updated_at_ms,
             "Completion is newer than its coordinator checkpoint"
@@ -267,13 +289,20 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
         match w.state {
             AttemptState::Issued =>
                 w.acknowledgement.is_none()
+                    && w.observations.is_empty()
                     && w.completion.is_none()
-                    && plan.status == PlanStatus::Running
+                    && matches!(
+                        (plan.status, e.stop_requested_at_ms),
+                        (PlanStatus::Running, None) | (PlanStatus::Stopping, Some(_))
+                    )
                     && task.status == TaskStatus::Running,
             AttemptState::Accepted =>
                 w.acknowledgement.is_some()
                     && w.completion.is_none()
-                    && plan.status == PlanStatus::Running
+                    && matches!(
+                        (plan.status, e.stop_requested_at_ms),
+                        (PlanStatus::Running, None) | (PlanStatus::Stopping, Some(_))
+                    )
                     && task.status == TaskStatus::Running,
             AttemptState::Unknown =>
                 w.completion.is_none()
@@ -282,6 +311,7 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
             AttemptState::Completed =>
                 w.acknowledgement.is_some()
                     && w.completion.is_some()
+                    && e.stop_requested_at_ms.is_none()
                     && plan.status == PlanStatus::Completed
                     && task.status == TaskStatus::Completed,
             _ => false,
@@ -457,6 +487,7 @@ pub struct Issued {
     acknowledged: bool,
     retired: bool,
     final_slot: Option<crate::jobs::WorkloadFinalSlot>,
+    ownership: Option<crate::task::WorkloadJob>,
 }
 struct IssuerOperation<'a> {
     issued: &'a mut Issued,
@@ -488,7 +519,7 @@ pub(crate) fn mark_unknown(store: &JobStore, definition: &Definition) -> Result<
             }
             ensure!(
                 matches!(w.state, AttemptState::Issued | AttemptState::Accepted)
-                    && plan.status == PlanStatus::Running,
+                    && matches!(plan.status, PlanStatus::Running | PlanStatus::Stopping),
                 "Workload no longer owns an active issuer"
             );
             w.state = AttemptState::Unknown;
@@ -505,10 +536,20 @@ impl Drop for Issued {
     }
 }
 impl Issued {
+    pub(crate) fn deadline(&self) -> tokio::time::Instant {
+        self.deadline.into()
+    }
+    pub(crate) fn stop_receiver(&self) -> Result<tokio::sync::watch::Receiver<bool>> {
+        Ok(self
+            .ownership
+            .as_ref()
+            .context("Workload driver requires original engine ownership")?
+            .stop_receiver())
+    }
     pub fn definition(&self) -> &Definition {
         &self.definition
     }
-    fn retire(&mut self) {
+    pub(crate) fn retire(&mut self) {
         if self.retired {
             return;
         }
@@ -528,14 +569,14 @@ impl Issued {
             self.store.deny_workload_reporting();
         }
     }
-    fn checked_live(&mut self) -> Result<Plan> {
-        let result = self.live();
-        if result.is_err() {
-            self.retire();
-        }
-        result
-    }
     fn local_live(&self) -> Result<()> {
+        self.check_clock()?;
+        if let Some(owner) = &self.ownership {
+            owner.check(&self.definition.job_id)?;
+        }
+        Ok(())
+    }
+    fn check_clock(&self) -> Result<()> {
         ensure!(!self.retired, "Workload issuer permanently retired");
         self.store.require_workload_reporting()?;
         let expected = self
@@ -546,6 +587,19 @@ impl Issued {
             "Workload issuer expired or local clock changed"
         );
         Ok(())
+    }
+    /// Enqueue one already validated lease under the same in-memory gate as
+    /// owner stop/shutdown. Never await or read storage inside this callback.
+    pub(crate) fn deliver(&self, send: impl FnOnce() -> Result<()>) -> Result<()> {
+        if let Some(owner) = &self.ownership {
+            owner.deliver(&self.definition.job_id, || {
+                self.check_clock()?;
+                send()
+            })
+        } else {
+            self.check_clock()?;
+            send()
+        }
     }
     fn validate_live(&self, saved: &Plan) -> Result<()> {
         self.local_live()?;
@@ -562,27 +616,60 @@ impl Issued {
         );
         Ok(())
     }
-    fn live(&self) -> Result<Plan> {
-        self.local_live()?;
-        let saved = self.store.get(&self.definition.job_id)?;
-        self.validate_live(&saved)?;
-        Ok(saved)
-    }
 }
-/// Internal issuance only. Product callers must hold the existing engine's
-/// admission/quiescence gate and verify current authenticated node capabilities.
-/// No route invokes this API yet and it sends no grant/probe by itself.
-#[allow(dead_code)]
-pub(crate) fn issue(
+/// Product issuance reserves an engine lifetime BEFORE any asynchronous storage.
+/// Current authenticated node/source checks remain the runtime caller's job.
+/// This never dispatches a grant/probe or reconstructs authority from a row.
+pub(crate) async fn issue_owned(
+    engine: &crate::task::TaskEngine,
+    command: &ExecuteCommand,
+    session: &str,
+    policy: &Policy,
+    observation_deadline: tokio::time::Instant,
+) -> Result<Issued> {
+    command.validate()?;
+    let owner = engine.claim_workload(&command.id)?;
+    issue_inner(
+        &engine.store,
+        command,
+        session,
+        policy,
+        observation_deadline,
+        Some(owner),
+    )
+    .await
+}
+// Existing isolated journal/window tests do not claim a product runtime. There
+// is no shipping unowned constructor; product integration must use issue_owned.
+#[cfg(test)]
+pub(crate) async fn issue(
     store: &Arc<JobStore>,
     command: &ExecuteCommand,
     session: &str,
     policy: &Policy,
+    observation_deadline: tokio::time::Instant,
+) -> Result<Issued> {
+    issue_inner(store, command, session, policy, observation_deadline, None).await
+}
+async fn issue_inner(
+    store: &Arc<JobStore>,
+    command: &ExecuteCommand,
+    session: &str,
+    policy: &Policy,
+    observation_deadline: tokio::time::Instant,
+    ownership: Option<crate::task::WorkloadJob>,
 ) -> Result<Issued> {
     command.validate()?;
+    if let Some(owner) = &ownership {
+        owner.check(&command.id)?;
+    }
     eefn::automation_occurrence::uuid(session)?;
+    ensure!(
+        tokio::time::Instant::now() < observation_deadline,
+        "Workload issuance observation deadline elapsed before admission"
+    );
     let final_slot = store.reserve_workload_finalization()?;
-    let saved = store.get(&command.id)?;
+    let saved = store.get_before(&command.id, observation_deadline).await?;
     let w = template(&saved)?;
     let a = saved
         .approval
@@ -627,62 +714,31 @@ pub(crate) fn issue(
         limits: w.limits.clone(),
         events: w.events.clone(),
     };
-    let contract = definition.lease_contract()?;
-    // Validate policy before any durable mutation; keep the ORIGINAL deadline.
-    let _ = IssuerWindow::new(contract.clone(), policy, deadline)?;
-    store.change(
-        &command.id,
-        "Exact workload definition issued durably before any network offer",
-        |plan| {
-            ensure!(
-                plan.status == PlanStatus::Approved
-                    && plan.execution.is_none()
-                    && plan.revision == command.expected_revision
-                    && plan
-                        .approval
-                        .as_ref()
-                        .is_some_and(|r| r.approval_sha256 == command.approval_sha256),
-                "Concurrent workload issuance/source change"
-            );
-            plan.execution = Some(ExecutionRecord {
-                schema_version: 2,
-                command: command.clone(),
-                started_at_ms: now,
-                attempts: vec![],
-                abandonment: None,
-                peer: None,
-                stop_requested_at_ms: None,
-                workload: Some(Execution {
-                    definition: definition.clone(),
-                    issued_at_ms: now,
-                    state: AttemptState::Issued,
-                    acknowledgement: None,
-                    completion: None,
-                }),
-            });
-            plan.status = PlanStatus::Running;
-            let task = &mut plan.tasks[0];
-            task.status = TaskStatus::Running;
-            task.attempts = 1;
-            task.assignments.push(Assignment {
-                attempt: 1,
-                node_id: w.executor_node.clone(),
-                resource_id: Some(w.resource_id().into()),
-                model_id: None,
-                backend: None,
-                assigned_at_ms: now,
-            });
-            Ok(())
-        },
-    )?;
-    let window = match IssuerWindow::new(contract, policy, deadline) {
-        Ok(window) => window,
-        Err(error) => {
-            let _ = store.queue_workload_unknown(definition, final_slot);
-            return Err(error);
-        }
-    };
-    let mut token = Issued {
+    // Keep this one original window on the caller, including across native
+    // persistence and post-commit inspection. Journal bytes cannot recreate it.
+    let window = IssuerWindow::new(definition.lease_contract()?, policy, deadline)?;
+    let observed_until = observation_deadline.min(tokio::time::Instant::from_std(deadline));
+    let mut checkpoint: crate::jobs::CommittedIssue = store
+        .checkpoint_workload_issue_before(
+            command.clone(),
+            definition.clone(),
+            now,
+            final_slot,
+            observed_until,
+        )
+        .await?;
+    // The historical packet still owns retirement throughout this await. A
+    // cancelled/expired caller cannot abandon a committed row or get a token.
+    let current = store.get_before(&definition.job_id, observed_until).await?;
+    ensure!(
+        current
+            .execution
+            .as_ref()
+            .and_then(|e| e.workload.as_ref())
+            .is_some_and(|w| w.state == AttemptState::Issued && w.acknowledgement.is_none()),
+        "Workload changed before original issuer delivery"
+    );
+    let token = Issued {
         definition,
         store: store.clone(),
         window,
@@ -691,9 +747,14 @@ pub(crate) fn issue(
         deadline,
         acknowledged: false,
         retired: false,
-        final_slot: Some(final_slot),
+        final_slot: Some(checkpoint.take_slot()),
+        ownership,
     };
-    token.checked_live()?;
+    token.validate_live(&current)?;
+    ensure!(
+        tokio::time::Instant::now() < observed_until,
+        "Workload issuance observation deadline elapsed before token delivery"
+    );
     Ok(token)
 }
 

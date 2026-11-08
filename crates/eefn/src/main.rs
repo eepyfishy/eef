@@ -16,6 +16,14 @@ use tracing::{info, warn};
 struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
+    #[command(flatten)]
+    options: ServiceOptions,
+}
+
+// Build service flags separately so their unoptimized derive temporaries do not
+// share the subcommand builder's caller frame on Windows' one-MiB main stack.
+#[derive(Debug, clap::Args)]
+struct ServiceOptions {
     #[arg(long, global = true, help = "Print command results as JSON")]
     json: bool,
     #[arg(
@@ -33,7 +41,7 @@ struct Args {
     node_id: Option<String>,
     #[arg(long)]
     name: Option<String>,
-    #[arg(long, env = "EEF_NODE_PSK")]
+    #[arg(long, env = "EEF_NODE_PSK", hide_env_values = true)]
     psk: Option<String>,
     #[arg(long)]
     allow_write: bool,
@@ -60,8 +68,21 @@ struct Args {
         help = "Advertise an installed Ollama model for this run; may be repeated"
     )]
     selected_models: Vec<String>,
-    #[arg(long, env = "EEF_NODE_OLLAMA")]
+    #[arg(long, env = "EEF_NODE_OLLAMA", hide_env_values = true)]
     ollama_url: Option<String>,
+}
+
+impl std::ops::Deref for Args {
+    type Target = ServiceOptions;
+    fn deref(&self) -> &Self::Target {
+        &self.options
+    }
+}
+
+impl std::ops::DerefMut for Args {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.options
+    }
 }
 
 impl Args {
@@ -111,10 +132,20 @@ enum Commands {
         #[command(subcommand)]
         command: eefn::workload_sources::Action,
     },
+    /// Configure continuous-workload admission limits; never start a source.
+    WorkloadPolicy {
+        #[command(subcommand)]
+        command: eefn::workload_policy::Action,
+    },
     /// Configure finite audio relay resources; never enable permissions or execute.
     Relay {
         #[command(subcommand)]
         command: eefn::relay_setup::RelayAction,
+    },
+    /// Configure camera resources without JSON; never enable permission or capture.
+    Camera {
+        #[command(subcommand)]
+        command: eefn::camera_setup::Action,
     },
     /// Inspect or explicitly allow/deny whole features; never execute or restart.
     Permissions {
@@ -894,6 +925,100 @@ async fn execute_audio_command(
         let value = eefn::model_manager::bounded_json(response).await?;
         if !ok || !confirmed_node(&value, &file.node_id, &command) {
             bail!("Unconfirmed typed audio submission reply")
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| unavailable(&file.node_id, command, true)))
+}
+
+async fn execute_camera_command(
+    args: &Args,
+    command: eefn::camera_submission::CameraCommand,
+) -> Result<serde_json::Value> {
+    use eefn::camera_submission::{CameraRequest, confirmed_node, unavailable};
+    command.validate()?;
+    let file = load_file(&args.config)?;
+    eefn::network::validate_remote_node_id(&file.node_id)?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        return Ok(unavailable(&file.node_id, command, false));
+    }
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!("http://{address}/api/commands/requests/camera"))
+            .timeout(Duration::from_secs(150))
+            .json(&CameraRequest {
+                schema_version: 1,
+                expected_node_id: file.node_id.clone(),
+                command: command.clone(),
+            })
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(unavailable(&file.node_id, command.clone(), false));
+        }
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok || !confirmed_node(&value, &file.node_id, &command) {
+            bail!("Unconfirmed camera submission reply");
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| unavailable(&file.node_id, command, true)))
+}
+
+async fn execute_microphone_command(
+    args: &Args,
+    command: eefn::microphone_submission::MicrophoneCommand,
+) -> Result<serde_json::Value> {
+    use eefn::microphone_submission::{MicrophoneRequest, confirmed_node, unavailable};
+    command.validate()?;
+    let file = load_file(&args.config)?;
+    eefn::network::validate_remote_node_id(&file.node_id)?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        return Ok(unavailable(&file.node_id, command, false));
+    }
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let exchange = async {
+        let response = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .post(format!("http://{address}/api/commands/requests/microphone"))
+            .timeout(Duration::from_secs(150))
+            .json(&MicrophoneRequest {
+                schema_version: 1,
+                expected_node_id: file.node_id.clone(),
+                command: command.clone(),
+            })
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(unavailable(&file.node_id, command.clone(), false));
+        }
+        let ok = response.status().is_success();
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !ok || !confirmed_node(&value, &file.node_id, &command) {
+            bail!("Unconfirmed microphone submission reply")
         }
         Ok::<_, anyhow::Error>(value)
     }
@@ -1743,6 +1868,97 @@ async fn execute_setup_check(args: &Args, local_plan: bool) -> Result<serde_json
     Ok(value)
 }
 
+async fn execute_camera_setup(
+    args: &Args,
+    action: &eefn::camera_setup::Action,
+) -> Result<serde_json::Value> {
+    use eefn::camera_setup::{Action, Command, Request};
+    use serde_json::json;
+    if let Action::Configure(settings) = action {
+        settings.validate()?;
+    }
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start this node first; camera configuration never launches a runtime");
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    let mutation = matches!(action, Action::Configure(_));
+    let mut sending_mutation = false;
+    let exchange = async {
+        let response = client
+            .get(format!("http://{address}/api/diagnostics"))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Node diagnostics unavailable");
+        }
+        let diagnostics = eefn::model_manager::bounded_json(response).await?;
+        if diagnostics["node_id"] != file.node_id || diagnostics["success"] != true {
+            bail!("Unconfirmed node diagnostics");
+        }
+        let mut request = Request {
+            schema_version: 1,
+            expected_node_id: file.node_id.clone(),
+            expected_runtime_id: diagnostics["runtime_id"]
+                .as_str()
+                .context("Node runtime unavailable")?
+                .into(),
+            command: Command::Show,
+        };
+        request.validate()?;
+        let url = format!("http://{address}/api/commands/camera-setup");
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Camera setup inspection unavailable");
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::camera_setup::confirmed(&inspected, &request) {
+            bail!("Unconfirmed camera setup inspection");
+        }
+        let Action::Configure(settings) = action else {
+            return Ok::<_, anyhow::Error>(inspected);
+        };
+        request.command = Command::Configure {
+            settings: settings.clone(),
+            expected_digest: inspected["saved_digest"]
+                .as_str()
+                .context("Camera configuration digest missing")?
+                .into(),
+        };
+        request.validate()?;
+        sending_mutation = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Camera configuration was not confirmed");
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::camera_setup::confirmed(&saved, &request) {
+            bail!("Unconfirmed camera configuration reply");
+        }
+        Ok(saved)
+    }
+    .await;
+    let success = exchange.is_ok();
+    Ok(
+        json!({"schema_version":1,"report_type":"node_camera_setup_command","node_id":file.node_id,"success":success,
+        "mutation_requested":mutation,"sending_attempted":sending_mutation,"outcome_unknown":!success && sending_mutation,"result":exchange.ok(),
+        "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "note":"Inspect camera show after uncertainty; no retry, permission change, restart or workload was sent."}),
+    )
+}
+
 async fn execute_relay_command(
     args: &Args,
     action: &eefn::relay_setup::RelayAction,
@@ -2091,6 +2307,9 @@ async fn execute_listening(
             expected_epoch: inspected["runtime_epoch"]
                 .as_u64()
                 .context("Listening runtime epoch unavailable")?,
+            expected_camera_epoch: inspected
+                .pointer("/camera/runtime_epoch")
+                .and_then(Value::as_u64),
         };
         request.validate()?;
         requested = json!(request.command);
@@ -2111,8 +2330,122 @@ async fn execute_listening(
     )
 }
 
+async fn execute_workload_policy(
+    args: &Args,
+    action: &eefn::workload_policy::Action,
+) -> Result<serde_json::Value> {
+    use eefn::workload_policy::{Action, Command, Request};
+    use serde_json::{Value, json};
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start this node first; workload policy commands never launch a runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(10))
+        .build()?;
+    let mutation = !matches!(action, Action::Show);
+    let mut sending = false;
+    let mut requested = Value::Null;
+    let result = async {
+        let response = client
+            .get(format!("http://{address}/api/diagnostics"))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Node diagnostics unavailable")
+        }
+        let diagnostics = eefn::model_manager::bounded_json(response).await?;
+        if diagnostics["success"] != true || diagnostics["node_id"] != file.node_id {
+            bail!("Unconfirmed node diagnostics")
+        }
+        let mut request = Request {
+            schema_version: 1,
+            expected_node_id: file.node_id.clone(),
+            expected_runtime_id: diagnostics["runtime_id"]
+                .as_str()
+                .context("Node runtime unavailable")?
+                .into(),
+            command: Command::Show {},
+        };
+        request.validate()?;
+        let url = format!("http://{address}/api/commands/workload-policy");
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Workload policy inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::workload_policy::confirmed(&inspected, &request) {
+            bail!("Unconfirmed workload policy inspection")
+        }
+        let mut policy: eefn::workload_leases::Policy =
+            serde_json::from_value(inspected["policy"].clone())?;
+        match action {
+            Action::Show => return Ok::<_, anyhow::Error>(inspected),
+            Action::Disable => policy.enabled = false,
+            Action::Enable {
+                max_session_ms,
+                max_lease_ms,
+            } => {
+                policy.enabled = true;
+                if let Some(value) = max_session_ms {
+                    policy.max_session_ms = *value;
+                }
+                if let Some(value) = max_lease_ms {
+                    policy.max_lease_ms = *value;
+                }
+            }
+        }
+        policy.validate()?;
+        request.command = Command::Set {
+            policy,
+            expected_revision: inspected["revision"]
+                .as_u64()
+                .context("Workload policy revision unavailable")?,
+            expected_epoch: inspected["runtime_epoch"]
+                .as_u64()
+                .context("Workload policy epoch unavailable")?,
+        };
+        request.validate()?;
+        requested = json!(request.command);
+        sending = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Workload policy save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::workload_policy::confirmed(&saved, &request) {
+            bail!("Unconfirmed workload policy save")
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(
+        json!({"schema_version":1,"report_type":"node_workload_policy_command","node_id":file.node_id,
+        "success":result.is_ok(),"mutation_requested":mutation,"sending_attempted":sending,
+        "outcome_unknown":result.is_err()&&sending,"command":requested,"result":result.ok(),
+        "execution_authorized":false,"capture_started":false,"restart_requested":false,"automatically_retried":false,
+        "note":"Inspect workload-policy show after uncertainty; no retry, source, permission change or restart was requested."}),
+    )
+}
+
 async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::Value> {
-    if let Commands::Workloads { .. } = command {
+    if let Commands::WorkloadPolicy { command } = command {
+        return execute_workload_policy(args, command).await;
+    }
+    if let Commands::Workloads {
+        command: source_command,
+    } = command
+    {
         if eefn::setup::instance_lock(&args.config)?.is_some() {
             bail!("Start this node first; source inspection never launches a runtime")
         }
@@ -2148,15 +2481,29 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 .into(),
         };
         request.validate()?;
+        let camera = matches!(
+            source_command,
+            eefn::workload_sources::Action::CameraSources
+        );
+        let operation = if camera {
+            "camera-workload-sources"
+        } else {
+            "workload-sources"
+        };
         let response = client
-            .post(format!("http://{address}/api/commands/workload-sources"))
+            .post(format!("http://{address}/api/commands/{operation}"))
             .json(&request)
             .send()
             .await?
             .error_for_status()?;
         let value = eefn::model_manager::bounded_json(response).await?;
-        let report: eefn::workload_sources::Report = serde_json::from_value(value.clone())?;
-        report.validate(&request)?;
+        if camera {
+            let report: eefn::camera_sources::Report = serde_json::from_value(value.clone())?;
+            report.validate(&request)?;
+        } else {
+            let report: eefn::workload_sources::Report = serde_json::from_value(value.clone())?;
+            report.validate(&request)?;
+        }
         return Ok(value);
     }
     if let Commands::Listening { command } = command {
@@ -2187,6 +2534,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     }
     if let Commands::Relay { command } = command {
         return execute_relay_command(args, command).await;
+    }
+    if let Commands::Camera { command } = command {
+        return execute_camera_setup(args, command).await;
     }
     if let Commands::Permissions { command } = command {
         return execute_permission_command(args, command).await;
@@ -2330,6 +2680,16 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 execute_node_planning_command(
                     args,
                     eefn::request_planning::PlanningCommand::Inspect { id: id.clone() },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::CompileSaved { id, revision } => {
+                execute_node_planning_command(
+                    args,
+                    eefn::request_planning::PlanningCommand::CompileSaved {
+                        id: id.clone(),
+                        expected_revision: *revision,
+                    },
                 )
                 .await
             }
@@ -2563,6 +2923,12 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
             }
             eefn::request_preview::RequestAction::SubmitAudio(input) => {
                 execute_audio_command(args, input.command()?).await
+            }
+            eefn::request_preview::RequestAction::SubmitMicrophone(input) => {
+                execute_microphone_command(args, input.command()?).await
+            }
+            eefn::request_preview::RequestAction::SubmitCamera(input) => {
+                execute_camera_command(args, input.command()?).await
             }
             eefn::request_preview::RequestAction::Submit {
                 text,
@@ -2873,6 +3239,26 @@ fn default_llama_binary() -> PathBuf {
     PathBuf::from("tools/llama-server.exe")
 }
 
+#[inline(never)]
+fn startup_phase(phase: &'static str) {
+    tracing::debug!(target: "eefn::startup", "node startup phase: {phase}");
+}
+
+#[inline(never)]
+fn parse_args_from(
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> std::result::Result<Args, clap::Error> {
+    // Keep one command tree in place instead of forwarding it by value through
+    // Parser::try_parse and Command::try_get_matches on the Windows main stack.
+    startup_phase("parse_build");
+    let mut command = <Args as clap::CommandFactory>::command();
+    startup_phase("parse_matches");
+    let mut matches = command.try_get_matches_from_mut(arguments)?;
+    startup_phase("parse_decode");
+    <Args as clap::FromArgMatches>::from_arg_matches_mut(&mut matches)
+        .map_err(|error| error.format(&mut command))
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -2883,7 +3269,9 @@ fn main() -> Result<()> {
         .init();
     let executable = std::env::current_exe()?;
     let install_dir = eefn::updater::installation_root(&executable)?;
-    let parsed = Args::try_parse();
+    startup_phase("parse");
+    let parsed = parse_args_from(std::env::args_os());
+    startup_phase("parsed");
     let service = parsed.as_ref().is_ok_and(Args::is_service);
     if service {
         eefn::console::detach_owned_service_console();
@@ -2914,12 +3302,23 @@ fn main() -> Result<()> {
     run(args, install_dir)
 }
 
-#[tokio::main]
-async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
+fn run(args: Args, install_dir: PathBuf) -> Result<()> {
+    // Keep the application future on the heap before polling it on Windows'
+    // one-MiB main stack. The runtime and lifecycle are unchanged.
+    startup_phase("runtime_build");
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(Box::pin(run_application(args, install_dir)))
+}
+
+async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
+    startup_phase("layout");
     args.config = eefn::runtime_layout::RuntimeLayout::current()?
         .configuration(&args.config, Path::new("config.json"));
     if let Some(command) = &args.command {
-        match execute_command(&args, command).await {
+        startup_phase("command_dispatch");
+        match Box::pin(execute_command(&args, command)).await {
             Ok(value) => {
                 if args.json {
                     println!("{}", serde_json::to_string(&value)?);
@@ -2948,6 +3347,20 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     }
                 ) {
                     print!("{}", eefn::audio_submission::render_node(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::SubmitMicrophone(_)
+                    }
+                ) {
+                    print!("{}", eefn::microphone_submission::render_node(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::SubmitCamera(_)
+                    }
+                ) {
+                    print!("{}", eefn::camera_submission::render_node(&value)?);
                 } else if matches!(command, Commands::ModelBootstrapPolicy { .. }) {
                     if value["success"] == true {
                         print!("{}", eefn::model_bootstrap::render(&value["result"])?);
@@ -2964,14 +3377,39 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                             "Python policy outcome was not confirmed. Inspect python show; no retry, permission change, restart or workload was sent."
                         );
                     }
+                } else if matches!(command, Commands::WorkloadPolicy { .. }) {
+                    if value["success"] == true {
+                        print!("{}", eefn::workload_policy::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Workload policy outcome unconfirmed. Inspect workload-policy show before deciding what to do."
+                        );
+                    }
                 } else if matches!(command, Commands::Workloads { .. }) {
-                    print!("{}", eefn::workload_sources::render(&value)?);
+                    if matches!(
+                        command,
+                        Commands::Workloads {
+                            command: eefn::workload_sources::Action::CameraSources
+                        }
+                    ) {
+                        print!("{}", eefn::camera_sources::render(&value)?);
+                    } else {
+                        print!("{}", eefn::workload_sources::render(&value)?);
+                    }
                 } else if matches!(command, Commands::Listening { .. }) {
                     if value["success"] == true {
                         print!("{}", eefn::listening::render(&value["result"])?);
                     } else {
                         println!(
                             "Listening consent outcome unconfirmed. Inspect `eefn listening show`; no automatic retry, workload or restart was sent."
+                        );
+                    }
+                } else if matches!(command, Commands::Camera { .. }) {
+                    if value["success"] == true {
+                        print!("{}", eefn::camera_setup::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Camera setup outcome unconfirmed. Inspect `eefn camera show` before deciding what to do; no automatic retry or restart was sent."
                         );
                     }
                 } else if matches!(command, Commands::Relay { .. }) {
@@ -3084,6 +3522,7 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
         }
         return Ok(());
     }
+    startup_phase("service_lock");
     let _instance = if args.is_service() {
         match eefn::setup::service_instance_lock(&args.config).await? {
             Some(lock) => Some(lock),
@@ -3100,15 +3539,20 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
     } else {
         None
     };
+    startup_phase("identity_initialize");
     let initial = eefn::setup::initialize_identity(&args.config)?;
+    startup_phase("local_pairing");
     let _ = eefn::setup::pair_local(&args.config)?;
+    startup_phase("configuration_load");
     let file = load_file(&args.config)?;
     let mut dashboard_config = file.dashboard.unwrap_or_default();
+    startup_phase("service_construct");
     let dashboard = NodeService::new(
         args.config.clone(),
         initial["node_id"].as_str().unwrap().into(),
     );
     let interactive = args.is_service();
+    startup_phase("api_start");
     let mut dashboard_task = if dashboard_config.enabled && interactive {
         Some(
             dashboard
@@ -3122,6 +3566,7 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
     } else {
         None
     };
+    startup_phase("api_started");
     if args.open_dashboard
         && !args.no_ui
         && dashboard_config.ui_enabled
@@ -3204,15 +3649,16 @@ async fn run(mut args: Args, install_dir: PathBuf) -> Result<()> {
                 }
             }
         };
+        startup_phase("runtime_start");
         let (result, reason) = supervise_runtime(
-            run_node(
+            Box::pin(run_node(
                 &args,
                 install_dir.clone(),
                 dashboard.clone(),
                 stopped,
                 shutdown_barrier.clone(),
                 startup,
-            ),
+            )),
             signal,
             stop,
         )
@@ -3484,7 +3930,12 @@ async fn run_node(
         .iter()
         .filter(|(enabled, _)| *enabled)
         .count();
-    let requested = requested_builtins > 0 || !file.python_plugins.is_empty();
+    let requested = python_runtime_requested(
+        requested_builtins,
+        &file.python_plugins,
+        media.camera,
+        &file.metadata,
+    );
     let mut python_startup = PythonStartup {
         complete: !requested,
         interpreter: if requested {
@@ -3897,6 +4348,23 @@ fn resolve_relative(config: &Path, value: &Path) -> PathBuf {
         .join(value)
 }
 
+fn python_runtime_requested(
+    builtin_plugins: usize,
+    custom_plugins: &[PathBuf],
+    camera_allowed: bool,
+    metadata: &eefn::context::NodeMetadata,
+) -> bool {
+    // An owner-bound camera source can be RTSP without a local webcam. Its
+    // interpreter is independent of optional one-shot camera plugin discovery.
+    builtin_plugins > 0
+        || !custom_plugins.is_empty()
+        || (camera_allowed
+            && metadata.resources.iter().any(|resource| {
+                resource.available
+                    && eefn::workload_leases::definition::camera_resource_digest(resource).is_ok()
+            }))
+}
+
 fn python_for_startup(
     config: &Path,
     value: Option<PathBuf>,
@@ -3928,6 +4396,82 @@ fn parse_selected_model(value: &str) -> Result<SelectedModel> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn explicit_camera_source_requests_python_without_a_discovered_webcam_plugin() {
+        let mut metadata: eefn::context::NodeMetadata = serde_json::from_value(serde_json::json!({
+            "resources":[{"id":"camera","capability":"camera.capture","parameters":{"device":"rtsp://camera.invalid/live"}}]
+        })).unwrap();
+        assert!(super::python_runtime_requested(0, &[], true, &metadata));
+        assert!(!super::python_runtime_requested(0, &[], false, &metadata));
+        metadata.resources[0].available = false;
+        assert!(!super::python_runtime_requested(0, &[], true, &metadata));
+        metadata.resources[0].available = true;
+        metadata.resources[0].parameters["device"] = serde_json::json!("file:///not-a-camera");
+        assert!(!super::python_runtime_requested(0, &[], true, &metadata));
+        metadata.resources.clear();
+        assert!(!super::python_runtime_requested(0, &[], true, &metadata));
+        assert!(super::python_runtime_requested(1, &[], false, &metadata));
+        assert!(super::python_runtime_requested(
+            0,
+            &[std::path::PathBuf::from("custom.py")],
+            false,
+            &metadata
+        ));
+    }
+
+    #[test]
+    fn camera_source_cli_is_a_read_without_capture_permission_or_execution_options() {
+        use clap::Parser;
+        let args = super::Args::try_parse_from(["eefn", "workloads", "camera-sources"]).unwrap();
+        assert!(!args.is_service());
+        assert!(matches!(
+            args.command,
+            Some(super::Commands::Workloads {
+                command: eefn::workload_sources::Action::CameraSources
+            })
+        ));
+        for flag in [
+            "--allow",
+            "--device",
+            "--execute",
+            "--restart",
+            "--grant",
+            "--file",
+        ] {
+            assert!(
+                super::Args::try_parse_from(["eefn", "workloads", "camera-sources", flag]).is_err()
+            );
+        }
+    }
+    #[test]
+    fn workload_policy_cli_has_owner_limits_without_source_or_permission_options() {
+        use clap::Parser;
+        for action in ["show", "disable", "enable"] {
+            let args = super::Args::try_parse_from(["eefn", "workload-policy", action]).unwrap();
+            assert!(matches!(
+                args.command,
+                Some(super::Commands::WorkloadPolicy { .. })
+            ));
+        }
+        assert!(
+            super::Args::try_parse_from([
+                "eefn",
+                "workload-policy",
+                "enable",
+                "--max-session-ms",
+                "60000",
+                "--max-lease-ms",
+                "10000"
+            ])
+            .is_ok()
+        );
+        for flag in ["--grant", "--microphone", "--start-source", "--restart"] {
+            assert!(
+                super::Args::try_parse_from(["eefn", "workload-policy", "enable", flag]).is_err()
+            );
+        }
+    }
+
     #[test]
     fn listening_cli_is_local_consent_with_no_workload_options() {
         use clap::Parser;
@@ -4252,6 +4796,172 @@ mod tests {
         }
     }
     #[test]
+    fn compile_saved_cli_requires_an_exact_revision_without_json_or_authority_flags() {
+        let job = uuid::Uuid::new_v4().simple().to_string();
+        let args =
+            Args::try_parse_from(["eefn", "requests", "compile-saved", &job, "--revision", "1"])
+                .unwrap();
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::CompileSaved { id, revision },
+        }) = args.command
+        else {
+            panic!("Wrong saved compilation adapter")
+        };
+        assert_eq!(id, job);
+        assert_eq!(revision, 1);
+        assert!(Args::try_parse_from(["eefn", "requests", "compile-saved", &job]).is_err());
+        for flag in [
+            "--file",
+            "--template",
+            "--model",
+            "--approve",
+            "--execute",
+            "--retry",
+            "--force",
+        ] {
+            assert!(
+                Args::try_parse_from([
+                    "eefn",
+                    "requests",
+                    "compile-saved",
+                    &job,
+                    "--revision",
+                    "1",
+                    flag
+                ])
+                .is_err()
+            );
+        }
+    }
+    #[test]
+    fn camera_setup_cli_needs_no_json_permission_or_authority_flags() {
+        let parsed = Args::try_parse_from([
+            "eefn",
+            "camera",
+            "configure",
+            "--resource",
+            "living-room",
+            "--device",
+            "2",
+        ])
+        .unwrap();
+        let Some(Commands::Camera {
+            command: eefn::camera_setup::Action::Configure(settings),
+        }) = parsed.command
+        else {
+            panic!("Wrong camera configuration adapter")
+        };
+        assert_eq!(settings.device, Some(2));
+        assert_eq!(settings.resource.as_deref(), Some("living-room"));
+        settings.validate().unwrap();
+        assert!(Args::try_parse_from(["eefn", "camera", "show"]).is_ok());
+        assert!(Args::try_parse_from(["eefn", "camera", "configure"]).is_ok());
+        for extra in [
+            vec!["--device", "1024"],
+            vec!["--device", "0", "--rtsp", "rtsp://camera.invalid/live"],
+            vec!["--permission"],
+            vec!["--grant"],
+            vec!["--start"],
+            vec!["--restart"],
+            vec!["--file", "settings.json"],
+        ] {
+            assert!(
+                Args::try_parse_from(["eefn", "camera", "configure"].into_iter().chain(extra))
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn submit_camera_cli_preserves_explicit_limits_without_authority_or_private_device_flags() {
+        let parsed = Args::try_parse_from([
+            "eefn",
+            "requests",
+            "submit-camera",
+            "--source-node",
+            "living-room",
+            "--camera",
+            "cam",
+            "--frames",
+            "5",
+            "--activation-level",
+            "20",
+            "--io-timeout-ms",
+            "1000",
+        ])
+        .unwrap();
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::SubmitCamera(input),
+        }) = parsed.command
+        else {
+            panic!("Wrong camera authoring adapter")
+        };
+        let command = input.command().unwrap();
+        assert_eq!(command.input.camera.as_deref(), Some("cam"));
+        assert_eq!(command.input.parameters.max_frames, 5);
+        assert_eq!(command.input.parameters.activation_level, 20);
+        assert_eq!(command.input.parameters.io_timeout_ms, 1000);
+        assert_eq!(command.input.limits.max_source_frames, 5);
+        for flag in [
+            "--grant",
+            "--approve",
+            "--execute",
+            "--device",
+            "--rtsp",
+            "--plugin",
+            "--file",
+            "--retry",
+        ] {
+            assert!(Args::try_parse_from(["eefn", "requests", "submit-camera", flag]).is_err());
+        }
+    }
+    #[test]
+    fn submit_microphone_cli_needs_no_file_model_or_authority_flags() {
+        let args = Args::try_parse_from([
+            "eefn",
+            "requests",
+            "submit-microphone",
+            "--source-node",
+            "living-room",
+            "--microphone",
+            "mic",
+            "--blocks",
+            "25",
+            "--operation-id",
+            "11111111-1111-4111-8111-111111111111",
+        ])
+        .unwrap();
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::SubmitMicrophone(source),
+        }) = args.command
+        else {
+            panic!("Wrong microphone authoring adapter")
+        };
+        let command = source.command().unwrap();
+        assert_eq!(command.input.source_node.as_deref(), Some("living-room"));
+        assert_eq!(command.input.parameters.max_blocks, 25);
+        assert_eq!(command.input.limits.max_source_frames, 40_000);
+        for flag in [
+            "--execute",
+            "--approve",
+            "--permissions",
+            "--restart",
+            "--file",
+            "--force",
+            "--retry",
+            "--model",
+        ] {
+            assert!(Args::try_parse_from(["eefn", "requests", "submit-microphone", flag]).is_err());
+        }
+        let defaults = Args::try_parse_from(["eefn", "requests", "submit-microphone"]).unwrap();
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::SubmitMicrophone(source),
+        }) = defaults.command
+        else {
+            panic!("Wrong default microphone authoring adapter")
+        };
+        assert!(source.command().unwrap().input.microphone.is_none());
+    }
+    #[test]
     fn relay_setup_cli_preserves_explicit_roles_without_json_or_authority_flags() {
         let args =
             Args::try_parse_from(["eefn", "relay", "configure", "--microphone", "--receive"])
@@ -4313,10 +5023,13 @@ mod tests {
                 None,
             )
         });
+        let application_args = Args::try_parse_from(["eefn", "--no-ui"]).unwrap();
+        let application = bytes(|| run_application(application_args, PathBuf::new()));
         for (name, size) in [
             ("dispatch", dispatch),
             ("pairing", pairing),
             ("runtime", runtime),
+            ("application", application),
         ] {
             assert!(size <= 64 * 1024, "{name} future grew to {size} bytes");
         }
@@ -4324,16 +5037,102 @@ mod tests {
 
     #[test]
     fn parser_fits_the_windows_main_stack_without_a_runtime_poll_frame() {
+        #[inline(never)]
+        fn phase(kind: &'static str, case: usize) {
+            // Bypass test-thread capture so an abort still leaves a fixed,
+            // argument-free marker. Never print argv or environment values.
+            use std::io::Write;
+            let _ = writeln!(std::io::stderr().lock(), "eefn parser case: {kind} {case}");
+        }
         std::thread::Builder::new()
             .name("cli-parser-1mib".into())
             .stack_size(1024 * 1024)
             .spawn(|| {
-                for args in [
+                for (case, args) in [
+                    vec!["eefn"],
+                    vec!["eefn", "--no-ui"],
+                    vec![
+                        "eefn",
+                        "--json",
+                        "repair",
+                        "--approve",
+                        "11111111-1111-4111-8111-111111111111",
+                        "--allow-prerelease",
+                    ],
                     vec!["eefn", "connection", "pair-stdin"],
                     vec!["eefn", "models", "show"],
                     vec!["eefn", "requests", "plan", "request-id"],
-                ] {
-                    Args::try_parse_from(args).unwrap();
+                    vec!["eefn", "requests", "submit-microphone"],
+                    vec!["eefn", "requests", "submit-camera"],
+                    vec![
+                        "eefn",
+                        "requests",
+                        "submit-camera",
+                        "--camera",
+                        "camera",
+                        "--frames",
+                        "5",
+                        "--width",
+                        "640",
+                        "--max-session-ms",
+                        "60000",
+                    ],
+                    vec![
+                        "eefn",
+                        "requests",
+                        "compile-saved",
+                        "request-id",
+                        "--revision",
+                        "1",
+                    ],
+                    vec![
+                        "eefn",
+                        "requests",
+                        "submit-microphone",
+                        "--source-node",
+                        "living-room",
+                        "--microphone",
+                        "mic",
+                        "--blocks",
+                        "25",
+                        "--max-session-ms",
+                        "60000",
+                    ],
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    phase("valid_baseline", case);
+                    Args::try_parse_from(args.clone()).unwrap();
+                    phase("valid_in_place", case);
+                    parse_args_from(args.into_iter().map(std::ffi::OsString::from)).unwrap();
+                }
+                for (case, args) in [
+                    vec!["eefn", "--help"],
+                    vec!["eefn", "--version"],
+                    vec!["eefn", "requests", "submit-camera", "--help"],
+                    vec!["eefn", "requests", "submit-camera", "--execute"],
+                    vec![
+                        "eefn",
+                        "camera",
+                        "configure",
+                        "--device",
+                        "1",
+                        "--rtsp",
+                        "rtsp://example.invalid/live",
+                    ],
+                    vec!["eefn", "unknown-subcommand"],
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    phase("error_baseline", case);
+                    let expected = Args::try_parse_from(args.clone()).unwrap_err();
+                    phase("error_in_place", case);
+                    let actual = parse_args_from(args.into_iter().map(std::ffi::OsString::from))
+                        .unwrap_err();
+                    assert_eq!(actual.kind(), expected.kind());
+                    assert_eq!(actual.to_string(), expected.to_string());
                 }
             })
             .unwrap()

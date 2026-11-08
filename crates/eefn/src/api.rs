@@ -132,6 +132,18 @@ impl NodeService {
                 post(workload_sources).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
             .route(
+                "/api/commands/camera-workload-sources",
+                post(camera_workload_sources).layer(axum::extract::DefaultBodyLimit::max(4096)),
+            )
+            .route(
+                "/api/commands/camera-setup",
+                post(camera_setup).layer(axum::extract::DefaultBodyLimit::max(8192)),
+            )
+            .route(
+                "/api/commands/workload-policy",
+                post(workload_policy).layer(axum::extract::DefaultBodyLimit::max(4096)),
+            )
+            .route(
                 "/api/commands/permissions",
                 post(permission_command).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
@@ -168,6 +180,14 @@ impl NodeService {
             .route("/api/commands/requests/resolve", post(request_resolution))
             .route("/api/commands/requests/prepare", post(request_preparation))
             .route("/api/commands/requests/submit", post(request_submission))
+            .route(
+                "/api/commands/requests/microphone",
+                post(microphone_submission).layer(axum::extract::DefaultBodyLimit::max(65536)),
+            )
+            .route(
+                "/api/commands/requests/camera",
+                post(camera_submission).layer(axum::extract::DefaultBodyLimit::max(65536)),
+            )
             .route(
                 "/api/commands/requests/audio",
                 post(audio_submission).layer(axum::extract::DefaultBodyLimit::max(65536)),
@@ -288,6 +308,18 @@ async fn audio_submission(
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.audio_request(request).await?))
 }
+async fn microphone_submission(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::microphone_submission::MicrophoneRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.microphone_request(request).await?))
+}
+async fn camera_submission(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::camera_submission::CameraRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.camera_request(request).await?))
+}
 async fn permission_command(
     State(state): State<Arc<NodeService>>,
     Json(request): Json<crate::permission_commands::PermissionRequest>,
@@ -312,6 +344,18 @@ async fn workload_sources(
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.workload_sources(request)?))
 }
+async fn camera_workload_sources(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::camera_sources::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.camera_workload_sources(request)?))
+}
+async fn workload_policy(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::workload_policy::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.workload_policy_command(request, false)?))
+}
 
 async fn model_bootstrap_policy(
     State(state): State<Arc<NodeService>>,
@@ -330,6 +374,12 @@ async fn relay_command(
     Json(request): Json<crate::relay_setup::RelayRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.relay_command(request, false)?))
+}
+async fn camera_setup(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::camera_setup::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.camera_setup(request, false)?))
 }
 async fn model_lifecycle(
     State(state): State<Arc<NodeService>>,

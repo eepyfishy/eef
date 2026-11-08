@@ -4,6 +4,19 @@
 can inspect the same node with `eef node workload-sources --node NODE_ID`.
 Both use backend operations; a dashboard or model is not required.
 
+The current development path also supports independently inspected camera motion
+sources through `eefn workloads camera-sources` and
+`eef node camera-workload-sources --node NODE_ID`. Compilation, conditional approval
+and explicit execution select the reviewed source kind; a camera request cannot
+fall back to microphone inspection or preparation. Camera-capable peers advertise
+an explicit version-three source list. Microphone-only peers retain the existing
+version-two wire shape. Fresh readiness withdrawal updates the same authenticated
+connection without restarting work. These changes require hosted verification;
+JSON-free camera resource setup and camera request authoring remain unfinished.
+See [camera development and acceptance boundaries](CAMERA-MOTION.md).
+
+The earlier implementation checkpoints below retain their original scope.
+
 Inspection lists the applied microphone resources, their private-binding digests,
 and the compiled-in energy adapter digest. It reports saved/applied microphone
 permission, local listening consent/revision/epoch, whether saved resource

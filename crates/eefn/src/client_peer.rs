@@ -33,6 +33,9 @@ impl NodeClient {
         peer: Option<&crate::peer::plan::Advertisement>,
     ) -> Vec<String> {
         let mut caps = advertised_capabilities(&self.engine.capabilities(), models);
+        // This built-in route is advertised only from current source readiness,
+        // never by an ordinary Python plugin using the same capability string.
+        caps.retain(|v| v != crate::workload_leases::definition::CAPABILITY);
         if peer.is_some() {
             caps.push("peer.transfer".into());
             caps.sort();

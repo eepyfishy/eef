@@ -4,6 +4,18 @@
 #[tokio::test]
 async fn reserved_one_shot_wav_capture_releases_only_after_owned_exit_and_can_run_again() {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use tracing::instrument::WithSubscriber;
+    // Capture only the shipping bridge's numeric timing event for this future.
+    // No global subscriber, child text, paths, IDs or plugin parameters are added.
+    let diagnostics = tracing::Dispatch::new(
+        tracing_subscriber::fmt()
+            .with_env_filter("eefn::python=debug")
+            .without_time()
+            .with_ansi(false)
+            .with_target(false)
+            .with_test_writer()
+            .finish(),
+    );
     let dir = tempfile::tempdir().unwrap();
     let executable = PathBuf::from(
         std::env::var_os("EEF_TEST_PYTHON")
@@ -45,7 +57,7 @@ def handle(action,params):
         params: Value::Null,
     };
     let pool = crate::capture_ownership::Pool::default();
-    for _ in 0..2 {
+    for iteration in 0..2 {
         let reservation = pool
             .reserve()
             .expect("Previous synthetic capture did not release after observed owned exit");
@@ -53,6 +65,7 @@ def handle(action,params):
             pool.reserve().is_err(),
             "Reservation must exclude a competing source"
         );
+        let observation_started = Instant::now();
         let value = runtime
             .invoke_with_capture_reservation(
                 &plugin,
@@ -62,8 +75,14 @@ def handle(action,params):
                 Some(Instant::now() + Duration::from_secs(6)),
                 Some(reservation),
             )
+            .with_subscriber(diagnostics.clone())
             .await
-            .unwrap_or_else(|error| panic!("Synthetic reserved one-shot failed: {error:#}"));
+            .unwrap_or_else(|error| {
+                panic!(
+                    "Synthetic reserved one-shot failed: iteration={iteration}, observed_elapsed_ms={}, original_execution_budget_ms=6000, error={error:#}",
+                    observation_started.elapsed().as_millis(),
+                )
+            });
         assert_eq!(value["mime_type"], "audio/wav");
         assert_eq!(value["sample_rate"], 16000);
         assert_eq!(value["channels"], 1);

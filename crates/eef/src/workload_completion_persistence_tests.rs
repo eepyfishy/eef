@@ -139,8 +139,10 @@ async fn failed_completion_and_uncertainty_checkpoint_deny_new_authority_without
             &store,
             &execute(&before),
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
 }
@@ -192,12 +194,14 @@ fn runtime_drop_preserves_completion_writer_ownership_until_the_actual_save_ends
     let saved = reopened.get(&d.job_id).unwrap();
     assert_eq!(saved.status, PlanStatus::Completed);
     assert!(
-        issue(
-            &reopened,
-            &execute(&saved),
-            &uuid::Uuid::new_v4().to_string(),
-            &policy()
-        )
-        .is_err()
+        observer
+            .block_on(issue(
+                &reopened,
+                &execute(&saved),
+                &uuid::Uuid::new_v4().to_string(),
+                &policy(),
+                tokio::time::Instant::now() + std::time::Duration::from_secs(2)
+            ))
+            .is_err()
     );
 }

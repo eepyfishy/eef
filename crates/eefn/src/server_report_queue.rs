@@ -8,6 +8,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 pub(super) struct Envelope {
     pub(super) message: Value,
     _bytes: OwnedSemaphorePermit,
+    _count: Option<OwnedSemaphorePermit>,
 }
 impl Envelope {
     pub(super) fn into_parts(self) -> (Value, OwnedSemaphorePermit) {
@@ -20,13 +21,14 @@ pub(super) struct Queue {
 }
 struct Size {
     bytes: usize,
+    limit: usize,
 }
 impl io::Write for Size {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         self.bytes = self
             .bytes
             .checked_add(buffer.len())
-            .filter(|size| *size <= crate::protocol::MAX_WIRE_LINE)
+            .filter(|size| *size <= self.limit)
             .ok_or_else(|| io::Error::other("Report envelope exceeds wire bound"))?;
         Ok(buffer.len())
     }
@@ -34,24 +36,39 @@ impl io::Write for Size {
         Ok(())
     }
 }
+pub(super) fn encoded_size(message: &Value, limit: usize) -> Result<usize> {
+    let mut size = Size {
+        bytes: 0,
+        limit: limit.min(crate::protocol::MAX_WIRE_LINE),
+    };
+    serde_json::to_writer(&mut size, message)?;
+    Ok(size.bytes)
+}
 impl Queue {
     pub(super) fn new(count: usize, bytes: Arc<Semaphore>) -> (Self, mpsc::Receiver<Envelope>) {
         let (sender, receiver) = mpsc::channel(count);
         (Self { sender, bytes }, receiver)
     }
     pub(super) fn try_send(&self, message: Value) -> Result<()> {
-        let mut size = Size { bytes: 0 };
+        self.try_send_with_permit(message, None)
+    }
+    pub(super) fn try_send_with_permit(
+        &self,
+        message: Value,
+        count: Option<OwnedSemaphorePermit>,
+    ) -> Result<()> {
         // Count without making another serialized payload allocation.
-        serde_json::to_writer(&mut size, &message)?;
+        let size = encoded_size(&message, crate::protocol::MAX_WIRE_LINE)?;
         let permit = self
             .bytes
             .clone()
-            .try_acquire_many_owned(u32::try_from(size.bytes)?)
+            .try_acquire_many_owned(u32::try_from(size)?)
             .context("Report byte allowance exhausted; session must retire")?;
         self.sender
             .try_send(Envelope {
                 message,
                 _bytes: permit,
+                _count: count,
             })
             .map_err(|_| anyhow::anyhow!("Report queue unavailable/full; session must retire"))?;
         Ok(())
@@ -104,12 +121,16 @@ mod tests {
             json!({"x":"ไทย\n\"\\"}),
             json!([1, true, {"x":2}]),
         ] {
-            let mut size = Size { bytes: 0 };
+            let mut size = Size {
+                bytes: 0,
+                limit: crate::protocol::MAX_WIRE_LINE,
+            };
             serde_json::to_writer(&mut size, &value).unwrap();
             assert_eq!(size.bytes, serde_json::to_vec(&value).unwrap().len());
         }
         let mut size = Size {
             bytes: crate::protocol::MAX_WIRE_LINE,
+            limit: crate::protocol::MAX_WIRE_LINE,
         };
         assert!(io::Write::write(&mut size, b"x").is_err());
     }

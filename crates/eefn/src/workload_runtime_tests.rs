@@ -1,12 +1,12 @@
 use super::*;
 use crate::workload_leases::{IssuerWindow, Policy, Query, Requests, definition::*};
 
-struct Fixture {
-    dir: tempfile::TempDir,
-    service: Arc<NodeService>,
-    runtime: String,
-    definition: Definition,
-    engine: Arc<crate::NodeEngine>,
+pub(crate) struct Fixture {
+    pub(crate) dir: tempfile::TempDir,
+    pub(crate) service: Arc<NodeService>,
+    pub(crate) runtime: String,
+    pub(crate) definition: Definition,
+    pub(crate) engine: Arc<crate::NodeEngine>,
     guard: Option<crate::request_preview::PreviewGuard>,
 }
 impl Fixture {
@@ -138,6 +138,9 @@ impl Fixture {
                         enabled,
                         expected_revision: shown["revision"].as_u64().unwrap(),
                         expected_epoch: shown["runtime_epoch"].as_u64().unwrap(),
+                        expected_camera_epoch: shown
+                            .pointer("/camera/runtime_epoch")
+                            .and_then(Value::as_u64),
                     },
                 },
                 false,
@@ -195,11 +198,32 @@ async fn consume(
             &d.issuer_id,
             &d.session_id,
             &d.executor_node,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(10),
         )
+        .await
         .unwrap();
     (ledger, token)
 }
 
+#[test]
+fn microphone_preparation_refuses_camera_definition_before_resource_or_python_use() {
+    let f = Fixture::new(None);
+    let before = f.config();
+    let mut d = crate::workload_leases::definition::camera_tests::camera();
+    d.executor_node = f.definition.executor_node.clone();
+    if let Source::CameraMotion { resource_id, .. } = &mut d.source {
+        *resource_id = crate::context::resource_id(&d.executor_node, "camera");
+    }
+    d.validate().unwrap();
+    let error = f.service.prepare_microphone(&f.runtime, d).err().unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("Camera source execution is not supported by microphone preparation")
+    );
+    assert!(f.service.microphone_pool.reserve().is_ok());
+    assert_eq!(before, f.config());
+}
 #[test]
 fn preparation_owns_compiled_bytes_and_private_binding_without_opening_a_source() {
     let f = Fixture::new(None);

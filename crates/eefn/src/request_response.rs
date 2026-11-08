@@ -212,11 +212,20 @@ impl NodeService {
         let budget =
             crate::inference_budget::InferenceBudget::new(request.inference_timeout_seconds)
                 .expect("validated inference budget");
-        let result = tokio::select! {
-            biased;
-            _=generation.changed()=>Err("runtime_changed"),
-            result=tokio::time::timeout(Duration::from_secs(budget.extend_seconds(180,2)),self.respond_inner(&request.command,policy,request.inference_timeout_seconds,&mut report))=>result.unwrap_or(Err("answer_workflow_timeout")),
-        };
+        let result = crate::request_input::within_runtime(&mut generation, &runtime, async {
+            tokio::time::timeout(
+                Duration::from_secs(budget.extend_seconds(180, 2)),
+                self.respond_inner(
+                    &request.command,
+                    policy,
+                    request.inference_timeout_seconds,
+                    &mut report,
+                ),
+            )
+            .await
+            .unwrap_or(Err("answer_workflow_timeout"))
+        })
+        .await;
         if let Err(code) = result {
             report["success"] = json!(false);
             report["error_code"] = json!(code);

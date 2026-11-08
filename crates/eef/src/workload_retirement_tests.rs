@@ -19,7 +19,9 @@ async fn insufficient_completion_quota_refuses_before_waiting_for_the_journal() 
         &command,
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
-    );
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
+    )
+    .await;
     assert!(started.elapsed() < Duration::from_secs(1));
     let error = match result {
         Ok(_) => panic!("Insufficient completion quota must refuse before issuance"),
@@ -69,14 +71,16 @@ fn hold_workload_journal(
         seen,
     )
 }
-fn unused_issuer(engine: &TaskEngine) -> (Plan, Issued) {
+async fn unused_issuer(engine: &TaskEngine) -> (Plan, Issued) {
     let (plan, _) = approved(engine);
     let issued = issue(
         &engine.store,
         &execute(&plan),
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     (plan, issued)
 }
@@ -85,7 +89,7 @@ fn unused_issuer(engine: &TaskEngine) -> (Plan, Issued) {
 async fn issuer_retirement_keeps_the_runtime_responsive_while_its_journal_is_held() {
     let engine = TaskEngine::new(EventBus::new(20));
     let store = engine.store.clone();
-    let (plan, mut issued) = unused_issuer(&engine);
+    let (plan, mut issued) = unused_issuer(&engine).await;
     let before = store.get(&plan.plan_id).unwrap();
     let ack = synthetic_ack(issued.definition());
     let available = store.workload_finalization_available();
@@ -135,7 +139,7 @@ async fn reporting_slot_precedes_issuance_and_remains_owned_through_the_actual_s
         .unwrap()
         .test_workload_finalization_limit(1);
     let engine = TaskEngine::with_store(EventBus::new(20), store.clone());
-    let (first, mut issued) = unused_issuer(&engine);
+    let (first, mut issued) = unused_issuer(&engine).await;
     let (second, _) = approved(&engine);
     let command = execute(&second);
     assert_eq!(store.workload_finalization_available(), 0);
@@ -144,8 +148,10 @@ async fn reporting_slot_precedes_issuance_and_remains_owned_through_the_actual_s
             &store,
             &command,
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
     assert_eq!(json!(store.get(&second.plan_id).unwrap()), json!(second));
@@ -158,8 +164,10 @@ async fn reporting_slot_precedes_issuance_and_remains_owned_through_the_actual_s
             &store,
             &command,
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
     assert!(
@@ -180,7 +188,9 @@ async fn reporting_slot_precedes_issuance_and_remains_owned_through_the_actual_s
         &command,
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     drop(next);
     store.wait_workload_finalizations().unwrap();
@@ -192,7 +202,7 @@ async fn failed_retirement_checkpoint_denies_new_authority_without_retry_or_evid
     let path = dir.path().join("checkpoint-failure.db");
     let store = new_store(&path, 8 * 1024 * 1024);
     let engine = TaskEngine::with_store(EventBus::new(20), store.clone());
-    let (plan, mut issued) = unused_issuer(&engine);
+    let (plan, mut issued) = unused_issuer(&engine).await;
     let (next, _) = approved(&engine);
     let before = json!(store.get(&plan.plan_id).unwrap());
     let db = rusqlite::Connection::open(&path).unwrap();
@@ -216,8 +226,10 @@ async fn failed_retirement_checkpoint_denies_new_authority_without_retry_or_evid
             &store,
             &execute(&next),
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
     assert_eq!(json!(store.get(&next.plan_id).unwrap()), json!(next));
@@ -233,13 +245,13 @@ fn runtime_drop_does_not_join_retirement_or_release_a_still_owned_journal() {
     let path = dir.path().join("owned-journal.db");
     let store = new_store(&path, 8 * 1024 * 1024);
     let engine = TaskEngine::with_store(EventBus::new(20), store.clone());
-    let (plan, mut issued) = unused_issuer(&engine);
-    let retired = store.retirement();
-    let (held, ready) = hold_workload_journal(store.clone());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
+    let (plan, mut issued) = runtime.block_on(unused_issuer(&engine));
+    let retired = store.retirement();
+    let (held, ready) = hold_workload_journal(store.clone());
     runtime.block_on(async {
         ready.await.unwrap();
         issued.retire();
@@ -265,13 +277,15 @@ fn runtime_drop_does_not_join_retirement_or_release_a_still_owned_journal() {
         PlanStatus::Interrupted
     );
     assert!(
-        issue(
-            &reopened,
-            &execute(&plan),
-            &uuid::Uuid::new_v4().to_string(),
-            &policy()
-        )
-        .is_err()
+        observer
+            .block_on(issue(
+                &reopened,
+                &execute(&plan),
+                &uuid::Uuid::new_v4().to_string(),
+                &policy(),
+                tokio::time::Instant::now() + std::time::Duration::from_secs(2)
+            ))
+            .is_err()
     );
 }
 

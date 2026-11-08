@@ -15,6 +15,10 @@ use crate::capability::CapabilityRegistry;
 use crate::event::EventBus;
 use crate::model::{ChatOptions, LlmService, Modality};
 
+#[path = "task_workload.rs"]
+mod workload;
+pub(crate) use workload::WorkloadJob;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
@@ -537,6 +541,7 @@ pub struct TaskEngine {
 struct ActiveJobs {
     closing: bool,
     ids: HashSet<String>,
+    workloads: BTreeMap<String, Arc<workload::State>>,
 }
 
 pub(crate) struct ActiveJob {
@@ -625,7 +630,7 @@ impl TaskEngine {
         if active.closing {
             bail!("Coordinator is stopping; no new job execution is accepted")
         }
-        if active.ids.contains(id) {
+        if active.contains(id) {
             bail!("Job is already running")
         }
         // Admission and shutdown share this lock. Persist before registering a
@@ -648,7 +653,7 @@ impl TaskEngine {
         let active = self.active.lock().expect("active jobs");
         let mut changed = false;
         let plan = self.store.edit(&command.id, "Explicit tracking abandonment; remote effects remain unknown; no stop or retry authorized", |p| {
-            changed = crate::request_execution::abandon(p, command, origin, active.closing || active.ids.contains(&command.id), eefn::protocol::now_ms())?;
+            changed = crate::request_execution::abandon(p, command, origin, active.closing || active.contains(&command.id), eefn::protocol::now_ms())?;
             Ok(changed)
         })?;
         Ok((plan, !changed))
@@ -664,7 +669,7 @@ impl TaskEngine {
             &p,
             command,
             origin,
-            active.closing || active.ids.contains(&command.id),
+            active.closing || active.contains(&command.id),
         )?;
         Ok((p, reused))
     }
@@ -684,7 +689,7 @@ impl TaskEngine {
                     p,
                     command,
                     origin,
-                    active.closing || active.ids.contains(&command.id),
+                    active.closing || active.contains(&command.id),
                     evidence,
                     eefn::protocol::now_ms(),
                 )?;
@@ -722,7 +727,12 @@ impl TaskEngine {
         // Keep the runner-presence decision valid through its checkpoint.
         // No await, executor call or remote cancellation occurs under the gate.
         let active = self.active.lock().expect("active jobs");
-        let has_runner = active.ids.contains(id);
+        let workload = active.workloads.get(id).filter(|state| state.active());
+        let workload_stop = workload.is_some();
+        if let Some(state) = workload {
+            state.cancel();
+        }
+        let has_runner = active.contains(id);
         let result = self.store.change(
             id,
             "Stop requested; completed actions are not undone",
@@ -736,7 +746,8 @@ impl TaskEngine {
                 ) {
                     bail!("Job is already finished")
                 }
-                plan.status = if has_runner {
+                let pending_workload = workload.is_some() && plan.execution.is_none();
+                plan.status = if has_runner && !pending_workload {
                     PlanStatus::Stopping
                 } else {
                     PlanStatus::Cancelled
@@ -746,7 +757,7 @@ impl TaskEngine {
                         execution.stop_requested_at_ms = Some(eefn::protocol::now_ms().max(execution.started_at_ms));
                     }
                 }
-                if !has_runner {
+                if !has_runner || pending_workload {
                     for task in &mut plan.tasks {
                         if task.status == TaskStatus::Pending {
                             task.status = TaskStatus::Cancelled;
@@ -757,7 +768,7 @@ impl TaskEngine {
             },
         );
         drop(active);
-        if result.is_ok() {
+        if result.is_ok() || workload_stop {
             self.stop_changes
                 .send_modify(|version| *version = version.wrapping_add(1));
         }
@@ -860,9 +871,15 @@ impl TaskEngine {
     pub async fn shutdown(&self) {
         // Close admission before notifying runners. Every successfully admitted
         // job is already tracked, including tasks that have not been polled yet.
-        self.active.lock().expect("active jobs").closing = true;
+        {
+            let mut active = self.active.lock().expect("active jobs");
+            active.closing = true;
+            for state in active.workloads.values() {
+                state.cancel();
+            }
+        }
         self.stopping.send_replace(true);
-        while !self.active.lock().expect("active jobs").ids.is_empty() {
+        while !self.active.lock().expect("active jobs").empty() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
@@ -917,7 +934,7 @@ impl TaskEngine {
         if active.closing {
             bail!("Coordinator is stopping; no new occurrence reservation");
         }
-        if matches!(&command,eefn::automation_occurrence::OccurrenceCommand::Reserve { job, .. } if active.ids.contains(job))
+        if matches!(&command,eefn::automation_occurrence::OccurrenceCommand::Reserve { job, .. } if active.contains(job))
         {
             bail!("Cannot reserve an active job");
         }
@@ -936,7 +953,7 @@ impl TaskEngine {
         let eefn::automation_occurrence::OccurrenceCommand::Archive { job, .. } = &command else {
             bail!("Expected exact occurrence archive command");
         };
-        if active.ids.contains(job) {
+        if active.contains(job) {
             bail!("Cannot archive a job still owned by an active driver");
         }
         self.store.occurrence_checkpoint_now(command, runtime, None)

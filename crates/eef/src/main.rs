@@ -160,12 +160,31 @@ enum NodeCommand {
         #[arg(long)]
         node: String,
     },
+    /// Inspect camera bindings and permissions on a node; never open a device.
+    CameraWorkloadSources {
+        #[arg(long)]
+        node: String,
+    },
+    /// Inspect or set a node's workload policy; never start capture or work.
+    WorkloadPolicy {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eefn::workload_policy::Action,
+    },
     /// Configure finite relay resources with current local node-owner approval.
     Relay {
         #[arg(long)]
         node: String,
         #[command(subcommand)]
         command: eefn::relay_setup::RelayAction,
+    },
+    /// Configure a camera on an authenticated node with its owner's current approval.
+    Camera {
+        #[arg(long)]
+        node: String,
+        #[command(subcommand)]
+        command: eefn::camera_setup::Action,
     },
     /// Inspect or allow/deny whole node features with current local node-owner approval.
     Permissions {
@@ -268,6 +287,32 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn remote_camera_source_cli_needs_only_a_node_and_cannot_capture_or_change_permissions() {
+        let base = [
+            "eef",
+            "node",
+            "camera-workload-sources",
+            "--node",
+            "fixture",
+        ];
+        assert!(matches!(
+            Args::try_parse_from(base).unwrap().command,
+            Some(Command::Node {
+                command: NodeCommand::CameraWorkloadSources { .. }
+            })
+        ));
+        for flag in [
+            "--allow",
+            "--device",
+            "--execute",
+            "--restart",
+            "--grant",
+            "--file",
+        ] {
+            assert!(Args::try_parse_from(base.into_iter().chain([flag])).is_err());
+        }
+    }
     #[test]
     fn setup_check_cli_requires_exact_model_consent_and_read_commands_cannot_arm() {
         let base = ["eef", "node", "setup-model-check", "--node", "fixture"];
@@ -480,6 +525,57 @@ mod credential_cli_tests {
         assert!(Args::try_parse_from(["eef", "requests", "stop-status"]).is_err());
     }
     #[test]
+    fn remote_workload_policy_cli_preserves_node_and_limits_without_execution_flags() {
+        use clap::Parser;
+        let args = Args::try_parse_from([
+            "eef",
+            "node",
+            "workload-policy",
+            "--node",
+            "fixture",
+            "enable",
+            "--max-session-ms",
+            "60000",
+            "--max-lease-ms",
+            "10000",
+        ])
+        .unwrap();
+        assert!(
+            matches!(args.command, Some(Command::Node { command:NodeCommand::WorkloadPolicy {
+            node, command:eefn::workload_policy::Action::Enable { max_session_ms:Some(60000), max_lease_ms:Some(10000) }
+        } }) if node=="fixture")
+        );
+        for action in ["show", "disable"] {
+            assert!(
+                Args::try_parse_from([
+                    "eef",
+                    "node",
+                    "workload-policy",
+                    "--node",
+                    "fixture",
+                    action
+                ])
+                .is_ok()
+            );
+        }
+        for flag in ["--execute", "--microphone", "--grant", "--restart"] {
+            assert!(
+                Args::try_parse_from([
+                    "eef",
+                    "node",
+                    "workload-policy",
+                    "--node",
+                    "fixture",
+                    "enable",
+                    flag
+                ])
+                .is_err()
+            );
+        }
+        assert!(Args::try_parse_from(["eef", "node", "workload-policy", "show"]).is_err());
+    }
+
+    #[test]
     fn remote_python_policy_cli_preserves_explicit_budgets_without_execution_flags() {
         let args = Args::try_parse_from([
             "eef",
@@ -523,6 +619,60 @@ mod credential_cli_tests {
                         .into_iter()
                         .chain(extra)
                 )
+                .is_err()
+            );
+        }
+    }
+    #[test]
+    fn camera_setup_cli_selects_a_node_without_json_or_authority_flags() {
+        let args = Args::try_parse_from([
+            "eef",
+            "node",
+            "camera",
+            "--node",
+            "living-room",
+            "configure",
+            "--resource",
+            "cam",
+            "--device",
+            "1",
+        ])
+        .unwrap();
+        let Some(Command::Node {
+            command:
+                NodeCommand::Camera {
+                    node,
+                    command: eefn::camera_setup::Action::Configure(settings),
+                },
+        }) = args.command
+        else {
+            panic!("Wrong camera setup adapter")
+        };
+        assert_eq!(node, "living-room");
+        assert_eq!(settings.device, Some(1));
+        assert_eq!(settings.resource.as_deref(), Some("cam"));
+        settings.validate().unwrap();
+        assert!(
+            Args::try_parse_from(["eef", "node", "camera", "--node", "living-room", "show"])
+                .is_ok()
+        );
+        for flag in [
+            "--permission",
+            "--grant",
+            "--execute",
+            "--restart",
+            "--retry",
+        ] {
+            assert!(
+                Args::try_parse_from([
+                    "eef",
+                    "node",
+                    "camera",
+                    "--node",
+                    "living-room",
+                    "configure",
+                    flag
+                ])
                 .is_err()
             );
         }
@@ -1279,6 +1429,72 @@ async fn owner_automation_exchange(
         "note":"Private automation checkpoints only, never timers or execution. Inspect the exact receipt after uncertainty. No new receipt, fallback or automatic retry."})
 }
 
+async fn remote_camera_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eefn::camera_setup::Action,
+) -> Result<serde_json::Value> {
+    use eef::node_camera::Request;
+    use eefn::camera_setup::{Action, Command};
+    use serde_json::json;
+    eefn::network::validate_remote_node_id(node)?;
+    if let Action::Configure(settings) = action {
+        settings.validate()?;
+    }
+    let mutation = matches!(action, Action::Configure(_));
+    let mut sending = false;
+    let exchange = async {
+        let url = format!("{base}/api/commands/node/camera");
+        let mut request = Request {
+            schema_version: 1,
+            node_id: node.into(),
+            expected_runtime_id: None,
+            command: Command::Show,
+        };
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Camera inspection unavailable");
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_camera::confirmed(&inspected, &request) {
+            bail!("Unconfirmed camera inspection");
+        }
+        let Action::Configure(settings) = action else {
+            return Ok::<_, anyhow::Error>(inspected);
+        };
+        request.expected_runtime_id = Some(
+            inspected["result"]["runtime_id"]
+                .as_str()
+                .context("Missing node runtime")?
+                .into(),
+        );
+        request.command = Command::Configure {
+            settings: settings.clone(),
+            expected_digest: inspected["result"]["saved_digest"]
+                .as_str()
+                .context("Missing camera configuration digest")?
+                .into(),
+        };
+        request.validate()?;
+        sending = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Camera save unconfirmed");
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_camera::confirmed(&saved, &request) {
+            bail!("Unconfirmed camera save");
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"remote_camera_setup","node_id":node,"success":false,
+        "mutation_requested":mutation,"sending_attempted":sending,"outcome_unknown":sending,"result":null,
+        "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
+        "error_code":"camera_setup_unconfirmed","note":"Inspect this exact node with camera show before deciding what to do; no automatic retry, permission change, restart or workload was sent."})))
+}
+
 async fn remote_relay_cli(
     client: &reqwest::Client,
     base: &str,
@@ -1762,6 +1978,90 @@ async fn remote_python_policy_cli(
         "success":false,"mutation_requested":mutation,"sending_attempted":sending_mutation,"outcome_unknown":sending_mutation,
         "command":requested,"result":null,"execution_authorized":false,"restart_requested":false,"automatically_retried":false,
         "error_code":"python_policy_unconfirmed","note":"Inspect this exact node with python show; no automatic retry, permission change, restart or workload was sent."})))
+}
+
+async fn remote_workload_policy_cli(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    action: &eefn::workload_policy::Action,
+) -> Result<serde_json::Value> {
+    use eef::node_workload_policy::Request;
+    use eefn::workload_policy::{Action, Command};
+    use serde_json::json;
+    eefn::network::validate_remote_node_id(node)?;
+    let mutation = !matches!(action, Action::Show);
+    let mut sending = false;
+    let mut requested = serde_json::Value::Null;
+    let exchange = async {
+        let url = format!("{base}/api/commands/node/workload-policy");
+        let mut request = Request {
+            schema_version: 1,
+            node_id: node.into(),
+            expected_runtime_id: None,
+            command: Command::Show {},
+        };
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Workload policy inspection unavailable")
+        }
+        let inspected = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_workload_policy::confirmed(&inspected, &request) {
+            bail!("Unconfirmed workload policy inspection")
+        }
+        let mut policy: eefn::workload_leases::Policy =
+            serde_json::from_value(inspected["result"]["policy"].clone())?;
+        match action {
+            Action::Show => return Ok::<_, anyhow::Error>(inspected),
+            Action::Disable => policy.enabled = false,
+            Action::Enable {
+                max_session_ms,
+                max_lease_ms,
+            } => {
+                policy.enabled = true;
+                if let Some(value) = max_session_ms {
+                    policy.max_session_ms = *value;
+                }
+                if let Some(value) = max_lease_ms {
+                    policy.max_lease_ms = *value;
+                }
+            }
+        }
+        policy.validate()?;
+        request.expected_runtime_id = Some(
+            inspected["result"]["runtime_id"]
+                .as_str()
+                .context("Missing node runtime")?
+                .into(),
+        );
+        request.command = Command::Set {
+            policy,
+            expected_revision: inspected["result"]["revision"]
+                .as_u64()
+                .context("Missing workload policy revision")?,
+            expected_epoch: inspected["result"]["runtime_epoch"]
+                .as_u64()
+                .context("Missing workload policy epoch")?,
+        };
+        request.validate()?;
+        requested = json!(request.command);
+        sending = true;
+        let response = client.post(&url).json(&request).send().await?;
+        if !response.status().is_success() {
+            bail!("Workload policy save unconfirmed")
+        }
+        let saved = eefn::model_manager::bounded_json(response).await?;
+        if !eef::node_workload_policy::confirmed(&saved, &request) {
+            bail!("Unconfirmed workload policy save")
+        }
+        Ok(saved)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| json!({"schema_version":1,"report_type":"remote_workload_policy","node_id":node,
+        "success":false,"mutation_requested":mutation,"sending_attempted":sending,"outcome_unknown":sending,
+        "command":requested,"result":null,"execution_authorized":false,"capture_started":false,"restart_requested":false,
+        "automatically_retried":false,"error_code":"workload_policy_unconfirmed",
+        "note":"Inspect this exact node with workload-policy show before deciding what to do; no automatic retry, source, permission change or restart was requested."})))
 }
 
 async fn remote_permissions_cli(
@@ -2443,6 +2743,12 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             command: NodeCommand::Python { node, command },
         } => return remote_python_policy_cli(&client, &base, node, command).await,
         Command::Node {
+            command: NodeCommand::WorkloadPolicy { node, command },
+        } => return remote_workload_policy_cli(&client, &base, node, command).await,
+        Command::Node {
+            command: NodeCommand::Camera { node, command },
+        } => return remote_camera_cli(&client, &base, node, command).await,
+        Command::Node {
             command: NodeCommand::WorkloadSources { node },
         } => {
             eefn::network::validate_remote_node_id(node)?;
@@ -2455,6 +2761,25 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             let value = command_response(response).await?;
             let report: eefn::workload_sources::Report = serde_json::from_value(value.clone())?;
             report.validate(&eefn::workload_sources::Request {
+                schema_version: 2,
+                expected_node_id: node.clone(),
+                expected_runtime_id: report.runtime_id.clone(),
+            })?;
+            return Ok(value);
+        }
+        Command::Node {
+            command: NodeCommand::CameraWorkloadSources { node },
+        } => {
+            eefn::network::validate_remote_node_id(node)?;
+            let response = client
+                .post(format!("{base}/api/commands/node/camera-workload-sources"))
+                .timeout(std::time::Duration::from_secs(10))
+                .json(&json!({"schema_version":2,"node_id":node}))
+                .send()
+                .await?;
+            let value = command_response(response).await?;
+            let report: eefn::camera_sources::Report = serde_json::from_value(value.clone())?;
+            report.validate(&eefn::camera_sources::Request {
                 schema_version: 2,
                 expected_node_id: node.clone(),
                 expected_runtime_id: report.runtime_id.clone(),
@@ -2726,6 +3051,21 @@ async fn main() -> Result<()> {
                     && matches!(
                         command,
                         Command::Node {
+                            command: NodeCommand::Camera { .. }
+                        }
+                    )
+                {
+                    if value["success"] == true {
+                        print!("{}", eefn::camera_setup::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Camera setup outcome unconfirmed. Inspect this node with camera show; no automatic retry, permission change, restart or workload was sent."
+                        );
+                    }
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
                             command: NodeCommand::SetupModelCheck { .. }
                         }
                     )
@@ -2814,11 +3154,35 @@ async fn main() -> Result<()> {
                     && matches!(
                         command,
                         Command::Node {
+                            command: NodeCommand::CameraWorkloadSources { .. }
+                        }
+                    )
+                {
+                    print!("{}", eefn::camera_sources::render(&value)?);
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
                             command: NodeCommand::WorkloadSources { .. }
                         }
                     )
                 {
                     print!("{}", eefn::workload_sources::render(&value)?);
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::WorkloadPolicy { .. }
+                        }
+                    )
+                {
+                    if value["success"] == true {
+                        print!("{}", eefn::workload_policy::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Workload policy outcome unconfirmed. Inspect this exact node with workload-policy show before deciding what to do."
+                        );
+                    }
                 } else if !args.json
                     && matches!(
                         command,

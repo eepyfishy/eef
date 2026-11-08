@@ -132,6 +132,41 @@ presence processing can avoid uploading ordinary frames; actual remote video
 still consumes bandwidth. Video relay must be explicitly requested/configured,
 not automatically enabled because a camera permission exists.
 
+## Audio reference under evaluation: soundbridge
+
+Owner suggestion reviewed on 2026-11-08:
+[soundbridge](https://github.com/aakashchamola/soundbridge), version `0.1.1` at
+[`f72679de06b36deea33c8b979763ea74d7b10a9d`](https://github.com/aakashchamola/soundbridge/tree/f72679de06b36deea33c8b979763ea74d7b10a9d).
+This is a source/documentation review, not an installation, performance test,
+security audit, dependency selection or completed eef integration.
+
+Its [architecture](https://github.com/aakashchamola/soundbridge/blob/f72679de06b36deea33c8b979763ea74d7b10a9d/docs/ARCHITECTURE.md)
+and [audio implementation](https://github.com/aakashchamola/soundbridge/blob/f72679de06b36deea33c8b979763ea74d7b10a9d/renderer/app.js)
+provide concrete references for Windows system-output capture, selected microphone
+input, direct WebRTC/Opus transport, output-device selection, live encoder bitrate
+changes, track replacement and measured link/jitter statistics. These overlap with
+the proposed room-to-room audio workflow. The project uses an Electron main process
+for signaling/settings and a Chromium renderer for capture, media transport and
+playback. It is not a native Rust media library or a command-owned node service.
+Its [documented limitations](https://github.com/aakashchamola/soundbridge/blob/f72679de06b36deea33c8b979763ea74d7b10a9d/README.md#not-done-yet)
+include the separate virtual cable needed to feed received audio into Discord.
+
+| eef requirement | What the reviewed project contributes | Remaining eef work |
+| --- | --- | --- |
+| Relay microphone and PC output to another node | Capture and peer audio transport, with chosen playback devices | Bind both endpoints to approved node/resource identities and current owner permissions |
+| Keep call-app devices stable while routing changes | Playback can target an existing output device | A persistent virtual input/output solution is separate; its Discord-microphone instructions require an external virtual cable |
+| Combine the user's microphone with assistant speech | Separate microphone/system tracks and playback paths | Explicit microphone/TTS mixing, levels, ducking, echo control and private-feedback routing |
+| Keep eef responsible for sessions | Password-based signaling and reconnect/ICE handling are implementation references | eef-issued participant/resource scope, expiry, revocation, disconnect behavior and no revival of expired work |
+| Remain lightweight and configurable | Opus bitrate controls and per-peer statistics | Measure native/helper costs, enforce aggregate budgets, and configure ICE/STUN/TURN or relay endpoints without hardcoded external services |
+| Operate without a dashboard | Audio behavior is implemented in its renderer | Keep capture, routing, lifetime and stop in node backend services; commands and UI remain clients |
+
+The [MIT license](https://github.com/aakashchamola/soundbridge/blob/f72679de06b36deea33c8b979763ea74d7b10a9d/LICENSE)
+permits code reuse with its required copyright/license notices. Any reused runtime,
+dependency or external virtual-audio driver also needs its own license review.
+No upstream code or binary is bundled by this reference. Evaluate a backend adapter
+or native implementation of the useful behavior against the existing job/grant
+model before choosing a dependency. Upstream latency claims are not eef measurements.
+
 ## Nearby ESP and accessory gateways
 
 A PC node may eventually act as an approved local gateway to ESP devices or

@@ -42,6 +42,60 @@ async fn store_events(
 }
 
 #[tokio::test]
+async fn camera_event_prefix_reopens_as_history_without_relabelling_or_replay_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("camera-events.db");
+    let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+    let d = crate::workload_leases::definition::camera_tests::camera();
+    let first = crate::workload_events::Event {
+        schema_version: 2,
+        kind: crate::workload_events::Kind::CameraMotion,
+        sequence: 1,
+        source_sequence: 1,
+        source_frames: 1,
+        elapsed_ms: 0,
+        active: None,
+        level: None,
+        discontinuity: false,
+    };
+    let second = crate::workload_events::Event {
+        schema_version: 2,
+        kind: crate::workload_events::Kind::CameraMotion,
+        sequence: 2,
+        source_sequence: 3,
+        source_frames: 3,
+        elapsed_ms: 200,
+        active: Some(true),
+        level: Some(20),
+        discontinuity: false,
+    };
+    let appended = store_events(
+        &ledger,
+        d.clone(),
+        vec![first.clone(), first.clone(), second.clone()],
+    )
+    .await
+    .unwrap();
+    assert!(!appended[0].reused && appended[1].reused && !appended[2].reused);
+    wait_unknown(&ledger, &d).await;
+    let shown = ledger
+        .workload_events(&d.issuer_id, &d.grant_id, 0, 128)
+        .unwrap();
+    assert_eq!(shown["durable_events"][0]["event"], json!(first));
+    assert_eq!(shown["durable_events"][1]["event"], json!(second));
+    assert_eq!(shown["event_count"], 2);
+    assert_eq!(shown["execution_authorized"], false);
+    assert!(!shown.to_string().contains("PRIVATE_CAMERA_PASSWORD"));
+    drop(ledger);
+    let reopened = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+    let history = reopened
+        .workload_events(&d.issuer_id, &d.grant_id, 0, 128)
+        .unwrap();
+    assert_eq!(history["state"], "unknown");
+    assert_eq!(history["durable_events"], shown["durable_events"]);
+    assert!(consume(&reopened, d).await.is_err());
+}
+#[tokio::test]
 async fn event_prefix_reopens_with_bounded_inspection_and_exact_duplicate_evidence() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("receipts.db");
@@ -249,7 +303,9 @@ async fn persistent_event_count_individual_and_total_bytes_enforce_reviewed_boun
                 &d.issuer_id,
                 &d.session_id,
                 &d.executor_node,
+                admission_end(),
             )
+            .await
             .unwrap();
         issuer.acknowledge_consumed(&d.scope().unwrap()).unwrap();
         let writer = consumed.event_writer().unwrap();

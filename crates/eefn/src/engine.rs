@@ -281,9 +281,38 @@ pub struct NodeEngine {
     peer_receive_address: Option<Option<std::net::SocketAddr>>,
     peer_slots: Arc<tokio::sync::Semaphore>,
     microphone_pool: crate::capture_ownership::Pool,
+    camera_pool: crate::capture_ownership::Pool,
 }
 
 impl NodeEngine {
+    pub(crate) fn source_service(&self) -> Option<Arc<crate::NodeService>> {
+        self.service.clone()
+    }
+    pub(crate) fn prepare_workload(
+        &self,
+        runtime: &str,
+        definition: crate::workload_leases::definition::Definition,
+    ) -> Result<(
+        crate::workload_leases::Policy,
+        crate::workload_policy::Permit,
+        crate::workload_runtime::PreparedMicrophone,
+    )> {
+        let service = self
+            .service
+            .as_ref()
+            .context("Node workload service unavailable")?;
+        let (policy, permit) = service.workload_policy_permit(runtime, &definition)?;
+        let source = match definition.source.source_kind() {
+            crate::workload_leases::definition::SourceKind::MicrophoneEnergy => {
+                service.prepare_microphone(runtime, definition)?
+            }
+            crate::workload_leases::definition::SourceKind::CameraMotion => {
+                service.prepare_camera(runtime, definition)?
+            }
+        };
+        Ok((policy, permit, source))
+    }
+
     pub fn new(
         allow_write: bool,
         allowed_roots: Vec<PathBuf>,
@@ -327,6 +356,7 @@ impl NodeEngine {
             peer_receive_address: None,
             peer_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             microphone_pool: Default::default(),
+            camera_pool: crate::capture_ownership::Pool::camera(),
             resource_owner: String::new(),
             resources: Vec::new(),
         })
@@ -398,6 +428,19 @@ impl NodeEngine {
         }
         self.python.clone().context("Python runtime is unavailable")
     }
+    /// Camera preparation must share the same owner and pool as one-shot capture.
+    /// This supplies no permission, workload admission or device readiness claim.
+    #[allow(dead_code)]
+    pub(crate) fn camera_runtime(
+        &self,
+        node: &str,
+        pool: &crate::capture_ownership::Pool,
+    ) -> Result<Arc<PythonRuntime>> {
+        if self.resource_owner != node || !self.camera_pool.same(pool) {
+            bail!("Camera runtime does not share this node's source ownership")
+        }
+        self.python.clone().context("Python runtime is unavailable")
+    }
     fn media_allowed(&self, capability: &str) -> bool {
         match capability {
             "audio.capture" => self.policy.media.microphone,
@@ -422,6 +465,7 @@ impl NodeEngine {
     }
     pub fn with_service(mut self, service: Arc<crate::NodeService>) -> Self {
         self.microphone_pool = service.microphone_pool.clone();
+        self.camera_pool = service.camera_pool.clone();
         self.granted_model_config = service.read_config().ok().map(|c| c["models"].clone());
         self.service = Some(service);
         self
@@ -953,10 +997,10 @@ impl NodeEngine {
                     .as_ref()
                     .context("Python runtime is unavailable")?;
                 #[cfg(windows)]
-                let reservation = if other == "audio.capture" {
-                    Some(self.microphone_pool.reserve()?)
-                } else {
-                    None
+                let reservation = match other {
+                    "audio.capture" => Some(self.microphone_pool.reserve()?),
+                    "camera.capture" => Some(self.camera_pool.reserve()?),
+                    _ => None,
                 };
                 #[cfg(not(windows))]
                 let reservation = None;
@@ -2417,6 +2461,10 @@ fn normalize_path(path: &Path) -> Result<PathBuf> {
     }
     Ok(normalized)
 }
+
+#[cfg(test)]
+#[path = "camera_ownership_tests.rs"]
+mod camera_ownership_tests;
 
 #[cfg(test)]
 mod tests {

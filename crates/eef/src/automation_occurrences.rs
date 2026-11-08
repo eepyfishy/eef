@@ -629,6 +629,65 @@ mod tests {
     fn fresh(engine: &TaskEngine) -> Plan {
         crate::request_approval::tests::compiled(engine)
     }
+    // Archive storage tests do not test time spent compiling a later occurrence.
+    // Compile their independent job first, then create the original ten-second
+    // policy. Its explicit test clock no longer mixes an old authorization with
+    // a later real-clock compilation delayed by filesystem setup.
+    fn archive_setup(store: Arc<JobStore>) -> (Arc<TaskEngine>, Plan, Authorization) {
+        let preparation = TaskEngine::with_store(crate::event::EventBus::new(20), store.clone());
+        let job = fresh(&preparation);
+        drop(preparation);
+        let (engine, source, policy) = setup(store);
+        assert_ne!(job.plan_id, source.plan_id);
+        assert!(job.planning.as_ref().unwrap().compiled_at_ms <= policy.approved_at_ms);
+        assert_eq!(policy.expires_at_ms - policy.approved_at_ms, 10000);
+        assert_eq!(at(&policy, &job), policy.approved_at_ms + 1);
+        (engine, job, policy)
+    }
+    #[test]
+    fn archive_setup_preserves_short_policy_and_refuses_insufficient_remaining_time() {
+        let store = JobStore::in_memory().unwrap();
+        let (_engine, job, policy) = archive_setup(store.clone());
+        let cmd = command(&policy, &job);
+        let (duration, _) = policy
+            .scope
+            .run_allowance(&policy.creation.limits().unwrap())
+            .unwrap();
+        assert_eq!(duration, 1000);
+        let original = json!(store.get(&job.plan_id).unwrap());
+        let usage = store.usage().unwrap();
+        let too_late = policy.expires_at_ms - duration + 1;
+        let error = store
+            .occurrence_checkpoint(
+                cmd.clone(),
+                &policy.runtime_id,
+                Some(&policy.issuer_id),
+                too_late,
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("remaining-time budget exhausted")
+        );
+        for now in [policy.approved_at_ms - 1, policy.expires_at_ms] {
+            assert!(
+                store
+                    .occurrence_checkpoint(
+                        cmd.clone(),
+                        &policy.runtime_id,
+                        Some(&policy.issuer_id),
+                        now
+                    )
+                    .is_err()
+            );
+        }
+        assert_eq!(json!(store.get(&job.plan_id).unwrap()), original);
+        assert_eq!(store.usage().unwrap(), usage);
+        let admitted = save(&store, &policy, &job, &cmd);
+        assert_eq!(admitted["reservation"]["ordinal"], 1);
+        assert_eq!(admitted["reservation"]["reserved_execution_ms"], 1000);
+    }
     fn command(policy: &Authorization, plan: &Plan) -> OccurrenceCommand {
         OccurrenceCommand::Reserve {
             policy: policy.id.clone(),
@@ -882,8 +941,7 @@ mod tests {
         let path = dir.path().join("jobs.db");
         Connection::open(&path).unwrap();
         let store = JobStore::open(&path, 20, 1024 * 1024).unwrap();
-        let (engine, _source, policy) = setup(store.clone());
-        let job = fresh(&engine);
+        let (engine, job, policy) = archive_setup(store.clone());
         let saved = save(&store, &policy, &job, &command(&policy, &job));
         let cancelled = engine.cancel(&job.plan_id).unwrap();
         let cmd = archive_command(&saved["reservation"], &cancelled);
@@ -930,8 +988,7 @@ mod tests {
             let path = dir.path().join("jobs.db");
             Connection::open(&path).unwrap();
             let store = JobStore::open(&path, 20, 1024 * 1024).unwrap();
-            let (engine, _source, policy) = setup(store.clone());
-            let job = fresh(&engine);
+            let (engine, job, policy) = archive_setup(store.clone());
             let saved = save(&store, &policy, &job, &command(&policy, &job));
             let terminal = engine.cancel(&job.plan_id).unwrap();
             let result = archive(

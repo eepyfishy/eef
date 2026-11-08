@@ -30,7 +30,7 @@ impl JobStore {
         );
         self.require_workload_reporting()?;
         let slot = self
-            .acknowledgements
+            .workload_writes
             .slots
             .clone()
             .try_acquire_owned()
@@ -38,7 +38,7 @@ impl JobStore {
         let (reply, receiver) = oneshot::channel();
         let store = self.clone();
         let end = deadline.into_std();
-        self.acknowledgements.submit(Box::new(move || {
+        self.workload_writes.submit(Box::new(move || {
             let result =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Plan> {
                     ensure!(
@@ -72,7 +72,7 @@ impl JobStore {
                             );
                             #[cfg(test)]
                             store
-                                .acknowledgements
+                                .workload_writes
                                 .started
                                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                             w.acknowledgement = Some(ack);
@@ -102,20 +102,20 @@ impl JobStore {
     }
     #[cfg(test)]
     pub(crate) fn test_workload_ack_limit(&mut self, limit: usize) {
-        assert!(self.acknowledgements.sender.lock().unwrap().is_none());
+        assert!(self.workload_writes.sender.lock().unwrap().is_none());
         assert_eq!(
-            self.acknowledgements.slots.available_permits(),
-            self.acknowledgements.capacity
+            self.workload_writes.slots.available_permits(),
+            self.workload_writes.capacity
         );
-        self.acknowledgements = Queue::for_acknowledgements(limit, self.max_bytes);
+        self.workload_writes = Queue::for_workload_writes(limit, self.max_bytes);
     }
     #[cfg(test)]
     pub(crate) fn workload_ack_available(&self) -> usize {
-        self.acknowledgements.slots.available_permits()
+        self.workload_writes.slots.available_permits()
     }
     #[cfg(test)]
     pub(crate) fn workload_ack_started(&self) -> usize {
-        self.acknowledgements
+        self.workload_writes
             .started
             .load(std::sync::atomic::Ordering::SeqCst)
     }

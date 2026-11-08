@@ -714,11 +714,7 @@ impl crate::Runtime {
                     bail!("Source node is not disclosed to this origin")
                 }
             }
-            let snapshot = self
-                .node_server
-                .workload_sources(&template.executor_node, 5)
-                .await?;
-            snapshot.confirms_template(&template)?;
+            self.node_server.workload_source(&template, 5).await?;
             let plan = crate::workload_jobs::compile(&self.engine, &request.command)?;
             return Ok(report(plan, &request.command, &self.instance_id, false));
         }
@@ -803,6 +799,45 @@ impl crate::Runtime {
         command.validate()?;
         let owner_command = match &command {
             NodeCommand::Inspect { id } => PlanningCommand::Inspect { id: id.clone() },
+            NodeCommand::CompileSaved {
+                id,
+                expected_revision,
+            } => {
+                // Resolve on the coordinator, never from a client's recreated
+                // JSON. The ordinary scoped compiler rechecks current state.
+                let saved = self.engine.store.get(id)?;
+                crate::jobs::validate_retained_review(&saved)?;
+                let source = saved
+                    .goal
+                    .request_context
+                    .as_ref()
+                    .filter(|source| source.origin_node() == context.origin_node())
+                    .context("Request unavailable or not owned by this origin")?;
+                let draft = saved
+                    .request_review
+                    .as_ref()
+                    .context("Not a reviewed request")?;
+                let NodeCommand::Compile {
+                    id,
+                    expected_revision,
+                    operation_id,
+                    input,
+                } = eefn::request_submission::saved_compile_command(
+                    draft,
+                    source,
+                    id,
+                    *expected_revision,
+                )?
+                else {
+                    bail!("Saved compilation could not resolve an exact existing command")
+                };
+                PlanningCommand::Compile {
+                    id,
+                    expected_revision,
+                    operation_id,
+                    input,
+                }
+            }
             NodeCommand::Compile {
                 id,
                 expected_revision,

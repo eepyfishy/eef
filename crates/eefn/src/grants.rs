@@ -509,6 +509,10 @@ pub struct GrantLedger {
     final_slots: Arc<tokio::sync::Semaphore>,
     final_reporting_failed: std::sync::atomic::AtomicBool,
     workload_worker: Mutex<Option<workload_journal_worker::Sender>>,
+    #[cfg(test)]
+    ack_reads_started: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    admission_started: std::sync::atomic::AtomicUsize,
 }
 // Both operation and continuous receipts share attempt slots and reservation
 // accounting. Changing operation kind cannot bypass an unresolved attempt.
@@ -685,6 +689,10 @@ impl GrantLedger {
             final_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             final_reporting_failed: std::sync::atomic::AtomicBool::new(false),
             workload_worker: Mutex::new(None),
+            #[cfg(test)]
+            ack_reads_started: Default::default(),
+            #[cfg(test)]
+            admission_started: Default::default(),
         }))
     }
     pub fn policy(&self) -> &GrantPolicy {

@@ -99,11 +99,7 @@ impl crate::Runtime {
             .node_server
             .grant_session(&template.executor_node)
             .await?;
-        let source = self
-            .node_server
-            .workload_sources(&template.executor_node, 5)
-            .await?;
-        source.confirms_template(&template)?;
+        self.node_server.workload_source(&template, 5).await?;
         let after = self
             .node_server
             .grant_session(&template.executor_node)

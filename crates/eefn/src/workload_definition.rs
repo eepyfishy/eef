@@ -47,9 +47,7 @@ impl Template {
         )
     }
     pub fn resource_id(&self) -> &str {
-        match &self.source {
-            Source::MicrophoneEnergy { resource_id, .. } => resource_id,
-        }
+        self.source.resource_id()
     }
 }
 
@@ -73,8 +71,22 @@ pub struct Definition {
     pub events: Events,
 }
 
-/// Only the implemented metadata-producing source has a reviewed shape today.
+/// Reviewed metadata-producing sources, not arbitrary extension entry points.
 /// No arbitrary plugin path, code, command, model or raw media destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    MicrophoneEnergy,
+    CameraMotion,
+}
+impl SourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MicrophoneEnergy => "microphone_energy",
+            Self::CameraMotion => "camera_motion",
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Source {
@@ -84,6 +96,109 @@ pub enum Source {
         adapter_sha256: String,
         parameters: EnergyParameters,
     },
+    CameraMotion {
+        resource_id: String,
+        resource_sha256: String,
+        adapter_sha256: String,
+        parameters: MotionParameters,
+    },
+}
+
+impl Source {
+    pub fn kind(&self) -> &'static str {
+        self.source_kind().as_str()
+    }
+    pub fn source_kind(&self) -> SourceKind {
+        match self {
+            Self::MicrophoneEnergy { .. } => SourceKind::MicrophoneEnergy,
+            Self::CameraMotion { .. } => SourceKind::CameraMotion,
+        }
+    }
+    pub fn resource_id(&self) -> &str {
+        match self {
+            Self::MicrophoneEnergy { resource_id, .. } | Self::CameraMotion { resource_id, .. } => {
+                resource_id
+            }
+        }
+    }
+    pub fn resource_sha256(&self) -> &str {
+        match self {
+            Self::MicrophoneEnergy {
+                resource_sha256, ..
+            }
+            | Self::CameraMotion {
+                resource_sha256, ..
+            } => resource_sha256,
+        }
+    }
+    pub fn adapter_sha256(&self) -> &str {
+        match self {
+            Self::MicrophoneEnergy { adapter_sha256, .. }
+            | Self::CameraMotion { adapter_sha256, .. } => adapter_sha256,
+        }
+    }
+    pub fn capability(&self) -> &'static str {
+        match self {
+            Self::MicrophoneEnergy { .. } => "audio.capture",
+            Self::CameraMotion { .. } => "camera.capture",
+        }
+    }
+    pub fn frames_per_observation(&self) -> u64 {
+        match self {
+            Self::MicrophoneEnergy { parameters, .. } => u64::from(parameters.block_frames),
+            Self::CameraMotion { .. } => 1,
+        }
+    }
+    pub fn max_observations(&self) -> u64 {
+        match self {
+            Self::MicrophoneEnergy { parameters, .. } => u64::from(parameters.max_blocks),
+            Self::CameraMotion { parameters, .. } => u64::from(parameters.max_frames),
+        }
+    }
+    pub fn max_level(&self) -> u16 {
+        match self {
+            Self::MicrophoneEnergy { .. } => 32768,
+            Self::CameraMotion { .. } => 255,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MotionParameters {
+    pub width: u32,
+    pub height: u32,
+    pub sample_width: u32,
+    pub sample_height: u32,
+    pub max_frames: u32,
+    pub interval_ms: u64,
+    pub activation_level: u32,
+    pub deactivation_level: u32,
+    pub io_timeout_ms: u64,
+    pub max_duration_ms: u64,
+}
+impl MotionParameters {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            (160..=1920).contains(&self.width)
+                && (120..=1080).contains(&self.height)
+                && (8..=160).contains(&self.sample_width)
+                && (8..=120).contains(&self.sample_height)
+                && (1..=100000).contains(&self.max_frames)
+                && (100..=10000).contains(&self.interval_ms)
+                && (1..=255).contains(&self.activation_level)
+                && self.deactivation_level <= self.activation_level
+                && (100..=10000).contains(&self.io_timeout_ms)
+                && (100..=3600000).contains(&self.max_duration_ms)
+                && self.io_timeout_ms <= self.max_duration_ms,
+            "Invalid camera motion parameters"
+        );
+        Ok(())
+    }
+    fn python_parameters(&self) -> Result<serde_json::Value> {
+        self.validate()?;
+        Ok(serde_json::to_value(self)?)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -200,6 +315,38 @@ pub fn microphone_resource_digest(resource: &crate::context::Resource) -> Result
     );
     crate::grants::definition_digest(&json!(resource))
 }
+pub fn camera_resource_digest(resource: &crate::context::Resource) -> Result<String> {
+    crate::context::NodeMetadata {
+        resources: vec![resource.clone()],
+        ..Default::default()
+    }
+    .validate()?;
+    ensure!(
+        resource.capability == "camera.capture"
+            && resource.parameters.keys().all(|key| key == "device"),
+        "Unsupported camera resource binding"
+    );
+    let device = resource
+        .parameters
+        .get("device")
+        .cloned()
+        .unwrap_or_default();
+    let permitted = device.is_null()
+        || device.as_u64().is_some_and(|value| value <= 1023)
+        || device.as_str().is_some_and(|value| {
+            !value.is_empty()
+                && value.len() <= 1024
+                && !value.chars().any(|c| c.is_control() || c.is_whitespace())
+                && reqwest::Url::parse(value).is_ok_and(|url| {
+                    matches!(url.scheme(), "rtsp" | "rtsps")
+                        && url.host_str().is_some_and(|host| !host.is_empty())
+                        && url.fragment().is_none_or(str::is_empty)
+                        && url.port().is_none_or(|port| port > 0)
+                })
+        });
+    ensure!(permitted, "Invalid private camera device binding");
+    crate::grants::definition_digest(&json!(resource))
+}
 impl Definition {
     pub fn validate(&self) -> Result<()> {
         ensure!(
@@ -289,29 +436,29 @@ fn validate_components(
         "Invalid workload event bounds"
     );
     match source {
-        Source::MicrophoneEnergy {
-            resource_id,
-            resource_sha256,
-            adapter_sha256,
-            parameters,
-        } => {
+        Source::MicrophoneEnergy { parameters, .. } => parameters.validate()?,
+        Source::CameraMotion { parameters, .. } => {
             parameters.validate()?;
-            let prefix = format!("{node}::");
-            let local = resource_id.strip_prefix(&prefix).unwrap_or("");
             ensure!(
-                !local.is_empty()
-                    && local.len() <= 100
-                    && local
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-                    && digest(resource_sha256)
-                    && digest(adapter_sha256)
-                    && u64::from(parameters.block_frames) * u64::from(parameters.max_blocks)
-                        <= limits.max_source_frames,
-                "Workload source resource, adapter or frame budget changed"
+                parameters.max_duration_ms <= limits.max_session_ms,
+                "Camera source duration exceeds reviewed session"
             );
         }
     }
+    let prefix = format!("{node}::");
+    let local = source.resource_id().strip_prefix(&prefix).unwrap_or("");
+    ensure!(
+        !local.is_empty()
+            && local.len() <= 100
+            && local
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            && digest(source.resource_sha256())
+            && digest(source.adapter_sha256())
+            && source.frames_per_observation() * source.max_observations()
+                <= limits.max_source_frames,
+        "Workload source resource, adapter or frame budget changed"
+    );
     Ok(())
 }
 impl Definition {
@@ -324,25 +471,32 @@ impl Definition {
         adapter_source: &[u8],
     ) -> Result<serde_json::Value> {
         self.validate()?;
-        let Source::MicrophoneEnergy {
-            resource_id,
-            resource_sha256,
-            adapter_sha256,
-            parameters,
-        } = &self.source;
+        let (digest, mut request) = match &self.source {
+            Source::MicrophoneEnergy { parameters, .. } => (
+                microphone_resource_digest(resource)?,
+                parameters.python_parameters()?,
+            ),
+            Source::CameraMotion { parameters, .. } => (
+                camera_resource_digest(resource)?,
+                parameters.python_parameters()?,
+            ),
+        };
         ensure!(
             resource.available
-                && *resource_id == crate::context::resource_id(&self.executor_node, &resource.id)
-                && *resource_sha256 == microphone_resource_digest(resource)?
-                && *adapter_sha256 == hex::encode(Sha256::digest(adapter_source)),
+                && self.source.resource_id()
+                    == crate::context::resource_id(&self.executor_node, &resource.id)
+                && self.source.resource_sha256() == digest
+                && self.source.adapter_sha256() == hex::encode(Sha256::digest(adapter_source)),
             "Local workload resource binding or source bytes changed"
         );
-        let device = resource
+        let mut device = resource
             .parameters
             .get("device")
             .cloned()
             .unwrap_or_default();
-        let mut request = parameters.python_parameters()?;
+        if matches!(&self.source, Source::CameraMotion { .. }) && device.is_null() {
+            device = json!(0);
+        }
         request["device"] = device;
         Ok(request)
     }
@@ -351,3 +505,7 @@ impl Definition {
 #[cfg(test)]
 #[path = "workload_definition_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "workload_camera_definition_tests.rs"]
+pub(crate) mod camera_tests;

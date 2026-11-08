@@ -17,6 +17,75 @@ installers are unchanged and stable-release acceptance remains separate.
 
 ## Continuous source inspection (in development)
 
+For the camera setup, review, approval, execution and stop sequence, see the
+[development camera walkthrough](user/CAMERA.md). Its simulated-device executable
+lifecycle passes hosted checks at `cf07f93`; physical acceptance remains open.
+
+Configure a camera resource on the running node without JSON:
+
+    eefn camera show
+    eefn camera configure
+    eefn camera configure --device 1
+    eefn camera configure --resource living-room-camera --rtsp rtsp://camera-host/live
+
+The unreleased coordinator owner commands use the same node-owned backend:
+
+    eef node camera --node NODE_ID show
+    eef node camera --node NODE_ID configure --resource RESOURCE_ID --device 1
+
+Pair the node with an independent credential and pinned TLS first. On that node,
+its owner can enable `eefn permissions allow remote-management`; revoking the same
+feature takes effect for the next configuration request. Remote inspection does
+not grant management approval. Configuration pins the exact node session/runtime
+and inspected settings digest, and refuses stale or unconfirmed changes without
+retry. Reports omit private bindings, including RTSP URLs; the same command-line
+privacy consideration below applies when supplying a URL from the coordinator.
+
+These unreleased commands use the backend owner API, including when browser pages
+are disabled. With no selector, configuration preserves an existing camera binding
+or creates a default webcam resource. If several cameras exist, choose `--resource`;
+an explicit unused local ID creates another resource. Other capabilities and
+disabled or unsupported camera bindings are refused rather than replaced.
+Private RTSP URLs stay in this node's saved settings and are omitted from command
+reports. A URL supplied as a command argument can also be visible in shell history
+and local process inspection; avoid putting credentials in shared command logs.
+
+Setup does not enable camera permission, local listening, workload policy or
+capture. Saved bindings need an explicit `eefn restart`; `camera show` distinguishes
+saved and applied bindings. After an unconfirmed save, inspect `camera show` before
+deciding what to do. No automatic retry, device probe, restart or model call is
+performed.
+
+Prepare a bounded camera-motion request without JSON or a model:
+
+    eefn requests submit-camera
+    eefn requests submit-camera --source-node NODE_ID --camera RESOURCE_ID --frames 30
+    eefn requests submit-camera --width 640 --height 480 --sample-width 64 --sample-height 48 --interval-ms 200
+
+The unreleased authoring command also exposes motion thresholds, I/O timeout,
+capture duration, session/lease/memory limits and bounded event-delivery settings.
+It saves the immutable intent and exact resolved source pins for review. It does
+not probe a camera, enable permission/listening, approve work or start capture.
+Keep the operation ID after uncertainty and inspect `eefn jobs find --operation-id
+OPERATION_ID`, then `eefn requests plan JOB_ID`. Exact receipt reuse reads retained
+choices; it does not reselect a source or continue incomplete compilation. Use
+`eefn requests compile-saved JOB_ID --revision REVISION` for that separate explicit
+step. Private device indices and RTSP URLs are configured on the source node, not
+supplied to this authoring command. Scoped simulated-device hosted checks pass at
+`cf07f93`; physical-source acceptance remains open.
+
+Prepare a bounded microphone activity request without JSON or a model:
+
+    eefn requests submit-microphone
+    eefn requests submit-microphone --source-node NODE_ID --microphone RESOURCE_ID --blocks 100
+    eefn requests compile-saved JOB_ID --revision 1
+
+The coordinator resolves and retains the source choice for review. This does not
+enable permissions, approve work or start capture. Keep the returned operation/job
+IDs, inspect `eefn requests plan JOB_ID`, and obtain separate owner approval before
+explicit execution. Exact receipt reuse preserves old choices. See
+[microphone authoring, limits and verification status](MICROPHONE-AUTHORING.md).
+
     eefn workloads sources
     eef node workload-sources --node NODE_ID
 
@@ -24,6 +93,53 @@ These inspect applied microphone resources and source pins without capture or
 model calls. Remote inspection requires an independently authenticated, pinned
 node session. Permission/listening snapshots and configured Python are not
 physical readiness or execution permission. See [source planning](WORKLOAD-SOURCES.md).
+
+The unreleased camera inspection path has separate camera permission fields:
+
+    eefn workloads camera-sources
+    eef node camera-workload-sources --node NODE_ID
+
+These read configured webcam/RTSP resources, source digests and camera consent
+from the running node without opening a camera, contacting an RTSP endpoint or
+calling a model. Private endpoints remain local. Saved/applied differences mean
+the running settings differ from the saved settings. A version-one report remains
+unavailable; a version-two report can indicate configured camera workload readiness
+when applied permissions, consent, policy and bindings agree. This does not prove
+OpenCV, a webcam or an RTSP endpoint works. Inspection cannot enable a feature or
+start work. Local `eefn listening show` also reports the camera's independent
+revocation epoch when camera settings are present; enabling consent uses that
+fresh epoch and refuses stale decisions, including after a failed permission save.
+See [camera integration status](CAMERA-MOTION.md).
+
+## Continuous-workload policy (in development)
+
+    eefn workload-policy show
+    eefn workload-policy enable --max-session-ms 60000 --max-lease-ms 10000
+    eefn workload-policy disable
+
+From the running coordinator, the equivalent controls are:
+
+    eef node workload-policy --node NODE_ID show
+    eef node workload-policy --node NODE_ID enable --max-session-ms 60000 --max-lease-ms 10000
+    eef node workload-policy --node NODE_ID disable
+
+Remote changes require a paired credential/TLS node and its owner's existing
+remote-management permission. Inspection precedes one conditional change using
+the exact node runtime, saved revision and runtime epoch. No automatic retry is
+made after an uncertain response. These commands do not start continuous capture.
+
+The local commands address the running node; the coordinator commands address
+the running eef service and the selected node. Both inspect or save the node's
+workload admission preference; they never start capture, enable permissions or
+restart an app. Omitted limit flags preserve the inspected limits. The policy
+defaults off. Disable and limit changes revoke original policy permits before
+storage; a fresh explicit enable is required after a failed revoking save.
+After an uncertain result, inspect `show` before deciding what to do.
+
+Listening consent, microphone permission, exact source bindings and owner-approved
+work remain required. The coordinator start/stop command path and complete network
+execution acceptance are still in development, so enabling this preference does
+not make continuous capture publicly available. See [node execution](WORKLOAD-NODE-EXECUTION.md).
 
 ## Coordinator first initialization (unreleased after alpha.6)
 
@@ -434,6 +550,12 @@ cannot replace it. This is a last-attempt snapshot, not history, latency measure
 durable evidence, or proof of all currently running effects. Use existing grant
 receipts/results for durable inspection. Legacy last-activity fields may still
 change during ordinary control activity.
+
+For continuous source sessions, an unconfirmed live workload status can include
+`reason_code`: a fixed Python bridge failure category or `workload_unconfirmed`
+when the cause is unclassified. It never includes private error text or source
+settings. This transient diagnostic does not prove completion, stop or that a
+retry is safe; retained job and grant receipts remain the durable evidence.
 
 ## Explicit interrupted-result reconciliation (unreleased after alpha.6)
 
@@ -869,6 +991,7 @@ retained plan without a dashboard or coordinator port:
 eefn requests plan DRAFT_ID --json
 eefn requests compile DRAFT_ID --revision 4 --template system_info --node EXACT_NODE_ID --operation-id UUID --json
 eefn requests compile DRAFT_ID --revision 4 --file concrete-plan.json --operation-id UUID --json
+eefn requests compile-saved JOB_ID --revision 1 --json
 ```
 
 Choose `--template` or `--file`, never both. Template mode supplies empty parameters

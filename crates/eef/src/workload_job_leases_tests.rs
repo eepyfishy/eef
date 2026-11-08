@@ -6,7 +6,7 @@ fn probe_deadline() -> tokio::time::Instant {
 #[tokio::test]
 async fn cancelling_a_polled_probe_retires_the_kept_issuer_before_storage_unlocks() {
     let engine = TaskEngine::new(EventBus::new(20));
-    let (plan, mut issued) = unused_issuer(&engine);
+    let (plan, mut issued) = unused_issuer(&engine).await;
     let d = issued.definition().clone();
     let q = query(&issued, 1);
     let before = engine.store.get(&plan.plan_id).unwrap().revision;
@@ -69,7 +69,7 @@ async fn cancelling_a_polled_probe_retires_the_kept_issuer_before_storage_unlock
 async fn probe_wait_obeys_both_caller_and_original_issuer_deadlines() {
     for original_issuer_expires in [false, true] {
         let engine = TaskEngine::new(EventBus::new(20));
-        let (plan, mut issued) = unused_issuer(&engine);
+        let (plan, mut issued) = unused_issuer(&engine).await;
         let d = issued.definition().clone();
         let q = query(&issued, 1);
         let before = engine.store.get(&plan.plan_id).unwrap().revision;
@@ -111,7 +111,7 @@ async fn probe_wait_obeys_both_caller_and_original_issuer_deadlines() {
 #[tokio::test]
 async fn delayed_probe_computes_remaining_budget_after_the_actual_journal_read() {
     let engine = TaskEngine::new(EventBus::new(20));
-    let (_, mut issued) = unused_issuer(&engine);
+    let (_, mut issued) = unused_issuer(&engine).await;
     let original_end = issued.deadline;
     let d = issued.definition().clone();
     let q = query(&issued, 1);
@@ -157,7 +157,7 @@ async fn delayed_probe_computes_remaining_budget_after_the_actual_journal_read()
 #[tokio::test]
 async fn invalid_peer_or_probe_cannot_consume_sequence_or_change_durable_history() {
     let engine = TaskEngine::new(EventBus::new(20));
-    let (plan, mut issued) = unused_issuer(&engine);
+    let (plan, mut issued) = unused_issuer(&engine).await;
     let d = issued.definition().clone();
     let q = query(&issued, 1);
     let before = json!(engine.store.get(&plan.plan_id).unwrap());

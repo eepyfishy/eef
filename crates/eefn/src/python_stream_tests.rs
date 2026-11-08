@@ -3,6 +3,38 @@ use tokio::io::AsyncWriteExt;
 
 #[cfg(not(windows))]
 #[tokio::test]
+async fn camera_owned_source_refuses_unsupported_platform_before_interpreter_or_observation() {
+    let runtime = PythonRuntime {
+        executable: std::path::PathBuf::from("PRIVATE-camera-interpreter-must-not-start"),
+        limits: BridgeLimits::default(),
+    };
+    let bytes = b"def stream(action, params):\n    yield params\n";
+    let source = PinnedStreamSource::new(bytes, &hex::encode(Sha256::digest(bytes))).unwrap();
+    let pool = crate::capture_ownership::Pool::camera();
+    let error = runtime
+        .observe_reserved_capture(
+            &source,
+            "motion",
+            json!({}),
+            &id(),
+            StreamBounds::default(),
+            Instant::now() + Duration::from_secs(5),
+            pool.reserve().unwrap(),
+            |_| async {
+                panic!("Unsupported camera cannot emit observations");
+                #[allow(unreachable_code)]
+                Ok(())
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("unsupported on this platform"));
+    assert!(!error.to_string().contains("PRIVATE"));
+    assert!(pool.reserve().is_ok());
+}
+
+#[cfg(not(windows))]
+#[tokio::test]
 async fn reserved_source_refuses_unsupported_exit_observation_before_starting_an_interpreter() {
     let runtime = PythonRuntime {
         executable: std::path::PathBuf::from("PRIVATE-interpreter-must-not-start"),

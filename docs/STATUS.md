@@ -3,6 +3,972 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Accepted development checkpoint: command-owned media workloads
+
+Product and test source `cf07f93` passes the complete
+[four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42456081625).
+Independent reconciliation verifies 1,605 Windows/headless Rust tests plus one
+pre-existing ignored test across 17 unfiltered groups, all 36 native command
+suites, the additional connection-close case, 63 firewall mock cases, listening
+and managed first-run checks.
+
+The shipping camera commands pass source setup, passive inspection, separate
+owner approval, origin execution, five durable events with an independently
+reconstructed payload checksum, lease renewal, owned exit and read-only receipt
+inspection. Stop/restart preserve uncertainty, exact execution reuse cannot replay
+capture, and a separately approved request proves source reuse. The Rust camera
+and microphone coordinator lifecycle fixtures also pass. Actual parsed command
+defaults consume within fresh node journal limits without widening owner policy.
+Command startup retains its original one-MiB thread and private help values remain
+hidden; answer restart keeps confirmed checkpoints and uncertainty.
+
+This accepts the exact automated development code with simulated device
+dependencies. The earlier microphone authoring failure and five-event camera
+rejection remain retained with unproven causes. Real OpenCV, physical media/two-PC,
+model quality/onboarding, VLM triggers, relays/aggregate quotas, general continuous
+work/strong stop, mesh/optimization/cluster, installer recovery/security and stable
+release acceptance remain open. Later documentation-only updates do not establish
+additional runtime behavior.
+
+## Native camera command lifecycle observed; full acceptance still failed
+
+At `98b9576`, run `42429344635` passed all 36 Windows command suites, the additional
+connection-close case, listening and firewall mock gates. The shipping-command
+camera fixture passed owner approval, origin execution, five durable events with
+an independently reconstructed payload checksum, stop/restart uncertainty and
+separately approved source reuse without replay. It used a simulated device.
+
+The full run failed a separate Windows/headless Rust microphone integration test
+before execution: origin authoring returned an unconfirmed result. The other three
+jobs passed. That failure is retained, and this is not complete development-source,
+physical-media or stable-release acceptance. The preceding byte-limit-only source
+also failed before camera consumption, at the node's consumption stage.
+
+The shared library fixture now adds failure-only, read-only diagnostics for source
+kind and lifecycle phase, elapsed time, input-channel/session snapshots and matching
+retained review/compilation/execution checkpoint flags. It reports no private
+source binding, credential, model output, raw error or request text. Every original
+submission/approval/execution/receipt assertion and deadline remains required;
+no submission is retried. The underlying microphone failure remains unproven.
+The development camera walkthrough is now included with this source.
+
+## In development: admit command defaults within journal reservations
+
+While the 64-KiB payload-default correction is under hosted verification, a source
+audit found that the remaining 1,000-event default reserves more than the fresh
+node's eight-MiB journal ceiling. Accounting includes conservative SQLite row,
+index and page overhead as well as payload bytes. Matching the per-receipt byte
+limit alone is insufficient.
+
+The shared camera/microphone default now allows 100 events, enough for the default
+30 camera observations or 100 microphone blocks. Explicit larger event limits
+remain configurable. Journal formulas, owner limits, admission checks, stored
+definitions and old receipts are unchanged. A new integration regression builds
+both actual command defaults and consumes them through the real SQLite/native
+admission path with a fresh node policy, then retires them without opening a
+source. Local diagnostics retain the closed receipt-quota code without private
+context. This correction still needs fresh hosted verification; it does not
+establish camera completion or physical acceptance.
+
+## In development: source request defaults fit node receipt limits
+
+Run `42426249194` passed all four workspace configurations and the native
+answer-restart checks, camera setup and passive camera readiness. Its first
+approved camera execution became interrupted before a consumed acknowledgment.
+That run did not report the underlying refusal code; it remains failed evidence.
+
+Source inspection found a definite default mismatch: microphone and camera
+authoring reserved 256 KiB of events while a fresh node allowed 64 KiB per receipt.
+Their shared command default now requests 64 KiB. Explicit larger budgets remain
+configurable and subject to owner policy; no owner limit or saved request is
+changed. Parser regressions cover both defaults and explicit larger values. A
+journal admission regression requires an oversized reservation to refuse before
+native saving and an exact-limit independently admitted request to consume.
+
+Local workload status now retains the closed owner-limit refusal code without
+private error context. The executable camera test reports bounded admission-stage
+observations if acknowledgment fails again. This is not proof of the previous
+run's unreported cause or full camera completion. Fresh hosted acceptance is
+required; physical media, broader roadmap and stable release remain open.
+
+## In development: preserve answer uncertainty during restart
+
+Run `42424184808` passed the four workspace test configurations, but its
+Windows/headless native suite stopped in the answer-workflow restart check,
+before the new camera lifecycle fixture. The answer was confirmed; the expected
+uncertainty flag was false. Source inspection found that the outer answer
+workflow lacked the input workflow's final-poll runtime fence: a nested stage can
+observe retirement and return an error during the same poll as restart, bypassing
+the outer biased watch branch.
+
+Answer handling now shares the existing tested runtime fence. Retired work keeps
+its confirmed earlier checkpoints and reports uncertainty without continuing,
+retrying, approving or executing anything. The native check retains its original
+requirements and additionally requires the runtime-change code, with bounded
+stage diagnostics on failure. Fresh hosted acceptance remains required for this
+correction and the executable camera lifecycle; no physical acceptance is claimed.
+
+## In development: initialize Python for an explicit camera source
+
+The executable lifecycle candidate `9e7f0c4`/run `42422028965` passed all Rust
+tests and the other three jobs, but its headless command suite stopped at source
+readiness before capture. Source inspection found that interpreter startup was
+requested only by optional one-shot plugins or custom plugins. The one-shot
+camera plugin depends on local webcam inventory, so a configured RTSP source on
+a node without a discovered webcam could leave Python uninitialized.
+
+Startup now also recognizes a valid, available camera resource when the camera
+feature is allowed. The existing bounded interpreter check runs independently of
+one-shot camera discovery. It does not open the source, load a model, enable a
+permission or grant authority. Existing listening, workload policy, source pins,
+approval, lease and owned-exit gates remain unchanged. A deterministic regression
+covers source intent with zero requested plugins, denied/unavailable/invalid
+bindings, and preservation of ordinary plugin startup. The executable test also
+reports bounded prerequisite flags and typed Python startup observations if
+readiness fails again. Fresh hosted acceptance is required.
+
+## In development: camera lifecycle through shipping command executables
+
+The fixture's independent event validator follows the source's actual `0..255`
+camera level range. Its post-capture isolation check reads each earlier job by
+exact ID, so adding new camera jobs cannot hide earlier rows behind a bounded
+job-list page. These test corrections retain all original success requirements.
+
+The existing input-command native suite now adds a separately approved camera
+fixture after all review-only input checks. Actual `eef` and `eefn` commands
+configure the camera, enable feature/listening/workload consent, restart the node,
+submit and inspect a camera request, approve its exact plan, execute it and stop
+it or restart the node during a blocked read. Only the simulated `cv2` dependency
+is installed out of band in a disposable stdlib venv; shipping host/source bytes
+and production discovery remain unchanged.
+
+Completion requires all five durable events, a read-only real node receipt,
+matching independently reconstructed payload prefix/bytes, lease renewal and
+owned-process exit. Stop and restart must retain uncertainty; reusing the same
+execution receipt cannot replay capture. A new independently approved job proves
+source reuse. Earlier input jobs must remain review-only, and no interpreter call
+is permitted. No original test or deadline is relaxed. This additional executable
+coverage requires hosted verification; physical media and stable release remain
+unaccepted.
+
+## Accepted development checkpoint: command startup and camera workflows
+
+Source `1943155` passes the complete [four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42391526288).
+The preceding construction change `166a888` also passes its
+[four-job run](https://github.com/eepyfishy/eef/actions/runs/42391002877).
+The final Windows/headless raw output reconciles 1,600 Rust tests plus one
+pre-existing ignored test across 17 groups, all 36 native suites, the extra
+connection-close case, listening, managed first-run and 63 firewall mock cases.
+
+The unchanged one-MiB parser thread completes all 11 valid cases and six
+help/version/error cases through both parsers. Actual service startup, stable
+identity/hostname, initial registration, explicit private enrollment and restart
+checks pass. Separate service-option construction resolves the reproduced
+command-tree startup overflow in these runs; earlier boxing and in-place-parser
+candidates remain failed evidence. Executable help also passes the private
+environment-value check without creating node settings.
+
+Camera authoring, passive inspection, local setup and approved remote setup
+commands pass. The full camera coordinator lifecycle test passes completion,
+explicit stop, disconnect/reconnect and separately approved reuse through the
+shipping source adapter with a simulated device dependency. Exact durable event
+prefixes, node receipts, lease renewal, owned exit and no replay remain required.
+This accepts the exact automated development source, not physical media or PCs.
+The earlier five-event camera completion rejection is retained; its underlying
+cause is not proven by subsequent passing runs.
+
+Model quality/default selection and complete onboarding, VLM triggers, relays and
+aggregate quotas, general continuous/sensor work and strong stop, mesh,
+optimization/cluster, physical acceptance, installer recovery/signing/Defender/
+firewall lifecycle and stable-release acceptance remain open. No main promotion,
+release, update feed or installed node was changed for this checkpoint.
+
+## In development: keep private environment values out of node help
+
+The pairing-key and Ollama-URL options now hide their environment values in
+Clap help while retaining the variable names. The existing managed first-run
+suite checks real executable `--help` with disposable private test values before
+starting the node: help must exit successfully, omit those values and leave node
+settings uncreated. Environment overrides are confined to that one child process.
+Normal flag parsing, node setup and the original first-run assertions and budgets
+remain required. Hosted executable verification is pending.
+
+## In development: separate service-option and command-tree construction
+
+The in-place parser candidate `255d2c2`/run `42389243153` passed both Linux jobs
+but failed both Windows jobs. The expanded parser test overflowed on its original
+one-MiB thread, and executable first-run again exited with `0xC00000FD`. Its last
+phase was `parse_build`: the derived command tree did not finish construction.
+Avoiding by-value parser forwarding did not resolve the startup failure.
+
+Root service options now form a separate flattened Clap argument group. This
+moves their derive temporaries out of the command-tree builder's caller frame.
+Original flags, defaults, subcommands and decoder are retained; field forwarding
+keeps runtime dispatch unchanged. Stack sizes, help/error checks, first-run and
+all other native acceptance assertions remain required. This is a construction-
+stack candidate, not an accepted fix; fresh full hosted verification is pending.
+
+## In development: private workload failure categories
+
+The full camera coordinator lifecycle test in `b3885b7`/run `42388092617` passed
+its completion, explicit-stop and reconnect cases. The overall run still failed:
+the separate node-native camera network test received all five events, then
+reported `source_unconfirmed` instead of a confirmed completion. Its underlying
+failure remains unproved; the earlier one-event pacing diagnosis does not explain
+this result. The parser candidate also needs further Windows verification.
+
+At `255d2c2`/run `42389243153`, the Windows/dashboard libraries passed but the
+expanded one-MiB parser test overflowed. That candidate is not accepted. Fixed
+case markers now bypass test-thread output capture so a process abort can still
+identify baseline versus in-place parsing and valid versus error cases without
+printing arguments. All cases and the original stack bound remain required.
+
+Local live workload status now retains a fixed `reason_code` for typed Python
+bridge failures, or `workload_unconfirmed` for unclassified failures. Error text,
+private source bindings, paths and interpreter output stay omitted. The wire
+rejection schema and original failure code are unchanged. The existing camera
+test's rejection diagnostic additionally observes owned exit, camera release,
+elapsed time and the last probe sequence; all completion, lease, source and stop
+assertions and deadlines remain required. These are observations rather than a
+camera completion fix. Fresh hosted verification is pending.
+
+## In development: parse the node command tree in place
+
+The phase diagnostic `f6505fd`/run `42387553819` passed all Rust tests, both
+Linux jobs and Windows/dashboard. Windows/headless still failed first-run with
+`0xC00000FD`; the last observed phase was `parse`, before runtime construction.
+The isolated one-MiB parser cases do not reproduce the full executable's stack
+use. Earlier application-future boxing is not a proven fix for this failure.
+
+The executable now builds one Clap command tree and calls its mutable parser
+directly, avoiding the convenience methods' by-value command forwarding. The
+same derived command definitions and argument decoder remain. Additional fixed
+markers distinguish tree construction, matching and decoding without logging
+arguments. The existing one-MiB test retains all original parser calls, also
+exercises the executable's parser and compares help/version/error behavior.
+Thread/OS stack sizes, test deadlines, update handoff and command authority are unchanged.
+This is a candidate correction; fresh first-run, repair and complete hosted
+acceptance remain required before calling startup fixed.
+
+## In development: full camera command and source lifecycle coverage
+
+The opt-in Windows coordinator lifecycle fixture now also runs with a simulated
+camera dependency installed in its own disposable stdlib venv. A separate camera
+test follows typed origin submission, backend resource selection, owner approval,
+origin execution, the coordinator driver and the shipping camera source over
+credential-authenticated TLS. Completion requires all five durable observations,
+matching node receipt and payload prefix, lease renewal and owned-process exit.
+Explicit stop and disconnect/reconnect retain uncertainty without replay; a new
+separately approved job must prove source reuse. The microphone's original three
+scenarios and four-event assertions remain required. No shipping test hook,
+hardware access, dependency download or deadline extension was added. This new
+coverage still requires hosted execution; it does not establish physical camera
+or full stable-release acceptance.
+
+## In development: narrow Windows startup overflow observations
+
+The boxed-entrypoint candidate `5b3e3bc`/run `42385273148` passed both Linux jobs
+and Windows/dashboard, including the extended 64 KiB future-size check. Its
+headless Windows job still failed the fresh-node fixture with the same startup
+stack-overflow observation. Boxing is not a proven fix for that failure.
+
+The existing one-MiB parser test now also parses the service-start and repair-
+approval argument shapes. Fixed-name startup phase markers use the separate
+`eefn::startup` debug target; the isolated first-run fixture enables only that
+additional target and reports the last phase on its unchanged timeout. No raw
+configuration, arguments, paths or credentials enter these markers. Thread/OS
+stack sizes, test assertions and deadlines remain unchanged. The next hosted
+result must locate the failing stage before any further causal fix is claimed.
+
+## In development: bounded node application entrypoint
+
+The frame-pacing candidate `63aff0c`/run `42383334177` passed the complete Rust
+test step: 1,595 passing cases and one ignored case across 17 groups, including
+the original native camera event/stop assertions. Full hosted acceptance still
+failed: the fresh-node fixture reports Windows exit `0xC00000FD`, a stack-overflow
+message, no observed node API runtime and a still-running coordinator.
+
+The node now creates the same Tokio runtime explicitly and polls a boxed
+application future. Command dispatch and the supervised node runtime also use
+boxed child futures so their storage does not enlarge the application poll state.
+The existing 64 KiB future-size test now includes the application itself. The
+one-MiB parser test, real first-run flow, original timeouts and all lifecycle/
+shutdown assertions remain. No thread/OS stack limit was increased. Fresh hosted
+verification must establish whether this fixes startup; the earlier repair
+approval timeout remains separately unproven.
+
+## In development: node-owned camera configuration from eef
+
+The coordinator owner API and `eef node camera --node NODE_ID show/configure` now
+delegate to the node's existing typed backend. Camera settings use a pinned
+credential/TLS session and runtime, checked again while selecting the exact route
+before sending private bindings. The node checks current management approval and
+the inspected metadata digest before saving. Reports hash the request without
+echoing private arguments; inspection grants no approval, and uncertainty causes
+no retry, fallback, restart or execution.
+
+Two authenticated backend cases, a CLI parser case, expanded legacy-session
+refusals and actual executable coordinator/node checks require hosted verification.
+The separate camera-frame pacing candidate is still being verified; fresh-node
+registration and earlier repair-wait failures remain unresolved release gates.
+
+## In development: simulated camera frame pacing
+
+Run `42381756425` at `53f4c0b` passed both Linux jobs and Windows/dashboard, but
+Windows/headless failed. Its camera diagnostic confirms admission, source opening
+and one durable delivered event before `source_unconfirmed`. The first-read test
+barrier can delay the producer past its next sampling time; the fake device then
+returns a catch-up frame immediately. The event filter correctly stops at its rate
+boundary rather than silently dropping a required transition. The synthetic
+camera now paces completed frames at its reviewed 200 ms
+cadence. All five events, durable-before-delivery assertions and original source,
+lease, session, stop and process-exit limits remain required. Production source
+and filter behavior are unchanged; fresh hosted verification must confirm the fix.
+
+That run separately timed out waiting for a fresh node to register, before reaching
+later native suites. It does not resolve the earlier repair-approval timeout.
+The unchanged sixty-second registration wait now adds bounded process-exit,
+runtime-seen, connection-state and stack-overflow observations on failure. It does
+not print credentials, paths, endpoints or raw process logs, and does not restart
+or retry setup. These diagnostics are not a first-run fix or acceptance claim.
+
+## In development: camera-intent helper fixture correction
+
+The authoring candidate `515d520`/run `42381353099` failed Linux test compilation:
+three existing direct helper calls omitted the newly explicit camera-intent
+expectation. They now pass `None`, retaining the original positive and conflict
+assertions. No production behavior or test expectation changed. The candidate and
+its failure evidence remain retained; complete hosted acceptance is still required.
+
+## In development: camera rejection and repair-wait diagnostics
+
+The isolated stop-fixture correction `77d5225` compiled, but its native camera route
+received `workload_rejected`; its headless Windows job also repeated the separate
+repair-hints implicit-approval connection timeout. Run `42360167494` remains failed.
+The camera assertion now includes the closed rejection code and source/ACK phase
+flags. The unchanged twelve-second repair wait reports only connection count,
+process exit and a validated error-code field on failure. No guard, expected
+outcome, deadline, stack limit or test is removed or relaxed. These observations
+are diagnostic evidence; neither failure cause nor a production fix is proven.
+
+## In development: immutable camera intent and command-based request authoring
+
+`eefn requests submit-camera` now resolves a disclosed, independently authenticated
+camera source and prepares a durable review without JSON or inference. The journal
+retains a distinct optional camera intent and concrete source pins; existing review
+wire shapes omit the new field when unused. Origin, intent and bindings remain
+immutable. Exact receipt reuse is read-only, including after provider disconnect
+or shutdown; an incomplete review requires explicit saved compilation.
+
+Six source/receipt tests, three credential/TLS origin-coordinator cases, one CLI
+parser case and native old/forged/lost-response checks require hosted verification.
+The one-MiB parser test includes camera flags. This increment starts no capture,
+permission, consent, model, approval, execution or automatic retry. Full camera
+command lifecycle and physical/stable-release acceptance remain open.
+
+Both earlier candidates `a29936b`/run `42358859871` and `5a18341`/run `42359571446`
+finished with three passing jobs and a failed headless Windows job. Their native
+test compilation used the wrong stop-report method. The isolated correction
+`77d5225`/run `42360167494` requires its own complete acceptance. The setup run also
+timed out in the separate repair-hints fixture while waiting for an implicit
+approval metadata connection; its cause is unproven and the original bound remains.
+
+## In development: native camera stop fixture correction
+
+The camera network and setup candidates `a29936b` and `5a18341` did not pass full
+hosted acceptance. Their Windows native test compilation calls a nonexistent
+`validate` method on the existing stop report. The fixture now uses that report's
+existing `confirms_scope` check against the exact reviewed workload scope, retaining
+all cancellation, receipt, process-exit and no-replay assertions. Production source
+and stop behavior are unchanged. Runs `42358859871` and `42359571446` remain
+retained; a changed-source candidate requires complete fresh hosted verification.
+
+## In development: camera resource setup without JSON
+
+The running node now exposes `eefn camera show/configure` through its backend owner
+API, including with browser pages disabled. Webcam and private RTSP bindings use
+exact runtime/configuration preconditions; ambiguous or incompatible resources and
+uncertain replies fail without automatic retry. Reports expose saved/applied
+binding digests and pending restart without echoing private URLs or granting
+permission, consent, policy, capture or work. Eight backend cases, one parser case
+and real command/API old/forged/lost-response checks require hosted verification.
+Camera request authoring, the full coordinator command lifecycle and physical
+camera/two-PC acceptance remain incomplete. See [setup commands](COMMANDS.md#continuous-source-inspection-in-development).
+
+## In development: source-specific camera network admission
+
+The coordinator's compiler, conditional approval and explicit driver now select
+the reviewed camera or microphone snapshot. Camera-capable nodes advertise an
+explicit version-three source list; microphone-only registration retains its old
+version-two serialization. The coalesced readiness observer checks both independent
+consent gates, and the node selects its source factory only after the existing
+policy permit. Camera readiness is configuration evidence, never device health or
+a grant. Local consent enabling checks the fresh camera epoch too, preventing a
+stale decision from clearing denial after a failed permission save.
+
+New source-negotiation, readiness, consent and policy tests accompany a native
+credential/pinned-TLS camera workload case with actual compiled source bytes,
+durable metadata, observed process exit, scoped stop and live readiness refresh.
+Fresh complete hosted acceptance is required. Camera resource setup/authoring
+without JSON, full coordinator command lifecycle acceptance, VLM triggers, relays,
+aggregate quotas and physical two-PC acceptance remain open.
+
+The preceding passive-inspection source `a500c0a` and private-runner source
+`9871f37` passed all four jobs in runs
+[42339783078](https://github.com/eepyfishy/eef/actions/runs/42339783078) and
+[42340544812](https://github.com/eepyfishy/eef/actions/runs/42340544812).
+Their retained headless records contain 1558/1567 passing Rust cases plus one
+ignored case across 17 groups, all 36 native suites, completed pre-registration
+close coverage, firewall mocks, listening and first-run gates. The failed initial
+inspection run `42339206757` remains retained; its two incorrect new fixture
+assertions were corrected in `a500c0a`. These records accept their exact synthetic
+scope, not the network changes above, physical capture or stable release.
+
+## In development: prepared camera source and owned workload runner
+
+Private camera preparation now binds the exact applied camera resource, compiled
+motion adapter bytes, camera permission/consent epoch and shared camera reservation.
+It intersects local/reviewed memory and frame bounds without opening a source.
+The admitted runner shares the existing microphone grant/lease/event lifecycle:
+exact consumption match, fresh source snapshot, original deadlines, one awaited
+durable event callback, source/filter seal and observed owned-process exit before
+completion. Camera consent uses its own gate; old prepared epochs cannot revive.
+
+Six Windows unit cases, three opt-in Windows native cases and one unsupported-
+platform case require hosted verification. Native cases inject the existing fake
+camera API into the actual pinned motion source through the test-only prelude;
+real root/descendant processes prove exclusion, normal exit, revocation/scoped stop
+and whole-future cancellation. Events must be camera metadata persisted before
+callbacks; replay history carries no authority. Existing microphone tests and
+limits remain. Public camera workload negotiation, readiness and driver/authoring
+are still unwired; the camera inspection protocol continues to refuse execution
+claims. No feature permission, camera, model, update or installed node was started.
+
+The consent/ownership/preflight sources `5a66ba8`, `57036bf` and `6bef4d1` passed
+all four jobs in runs [42337185615](https://github.com/eepyfishy/eef/actions/runs/42337185615),
+[42337635066](https://github.com/eepyfishy/eef/actions/runs/42337635066) and
+[42337963600](https://github.com/eepyfishy/eef/actions/runs/42337963600). Retained
+headless records contain Rust1540/1545/1548+1ignored across 17 groups and all native
+gates. The private named-case checkers' quiet-output mismatch remains recorded;
+independent exact-source test/module and unfiltered-count reconciliation confirms
+the six/five/three added cases without rerunning or changing tests. This accepts
+those synthetic increments, not subsequent camera inspection/runner source,
+physical operation or stable release.
+
+## In development: distinguish pending settings from a requested restart
+
+The inspection source `1d6e982` failed two new Linux fixture assertions after
+saving configuration. Both incorrectly expected `pending_restart=false`; the
+existing `save_configuration` contract deliberately marks saved settings as needing
+a restart. The fixtures now require that pending flag and independently poll the
+restart notification to prove no restart was requested. Both saved/applied camera
+and readiness assertions remain, with the same test count and original deadlines.
+The failed run is retained; this changed fixture source requires full hosted
+verification. Production save, inspection, permission and restart code is unchanged.
+
+## In development: camera source inspection through node and coordinator commands
+
+`eefn workloads camera-sources` and `eef node camera-workload-sources --node NODE_ID`
+read the same passive node-owned camera snapshot through backend APIs. The closed
+camera report uses its own permission fields, resource digests and consent epoch;
+private webcam/RTSP parameters stay local, pending edits cannot substitute applied
+bindings, and inspection grants or opens nothing. Camera permission/epoch changes
+invalidate readiness; initial denial wakes its observer to preserve microphone
+refresh. Remote reads require fresh independently authenticated pinned sessions
+and exact runtime/session correlation. Legacy transport, older APIs and substituted
+reports have no fallback. Camera execution claims remain unavailable in this
+protocol. Ten added Rust cases and mandatory executable command checks require
+hosted verification. See [camera inspection boundaries](CAMERA-MOTION.md).
+
+The preceding definition/filter/history source `f2df98e` passed all four jobs in
+[run 42336088398](https://github.com/eepyfishy/eef/actions/runs/42336088398), with
+Rust1534+1ignored/17groups, all 36 native suites, camera19+3 and the complete
+prefix/firewall/listening/first-run gates. That accepts only the exact synthetic
+development increment; later source changes, physical capture and release remain
+separate requirements.
+
+The independent camera-consent source `5a66ba8` passed all four jobs in
+[run 42337185615](https://github.com/eepyfishy/eef/actions/runs/42337185615), with
+Rust1540+1ignored/17groups and all native gates. Its additional private named-case
+log checker assumed verbose test output and failed against the workflow's quiet
+output; that checker failure is retained separately from the successful full run.
+
+## In development: source-specific coordinator route checks
+
+Coordinator workload preflight and direct route preparation now require the
+reviewed source kind to match the peer's validated execution advertisement.
+Generic `workload.session` and one-shot `camera.capture` capabilities cannot imply
+camera workload support. The current version-two advertisement remains exactly
+microphone-only; changing its source string cannot mint a compatible camera
+protocol. Unsupported camera requests fail before route capacity or any offer is
+created. Three added regressions cover serialized kind agreement, authenticated
+registration preflight and both direct prepare/open paths, including subsequent
+microphone route availability. Hosted verification is required. Compatible camera
+negotiation and a complete camera runner remain future integration work.
+
+## In development: shared Windows camera source ownership
+
+One-shot camera dispatch now reserves a separate node-owned camera pool through
+the existing owned-process bridge. Engines attached to the same node service share
+that pool, while microphone and camera capacity remain independent. A successful
+reserved bridge result already requires exact owned-job exit; failed or abandoned
+observation retains the existing quarantine. Preparation can obtain the configured
+camera runtime only with the exact service pool and resource owner. No source or
+feature permission is created by that lookup. The pool conservatively allows one
+camera source per node, including aliases; it does not lock other applications.
+
+Five new cases require hosted verification: pool separation, exact owner/service
+binding, service replacement, actual busy-camera dispatch refusal, and an opt-in
+synthetic Python camera bridge held open behind a fixture barrier. The latter
+checks exclusion during execution and reuse after observed exit twice, within each
+original six-second parent deadline, without a camera, OpenCV or model. Existing
+microphone tests and process-exit witnesses remain. Camera workload preparation,
+runner/readiness, peer negotiation and command authoring still need integration.
+
+## In development: independent camera ambient consent lifetime
+
+Camera ambient supervision now checks saved and applied camera permission without
+requiring microphone permission. It has its own revocation epoch: microphone-off
+leaves camera consent intact, camera-off does not revoke microphone consent, and
+local listening-off retires both. Denial precedes config storage, including failed
+saves. Generic permission restoration cannot clear the denial; explicit local
+enable permits only a fresh epoch. Runtime replacement and guard retirement bind
+both input lifetimes, including a reused runtime ID. Six synthetic regressions
+exercise those boundaries without a device, process, model or admitted workload.
+Hosted verification is required. This consent wrapper grants no workload authority;
+camera readiness, resource ownership and execution remain unavailable.
+
+The camera producer/archive-order source `1c7016e` passed all four jobs in
+[run 42334853657](https://github.com/eepyfishy/eef/actions/runs/42334853657).
+The retained complete headless record contains Rust1524+1ignored across 17 groups,
+all 36 native suites, camera fake-device19+pinned-transport3 and the full
+prefix/firewall/listening/first-run gates. This accepts that exact synthetic
+development increment, without erasing the earlier archive fixture failure or
+claiming physical capture, camera admission or the later definition/consent source.
+
+## In development: camera definitions and durable event semantics
+
+The existing workload source definition now binds exact camera motion parameters,
+resource and adapter digests. Camera event filtering, prefix validation, journal
+history and completion metadata use a one-image observation stride and motion
+levels `0..255`, with their own event kind. Private endpoints remain node-local;
+microphone serialization/meaning and existing bounds remain. Ten new regressions
+cover private binding and limits, camera transitions/uncertainty, payload/persisted
+history, no replay and explicit refusal from microphone-only paths. Old microphone
+fixtures now assert their source variant without changing their assertions.
+Full hosted verification is required. Camera execution remains unavailable until
+permission/listening/resource ownership/readiness/peer compatibility and its owned
+runner are integrated, followed by command authoring and VLM/relay workflows.
+See [camera integration boundaries](CAMERA-MOTION.md).
+
+## In development: archive fixture ordering under the original short policy
+
+Camera source run `42242697692` failed two existing occurrence-archive tests in
+reservation setup: their ten-second policy preceded a later real-clock job
+compilation, leaving less than the required execution allowance. Both failures
+occurred before archive assertions at the same save helper. Production correctly
+refused the insufficient remaining time. The archive-only fixtures now prepare
+their independent job before creating the original ten-second policy, without
+changing policy validity, reservations, clocks, quota/corruption assertions or
+production code. A regression explicitly refuses insufficient remaining time,
+pre-approval time and expiry without mutation, then admits the valid original
+allowance. Full changed-source verification is required; the prior failure stays.
+
+Independently, that failed run completed all 36 native suites and the full native
+gates, including all 19 camera fake-device and three pinned-source transport cases.
+It is component evidence, not acceptance of the full camera source revision or
+physical devices. Saved compilation `a4977ab` passed all four jobs in run
+`42239571549`, with Rust1523+1ignored and the full native gates; that separate
+acceptance does not erase the later camera-run failure.
+
+## In development: bounded camera motion producer and owned transport checks
+
+A lazy single-open webcam/RTSP motion producer samples tiny grayscale images and
+emits bounded metadata only. It validates actual geometry/types/bytes, limits
+sampling and local duration, resets uncertainty on resolution change and fails
+read loss without reopening. OpenCV transforms use one source-process thread;
+decoder/driver resources remain separate. Nineteen fake-device cases and three
+pinned-source cases through the existing owned streaming bridge are added to the
+required native source suite, with prior microphone cases unchanged. No local
+Python/media runtime testing or package installation is used. Full hosted
+verification is pending. This is a producer increment; camera admission, leases,
+resource ownership/revocation, command authoring, VLM triggers, relays and physical
+acceptance remain open. See [camera motion](CAMERA-MOTION.md).
+
+The ACK correction `dfbdfd6` and microphone executable acceptance `6a1c83d` passed
+all four jobs in runs `42236696813` and `42237532926`, respectively. Each retained
+raw Windows record contains Rust1518+1ignored across 17 groups, all 36 native
+suites and completed prefix/firewall/listening/first-run gates. This verifies
+those exact increments, including actual command/refusal/receipt behavior. It
+does not accept the later saved-compilation or camera source changes, physical
+devices, final main or the stable release.
+
+## In development: explicit compilation of retained concrete input
+
+`eefn requests compile-saved JOB_ID --revision REVISION` asks the coordinator to
+compile the exact saved concrete review without recreating JSON. It resolves
+input on the coordinator and reuses the original deterministic compilation
+receipt, then delegates to the existing origin-scoped compiler. Current provider,
+revision and immutable binding checks still apply. A matching compiled receipt
+returns history before provider lookup; ordinary microphone receipt reuse remains
+inspection-only. Semantic reviews without original concrete intent are refused.
+The existing typed planning API and running-node service expose the same operation;
+no dashboard controller, approval, execution or new persistence format is added.
+Two shared contract/view cases, one CLI case, two actual credential/TLS partial-save
+cases and the extended native executable fixture require hosted verification.
+
+The ACK isolation source `dfbdfd6` passed Windows/dashboard in run `42236696813`:
+raw output records Rust1510+1ignored across 17 groups, including all 34 CLI cases
+at that checkpoint. Both Linux jobs passed; Windows/headless
+remains in progress. This is partial evidence only, not full source acceptance.
+
+The earlier outcome run `42234328855` is terminal failure because of its dashboard
+ACK test precondition. Independently, its headless job passed Rust1517+1ignored,
+all 36 native suites, the completed pre-registration-close case, firewall mocks,
+listening and first-run gates. The failed overall result remains retained; later
+sources still require their own full verification.
+
+## In development: executable microphone command acceptance
+
+The existing native input suite now additionally drives `eefn requests
+submit-microphone` through its actual executable and running node API, with
+credential/TLS coordinator pairing and no dashboard pages. Passive synthetic
+resources exercise preparation without an LM or device permission, exact retained
+receipts, conflicts/refusals, human output/nonzero exits, dropped/substituted local
+replies and older API behavior. The proxy counts actual sends to reject retries;
+receipt inspection and reuse must retain job state after restart and interpreter
+withdrawal. Stopped-node preparation cannot launch a runtime or edit configuration.
+No source device is opened, and physical acceptance remains open. These added
+checks require fresh full hosted verification; syntax/source checks alone do not
+establish runtime behavior. The shipping backend and existing native gates are
+unchanged by this acceptance increment.
+
+## In development: isolate ACK expiry from journal admission
+
+Run `42234328855` passed both Linux jobs. Windows/dashboard failed before the
+CLI tests: a one-second lease in the ACK inspection fixture expired during
+real journal admission, at `workload_ack_reads_tests.rs:108`. The headless Rust
+step passed; its native regressions are still running. These separate results
+do not establish a full Windows pass or final acceptance of the parser change.
+
+The ACK fixture now completes ordinary real admission and acquires its real
+journal blocker before imposing a shorter test-only lease or session deadline
+on that same proof. The helper only removes time and is absent from shipping
+builds; a regression checks that it cannot restore time or change identity.
+The 985-ms conservative lease window, 500-ms caller window and two-second
+observation budget remain. The fixture requires the specific deadline error,
+retained worker ownership, retirement to unknown and refusal to replay. It
+also covers session expiry separately. Real short-proof admission and lease
+challenge/expiry tests remain unchanged. This corrects a test precondition;
+production deadlines, storage and authority checks are unchanged. Full hosted
+verification of this follow-up is required, and earlier failures remain failed.
+
+## In development: explicit microphone preparation outcomes
+
+Confirmed refusals before this attempt's review checkpoint now carry bounded,
+identity-checked reason codes and actionable source/resource guidance. Storage,
+reply or compilation failure after entering authoring remains unconfirmed; a
+refusal never claims that earlier/concurrent jobs or effects are absent. Exact
+reuse of a retained uncompiled typed review now inspects its incomplete status
+without retrying compilation or requiring a live source. Three shared report/
+compatibility/rendering tests and one actual journal/credential-TLS partial-save
+case await hosted verification. See [outcome semantics](MICROPHONE-AUTHORING.md).
+
+Authoring source `b05e5a2` passed Linux but failed both Windows jobs in run
+`42228933980`: the dashboard parser overflowed the existing one-MiB stack guard,
+the headless source test exceeded its original 30-second disposable venv setup
+budget, and the first native registration script timed out. The new microphone
+parser now uses boxed flattened argument groups and a boxed variant; flags/defaults
+are preserved and the same stack guard additionally parses the new command. The
+venv fixture records bounded numeric setup/cleanup observations while retaining its
+original deadline and failed outcome. The venv timeout's cause remains unproven.
+Full changed-source Windows/native verification is still required.
+
+## In development: typed microphone request authoring without JSON
+
+The running node now has `requests submit-microphone` and a matching API adapter.
+The coordinator selects a fresh disclosed source, retains immutable typed intent
+and resolved bindings in the existing journal, and compiles without approving or
+executing. Exact receipt reuse checks retained choices before provider lookup.
+Historical records omit the new optional field; typed history is frozen across
+edits and cannot be relabeled as a different source. Shared, CLI and actual origin
+tests and the extended Windows source test await hosted verification. See
+[microphone authoring](MICROPHONE-AUTHORING.md).
+
+## In development: complete capability vocabulary for continuous source review
+
+The origin-admission run `42224709777` failed its positive mailbox case. Correlated
+diagnostic `e86ec21` in run `42227421006` identified the strict capability rejection:
+the retained template describes both the session wrapper and microphone operation,
+but admission added only the wrapper. After the existing authenticated binding and
+disclosure checks, admission now adds that exact template's complete review set.
+The validator, global node/plugin vocabulary, permissions and execution gates remain
+unchanged. Existing positive and refusal assertions and the mailbox diagnostic await
+fresh full hosted verification. See [diagnosis](WORKLOAD-ADMISSION-DIAGNOSTIC.md).
+
+The corrected admission source `855d131` passed all four jobs in run `42228100201`,
+including Rust1504+1ignored across 17 Windows groups and every native suite/gate in
+the raw record. This accepts the exact source-scoped capability correction and
+running-origin synthetic source workflow, not later microphone authoring, physical
+devices, final main or stable release acceptance.
+
+## In development: origin admission independent of the one-shot media plugin
+
+New continuous-source reviews now bind a fresh authenticated disclosed node source
+snapshot instead of requiring the separate one-shot audio plugin. Resource/adapter
+digests and disclosure are checked before saving review; execution permissions and
+owner approval remain separate. Exact retained receipts avoid current provider
+lookup. Two shared credential/TLS origin-mailbox tests and the extended Windows
+combined source test await changed-source hosted verification. See
+[origin admission](WORKLOAD-ORIGIN-ADMISSION.md).
+
+## In development: combined owner/origin command and real node source acceptance
+
+A new opt-in Windows adapter test joins actual owner HTTP planning/approval,
+running-origin execution, the coordinator driver and a real node source over
+credential/TLS. A disposable no-pip venv supplies the synthetic microphone dependency;
+shipping source and host bytes are unchanged. Completion must match both journals'
+event evidence; stop/disconnect retain uncertainty, and a new explicit approved job
+proves reuse without replaying or rewriting old history. Existing CI gates remain
+and explicitly add the parent native-test feature. Full verification is pending.
+See [combined acceptance](WORKLOAD-FULL-COMMAND-ACCEPTANCE.md).
+
+Candidate `480e4ad` passed all four hosted jobs in run `42184728406`.
+The raw Windows record contains Rust1501+1ignored across 17 groups, all 36 native
+suites and the completed pre-registration-close, firewall63, listening and first-run
+gates. This verifies the distinct payload checksum and that checkpoint's synthetic
+device command/source workflow. It does not establish the later origin-admission
+change, physical devices, final main or stable release acceptance.
+
+Readiness source `82aeabe` passed both Linux jobs and Windows/dashboard in run
+`42179897667`, but Windows/headless Rust failed the new credential/TLS source
+lifecycle assertion. All 36 subsequent native scripts passed. The failure exposed
+a real completion mismatch: node journal prefixes include lease/time metadata,
+while coordinator prefixes contain event payloads only. The verified `480e4ad`
+follow-up preserves the journal checksum and adds a separately audited payload
+checksum with capability negotiation. Physical testing, final main and stable
+release gates remain open.
+
+## In development: node readiness and registration without reconnect
+
+The node now derives source readiness from current applied resource/permission,
+local listening, configured Python, workload policy and runtime state. A bounded
+passive worker coalesces metadata updates without holding the live binding across
+storage. Configuration and gate changes invalidate cached readiness before I/O;
+the existing connection updates its registration in place. Three shared cases
+and one new opt-in Windows credential/TLS running-node source case await hosted
+verification. See [node readiness](WORKLOAD-NODE-READINESS.md).
+
+Command-driver source `392a53d` passed all four jobs in run `42176299981`, with
+Rust1494+1ignored and complete native Windows gates checked in the raw record.
+That confirms its synthetic peer command scope, not combined real-node source,
+physical two-PC, final main or stable release acceptance. Those gates remain open.
+
+## In development: reviewed workload execution through owner commands
+
+The existing execute backend now branches to an engine-owned workload driver.
+It checks fresh credential/TLS source/runtime/policy readiness, serializes offer
+and lease enqueue with stop, and retains the original issuer through bounded
+authenticated frames. Events save through the existing journal writer while
+control remains serviceable; completion checks the durable definition-bound
+prefix. Per-job cancellation interrupts the driver, which retires authority
+before the exact one-attempt stop path. Eight new journal/transport/owner-HTTP
+cases await hosted verification. See [command driver](WORKLOAD-COMMAND-DRIVER.md).
+
+The stop candidate `c61d7cc` passed both Linux jobs and Windows/dashboard in run
+`42173890650`; Windows/headless native checks remain pending. Production node
+execution advertising, full credential/TLS NodeClient source acceptance, the
+existing main capture failure, physical testing and stable release remain open.
+
+## In development: exact durable workload stop delivery
+
+Issued workloads can now retain the existing jobs-stop intent and retire to
+unknown without losing their definition or consumed ACK. A typed driver operation
+reserves one stop send before one original-session network attempt. Its bounded
+native metadata checkpoint retains actual capacity/storage ownership after caller
+cancellation. Retained timestamps and confirmed intent-only receipts are immutable;
+old history without the optional stop field retains its existing schema. Job
+commands expose workload stop evidence and unknown effects. Eight new regressions
+await hosted verification. See [stop delivery](WORKLOAD-STOP-DELIVERY.md).
+
+Engine ownership source `9b1f880` passed all four jobs in run `42142179193`, with
+Rust1478+1ignored and the full native Windows gates checked in the raw record.
+Public owner start/stop integration, execution advertising, credential/TLS source
+acceptance, the existing main capture failure and stable release gates stay open.
+
+## In development: coordinator ownership during asynchronous workload issuance
+
+Product issuance now reserves an engine-owned workload lifetime before awaiting
+storage. Duplicate starts and ordinary runners cannot share that job identity.
+Stop and shutdown revoke its in-memory control gate before journal work; control
+enqueue shares that gate, so it cannot race past revocation. The original issuer
+keeps the lifetime through ACK/lease/completion. Dropping registration does not
+wait on SQLite; original reserved finalization still retains the journal and
+uncertainty. Pending pre-issuance stop can cancel a plan without inventing an
+execution. Existing low-level journal tests retain a test-only unowned constructor;
+there is no shipping unowned constructor. Nine new lifecycle regressions await
+hosted verification. See [engine ownership](WORKLOAD-ENGINE-OWNERSHIP.md).
+
+Execution source `3cd98c6` passed all four jobs in run `42137156813`, including
+Rust1465+1ignored and the complete native Windows gates. The coordinator policy
+candidate `f6edf0f` also passed all four GitHub jobs in run `42138453629`, with
+Rust1469+1ignored and the complete native Windows gates checked in the raw record. These source
+passes do not resolve the earlier main capture deadline failure or establish
+physical two-PC/stable release acceptance. Owner start/stop integration and public
+execution advertising remain open.
+
+## In development: coordinator commands for node workload policy
+
+`eef node workload-policy --node NODE_ID show|enable|disable` now uses the same
+typed node backend as local commands. The coordinator adapter requires an actual
+credential/TLS grant session; writes also require the node owner's existing remote
+management consent. The CLI inspects limits/runtime/revision/epoch before one
+conditional mutation and never retries an uncertain reply. Permission, listening,
+source startup and restart are unchanged. The owner API adapter is
+`/api/commands/node/workload-policy`.
+
+Four new cases cover request/receipt scope, CLI parsing and genuine pinned-TLS
+node policy control with local/remote state equality, stale-revision refusal and
+management revocation. This network case configures preferences only; it does
+not prove authenticated source execution. Hosted validation is pending. Both
+Linux jobs passed the preceding corrected execution source `3cd98c6` in run
+`42137156813`; the complete Windows/native and four-job result remains pending.
+Public execution advertising, owner start/stop integration and stable release
+acceptance remain open.
+
+## In development: node workload delivery and owner policy commands
+
+The node connection now dispatches exact schema-two offers and correlates leases
+only within its original authenticated session. It prepares the pinned source,
+awaits durable consumption, flushes the consumed ACK, and then owns one source
+and renewal loop together. Events follow durable appends; terminal completion
+requires the existing observed-source receipt. Stop/failure rejection bypasses
+queued observations and prevents further lease delivery. No public execution
+advertisement is enabled yet: the coordinator owner start/stop route and complete
+credential/TLS execution acceptance remain open.
+
+`eefn workload-policy show|enable|disable` configures the backend policy without
+JSON or a browser. It defaults off; limits, revision/runtime checks and a sticky
+revocation epoch apply. Permission and local listening consent remain independent.
+Remote policy adapters require node-owner management consent; policy revocation
+uses reserved control capacity. New policy, dispatch and opt-in Windows source
+tests await full changed-source hosted verification. See
+[node execution and remaining acceptance](WORKLOAD-NODE-EXECUTION.md).
+
+Initial node execution run `42136710696` failed compilation because the historical
+fixture referenced `AttemptState` from the node crate instead of the coordinator
+crate. The correction changes only that fixture path and this status note;
+production code, assertions and all new tests are unchanged. The failed run is
+retained, and fresh full changed-source verification remains required.
+
+Admission v2 run `42133115874` passed both Linux jobs but failed an unrelated
+Windows historical-receipt fixture while its two-second live issuance setup
+expired. That fixture now stages explicit historical metadata in the real job
+journal without creating live issuance authority. Its command, origin isolation,
+read-only history and no-execution assertions remain. Runtime deadlines are
+unchanged. Old negative runs remain retained; no main or release is accepted.
+
+## In development: bounded asynchronous node consumption admission
+
+Node consumption now awaits its existing bounded journal worker with an explicit
+caller deadline clamped to the original initial lease. The original proof stays
+on the caller. Native persistence owns metadata and the original final reporting
+reservation; an abandoned committed reply retires to `unknown`. Cancellation,
+storage contention, stop intent and late observation cannot refresh authority or
+start a source. The caller then awaits the existing exact saved-ACK inspection.
+Eight real-journal regressions cover admission loss, deadlines, teardown, rollback
+and damaged evidence; existing admission/source fixtures await the same API.
+Changed-source hosted verification is pending. See
+[node admission](WORKLOAD-NODE-ADMISSION.md).
+
+Initial admission run `42132439721` exposed an old lock-wait fixture assumption:
+it required a full second on the calling thread, whereas the async waiter now
+ends at its original conservative proof deadline. The fixture now captures and
+asserts that exact original deadline, then drains native rollback before checking
+the unchanged schema/no-consumption assertions. Production code, proof margins,
+busy timeout and all eight new regressions are unchanged. The failed run is
+retained; corrected-source full verification is required.
+
+The preceding transport candidate `2dbb451` passed run `42095342427` across all
+four hosted jobs, including Rust1440+1ignored and the complete native Windows
+gates. That source pass does not resolve the existing main capture deadline
+failure. The actual node dispatcher and owner start/stop command path remain
+unfinished; execution support is not newly advertised and main is not promoted.
+
+## In development: authenticated workload transport integration
+
+The coordinator now has a typed session/runtime-bound workload offer and framed
+lease/ACK/event/completion route. Control bypasses bounded events; active frames
+retain byte/count ownership, terminal delivery drains prior events, and stale
+session/caller cleanup cannot affect a replacement link. Ten regressions include
+a real pinned-TLS credential-authenticated loopback challenge with simulated peer
+receipts. Source execution and owner start/stop remain unavailable until the node
+admission/dispatcher and runtime/CLI path are connected; no new execution support
+is advertised. Full hosted and final main acceptance are required. See
+[network transport](WORKLOAD-NETWORK-TRANSPORT.md).
+
+Initial transport run `42093987281` failed compilation on two old size-counter
+fixture initializers and a simulated receipt's byte-count type. Both original
+counter bounds and every assertion are retained in the correction; shipping code
+is unchanged. The failure is retained and corrected-source full validation is
+required.
+
+The preceding node ACK-read candidate `9b8af0e` passed source run `42087047588`
+across all four jobs, Rust1430+1ignored and the complete native Windows gates.
+The existing main capture deadline failure remains unresolved; this source pass
+does not establish its cause or fix it. Main promotion remains held.
+
+## In development: reserved one-shot capture failure observation
+
+Main run `42084214870` failed an existing Windows synthetic reserved one-shot WAV
+case because the Python bridge exceeded its original execution deadline. Other
+node cases and the independent native gates completed; the main run remains
+failed. The case now captures the existing numeric bridge timing event through a
+future-local test subscriber and reports iteration/elapsed time on failure. Its
+six-second deadline, two iterations, exact WAV/owned-exit assertions and shipping
+code are unchanged. Cause remains unproven; this is not a claimed fix, retry or
+accepted release. See [capture observation](RESERVED-CAPTURE-OBSERVATION.md).
+
+## In development: bounded node ACK inspection before source execution
+
+The prepared microphone runner and consumed-source supervisor now await saved ACK
+inspection through the existing bounded node journal worker. Original consumption
+and lease proof remain on the caller. Cancellation/failure closes that proof;
+source destruction still precedes uncertainty submission using the original final
+reservation. A post-read stop, original deadline, damaged ACK or lost waiter cannot
+start/restart a source. Actual reads retain capacity/journal through runtime loss.
+The event writer reuses checked metadata; durable event authority is unchanged.
+Six real-journal regressions are added. Full hosted/native and final main acceptance
+are still required. Native consumption and public execution/stop integration remain
+unfinished; execution support is not newly advertised. See
+[node ACK reads](WORKLOAD-NODE-ACK-READS.md).
+
+## In development: asynchronous workload issuance
+
+Internal issuance now uses bounded native reads/writes with an explicit original
+caller deadline. Its original monotonic issuer window remains caller-owned; the
+native worker receives metadata only. Issuance shares the existing ACK write
+budget, while the original reporting reservation survives cancellation, a lost
+committed reply and post-commit inspection. Unclaimed successful saves retire to
+`Unknown`; uncertain unreadable writes deny new authority without evidence repair
+or automatic retry. Eight real-SQLite coordinator regressions cover these
+boundaries, including runtime destruction and actual journal ownership. Existing
+issuance callers await the same internal API; public continuous execution remains
+unavailable. Changed-source hosted acceptance and final main-ref acceptance are
+still required. See [issuance persistence](WORKLOAD-ISSUANCE-PERSISTENCE.md).
+
+Initial hosted compilation `42082338014` caught one remaining migrated issuance
+call outside an async block in the existing manual-runtime completion case. That
+call now uses the case's existing observer runtime. No shipping code or test
+assertions changed in this correction; the failed run is retained and fresh full
+hosted validation is required.
+
+The issuance handoff also releases the native writer's own store reference before
+waking its waiter. A successful historical packet retains its separate exact
+store/reporting ownership; a lost packet still queues uncertainty before the
+actual issuance drain completes. This prevents an unnecessary journal ownership
+race at caller teardown. The eight added cases and production bounds are unchanged.
+
 ## In development: historical completion fixture staging
 
 Diagnostic run `42046011083` failed a separate completion test before it reached

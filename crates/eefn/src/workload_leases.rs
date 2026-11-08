@@ -23,7 +23,7 @@ pub mod definition;
 mod reporting;
 pub(crate) use reporting::{Checkpoint, ReportingAuthority};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
     pub enabled: bool,
@@ -78,7 +78,7 @@ impl Contract {
         self.validate()?;
         crate::grants::definition_digest(&json!(self))
     }
-    fn permitted(&self, policy: &Policy) -> Result<()> {
+    pub(crate) fn permitted(&self, policy: &Policy) -> Result<()> {
         self.validate()?;
         policy.validate()?;
         ensure!(
@@ -295,6 +295,18 @@ impl LeaseProof {
     }
     pub fn session_deadline(&self) -> Instant {
         self.session_deadline
+    }
+    /// Read-only scheduling bound, never renewal or source authority.
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline.min(self.session_deadline)
+    }
+    // A journal test can finish real admission before imposing its short ACK
+    // observation window. This can only remove time from the same proof; it
+    // cannot renew it, change identity or exist in a shipping build.
+    #[cfg(test)]
+    pub(crate) fn restrict_deadlines_for_test(&mut self, lease: Instant, session: Instant) {
+        self.deadline = self.deadline.min(lease);
+        self.session_deadline = self.session_deadline.min(session);
     }
     pub(crate) fn initial_deadline(&self, contract: &Contract, policy: &Policy) -> Result<Instant> {
         contract.permitted(policy)?;

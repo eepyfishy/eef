@@ -13,8 +13,12 @@ include!("workload_retirement_tests.rs");
 include!("workload_job_leases_tests.rs");
 include!("workload_job_acknowledgements_tests.rs");
 include!("workload_completion_persistence_tests.rs");
+include!("workload_issuance_persistence_tests.rs");
+include!("workload_engine_ownership_tests.rs");
+include!("workload_stop_tests.rs");
+include!("workload_driver_journal_tests.rs");
 
-fn template_input() -> PlanInput {
+pub(crate) fn template_input() -> PlanInput {
     PlanInput {
         schema_version: 1,
         template: TEMPLATE.into(),
@@ -29,7 +33,9 @@ fn template_input() -> PlanInput {
     }
 }
 fn review(engine: &TaskEngine) -> (Plan, PlanInput) {
-    let input = template_input();
+    review_input(engine, template_input())
+}
+pub(crate) fn review_input(engine: &TaskEngine, input: PlanInput) -> (Plan, PlanInput) {
     let concrete = ConcreteInput {
         schema_version: 1,
         original_text: "Observe microphone energy for a bounded continuous session".into(),
@@ -47,6 +53,8 @@ fn review(engine: &TaskEngine) -> (Plan, PlanInput) {
         original_text: concrete.original_text.clone(),
         concrete_input: Some(input.clone()),
         audio_source: None,
+        workload_source: None,
+        camera_source: None,
         proposals: vec![ProposalRevision {
             operation_id: context.request_id().into(),
             proposal: concrete.proposal().unwrap(),
@@ -168,7 +176,9 @@ async fn existing_job_store_persists_review_approval_definition_and_ack_before_r
         &command,
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     let d = issued.definition().clone();
     let db = rusqlite::Connection::open(&path).unwrap();
@@ -239,8 +249,10 @@ async fn existing_job_store_persists_review_approval_definition_and_ack_before_r
             &store,
             &command,
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
     drop(engine);
@@ -252,8 +264,8 @@ async fn existing_job_store_persists_review_approval_definition_and_ack_before_r
     );
 }
 
-#[test]
-fn normal_approval_and_execution_cannot_reinterpret_a_workload_as_v1_authority() {
+#[tokio::test]
+async fn normal_approval_and_execution_cannot_reinterpret_a_workload_as_v1_authority() {
     let engine = TaskEngine::new(EventBus::new(20));
     let (plan, _) = approved(&engine);
     assert!(crate::request_approval::scope(&plan, 0, plan.approval.as_ref().unwrap()).is_err());
@@ -268,15 +280,17 @@ fn normal_approval_and_execution_cannot_reinterpret_a_workload_as_v1_authority()
             &engine.store,
             &command,
             &uuid::Uuid::new_v4().to_string(),
-            &Policy::default()
+            &Policy::default(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
     assert!(engine.store.get(&plan.plan_id).unwrap().execution.is_none());
 }
 
-#[test]
-fn restored_running_job_becomes_unknown_and_never_recreates_an_issuer() {
+#[tokio::test]
+async fn restored_running_job_becomes_unknown_and_never_recreates_an_issuer() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("live.db");
     let snapshot = dir.path().join("crash-snapshot.db");
@@ -289,7 +303,9 @@ fn restored_running_job_becomes_unknown_and_never_recreates_an_issuer() {
         &command,
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     // Copy only this small, committed temporary SQLite file to model a process
     // exiting before token Drop. This is not a supported replica/cluster path.
@@ -313,8 +329,10 @@ fn restored_running_job_becomes_unknown_and_never_recreates_an_issuer() {
             &restored,
             &command,
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
     drop(issued);
@@ -330,7 +348,9 @@ async fn retired_or_changed_issuance_cannot_renew_and_generic_edits_cannot_rebin
         &execute(&plan),
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     let before = engine.store.get(&plan.plan_id).unwrap();
     assert!(
@@ -383,7 +403,9 @@ async fn wrong_ack_scope_or_expired_issuer_cannot_activate_renewals() {
         &execute(&plan),
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
     )
+    .await
     .unwrap();
     let mut wrong = synthetic_ack(issued.definition());
     wrong.receipt.node_id = "other".into();
@@ -421,7 +443,9 @@ async fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
                 &execute(&plan),
                 &uuid::Uuid::new_v4().to_string(),
                 &policy(),
+                tokio::time::Instant::now() + std::time::Duration::from_secs(2),
             )
+            .await
             .unwrap();
             let ack = synthetic_ack(issued.definition());
             if consumed || acknowledge_entry {
@@ -487,8 +511,8 @@ async fn observed_clock_failure_permanently_retires_lease_and_ack_authority() {
     }
 }
 
-#[test]
-fn quota_failure_keeps_the_approved_plan_without_issuance_or_lease_authority() {
+#[tokio::test]
+async fn quota_failure_keeps_the_approved_plan_without_issuance_or_lease_authority() {
     let dir = tempfile::tempdir().unwrap();
     let store = new_store(&dir.path().join("jobs.db"), 65536);
     let engine = TaskEngine::with_store(EventBus::new(20), store.clone());
@@ -498,8 +522,10 @@ fn quota_failure_keeps_the_approved_plan_without_issuance_or_lease_authority() {
             &store,
             &execute(&plan),
             &uuid::Uuid::new_v4().to_string(),
-            &policy()
+            &policy(),
+            tokio::time::Instant::now() + std::time::Duration::from_secs(2)
         )
+        .await
         .is_err()
     );
     assert_eq!(json!(store.get(&plan.plan_id).unwrap()), json!(plan));

@@ -227,6 +227,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(node_python_policy).layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
         .route(
+            "/api/commands/node/workload-policy",
+            post(node_workload_policy).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/commands/node/permissions",
             post(node_permissions).layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
@@ -235,8 +239,16 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(node_workload_sources).layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
         .route(
+            "/api/commands/node/camera-workload-sources",
+            post(node_camera_workload_sources).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/commands/node/relay",
             post(node_relay).layer(axum::extract::DefaultBodyLimit::max(8192)),
+        )
+        .route(
+            "/api/commands/node/camera",
+            post(node_camera).layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
         .route(
             "/api/commands/node/model-lifecycle",
@@ -516,6 +528,14 @@ async fn setup_model_check(
 ) -> ApiResult<Value> {
     Ok(Json(runtime.setup_model_check_command(request).await?))
 }
+async fn node_workload_policy(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::node_workload_policy::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_workload_policy::command(&runtime.node_server, request).await?,
+    ))
+}
 async fn node_python_policy(
     State(runtime): State<Arc<Runtime>>,
     Json(request): Json<crate::node_python_policy::Request>,
@@ -530,6 +550,14 @@ async fn node_relay(
 ) -> ApiResult<Value> {
     Ok(Json(
         crate::node_relay::command(&runtime.node_server, request).await?,
+    ))
+}
+async fn node_camera(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::node_camera::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_camera::command(&runtime.node_server, request).await?,
     ))
 }
 #[derive(serde::Deserialize)]
@@ -548,6 +576,19 @@ async fn node_workload_sources(
     let report = runtime
         .node_server
         .workload_sources(&request.node_id, 5)
+        .await?;
+    Ok(Json(serde_json::json!(report)))
+}
+async fn node_camera_workload_sources(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<NodeSourceRequest>,
+) -> ApiResult<Value> {
+    if request.schema_version != 2 {
+        return Err(anyhow::anyhow!("Unsupported camera source inspection schema").into());
+    }
+    let report = runtime
+        .node_server
+        .camera_workload_sources(&request.node_id, 5)
         .await?;
     Ok(Json(serde_json::json!(report)))
 }
@@ -898,4 +939,20 @@ mod workload_receipt_tests {
         tests::{execute, planned, policy, synthetic_ack},
     };
     include!("workload_command_acceptance_tests.rs");
+    include!("workload_driver_command_tests.rs");
+}
+
+#[cfg(all(test, windows, feature = "native-test-fixtures"))]
+mod workload_full_native_acceptance {
+    use super::*;
+    use crate::{
+        request_execution::AttemptState,
+        task::{Plan, PlanStatus},
+        workload_jobs::{
+            ApprovalCommand,
+            tests::{execute, template_input},
+        },
+    };
+    use eefn::workload_leases::definition::{EnergyParameters, Template};
+    include!("workload_full_native_tests.rs");
 }

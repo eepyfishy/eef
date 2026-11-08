@@ -23,6 +23,9 @@ use crate::protocol::{PROTOCOL_VERSION, now_ms, read_message, write_message};
 mod report_queue;
 #[path = "server_report_workers.rs"]
 mod report_workers;
+#[path = "server_workloads.rs"]
+mod workloads;
+pub use workloads::{WorkloadFrame, WorkloadLink, WorkloadPeer};
 
 pub const DEFAULT_PORT: u16 = 51335;
 const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
@@ -90,6 +93,7 @@ struct Inner {
     connections: RwLock<HashMap<String, Connection>>,
     routes: RwLock<HashMap<String, ConnectionInfo>>,
     pending: Mutex<HashMap<String, Pending>>,
+    workloads: Arc<workloads::Registry>,
     report_workers: Arc<report_workers::ReportWorkers>,
     report_bytes: Arc<tokio::sync::Semaphore>,
     nonces: Mutex<HashMap<(String, String), Instant>>,
@@ -128,6 +132,10 @@ struct Connection {
     advertisement: Option<crate::network::PeerRecord>,
     state: Option<NodeStateSnapshot>,
     last_seen: Instant,
+}
+struct CameraControlBinding {
+    session_id: Uuid,
+    runtime_id: String,
 }
 
 struct Pending {
@@ -203,6 +211,7 @@ impl NodeServer {
                 connections: RwLock::new(HashMap::new()),
                 routes: RwLock::new(HashMap::new()),
                 pending: Mutex::new(HashMap::new()),
+                workloads: Arc::default(),
                 report_workers: report_workers::ReportWorkers::new(MAX_REPORT_WORKERS),
                 report_bytes: Arc::new(tokio::sync::Semaphore::new(MAX_QUEUED_REPORT_BYTES)),
                 nonces: Mutex::new(HashMap::new()),
@@ -284,6 +293,7 @@ impl NodeServer {
         // Serialize stop/cleanup with start. Retain the handle if this future is
         // cancelled so a subsequent stop can still await the same generation.
         let mut gateway = self.inner.accept_task.lock().await;
+        self.inner.workloads.close_all();
         self.inner.report_workers.close();
         if let Some(task) = gateway.as_mut() {
             if let Some(stop) = task.stop.take() {
@@ -305,6 +315,9 @@ impl NodeServer {
             .drain()
             .map(|(id, _)| id)
             .collect::<Vec<_>>();
+        // An offer may have held routing read ownership when stop began. Once
+        // routing is drained no such registration can append after this clear.
+        self.inner.workloads.close_all();
         for id in disconnected {
             let _ = self.inner.events.send(NodeEvent::Down(id));
         }
@@ -420,6 +433,50 @@ impl NodeServer {
     ) -> Result<Value> {
         crate::execution_boundary::require_control(capability)?;
         self.invoke_message(node_id,json!({"type":"request","capability":capability,"action":action,"params":params,"request_context":context}),wait,None,None,None).await
+    }
+
+    /// Camera setup carries private bindings: pin the exact authenticated route
+    /// before sending any parameters. This grants no execution or source access.
+    pub async fn invoke_camera_setup(
+        &self,
+        request: crate::camera_setup::Request,
+    ) -> Result<Value> {
+        request.validate()?;
+        let binding = {
+            let connections = self.inner.connections.read().await;
+            let connection = connections
+                .get(&request.expected_node_id)
+                .context("Camera node unavailable")?;
+            Self::check_camera_control(connection, &request.expected_runtime_id)?;
+            CameraControlBinding {
+                session_id: connection.session_id,
+                runtime_id: request.expected_runtime_id.clone(),
+            }
+        };
+        let action = if matches!(request.command, crate::camera_setup::Command::Show) {
+            "camera_setup_status"
+        } else {
+            "camera_setup"
+        };
+        self.invoke_message_with_camera_binding(&request.expected_node_id,
+            json!({"type":"request","capability":"node.configure","action":action,"params":request}),
+            Duration::from_secs(10),None,None,None,Some(binding)).await
+    }
+    fn check_camera_control(connection: &Connection, runtime: &str) -> Result<()> {
+        if !connection.credential_transport {
+            bail!("Camera setup requires an independently authenticated pinned connection");
+        }
+        let state = connection
+            .state
+            .as_ref()
+            .context("Camera node registration unavailable")?;
+        let offer: crate::registration::Offer =
+            serde_json::from_value(state.registration["registration_receipt"].clone())?;
+        offer.validate()?;
+        if offer.runtime_id != runtime {
+            bail!("Camera setup runtime changed; inspect before deciding what to do");
+        }
+        Ok(())
     }
 
     /// Issuer/session selection only, never an execution approval. The caller
@@ -624,15 +681,30 @@ impl NodeServer {
         &self,
         grant: &crate::grants::ExecutionGrant,
     ) -> Result<crate::grants::stop::Report> {
-        grant.validate()?;
-        let response = self.invoke_message(&grant.executor_node,
-            json!({"type":"stop_grant","scope":crate::grants::stop::Scope::from_grant(grant)?,"expected_node_id":grant.executor_node,"expected_issuer_id":grant.issuer_id}),
+        self.stop_scope(crate::grants::stop::Scope::from_grant(grant)?)
+            .await
+    }
+    /// Stop only this schema-two definition on its original authenticated session.
+    /// This does not synthesize a v1 grant, renew a lease or prove source exit.
+    pub async fn stop_workload(
+        &self,
+        definition: &crate::workload_leases::definition::Definition,
+    ) -> Result<crate::grants::stop::Report> {
+        self.stop_scope(definition.scope()?).await
+    }
+    async fn stop_scope(
+        &self,
+        scope: crate::grants::stop::Scope,
+    ) -> Result<crate::grants::stop::Report> {
+        scope.validate()?;
+        let response = self.invoke_message(&scope.executor_node,
+            json!({"type":"stop_grant","scope":scope,"expected_node_id":scope.executor_node,"expected_issuer_id":scope.issuer_id}),
             Duration::from_secs(5),None,None,None).await?;
         if response["success"] != true {
             bail!("Stop intent unconfirmed; effects remain unknown")
         }
         let report: crate::grants::stop::Report = serde_json::from_value(response["data"].clone())?;
-        if !report.confirms(grant) {
+        if !report.confirms_scope(&scope) {
             bail!("Stop receipt differs from exact grant")
         }
         Ok(report)
@@ -720,11 +792,33 @@ impl NodeServer {
     async fn invoke_message(
         &self,
         node_id: &str,
+        message: Value,
+        wait: Duration,
+        grant: Option<crate::grants::ExecutionGrant>,
+        observer: Option<Arc<dyn crate::grants::GrantObserver>>,
+        lease_deadline: Option<Instant>,
+    ) -> Result<Value> {
+        self.invoke_message_with_camera_binding(
+            node_id,
+            message,
+            wait,
+            grant,
+            observer,
+            lease_deadline,
+            None,
+        )
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn invoke_message_with_camera_binding(
+        &self,
+        node_id: &str,
         mut message: Value,
         wait: Duration,
         grant: Option<crate::grants::ExecutionGrant>,
         observer: Option<Arc<dyn crate::grants::GrantObserver>>,
         lease_deadline: Option<Instant>,
+        camera: Option<CameraControlBinding>,
     ) -> Result<Value> {
         // Start before routing/queue waits. The reviewed driver also supplies
         // its mint-time monotonic deadline, before durable issuance journal I/O.
@@ -751,6 +845,12 @@ impl NodeServer {
             .get(node_id)
             .cloned()
             .ok_or_else(|| NodeOfflineError(node_id.into()))?;
+        if let Some(binding) = &camera {
+            Self::check_camera_control(&connection, &binding.runtime_id)?;
+            if connection.session_id != binding.session_id {
+                bail!("Camera setup session changed before dispatch");
+            }
+        }
         if message["type"] == "grant_receipt"
             || message["type"] == "grant_result"
             || message["type"] == "stop_grant"
@@ -1367,6 +1467,21 @@ impl NodeServer {
                             bail!("Workload inspection requires a grant receipt journal")
                         }
                     }
+                    if let Some(value) = message.get("workload_execution") {
+                        let support: crate::workload_network::Advertisement =
+                            serde_json::from_value(value.clone())?;
+                        support.validate()?;
+                        if support.available
+                            && (offered
+                                .as_ref()
+                                .is_none_or(|o| Some(&o.runtime_id) != support.runtime_id.as_ref())
+                                || !capabilities
+                                    .iter()
+                                    .any(|c| c == crate::workload_leases::definition::CAPABILITY))
+                        {
+                            bail!("Workload support lacks its exact registered runtime/capability")
+                        }
+                    }
                     if let Some(value) = message.get("peer_transfer") {
                         let support: crate::peer::plan::Advertisement =
                             serde_json::from_value(value.clone())?;
@@ -1430,6 +1545,7 @@ impl NodeServer {
                                     "grant_stop",
                                     "grant_stop_read",
                                     "workload_receipts",
+                                    "workload_execution",
                                 ],
                                 received_at_ms,
                             ),
@@ -1519,6 +1635,17 @@ impl NodeServer {
                     }
                     self.reply_grant_lease(authenticated_id, session_id, message)
                         .await?;
+                }
+                Some(
+                    "workload_probe" | "workload_ack" | "workload_event" | "workload_complete"
+                    | "workload_rejected",
+                ) => {
+                    if !registered {
+                        bail!("register before workload control")
+                    }
+                    self.inner
+                        .workloads
+                        .route(authenticated_id, session_id, message)?;
                 }
                 Some("grant_ack" | "response") => {
                     match self
@@ -1753,6 +1880,7 @@ impl NodeServer {
     }
 
     async fn fail_pending_for(&self, node_id: &str, session_id: Uuid) {
+        self.inner.workloads.disconnect(node_id, session_id);
         let mut pending = self.inner.pending.lock().await;
         let ids = pending
             .iter()

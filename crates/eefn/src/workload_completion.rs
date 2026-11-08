@@ -14,6 +14,9 @@ pub struct Report {
     pub event_count: u64,
     pub event_bytes: usize,
     pub event_prefix_sha256: String,
+    /// Payload-only prefix; the existing prefix also binds node lease/time rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_payload_prefix_sha256: Option<String>,
     pub lease_sequence: u64,
     pub recorded_at_ms: u64,
     pub owned_process_exit_observed: bool,
@@ -21,24 +24,26 @@ pub struct Report {
 }
 impl Report {
     pub(super) fn validate(&self, receipt: &Receipt) -> Result<()> {
-        let crate::workload_leases::definition::Source::MicrophoneEnergy {
-            parameters,
-            adapter_sha256,
-            ..
-        } = &receipt.definition.source;
         ensure!(
-            self.schema_version == 1
-                && self.grant_sha256 == receipt.definition.scope()?.grant_sha256
-                && self.adapter_sha256 == *adapter_sha256
-                && self.source_observations == u64::from(parameters.max_blocks)
+            matches!(
+                (self.schema_version, &self.event_payload_prefix_sha256),
+                (1, None) | (2, Some(_))
+            ) && self.grant_sha256 == receipt.definition.scope()?.grant_sha256
+                && self.adapter_sha256 == receipt.definition.source.adapter_sha256()
+                && self.source_observations == receipt.definition.source.max_observations()
                 && self.source_frames
-                    == self.source_observations * u64::from(parameters.block_frames)
+                    == self.source_observations
+                        * receipt.definition.source.frames_per_observation()
                 && self.source_frames <= receipt.definition.limits.max_source_frames
                 && self.event_count > 0
                 && self.event_count <= receipt.definition.events.max_events
                 && self.event_bytes <= receipt.definition.events.max_total_bytes
                 && self.event_bytes >= usize::try_from(self.event_count)?.saturating_mul(128)
                 && crate::request_result::valid_digest(&self.event_prefix_sha256)
+                && self
+                    .event_payload_prefix_sha256
+                    .as_ref()
+                    .is_none_or(|v| crate::request_result::valid_digest(v))
                 && self.lease_sequence > 0
                 && self.owned_process_exit_observed
                 && !self.physical_effects_stopped
@@ -126,6 +131,12 @@ pub(super) fn audit_prefix(db: &Connection, receipt: &Receipt) -> Result<()> {
                 && sequence <= report.lease_sequence,
             "Workload completion differs from its retained event prefix"
         );
+        if let Some(payload) = &report.event_payload_prefix_sha256 {
+            ensure!(
+                *payload == event_journal::completion_payload_prefix(db, receipt)?,
+                "Workload payload prefix differs from retained records"
+            );
+        }
     }
     Ok(())
 }
@@ -193,15 +204,11 @@ pub(super) fn save(
             "Workload completion refused; inspect the retained receipt"
         )));
     }
-    let crate::workload_leases::definition::Source::MicrophoneEnergy {
-        parameters,
-        adapter_sha256,
-        ..
-    } = &receipt.definition.source;
     ensure!(
-        evidence.adapter_sha256 == *adapter_sha256
-            && evidence.observations == u64::from(parameters.max_blocks)
-            && evidence.frames == evidence.observations * u64::from(parameters.block_frames),
+        evidence.adapter_sha256 == receipt.definition.source.adapter_sha256()
+            && evidence.observations == receipt.definition.source.max_observations()
+            && evidence.frames
+                == evidence.observations * receipt.definition.source.frames_per_observation(),
         "Observed workload source differs from its consumed definition"
     );
     let (count, bytes, prefix, last, sequence) = event_journal::completion_prefix(&tx, &receipt)?;
@@ -215,7 +222,7 @@ pub(super) fn save(
     receipt.receipt.state = "completed".into();
     receipt.receipt.updated_at_ms = recorded;
     receipt.completion = Some(Report {
-        schema_version: 1,
+        schema_version: 2,
         grant_sha256: scope.grant_sha256.clone(),
         adapter_sha256: evidence.adapter_sha256,
         source_observations: evidence.observations,
@@ -223,6 +230,7 @@ pub(super) fn save(
         event_count: count,
         event_bytes: bytes,
         event_prefix_sha256: prefix,
+        event_payload_prefix_sha256: Some(event_journal::completion_payload_prefix(&tx, &receipt)?),
         lease_sequence: evidence.boundary.sequence(),
         recorded_at_ms: recorded,
         owned_process_exit_observed: true,

@@ -95,14 +95,70 @@ async fn owner_http_and_running_origin_receipt_commands_share_workload_history_w
         valid_for_ms: 120000,
     };
     let approved = approve(&runtime.engine, &approval, &identity.fingerprint().unwrap()).unwrap();
-    let issued = issue(
-        &runtime.engine.store,
-        &execute(&approved),
-        auth["grant_session_id"].as_str().unwrap(),
-        &policy(),
-    )
-    .unwrap();
-    let d = issued.definition().clone();
+    // This case inspects retained history; it must not require delivery of live
+    // issuance authority within an unrelated two-second setup deadline. Stage
+    // explicit historical metadata in the real journal, with no Issued/window,
+    // lease proof, source factory or dispatch. Live issuance has its own suite.
+    let template =
+        eefn::workload_leases::definition::Template::from_params(&approved.goal.params).unwrap();
+    let now = eefn::protocol::now_ms();
+    let d = eefn::workload_leases::definition::Definition {
+        schema_version: 2,
+        grant_id: uuid::Uuid::new_v4().to_string(),
+        issuer_id: identity.fingerprint().unwrap(),
+        session_id: auth["grant_session_id"].as_str().unwrap().into(),
+        executor_node: template.executor_node.clone(),
+        job_id: approved.plan_id.clone(),
+        task_id: approved.tasks[0].task_id.clone(),
+        attempt: 1,
+        plan_sha256: approved.approval.as_ref().unwrap().plan_sha256.clone(),
+        request_context: approved.goal.request_context.clone().unwrap(),
+        priority: template.priority,
+        source: template.source.clone(),
+        limits: template.limits.clone(),
+        events: template.events.clone(),
+    };
+    d.validate().unwrap();
+    runtime
+        .engine
+        .store
+        .change(
+            &d.job_id,
+            "Stage explicit synthetic workload history without a live issuer",
+            |saved| {
+                saved.execution = Some(crate::request_execution::ExecutionRecord {
+                    schema_version: 2,
+                    command: execute(&approved),
+                    started_at_ms: now,
+                    attempts: vec![],
+                    abandonment: None,
+                    peer: None,
+                    stop_requested_at_ms: None,
+                    workload: Some(crate::workload_jobs::Execution {
+                        definition: d.clone(),
+                        issued_at_ms: now,
+                        state: crate::request_execution::AttemptState::Issued,
+                        acknowledgement: None,
+                        completion: None,
+                        stop: None,
+                        observations: vec![],
+                    }),
+                });
+                saved.status = crate::task::PlanStatus::Running;
+                saved.tasks[0].status = crate::task::TaskStatus::Running;
+                saved.tasks[0].attempts = 1;
+                saved.tasks[0].assignments.push(crate::jobs::Assignment {
+                    attempt: 1,
+                    node_id: d.executor_node.clone(),
+                    resource_id: Some(template.resource_id().into()),
+                    model_id: None,
+                    backend: None,
+                    assigned_at_ms: now,
+                });
+                Ok(())
+            },
+        )
+        .unwrap();
     let receipt = synthetic_ack(&d);
     let served = Arc::new(AtomicUsize::new(0));
     let observed = served.clone();
@@ -223,6 +279,5 @@ async fn owner_http_and_running_origin_receipt_commands_share_workload_history_w
     }
     responder.abort();
     let _ = responder.await;
-    drop(issued);
     runtime.shutdown().await;
 }

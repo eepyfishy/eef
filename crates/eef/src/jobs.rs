@@ -23,7 +23,9 @@ mod automations;
 mod job_finalizations;
 #[path = "job_reads.rs"]
 mod job_reads;
+pub(crate) use job_finalizations::CommittedIssue;
 pub(crate) use job_finalizations::Slot as WorkloadFinalSlot;
+pub(crate) use job_finalizations::StopCheckpoint as WorkloadStopCheckpoint;
 #[path = "model_verification_intents.rs"]
 mod model_verification_intents;
 #[path = "setup_model_check_store.rs"]
@@ -74,7 +76,7 @@ pub struct JobStore {
     max_bytes: usize,
     reads: job_reads::Queue,
     finalizations: job_finalizations::Queue,
-    acknowledgements: job_finalizations::Queue,
+    workload_writes: job_finalizations::Queue,
     // Must remain after connection and file lock: field drop order releases
     // both before announcing retirement. The receiver owns no journal/lease.
     retired: RetirementSignal,
@@ -105,6 +107,12 @@ impl JournalRetirement {
         })
         .await
         .context("Prior job database ownership has not retired; no replacement or retry started")?
+    }
+}
+
+impl JobStore {
+    pub(crate) fn workload_lifetime_capacity(&self) -> usize {
+        self.finalizations.capacity()
     }
 }
 
@@ -251,7 +259,7 @@ impl JobStore {
             max_bytes,
             reads: Default::default(),
             finalizations: job_finalizations::Queue::new(max_count, max_bytes),
-            acknowledgements: job_finalizations::Queue::for_acknowledgements(max_count, max_bytes),
+            workload_writes: job_finalizations::Queue::for_workload_writes(max_count, max_bytes),
             retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         });
         store.validate_automations()?;
@@ -437,10 +445,14 @@ impl JobStore {
         let mut plan = read(&connection, id)?;
         let old_stop = crate::execution_stop::snapshot(&plan);
         let old_workload = crate::workload_jobs::snapshot(&plan);
-        let frozen_audio = plan
+        let frozen_source = plan
             .request_review
             .as_ref()
-            .filter(|draft| draft.audio_source.is_some())
+            .filter(|draft| {
+                draft.audio_source.is_some()
+                    || draft.workload_source.is_some()
+                    || draft.camera_source.is_some()
+            })
             .map(|draft| (json!(draft), json!(plan.goal.request_context)));
         let uncompiled = plan.planning.is_none();
         if let Some((runtime, issuer)) = fence {
@@ -457,11 +469,11 @@ impl JobStore {
         }
         crate::execution_stop::preserve(&old_stop, &plan)?;
         crate::workload_jobs::preserve(&old_workload, &plan)?;
-        if frozen_audio.as_ref().is_some_and(|(draft, context)| {
+        if frozen_source.as_ref().is_some_and(|(draft, context)| {
             *draft != json!(plan.request_review) || *context != json!(plan.goal.request_context)
         }) {
             bail!(
-                "Typed audio intent, resource choices and origin are immutable; create a new reviewed request"
+                "Typed source intent, resource choices and origin are immutable; create a new reviewed request"
             )
         }
         if uncompiled && plan.planning.is_some() {
@@ -665,6 +677,34 @@ pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
                 bail!("Retained audio origin differs from its typed source")
             }
         }
+        if let Some(source) = &draft.camera_source {
+            let input = draft
+                .concrete_input
+                .as_ref()
+                .context("Missing retained camera input")?;
+            let template = eefn::workload_leases::definition::Template::from_params(&input.params)?;
+            if source
+                .concrete(&template, Some(context.origin_node()))?
+                .input
+                != *input
+            {
+                bail!("Retained camera origin differs from its typed intent");
+            }
+        }
+        if let Some(source) = &draft.workload_source {
+            let input = draft
+                .concrete_input
+                .as_ref()
+                .context("Missing retained microphone input")?;
+            let template = eefn::workload_leases::definition::Template::from_params(&input.params)?;
+            if source
+                .concrete(&template, Some(context.origin_node()))?
+                .input
+                != *input
+            {
+                bail!("Retained microphone origin differs from its typed intent")
+            }
+        }
         if (plan.execution.is_none() && !plan.results.is_empty())
             || context.request_id() != draft.proposals[0].operation_id
             || plan.goal.description != draft.proposals[0].proposal.goal
@@ -825,12 +865,15 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
         }
         if let Some(execution) = &plan.execution {
             value["tracking_abandoned"] = json!(execution.abandonment.is_some());
-            value["remote_effects_unknown"] = json!(
-                execution
-                    .attempts
-                    .iter()
-                    .any(|a| a.state == crate::request_execution::AttemptState::Unknown)
-            );
+            let unknown = execution
+                .attempts
+                .iter()
+                .any(|a| a.state == crate::request_execution::AttemptState::Unknown)
+                || execution
+                    .workload
+                    .as_ref()
+                    .is_some_and(|w| w.state == crate::request_execution::AttemptState::Unknown);
+            value["remote_effects_unknown"] = json!(unknown);
             value["can_abandon_tracking"] = json!(
                     plan.status == PlanStatus::Interrupted
                         && execution.peer.is_none()
@@ -844,6 +887,17 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
                 if let Some(stop) = &a.stop { value["stop"] = json!(stop); }
                 value
             }).collect::<Vec<_>>());
+            if let Some(w) = &execution.workload {
+                value["workload"] = json!({"grant_id":w.definition.grant_id,
+                    "task_id":w.definition.task_id,"node_id":w.definition.executor_node,
+                    "state":w.state,"acknowledged":w.acknowledgement.is_some(),
+                    "completed":w.completion.is_some(),"stop":w.stop,"event_count":w.observations.len()});
+                if details {
+                    let first = w.observations.len().saturating_sub(8);
+                    value["workload"]["events"] = json!(&w.observations[first..]);
+                    value["workload"]["events_truncated"] = json!(first != 0);
+                }
+            }
             if execution.stop_requested_at_ms.is_some() {
                 value["stop_requested"] = json!(true);
                 value["remote_stop_confirmed"] = json!(false);

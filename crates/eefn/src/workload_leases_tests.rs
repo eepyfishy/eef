@@ -1,6 +1,37 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[test]
+fn test_deadline_restriction_only_removes_time_from_the_same_lease_proof() {
+    let c = contract();
+    let mut p = proof(&c, 1, 900, 40_000);
+    let digest = p.contract_sha256.clone();
+    let sequence = p.sequence;
+    let lease = p.deadline;
+    let session = p.session_deadline;
+    p.restrict_deadlines_for_test(
+        lease + Duration::from_secs(1),
+        session + Duration::from_secs(1),
+    );
+    assert_eq!((p.deadline, p.session_deadline), (lease, session));
+    let shorter_lease = lease - Duration::from_millis(100);
+    let shorter_session = session - Duration::from_millis(100);
+    p.restrict_deadlines_for_test(shorter_lease, shorter_session);
+    assert_eq!(
+        (p.deadline, p.session_deadline),
+        (shorter_lease, shorter_session)
+    );
+    p.restrict_deadlines_for_test(lease, session);
+    assert_eq!(
+        (p.deadline, p.session_deadline),
+        (shorter_lease, shorter_session)
+    );
+    assert_eq!(p.contract_sha256, digest);
+    assert_eq!(p.sequence, sequence);
+    p.restrict_deadlines_for_test(Instant::now(), session);
+    assert!(p.initial_deadline(&c, &policy()).is_err());
+}
+
 #[tokio::test]
 async fn sealed_finish_is_historical_and_never_restores_reporting_after_lease_expiry() {
     let c = contract();

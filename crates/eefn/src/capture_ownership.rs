@@ -1,23 +1,29 @@
-//! One node-owned microphone reservation, held through observed Windows job exit.
+//! Separate node-owned camera/microphone reservations, held through observed Windows job exit.
 //! This excludes our competing sources, not other applications or device drivers.
 use anyhow::{Result, bail, ensure};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[derive(Clone)]
-pub(crate) struct Pool(Arc<Semaphore>);
+pub(crate) struct Pool(Arc<Semaphore>, &'static str);
 impl Default for Pool {
     fn default() -> Self {
-        Self(Arc::new(Semaphore::new(1)))
+        Self(Arc::new(Semaphore::new(1)), "Microphone")
     }
 }
 impl Pool {
+    pub(crate) fn camera() -> Self {
+        Self(Arc::new(Semaphore::new(1)), "Camera")
+    }
     pub(crate) fn same(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
     pub(crate) fn reserve(&self) -> Result<Reservation> {
         let permit = self.0.clone().try_acquire_owned().map_err(|_| {
-            anyhow::anyhow!("Microphone source is busy or its previous exit is unconfirmed")
+            anyhow::anyhow!(
+                "{} source is busy or its previous exit is unconfirmed",
+                self.1
+            )
         })?;
         Ok(Reservation(permit))
     }
@@ -86,7 +92,7 @@ impl OwnedCapture {
             Ok(())
         }
         #[cfg(not(windows))]
-        bail!("Owned microphone tree observation is unsupported on this platform")
+        bail!("Owned capture tree observation is unsupported on this platform")
     }
 }
 impl Drop for OwnedCapture {
@@ -123,6 +129,37 @@ impl Drop for OwnedCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn camera_and_microphone_reservations_are_independent_but_camera_aliases_are_exclusive() {
+        let microphone = Pool::default();
+        let camera = Pool::camera();
+        let alias = camera.clone();
+        assert!(camera.same(&alias));
+        assert!(!camera.same(&microphone));
+        let camera_owner = camera.reserve().unwrap();
+        let microphone_owner = microphone.reserve().unwrap();
+        assert!(
+            alias
+                .reserve()
+                .err()
+                .unwrap()
+                .to_string()
+                .starts_with("Camera source is busy")
+        );
+        assert!(
+            microphone
+                .reserve()
+                .err()
+                .unwrap()
+                .to_string()
+                .starts_with("Microphone source is busy")
+        );
+        drop(camera_owner);
+        assert!(alias.reserve().is_ok());
+        assert!(microphone.reserve().is_err());
+        drop(microphone_owner);
+        assert!(microphone.reserve().is_ok());
+    }
     #[test]
     fn aliases_and_clones_share_one_reservation_until_unarmed_drop() {
         let pool = Pool::default();

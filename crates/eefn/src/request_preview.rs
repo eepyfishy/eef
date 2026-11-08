@@ -66,6 +66,10 @@ pub enum RequestAction {
     SubmitProcess(crate::request_submission::ProcessSubmission),
     /// Prepare an explicit finite microphone relay without JSON or model inference; never execute.
     SubmitAudio(crate::audio_submission::AudioSubmission),
+    /// Prepare a bounded microphone activity request without JSON or a model; never execute.
+    SubmitMicrophone(Box<crate::microphone_submission::MicrophoneSubmission>),
+    /// Prepare a bounded camera-motion request for review; never enable or capture.
+    SubmitCamera(Box<crate::camera_submission::CameraSubmission>),
     /// Propose and save a source-bound method or clarification; never approve/execute.
     Prepare {
         #[command(flatten)]
@@ -78,6 +82,12 @@ pub enum RequestAction {
     },
     /// Inspect this origin's retained concrete plan without contacting an executor.
     Plan { id: String },
+    /// Explicitly compile an exact saved concrete request without recreating JSON; never execute.
+    CompileSaved {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+    },
     /// Ask eef to compile a reviewed request; separate owner approval is required.
     Compile {
         id: String,
@@ -336,12 +346,18 @@ pub struct PreviewGuard {
     runtime_id: String,
     listening: Arc<crate::listening::Gate>,
     listening_generation: u64,
+    camera_listening: Arc<crate::listening::Gate>,
+    camera_listening_generation: u64,
+    source_readiness: Arc<crate::workload_readiness::State>,
 }
 impl Drop for PreviewGuard {
     fn drop(&mut self) {
         // Latch before a slow preparation/config read can hold this lock. A
         // stale guard cannot retire a replacement, even with a reused UUID.
         self.listening.retire_generation(self.listening_generation);
+        self.camera_listening
+            .retire_generation(self.camera_listening_generation);
+        self.source_readiness.invalidate();
         let mut binding = self.runtime.binding.lock().unwrap();
         if binding
             .as_ref()
@@ -803,10 +819,15 @@ impl NodeService {
         if self.listening_gate.runtime_generation() > 0 {
             self.listening_gate.retire_runtime();
         }
+        if self.camera_listening_gate.runtime_generation() > 0 {
+            self.camera_listening_gate.retire_runtime();
+        }
         let listening_generation;
+        let camera_listening_generation;
         {
             let mut binding = runtime.binding.lock().unwrap();
             listening_generation = self.listening_gate.bind_runtime();
+            camera_listening_generation = self.camera_listening_gate.bind_runtime();
             *binding = Some(Binding {
                 runtime_id: runtime_id.clone(),
                 engine: Arc::downgrade(engine),
@@ -814,11 +835,15 @@ impl NodeService {
             });
             runtime.generation.send_replace(Some(runtime_id.clone()));
         }
+        self.source_readiness.invalidate();
         PreviewGuard {
             runtime,
             runtime_id,
             listening: self.listening_gate.clone(),
             listening_generation,
+            camera_listening: self.camera_listening_gate.clone(),
+            camera_listening_generation,
+            source_readiness: self.source_readiness.clone(),
         }
     }
 
@@ -867,6 +892,22 @@ impl NodeService {
             .upgrade()
             .ok_or_else(|| anyhow::anyhow!("Node runtime unavailable"))?;
         inspect(&engine)
+    }
+
+    /// Passive metadata inspection must not hold the live binding across I/O.
+    /// Its caller fences the source-readiness version before using the result.
+    pub(crate) fn passive_source_engine(&self, expected: &str) -> anyhow::Result<Arc<NodeEngine>> {
+        let binding = self.preview.binding.lock().unwrap();
+        let bound = binding
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Node runtime unavailable"))?;
+        if bound.runtime_id != expected {
+            anyhow::bail!("Node source runtime changed");
+        }
+        bound
+            .engine
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("Node runtime unavailable"))
     }
 
     pub(crate) fn input_workflow_permit(

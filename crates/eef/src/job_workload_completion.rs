@@ -66,7 +66,7 @@ impl JobStore {
                         plan.updated_at_ms = plan.updated_at_ms.max(completed.recorded_at_ms);
                         w.completion = Some(completed);
                         w.state = AttemptState::Completed;
-                        execution.schema_version = 3;
+                        execution.schema_version = if w.observations.is_empty() { 3 } else { 5 };
                         plan.status = PlanStatus::Completed;
                         plan.tasks[0].status = TaskStatus::Completed;
                         Ok(())

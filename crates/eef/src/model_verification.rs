@@ -459,7 +459,12 @@ fn fixed_source(plan: &Plan) -> Result<Definition> {
         .request_review
         .as_ref()
         .context("Missing model verification source")?;
-    if draft.proposals.len() != 1 || !draft.answers.is_empty() || draft.audio_source.is_some() {
+    if draft.proposals.len() != 1
+        || !draft.answers.is_empty()
+        || draft.audio_source.is_some()
+        || draft.workload_source.is_some()
+        || draft.camera_source.is_some()
+    {
         bail!("Model verification source was revised or widened")
     }
     let source = eefn::request_submission::ConcreteInput {
@@ -1043,6 +1048,8 @@ mod tests {
             original_text: source.request.original_text.clone(),
             concrete_input: Some(source.request.input.clone()),
             audio_source: None,
+            workload_source: None,
+            camera_source: None,
             proposals: vec![eefn::request_drafts::ProposalRevision {
                 operation_id: source.operation_id,
                 proposal: source.request.proposal().unwrap(),
