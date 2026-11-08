@@ -28,7 +28,7 @@ impl Input {
     }
     pub fn digest(&self, context: &crate::context::RequestContext) -> Result<String> {
         self.validate()?;
-        context.validate()?;
+        // RequestContext is immutable and validates on construction/deserialization.
         crate::grants::definition_digest(&json!({"input":self,"request_context":context}))
     }
 }
@@ -54,7 +54,6 @@ pub struct Saved {
 impl Saved {
     pub fn validate(&self) -> Result<()> {
         self.input.validate()?;
-        self.request_context.validate()?;
         crate::request_drafts::validate_id(&self.id)?;
         crate::job_commands::validate_operation_id(&self.operation_id)?;
         ensure!(

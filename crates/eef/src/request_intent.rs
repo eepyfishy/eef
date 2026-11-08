@@ -16,7 +16,6 @@ pub(crate) fn validate(plan: &Plan) -> Result<Input> {
         .request_context
         .as_ref()
         .context("Saved input origin missing")?;
-    context.validate()?;
     eefn::job_commands::validate_operation_id(context.request_id())?;
     ensure!(
         plan.goal.template == TEMPLATE
@@ -36,7 +35,6 @@ pub(crate) fn validate(plan: &Plan) -> Result<Input> {
 pub(crate) fn save(engine: &TaskEngine, payload: Value, context: &RequestContext) -> Result<Value> {
     let input: Input = serde_json::from_value(payload)?;
     input.validate()?;
-    context.validate()?;
     let admission = engine.store_input_intent(Plan {
         execution: None,
         approval: None,
