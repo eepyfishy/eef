@@ -18,7 +18,7 @@ import {randomUUID,randomBytes} from 'node:crypto';
 const root=resolve(import.meta.dirname,'..'),scratch=await mkdtemp(join(root,'.validation/request-input-'));
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const configPath=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml'),marker=configPath+'.api.json';
-const children=[],calls=[],proxyCalls=[],gates=new Set();let node='',mode='valid',proxyMode='drop';
+const children=[],calls=[],proxyCalls=[],gates=new Set();let node='',mode='valid',proxyMode='drop',inferenceObserver=null;
 const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),
  PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 function launch(name,args,extra={}) {
@@ -52,6 +52,7 @@ const fake=createServer(async(req,res)=>{
  let bytes='';for await(const b of req){bytes+=b;assert(bytes.length<=65536);}
  const body=JSON.parse(bytes);calls.push(body);
  const preparing=body.messages[0].content.startsWith('Propose one method');
+ if(inferenceObserver)await inferenceObserver(preparing);
  if(!preparing){
   assert.deepEqual(Object.keys(body.format),['anyOf']);assert.equal(body.format.anyOf.length,2);
   for(const branch of body.format.anyOf){
@@ -153,10 +154,13 @@ try {
   ...(budget===undefined?[]:['--inference-timeout-seconds',String(budget)])],success);
  let rejectionCount=calls.length;mode='reject-schema';
  const rejectedReceipt=randomUUID(),rejectedFormat=await input('Backend refuses schema',rejectedReceipt,false);
- assert.equal(rejectedFormat.error_code,'interpreter_backend_failed');assert.equal(rejectedFormat.creation_attempted,true);
- assert.equal(rejectedFormat.source_confirmed,false);assert.equal(calls.length,rejectionCount+1,'unsupported format cannot trigger unconstrained inference or a retry');
- assert.equal(rejectedFormat.outcome_unknown,false);assert.equal(rejectedFormat.preparation_command,null);
- assert.equal((await nodeCli(['jobs','find','--operation-id',rejectedReceipt])).data.total,0,'backend rejection cannot save a source');
+ assert.equal(rejectedFormat.error_code,'input_interpretation_unconfirmed');assert.equal(rejectedFormat.creation_attempted,true);
+ assert.equal(rejectedFormat.source_confirmed,true);assert.equal(calls.length,rejectionCount+1,'unsupported format cannot trigger unconstrained inference or a retry');
+ assert.equal(rejectedFormat.outcome_unknown,true);assert.equal(rejectedFormat.preparation_command,null);
+ const rejectedSource=(await nodeCli(['jobs','find','--operation-id',rejectedReceipt])).data;
+ assert.equal(rejectedSource.total,1,'the raw request survives provider rejection');
+ assert.equal(rejectedSource.jobs[0].interpretation_state,'claimed');assert.equal(rejectedSource.jobs[0].proposal_count,0);
+ assert.equal((await input('Backend refuses schema',rejectedReceipt)).status,'historical_snapshot');assert.equal(calls.length,rejectionCount+1);
  mode='valid';
  const plan=async job=>{
   const report=await nodeCli(['requests','plan',job]);
@@ -164,9 +168,24 @@ try {
   const {operation_id:inspectionReceipt,...retained}=report.result;
   assert.match(inspectionReceipt,/^[0-9a-f-]{36}$/);return {...report,result:retained};
  };
- let count=calls.length;const text='  Inspect status\n',receipt=randomUUID(),prepared=await input(text,receipt);
+ let count=calls.length;const text='  Inspect status\n',receipt=randomUUID();
+ const inferenceStages=[];
+ inferenceObserver=async preparing=>{
+  const found=(await nodeCli(['jobs','find','--operation-id',receipt])).data;
+  assert.equal(found.total,1,'durable identity must exist before any model stage');
+  const retained=(await nodeCli(['jobs','get',found.jobs[0].id])).data;
+  assert.equal(retained.interpretation_state,preparing?'promoted':'claimed');
+  assert.equal(retained.revision,preparing?3:2);assert.equal(retained.task_count,0);
+  assert.equal(retained.input_interpretation.input.original_text,text);
+  assert.equal(retained.request_context.request_id,receipt);inferenceStages.push(preparing?'method':'interpretation');
+ };
+ const prepared=await input(text,receipt);inferenceObserver=null;
+ assert.deepEqual(inferenceStages,['interpretation','method']);
  assert.equal(prepared.report_type,'node_input_workflow');assert.equal(prepared.status,'awaiting_approval');assert.equal(prepared.success,true);
- assert.equal(prepared.result.status,'awaiting_approval');assert.equal(prepared.result.revision,2);assert.equal(calls.length,count+2);
+ assert.equal(prepared.result.status,'awaiting_approval');assert.equal(prepared.result.revision,4);assert.equal(calls.length,count+2);
+ assert.equal(prepared.raw_save.result.revision,1);assert.equal(prepared.interpretation.checkpoint.revision,3);
+ assert.equal(prepared.raw_save.result.id,prepared.result.id);assert.equal(prepared.interpretation.checkpoint.id,prepared.result.id);
+ assert.deepEqual(prepared.raw_save.result.request_context,prepared.result.request_context);
  assert.equal(prepared.result.draft.original_text,text);assert.deepEqual(prepared.result.request_context,prepared.opening.result.request_context);
  assert.equal(prepared.result.request_context.request_id,receipt);assert.equal(prepared.result.request_context.origin_node,id);
  assert.deepEqual(prepared.result.request_context.origin_area,['Home','Office']);assert.equal(prepared.preparation.command.operation_id,prepared.preparation_command.operation_id);
@@ -184,7 +203,7 @@ try {
  mode='clarify';count=calls.length;const clarification=await input('Inspect that room');assert.equal(clarification.status,'clarification_required');assert.equal(calls.length,count+1);assert.equal(clarification.preparation_command,null);
  mode='continuous';count=calls.length;const continuous=await input('Watch status continuously');assert.equal(continuous.status,'review_only');assert.equal(calls.length,count+1);assert.equal(continuous.preparation,null);
  mode='question';count=calls.length;const question=await json(node+'/api/chat',{message:'Inspect the concrete node I mean',request_id:randomUUID()});
- assert.equal(question.status,'clarification_required');assert.equal(calls.length,count+2);assert.equal(question.result.revision,2);
+ assert.equal(question.status,'clarification_required');assert.equal(calls.length,count+2);assert.equal(question.result.revision,4);
  assert(question.reply.includes('Which concrete node should be inspected?'));assert.equal(question.result.input,null);
  // Answers are explicit typed inputs with source revision/digest evidence. The
  // selected policy resolves/prepares them, never approves or starts a workload.
@@ -194,107 +213,108 @@ try {
  mode='reasoning-method';count=calls.length;const reasoningInputId=randomUUID();
  const reasoningInput=await input('Method reasoning is not an answer',reasoningInputId,false);
  assert.equal(reasoningInput.preparation.error_code,'interpretation_incomplete');assert.equal(reasoningInput.preparation.completion_reason,'reasoning_only_output_limit');
- assert.equal(reasoningInput.result.revision,1);assert.equal(calls.length,count+2);assert(!JSON.stringify(reasoningInput).includes('PRIVATE_REASONING_TRACE'));
+ assert.equal(reasoningInput.result.revision,3);assert.equal(calls.length,count+2);assert(!JSON.stringify(reasoningInput).includes('PRIVATE_REASONING_TRACE'));
  assert.equal((await input('Method reasoning is not an answer',reasoningInputId)).status,'historical_snapshot');assert.equal(calls.length,count+2);
  const reasoningSource=await newQuestion('Clarification reasoning is not an answer');mode='reasoning-resolution';count=calls.length;
- const reasoningAnswerId=randomUUID(),reasoningAnswer=await respond(reasoningSource.id,1,'This node',reasoningAnswerId,false);
+ const reasoningAnswerId=randomUUID(),reasoningAnswer=await respond(reasoningSource.id,reasoningSource.revision,'This node',reasoningAnswerId,false);
  assert.equal(reasoningAnswer.resolution.error_code,'interpretation_incomplete');assert.equal(reasoningAnswer.resolution.completion_reason,'reasoning_only_output_limit');
- assert.equal(reasoningAnswer.answer_confirmed,true);assert.equal(reasoningAnswer.result.revision,2);assert.equal(calls.length,count+1);
+ assert.equal(reasoningAnswer.answer_confirmed,true);assert.equal(reasoningAnswer.result.revision,4);assert.equal(calls.length,count+1);
  assert(!JSON.stringify(reasoningAnswer).includes('PRIVATE_REASONING_TRACE'));
- assert.equal((await respond(reasoningSource.id,1,'This node',reasoningAnswerId)).status,'historical_snapshot');assert.equal(calls.length,count+1);
+ assert.equal((await respond(reasoningSource.id,reasoningSource.revision,'This node',reasoningAnswerId)).status,'historical_snapshot');assert.equal(calls.length,count+1);
  mode='gate-resolution';count=calls.length;const timedOpeningId=randomUUID();let timingStarted=Date.now();
  const timedOpening=await input('Explicit timing for initial interpretation',timedOpeningId,false,1);
- assert.equal(timedOpening.error_code,'interpretation_timeout');assert.equal(calls.length,count+1);assert(Date.now()-timingStarted<8000);
- assert.equal((await nodeCli(['jobs','find','--operation-id',timedOpeningId])).data.total,0);await until(()=>gates.size===0,'opening timeout drops provider wait');
+ assert.equal(timedOpening.error_code,'input_interpretation_unconfirmed');assert.equal(timedOpening.source_confirmed,true);assert.equal(timedOpening.interpretation.error_code,'inference_unconfirmed');assert.equal(timedOpening.outcome_unknown,true);assert.equal(calls.length,count+1);assert(Date.now()-timingStarted<8000);
+ const timedFound=(await nodeCli(['jobs','find','--operation-id',timedOpeningId])).data;assert.equal(timedFound.total,1);assert.equal(timedFound.jobs[0].interpretation_state,'claimed');assert.equal(timedFound.jobs[0].task_count,0);await until(()=>gates.size===0,'opening timeout drops provider wait');
+ assert.equal((await input('Explicit timing for initial interpretation',timedOpeningId,true,120)).status,'historical_snapshot');assert.equal(calls.length,count+1);
  mode='gate-method';count=calls.length;const timedMethodId=randomUUID();
  const timedMethod=await input('Explicit timing for input preparation',timedMethodId,false,1);
- assert.equal(timedMethod.preparation.error_code,'preparation_timeout');assert.equal(calls.length,count+2);assert.equal(timedMethod.result.revision,1);
+ assert.equal(timedMethod.preparation.error_code,'preparation_timeout');assert.equal(calls.length,count+2);assert.equal(timedMethod.result.revision,3);
  await until(()=>gates.size===0,'input method timeout drops provider wait');
  assert.equal((await input('Explicit timing for input preparation',timedMethodId,true,120)).status,'historical_snapshot');assert.equal(calls.length,count+2);
- const standaloneMethod=await nodeCli(['requests','prepare',timedMethod.result.id,'--revision','1','--operation-id',randomUUID(),'--inference-timeout-seconds','1'],false);
+ const standaloneMethod=await nodeCli(['requests','prepare',timedMethod.result.id,'--revision',String(timedMethod.result.revision),'--operation-id',randomUUID(),'--inference-timeout-seconds','1'],false);
  assert.equal(standaloneMethod.error_code,'preparation_timeout');assert.equal(calls.length,count+3);await until(()=>gates.size===0,'standalone method timeout');
  const timedResolveSource=await newQuestion('Explicit answer-resolution timing');mode='gate-resolution';count=calls.length;
- const timedResolveId=randomUUID(),timedResolve=await respond(timedResolveSource.id,1,'This node',timedResolveId,false,1);
+ const timedResolveId=randomUUID(),timedResolve=await respond(timedResolveSource.id,timedResolveSource.revision,'This node',timedResolveId,false,1);
  assert.equal(timedResolve.resolution.error_code,'interpretation_timeout');assert.equal(timedResolve.answer_confirmed,true);assert.equal(calls.length,count+1);
- assert.equal(timedResolve.result.revision,2);await until(()=>gates.size===0,'answer resolution timeout');
- assert.equal((await respond(timedResolveSource.id,1,'This node',timedResolveId,true,120)).status,'historical_snapshot');assert.equal(calls.length,count+1);
- const standaloneResolve=await nodeCli(['requests','resolve',timedResolveSource.id,'--revision','2','--operation-id',randomUUID(),'--inference-timeout-seconds','1'],false);
+ assert.equal(timedResolve.result.revision,4);await until(()=>gates.size===0,'answer resolution timeout');
+ assert.equal((await respond(timedResolveSource.id,timedResolveSource.revision,'This node',timedResolveId,true,120)).status,'historical_snapshot');assert.equal(calls.length,count+1);
+ const standaloneResolve=await nodeCli(['requests','resolve',timedResolveSource.id,'--revision',String(timedResolve.result.revision),'--operation-id',randomUUID(),'--inference-timeout-seconds','1'],false);
  assert.equal(standaloneResolve.error_code,'interpretation_timeout');assert.equal(calls.length,count+2);await until(()=>gates.size===0,'standalone resolution timeout');
  const timedAnswerMethodSource=await newQuestion('Explicit answer-method timing');mode='gate-method';count=calls.length;
- const timedAnswerMethod=await respond(timedAnswerMethodSource.id,1,'This node',randomUUID(),false,1);
+ const timedAnswerMethod=await respond(timedAnswerMethodSource.id,timedAnswerMethodSource.revision,'This node',randomUUID(),false,1);
  assert.equal(timedAnswerMethod.preparation.error_code,'preparation_timeout');assert.equal(timedAnswerMethod.answer_confirmed,true);assert.equal(calls.length,count+2);
- assert.equal(timedAnswerMethod.result.revision,3);await until(()=>gates.size===0,'answer method timeout');
+ assert.equal(timedAnswerMethod.result.revision,5);await until(()=>gates.size===0,'answer method timeout');
  const original=await newQuestion('  Inspect a node after my answer\n');mode='valid';count=calls.length;
- const responseId=randomUUID(),answerText='  This bedroom node\n',response=await respond(original.id,1,answerText,responseId);
- assert.equal(response.report_type,'node_answer_workflow');assert.equal(response.status,'awaiting_approval');assert.equal(response.result.revision,4);assert.equal(calls.length,count+2);
- assert.equal(response.answer_confirmed,true);assert.equal(response.answer.result.draft.answers[0].source.revision,1);
+ const responseId=randomUUID(),answerText='  This bedroom node\n',response=await respond(original.id,original.revision,answerText,responseId);
+ assert.equal(response.report_type,'node_answer_workflow');assert.equal(response.status,'awaiting_approval');assert.equal(response.result.revision,6);assert.equal(calls.length,count+2);
+ assert.equal(response.answer_confirmed,true);assert.equal(response.answer.result.draft.answers[0].source.revision,3);
  assert.equal(response.answer.result.draft.answers[0].text,answerText);assert.equal(response.result.draft.original_text,original.draft.original_text);
  assert.deepEqual(response.result.request_context,original.request_context);assert.equal(response.result.request_context.request_id,original.request_context.request_id);
- assert.equal(response.resolution_command.expected_revision,2);assert.equal(response.preparation_command.expected_revision,3);
+ assert.equal(response.resolution_command.expected_revision,4);assert.equal(response.preparation_command.expected_revision,5);
  assert.notEqual(response.resolution_command.operation_id,response.preparation_command.operation_id);assert.notEqual(response.resolution_command.operation_id,responseId);
  assert.equal(response.result.tasks[0].status,'pending');assert.equal(response.execution_authorized,false);assert.equal(response.dispatched,false);
  const responseSnapshot=(await plan(original.id)).result;
- assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count+2);
- assert.equal((await respond(original.id,2,answerText,responseId,false)).error_code,'answer_receipt_conflict');
- assert.equal((await respond(original.id,1,'Changed answer',responseId,false)).error_code,'answer_receipt_conflict');
- assert.equal((await respond(original.id,1,answerText,randomUUID(),false)).error_code,'answer_source_revision_changed');
+ assert.equal((await respond(original.id,original.revision,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count+2);
+ assert.equal((await respond(original.id,original.revision+1,answerText,responseId,false)).error_code,'answer_receipt_conflict');
+ assert.equal((await respond(original.id,original.revision,'Changed answer',responseId,false)).error_code,'answer_receipt_conflict');
+ assert.equal((await respond(original.id,original.revision,answerText,randomUUID(),false)).error_code,'answer_source_revision_changed');
  assert.equal(calls.length,count+2);assert.deepEqual((await plan(original.id)).result,responseSnapshot);
  const chatSource=await newQuestion('Answer through chat adapter');mode='valid';count=calls.length;
- const chatAnswer=await json(node+'/api/chat',{message:'This node',request_id:randomUUID(),response_to:{id:chatSource.id,expected_revision:1}});
+ const chatAnswer=await json(node+'/api/chat',{message:'This node',request_id:randomUUID(),response_to:{id:chatSource.id,expected_revision:chatSource.revision}});
  assert.equal(chatAnswer.status,'awaiting_approval');assert(chatAnswer.reply.includes('Prepared request'));assert.equal(calls.length,count+2);
- const respondUrl=node+'/api/commands/requests/respond',guarded={schema_version:1,expected_node_id:id,command:{id:original.id,expected_revision:1,text:answerText,operation_id:responseId}};
+ const respondUrl=node+'/api/commands/requests/respond',guarded={schema_version:1,expected_node_id:id,command:{id:original.id,expected_revision:original.revision,text:answerText,operation_id:responseId}};
  assert.equal((await fetch(respondUrl,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(guarded)})).status,403);
  assert.equal((await fetch(respondUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...guarded,request_context:{origin_node:'forged'}})})).status,422);
  assert.equal((await json(respondUrl,{...guarded,expected_node_id:'other'})).error_code,'invalid_response_request');
- assert.equal((await fetch(node+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Forged answer',response_to:{id:original.id,expected_revision:1,origin_node:'forged'}})})).status,422);
+ assert.equal((await fetch(node+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'Forged answer',response_to:{id:original.id,expected_revision:original.revision,origin_node:'forged'}})})).status,422);
  const stillQuestion=await newQuestion('Still ambiguous after answering');mode='resolve-question';count=calls.length;
- const unresolved=await respond(stillQuestion.id,1,'Unknown room');assert.equal(unresolved.status,'clarification_required');assert.equal(unresolved.result.revision,3);assert.equal(unresolved.preparation,null);assert.equal(calls.length,count+1);
+ const unresolved=await respond(stillQuestion.id,stillQuestion.revision,'Unknown room');assert.equal(unresolved.status,'clarification_required');assert.equal(unresolved.result.revision,5);assert.equal(unresolved.preparation,null);assert.equal(calls.length,count+1);
  const methodQuestionSource=await newQuestion('Needs concrete input after resolution');mode='question';count=calls.length;
- const methodQuestion=await json(node+'/api/chat',{message:'This node I think',request_id:randomUUID(),response_to:{id:methodQuestionSource.id,expected_revision:1}});
- assert.equal(methodQuestion.status,'clarification_required');assert.equal(methodQuestion.result.revision,4);assert(methodQuestion.reply.includes('Which concrete node should be inspected?'));assert.equal(calls.length,count+2);
- mode='valid';const secondRound=await respond(methodQuestionSource.id,4,'This node explicitly');assert.equal(secondRound.status,'awaiting_approval');assert.equal(secondRound.result.revision,7);
- assert.equal(secondRound.result.draft.answers.length,2);assert.equal(secondRound.result.draft.answers[1].source.revision,4);assert.equal(calls.length,count+4);
+ const methodQuestion=await json(node+'/api/chat',{message:'This node I think',request_id:randomUUID(),response_to:{id:methodQuestionSource.id,expected_revision:methodQuestionSource.revision}});
+ assert.equal(methodQuestion.status,'clarification_required');assert.equal(methodQuestion.result.revision,6);assert(methodQuestion.reply.includes('Which concrete node should be inspected?'));assert.equal(calls.length,count+2);
+ mode='valid';const secondRound=await respond(methodQuestionSource.id,methodQuestion.result.revision,'This node explicitly');assert.equal(secondRound.status,'awaiting_approval');assert.equal(secondRound.result.revision,9);
+ assert.equal(secondRound.result.draft.answers.length,2);assert.equal(secondRound.result.draft.answers[1].source.revision,6);assert.equal(calls.length,count+4);
  const badResolve=await newQuestion('Invalid resolution check');mode='invalid-resolution';count=calls.length;const badResolveId=randomUUID();
- const rejectedResolve=await respond(badResolve.id,1,'This node',badResolveId,false);
- assert.equal(rejectedResolve.error_code,'answer_resolution_not_confirmed');assert.equal(rejectedResolve.answer_confirmed,true);assert.equal(rejectedResolve.result.revision,2);assert.equal(rejectedResolve.preparation_command,null);assert.equal(calls.length,count+1);
- mode='valid';assert.equal((await respond(badResolve.id,1,'This node',badResolveId)).status,'historical_snapshot');assert.equal(calls.length,count+1);
+ const rejectedResolve=await respond(badResolve.id,badResolve.revision,'This node',badResolveId,false);
+ assert.equal(rejectedResolve.error_code,'answer_resolution_not_confirmed');assert.equal(rejectedResolve.answer_confirmed,true);assert.equal(rejectedResolve.result.revision,4);assert.equal(rejectedResolve.preparation_command,null);assert.equal(calls.length,count+1);
+ mode='valid';assert.equal((await respond(badResolve.id,badResolve.revision,'This node',badResolveId)).status,'historical_snapshot');assert.equal(calls.length,count+1);
  const badPrepare=await newQuestion('Invalid method after answer');mode='invalid-method';count=calls.length;const badPrepareId=randomUUID();
- const rejectedPrepare=await respond(badPrepare.id,1,'This node',badPrepareId,false);
- assert.equal(rejectedPrepare.error_code,'answer_preparation_not_confirmed');assert.equal(rejectedPrepare.answer_confirmed,true);assert.equal(rejectedPrepare.result.revision,3);assert.equal(calls.length,count+2);
- mode='valid';assert.equal((await respond(badPrepare.id,1,'This node',badPrepareId)).status,'historical_snapshot');assert.equal(calls.length,count+2);
+ const rejectedPrepare=await respond(badPrepare.id,badPrepare.revision,'This node',badPrepareId,false);
+ assert.equal(rejectedPrepare.error_code,'answer_preparation_not_confirmed');assert.equal(rejectedPrepare.answer_confirmed,true);assert.equal(rejectedPrepare.result.revision,5);assert.equal(calls.length,count+2);
+ mode='valid';assert.equal((await respond(badPrepare.id,badPrepare.revision,'This node',badPrepareId)).status,'historical_snapshot');assert.equal(calls.length,count+2);
  // Saving one optional policy field preserves the other and changes no live
  // behavior until a verified restart. Disabled resolution records an answer only.
  const answerPolicy=await nodeCli(['requests','workflow','set','--resolve-on-answer','false']);assert.equal(answerPolicy.applied_policy.resolve_on_answer,true);assert.equal(answerPolicy.saved_policy.prepare_on_input,true);
  const appliedSource=await newQuestion('Applied answer policy before restart');mode='valid';count=calls.length;
- assert.equal((await respond(appliedSource.id,1,'This node')).status,'awaiting_approval');assert.equal(calls.length,count+2);
+ assert.equal((await respond(appliedSource.id,appliedSource.revision,'This node')).status,'awaiting_approval');assert.equal(calls.length,count+2);
  await nodeCli(['restart','--wait-seconds','20']);await until(ready,'disabled answer policy applied');
  const disabledSource=await newQuestion('Record only answer');mode='valid';count=calls.length;const disabledId=randomUUID();
- const recordOnly=await respond(disabledSource.id,1,'Keep exact answer',disabledId);assert.equal(recordOnly.status,'answer_recorded');assert.equal(recordOnly.result.revision,2);assert.equal(recordOnly.resolution_command,null);assert.equal(calls.length,count);
+ const recordOnly=await respond(disabledSource.id,disabledSource.revision,'Keep exact answer',disabledId);assert.equal(recordOnly.status,'answer_recorded');assert.equal(recordOnly.result.revision,4);assert.equal(recordOnly.resolution_command,null);assert.equal(calls.length,count);
  await nodeCli(['requests','workflow','set','--resolve-on-answer','true','--prepare-on-input','false']);await nodeCli(['restart','--wait-seconds','20']);await until(ready,'resolve only policy applied');
- assert.equal((await respond(disabledSource.id,1,'Keep exact answer',disabledId)).status,'historical_snapshot');assert.equal(calls.length,count);
+ assert.equal((await respond(disabledSource.id,disabledSource.revision,'Keep exact answer',disabledId)).status,'historical_snapshot');assert.equal(calls.length,count);
  const resolveOnly=await newQuestion('Resolve without preparation');mode='valid';count=calls.length;
- const only=await respond(resolveOnly.id,1,'This node');assert.equal(only.status,'review_only');assert.equal(only.result.revision,3);assert.equal(only.preparation_command,null);assert.equal(calls.length,count+1);
+ const only=await respond(resolveOnly.id,resolveOnly.revision,'This node');assert.equal(only.status,'review_only');assert.equal(only.result.revision,5);assert.equal(only.preparation_command,null);assert.equal(calls.length,count+1);
  await nodeCli(['requests','workflow','set','--resolve-on-answer','true','--prepare-on-input','true']);await nodeCli(['restart','--wait-seconds','20']);await until(ready,'restore both input policies');
  // A concurrent explicit source edit while resolution runs invalidates its
  // checkpoint. Neither old candidate nor a retry overwrites the newer answer.
  const raceSource=await newQuestion('Race answer resolution');mode='gate-resolution';count=calls.length;const raceId=randomUUID();
- const racing=respond(raceSource.id,1,'First answer',raceId,false);await until(()=>gates.size===1,'gated resolution');
+ const racing=respond(raceSource.id,raceSource.revision,'First answer',raceId,false);await until(()=>gates.size===1,'gated resolution');
  assert.equal((await input('Must not queue input during answer',randomUUID(),false)).error_code,'input_workflow_busy');
- assert.equal((await respond(raceSource.id,1,'Must not queue another answer',randomUUID(),false)).error_code,'input_workflow_busy');assert.equal(calls.length,count+1);
- const concurrent=await nodeCli(['requests','answer',raceSource.id,'--revision','2','--text','Concurrent explicit answer']);assert.equal(concurrent.result.revision,3);
+ assert.equal((await respond(raceSource.id,raceSource.revision,'Must not queue another answer',randomUUID(),false)).error_code,'input_workflow_busy');assert.equal(calls.length,count+1);
+ const concurrent=await nodeCli(['requests','answer',raceSource.id,'--revision',String(raceSource.revision+1),'--text','Concurrent explicit answer']);assert.equal(concurrent.result.revision,5);
  for(const gate of gates)gate.end(JSON.stringify({message:{content:JSON.stringify(proposal())},done:true,done_reason:'stop'}));
  const raceReport=await racing;assert.equal(raceReport.success,false);assert.equal(raceReport.answer_confirmed,true);assert.equal(raceReport.preparation,null);
- const afterRace=(await plan(raceSource.id)).result;assert.equal(afterRace.revision,3);assert.equal(afterRace.status,'review');assert.equal(afterRace.draft.answers.length,2);assert.equal(afterRace.input,null);
- mode='valid';assert.equal((await respond(raceSource.id,1,'First answer',raceId)).status,'historical_snapshot');assert.equal(calls.length,count+1);
+ const afterRace=(await plan(raceSource.id)).result;assert.equal(afterRace.revision,5);assert.equal(afterRace.status,'review');assert.equal(afterRace.draft.answers.length,2);assert.equal(afterRace.input,null);
+ mode='valid';assert.equal((await respond(raceSource.id,raceSource.revision,'First answer',raceId)).status,'historical_snapshot');assert.equal(calls.length,count+1);
  // A known coordinator rejection during checkpoint saving stays distinct from
  // a lost reply. Its diagnostic is not proof of no commit or permission to retry.
  const checkpointRaceSource=await newQuestion('Reject stale method checkpoint');mode='gate-method';count=calls.length;
- const checkpointRaceId=randomUUID(),checkpointPending=respond(checkpointRaceSource.id,1,'This node',checkpointRaceId,false);
+ const checkpointRaceId=randomUUID(),checkpointPending=respond(checkpointRaceSource.id,checkpointRaceSource.revision,'This node',checkpointRaceId,false);
  await until(()=>gates.size===1,'gated checkpoint preparation');
  const changedProposalFile=join(scratch,'checkpoint-race-proposal.json');
  await writeFile(changedProposalFile,JSON.stringify({schema_version:1,original_text:checkpointRaceSource.draft.original_text,proposal:proposal()}));
- const changedProposal=await nodeCli(['requests','revise-proposal',checkpointRaceSource.id,'--revision','3','--file',changedProposalFile]);
- assert.equal(changedProposal.result.revision,4);
+ const changedProposal=await nodeCli(['requests','revise-proposal',checkpointRaceSource.id,'--revision',String(checkpointRaceSource.revision+2),'--file',changedProposalFile]);
+ assert.equal(changedProposal.result.revision,6);
  for(const gate of gates)gate.end(JSON.stringify({message:{content:JSON.stringify(method())},done:true,done_reason:'stop'}));
  const checkpointRejected=await checkpointPending;
  assert.equal(checkpointRejected.error_code,'answer_preparation_not_confirmed');assert.equal(checkpointRejected.answer_confirmed,true);
@@ -304,21 +324,21 @@ try {
  assert.equal(checkpointRejected.preparation.outcome_unknown,true);assert.equal(checkpointRejected.outcome_unknown,true);
  assert.equal(checkpointRejected.execution_authorized,false);assert.equal(checkpointRejected.dispatched,false);assert.equal(checkpointRejected.automatically_retried,false);
  const afterCheckpointRace=(await plan(checkpointRaceSource.id)).result;
- assert.equal(afterCheckpointRace.revision,4);assert.equal(afterCheckpointRace.status,'review');assert.equal(afterCheckpointRace.input,null);
- mode='valid';assert.equal((await respond(checkpointRaceSource.id,1,'This node',checkpointRaceId)).status,'historical_snapshot');
+ assert.equal(afterCheckpointRace.revision,6);assert.equal(afterCheckpointRace.status,'review');assert.equal(afterCheckpointRace.input,null);
+ mode='valid';assert.equal((await respond(checkpointRaceSource.id,checkpointRaceSource.revision,'This node',checkpointRaceId)).status,'historical_snapshot');
  assert.equal(calls.length,count+2);assert.deepEqual((await plan(checkpointRaceSource.id)).result,afterCheckpointRace);
  // Lost/corrupt replies preserve the entire response command. Reusing it only
  // reads durable history, including after interpreter withdrawal/restart below.
- let lostAnswerId,lostAnswerSource;for(const transport of ['drop','answer-lineage','old']) {
+ let lostAnswerId,lostAnswerSource,lostAnswerRevision;for(const transport of ['drop','answer-lineage','old']) {
   const q=await newQuestion('Answer transport '+transport);mode='valid';proxyMode=transport;const responseReceipt=randomUUID();count=calls.length;
   const originalMarker=await readFile(marker,'utf8'),value=JSON.parse(originalMarker);value.address=`127.0.0.1:${proxyPort}`;await writeFile(marker,JSON.stringify(value));
   try {
-   const lost=await respond(q.id,1,'This node',responseReceipt,false);assert.equal(lost.command.operation_id,responseReceipt);assert.equal(lost.command.id,q.id);
+   const lost=await respond(q.id,q.revision,'This node',responseReceipt,false);assert.equal(lost.command.operation_id,responseReceipt);assert.equal(lost.command.id,q.id);
    assert.equal(lost.error_code,transport==='old'?'unsupported_command':'local_answer_reply_unconfirmed');assert.equal(lost.outcome_unknown,transport!=='old');assert.equal(calls.length,count+(transport==='old'?0:2));
   }finally{await writeFile(marker,originalMarker);}
-  if(transport!=='old'){assert.equal((await respond(q.id,1,'This node',responseReceipt)).status,'historical_snapshot');assert.equal(calls.length,count+2);lostAnswerId=responseReceipt;lostAnswerSource=q.id;}
+  if(transport!=='old'){assert.equal((await respond(q.id,q.revision,'This node',responseReceipt)).status,'historical_snapshot');assert.equal(calls.length,count+2);lostAnswerId=responseReceipt;lostAnswerSource=q.id;lostAnswerRevision=q.revision;}
  }
- const restartAnswerSource=await newQuestion('Restart during answer preparation');mode='gate-method';count=calls.length;const restartAnswerId=randomUUID(),restartPending=respond(restartAnswerSource.id,1,'This node',restartAnswerId,false);
+ const restartAnswerSource=await newQuestion('Restart during answer preparation');mode='gate-method';count=calls.length;const restartAnswerId=randomUUID(),restartPending=respond(restartAnswerSource.id,restartAnswerSource.revision,'This node',restartAnswerId,false);
  await until(()=>gates.size===1,'gated answer preparation');await nodeCli(['restart','--wait-seconds','20']);await until(ready,'answer workflow runtime replaced');
  const restartedAnswer=await restartPending;assert.equal(restartedAnswer.success,false);assert.equal(restartedAnswer.answer_confirmed,true);
  const restartObservation={error_code:restartedAnswer.error_code,status:restartedAnswer.status,answer_confirmed:restartedAnswer.answer_confirmed,
@@ -326,10 +346,10 @@ try {
  assert.equal(restartedAnswer.outcome_unknown,true,'Restart must retain uncertainty: '+JSON.stringify(restartObservation));
  assert.equal(restartedAnswer.error_code,'runtime_changed','Retired answer workflow: '+JSON.stringify(restartObservation));
  for(const gate of gates)gate.destroy();mode='valid';
- const restartSnapshot=await respond(restartAnswerSource.id,1,'This node',restartAnswerId);assert.equal(restartSnapshot.status,'historical_snapshot');assert.equal(restartSnapshot.result.revision,3);assert.equal(calls.length,count+2);
+ const restartSnapshot=await respond(restartAnswerSource.id,restartAnswerSource.revision,'This node',restartAnswerId);assert.equal(restartSnapshot.status,'historical_snapshot');assert.equal(restartSnapshot.result.revision,5);assert.equal(calls.length,count+2);
  mode='invalid-method';count=calls.length;const invalidId=randomUUID(),invalid=await input('Reject invented authority',invalidId,false);
  assert.equal(invalid.error_code,'input_preparation_not_confirmed');assert.equal(invalid.source_confirmed,true);assert.equal(calls.length,count+2);assert(invalid.preparation_command.operation_id);
- const partial=(await plan(invalid.result.id)).result;assert.equal(partial.revision,1);assert.equal(partial.status,'review');assert.equal(partial.input,null);
+ const partial=(await plan(invalid.result.id)).result;assert.equal(partial.revision,3);assert.equal(partial.status,'review');assert.equal(partial.input,null);
  mode='valid';const partialRead=await input('Reject invented authority',invalidId);assert.equal(partialRead.status,'historical_snapshot');assert.equal(calls.length,count+2);
  assert.deepEqual((await plan(invalid.result.id)).result,partial);
  // Saved policy is not live policy until explicit verified restart.
@@ -350,7 +370,7 @@ try {
  assert.equal(interrupted.success,false,interruptedDiagnostic);assert.equal(interrupted.source_confirmed,true,interruptedDiagnostic);assert.equal(interrupted.outcome_unknown,true,interruptedDiagnostic);
  assert(['runtime_changed','local_input_reply_unconfirmed'].includes(interrupted.error_code));
  for(const gate of gates)gate.destroy();mode='valid';
- const afterRestart=await input('Gated preparation',gatedId);assert.equal(afterRestart.status,'historical_snapshot');assert.equal(afterRestart.result.revision,1);assert.equal(calls.length,count+2);
+ const afterRestart=await input('Gated preparation',gatedId);assert.equal(afterRestart.status,'historical_snapshot');assert.equal(afterRestart.result.revision,3);assert.equal(calls.length,count+2);
  // Losing or corrupting a local HTTP reply does not request replay. Repeating
  // its explicit receipt after restart/role withdrawal only reads the history.
  let lostReceipt,lostText;for(const transport of ['drop','corrupt','lineage','old']) {
@@ -371,8 +391,13 @@ try {
  await cameraAuthoring.verifyRetained();
  await savedInput.verifyRetained();
  count=calls.length;assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal((await input(lostText,lostReceipt)).status,'historical_snapshot');
- const missing=await input('New input without role',randomUUID(),false);assert.equal(missing.error_code,'interpreter_unavailable');assert(missing.setup_hint.includes('request_interpreter'));assert.equal(calls.length,count);
- assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal((await respond(lostAnswerSource,1,'This node',lostAnswerId)).status,'historical_snapshot');assert.equal(calls.length,count);
+ const missingReceipt=randomUUID(),missing=await input('New input without role',missingReceipt,false);assert.equal(missing.error_code,'interpreter_unavailable');assert(missing.setup_hint.includes('request_interpreter'));assert.equal(calls.length,count);
+ assert.equal(missing.source_confirmed,true);assert.equal(missing.outcome_unknown,false);assert.equal(missing.result.revision,1);
+ assert.equal(missing.result.input.original_text,'New input without role');assert.equal(missing.interpretation.claim_attempted,false);
+ const retainedMissing=await input('New input without role',missingReceipt);assert.equal(retainedMissing.status,'historical_snapshot');assert.equal(retainedMissing.result.proposal_count,0);
+ assert.equal(retainedMissing.result.task_count,0);assert.equal(calls.length,count);
+ console.log('Normal input raw-first validation passed');
+ assert.equal((await respond(original.id,original.revision,answerText,responseId)).status,'historical_snapshot');assert.equal((await respond(lostAnswerSource,lostAnswerRevision,'This node',lostAnswerId)).status,'historical_snapshot');assert.equal(calls.length,count);
  assert.deepEqual((await plan(prepared.result.id)).result,saved);assert.equal((await json(node+'/api/status')).last_workload,null);
  const jobs=(await nodeCli(['jobs','list'])).data.jobs;assert(jobs.length>0);
  for(const job of jobs) {
@@ -398,12 +423,12 @@ try {
  await savedInput.verifyRetained(true);
  count=calls.length;
  const foreign=await cli('eefn',peerPath,['requests','input','--text',text,'--operation-id',receipt],false);
- assert.equal(foreign.error_code,'interpreter_unavailable');assert.equal(foreign.source_confirmed,false);assert.equal(foreign.inspection,null);assert.equal(foreign.result,null);
+ assert.equal(foreign.error_code,'input_save_unconfirmed');assert.equal(foreign.source_confirmed,false);assert.equal(foreign.inspection,null);assert.equal(foreign.result,null);
  assert.equal((await cli('eefn',peerPath,['jobs','find','--operation-id',receipt])).data.total,0);assert.equal(calls.length,count);
- const foreignAnswer=await cli('eefn',peerPath,['requests','respond',original.id,'--revision','1','--text',answerText,'--operation-id',responseId],false);
+ const foreignAnswer=await cli('eefn',peerPath,['requests','respond',original.id,'--revision',String(original.revision),'--text',answerText,'--operation-id',responseId],false);
  assert.equal(foreignAnswer.error_code,'answer_source_unconfirmed');assert.equal(foreignAnswer.source_confirmed,false);assert.equal(foreignAnswer.answer_attempted,false);assert.equal(foreignAnswer.result,null);
  assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal(calls.length,count);
- assert.equal((await respond(original.id,1,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count);
+ assert.equal((await respond(original.id,original.revision,answerText,responseId)).status,'historical_snapshot');assert.equal(calls.length,count);
  const cameraSetup=await verifyCameraSetupCommands({nodeCli,nodeText:(args,success)=>cli('eefn',configPath,args,success,false),
   nodeId:id,nodeUrl:node,json,configPath,marker,proxyPort,setProxyMode:value=>{proxyMode=value;},proxyCalls,inferenceCalls:calls});
  const remoteCamera=await verifyRemoteCameraCommands({nodeCli,coordinatorCli:(args,success=true)=>cli('eef',eefConfig,args,success),
@@ -417,6 +442,7 @@ try {
  evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,...remoteCamera,...cameraLifecycle,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
+  normal_input_saved_before_any_inference:true,missing_model_retains_raw_input:true,failed_initial_inference_retains_raw_input:true,
   reasoning_completion_failure_retains_source_and_answer:true,completion_diagnostics_do_not_echo_reasoning_or_replay:true,
   checkpoint_rejection_diagnosed_without_replay:true,
   immutable_input_context:true,read_only_receipt_reuse:true,partial_preparation_no_implicit_retry:true,current_question_returned:true,

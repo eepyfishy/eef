@@ -7,6 +7,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
 
+#[path = "request_input_raw.rs"]
+mod raw_first;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InputPolicy {
@@ -86,7 +89,7 @@ pub fn input_reply(report: &Value) -> String {
             "Input workflow not confirmed ({}). {} Inspect receipt {} and any exact preparation command before retrying. No approval, workload execution or automatic retry was requested. {}",
             report["error_code"].as_str().unwrap_or("input_unconfirmed"),
             if report["source_confirmed"] == true {
-                "The source request was saved, but preparation is not confirmed."
+                "The source request was saved, but interpretation or preparation is not confirmed."
             } else {
                 "Source save is not confirmed."
             },
@@ -169,7 +172,7 @@ impl NodeService {
             "request_id":request.request_id,"runtime_id":null,"success":false,"status":"input_not_confirmed",
             "coordinator_acknowledged":false,
             "source_confirmed":false,"creation_attempted":false,"opening_reused":false,"policy":null,
-            "opening":null,"inspection":null,"preparation_command":null,"preparation":null,"result":null,
+            "opening":null,"inspection":null,"raw_save":null,"raw_history":null,"interpretation":null,"preparation_command":null,"preparation":null,"result":null,
             "error_code":null,"outcome_unknown":false,"execution_authorized":false,"dispatched":false,
             "automatically_retried":false,
             "note":"Input/review/preparation only. Separate owner approval/execution are required. After uncertainty inspect this input receipt and any exact preparation receipt; no automatic retry or continuation."});
@@ -206,7 +209,7 @@ impl NodeService {
         let result = within_runtime(&mut generation, &runtime, async {
             tokio::time::timeout(
                 Duration::from_secs(budget.extend_seconds(135, 2)),
-                self.input_request_inner(&request, policy, &mut report),
+                self.input_request_inner(&request, policy, &mut report, &_permit),
             )
             .await
             .unwrap_or(Err("input_workflow_timeout"))
@@ -243,6 +246,7 @@ impl NodeService {
         request: &PreviewRequest,
         policy: InputPolicy,
         report: &mut Value,
+        admission: &tokio::sync::OwnedSemaphorePermit,
     ) -> std::result::Result<(), &'static str> {
         // An unconfirmed lookup never licenses another opening. Repeated input
         // receipts inspect current retained history, not reinfer/continue it.
@@ -276,6 +280,9 @@ impl NodeService {
         }
         if let Some(job) = jobs.first() {
             let id = job["id"].as_str().ok_or("input_lookup_unconfirmed")?;
+            if job["planning_state"] == "not_interpreted" {
+                return self.inspect_raw_input(request, id, report).await;
+            }
             let inspected = self
                 .draft_command(crate::request_drafts::DraftRequest {
                     schema_version: 1,
@@ -304,36 +311,9 @@ impl NodeService {
             report["success"] = json!(true);
             return Ok(());
         }
-        report["creation_attempted"] = json!(true);
-        let opened = self
-            .open_request(PreviewRequest {
-                schema_version: 1,
-                expected_node_id: self.node_id.clone(),
-                request_id: request.request_id.clone(),
-                text: request.text.clone(),
-                inference_timeout_seconds: request.inference_timeout_seconds,
-            })
-            .await;
-        report["opening"] = opened.clone();
-        report["outcome_unknown"] = opened["outcome_unknown"].clone();
-        if let Some(hint) = opened.get("setup_hint") {
-            report["setup_hint"] = hint.clone();
-        }
-        if opened["success"] != true {
-            report["error_code"] = opened["error_code"].clone();
-            return Err("input_open_not_confirmed");
-        }
-        if opened["coordinator_acknowledged"] != true
-            || !crate::request_drafts::confirmed_report(
-                &opened["result"],
-                &self.node_id,
-                &request.request_id,
-                None,
-            )
-        {
-            report["outcome_unknown"] = json!(true);
-            return Err("input_open_not_confirmed");
-        }
+        let Some(opened) = self.open_raw_input(request, report, admission).await? else {
+            return Ok(());
+        };
         validate_source(&opened["result"], request)?;
         report["source_confirmed"] = json!(true);
         report["result"] = opened["result"].clone();
@@ -479,6 +459,12 @@ struct InputReport {
     policy: Option<InputPolicy>,
     opening: Option<Value>,
     inspection: Option<Value>,
+    #[serde(default)]
+    raw_save: Option<Value>,
+    #[serde(default)]
+    raw_history: Option<Value>,
+    #[serde(default)]
+    interpretation: Option<Value>,
     preparation_command: Option<crate::request_preparation::PrepareCommand>,
     preparation: Option<Value>,
     result: Option<Value>,
@@ -515,9 +501,13 @@ pub fn confirmed(value: &Value, node: &str, input: &str, text: &str) -> bool {
                 | "historical_snapshot"
                 | "preparation_not_confirmed"
                 | "awaiting_approval"
+                | "interpretation_not_confirmed"
         )
     {
         return false;
+    }
+    if r.raw_save.is_some() || r.raw_history.is_some() || r.interpretation.is_some() {
+        return raw_first::confirmed_raw(&r, node, input, text);
     }
     if !r.success {
         let source_valid = !r.source_confirmed

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Source {
+pub(crate) struct Source {
     id: String,
     revision: u64,
     status: String,
@@ -19,6 +19,9 @@ struct Source {
     record: Option<Record>,
 }
 impl Source {
+    pub(crate) fn confirms_input(&self, operation: &str, text: &str) -> bool {
+        self.request_context.request_id() == operation && self.input.original_text == text
+    }
     fn validate(&self, id: &str, node: &str) -> Result<()> {
         ensure!(
             self.id == id
@@ -41,7 +44,7 @@ impl Source {
         }
         Ok(())
     }
-    fn read(value: &Value, id: &str, node: &str) -> Result<Self> {
+    pub(crate) fn read(value: &Value, id: &str, node: &str) -> Result<Self> {
         let record = value
             .get("input_interpretation")
             .cloned()
@@ -249,6 +252,29 @@ impl crate::NodeService {
             request.expected_node_id == self.node_id,
             "Saved interpretation targets another node"
         );
+        let permit = match self.input_workflow_permit() {
+            Ok(permit) => permit,
+            Err(_) => {
+                let mut report = Report::new(&request);
+                report.error_code = Some(Failure::Busy);
+                return Ok(json!(report));
+            }
+        };
+        self.interpret_saved_input_admitted(request, &permit).await
+    }
+
+    // Normal input already owns this capacity. Borrow its admission rather than
+    // acquiring a second slot or bypassing the runtime/model/journal fences.
+    pub(crate) async fn interpret_saved_input_admitted(
+        &self,
+        request: Request,
+        _admission: &tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<Value> {
+        request.validate()?;
+        ensure!(
+            request.expected_node_id == self.node_id,
+            "Saved interpretation targets another node"
+        );
         let mut report = Report::new(&request);
         let Some((runtime, engine, mut generation)) = self.saved_interpreter_runtime() else {
             return Ok(json!(report));
@@ -257,13 +283,6 @@ impl crate::NodeService {
             report.error_code = Some(Failure::RuntimeChanged);
             return Ok(json!(report));
         }
-        let _permit = match self.input_workflow_permit() {
-            Ok(permit) => permit,
-            Err(_) => {
-                report.error_code = Some(Failure::Busy);
-                return Ok(json!(report));
-            }
-        };
         let budget = crate::inference_budget::InferenceBudget::new(
             request.command.inference_timeout_seconds,
         )

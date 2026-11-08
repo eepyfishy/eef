@@ -91,6 +91,19 @@ try {
   // Real shipping raw-input commands, through the running model-free node.
   // Saving has no interpreter, proposal, permission change, grant or execution.
   const operation=randomUUID(),text='Keep this exact input before choosing an interpreter. 👋';
+  const normalOperation=randomUUID(),normalText='PRIVATE_MODEL_FREE_NORMAL_INPUT';
+  const normalArgs=['requests','input','--text',normalText,'--operation-id',normalOperation];
+  const normal=await nodeCommand(normalArgs,1);
+  assert.equal(normal.source_confirmed,true);assert.equal(normal.error_code,'interpreter_unavailable');
+  assert.equal(normal.outcome_unknown,false);assert.equal(normal.result.input.original_text,normalText);
+  assert.equal(normal.interpretation.claim_attempted,false);assert.equal(normal.interpretation.model_inference_requested,false);
+  const normalView=(await nodeCommand(['jobs','get',normal.result.id])).data;
+  assert.equal(normalView.input_intent.original_text,normalText);assert.equal(normalView.task_count,0);assert.equal(normalView.proposal_count,0);
+  assert.equal(normalView.input_interpretation,undefined);
+  const normalHistory=await nodeCommand(normalArgs);assert.equal(normalHistory.status,'historical_snapshot');
+  assert.equal(normalHistory.result.id,normal.result.id);assert.equal(normalHistory.result.revision,normal.result.revision);
+  const normalPlain=await nodeCommand(normalArgs,0,true);assert(normalPlain.includes(normal.result.id));assert(!normalPlain.includes(normalText));
+  console.log('Model-free normal input validation passed');
   const saveArgs=['requests','save-input','--text',text,'--operation-id',operation];
   const inputConfig=await readFile(config,'utf8');
   const input=await nodeCommand(saveArgs);

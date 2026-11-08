@@ -1,10 +1,10 @@
 # Network interpreter delegation (planned)
 
-Status: the first durable raw-input increment passed all four hosted jobs at
-`4ef0935`. The delegation described below remains planned. The existing
-ordinary-language input workflow still requires a selected interpreter on its
-input node. Saving raw input does not enable delegation or approve inference.
-Local interpretation and its existing explicit setup remain supported.
+Status: raw saving (`4ef0935`) and explicit saved-input interpretation
+(`2a49073`) passed all four hosted jobs. Automatic delegation remains planned.
+Normal input's new raw-first integration is in development, awaiting hosted
+verification. It saves before checking for a local interpreter. Saving raw input
+does not enable delegation or approve inference; missing models retain input.
 
 The new `eefn requests save-input --text 'Your request'` command uses the running
 node to retain raw text in the existing coordinator job journal without a model,
@@ -14,14 +14,15 @@ allows inspection of the same retained input after a lost reply; changed text
 under that receipt is refused. Receipts are scoped to the authenticated origin
 and retained history. Deleting history removes that deduplication protection.
 
-The new explicit `eefn requests interpret-saved ID` follow-up is in development
-and awaiting hosted verification. It uses the input node's selected local
+The unreleased `eefn requests interpret-saved ID` follow-up passed hosted
+verification at `2a49073`. It uses the input node's selected local
 interpreter and promotes the same request to review after a durable ownership
 checkpoint. An uncertain or already completed attempt is inspected without
 another model call. Source identity/revision/digest are read and pinned by the
 backend; the user does not need to copy JSON or hashes. Missing models leave the
-input saved. This does not yet integrate durable-first behavior into normal
-`requests input`, or supply automatic remote interpretation to model-free nodes.
+input saved. Normal `requests input` now integrates these stages in source;
+that integration remains unverified. Automatic remote interpretation for
+model-free nodes is still unimplemented.
 
 ## Intended user behavior
 

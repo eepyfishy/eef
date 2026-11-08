@@ -32,14 +32,17 @@ configured. Its command flow passed hosted verification at `4ef0935`:
 ```
 
 This saves raw input only. It does not interpret, prepare, approve or execute it.
-The new `eefn requests interpret-saved REQUEST_ID` follow-up is in development
-and awaiting hosted verification. It explicitly uses this node's selected local
+The unreleased `eefn requests interpret-saved REQUEST_ID` follow-up passed hosted
+verification at `2a49073`. It explicitly uses this node's selected local
 interpreter, saves a proposal under the same request ID, and starts no tool work.
 The command reads and pins the current source itself; it needs no JSON, revision
 or digest copied by the user. Repeated attempts inspect retained interpretation;
 an uncertain attempt cannot automatically run again. Missing models leave the
 input saved and core services available. Automatic remote interpretation remains
-planned, and `requests input` still uses its existing local flow.
+planned. Normal `requests input` is being updated to save raw input before
+inference too; that integration is not yet hosted-verified. A missing model
+leaves a saved request with setup guidance. Repeating its receipt only inspects
+history; use `interpret-saved` explicitly after selecting and applying a model.
 
 You can cancel saved input with
 `eefn jobs stop REQUEST_ID`. To inspect after a lost reply, use the operation ID

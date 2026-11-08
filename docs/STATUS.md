@@ -3,6 +3,29 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: normal input saves before inference
+
+Normal `requests input` now reuses the raw-input journal and saved-interpretation
+runner before optional method preparation. Its source is not yet accepted:
+hosted compile and command verification are pending. The same admission slot
+covers saving and interpretation. Missing models and failed initial inference
+retain the request; repeating its receipt reads history without continuing it.
+Journal revisions include raw save and claim, so clients must use returned
+revisions for later answer/preparation commands. No approval or execution is
+added. Automatic remote interpretation still requires the delegation work below.
+
+## Accepted development checkpoint: explicit saved-input interpretation
+
+Source `2a49073` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42488480969):
+1,641 Windows/headless Rust tests, one ignored across 17 unfiltered groups,
+all 37 native suites and prior additional gates. Shipping no-UI commands use a
+synthetic provider to verify source-bound claims, same-request promotion,
+clarification, cancellation, incomplete output, read-only reuse and retained
+history after model-role withdrawal and restart. This accepts the explicit
+local command, not physical model quality, two-PC or stable release behavior.
+No new model, worker or dependency is required for model-free core services.
+
 ## Accepted development checkpoint: saved-input interpretation journal
 
 Source `23d7309` passes all four jobs in the
