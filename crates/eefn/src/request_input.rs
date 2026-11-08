@@ -948,6 +948,10 @@ mod tests {
         assert!(!reply.contains("Old question"));
         let partial = json!({"success":false,"source_confirmed":true,"error_code":"input_preparation_not_confirmed","request_id":"receipt"});
         assert!(input_reply(&partial).contains("source request was saved"));
+        let historical = json!({"success":true,"status":"historical_snapshot","result":{"id":"saved-id","status":"review","input":{"original_text":"PRIVATE_RAW_TEXT"}},"raw_history":{"private":"PRIVATE_RAW_TEXT"}});
+        let reply = input_reply(&historical);
+        assert!(reply.contains("saved-id"));
+        assert!(!reply.contains("PRIVATE_RAW_TEXT"));
     }
     #[tokio::test]
     async fn runtime_retirement_during_final_poll_cannot_hide_behind_a_nested_result() {

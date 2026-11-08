@@ -3505,6 +3505,13 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                 } else if matches!(
                     command,
                     Commands::Requests {
+                        command: eefn::request_preview::RequestAction::Input { .. }
+                    }
+                ) {
+                    println!("{}", eefn::request_input::input_reply(&value));
+                } else if matches!(
+                    command,
+                    Commands::Requests {
                         command: eefn::request_preview::RequestAction::InterpretSaved { .. }
                     }
                 ) {
@@ -3698,7 +3705,7 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
         if args.json {
             println!("{}", serde_json::to_string(&value)?);
         } else {
-            println!("{}", serde_json::to_string_pretty(&value)?);
+            println!("{}", eefn::request_input::input_reply(&value));
         }
         if value["success"] == false {
             bail!("Input was not confirmed; inspect the receipt before retrying")
