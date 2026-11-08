@@ -462,6 +462,9 @@ mod tests {
             ),
             ("/source_confirmed", json!(false)),
             ("/success", json!(true)),
+            ("/interpretation/outcome_unknown", json!(true)),
+            ("/error_code", json!("")),
+            ("/error_code", json!("x".repeat(129))),
         ] {
             let mut bad = report.clone();
             *bad.pointer_mut(pointer).unwrap() = value;

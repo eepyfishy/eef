@@ -493,6 +493,21 @@ pub fn confirmed(value: &Value, node: &str, input: &str, text: &str) -> bool {
         || r.automatically_retried
         || r.note.len() > 2048
         || r.setup_hint.as_ref().is_some_and(|h| h.len() > 2048)
+        || r.error_code
+            .as_ref()
+            .is_some_and(|c| c.is_empty() || c.len() > 128)
+        || !r.outcome_unknown
+            && [
+                &r.opening,
+                &r.inspection,
+                &r.raw_save,
+                &r.raw_history,
+                &r.interpretation,
+                &r.preparation,
+            ]
+            .iter()
+            .filter_map(|stage| stage.as_ref())
+            .any(|stage| stage["outcome_unknown"] == true)
         || !matches!(
             r.status.as_str(),
             "input_not_confirmed"

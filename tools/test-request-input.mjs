@@ -102,6 +102,7 @@ const proxy=createServer(async(req,res)=>{
   if(proxyMode==='corrupt'){value.result.request_context.origin_node='forged';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='lineage'){value.opening.result.draft.proposals[0].proposal.goal='Different schema-valid source goal';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='answer-lineage'){value.source.result.draft.proposals[0].proposal.goal='Different source question goal';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
+  if(proxyMode==='hide-uncertainty'){value.outcome_unknown=false;res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   res.destroy();
  }catch{res.destroy();}
 });
@@ -226,6 +227,18 @@ try {
  assert.equal(timedOpening.error_code,'input_interpretation_unconfirmed');assert.equal(timedOpening.source_confirmed,true);assert.equal(timedOpening.interpretation.error_code,'inference_unconfirmed');assert.equal(timedOpening.outcome_unknown,true);assert.equal(calls.length,count+1);assert(Date.now()-timingStarted<8000);
  const timedFound=(await nodeCli(['jobs','find','--operation-id',timedOpeningId])).data;assert.equal(timedFound.total,1);assert.equal(timedFound.jobs[0].interpretation_state,'claimed');assert.equal(timedFound.jobs[0].task_count,0);await until(()=>gates.size===0,'opening timeout drops provider wait');
  assert.equal((await input('Explicit timing for initial interpretation',timedOpeningId,true,120)).status,'historical_snapshot');assert.equal(calls.length,count+1);
+ // A local reply cannot hide the nested unknown inference outcome. The CLI
+ // retains its receipt and conservative uncertainty without replaying the call.
+ const uncertaintyMarker=await readFile(marker,'utf8'),uncertaintyValue=JSON.parse(uncertaintyMarker),uncertaintyReceipt=randomUUID();
+ uncertaintyValue.address=`127.0.0.1:${proxyPort}`;proxyMode='hide-uncertainty';await writeFile(marker,JSON.stringify(uncertaintyValue));
+ count=calls.length;
+ try {
+  const hidden=await input('Do not hide unknown inference',uncertaintyReceipt,false,1);
+  assert.equal(hidden.error_code,'local_input_reply_unconfirmed');assert.equal(hidden.outcome_unknown,true);
+  assert.equal(hidden.request_id,uncertaintyReceipt);assert.equal(hidden.automatically_retried,false);assert.equal(calls.length,count+1);
+ }finally{await writeFile(marker,uncertaintyMarker);}
+ await until(()=>gates.size===0,'corrupted uncertainty drops provider wait');
+ assert.equal((await input('Do not hide unknown inference',uncertaintyReceipt)).status,'historical_snapshot');assert.equal(calls.length,count+1);
  mode='gate-method';count=calls.length;const timedMethodId=randomUUID();
  const timedMethod=await input('Explicit timing for input preparation',timedMethodId,false,1);
  assert.equal(timedMethod.preparation.error_code,'preparation_timeout');assert.equal(calls.length,count+2);assert.equal(timedMethod.result.revision,3);
