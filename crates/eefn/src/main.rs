@@ -1026,6 +1026,56 @@ async fn execute_microphone_command(
     Ok(exchange.unwrap_or_else(|_| unavailable(&file.node_id, command, true)))
 }
 
+async fn execute_save_input(
+    args: &Args,
+    command: eefn::request_intent::Command,
+) -> Result<serde_json::Value> {
+    command.input()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; saving input never launches a runtime");
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(20))
+        .build()?;
+    let runtime =
+        eefn::credential_pairing::wait_for_runtime(&client, address, &file.node_id).await?;
+    let request = eefn::request_intent::Request {
+        schema_version: 1,
+        expected_node_id: file.node_id,
+        expected_runtime_id: runtime,
+        command,
+    };
+    request.validate()?;
+    let exchange = async {
+        let response = client
+            .post(format!("http://{address}/api/commands/requests/save-input"))
+            .json(&request)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Input save API refused or unavailable");
+        }
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::request_intent::confirmed(&value, &request) {
+            bail!("Unconfirmed input save reply");
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| eefn::request_intent::unconfirmed(&request)))
+}
+
 async fn execute_concrete_command(
     args: &Args,
     command: eefn::request_submission::ConcreteCommand,
@@ -2689,6 +2739,18 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
+            eefn::request_preview::RequestAction::SaveInput { text, operation_id } => {
+                execute_save_input(
+                    args,
+                    eefn::request_intent::Command {
+                        original_text: text.clone(),
+                        operation_id: operation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    },
+                )
+                .await
+            }
             eefn::request_preview::RequestAction::Input {
                 text,
                 operation_id,
@@ -3369,6 +3431,13 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     print!("{}", eefn::local_setup::render(&value)?);
                 } else if matches!(command, Commands::Setup { .. }) {
                     print!("{}", eefn::setup_check::render(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::SaveInput { .. }
+                    }
+                ) {
+                    print!("{}", eefn::request_intent::render(&value)?);
                 } else if matches!(
                     command,
                     Commands::Requests {
@@ -5120,6 +5189,13 @@ mod tests {
                     vec!["eefn", "connection", "pair-stdin"],
                     vec!["eefn", "models", "show"],
                     vec!["eefn", "requests", "plan", "request-id"],
+                    vec![
+                        "eefn",
+                        "requests",
+                        "save-input",
+                        "--text",
+                        "Save before model setup",
+                    ],
                     vec!["eefn", "requests", "submit-microphone"],
                     vec!["eefn", "requests", "submit-camera"],
                     vec![
@@ -5253,6 +5329,38 @@ mod tests {
             supervise_runtime(async { Ok(()) }, std::future::pending(), stop).await;
         result.unwrap();
         assert_eq!(reason, None);
+    }
+    #[test]
+    fn save_input_cli_cannot_select_a_model_or_authorize_work() {
+        let Some(Commands::Requests {
+            command: eefn::request_preview::RequestAction::SaveInput { text, operation_id },
+        }) = Args::try_parse_from([
+            "eefn",
+            "requests",
+            "save-input",
+            "--text",
+            "Exact raw input",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("wrong raw input command")
+        };
+        assert_eq!(text, "Exact raw input");
+        assert!(operation_id.is_none());
+        for extra in [
+            vec!["--model", "model"],
+            vec!["--backend", "ollama"],
+            vec!["--execute"],
+            vec!["--approve"],
+            vec!["--grant", "grant"],
+            vec!["--file", "input.json"],
+            vec!["--inference-timeout-seconds", "10"],
+        ] {
+            let mut args = vec!["eefn", "requests", "save-input", "--text", "Raw input"];
+            args.extend(extra);
+            assert!(Args::try_parse_from(args).is_err());
+        }
     }
     #[test]
     fn inference_timeout_cli_is_explicit_for_all_model_workflows_only() {

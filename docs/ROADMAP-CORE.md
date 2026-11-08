@@ -1562,6 +1562,16 @@ reachability, priority, ownership and resource limits to build the authoritative
 plan. The LM may describe semantic complexity, not assert exact compute cost.
 Preserve the current scheduler and extend its constraints and measured inputs.
 
+Model-free input nodes still need a complete network interpretation path. The
+[network interpreter design](NETWORK-INTERPRETER.md) records durable raw input,
+explicit sharing policy and grant-backed delegation for initial interpretation,
+clarification and preparation. It preserves the node origin, current discovery
+scope and separate approval of resulting tool work; a management RPC cannot act
+as an inference bypass. The first `requests save-input` increment now retains raw
+input without a proposal or executor in development source; hosted verification
+is pending. Saved-input interpretation/promotion and the complete delegation
+service are still planned.
+
 The unreleased attempt-assignment increment now persists at most one executor
 per durable task attempt. Model assignments retain node/backend/model identity;
 older missing backends remain unknown. Durable model jobs no longer traverse

@@ -185,6 +185,10 @@ impl NodeService {
             .route("/api/commands/requests/prepare", post(request_preparation))
             .route("/api/commands/requests/submit", post(request_submission))
             .route(
+                "/api/commands/requests/save-input",
+                post(request_save_input).layer(axum::extract::DefaultBodyLimit::max(128 * 1024)),
+            )
+            .route(
                 "/api/commands/requests/microphone",
                 post(microphone_submission).layer(axum::extract::DefaultBodyLimit::max(65536)),
             )
@@ -616,6 +620,12 @@ async fn request_submission(
     Json(request): Json<crate::request_submission::ConcreteRequest>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.concrete_request(request).await?))
+}
+async fn request_save_input(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::request_intent::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.save_input(request).await?))
 }
 async fn request_planning(
     State(state): State<Arc<NodeService>>,

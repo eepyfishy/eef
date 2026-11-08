@@ -8,6 +8,14 @@ use tokio::sync::{Semaphore, watch};
 
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    /// Save raw input durably without a model, proposal, approval or execution.
+    SaveInput {
+        #[arg(long)]
+        text: String,
+        /// Reuse only inspects retained input; it never interprets or executes.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Answer an exact saved question; resolve/prepare according to applied policy, never execute.
     Respond {
         #[command(flatten)]

@@ -638,6 +638,10 @@ fn read(connection: &Connection, id: &str) -> Result<Plan> {
     Ok(plan)
 }
 pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
+    if plan.goal.template == eefn::request_intent::TEMPLATE {
+        crate::request_intent::validate(plan)?;
+        return Ok(());
+    }
     if let Some(draft) = &plan.request_review {
         draft.validate()?;
         if draft
@@ -762,6 +766,10 @@ fn validate(plan: &Plan) -> Result<()> {
     {
         bail!("New jobs must have fresh pending state")
     }
+    if plan.goal.template == eefn::request_intent::TEMPLATE {
+        crate::request_intent::validate(plan)?;
+        return Ok(());
+    }
     if let Some(draft) = &plan.request_review {
         validate_retained_review(plan)?;
         draft.validate()?;
@@ -843,8 +851,17 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
         "status": plan.status, "revision": plan.revision, "updated_at_ms": plan.updated_at_ms,
         "request_context": plan.goal.request_context, "task_count": plan.tasks.len(),
         "completed_tasks": plan.tasks.iter().filter(|t|t.status==TaskStatus::Completed).count(),
-        "can_resume": plan.request_review.is_none() && matches!(plan.status,PlanStatus::Paused|PlanStatus::Interrupted) && !plan.tasks.iter().any(|t|t.status==TaskStatus::Interrupted&&!crate::task::retry_safe(t)),
+        "can_resume": !plan.is_review_request() && matches!(plan.status,PlanStatus::Paused|PlanStatus::Interrupted) && !plan.tasks.iter().any(|t|t.status==TaskStatus::Interrupted&&!crate::task::retry_safe(t)),
     });
+    if plan.goal.template == eefn::request_intent::TEMPLATE {
+        value["review_only"] = json!(true);
+        value["review_state"] = json!("awaiting_interpretation");
+        value["planning_state"] = json!("not_interpreted");
+        value["proposal_count"] = json!(0);
+        if details {
+            value["input_intent"] = plan.goal.params.clone();
+        }
+    }
     if let Some(draft) = &plan.request_review {
         value["review_only"] = json!(plan.execution.is_none());
         value["review_state"] = json!(draft.state());

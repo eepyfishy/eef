@@ -160,6 +160,14 @@ pub struct Plan {
 }
 
 impl Plan {
+    /// Raw and interpreted user requests never use the legacy task runner.
+    pub(crate) fn is_review_request(&self) -> bool {
+        self.request_review.is_some()
+            || matches!(
+                self.goal.template.as_str(),
+                "request_review" | "request_intent"
+            )
+    }
     fn ready_indices(&self) -> Vec<usize> {
         self.tasks
             .iter()
@@ -702,7 +710,7 @@ impl TaskEngine {
         if self.reviewed_only {
             return Err(eefn::execution_boundary::ExecutionGrantRequired.into());
         }
-        if plan.status != PlanStatus::Pending || plan.request_review.is_some() {
+        if plan.status != PlanStatus::Pending || plan.is_review_request() {
             bail!("Review records are not executable plans")
         }
         if !self.has_executor() {
@@ -714,7 +722,7 @@ impl TaskEngine {
     pub fn pause(&self, id: &str) -> Result<Plan> {
         self.store
             .change(id, "Pause requested; current batch may finish", |plan| {
-                if plan.request_review.is_some() { bail!("Reviewed grant execution has no pause acknowledgement; use Stop and inspect") }
+                if plan.is_review_request() { bail!("Reviewed grant execution has no pause acknowledgement; use Stop and inspect") }
                 plan.status = match plan.status {
                     PlanStatus::Running => PlanStatus::Pausing,
                     PlanStatus::Pending | PlanStatus::Paused => PlanStatus::Paused,
@@ -783,7 +791,7 @@ impl TaskEngine {
         }
         let guard = self.claim(id, || {
             self.store.change(id,"Owner requested resume",|plan|{
-            if plan.request_review.is_some() {bail!("Reviewed grants cannot resume or replay through legacy runners; inspect uncertain effects")}
+            if plan.is_review_request() {bail!("Reviewed grants cannot resume or replay through legacy runners; inspect uncertain effects")}
             if !matches!(plan.status,PlanStatus::Paused|PlanStatus::Interrupted) {bail!("Only paused or interrupted jobs can resume")}
             if plan.tasks.iter().any(|t|t.status==TaskStatus::Interrupted&&!retry_safe(t)) {
                 bail!("An interrupted action may already have happened. This job cannot safely resume; review it and create new work explicitly.")
@@ -822,7 +830,7 @@ impl TaskEngine {
         if self.reviewed_only {
             return Err(eefn::execution_boundary::ExecutionGrantRequired.into());
         }
-        if plan.status != PlanStatus::Pending || plan.request_review.is_some() {
+        if plan.status != PlanStatus::Pending || plan.is_review_request() {
             bail!("Review records are not executable plans")
         }
         if !self.has_executor() {
@@ -857,6 +865,14 @@ impl TaskEngine {
         let id = plan.plan_id.clone();
         let guard = self.admit_new(plan)?;
         self.drive(&id, guard).await
+    }
+    pub(crate) fn store_input_intent(&self, plan: Plan) -> Result<crate::jobs::JobAdmission> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no new input is accepted")
+        }
+        crate::request_intent::validate(&plan)?;
+        self.store.admit_request(plan)
     }
     pub(crate) fn store_review_request(&self, plan: Plan) -> Result<crate::jobs::JobAdmission> {
         let active = self.active.lock().expect("active jobs");

@@ -15,6 +15,29 @@ package command exit codes. Background service launch/console ownership remains
 separate. Its local and published-source regressions pass; existing published
 installers are unchanged and stable-release acceptance remains separate.
 
+## Retain input before model setup (in development)
+
+The unreleased raw-input command is awaiting hosted verification:
+
+    eefn requests save-input --text 'Your request'
+    eefn requests save-input --text 'Your request' --operation-id UUID
+    eefn jobs find --operation-id UUID
+    eefn jobs get REQUEST_ID
+    eefn jobs stop REQUEST_ID
+
+It uses the running node and the existing durable coordinator journal. It saves
+raw text and its authenticated origin before any interpretation, without a fake
+proposal, task or execution authority. Identical retained receipt reuse inspects
+the original record, including a cancelled record; changed text is refused.
+Count/byte quotas still apply. Receipt protection lasts while history is retained.
+If the save outcome is unknown, inspect the operation before deciding to resend;
+the command never automatically retries. JSON output and detailed job inspection
+contain the original private text, while the concise save confirmation does not.
+
+This command does not yet interpret saved input, and `requests input` still uses
+its existing selected local interpreter. Automatic network interpretation needs
+the remaining [delegation work](NETWORK-INTERPRETER.md).
+
 ## Continuous source inspection (in development)
 
 For the camera setup, review, approval, execution and stop sequence, see the
@@ -56,8 +79,9 @@ saved and applied bindings. After an unconfirmed save, inspect `camera show` bef
 deciding what to do. No automatic retry, device probe, restart or model call is
 performed.
 
-An additional dependency check is in development; its new hosted runtime checks
-are pending. It can run before camera permission is enabled:
+An additional dependency check is available in development source. Its local and
+pinned remote command paths passed hosted verification at `bec16819`; physical
+camera acceptance is still open. It can run before camera permission is enabled:
 
     eefn camera check
     eefn camera check --timeout-seconds 20 --max-job-memory-mib 512

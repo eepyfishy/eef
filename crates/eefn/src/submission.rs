@@ -80,6 +80,7 @@ impl SubmissionMailbox {
             kind,
             "message"
                 | "requests.capabilities"
+                | "requests.intent"
                 | "requests.planning"
                 | "requests.preparation_checkpoint"
                 | "requests.concrete"

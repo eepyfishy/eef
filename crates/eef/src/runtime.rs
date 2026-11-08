@@ -714,6 +714,9 @@ impl Runtime {
             "message" => Err(anyhow::anyhow!(
                 "Legacy message execution is retired. Interpret through the running node and save a reviewed request; no keyword, model or workload fallback."
             )),
+            "requests.intent" => {
+                crate::request_intent::save(&self.engine, message["payload"].clone(), &context)
+            }
             "requests.review" => {
                 match self
                     .discovery

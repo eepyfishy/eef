@@ -84,6 +84,7 @@ pub mod request_abandon;
 pub mod request_drafts;
 pub mod request_execution;
 pub mod request_input;
+pub mod request_intent;
 pub mod request_limits;
 pub mod request_planning;
 pub mod request_preparation;

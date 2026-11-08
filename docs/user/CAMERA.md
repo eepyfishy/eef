@@ -41,8 +41,9 @@ instead of relying on automatic selection.
 
 ## Check the selected dependencies
 
-The additional `camera check` command is in development; its hosted runtime
-verification is pending. Before granting camera permission, run:
+The additional `camera check` command is in development source. Local and pinned
+remote command checks passed hosted verification at `bec16819`; physical camera
+acceptance is still open. Before granting camera permission, run:
 
 ```powershell
 .\eefn.exe camera check

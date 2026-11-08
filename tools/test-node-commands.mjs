@@ -5,7 +5,7 @@ import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:net';
-import {randomBytes} from 'node:crypto';
+import {randomBytes,randomUUID} from 'node:crypto';
 
 const root=resolve(import.meta.dirname,'..');
 const scratch=await mkdtemp(join(root,'.validation','node-commands-'));
@@ -26,6 +26,11 @@ async function command(args,success=true) {
 async function port(){const s=createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
 async function until(fn,label){const end=Date.now()+65000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,200));}throw Error('Timeout: '+label);}
 async function json(url){const r=await fetch(url,{signal:AbortSignal.timeout(2000)});assert(r.ok);return r.json();}
+async function nodeCommand(args,expected=0,plain=false){
+  const child=launch('eefn',['--config',config,...(plain?[]:['--json']),...args]);
+  const timer=setTimeout(()=>child.kill(),30000);
+  try{const r=await child.result;assert.equal(r.code,expected,r.err);return plain?r.out:JSON.parse(r.out);}finally{clearTimeout(timer);}
+}
 try {
   const first=await command(['set','--name','Command node','--advertise-address','26.1.2.3']);
   const id=first.node_id;assert.match(id,/^device-/);assert.equal(first.running,false);
@@ -39,6 +44,8 @@ try {
   await modelCommand(['hints','--backend','ollama','--model','offline-fixture','--capability','vlm.analyze'],false);assert.equal(await readFile(config,'utf8'),selectionBefore);
   await modelCommand(['remove','--backend','ollama','--model','offline-fixture']);assert.equal((await modelCommand(['show'])).saved_selections.length,0);
   const before=await readFile(config,'utf8');
+  await nodeCommand(['requests','save-input','--text','Cannot save from a stopped node'],1);
+  assert.equal(await readFile(config,'utf8'),before);
   await command(['set','--name','Must not save','--advertise-address','http://bad/path'],false);
   assert.equal(await readFile(config,'utf8'),before);
   const [apiPort,nodePort,eefPort]=await Promise.all([port(),port(),port()]);
@@ -49,7 +56,8 @@ try {
   await writeFile(config,JSON.stringify(saved));
   const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${eefPort}`).replace('port: 51335',`port: ${nodePort}`).replace('policy: prompt','policy: off');
   const eefConfig=join(scratch,'eef.yaml');await writeFile(eefConfig,yaml);
-  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain'],{EEF_NODE_PSK:secret});
+  const startCoordinator=()=>launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain'],{EEF_NODE_PSK:secret});
+  let coordinator=startCoordinator();
   await until(async()=>(await json(eef+'/api/diagnostics')).initialized===true,'coordinator initialized before node start');
   const emptyReport=await json(eef+'/api/diagnostics');
   for(const field of ['node_event_loss_count','assistant_event_loss_count','world_event_loss_count'])assert.equal(emptyReport[field],0,field);
@@ -80,6 +88,45 @@ try {
   await coordinatorCommand(['diagnostics','--node','missing-node'],1);
   const invite=await coordinatorCommand(['invite','--address','192.0.2.10:51335']);const decoded=JSON.parse(Buffer.from(invite.code,'base64').toString('utf8'));assert.equal(decoded.address,'192.0.2.10:51335');assert.equal(decoded.psk,secret);
   await coordinatorCommand(['invite','--address','http://bad/path'],1);
+  // Real shipping raw-input commands, through the running model-free node.
+  // Saving has no interpreter, proposal, permission change, grant or execution.
+  const operation=randomUUID(),text='Keep this exact input before choosing an interpreter. 👋';
+  const saveArgs=['requests','save-input','--text',text,'--operation-id',operation];
+  const inputConfig=await readFile(config,'utf8');
+  const input=await nodeCommand(saveArgs);
+  assert.equal(input.report_type,'node_request_intent');assert.equal(input.success,true);
+  assert.equal(input.result.input.original_text,text);assert.equal(input.result.request_context.origin_node,id);
+  assert.equal(input.result.operation_id,operation);assert.equal(input.result.status,'review');
+  for(const field of ['interpretation_requested','execution_authorized','dispatched','automatically_retried'])assert.equal(input[field],false,field);
+  const inspect=(await nodeCommand(['jobs','get',input.result.id])).data;
+  assert.equal(inspect.review_state,'awaiting_interpretation');assert.equal(inspect.proposal_count,0);
+  assert.equal(inspect.can_resume,false);assert.equal(inspect.task_count,0);assert.equal(inspect.input_intent.original_text,text);
+  const found=(await nodeCommand(['jobs','find','--operation-id',operation])).data;
+  assert.equal(found.total,1);assert.equal(found.jobs[0].id,input.result.id);assert(!('input_intent' in found.jobs[0]));
+  const duplicate=await nodeCommand(saveArgs);assert.equal(duplicate.result.reused,true);
+  assert.equal(duplicate.result.id,input.result.id);assert.equal(duplicate.result.revision,input.result.revision);
+  const conflict=await nodeCommand(['requests','save-input','--text','Changed','--operation-id',operation],1);
+  assert.equal(conflict.error_code,'refused');assert.equal(conflict.outcome_unknown,false);
+  await nodeCommand(['jobs','resume',input.result.id],1);
+  await nodeCommand(['requests','plan',input.result.id],1);
+  const plain=await nodeCommand(saveArgs,0,true);assert.match(plain,/awaiting interpretation/);assert(plain.includes(input.result.id));
+  assert(!plain.includes(text));assert(!plain.includes(secret));
+  const rawRequest={schema_version:1,expected_node_id:id,expected_runtime_id:input.runtime_id,command:{operation_id:randomUUID(),original_text:'Should not save'}};
+  let rejected=await fetch(api+'/api/commands/requests/save-input',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(rawRequest)});
+  assert.equal(rejected.status,403);
+  rejected=await fetch(api+'/api/commands/requests/save-input',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...rawRequest,expected_node_id:'wrong-node'})});
+  assert.equal(rejected.status,400);
+  assert.equal(await readFile(config,'utf8'),inputConfig);
+  coordinator.kill();await coordinator.result;coordinator=startCoordinator();
+  await until(async()=>(await json(eef+'/api/diagnostics')).registered_node_count===1,'node reconnects after fixture coordinator restart');
+  const retained=await nodeCommand(saveArgs);
+  assert.equal(retained.result.reused,true);assert.equal(retained.result.id,input.result.id);
+  assert.equal(retained.result.source_sha256,input.result.source_sha256);assert.equal(retained.result.revision,input.result.revision);
+  await nodeCommand(['jobs','stop',input.result.id]);
+  const stopped=await nodeCommand(saveArgs);assert.equal(stopped.result.reused,true);assert.equal(stopped.result.status,'cancelled');
+  assert.equal((await nodeCommand(['jobs','get',input.result.id])).data.task_count,0);
+  assert.equal((await coordinatorCommand(['models','list'])).nodes[0].models.length,0);
+  console.log('Durable model-free input command validation passed: '+scratch);
   assert.equal(online.applied_network.advertised_address,'26.1.2.3');
   assert(!JSON.stringify(online).includes(secret));
   const next=await command(['set','--name','Renamed node','--advertise-address','26.4.5.6','--coordinator-id','eef-local','--coordinator-address',`26.4.5.6:${nodePort}`,'--coordinator-state','standby']);
@@ -92,7 +139,7 @@ try {
   const after=JSON.parse(await readFile(config,'utf8'));assert.equal(after.psk,secret);assert.deepEqual(after.permissions,saved.permissions);assert.equal(after.node_id,id);
   await command(['set','--clear-address','--clear-coordinator']);
   const cleared=await command(['show']);assert.equal(cleared.network.advertised_address,null);assert.equal(cleared.network.coordinator,null);
-  const results={passed:true,offline_commands_without_models:true,headless_running_commands:true,stable_identity:true,distinct_connection_and_advertisement:true,coordinator_metadata_reaches_eef:true,permissions_preserved:true,malformed_address_and_wrong_target_and_origin_rejected:true,physical_two_pc:false};
+  const results={passed:true,offline_commands_without_models:true,headless_running_commands:true,durable_model_free_input:true,input_reuse_conflict_restart_and_cancellation:true,automatic_remote_interpretation:false,stable_identity:true,distinct_connection_and_advertisement:true,coordinator_metadata_reaches_eef:true,permissions_preserved:true,malformed_address_and_wrong_target_and_origin_rejected:true,physical_two_pc:false};
   await writeFile(join(scratch,'results.json'),JSON.stringify(results,null,2));
   console.log('Node command validation passed: '+scratch);
 } finally {

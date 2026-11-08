@@ -23,6 +23,24 @@ The dashboard and commands use the same backend rules.
 
 ## Try a request without a model
 
+An unreleased `save-input` command can retain ordinary text before any model is
+configured. Its new hosted verification is pending:
+
+```powershell
+.\eefn.exe requests save-input --text 'Your request'
+.\eefn.exe jobs get REQUEST_ID
+```
+
+This saves raw input only. It does not interpret, prepare, approve or execute it.
+Saved-input interpretation is still being implemented; `requests input` continues
+to require a selected interpreter. You can cancel saved input with
+`eefn jobs stop REQUEST_ID`. To inspect after a lost reply, use the operation ID
+with `eefn jobs find --operation-id OPERATION_ID`. Reusing an explicit
+`--operation-id` with the same text returns the retained record; changing the
+text is refused. This protection lasts while the job remains in history.
+
+To create an executable plan without a model, use an explicit template instead:
+
 This example asks for basic system information using an explicit template. It
 does not need an interpreter or a JSON input file. Both apps must be running and
 the execution node must support reviewed grants.
