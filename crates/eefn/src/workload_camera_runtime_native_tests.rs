@@ -1,5 +1,6 @@
 // Included only by Windows native-test-fixtures; no shipping hook or hardware.
 use futures_util::FutureExt;
+include!("workload_camera_opencv_native_tests.rs");
 pub(crate) fn native_fixture(mode: &str) -> (Fixture, tempfile::TempDir) {
     let trace = tempfile::tempdir().unwrap();
     let executable = std::path::PathBuf::from(

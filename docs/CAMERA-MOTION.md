@@ -10,6 +10,21 @@ The sections below retain the earlier incremental checkpoints and their own
 verification boundaries. A feature described as unavailable at an earlier
 checkpoint is not a claim that later sections or current code omit it.
 
+The next decoder fixture is under development and has not passed hosted runtime
+verification yet. It uses the existing hashed OpenCV/NumPy interpreter and a
+generated MJPEG/AVI sequence inside the owned source process. Only acquisition is
+substituted through the existing opt-in native-test prelude; decoding, resizing,
+grayscale comparison, consumed workload authority, durable event delivery and
+completion/error handling use the existing implementation. The source still
+rejects arbitrary file bindings in shipping builds.
+
+The fixture checks a complete five-frame sequence and a three-frame truncated
+sequence against the same five-frame reviewed workload. Truncation must keep the
+receipt uncertain, release the decoder once and emit no invented quiet frames.
+Its explicit 512 MiB test grant does not change production memory defaults.
+This adds a real-codec acceptance case; it does not establish physical camera,
+RTSP transport, two-PC or stable-release acceptance.
+
 `python/streams/camera_motion.py` implements a lazy, single-open motion iterator
 for later admitted camera workloads. It samples a small grayscale image, compares
 it with the preceding sample and emits only frame count, optional activity,
