@@ -49,6 +49,14 @@ explicit 512 MiB check; no camera workload memory default is changed. None of
 this proves physical media, real streaming decode, an installer or stable release
 acceptance. The accepted checkpoint above remains the current runtime evidence.
 
+The following command-coverage increment also exercises the actual eef CLI over
+a privately paired TLS node connection with real camera dependencies and browser
+pages disabled. It requires a successful typed result and readable plain output,
+refuses the legacy connection and absent/revoked owner approval, and verifies
+that capture permission stays disabled and checks do not rewrite node settings.
+This new coverage is pending hosted verification; a backend adapter test alone
+does not establish the successful public coordinator command path.
+
 ## Native camera command lifecycle observed; full acceptance still failed
 
 At `98b9576`, run `42429344635` passed all 36 Windows command suites, the additional
