@@ -72,6 +72,8 @@ fn local_id<'a>(node: &str, id: &'a str, check_owner: bool) -> Result<&'a str> {
 }
 #[derive(Debug, clap::Subcommand)]
 pub enum Action {
+    /// Check selected Python/OpenCV dependencies using a tiny in-memory image.
+    Check(crate::camera_check::Settings),
     /// Inspect saved/applied camera bindings and permission; never probe a device.
     Show,
     /// Save webcam/RTSP bindings; permissions, consent and execution stay separate.

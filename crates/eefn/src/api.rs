@@ -140,6 +140,10 @@ impl NodeService {
                 post(camera_setup).layer(axum::extract::DefaultBodyLimit::max(8192)),
             )
             .route(
+                "/api/commands/camera-check",
+                post(camera_check).layer(axum::extract::DefaultBodyLimit::max(4096)),
+            )
+            .route(
                 "/api/commands/workload-policy",
                 post(workload_policy).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
@@ -380,6 +384,12 @@ async fn camera_setup(
     Json(request): Json<crate::camera_setup::Request>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.camera_setup(request, false)?))
+}
+async fn camera_check(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::camera_check::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.camera_check(request, false).await?))
 }
 async fn model_lifecycle(
     State(state): State<Arc<NodeService>>,

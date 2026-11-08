@@ -462,6 +462,27 @@ impl NodeServer {
             json!({"type":"request","capability":"node.configure","action":action,"params":request}),
             Duration::from_secs(10),None,None,None,Some(binding)).await
     }
+    /// The dependency probe uses the same authenticated route fence as setup.
+    pub async fn invoke_camera_check(
+        &self,
+        request: crate::camera_check::Request,
+    ) -> Result<Value> {
+        request.validate()?;
+        let binding = {
+            let connections = self.inner.connections.read().await;
+            let connection = connections
+                .get(&request.expected_node_id)
+                .context("Camera node unavailable")?;
+            Self::check_camera_control(connection, &request.expected_runtime_id)?;
+            CameraControlBinding {
+                session_id: connection.session_id,
+                runtime_id: request.expected_runtime_id.clone(),
+            }
+        };
+        self.invoke_message_with_camera_binding(&request.expected_node_id,
+            json!({"type":"request","capability":"node.configure","action":"camera_check","params":request}),
+            Duration::from_secs(request.settings.timeout_seconds + 4), None, None, None, Some(binding)).await
+    }
     fn check_camera_control(connection: &Connection, runtime: &str) -> Result<()> {
         if !connection.credential_transport {
             bail!("Camera setup requires an independently authenticated pinned connection");

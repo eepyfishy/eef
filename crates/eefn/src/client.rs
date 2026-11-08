@@ -1077,6 +1077,7 @@ impl NodeClient {
                         | "camera_workload_sources"
                         | "camera_setup"
                         | "camera_setup_status"
+                        | "camera_check"
                 )
                 && (grant_issuer.is_none() || grant_session.is_none())
             {
@@ -1543,6 +1544,7 @@ mod tests {
             "camera_workload_sources",
             "camera_setup",
             "camera_setup_status",
+            "camera_check",
         ] {
             let rejected = server
                 .invoke_remote(

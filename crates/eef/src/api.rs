@@ -251,6 +251,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(node_camera).layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
         .route(
+            "/api/commands/node/camera/check",
+            post(node_camera_check).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/commands/node/model-lifecycle",
             post(node_model_lifecycle),
         )
@@ -558,6 +562,14 @@ async fn node_camera(
 ) -> ApiResult<Value> {
     Ok(Json(
         crate::node_camera::command(&runtime.node_server, request).await?,
+    ))
+}
+async fn node_camera_check(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<eefn::camera_check::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(
+        crate::node_camera::check_command(&runtime.node_server, request).await?,
     ))
 }
 #[derive(serde::Deserialize)]

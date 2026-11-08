@@ -1874,6 +1874,9 @@ async fn execute_camera_setup(
 ) -> Result<serde_json::Value> {
     use eefn::camera_setup::{Action, Command, Request};
     use serde_json::json;
+    if let Action::Check(settings) = action {
+        settings.validate()?;
+    }
     if let Action::Configure(settings) = action {
         settings.validate()?;
     }
@@ -1894,6 +1897,32 @@ async fn execute_camera_setup(
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(10))
         .build()?;
+    if let Action::Check(settings) = action {
+        let runtime =
+            eefn::credential_pairing::wait_for_runtime(&client, address, &file.node_id).await?;
+        let request = eefn::camera_check::Request {
+            schema_version: 1,
+            expected_node_id: file.node_id,
+            expected_runtime_id: runtime,
+            request_id: uuid::Uuid::new_v4().to_string(),
+            settings: settings.clone(),
+        };
+        request.validate()?;
+        let response = client
+            .post(format!("http://{address}/api/commands/camera-check"))
+            .timeout(Duration::from_secs(settings.timeout_seconds + 5))
+            .json(&request)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Camera dependency check was refused or unavailable; no retry was sent");
+        }
+        let result = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::camera_check::confirmed(&result, &request) {
+            bail!("Camera dependency check reply was unconfirmed; no retry was sent");
+        }
+        return Ok(result);
+    }
     let mutation = matches!(action, Action::Configure(_));
     let mut sending_mutation = false;
     let exchange = async {
@@ -3405,7 +3434,14 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                         );
                     }
                 } else if matches!(command, Commands::Camera { .. }) {
-                    if value["success"] == true {
+                    if matches!(
+                        command,
+                        Commands::Camera {
+                            command: eefn::camera_setup::Action::Check(_)
+                        }
+                    ) {
+                        print!("{}", eefn::camera_check::render(&value)?);
+                    } else if value["success"] == true {
                         print!("{}", eefn::camera_setup::render(&value["result"])?);
                     } else {
                         println!(
@@ -3954,12 +3990,14 @@ async fn run_node(
     };
     dashboard.record_python_startup(&python_startup);
     dashboard.live.lock().unwrap()["python_bridge"] = serde_json::Value::Null;
+    let executable = python_for_startup(&args.config, file.python.clone(), args.python.is_some());
+    let configured = PythonRuntime::discover(executable)
+        .map(|runtime| runtime.with_limits(file.python_bridge.clone()))
+        .transpose();
+    if let Ok(Some(selected)) = &configured {
+        engine = engine.with_python_check_runtime(Arc::new(selected.clone()));
+    }
     if requested {
-        let executable =
-            python_for_startup(&args.config, file.python.clone(), args.python.is_some());
-        let configured = PythonRuntime::discover(executable)
-            .map(|runtime| runtime.with_limits(file.python_bridge.clone()))
-            .transpose();
         let runtime = match configured {
             Ok(Some(runtime)) => match runtime.check_availability().await {
                 Ok(()) => {
@@ -4855,6 +4893,26 @@ mod tests {
         assert_eq!(settings.resource.as_deref(), Some("living-room"));
         settings.validate().unwrap();
         assert!(Args::try_parse_from(["eefn", "camera", "show"]).is_ok());
+        let check = Args::try_parse_from(["eefn", "camera", "check"]).unwrap();
+        let Some(Commands::Camera {
+            command: eefn::camera_setup::Action::Check(settings),
+        }) = check.command
+        else {
+            panic!("Wrong camera dependency adapter")
+        };
+        assert_eq!(settings.timeout_seconds, 10);
+        assert_eq!(settings.max_job_memory_mib, 128);
+        for flag in [
+            "--device",
+            "--rtsp",
+            "--file",
+            "--module",
+            "--grant",
+            "--enable",
+            "--restart",
+        ] {
+            assert!(Args::try_parse_from(["eefn", "camera", "check", flag]).is_err());
+        }
         assert!(Args::try_parse_from(["eefn", "camera", "configure"]).is_ok());
         for extra in [
             vec!["--device", "1024"],

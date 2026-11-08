@@ -146,3 +146,17 @@ pub async fn command(server: &eefn::NodeServer, request: Request) -> Result<Valu
     }
     Ok(report)
 }
+
+/// A negative typed dependency result is still an acknowledged check.
+pub async fn check_command(
+    server: &eefn::NodeServer,
+    request: eefn::camera_check::Request,
+) -> Result<Value> {
+    request.validate()?;
+    let reply = server.invoke_camera_check(request.clone()).await?;
+    ensure!(
+        reply["success"] == true && eefn::camera_check::confirmed(&reply["data"], &request),
+        "Remote camera dependency check unconfirmed; no retry was sent"
+    );
+    Ok(reply["data"].clone())
+}

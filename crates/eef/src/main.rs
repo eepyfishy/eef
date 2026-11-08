@@ -625,6 +625,32 @@ mod credential_cli_tests {
     }
     #[test]
     fn camera_setup_cli_selects_a_node_without_json_or_authority_flags() {
+        let check = Args::try_parse_from([
+            "eef",
+            "node",
+            "camera",
+            "--node",
+            "living-room",
+            "check",
+            "--timeout-seconds",
+            "15",
+            "--max-job-memory-mib",
+            "256",
+        ])
+        .unwrap();
+        let Some(Command::Node {
+            command:
+                NodeCommand::Camera {
+                    node,
+                    command: eefn::camera_setup::Action::Check(settings),
+                },
+        }) = check.command
+        else {
+            panic!("Wrong remote camera dependency adapter")
+        };
+        assert_eq!(node, "living-room");
+        assert_eq!(settings.timeout_seconds, 15);
+        assert_eq!(settings.max_job_memory_mib, 256);
         let args = Args::try_parse_from([
             "eef",
             "node",
@@ -1439,6 +1465,9 @@ async fn remote_camera_cli(
     use eefn::camera_setup::{Action, Command};
     use serde_json::json;
     eefn::network::validate_remote_node_id(node)?;
+    if let Action::Check(settings) = action {
+        settings.validate()?;
+    }
     if let Action::Configure(settings) = action {
         settings.validate()?;
     }
@@ -1459,6 +1488,33 @@ async fn remote_camera_cli(
         let inspected = eefn::model_manager::bounded_json(response).await?;
         if !eef::node_camera::confirmed(&inspected, &request) {
             bail!("Unconfirmed camera inspection");
+        }
+        if let Action::Check(settings) = action {
+            let check = eefn::camera_check::Request {
+                schema_version: 1,
+                expected_node_id: node.into(),
+                expected_runtime_id: inspected["result"]["runtime_id"]
+                    .as_str()
+                    .context("Missing node runtime")?
+                    .into(),
+                request_id: uuid::Uuid::new_v4().to_string(),
+                settings: settings.clone(),
+            };
+            check.validate()?;
+            let response = client
+                .post(format!("{base}/api/commands/node/camera/check"))
+                .timeout(std::time::Duration::from_secs(settings.timeout_seconds + 6))
+                .json(&check)
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                bail!("Remote camera dependency check was refused or unavailable");
+            }
+            let result = eefn::model_manager::bounded_json(response).await?;
+            if !eefn::camera_check::confirmed(&result, &check) {
+                bail!("Unconfirmed remote camera dependency check");
+            }
+            return Ok(result);
         }
         let Action::Configure(settings) = action else {
             return Ok::<_, anyhow::Error>(inspected);
@@ -1489,6 +1545,9 @@ async fn remote_camera_cli(
         Ok(saved)
     }
     .await;
+    if matches!(action, Action::Check(_)) {
+        return exchange.context("Remote camera dependency check unconfirmed; no retry was sent");
+    }
     Ok(exchange.unwrap_or_else(|_|json!({"schema_version":1,"report_type":"remote_camera_setup","node_id":node,"success":false,
         "mutation_requested":mutation,"sending_attempted":sending,"outcome_unknown":sending,"result":null,
         "execution_authorized":false,"restart_requested":false,"automatically_retried":false,
@@ -3055,7 +3114,17 @@ async fn main() -> Result<()> {
                         }
                     )
                 {
-                    if value["success"] == true {
+                    if matches!(
+                        command,
+                        Command::Node {
+                            command: NodeCommand::Camera {
+                                command: eefn::camera_setup::Action::Check(_),
+                                ..
+                            }
+                        }
+                    ) {
+                        print!("{}", eefn::camera_check::render(&value)?);
+                    } else if value["success"] == true {
                         print!("{}", eefn::camera_setup::render(&value["result"])?);
                     } else {
                         println!(

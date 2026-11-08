@@ -261,6 +261,7 @@ pub struct NodeEngine {
     policy: NodePolicy,
     pub model_server: Option<Arc<ModelServer>>,
     python: Option<Arc<PythonRuntime>>,
+    python_check_runtime: Option<Arc<PythonRuntime>>,
     plugins: HashMap<String, PythonPlugin>,
     install_dir: PathBuf,
     update_manifest: Option<String>,
@@ -336,6 +337,7 @@ impl NodeEngine {
             policy: normalize_policy(policy)?,
             model_server: None,
             python: None,
+            python_check_runtime: None,
             plugins: HashMap::new(),
             install_dir,
             update_manifest: None,
@@ -417,6 +419,25 @@ impl NodeEngine {
     pub fn with_python_runtime(mut self, runtime: Arc<PythonRuntime>) -> Self {
         self.python = Some(runtime);
         self
+    }
+    /// Retain the applied selection for explicit health checks before permission
+    /// is enabled. This does not launch Python or register a media capability.
+    pub fn with_python_check_runtime(mut self, runtime: Arc<PythonRuntime>) -> Self {
+        self.python_check_runtime = Some(runtime);
+        self
+    }
+    pub(crate) fn camera_check_runtime(
+        &self,
+        node: &str,
+        pool: &crate::capture_ownership::Pool,
+    ) -> Result<Arc<PythonRuntime>> {
+        if self.resource_owner != node || !self.camera_pool.same(pool) {
+            bail!("Camera check does not share this node's source ownership")
+        }
+        self.python_check_runtime
+            .clone()
+            .or_else(|| self.python.clone())
+            .context("Python check selection is unavailable")
     }
     pub(crate) fn microphone_runtime(
         &self,

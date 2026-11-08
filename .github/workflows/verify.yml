@@ -107,6 +107,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node tools/test-msi-authoring.mjs
           exit $LASTEXITCODE
+      - name: Prepare locked camera dependencies (hosted runner only)
+        if: matrix.os == 'windows-2025' && matrix.mode == 'headless'
+        run: |
+          & ./tools/prepare-camera-check-python.ps1
       - name: Workspace and all-target regression tests
         id: workspace_tests
         run: |
@@ -170,6 +174,7 @@ jobs:
             'test-local-pipelines.mjs',
             'test-python-policy.mjs',
             'test-python-bridge.mjs',
+            'test-camera-check.mjs',
             'test-python-stream.mjs',
             'test-microphone-energy.mjs',
             'test-microphone-stream.mjs',

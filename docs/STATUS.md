@@ -30,6 +30,25 @@ work/strong stop, mesh/optimization/cluster, installer recovery/security and sta
 release acceptance remain open. Later documentation-only updates do not establish
 additional runtime behavior.
 
+## Camera dependency check in development
+
+The next backend increment adds `eefn camera check` and
+`eef node camera --node NODE_ID check`. They use the applied Python selection,
+including before capture permission, with a short deadline, bounded pipes,
+Windows owned-job memory limits and the camera ownership pool. A fixed payload
+imports OpenCV/NumPy and checks tiny in-memory transforms without opening a
+source. Remote checks require current owner management approval and a pinned
+credential/session/runtime. Runtime retirement fences results and owned-process
+cleanup retains source ownership until observed exit.
+
+Hosted verification of this increment is pending. Its new fixtures use the
+existing hashed OpenCV/NumPy Windows lock in a disposable interpreter, a separate
+empty interpreter for missing dependencies, real shipping CLI/API commands and
+owner-limit observations. The 128 MiB default is measured separately from an
+explicit 512 MiB check; no camera workload memory default is changed. None of
+this proves physical media, real streaming decode, an installer or stable release
+acceptance. The accepted checkpoint above remains the current runtime evidence.
+
 ## Native camera command lifecycle observed; full acceptance still failed
 
 At `98b9576`, run `42429344635` passed all 36 Windows command suites, the additional

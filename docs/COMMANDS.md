@@ -56,6 +56,28 @@ saved and applied bindings. After an unconfirmed save, inspect `camera show` bef
 deciding what to do. No automatic retry, device probe, restart or model call is
 performed.
 
+An additional dependency check is in development; its new hosted runtime checks
+are pending. It can run before camera permission is enabled:
+
+    eefn camera check
+    eefn camera check --timeout-seconds 20 --max-job-memory-mib 512
+    eef node camera --node NODE_ID check
+
+This explicitly starts a short-lived process in the node's applied Python
+selection, imports OpenCV/NumPy and transforms a tiny in-memory image. It opens no
+camera or RTSP endpoint, calls no model and changes no settings or permissions.
+It works with browser pages disabled. A remote check requires current local
+remote-management approval and an independently authenticated pinned session.
+`camera show` and passive source inspection still start no dependency check.
+
+The default check allows ten seconds and a 128 MiB Windows job commit ceiling;
+the applied Python policy can tighten both. The flags above are explicit limits
+for the check, not new workload defaults. Output is bounded, and raw interpreter
+errors/paths are omitted. A failed check exits nonzero with a closed reason; it
+does not automatically install packages, retry, restart or enable capture. Success
+confirms only the small dependency operation, not camera/decoder/network readiness
+or capture approval. Windows owned-process support is currently required.
+
 Prepare a bounded camera-motion request without JSON or a model:
 
     eefn requests submit-camera

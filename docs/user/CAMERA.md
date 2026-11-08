@@ -39,6 +39,29 @@ The `camera` resource name in these examples is your chosen name. Use the same
 name when submitting. With multiple resources, select the intended one explicitly
 instead of relying on automatic selection.
 
+## Check the selected dependencies
+
+The additional `camera check` command is in development; its hosted runtime
+verification is pending. Before granting camera permission, run:
+
+```powershell
+.\eefn.exe camera check
+```
+
+It imports OpenCV/NumPy in the running node's selected Python environment and
+checks a tiny in-memory image. It does not open your camera or change settings.
+The node can report missing dependencies, process-limit failures or a competing
+camera operation without exposing private interpreter output. Use `python show`
+to inspect saved versus applied Python settings; apply changed selections with
+an explicit restart.
+
+An eef owner can also run `eef node camera --node NODE_ID check` after the source
+owner enables remote management. The default check uses ten seconds and a
+128 MiB owned-job commit ceiling, tightened by the node's applied Python policy.
+An explicit `--timeout-seconds` or `--max-job-memory-mib` changes this check's
+requested limits only. See [the command reference](../COMMANDS.md) for details.
+Success does not prove that a physical camera or RTSP stream works.
+
 ## Enable the source and apply its settings
 
 The source node owner enables the camera feature, ambient listening consent and

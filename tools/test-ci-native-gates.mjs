@@ -45,7 +45,8 @@ for(const os of ['windows-2025','ubuntu-24.04'])for(const mode of ['headless','d
  const reachable={...steps,native_build:{outcome:canBuild(matrix,steps,()=>cancelled)?fresh:'skipped'}};
  if(!canBuild(matrix,steps,()=>cancelled))assert.equal(canRun(matrix,reachable,()=>cancelled),false,'Skipped prerequisites must not reach native execution');
 }
-const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,36);assert.equal(new Set(scripts).size,36);
+const scripts=[...native.matchAll(/'(test-[\w-]+\.mjs)'/g)].map(match=>match[1]);assert.equal(scripts.length,37);assert.equal(new Set(scripts).size,37);
+assert(scripts.includes('test-camera-check.mjs'));
 assert(scripts.includes('test-setup-model-check.mjs'));
 assert(scripts.includes('test-coordinator-initialization.mjs'));assert(scripts.includes('test-bundled-components.mjs'));assert(scripts.includes('test-python-bridge.mjs'));
 assert(scripts.includes('test-python-stream.mjs'));

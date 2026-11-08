@@ -413,6 +413,42 @@ impl PythonRuntime {
         execution_deadline: Option<Instant>,
         reservation: Option<crate::capture_ownership::Reservation>,
     ) -> Result<Value> {
+        self.call_host(
+            PLUGIN_HOST,
+            Some(plugin_path),
+            request,
+            stdout_limit,
+            execution_deadline,
+            reservation,
+        )
+        .await
+    }
+
+    /// Fixed reviewed health payload only; no caller-supplied source or imports.
+    pub(crate) async fn check_camera_dependencies(
+        &self,
+        reservation: crate::capture_ownership::Reservation,
+    ) -> Result<Value> {
+        self.call_host(
+            include_str!("../../../python/eef_camera_check.py"),
+            None,
+            json!({}),
+            1024,
+            None,
+            Some(reservation),
+        )
+        .await
+    }
+
+    async fn call_host(
+        &self,
+        host: &'static str,
+        plugin_path: Option<&Path>,
+        request: Value,
+        stdout_limit: usize,
+        execution_deadline: Option<Instant>,
+        reservation: Option<crate::capture_ownership::Reservation>,
+    ) -> Result<Value> {
         self.limits.validate()?;
         // Never silently drop an explicitly requested native ceiling.
         crate::model_memory::supported(self.limits.max_job_memory_mib)?;
@@ -427,18 +463,21 @@ impl PythonRuntime {
         if Instant::now() >= deadline {
             return Err(BridgeFailure::Deadline.into());
         }
-        let metadata = timeout_at(deadline, tokio::fs::metadata(plugin_path))
-            .await
-            .map_err(|_| BridgeFailure::Deadline)?
-            .context("Python plugin metadata unavailable")?;
-        if !metadata.is_file() {
-            bail!("Python plugin '{}' does not exist", plugin_path.display());
+        if let Some(plugin_path) = plugin_path {
+            let metadata = timeout_at(deadline, tokio::fs::metadata(plugin_path))
+                .await
+                .map_err(|_| BridgeFailure::Deadline)?
+                .context("Python plugin metadata unavailable")?;
+            if !metadata.is_file() {
+                bail!("Python plugin '{}' does not exist", plugin_path.display());
+            }
         }
         let mut command = self.command();
+        command.arg("-c").arg(host);
+        if let Some(plugin_path) = plugin_path {
+            command.arg(plugin_path);
+        }
         command
-            .arg("-c")
-            .arg(PLUGIN_HOST)
-            .arg(plugin_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
