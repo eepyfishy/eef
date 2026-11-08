@@ -1,5 +1,16 @@
 # Architecture
 
+eef means **eve's extensible framework**. Its product direction is a lightweight,
+independent framework that users expand themselves. eve is the primary motivation
+and intended flagship application, with its own assistant behavior and state;
+eef's core services remain useful without eve or working model inference.
+
+The present v0.4 implementation still includes built-in assistant and model
+features described below. Separating these into optional modules and building a
+new expandable dashboard belong to the parked v0.5 design, after stable v0.4 and
+explicit owner authorization. This direction is not a claim that modularization
+is already implemented or permission for a new core rewrite.
+
 This page describes the v0.4.0a baseline. The accepted next architecture and
 source-module mapping are in [Command-first core roadmap](ROADMAP-CORE.md).
 The target makes CLI, automation and UI clients of shared core commands; nodes

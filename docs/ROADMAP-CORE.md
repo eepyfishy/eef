@@ -7,6 +7,15 @@ It distinguishes planned scope from the development checkpoints below.
 Keep the working Rust workspace; extend it incrementally, with migrations and
 tests. No rewrite, new release, or model download is implied by this document.
 
+Owner clarification, 2026-11-08: **eef means eve's extensible framework**. Keep it
+lightweight and usable independently of eve, while allowing users to expand it
+with their chosen capabilities. eve is the main motivation and intended flagship
+application. Current v0.4 work improves the existing core's reliability; assistant
+behavior and model availability must not become dependencies of core uptime,
+management or recovery. The modular-engine, optional-assistant and new-dashboard
+vision in `docs/future/` remains gated on stable v0.4 and explicit v0.5 design
+authorization. Reading those drafts does not activate that work.
+
 The subsequent owner-requested two-PC test release is tracked separately in
 [v0.4.0a2](RELEASE-0.4.0a2.md), internal version `0.4.0-alpha.2`. It packages the
 completed increments and explicit diagnostics, not the full roadmap.

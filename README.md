@@ -1,5 +1,13 @@
 # eef
 
+**eve's extensible framework** is being built as a lightweight foundation that
+users expand with the capabilities, models and integrations they choose. eve is
+the main motivation and intended flagship application; eef operates independently
+of eve. Core connection, status, management and recovery remain usable without
+working inference. The modular-engine and optional-assistant direction is recorded
+in [the architecture notes](docs/ARCHITECTURE.md); the v0.5 design remains gated
+on stable v0.4 and explicit owner authorization.
+
 Start with the [user guide](docs/USER_GUIDE.md) for installation, node and model
 setup, a complete request walkthrough, and troubleshooting. It distinguishes
 published alpha instructions from commands available only in development builds.
