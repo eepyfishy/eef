@@ -258,7 +258,10 @@ mod tests {
         let original = serde_json::to_value(store.get(&first.id).unwrap()).unwrap();
         for (key, value) in [
             ("status", json!("pending")),
-            ("results", json!({"fake":"result"})),
+            (
+                "results",
+                json!({"fake":{"task_id":"fake","success":true,"duration_ms":1,"attempts":1}}),
+            ),
             ("plan_id", json!("invalid")),
             (
                 "goal",
