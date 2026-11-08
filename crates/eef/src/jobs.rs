@@ -445,6 +445,8 @@ impl JobStore {
         let mut plan = read(&connection, id)?;
         let old_stop = crate::execution_stop::snapshot(&plan);
         let old_workload = crate::workload_jobs::snapshot(&plan);
+        let raw_input = (plan.goal.template == eefn::request_intent::TEMPLATE)
+            .then(|| json!([plan.plan_id, plan.goal]));
         let frozen_source = plan
             .request_review
             .as_ref()
@@ -466,6 +468,12 @@ impl JobStore {
         }
         if !edit(&mut plan)? {
             return Ok(plan);
+        }
+        if raw_input
+            .as_ref()
+            .is_some_and(|source| *source != json!([plan.plan_id, plan.goal]))
+        {
+            bail!("Saved input and its origin are immutable; create a new request")
         }
         crate::execution_stop::preserve(&old_stop, &plan)?;
         crate::workload_jobs::preserve(&old_workload, &plan)?;

@@ -278,6 +278,27 @@ mod tests {
                 })
                 .is_err()
         );
+        for mutation in 0..3 {
+            assert!(
+                store
+                    .change(&first.id, "Cannot rewrite saved input", |p| {
+                        if mutation == 0 {
+                            let changed = Input {
+                                schema_version: 1,
+                                original_text: "Changed after admission".into(),
+                            };
+                            p.goal.description = changed.description();
+                            p.goal.params = json!(changed);
+                        } else if mutation == 1 {
+                            p.goal.request_context = Some(context());
+                        } else {
+                            p.plan_id = uuid::Uuid::new_v4().simple().to_string();
+                        }
+                        Ok(())
+                    })
+                    .is_err()
+            );
+        }
         assert_eq!(
             serde_json::to_value(store.get(&first.id).unwrap()).unwrap(),
             original
