@@ -1,32 +1,75 @@
 #[tokio::test]
 async fn camera_dependency_control_requires_pinned_runtime_and_current_remote_owner_approval() {
     let f = camera_authoring_fixture().await;
-    let runtime = f.runtime.node_server.node_state("origin").await.unwrap()
-        .registration["registration_receipt"]["runtime_id"].as_str().unwrap().to_string();
+    let runtime = f
+        .runtime
+        .node_server
+        .node_state("origin")
+        .await
+        .unwrap()
+        .registration["registration_receipt"]["runtime_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let request = eefn::camera_check::Request {
-        schema_version: 1, expected_node_id: "origin".into(), expected_runtime_id: runtime,
-        request_id: uuid::Uuid::new_v4().to_string(), settings: Default::default(),
+        schema_version: 1,
+        expected_node_id: "origin".into(),
+        expected_runtime_id: runtime,
+        request_id: uuid::Uuid::new_v4().to_string(),
+        settings: Default::default(),
     };
     let before = std::fs::read(&f.node_path).unwrap();
-    assert!(crate::node_camera::check_command(&f.runtime.node_server, request.clone()).await.is_err());
+    assert!(
+        crate::node_camera::check_command(&f.runtime.node_server, request.clone())
+            .await
+            .is_err()
+    );
     assert_eq!(std::fs::read(&f.node_path).unwrap(), before);
     let mut allowed: Value = serde_json::from_slice(&before).unwrap();
     allowed["management"] = json!({"allow_remote":true});
     f.service.save_configuration(allowed).unwrap();
     let after = std::fs::read(&f.node_path).unwrap();
-    let checked = crate::node_camera::check_command(&f.runtime.node_server, request.clone()).await.unwrap();
+    let checked = crate::node_camera::check_command(&f.runtime.node_server, request.clone())
+        .await
+        .unwrap();
     assert!(eefn::camera_check::confirmed(&checked, &request));
     assert_eq!(checked["success"], false);
     assert_eq!(checked["status"], "runtime_unavailable");
     assert!(!checked.to_string().contains("PRIVATE_"));
     assert_eq!(std::fs::read(&f.node_path).unwrap(), after);
-    let unpinned = f.runtime.node_server.invoke_remote("origin", "node.configure", "camera_check", json!(request),
-        std::time::Duration::from_secs(5)).await.unwrap();
-    assert_eq!(unpinned["success"], false);
-    assert_eq!(unpinned["error_type"], "PinnedSessionRequired");
-    let stale = eefn::camera_check::Request { expected_runtime_id: uuid::Uuid::new_v4().to_string(), ..request };
-    assert!(f.runtime.node_server.invoke_camera_check(stale).await.is_err());
-    assert_eq!(std::fs::read(&f.node_path).unwrap(), after);
+    // This generic helper still carries the connection's authenticated issuer
+    // session. It must honor owner revocation too; a legacy connection's absent
+    // session is independently rejected in the node client regression.
+    let mut revoked: Value = serde_json::from_slice(&after).unwrap();
+    revoked["management"]["allow_remote"] = json!(false);
+    f.service.save_configuration(revoked).unwrap();
+    let revoked_bytes = std::fs::read(&f.node_path).unwrap();
+    let denied = f
+        .runtime
+        .node_server
+        .invoke_remote(
+            "origin",
+            "node.configure",
+            "camera_check",
+            json!(request),
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied["success"], false);
+    assert!(!denied.to_string().contains("PRIVATE_"));
+    let stale = eefn::camera_check::Request {
+        expected_runtime_id: uuid::Uuid::new_v4().to_string(),
+        ..request
+    };
+    assert!(
+        f.runtime
+            .node_server
+            .invoke_camera_check(stale)
+            .await
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&f.node_path).unwrap(), revoked_bytes);
     f.close().await;
 }
 
