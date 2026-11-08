@@ -1658,6 +1658,12 @@ Continue those on the existing
 durable runtime; the full finite/continuous/media/peer scope below is unchanged.
 
 Owner clarification, 2026-09-22: see [presence and supervised media sessions](PRESENCE-AND-MEDIA.md).
+
+The owner-suggested [soundbridge audio reference](PRESENCE-AND-MEDIA.md#audio-reference-under-evaluation-soundbridge)
+records a pinned source review of Windows capture, WebRTC/Opus and output routing,
+including gaps for virtual devices, microphone/TTS mixing and eef-owned session
+authority. No Electron dependency or integration has been selected; existing
+backend, permission, resource and acceptance requirements remain in force.
 eef approves and supervises sessions; payloads may use approved peer paths or a
 user-selected bounded coordinator relay. This replaces the intermediate proposal
 to require every packet to traverse eef, not eef's authority over the session.
