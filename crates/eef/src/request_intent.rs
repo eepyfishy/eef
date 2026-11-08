@@ -36,6 +36,7 @@ pub(crate) fn save(engine: &TaskEngine, payload: Value, context: &RequestContext
     let input: Input = serde_json::from_value(payload)?;
     input.validate()?;
     let admission = engine.store_input_intent(Plan {
+        input_interpretation: None,
         execution: None,
         approval: None,
         planning: None,
@@ -56,6 +57,10 @@ pub(crate) fn save(engine: &TaskEngine, payload: Value, context: &RequestContext
         history: vec![],
     })?;
     let plan = admission.plan;
+    ensure!(
+        plan.input_interpretation.is_none(),
+        "Input has an interpretation attempt; inspect the retained job instead"
+    );
     let input = validate(&plan)?;
     let context = plan
         .goal

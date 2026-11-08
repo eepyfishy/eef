@@ -72,6 +72,7 @@ pub(crate) fn store_review(
     draft.validate()?;
     let description = draft.proposals[0].proposal.goal.clone();
     let plan = Plan {
+        input_interpretation: None,
         execution: None,
         approval: None,
         planning: None,

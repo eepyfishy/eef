@@ -34,6 +34,14 @@ mod setup_model_checks;
 // Logical quota headroom, not a promise that the physical disk cannot fill.
 const RECOVERY_RESERVE: usize = 4096;
 fn reserve(plan: &Plan) -> usize {
+    if plan
+        .input_interpretation
+        .as_ref()
+        .is_some_and(|r| r.state == crate::request_interpretation::State::Claimed)
+    {
+        // Reserve bounded review conversion/retirement before any model call.
+        return 128 * 1024;
+    }
     let grant_reserve = crate::request_execution::reserved_bytes(plan);
     if grant_reserve > 0 {
         return grant_reserve;
@@ -274,6 +282,18 @@ impl JobStore {
                     params![plan.plan_id, i64::try_from(reserve(&plan))?],
                 )?;
             }
+            if plan
+                .input_interpretation
+                .as_ref()
+                .is_some_and(|r| r.state == crate::request_interpretation::State::Claimed)
+            {
+                store.input_interpretation_transition(
+                    &plan.plan_id,
+                    crate::request_interpretation::Transition::Interrupt,
+                    None,
+                    &[],
+                )?;
+            }
             if matches!(
                 plan.status,
                 PlanStatus::Pending
@@ -422,7 +442,7 @@ impl JobStore {
         event: &str,
         edit: impl FnOnce(&mut Plan) -> Result<bool>,
     ) -> Result<Plan> {
-        self.edit_with_gate(id, event, None, edit)
+        self.edit_with_gate(id, event, None, false, edit)
     }
     pub(crate) fn edit_with_policy_fence(
         &self,
@@ -432,19 +452,42 @@ impl JobStore {
         issuer: &str,
         edit: impl FnOnce(&mut Plan) -> Result<bool>,
     ) -> Result<Plan> {
-        self.edit_with_gate(id, event, Some((runtime, issuer)), edit)
+        self.edit_with_gate(id, event, Some((runtime, issuer)), false, edit)
+    }
+    pub(crate) fn input_interpretation_transition(
+        &self,
+        id: &str,
+        transition: crate::request_interpretation::Transition,
+        origin: Option<&str>,
+        capabilities: &[String],
+    ) -> Result<(Plan, bool)> {
+        let mut changed = false;
+        let plan = self.edit_with_gate(
+            id,
+            "Initial interpretation checkpoint; no execution authorized",
+            None,
+            true,
+            |plan| {
+                changed =
+                    crate::request_interpretation::apply(plan, transition, origin, capabilities)?;
+                Ok(changed)
+            },
+        )?;
+        Ok((plan, changed))
     }
     fn edit_with_gate(
         &self,
         id: &str,
         event: &str,
         fence: Option<(&str, &str)>,
+        input_transition: bool,
         edit: impl FnOnce(&mut Plan) -> Result<bool>,
     ) -> Result<Plan> {
         let connection = self.connection.lock().expect("job journal");
         let mut plan = read(&connection, id)?;
         let old_stop = crate::execution_stop::snapshot(&plan);
         let old_workload = crate::workload_jobs::snapshot(&plan);
+        let old_interpretation = json!(plan.input_interpretation);
         let raw_input = (plan.goal.template == eefn::request_intent::TEMPLATE)
             .then(|| json!([plan.plan_id, plan.goal]));
         let frozen_source = plan
@@ -469,9 +512,13 @@ impl JobStore {
         if !edit(&mut plan)? {
             return Ok(plan);
         }
-        if raw_input
-            .as_ref()
-            .is_some_and(|source| *source != json!([plan.plan_id, plan.goal]))
+        if !input_transition && old_interpretation != json!(plan.input_interpretation) {
+            bail!("Interpretation ownership requires its source-bound journal transition")
+        }
+        if !input_transition
+            && raw_input
+                .as_ref()
+                .is_some_and(|source| *source != json!([plan.plan_id, plan.goal]))
         {
             bail!("Saved input and its origin are immutable; create a new request")
         }
@@ -646,6 +693,7 @@ fn read(connection: &Connection, id: &str) -> Result<Plan> {
     Ok(plan)
 }
 pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
+    crate::request_interpretation::validate(plan)?;
     if plan.goal.template == eefn::request_intent::TEMPLATE {
         crate::request_intent::validate(plan)?;
         return Ok(());
@@ -861,6 +909,13 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
         "completed_tasks": plan.tasks.iter().filter(|t|t.status==TaskStatus::Completed).count(),
         "can_resume": !plan.is_review_request() && matches!(plan.status,PlanStatus::Paused|PlanStatus::Interrupted) && !plan.tasks.iter().any(|t|t.status==TaskStatus::Interrupted&&!crate::task::retry_safe(t)),
     });
+    if let Some(record) = &plan.input_interpretation {
+        value["interpretation_state"] = json!(record.state);
+        value["interpretation_operation_id"] = json!(record.claim.operation_id);
+        if details {
+            value["input_interpretation"] = json!(record);
+        }
+    }
     if plan.goal.template == eefn::request_intent::TEMPLATE {
         value["review_only"] = json!(true);
         value["review_state"] = json!("awaiting_interpretation");

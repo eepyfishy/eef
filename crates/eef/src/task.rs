@@ -136,6 +136,8 @@ pub struct TaskResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_interpretation: Option<Box<crate::request_interpretation::Record>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<crate::request_execution::ExecutionRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<crate::request_approval::ApprovalRecord>,
@@ -271,6 +273,7 @@ impl TaskPlanner {
             });
         }
         Ok(Plan {
+            input_interpretation: None,
             execution: None,
             approval: None,
             planning: None,
@@ -873,6 +876,20 @@ impl TaskEngine {
         }
         crate::request_intent::validate(&plan)?;
         self.store.admit_request(plan)
+    }
+    pub(crate) fn transition_input_interpretation(
+        &self,
+        id: &str,
+        transition: crate::request_interpretation::Transition,
+        origin: Option<&str>,
+        capabilities: &[String],
+    ) -> Result<(Plan, bool)> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing || active.contains(id) {
+            bail!("Coordinator is stopping or the request already has active execution")
+        }
+        self.store
+            .input_interpretation_transition(id, transition, origin, capabilities)
     }
     pub(crate) fn store_review_request(&self, plan: Plan) -> Result<crate::jobs::JobAdmission> {
         let active = self.active.lock().expect("active jobs");

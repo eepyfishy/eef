@@ -1,7 +1,7 @@
 # Network interpreter delegation (planned)
 
-Status: the first durable raw-input increment is in development and awaiting
-hosted verification. The delegation described below remains planned. The existing
+Status: the first durable raw-input increment passed all four hosted jobs at
+`4ef0935`. The delegation described below remains planned. The existing
 ordinary-language input workflow still requires a selected interpreter on its
 input node. Saving raw input does not enable delegation or approve inference.
 Local interpretation and its existing explicit setup remain supported.
@@ -72,6 +72,29 @@ Use the existing journal and its count/byte limits. Do not introduce a second
 in-memory queue that becomes authoritative after restart.
 
 ## Owner authorization and provider selection
+
+The next journal-transition increment is in development and awaiting hosted
+verification. It adds initial interpretation ownership to the existing `Plan`
+record rather than introducing another job queue. The ownership record retains
+the original input/context/digest, source revision, explicit attempt ID and input
+node runtime. Repeated ownership requests inspect the existing attempt and do
+not permit another model call. A coordinator restart marks an unfinished claim
+`unknown`; cancellation and inspection remain available under lowered storage
+quotas using reserved checkpoint space.
+
+A specific validated transition can promote the same request into ordinary
+review, retaining its identity, original text, context and first proposal digest.
+The proposal is validated against current disclosed capability names. It creates
+no tasks, plan approval or execution grant. Ordinary journal edits cannot claim,
+erase or rewrite this ownership evidence. The claimed record reserves 128 KiB
+of journal checkpoint space; this is storage accounting, not a model memory limit.
+
+These are internal backend transitions. No public interpretation command, model
+call, network sharing permission or automatic continuation is enabled by this
+increment. Integration into `requests input`, runtime/provider authorization,
+bounded broker grants and explicit recovery remain required. A claim is never
+an inference authorization. A completed review still needs its existing separate
+preparation, owner approval and execution flow.
 
 Interpretation sharing must be an explicit, configurable service permission.
 The coordinator owner controls its allowed origins/providers and aggregate use;

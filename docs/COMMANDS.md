@@ -17,7 +17,7 @@ installers are unchanged and stable-release acceptance remains separate.
 
 ## Retain input before model setup (in development)
 
-The unreleased raw-input command is awaiting hosted verification:
+The unreleased raw-input command passed all four hosted jobs at `4ef0935`:
 
     eefn requests save-input --text 'Your request'
     eefn requests save-input --text 'Your request' --operation-id UUID

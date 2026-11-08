@@ -24,7 +24,7 @@ The dashboard and commands use the same backend rules.
 ## Try a request without a model
 
 An unreleased `save-input` command can retain ordinary text before any model is
-configured. Its new hosted verification is pending:
+configured. Its command flow passed hosted verification at `4ef0935`:
 
 ```powershell
 .\eefn.exe requests save-input --text 'Your request'

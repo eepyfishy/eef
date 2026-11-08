@@ -40,6 +40,7 @@ pub mod request_approval;
 pub mod request_drafts;
 pub mod request_execution;
 pub mod request_intent;
+pub mod request_interpretation;
 pub mod request_planning;
 pub mod request_preparation;
 pub mod request_recovery;

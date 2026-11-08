@@ -3,6 +3,31 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Accepted development checkpoint: durable model-free input
+
+Source `4ef0935` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42482928815), including
+1,624 Windows/headless Rust tests plus one ignored test in 17 unfiltered groups,
+all 37 native command suites and the existing additional gates. Shipping apps
+with browser pages disabled and no model configured save raw input, inspect and
+reuse exact receipts, refuse changed text, survive a fixture coordinator restart
+and retain cancellation. They create no semantic proposal or executable task.
+The two earlier failed runs remain retained; an earlier media-lifecycle timeout
+has no proven cause and is not rewritten as a success.
+
+The `bec16819` ancestor also passes the
+[four-job camera run](https://github.com/eepyfishy/eef/actions/runs/42478256708).
+It verifies local/pinned remote camera dependency commands and a generated-video
+decoder fixture, preserving historical adapter source pins. This is not physical
+camera/RTSP or two-PC acceptance.
+
+Current follow-up source adds internal durable interpretation ownership and
+same-request review promotion; its hosted verification is pending. It exposes
+no interpretation command or new inference permission. Normal `requests input`
+is not yet raw-first, and automatic remote interpretation, physical acceptance
+and the full remaining stable-release requirements remain open. See
+[the delegation plan](NETWORK-INTERPRETER.md).
+
 ## Accepted development checkpoint: command-owned media workloads
 
 Product and test source `cf07f93` passes the complete
