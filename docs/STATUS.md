@@ -14,6 +14,14 @@ Journal revisions include raw save and claim, so clients must use returned
 revisions for later answer/preparation commands. No approval or execution is
 added. Automatic remote interpretation still requires the delegation work below.
 
+The first raw-first run at `4b40e72` passed all 1,645 Rust tests but failed its
+native cross-origin fixture: that fixture incorrectly expected operation IDs to
+conflict globally. Existing admission scopes receipts to authenticated origins.
+The corrected fixture requires separate retained IDs, the peer's own context,
+refusal to read the first node's job, and an unchanged original plan. This is a
+test correction, not a change to server authorization. Full acceptance remains
+pending; the failure and complete logs are retained.
+
 ## Accepted development checkpoint: explicit saved-input interpretation
 
 Source `2a49073` passes all four jobs in the

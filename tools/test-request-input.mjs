@@ -419,10 +419,11 @@ try {
   assert.equal(retained.grant_attempts,undefined,'no execution record means no issued attempts');
   assert.equal(retained.completed_tasks,0);
  }
- // A separately paired logical peer cannot reuse another origin's input UUID
- // to inspect its saved history. No private draft/plan is disclosed by lookup.
+ // Receipts are scoped to an authenticated origin. A separately paired peer
+ // may save its own input under the same UUID, but cannot inspect the original.
  const peerId='input-peer-node',peerPath=join(scratch,'peer.json'),peerPort=await port();
  const peerConfig={...config,node_id:peerId,name:'Input peer',dashboard:{...config.dashboard,port:peerPort},
+  metadata:{...config.metadata,area:['Peer room']},
   models:{...config.models,ollama:{...config.models.ollama,selected:[]}}};
  await writeFile(peerPath,JSON.stringify(peerConfig));
  const peerInvitation=await cli('eef',eefConfig,['credentials','provision','--node',peerId,'--address',`127.0.0.1:${gatewayPort}`]);
@@ -436,8 +437,20 @@ try {
  await savedInput.verifyRetained(true);
  count=calls.length;
  const foreign=await cli('eefn',peerPath,['requests','input','--text',text,'--operation-id',receipt],false);
- assert.equal(foreign.error_code,'input_save_unconfirmed');assert.equal(foreign.source_confirmed,false);assert.equal(foreign.inspection,null);assert.equal(foreign.result,null);
- assert.equal((await cli('eefn',peerPath,['jobs','find','--operation-id',receipt])).data.total,0);assert.equal(calls.length,count);
+ assert.equal(foreign.error_code,'interpreter_unavailable');assert.equal(foreign.source_confirmed,true);assert.equal(foreign.outcome_unknown,false);
+ assert.equal(foreign.inspection,null);assert.equal(foreign.opening,null);assert.equal(foreign.interpretation.claim_attempted,false);
+ assert.equal(foreign.interpretation.model_inference_requested,false);assert.equal(foreign.raw_save.result.reused,false);
+ assert.notEqual(foreign.result.id,prepared.result.id);assert.equal(foreign.result.input.original_text,text);
+ assert.equal(foreign.result.request_context.request_id,receipt);assert.equal(foreign.result.request_context.origin_node,peerId);
+ assert.deepEqual(foreign.result.request_context.origin_area,['Peer room']);
+ const peerFound=(await cli('eefn',peerPath,['jobs','find','--operation-id',receipt])).data;
+ assert.equal(peerFound.total,1);assert.equal(peerFound.jobs[0].id,foreign.result.id);
+ const denied=await cli('eefn',peerPath,['jobs','get',prepared.result.id],false);
+ assert.equal(denied.error_code,'job_rejected');assert.equal(denied.acknowledged,false);assert.equal(denied.outcome_unknown,false);
+ assert.equal(denied.data,undefined);assert.equal(calls.length,count);
+ const ownHistory=await cli('eefn',peerPath,['requests','input','--text',text,'--operation-id',receipt]);
+ assert.equal(ownHistory.status,'historical_snapshot');assert.equal(ownHistory.result.id,foreign.result.id);
+ assert.deepEqual((await plan(prepared.result.id)).result,saved);assert.equal(calls.length,count);
  const foreignAnswer=await cli('eefn',peerPath,['requests','respond',original.id,'--revision',String(original.revision),'--text',answerText,'--operation-id',responseId],false);
  assert.equal(foreignAnswer.error_code,'answer_source_unconfirmed');assert.equal(foreignAnswer.source_confirmed,false);assert.equal(foreignAnswer.answer_attempted,false);assert.equal(foreignAnswer.result,null);
  assert.equal((await input(text,receipt)).status,'historical_snapshot');assert.equal(calls.length,count);
@@ -456,6 +469,7 @@ try {
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
   normal_input_saved_before_any_inference:true,missing_model_retains_raw_input:true,failed_initial_inference_retains_raw_input:true,
+  equal_receipts_on_distinct_authenticated_origins_are_isolated:true,
   reasoning_completion_failure_retains_source_and_answer:true,completion_diagnostics_do_not_echo_reasoning_or_replay:true,
   checkpoint_rejection_diagnosed_without_replay:true,
   immutable_input_context:true,read_only_receipt_reuse:true,partial_preparation_no_implicit_retry:true,current_question_returned:true,
