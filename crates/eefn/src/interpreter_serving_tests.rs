@@ -78,6 +78,137 @@ fn grant(task: &Task) -> ExecutionGrant {
     grant.validate().unwrap();
     grant
 }
+fn result_fixture(stage: &str) -> (ExecutionGrant, Value) {
+    let task = task(stage);
+    let g = grant(&task);
+    let output = if stage == "method" {
+        json!({"schema_version":1,"method":{"schema_version":1,"template":"system_info","params":{},"constraints":{}},"clarification":null})
+    } else {
+        proposal(false)
+    };
+    let candidate = task
+        .candidate(&serde_json::to_vec(&output).unwrap(), "ollama", "chosen")
+        .unwrap();
+    let value = candidate_report(&g, &task, candidate);
+    (g, value)
+}
+
+#[test]
+fn completed_service_reports_revalidate_all_three_stage_sources_and_semantics() {
+    for stage in ["initial", "clarification", "method"] {
+        let (g, value) = result_fixture(stage);
+        let report =
+            crate::grants::GrantReport::new(&g, ReceiptState::Completed, value.clone(), None);
+        assert!(report.confirms(&g));
+        for (pointer, replacement) in [
+            ("/task_sha256", json!("0".repeat(64))),
+            ("/snapshot_sha256", json!("0".repeat(64))),
+            ("/job_id", json!(uuid::Uuid::new_v4().simple().to_string())),
+            ("/source_revision", json!(999)),
+            ("/model/backend", json!("llamacpp")),
+            ("/model/model_id", json!("another")),
+            ("/permission_revision", json!(1)),
+            (
+                "/candidate/stage",
+                json!(if stage == "method" {
+                    "initial"
+                } else {
+                    "method"
+                }),
+            ),
+            ("/model_output_is_untrusted", json!(false)),
+            ("/execution_authorized", json!(true)),
+            ("/delegation_requested", json!(true)),
+            ("/automatically_retried", json!(true)),
+        ] {
+            let mut bad = report.clone();
+            *bad.data.pointer_mut(pointer).unwrap() = replacement;
+            assert!(!bad.confirms(&g), "stage={stage} pointer={pointer}");
+        }
+        let mut extra = report;
+        extra.data["peer_attestation"] = json!("PRIVATE_UNTRUSTED_CLAIM");
+        assert!(!extra.confirms(&g));
+    }
+}
+
+#[test]
+fn service_reports_reject_candidate_authority_evidence_and_undisclosed_capabilities() {
+    for stage in ["initial", "clarification", "method"] {
+        let (g, data) = result_fixture(stage);
+        let report = crate::grants::GrantReport::new(&g, ReceiptState::Completed, data, None);
+        for field in ["execution_authorized", "model_output_is_untrusted"] {
+            let mut bad = report.clone();
+            bad.data["candidate"]["candidate"][field] = json!(field == "execution_authorized");
+            assert!(!bad.confirms(&g));
+        }
+        if stage == "method" {
+            for (field, replacement) in [
+                ("source_sha256", json!("0".repeat(64))),
+                ("source_revision", json!(999)),
+                ("source_proposal_count", json!(999)),
+                ("backend", json!("llamacpp")),
+                ("model_id", json!("another")),
+            ] {
+                let mut bad = report.clone();
+                bad.data["candidate"]["candidate"]["evidence"][field] = replacement;
+                assert!(!bad.confirms(&g), "evidence={field}");
+            }
+            let mut bad = report;
+            bad.data["candidate"]["candidate"]["proposal"]["method"]["template"] =
+                json!("untrusted_template");
+            assert!(!bad.confirms(&g));
+        } else {
+            let mut bad = report.clone();
+            bad.data["candidate"]["candidate"]["proposal"]["suggested_capabilities"] =
+                json!(["filesystem.write"]);
+            assert!(!bad.confirms(&g));
+            let mut bad = report;
+            bad.data["candidate"]["candidate"]["original_text"] = json!("Another origin's text");
+            assert!(!bad.confirms(&g));
+        }
+    }
+}
+
+#[test]
+fn service_result_bounds_and_unknown_reports_preserve_existing_non_execution_semantics() {
+    let ordinary = crate::grants::tests::grant();
+    assert!(
+        crate::grants::GrantReport::new(
+            &ordinary,
+            ReceiptState::Completed,
+            json!({"success":true}),
+            None
+        )
+        .confirms(&ordinary)
+    );
+    let (g, value) = result_fixture("initial");
+    let mut oversized =
+        crate::grants::GrantReport::new(&g, ReceiptState::Completed, value.clone(), None);
+    oversized.data["padding"] = json!("x".repeat(g.limits.max_result_bytes));
+    assert!(!oversized.confirms(&g));
+    let too_large = crate::grants::GrantReport::new(
+        &g,
+        ReceiptState::Completed,
+        Value::Null,
+        Some("result_too_large"),
+    );
+    assert!(too_large.confirms(&g));
+    assert!(!too_large.success);
+    let unknown = crate::grants::GrantReport::new(
+        &g,
+        ReceiptState::Unknown,
+        Value::Null,
+        Some("local_policy_changed"),
+    );
+    assert!(unknown.confirms(&g));
+    assert!(!unknown.success);
+    let mut invented = unknown;
+    invented.data = value;
+    assert!(
+        !invented.confirms(&g),
+        "Unknown outcomes cannot carry a successful candidate"
+    );
+}
 struct Fixture {
     engine: Arc<NodeEngine>,
     ledger: Arc<GrantLedger>,

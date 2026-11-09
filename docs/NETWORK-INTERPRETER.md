@@ -205,6 +205,13 @@ complete output and the existing proposal/method schema before updating review.
 Malformed, incomplete, oversized or out-of-scope output cannot approve a plan,
 create another action, change resource ownership or enable a feature.
 
+The unreleased [receiving-result validation](INTERPRETER-RESULTS.md) increment,
+pending hosted verification, regenerates the exact typed candidate from the
+returned proposal and granted source as part of grant-report confirmation. It
+checks the whole result, including evidence and non-authority flags, rather than
+trusting the peer's validation claim. It creates no review promotion or broker
+authority by itself.
+
 ## Failure and recovery
 
 Disconnect, node/coordinator restart, policy revocation, stale source revisions

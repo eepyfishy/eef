@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: independent interpreter result validation
+
+The [receiving-result increment](INTERPRETER-RESULTS.md) makes the existing grant
+confirmation path regenerate each completed interpreter candidate through the
+current validators and exact granted source before accepting the complete
+result. It rejects changed source/model/stage/revision, forged flags/evidence,
+extra peer claims and undisclosed capabilities. The producer uses the same
+result formatter; the wire shape is unchanged. Three added tests cover all
+stages, result bounds and unknown/error behavior. Existing private transport
+tests also exercise this path. Hosted verification is pending. No inference,
+grant, permission, deadline, dependency or broker behavior is added.
+
 ## In development: fresh policy-scoped interpreter routing
 
 The new [routing command](INTERPRETER-ROUTING.md) reuses existing model ranking,

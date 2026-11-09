@@ -91,6 +91,45 @@ pub(crate) fn definition_digest(task: &Task) -> Result<String> {
     crate::grants::definition_digest(&json!({"domain":"eef.interpreter.task.v1","task":task}))
 }
 
+fn candidate_report(
+    grant: &ExecutionGrant,
+    task: &Task,
+    candidate: crate::interpreter_task::Candidate,
+) -> Value {
+    json!({"schema_version":1,"report_type":"node_interpreter_candidate",
+        "task_sha256":grant.plan_sha256,"snapshot_sha256":task.snapshot_sha256,
+        "job_id":task.snapshot.job_id,"source_revision":task.snapshot.revision,
+        "model":{"backend":grant.backend,"model_id":grant.model_id},"candidate":candidate,
+        "permission_revision":grant.params["permission_revision"],
+        "model_output_is_untrusted":true,"execution_authorized":false,
+        "delegation_requested":false,"automatically_retried":false})
+}
+
+/// Receiver-side validation regenerates the typed untrusted candidate from its
+/// semantic proposal and the exact grant source. Peer assertions, flags and
+/// attribution are not authority, and no model/output object is trusted as-is.
+pub(crate) fn confirmed_result(grant: &ExecutionGrant, value: &Value) -> bool {
+    let checked = || -> Result<Value> {
+        let task = binding(grant)?;
+        let proposal = value
+            .pointer("/candidate/candidate/proposal")
+            .context("Missing interpreter proposal")?;
+        let candidate = task.candidate(
+            &serde_json::to_vec(proposal)?,
+            grant
+                .backend
+                .as_deref()
+                .context("Missing interpreter backend")?,
+            grant
+                .model_id
+                .as_deref()
+                .context("Missing interpreter model")?,
+        )?;
+        Ok(candidate_report(grant, &task, candidate))
+    };
+    checked().is_ok_and(|expected| expected == *value)
+}
+
 /// Only the accepted-grant driver invokes this operation under its existing
 /// ledger, deadline, stop/policy watcher and durable completion checkpoint.
 pub(crate) async fn execute(
@@ -140,15 +179,7 @@ pub(crate) async fn execute(
         .as_str()
         .context("Missing interpreter output")?;
     let candidate = task.candidate(output.as_bytes(), backend, model)?;
-    Ok(
-        json!({"schema_version":1,"report_type":"node_interpreter_candidate",
-        "task_sha256":grant.plan_sha256,"snapshot_sha256":task.snapshot_sha256,
-        "job_id":task.snapshot.job_id,"source_revision":task.snapshot.revision,
-        "model":{"backend":backend,"model_id":model},"candidate":candidate,
-        "permission_revision":grant.params["permission_revision"],
-        "model_output_is_untrusted":true,"execution_authorized":false,
-        "delegation_requested":false,"automatically_retried":false}),
-    )
+    Ok(candidate_report(grant, &task, candidate))
 }
 
 #[cfg(test)]

@@ -487,6 +487,14 @@ impl GrantReport {
                 || (self.success
                     && self.error_code.is_none()
                     && crate::peer::admission::confirmed_result(g, &self.data)))
+            && (g.params.get("interpreter_task").is_none()
+                || self.state != ReceiptState::Completed
+                || (self.data.is_null()
+                    && !self.success
+                    && self.error_code.as_deref() == Some("result_too_large"))
+                || (self.success
+                    && self.error_code.is_none()
+                    && crate::interpreter_serving::confirmed_result(g, &self.data)))
             && (self.state != ReceiptState::Accepted
                 || (self.persisted
                     && self.data.is_null()
