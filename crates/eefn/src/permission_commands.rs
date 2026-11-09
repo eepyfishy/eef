@@ -26,9 +26,10 @@ pub enum Feature {
     RemoteUpdates,
     RemoteManagement,
     RemoteRepairSetupPolicy,
+    InterpreterSharing,
 }
 impl Feature {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::FilesystemRead,
         Self::FilesystemWrite,
         Self::ProcessExecution,
@@ -46,6 +47,7 @@ impl Feature {
         Self::RemoteUpdates,
         Self::RemoteManagement,
         Self::RemoteRepairSetupPolicy,
+        Self::InterpreterSharing,
     ];
     fn field(self) -> &'static str {
         match self {
@@ -66,6 +68,7 @@ impl Feature {
             Self::RemoteUpdates => "/permissions/remote_updates",
             Self::RemoteManagement => "/management/allow_remote",
             Self::RemoteRepairSetupPolicy => "/management/allow_remote_repair_setup_policy",
+            Self::InterpreterSharing => "/permissions/interpreter_sharing",
         }
     }
     fn unrestricted(self) -> Option<&'static str> {
@@ -98,6 +101,7 @@ impl Feature {
             Self::RemoteUpdates => "Remote updates",
             Self::RemoteManagement => "Management from eef",
             Self::RemoteRepairSetupPolicy => "Shared installation maintenance policy from eef",
+            Self::InterpreterSharing => "Serve granted interpreter requests",
         }
     }
 }
@@ -180,6 +184,8 @@ struct Report {
     changed: bool,
     restart_required: bool,
     remote_management_allowed: bool,
+    interpreter_sharing_revision: u64,
+    applied_interpreter_sharing_revision: u64,
     execution_authorized: bool,
     restart_requested: bool,
     model_inference_requested: bool,
@@ -274,6 +280,7 @@ fn apply(config: &mut Value, feature: Feature, enabled: bool) -> Result<bool> {
     let policy: crate::NodePolicy =
         serde_json::from_value(config.get("permissions").cloned().unwrap_or(json!({})))?;
     policy.validate()?;
+    crate::interpreter_serving::preserve_permission(&before, config)?;
     Ok(*config != before)
 }
 pub fn confirmed(value: &Value, request: &PermissionRequest) -> bool {
@@ -302,6 +309,8 @@ pub fn confirmed(value: &Value, request: &PermissionRequest) -> bool {
         || report.restart_requested
         || report.model_inference_requested
         || report.automatically_retried
+        || (report.interpreter_sharing_revision != report.applied_interpreter_sharing_revision
+            && !report.restart_required)
         || report.note != NOTE
     {
         return false;
@@ -433,7 +442,12 @@ impl crate::NodeService {
                     })
                     .collect::<Vec<_>>();
                 let restart = live["pending_restart"].as_bool().unwrap_or(false)
-                    || features.iter().any(|row| row.saved != row.applied);
+                    || features.iter().any(|row| row.saved != row.applied)
+                    || next
+                        .pointer("/permissions/interpreter_sharing_revision")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        != engine.applied_permissions().interpreter_sharing_revision;
                 let report = serde_json::to_value(Report {
                     schema_version: 1,
                     report_type: "node_permissions".into(),
@@ -449,6 +463,13 @@ impl crate::NodeService {
                         .pointer("/management/allow_remote")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
+                    interpreter_sharing_revision: next
+                        .pointer("/permissions/interpreter_sharing_revision")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0),
+                    applied_interpreter_sharing_revision: engine
+                        .applied_permissions()
+                        .interpreter_sharing_revision,
                     execution_authorized: false,
                     restart_requested: false,
                     model_inference_requested: false,
@@ -547,6 +568,60 @@ mod tests {
             ..request.clone()
         }
     }
+    #[test]
+    fn interpreter_sharing_requires_explicit_permission_and_applied_preferences() {
+        let (_dir, core, _engine, _guard, request) = fixture();
+        let show = core.permission_command(request.clone(), false).unwrap();
+        let row = |value: &Value| {
+            value["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["feature"] == "interpreter_sharing")
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(row(&show)["saved"], "disabled");
+        let models = core.read_config().unwrap()["models"].clone();
+        let allowed = core
+            .permission_command(
+                set(&request, &show, Feature::InterpreterSharing, true),
+                false,
+            )
+            .unwrap();
+        assert_eq!(row(&allowed)["saved"], "feature_wide");
+        assert_eq!(row(&allowed)["applied"], "disabled");
+        assert_eq!(allowed["restart_required"], true);
+        assert_eq!(core.read_config().unwrap()["models"], models);
+        for field in [
+            "execution_authorized",
+            "restart_requested",
+            "model_inference_requested",
+            "automatically_retried",
+        ] {
+            assert_eq!(allowed[field], false);
+        }
+        assert!(
+            core.permission_command(
+                set(&request, &show, Feature::InterpreterSharing, false),
+                false
+            )
+            .is_err()
+        );
+        let denied = core
+            .permission_command(
+                set(&request, &allowed, Feature::InterpreterSharing, false),
+                false,
+            )
+            .unwrap();
+        assert_eq!(row(&denied)["saved"], "disabled");
+        let defaults = json!(crate::NodePolicy::default());
+        assert!(
+            defaults.get("interpreter_sharing").is_none(),
+            "keep pre-extension default serialization unchanged"
+        );
+    }
+
     #[test]
     fn each_feature_uses_its_existing_executor_preference_without_per_object_allowlists() {
         let mut config = json!({"permissions":{"stt":{"endpoint":"http://127.0.0.1:1","model":"owner-choice"},"full_access":["future.feature"],"future":{"keep":true}},"custom":42});

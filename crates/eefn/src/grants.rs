@@ -252,6 +252,9 @@ impl ExecutionGrant {
         {
             bail!("Invalid execution grant scope or limits")
         }
+        if self.params.get("interpreter_task").is_some() {
+            crate::interpreter_serving::binding(self)?;
+        }
         if self.capability == "pipeline.run" {
             crate::pipeline::FinitePipeline::from_grant(self)?;
             return Ok(());
@@ -945,7 +948,9 @@ impl AcceptedGrant {
             params["backend"] = json!(g.backend);
         }
         let operation = async {
-            if crate::pipeline::is_compound(&g.capability) {
+            if g.params.get("interpreter_task").is_some() {
+                crate::interpreter_serving::execute(engine, &g, execution_deadline).await
+            } else if crate::pipeline::is_compound(&g.capability) {
                 crate::pipeline_runtime::execute(engine, &g, &ledger, execution_deadline).await
             } else {
                 engine

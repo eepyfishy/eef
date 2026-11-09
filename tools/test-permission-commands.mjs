@@ -38,6 +38,14 @@ try{
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:randomBytes(32).toString('hex')});launch('eefn',['--config',nodeConfig,'--no-ui']);
  await until(async()=>(await json(node+'/api/status')).connection.state==='connected','connected without any model');
  const initial=await show();assert(initial.features.every(row=>row.saved==='disabled'));assert((await local(['permissions','show'],true,true)).out.includes('Node permissions: '+id));
+ const sharing=(await local(['permissions','allow','interpreter-sharing'])).result;
+ assert.equal(feature(sharing,'interpreter_sharing').saved,'feature_wide');assert.equal(feature(sharing,'interpreter_sharing').applied,'disabled');
+ assert.equal(sharing.restart_required,true);assert.equal(sharing.model_inference_requested,false);assert.equal(sharing.execution_authorized,false);
+ assert.equal(sharing.interpreter_sharing_revision,1);assert.equal(sharing.applied_interpreter_sharing_revision,0);
+ assert.deepEqual(JSON.parse(await readFile(nodeConfig,'utf8')).models,config.models);
+ const sharingOff=(await local(['permissions','deny','interpreter-sharing'])).result;assert.equal(feature(sharingOff,'interpreter_sharing').saved,'disabled');
+ assert.equal(sharingOff.interpreter_sharing_revision,2);
+ console.log('Interpreter sharing permission command validation passed');
  const allowed=(await local(['permissions','allow','filesystem-write'])).result;assert.equal(feature(allowed,'filesystem_write').saved,'feature_wide');assert.equal(feature(allowed,'filesystem_write').applied,'disabled');assert.equal(allowed.restart_required,true);assert.equal(allowed.restart_requested,false);
  const noop=(await local(['permissions','allow','filesystem-write'])).result;assert.equal(noop.changed,false);
  let saved=JSON.parse(await readFile(nodeConfig,'utf8'));assert.deepEqual(saved.permissions.filesystem.roots,[]);assert.equal(saved.permissions.filesystem.max_write_bytes,8192);assert.equal(saved.custom.preserve,true);assert.deepEqual(saved.models,config.models);

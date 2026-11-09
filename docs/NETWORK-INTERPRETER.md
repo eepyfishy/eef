@@ -130,18 +130,42 @@ revision, prior answers, disclosed capability context and prompt/schema version.
 Build or verify its prompt deterministically from those records; never accept an
 unrestricted caller-supplied system prompt under the service permission.
 
-An unreleased, data-only `eefn::interpreter_task` contract is awaiting hosted
-verification. It reconstructs all three stages through the existing shared
+The unreleased, data-only `eefn::interpreter_task` contract passed all four hosted
+jobs and the independent source audit at `4bbe879`. It reconstructs all three stages through the existing shared
 prompt builders and validators, pins the retained source and inference-input
 definitions separately, and rejects changed definitions or oversized history
 instead of truncating it. It adds no dependency, background service, inference
 endpoint or automatic delegation. Existing local token ceilings remain unchanged.
+Its own encoded limits do not override smaller enclosing grant/transport budgets.
 
 These digests prove self-consistency, not ownership, permission or which model
 ran. A future issuer must independently match the journal and service policy;
 the receiver must validate the exact grant, model, session and completion before
 accepting output. Validated candidates remain untrusted and cannot authorize
 tool execution. This contract alone does not implement the broker below.
+
+### Node-side serving increment (awaiting verification)
+
+The next source increment adds `eefn permissions allow interpreter-sharing` and
+`eefn permissions deny interpreter-sharing` through the existing feature-wide
+permission commands. It is off when absent. Enabling is a saved preference that
+needs an explicit node restart to apply; it selects, downloads and runs no model.
+Owners still select the serving models and their `request_interpreter` role.
+
+Only the existing accepted-grant driver can execute the new source-bound task.
+It requires exact source/context/task-definition, model/backend/role and serving
+permission revision bindings. The normal ledger, lease/deadline, stop/policy
+watcher and completion checkpoint remain in control. Backend-owned permission
+revisions survive ordinary saves/restore: disabling then re-enabling cannot revive
+old work. A candidate also needs complete validated provider output and unchanged
+current permission at the final response. It remains untrusted and grants no tool
+authority. Direct generic execution of this task is refused.
+
+This is pending node-side execution and command coverage, with synthetic Ollama
+replies and the internal test admission path. It is not acceptance of a production
+network-interpreter lease exchange, physical models or automatic routing. The
+coordinator sharing policy, durable allowance ledger, provider resolution and
+three-stage broker are still missing; ordinary input does not delegate yet.
 
 An owner-approved service policy must make each inference authorization durable,
 identifiable and bounded before issuance. Record that it derives from a specific

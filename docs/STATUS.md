@@ -3,6 +3,30 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: opt-in granted interpreter serving on a node
+
+New source reuses the existing permission commands and accepted-grant driver for
+exact interpreter tasks, with complete provider output validation. Sharing is off
+by default, and permission revisions prevent off/on saves from reviving old work.
+Tests cover all three stages using a synthetic Ollama provider, strict bindings,
+replay refusal, invalid/incomplete output, and revocation during the final response.
+The CLI preference change has native command coverage. Hosted compilation/runtime
+verification is pending; the production interpreter lease exchange, coordinator
+policy/allowance ledger, provider resolution, broker and physical checks remain open.
+
+## Accepted development checkpoint: data-only interpreter task contract
+
+Source `4bbe879` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42541147479) and independent
+source/log audit: 1,651 Windows/headless Rust tests, one ignored across 17 groups,
+all 37 native suites and existing additional gates. Six new tests bind retained
+source and deterministic prompt/schema/token definitions for all three stages,
+with strict decoding, bounded history and untrusted candidates. This adds no
+dependency or inference service and does not implement automatic delegation.
+The predecessor's Windows-dashboard setup fixture timed out waiting for HTTP
+activity; it now uses an explicit notification with a bounded startup allowance.
+Production setup timeouts and consent are unchanged; the failed logs remain retained.
+
 ## In development: automation approvals include setup-check storage reservations
 
 Reusable automation-policy admission previously omitted the existing reserved

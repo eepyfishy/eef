@@ -59,6 +59,20 @@ interpretation still needs the remaining
 Plain `requests input` and `--ask` show status, receipt and setup guidance without
 dumping the retained raw input; `--json` and detailed inspection contain private text.
 
+## Interpreter sharing permission (in development)
+
+The interpreter-serving follow-up is awaiting hosted verification. Its feature
+permission uses the existing backend commands, with no model call or download:
+
+    eefn permissions allow interpreter-sharing
+    eefn permissions deny interpreter-sharing
+
+Sharing is off by default. Applying a saved enablement requires a node restart.
+Revocation blocks admission and is checked during execution; computation on a
+shared provider may continue. Switching the feature back on cannot revive an old
+grant. This permission alone does not provide
+automatic interpretation on other nodes; the coordinator broker remains planned.
+
 ## Continuous source inspection (in development)
 
 For the camera setup, review, approval, execution and stop sequence, see the

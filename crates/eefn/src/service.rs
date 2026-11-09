@@ -203,6 +203,7 @@ impl NodeService {
             bail!("node configuration must be a JSON object")
         }
         let old = self.read_config()?;
+        crate::interpreter_serving::preserve_permission(&old, &mut value)?;
         // Backend-owned version survives generic saves/restore as well as the
         // typed policy command. Content rollback must not revive an old CAS.
         crate::model_bootstrap::preserve_revision(&old, &mut value, bootstrap_authorized)?;

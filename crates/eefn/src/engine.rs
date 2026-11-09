@@ -37,6 +37,11 @@ pub struct NodePolicy {
     pub full_access: Vec<String>,
     #[serde(default)]
     pub remote_updates: bool,
+    /// Opt-in serving of source-bound interpreter grants, not tool approval.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub interpreter_sharing: bool,
+    #[serde(default, skip_serializing_if = "crate::interpreter_serving::zero")]
+    pub interpreter_sharing_revision: u64,
     #[serde(default)]
     pub filesystem: FilesystemPolicy,
     #[serde(default)]
@@ -780,6 +785,14 @@ impl NodeEngine {
         require_ready: bool,
     ) -> Result<()> {
         let model_operation = matches!(g.capability, "llm.infer" | "vlm.analyze");
+        let interpreter_task = g.params.get("interpreter_task").is_some();
+        if interpreter_task
+            && (!self.policy.interpreter_sharing
+                || g.params["permission_revision"].as_u64()
+                    != Some(self.policy.interpreter_sharing_revision))
+        {
+            bail!("Interpreter sharing is disabled on this node")
+        }
         if !self.media_allowed(g.capability) {
             bail!("Local media permission is disabled")
         }
@@ -826,6 +839,20 @@ impl NodeEngine {
                     bail!("Saved node grant limits were reduced")
                 }
                 if section == Some("models") {
+                    if interpreter_task {
+                        let current: NodePolicy = serde_json::from_value(
+                            config
+                                .get("permissions")
+                                .cloned()
+                                .unwrap_or_else(|| json!({})),
+                        )?;
+                        if !current.interpreter_sharing
+                            || current.interpreter_sharing_revision
+                                != self.policy.interpreter_sharing_revision
+                        {
+                            bail!("Interpreter sharing was revoked")
+                        }
+                    }
                     if self.granted_model_config.as_ref() != Some(&config["models"]) {
                         bail!("Model selection changed; restart/replan required")
                     }
@@ -1526,11 +1553,14 @@ impl NodeEngine {
     }
 
     async fn infer(&self, capability: &str, params: Value) -> Result<Value> {
+        if params.get("interpreter_task").is_some() {
+            return Err(crate::execution_boundary::ExecutionGrantRequired.into());
+        }
         self.infer_with_schema(capability, params, None, None).await
     }
 
     /// The schema is internally generated, not a public caller-supplied payload.
-    async fn infer_with_schema(
+    pub(crate) async fn infer_with_schema(
         &self,
         capability: &str,
         params: Value,
