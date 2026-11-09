@@ -149,13 +149,22 @@ fn source_matches(plan: &Plan, record: &Record, delivering: bool) -> Result<()> 
                     .input_interpretation
                     .as_ref()
                     .context("Interpreter source ownership missing")?;
+                // A final failed observation can be checkpointed before its RPC
+                // waiter is resumed. Its own retirement is not a new source edit.
+                let failed = record.phase == Phase::Final
+                    && record.report.as_ref().is_some_and(|r| !r.success);
+                let expected_state = if failed {
+                    eefn::request_interpretation::State::Unknown
+                } else {
+                    eefn::request_interpretation::State::Claimed
+                };
                 if claim.claim != expected
-                    || claim.state != eefn::request_interpretation::State::Claimed
+                    || claim.state != expected_state
                     || plan.revision
                         != task
                             .snapshot
                             .revision
-                            .checked_add(1)
+                            .checked_add(if failed { 2 } else { 1 })
                             .context("Source revision overflow")?
                 {
                     bail!("Interpreter source ownership changed")

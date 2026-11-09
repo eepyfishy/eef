@@ -1203,3 +1203,90 @@ fn source_observation_wakes_on_saved_edits_and_removal_without_polling_or_read_s
     assert!(changes.has_changed().unwrap());
     assert_ne!(*changes.borrow_and_update(), version);
 }
+
+#[test]
+fn saved_failure_is_observable_before_rpc_delivery_without_restoring_source_or_execution_authority()
+{
+    for state in [
+        ReceiptState::Rejected,
+        ReceiptState::Unknown,
+        ReceiptState::Completed,
+    ] {
+        let store = JobStore::in_memory().unwrap();
+        let runtime = uuid();
+        let pin = policy(&store, &runtime, limits());
+        let mut p = permit();
+        let task = input(&store, "input");
+        let r = reserve_new(&store, task.clone(), &pin, &p, &runtime);
+        let d = store
+            .interpreter_delivery_intent(&r, &p, &runtime, &pin)
+            .unwrap();
+        if state != ReceiptState::Rejected {
+            store
+                .interpreter_report(
+                    r.id(),
+                    GrantReport::new(d.grant(), ReceiptState::Accepted, json!(null), None),
+                )
+                .unwrap();
+        }
+        let report = GrantReport::new(
+            d.grant(),
+            state,
+            json!(null),
+            Some(if state == ReceiptState::Completed {
+                "result_too_large"
+            } else {
+                "fixture_failed"
+            }),
+        );
+        store.interpreter_report(r.id(), report.clone()).unwrap();
+        let before_observation = store.usage().unwrap();
+        let observed = store
+            .interpreter_continuation_current(&r, &p, &runtime, &pin)
+            .unwrap();
+        assert_eq!(json!(observed.report), json!(Some(report)));
+        assert!(!observed.report.unwrap().success);
+        assert_eq!(store.usage().unwrap(), before_observation);
+        let plan = store.get(&task.snapshot.job_id).unwrap();
+        assert_eq!(
+            plan.input_interpretation.as_ref().unwrap().state,
+            eefn::request_interpretation::State::Unknown
+        );
+        assert!(plan.request_review.is_none() && plan.execution.is_none() && plan.tasks.is_empty());
+        assert!(
+            store
+                .interpreter_delivery_intent(&r, &p, &runtime, &pin)
+                .is_err()
+        );
+        let original_session = std::mem::replace(&mut p.provider_session, uuid());
+        assert!(
+            store
+                .interpreter_continuation_current(&r, &p, &runtime, &pin)
+                .is_err()
+        );
+        p.provider_session = original_session;
+        assert!(
+            store
+                .interpreter_continuation_current(&r, &p, &uuid(), &pin)
+                .is_err()
+        );
+        let mut different_policy = pin.clone();
+        different_policy.generation += 1;
+        assert!(
+            store
+                .interpreter_continuation_current(&r, &p, &runtime, &different_policy)
+                .is_err()
+        );
+        store
+            .change(&task.snapshot.job_id, "Owner cancelled source", |p| {
+                p.status = PlanStatus::Cancelled;
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            store
+                .interpreter_continuation_current(&r, &p, &runtime, &pin)
+                .is_err()
+        );
+    }
+}

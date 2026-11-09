@@ -32,12 +32,10 @@ impl JobStore {
     ) -> Result<Record> {
         let connection = self.connection.lock().expect("job journal");
         let record = retained(&connection, reserved.id(), &reserved.record.binding_sha256)?;
-        let completed = record.phase == Phase::Final
-            && record
-                .report
-                .as_ref()
-                .is_some_and(|r| r.state == ReceiptState::Completed && r.success);
-        if !(matches!(record.phase, Phase::DeliveryIntent | Phase::Accepted) || completed)
+        // Final failure is an observable outcome, never a new continuation or a
+        // successful completion. Keep checking policy, participants and source.
+        let final_observation = record.phase == Phase::Final && record.report.is_some();
+        if !(matches!(record.phase, Phase::DeliveryIntent | Phase::Accepted) || final_observation)
             || record.stop.is_some()
             || record.binding.runtime_id != runtime
             || Instant::now() >= reserved.deadline
