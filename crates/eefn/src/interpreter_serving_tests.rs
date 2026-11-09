@@ -341,23 +341,29 @@ async fn serving_permission_revoked_in_the_final_provider_poll_cannot_return_a_c
 
 #[tokio::test]
 async fn serving_permission_generation_is_pinned_and_generic_saves_cannot_reset_it() {
-    let f = Fixture::new(true, true).await;
-    let mut g = grant(&task("initial"));
-    g.params["permission_revision"] = json!(1);
-    assert!(g.validate().is_ok());
-    assert!(f.accept(&g).is_err());
-    let original = f.service.read_config().unwrap();
-    let mut revoked = original.clone();
-    revoked["permissions"]["interpreter_sharing"] = json!(false);
-    f.service.save_configuration(revoked).unwrap();
-    f.service.save_configuration(original).unwrap();
-    assert_eq!(
-        f.service.read_config().unwrap()["permissions"]["interpreter_sharing_revision"],
-        2
-    );
-    let g = grant(&task("initial"));
-    assert!(f.accept(&g).is_err());
-    assert!(f.requests.lock().unwrap().is_empty());
+    for model_change in [false, true] {
+        let f = Fixture::new(true, true).await;
+        let mut g = grant(&task("initial"));
+        g.params["permission_revision"] = json!(1);
+        assert!(g.validate().is_ok());
+        assert!(f.accept(&g).is_err());
+        let original = f.service.read_config().unwrap();
+        let mut revoked = original.clone();
+        if model_change {
+            revoked["models"]["ollama"]["selected"] = json!([]);
+        } else {
+            revoked["permissions"]["interpreter_sharing"] = json!(false);
+        }
+        f.service.save_configuration(revoked).unwrap();
+        f.service.save_configuration(original).unwrap();
+        assert_eq!(
+            f.service.read_config().unwrap()["permissions"]["interpreter_sharing_revision"],
+            2
+        );
+        let g = grant(&task("initial"));
+        assert!(f.accept(&g).is_err());
+        assert!(f.requests.lock().unwrap().is_empty());
+    }
 }
 
 #[test]

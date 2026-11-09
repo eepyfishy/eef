@@ -28,7 +28,11 @@ pub(crate) fn preserve_permission(old: &Value, next: &mut Value) -> Result<()> {
             .cloned()
             .unwrap_or_else(|| json!({})),
     )?;
-    let revision = if before.interpreter_sharing == after.interpreter_sharing {
+    let model_scope_changed = (before.interpreter_sharing || after.interpreter_sharing)
+        && old.get("models") != next.get("models");
+    let revision = if before.interpreter_sharing == after.interpreter_sharing
+        && !model_scope_changed
+    {
         before.interpreter_sharing_revision
     } else {
         match before.interpreter_sharing_revision.checked_add(1) {

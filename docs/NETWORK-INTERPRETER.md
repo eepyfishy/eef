@@ -156,8 +156,9 @@ Only the existing accepted-grant driver can execute the new source-bound task.
 It requires exact source/context/task-definition, model/backend/role and serving
 permission revision bindings. The normal ledger, lease/deadline, stop/policy
 watcher and completion checkpoint remain in control. Backend-owned permission
-revisions survive ordinary saves/restore: disabling then re-enabling cannot revive
-old work. A candidate also needs complete validated provider output and unchanged
+revisions survive ordinary saves/restore and track relevant model-setting changes:
+disabling then re-enabling or restoring a removed model role cannot revive old
+work. A candidate also needs complete validated provider output and unchanged
 current permission at the final response. It remains untrusted and grants no tool
 authority. Direct generic execution of this task is refused.
 
