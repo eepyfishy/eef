@@ -39,10 +39,12 @@ The command reads and pins the current source itself; it needs no JSON, revision
 or digest copied by the user. Repeated attempts inspect retained interpretation;
 an uncertain attempt cannot automatically run again. Missing models leave the
 input saved and core services available. Automatic remote interpretation remains
-planned. Normal `requests input` is being updated to save raw input before
-inference too; that integration is not yet hosted-verified. A missing model
+planned. Normal `requests input` also saves raw input before inference; this
+unreleased integration passed hosted verification at `2b650d6`. A missing model
 leaves a saved request with setup guidance. Repeating its receipt only inspects
 history; use `interpret-saved` explicitly after selecting and applying a model.
+Plain input output shows status and guidance; use `--json` or detailed inspection
+only when you want the retained private request included in the output.
 
 You can cancel saved input with
 `eefn jobs stop REQUEST_ID`. To inspect after a lost reply, use the operation ID

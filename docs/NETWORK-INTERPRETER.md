@@ -2,8 +2,8 @@
 
 Status: raw saving (`4ef0935`) and explicit saved-input interpretation
 (`2a49073`) passed all four hosted jobs. Automatic delegation remains planned.
-Normal input's new raw-first integration is in development, awaiting hosted
-verification. It saves before checking for a local interpreter. Saving raw input
+Normal input's raw-first integration passed all four hosted jobs and the
+independent source audit at `2b650d6`. It saves before checking for a local interpreter. Saving raw input
 does not enable delegation or approve inference; missing models retain input.
 
 The new `eefn requests save-input --text 'Your request'` command uses the running
@@ -20,8 +20,8 @@ interpreter and promotes the same request to review after a durable ownership
 checkpoint. An uncertain or already completed attempt is inspected without
 another model call. Source identity/revision/digest are read and pinned by the
 backend; the user does not need to copy JSON or hashes. Missing models leave the
-input saved. Normal `requests input` now integrates these stages in source;
-that integration remains unverified. Automatic remote interpretation for
+input saved. Normal `requests input` integrates these stages at the accepted
+development checkpoint `2b650d6`. Automatic remote interpretation for
 model-free nodes is still unimplemented.
 
 ## Intended user behavior
@@ -101,7 +101,7 @@ backend and runtime. The explicit public command and local model-call path passe
 hosted verification at `2a49073`. Old records with missing provider metadata stay unknown;
 they never become an inferred model selection. This local path cannot claim a
 different node as its interpreter or authorize remote inference. Integration into
-`requests input`, remote provider authorization, bounded broker grants and
+`requests input` passed at `2b650d6`; remote provider authorization, bounded broker grants and
 explicit recovery remain required. A claim itself never authorizes inference.
 A completed review still needs separate preparation, owner approval and execution.
 

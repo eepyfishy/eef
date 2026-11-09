@@ -3,11 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: normal input saves before inference
+## Accepted development checkpoint: normal input saves before inference
+
+Source `2b650d6` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42515083456) and an
+independent source/log audit: 1,645 Windows/headless Rust tests, one ignored across
+17 unfiltered groups, all 37 native suites and the existing additional gates.
+The shipping commands verify raw-save-before-inference, retained input without
+models, read-only receipt reuse, source/context identity, same-request promotion,
+uncertain-outcome handling and persistence across restart. Ordinary coordinator
+startup also passes without a model or `--no-brain`. Plain `requests input` and
+`--ask` use the backend text formatter; detailed JSON remains explicitly available.
+This is synthetic development acceptance, not physical model quality, two-PC,
+installer or stable-release acceptance. Automatic network interpretation is open.
+
+## Earlier raw-first validation attempts
 
 Normal `requests input` now reuses the raw-input journal and saved-interpretation
-runner before optional method preparation. Its source is not yet accepted:
-hosted compile and command verification are pending. The same admission slot
+runner before optional method preparation. Before the accepted checkpoint above,
+hosted compile and command verification remained pending. The same admission slot
 covers saving and interpretation. Missing models and failed initial inference
 retain the request; repeating its receipt reads history without continuing it.
 Journal revisions include raw save and claim, so clients must use returned
@@ -34,7 +48,13 @@ Run `f900aa6` passed the complete input-workflow suite and reached native suite
 35 of 37, then failed a new startup-fixture assertion: `brain_alive` belongs to
 `/api/status`, not `/api/diagnostics`. The fixture now reads the correct status
 endpoint, requires matching initialized runtime identity and an empty model list,
-and retains the existing diagnostic checks. Its full verification is pending.
+and retains the existing diagnostic checks. Its full verification was pending.
+
+The subsequent `daa3fcb` run passed default startup but exposed a CLI privacy
+bug: normal input and `--ask` printed detailed JSON in plain mode. The accepted
+`2b650d6` correction connects both adapters to the existing backend text formatter,
+with native checks for history, partial failure and `--ask`. The failed run and
+its complete logs remain retained alongside the earlier fixture failures.
 
 ## Accepted development checkpoint: explicit saved-input interpretation
 

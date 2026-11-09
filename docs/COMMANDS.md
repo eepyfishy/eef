@@ -48,14 +48,16 @@ restart or model-role withdrawal. JSON contains private source/review text;
 plain output provides status and any currently unanswered question. Missing
 models leave the raw input available and do not disable core services.
 
-Normal `requests input` now saves raw input before checking for a local
-interpreter in development source; hosted verification of that integration is
-pending. Missing models or failed inference retain the source. A repeated input
+Normal `requests input` saves raw input before checking for a local interpreter.
+This unreleased integration passed all four hosted jobs and the independent
+source audit at `2b650d6`. Missing models or failed inference retain the source. A repeated input
 receipt only reads history; use `interpret-saved` explicitly for a saved request
 that has no attempt after applying a model. Journal revisions include saving and
 claiming, so later commands must use the returned revision. Automatic remote
 interpretation still needs the remaining
 [delegation work](NETWORK-INTERPRETER.md).
+Plain `requests input` and `--ask` show status, receipt and setup guidance without
+dumping the retained raw input; `--json` and detailed inspection contain private text.
 
 ## Continuous source inspection (in development)
 
