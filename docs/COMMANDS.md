@@ -13,8 +13,8 @@ interpretation and allowance consumption remain under development.
 
 The additional unreleased `interpreter-policies resolve --origin <node-id>`
 [routing observation](INTERPRETER-ROUTING.md) supports exact provider/backend/model
-preferences and `--local-only`. It starts no inference and is awaiting hosted
-verification.
+preferences and `--local-only`. It starts no inference and passes development
+acceptance at source `0aeb23a`; published alpha installers remain unchanged.
 
 v0.4.0a6 supports these commands without a browser. Deterministic commands need no LM. Run
 from the installation directory, or supply `--config` to select a node config.

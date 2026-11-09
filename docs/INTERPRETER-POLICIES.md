@@ -60,8 +60,8 @@ Damaged records are retained and refused rather than replaced with defaults.
 
 ## Remaining network interpretation work
 
-An additional unreleased [routing command](INTERPRETER-ROUTING.md), pending hosted
-verification, can inspect a fresh policy/disclosure-scoped advertised candidate.
+An additional unreleased [routing command](INTERPRETER-ROUTING.md), accepted at
+`0aeb23a`, can inspect a fresh policy/disclosure-scoped advertised candidate.
 It records no allowance or attempt and starts no inference.
 
 This policy grants no filesystem, process, microphone, camera or other tool

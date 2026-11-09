@@ -1,7 +1,8 @@
 # Interpreter routing observations
 
-This unreleased development increment is awaiting hosted compilation/runtime
-verification. It adds read-only provider resolution through existing model
+This unreleased development increment is accepted at source `0aeb23a` in the
+[four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42581232439)
+and independent source/log audit. It adds read-only provider resolution through existing model
 ranking, owner service policy and directional disclosure. It does not implement
 automatic network interpretation or reserve execution authority.
 

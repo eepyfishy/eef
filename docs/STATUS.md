@@ -3,6 +3,31 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Accepted development checkpoint: private routing and received interpreter results
+
+Source `5b9ef3a` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42582257784) and independent
+source/log audit: 1,683 Windows/headless Rust tests, one ignored across 17
+unfiltered groups, all 37 native suites and the existing additional gates.
+The receiver rebuilds and validates completed interpreter candidates against
+the exact granted source, stage, capabilities, model and permission revision.
+Forged flags/evidence and extra peer claims cannot become accepted output.
+Existing admission, leases, deadlines, stop and journal behavior remain unchanged.
+
+Its routing parent `0aeb23a` separately passes its
+[four-job run](https://github.com/eepyfishy/eef/actions/runs/42581232439) and source
+audit with 1,680 Rust tests and all 37 native suites. The owner can inspect a
+fresh independently authenticated candidate using existing model ranking,
+explicit preferences, service policy and directional disclosure. Three logical
+nodes verify a model-free origin, an eligible provider and a hidden higher-ranked
+provider without any inference or journal mutation from routing. Earlier failed
+fixtures and the omitted-registration-field failure remain retained.
+
+These are synthetic development checkpoints. The coordinator's durable
+allowance/attempt ledger and three-stage broker still need implementation before
+ordinary input can delegate automatically. Physical/model quality, setup,
+continuous work, installer/security and stable-release acceptance remain open.
+
 ## In development: independent interpreter result validation
 
 The [receiving-result increment](INTERPRETER-RESULTS.md) makes the existing grant

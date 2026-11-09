@@ -123,7 +123,7 @@ download a default model or choose a hidden provider outside the origin's scope.
 
 The unreleased [interpreter routing observation](INTERPRETER-ROUTING.md) adds this
 read-only selection boundary through the existing registry and private gateway
-state. Hosted verification is pending. It pins fresh runtime/session/model and
+state. Source `0aeb23a` passes hosted and independent source/log acceptance. It pins fresh runtime/session/model and
 serving permission metadata, preserves explicit preferences and directional
 disclosure, and rechecks before returning. It reserves no allowance or grant and
 does not connect normal input to a remote interpreter yet.
@@ -206,7 +206,7 @@ Malformed, incomplete, oversized or out-of-scope output cannot approve a plan,
 create another action, change resource ownership or enable a feature.
 
 The unreleased [receiving-result validation](INTERPRETER-RESULTS.md) increment,
-pending hosted verification, regenerates the exact typed candidate from the
+accepted at source `5b9ef3a`, regenerates the exact typed candidate from the
 returned proposal and granted source as part of grant-report confirmation. It
 checks the whole result, including evidence and non-authority flags, rather than
 trusting the peer's validation claim. It creates no review promotion or broker

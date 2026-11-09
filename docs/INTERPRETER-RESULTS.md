@@ -1,8 +1,10 @@
 # Receiving interpreter results
 
-This unreleased increment is awaiting hosted verification. It adds semantic
-validation to the existing grant-report confirmation path; it introduces no new
-command, model request, permission or wire format.
+This unreleased increment is accepted at source `5b9ef3a` in the
+[four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42582257784)
+and independent source/log audit. It adds semantic validation to the existing
+grant-report confirmation path; it introduces no new command, model request,
+permission or wire format.
 
 An interpreter node already validates complete model output before returning a
 candidate. The receiver must independently validate that candidate as well.
