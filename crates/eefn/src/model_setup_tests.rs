@@ -10,6 +10,7 @@ struct Fixture {
     hold_tags: Arc<AtomicBool>,
     tags_started: Arc<AtomicUsize>,
     tags_gate: Arc<tokio::sync::Notify>,
+    activity_changed: Arc<tokio::sync::Notify>,
     server: tokio::task::JoinHandle<()>,
     // Drop runtime/database owners before temporary-directory cleanup on Windows.
     dir: tempfile::TempDir,
@@ -80,15 +81,18 @@ impl Fixture {
         let hold_tags = Arc::new(AtomicBool::new(false));
         let tags_gate = Arc::new(tokio::sync::Notify::new());
         let tags_started = Arc::new(AtomicUsize::new(0));
+        let activity_changed = Arc::new(tokio::sync::Notify::new());
         let pull_hold = hold_pull.clone();
         let pull_wait = pull_gate.clone();
         let tags_hold = hold_tags.clone();
         let tags_wait = tags_gate.clone();
         let tags_seen = tags_started.clone();
+        let tags_activity = activity_changed.clone();
+        let pull_activity = activity_changed.clone();
         let app=Router::new()
-            .route("/api/tags",get(move||{let present=present.clone();let hold=tags_hold.clone();let wait=tags_wait.clone();let seen=tags_seen.clone();async move{seen.fetch_add(1,Ordering::SeqCst);if hold.load(Ordering::SeqCst){wait.notified().await;}Json(json!({"models":if present.load(Ordering::SeqCst){json!([{"name":"fixture:latest"}])}else{json!([])}}))}}))
+            .route("/api/tags",get(move||{let present=present.clone();let hold=tags_hold.clone();let wait=tags_wait.clone();let seen=tags_seen.clone();let activity=tags_activity.clone();async move{seen.fetch_add(1,Ordering::SeqCst);activity.notify_one();if hold.load(Ordering::SeqCst){wait.notified().await;}Json(json!({"models":if present.load(Ordering::SeqCst){json!([{"name":"fixture:latest"}])}else{json!([])}}))}}))
             .route("/api/show",post(||async{Json(json!({"capabilities":["completion"]}))}))
-            .route("/api/pull",post(move||{let changed=changed.clone();let count=count.clone();let hold=pull_hold.clone();let wait=pull_wait.clone();async move{count.fetch_add(1,Ordering::SeqCst);if hold.load(Ordering::SeqCst){wait.notified().await;}changed.store(true,Ordering::SeqCst);"{\"status\":\"success\"}\n"}}));
+            .route("/api/pull",post(move||{let changed=changed.clone();let count=count.clone();let hold=pull_hold.clone();let wait=pull_wait.clone();let activity=pull_activity.clone();async move{count.fetch_add(1,Ordering::SeqCst);activity.notify_one();if hold.load(Ordering::SeqCst){wait.notified().await;}changed.store(true,Ordering::SeqCst);"{\"status\":\"success\"}\n"}}));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -114,6 +118,7 @@ impl Fixture {
             hold_tags,
             tags_started,
             tags_gate,
+            activity_changed,
             server,
         }
     }
@@ -684,10 +689,19 @@ async fn wait_count(
 ) {
     let started = std::time::Instant::now();
     let mut polls = 0_u64;
-    let waited = tokio::time::timeout(Duration::from_secs(3), async {
-        while count.load(Ordering::SeqCst) == 0 {
+    // This rendezvous includes provider inspection and journal admission before
+    // the fixture endpoint is reached. It is not a production latency/consent
+    // deadline. Wait for observed HTTP activity instead of a 10-ms polling loop.
+    let waited = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let activity = f.activity_changed.notified();
+            tokio::pin!(activity);
+            activity.as_mut().enable();
+            if count.load(Ordering::SeqCst) > 0 {
+                break;
+            }
             polls += 1;
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            activity.await;
         }
     })
     .await;
