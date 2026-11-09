@@ -178,6 +178,45 @@ fn source_matches(plan: &Plan, record: &Record, delivering: bool) -> Result<()> 
     }
     Ok(())
 }
+fn current_participants(record: &Record, permit: &Permit) -> Result<()> {
+    permit.validate(&record.task()?)?;
+    let binding = &record.binding;
+    let grant = &binding.grant;
+    if permit.origin_runtime != binding.origin_runtime_id
+        || permit.origin_session != binding.origin_session_id
+        || permit.provider_runtime != binding.provider_runtime_id
+        || permit.provider_session != grant.session_id
+        || permit.issuer != grant.issuer_id
+        || permit.provider_node != grant.executor_node
+        || grant.backend.as_deref() != Some(permit.backend.as_str())
+        || grant.model_id.as_deref() != Some(permit.model_id.as_str())
+        || grant.params["permission_revision"] != json!(permit.permission_revision)
+        || grant.limits.max_execution_ms > permit.limits.max_duration_ms
+        || grant.limits.max_result_bytes > permit.limits.max_result_bytes
+    {
+        bail!("Interpreter participants/model/limits changed")
+    }
+    Ok(())
+}
+fn current_policy(
+    connection: &Connection,
+    record: &Record,
+    pin: &PolicyPin,
+    permit: &Permit,
+) -> Result<u64> {
+    let policies = interpreter_policies::records(connection)?;
+    let policy = policies.last().context("Interpreter policy unavailable")?;
+    let now = eefn::protocol::now_ms();
+    if PolicyPin::from(policy) != *pin
+        || record.binding.policy_id != policy.id
+        || !policy.active(policy.generation, &permit.issuer, now)
+        || now < record.binding.reserved_at_ms
+        || now >= record.binding.grant.expires_at_ms
+    {
+        bail!("Interpreter policy or original grant time changed")
+    }
+    Ok(now)
+}
 fn update_record(connection: &Connection, old: &Record, new: &Record) -> Result<()> {
     new.validate()?;
     if old.binding_sha256 != new.binding_sha256 || json!(old.binding) != json!(new.binding) {
@@ -538,36 +577,9 @@ impl JobStore {
         {
             bail!("Interpreter reservation changed, expired or belongs to another runtime")
         }
-        let task = old.task()?;
-        permit.validate(&task)?;
-        let binding = &old.binding;
-        let grant = &binding.grant;
-        if permit.origin_runtime != binding.origin_runtime_id
-            || permit.origin_session != binding.origin_session_id
-            || permit.provider_runtime != binding.provider_runtime_id
-            || permit.provider_session != grant.session_id
-            || permit.issuer != grant.issuer_id
-            || permit.provider_node != grant.executor_node
-            || grant.backend.as_deref() != Some(permit.backend.as_str())
-            || grant.model_id.as_deref() != Some(permit.model_id.as_str())
-            || grant.params["permission_revision"] != json!(permit.permission_revision)
-            || grant.limits.max_execution_ms > permit.limits.max_duration_ms
-            || grant.limits.max_result_bytes > permit.limits.max_result_bytes
-        {
-            bail!("Interpreter participants/model/limits changed before delivery")
-        }
-        let policies = interpreter_policies::records(&transaction)?;
-        let policy = policies.last().context("Interpreter policy unavailable")?;
-        let now = eefn::protocol::now_ms();
-        if PolicyPin::from(policy) != *pin
-            || binding.policy_id != policy.id
-            || !policy.active(policy.generation, &permit.issuer, now)
-            || now < binding.reserved_at_ms
-            || now >= grant.expires_at_ms
-        {
-            bail!("Interpreter policy or original grant time changed")
-        }
-        source_matches(&read(&transaction, &grant.job_id)?, old, true)?;
+        current_participants(old, permit)?;
+        let now = current_policy(&transaction, old, pin, permit)?;
+        source_matches(&read(&transaction, &old.binding.grant.job_id)?, old, true)?;
         let mut record = old.clone();
         record.phase = Phase::DeliveryIntent;
         record.revision = 2;

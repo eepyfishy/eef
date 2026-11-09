@@ -23,6 +23,36 @@ fn increment(record: &mut Record) -> Result<()> {
 }
 
 impl JobStore {
+    pub(crate) fn interpreter_continuation_current(
+        &self,
+        reserved: &Reserved,
+        permit: &Permit,
+        runtime: &str,
+        pin: &PolicyPin,
+    ) -> Result<Record> {
+        let connection = self.connection.lock().expect("job journal");
+        let record = retained(&connection, reserved.id(), &reserved.record.binding_sha256)?;
+        let completed = record.phase == Phase::Final
+            && record
+                .report
+                .as_ref()
+                .is_some_and(|r| r.state == ReceiptState::Completed && r.success);
+        if !(matches!(record.phase, Phase::DeliveryIntent | Phase::Accepted) || completed)
+            || record.stop.is_some()
+            || record.binding.runtime_id != runtime
+            || Instant::now() >= reserved.deadline
+        {
+            bail!("Interpreter continuation is no longer current")
+        }
+        current_participants(&record, permit)?;
+        current_policy(&connection, &record, pin, permit)?;
+        source_matches(
+            &read(&connection, &record.binding.grant.job_id)?,
+            &record,
+            true,
+        )?;
+        Ok(record)
+    }
     /// Retire only the exact in-process continuation. No report, fresh grant or
     /// proof of external stop is invented when a future is dropped.
     pub(crate) fn retire_interpreter_continuation(

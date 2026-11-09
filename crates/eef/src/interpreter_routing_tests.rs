@@ -221,6 +221,7 @@ async fn private_model_free_origin_resolves_only_disclosed_policy_scoped_current
         limits: Default::default(),
         valid_for_ms: None,
     };
+    let mut policy_changes = runtime.engine.stop_changes.subscribe();
     let saved = runtime
         .interpreter_policy_command(eefn::interpreter_policy::Request {
             schema_version: 1,
@@ -228,6 +229,8 @@ async fn private_model_free_origin_resolves_only_disclosed_policy_scoped_current
             command: approval.clone(),
         })
         .unwrap();
+    assert!(policy_changes.has_changed().unwrap());
+    let _ = *policy_changes.borrow_and_update();
     let before = runtime.engine.store.usage().unwrap();
     let request = Request {
         schema_version: 1,
@@ -432,6 +435,7 @@ async fn private_model_free_origin_resolves_only_disclosed_policy_scoped_current
             },
         })
         .unwrap();
+    assert!(policy_changes.has_changed().unwrap());
     assert!(runtime.interpreter_route_preview(request).await.is_err());
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     for node in nodes {

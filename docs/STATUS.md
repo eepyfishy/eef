@@ -3,6 +3,15 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: core interpreter service exchange
+
+The [exchange driver](INTERPRETER-EXCHANGE.md) joins durable reservations to the
+existing private grant transport, observed journal checkpoints, scheduler and
+active-job lifecycle. Source, policy, configuration and gateway changes wake
+state rechecks without an idle poller. Hosted verification is pending. Its
+synthetic two-node tests do not complete source promotion, public input wiring,
+explicit recovery, physical operation or stable-release acceptance.
+
 ## In development: interpreter cancellation and stop checkpoints
 
 The [lifecycle increment](INTERPRETER-LIFECYCLE.md) adds exact durable stop send

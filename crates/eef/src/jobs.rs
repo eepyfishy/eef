@@ -86,6 +86,7 @@ pub struct JobStore {
     _file_lock: Option<File>,
     max_count: usize,
     max_bytes: usize,
+    source_changes: tokio::sync::watch::Sender<u64>,
     reads: job_reads::Queue,
     finalizations: job_finalizations::Queue,
     workload_writes: job_finalizations::Queue,
@@ -271,6 +272,7 @@ impl JobStore {
             _file_lock: lock,
             max_count,
             max_bytes,
+            source_changes: tokio::sync::watch::channel(0).0,
             reads: Default::default(),
             finalizations: job_finalizations::Queue::new(max_count, max_bytes),
             workload_writes: job_finalizations::Queue::for_workload_writes(max_count, max_bytes),
@@ -329,6 +331,10 @@ impl JobStore {
                 Ok(plan)
             })
             .collect()
+    }
+    /// This counter grants no authority and is not reconstructed as job state.
+    pub(crate) fn source_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.source_changes.subscribe()
     }
     pub fn get(&self, id: &str) -> Result<Plan> {
         let connection = self.connection.lock().expect("job journal");
@@ -557,6 +563,8 @@ impl JobStore {
                 i64::try_from(reserve(&plan))?
             ],
         )?;
+        self.source_changes
+            .send_modify(|revision| *revision = revision.wrapping_add(1));
         Ok(plan)
     }
     fn check_size(
@@ -703,6 +711,8 @@ impl JobStore {
             bail!("Only finished jobs can be removed")
         }
         connection.execute("DELETE FROM durable_jobs WHERE job_id=?1", [id])?;
+        self.source_changes
+            .send_modify(|revision| *revision = revision.wrapping_add(1));
         Ok(())
     }
 }

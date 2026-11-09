@@ -470,7 +470,7 @@ impl Charge {
 }
 
 impl crate::Runtime {
-    async fn current_interpreter_permit(
+    pub(crate) async fn current_interpreter_permit(
         &self,
         task: &Task,
         participants: &Participants,
@@ -505,6 +505,38 @@ impl crate::Runtime {
         let permit = Permit::from_participants(&current, capabilities)?;
         permit.validate(task)?;
         Ok(permit)
+    }
+    pub(crate) async fn interpreter_continuation_current(
+        &self,
+        reserved: &Reserved,
+        pin: &PolicyPin,
+        participants: &Participants,
+    ) -> Result<Record> {
+        let permit = self
+            .current_interpreter_permit(&reserved.record.task()?, participants)
+            .await?;
+        self.config.edit_for_restart(|saved| {
+            let settings = eefn::authentication::AuthenticationPolicy::parse(
+                saved.pointer("/node/authentication"),
+            )?;
+            let issuer = crate::interpreter_policy::current_issuer(
+                self.node_server.authentication_policy(),
+                &settings,
+            )?;
+            ensure!(
+                issuer.as_deref() == Some(permit.issuer.as_str()),
+                "Interpreter authentication changed during continuation"
+            );
+            Ok((
+                self.engine.store.interpreter_continuation_current(
+                    reserved,
+                    &permit,
+                    self.runtime_id(),
+                    pin,
+                )?,
+                false,
+            ))
+        })
     }
     pub(crate) async fn reserve_interpreter_allowance(
         &self,

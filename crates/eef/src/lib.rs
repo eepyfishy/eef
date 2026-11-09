@@ -20,6 +20,7 @@ pub mod execution_stop;
 pub mod firmware;
 pub mod initialization;
 pub(crate) mod interpreter_allowance;
+pub(crate) mod interpreter_exchange;
 pub mod interpreter_policy;
 pub mod interpreter_routing;
 pub mod interpreter_usage;

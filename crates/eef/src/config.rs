@@ -11,6 +11,54 @@ pub struct Config {
     value: Arc<Value>,
     source: Option<Arc<PathBuf>>,
     edit_lock: Arc<Mutex<()>>,
+    changes: tokio::sync::watch::Sender<u64>,
+}
+
+#[cfg(test)]
+mod change_observation_tests {
+    use super::*;
+    #[test]
+    fn only_successful_saved_changes_wake_observers_and_never_apply_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("owner.json");
+        std::fs::write(&path, b"{}").unwrap();
+        let config = Config::load(Some(&path)).unwrap();
+        let clone = config.clone();
+        let mut changes = config.changes();
+        assert!(!changes.has_changed().unwrap());
+        config.edit_for_restart(|_| Ok(((), false))).unwrap();
+        assert!(!changes.has_changed().unwrap());
+        assert!(
+            config
+                .edit_for_restart::<()>(|_| anyhow::bail!("Refused edit"))
+                .is_err()
+        );
+        assert!(!changes.has_changed().unwrap());
+        assert!(
+            config
+                .edit_for_restart(|saved| {
+                    saved["node"]["port"] = json!(0);
+                    Ok(((), true))
+                })
+                .is_err()
+        );
+        assert!(!changes.has_changed().unwrap());
+        let original = config.string("identity.name", "");
+        clone
+            .edit_for_restart(|saved| {
+                saved["identity"]["name"] = json!("New saved name");
+                Ok(((), true))
+            })
+            .unwrap();
+        assert!(changes.has_changed().unwrap());
+        let version = *changes.borrow_and_update();
+        assert_eq!(config.string("identity.name", ""), original);
+        let mut next = Config::load(Some(&path)).unwrap().as_value();
+        next["identity"]["name"] = json!("Another saved name");
+        config.save_for_restart(&next).unwrap();
+        assert!(changes.has_changed().unwrap());
+        assert_ne!(*changes.borrow_and_update(), version);
+    }
 }
 
 impl Config {
@@ -41,6 +89,7 @@ impl Config {
             value: Arc::new(value),
             source: source.map(Arc::new),
             edit_lock: Arc::new(Mutex::new(())),
+            changes: tokio::sync::watch::channel(0).0,
         })
     }
 
@@ -50,6 +99,11 @@ impl Config {
             value = value.get(part)?;
         }
         Some(value)
+    }
+
+    /// A wake-up hint only; callers must reread settings under the existing fence.
+    pub(crate) fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
     }
 
     pub fn string(&self, path: &str, default: &str) -> String {
@@ -167,6 +221,8 @@ impl Config {
             eefn::atomic_file::copy(path, &path.with_extension("yaml.bak"))?;
         }
         eefn::atomic_file::write(path, bytes.as_bytes())?;
+        self.changes
+            .send_modify(|revision| *revision = revision.wrapping_add(1));
         Ok(())
     }
 }

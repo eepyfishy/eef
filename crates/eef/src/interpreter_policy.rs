@@ -144,17 +144,19 @@ impl Runtime {
             false
         };
         if !new_approval {
-            return self.engine.store.interpreter_policy_command(
+            let value = self.engine.store.interpreter_policy_command(
                 command,
                 &self.instance_id,
                 None,
                 eefn::protocol::now_ms(),
-            );
+            )?;
+            self.interpreter_policy_changed(&value);
+            return Ok(value);
         }
         let applied = self.node_server.authentication_policy();
         // Hold the existing configuration fence through the durable checkpoint;
         // saved credential replacement cannot race approval under an old issuer.
-        self.config.edit_for_restart(|saved| {
+        let value = self.config.edit_for_restart(|saved| {
             let settings = eefn::authentication::AuthenticationPolicy::parse(
                 saved.pointer("/node/authentication"),
             )?;
@@ -166,7 +168,17 @@ impl Runtime {
                 eefn::protocol::now_ms(),
             )?;
             Ok((value, false))
-        })
+        })?;
+        self.interpreter_policy_changed(&value);
+        Ok(value)
+    }
+
+    fn interpreter_policy_changed(&self, value: &Value) {
+        if value["changed"] == true {
+            self.engine
+                .stop_changes
+                .send_modify(|revision| *revision = revision.wrapping_add(1));
+        }
     }
 }
 

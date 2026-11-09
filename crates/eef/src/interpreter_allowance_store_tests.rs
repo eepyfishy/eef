@@ -1170,3 +1170,36 @@ fn active_unissued_input_can_be_cancelled_without_an_invalid_stopping_state() {
         PlanStatus::Cancelled
     );
 }
+
+#[test]
+fn source_observation_wakes_on_saved_edits_and_removal_without_polling_or_read_side_effects() {
+    let store = JobStore::in_memory().unwrap();
+    let task = input(&store, "input");
+    let mut changes = store.source_changes();
+    store.get(&task.snapshot.job_id).unwrap();
+    store.list().unwrap();
+    store.usage().unwrap();
+    assert!(!changes.has_changed().unwrap());
+    let before = json!(store.get(&task.snapshot.job_id).unwrap());
+    assert!(
+        store
+            .change(&task.snapshot.job_id, "Refused source edit", |p| {
+                p.status = PlanStatus::Cancelled;
+                anyhow::bail!("Refused")
+            })
+            .is_err()
+    );
+    assert!(!changes.has_changed().unwrap());
+    assert_eq!(json!(store.get(&task.snapshot.job_id).unwrap()), before);
+    store
+        .change(&task.snapshot.job_id, "Owner cancelled source", |p| {
+            p.status = PlanStatus::Cancelled;
+            Ok(())
+        })
+        .unwrap();
+    assert!(changes.has_changed().unwrap());
+    let version = *changes.borrow_and_update();
+    store.remove_finished(&task.snapshot.job_id).unwrap();
+    assert!(changes.has_changed().unwrap());
+    assert_ne!(*changes.borrow_and_update(), version);
+}
