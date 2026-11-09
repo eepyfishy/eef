@@ -73,6 +73,9 @@ delivery intent becomes `not_sent`; delivered or accepted work becomes
 The original wall-clock and monotonic deadlines are never renewed.
 
 Reports must confirm the exact reserved grant and existing result validators.
+Completion needs its matching durably saved acceptance. Ordinary observer
+reports cannot settle an interrupted attempt after reopen; that needs the
+separately authenticated explicit recovery path still to be integrated.
 Accepted and final checkpoints use reserved storage. Failed final observations
 retire initial ownership without inventing a successful proposal. An unknown
 completion continues occupying a concurrency slot: an observer timeout does

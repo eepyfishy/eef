@@ -394,6 +394,16 @@ fn delivery_and_receipts_keep_original_deadline_exact_binding_and_reserved_check
             .interpreter_delivery_intent(&reserved, &p, &runtime, &pin)
             .is_err()
     );
+    let unaccepted = GrantReport::new(
+        dispatch.grant(),
+        ReceiptState::Completed,
+        json!(null),
+        Some("result_too_large"),
+    );
+    assert!(
+        store.interpreter_report(reserved.id(), unaccepted).is_err(),
+        "Completion needs the exact saved acceptance"
+    );
     let accepted = GrantReport::new(dispatch.grant(), ReceiptState::Accepted, json!(null), None);
     let saved = store
         .interpreter_report(reserved.id(), accepted.clone())
@@ -538,17 +548,20 @@ fn reopen_never_reconstructs_a_continuation_and_recovery_works_below_quota() {
                 .is_err()
         );
         if phase != "reserved" {
-            store
-                .interpreter_report(
-                    r.id(),
-                    GrantReport::new(
-                        &r.record.binding.grant,
-                        ReceiptState::Completed,
-                        json!(null),
-                        Some("result_too_large"),
-                    ),
-                )
-                .unwrap();
+            assert!(
+                store
+                    .interpreter_report(
+                        r.id(),
+                        GrantReport::new(
+                            &r.record.binding.grant,
+                            ReceiptState::Completed,
+                            json!(null),
+                            Some("result_too_large"),
+                        ),
+                    )
+                    .is_err(),
+                "Interrupted history needs separately authenticated explicit recovery, not a live observer"
+            );
         }
         drop(store);
         assert!(JobStore::open(&path, 1, 1024).is_ok());

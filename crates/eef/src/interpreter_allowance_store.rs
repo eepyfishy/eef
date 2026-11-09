@@ -596,15 +596,18 @@ impl JobStore {
         {
             return Ok(old.clone());
         }
-        if !report.confirms(&old.binding.grant)
-            || matches!(old.phase, Phase::Reserved | Phase::NotSent | Phase::Final)
-            || (report.state == ReceiptState::Accepted && old.phase != Phase::DeliveryIntent)
-            || (report.state == ReceiptState::Rejected
-                && old
-                    .report
-                    .as_ref()
-                    .is_some_and(|r| r.state == ReceiptState::Accepted))
-        {
+        let admitted_transition = match report.state {
+            ReceiptState::Accepted | ReceiptState::Rejected => old.phase == Phase::DeliveryIntent,
+            ReceiptState::Completed => {
+                old.phase == Phase::Accepted
+                    && old
+                        .report
+                        .as_ref()
+                        .is_some_and(|r| r.state == ReceiptState::Accepted)
+            }
+            ReceiptState::Unknown => matches!(old.phase, Phase::DeliveryIntent | Phase::Accepted),
+        };
+        if !report.confirms(&old.binding.grant) || !admitted_transition {
             bail!("Interpreter report is stale, conflicting or outside delivery")
         }
         let mut record = old.clone();
