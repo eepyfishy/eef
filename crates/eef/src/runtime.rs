@@ -648,6 +648,25 @@ impl Runtime {
             .interpretation_capabilities(origin, &self.node_server)
             .await
     }
+    pub(crate) async fn interpreter_participant_context(
+        &self,
+        origin: &str,
+        provider: &str,
+    ) -> Result<(Vec<String>, u64)> {
+        let disclosed = self
+            .discovery
+            .planning_nodes(origin, &self.node_server)
+            .await?;
+        if !disclosed.contains(provider) {
+            bail!("Interpreter provider is outside directional disclosure")
+        }
+        Ok((
+            self.discovery
+                .interpretation_capabilities(origin, &self.node_server)
+                .await?,
+            self.discovery.freshness_seconds,
+        ))
+    }
     pub(crate) async fn disclosed_planning_nodes(
         &self,
         origin: &str,

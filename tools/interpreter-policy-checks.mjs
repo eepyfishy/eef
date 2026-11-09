@@ -6,6 +6,8 @@ export async function checkInterpreterPolicyUnavailable({owner,nodeId}) {
  assert.equal(rejected.success,false);
  const state=await owner(['interpreter-policies','show']);
  assert.equal(state.result.current_generation,0);assert.equal(state.result.authorization,null);
+ const usage=await owner(['interpreter-policies','usage']);assert.equal(usage.success,true);
+ assert.equal(usage.result.policy,null);assert.equal(usage.result.charged.calls,0);
 }
 export async function checkInterpreterPolicy({owner,eef,nodeId}) {
  const empty=await owner(['interpreter-policies','show']);assert.equal(empty.success,true);
@@ -14,6 +16,16 @@ export async function checkInterpreterPolicy({owner,eef,nodeId}) {
   '--operation-id',operation,'--max-calls','2','--max-output-tokens','128','--max-execution-ms','1000','--max-result-bytes','4096'];
  const saved=await owner(args);assert.equal(saved.success,true);assert.equal(saved.result.changed,true);
  const record=saved.result.authorization;assert.equal(record.id,operation);assert.equal(record.generation,1);
+ const usage=await owner(['interpreter-policies','usage',record.id,'--limit','1']);assert.equal(usage.success,true);
+ assert.equal(usage.result.report_type,'interpreter_allowance_usage');assert.equal(usage.result.charged.calls,0);
+ assert.equal(usage.result.policy.id,record.id);assert.deepEqual(usage.result.items,[]);
+ for(const flag of ['grants_issued','model_inference_requested','allowance_reserved','automatically_retried','automatic_delegation_available'])assert.equal(usage.result[flag],false,flag);
+ const usagePayload={schema_version:1,expected_runtime_id:saved.runtime_id,command:{id:record.id,limit:1,after_sequence:0}};
+ const usagePost=(body,headers={})=>fetch(eef+'/api/commands/interpreter-usage',{method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+ assert.equal((await usagePost(usagePayload,{Origin:'https://untrusted.example'})).status,403);
+ assert.equal((await usagePost({...usagePayload,expected_runtime_id:randomUUID()})).status,400);
+ assert.equal((await usagePost({...usagePayload,command:{...usagePayload.command,limit:101}})).status,400);
+ assert.equal((await usagePost({...usagePayload,padding:'x'.repeat(4096)})).status,413);
  assert.deepEqual(record.creation.scope,{origin_nodes:[nodeId],provider_nodes:[nodeId]});
  assert.equal(record.creation.limits.max_reserved_output_tokens,256);
  assert.equal(record.creation.limits.max_reserved_execution_ms,2000);
@@ -45,6 +57,10 @@ export async function checkInterpreterPolicy({owner,eef,nodeId}) {
  const revoked=await owner(revokeArgs);assert.equal(revoked.result.authorization.revision,2);
  const repeated=await owner(revokeArgs);assert.equal(repeated.result.reused,true);
  const old=await owner(args);assert.equal(old.result.reused,true);assert.equal(old.result.authorization.revision,2);
+ const historical=await owner(['interpreter-policies','usage',record.id]);assert.equal(historical.result.policy.revoked,true);
+ assert.equal(historical.result.charged.calls,0);assert.deepEqual(historical.result.items,[]);
+ const usagePlain=await owner(['interpreter-policies','usage',record.id],true,true);
+ assert(usagePlain.out.includes('Reserved calls: 0/2'));assert(usagePlain.out.includes('conservative'));
  const refusedRoute=await owner(['interpreter-policies','resolve','--origin',nodeId],false);assert.equal(refusedRoute.success,false);
  const listed=await owner(['interpreter-policies','list']);assert.equal(listed.result.items.length,1);
  assert.equal(listed.result.items[0].revoked,true);
@@ -54,4 +70,5 @@ export async function checkInterpreterPolicy({owner,eef,nodeId}) {
  assert(models.nodes.every(node=>node.models.length===0));
  console.log('Interpreter service policy command validation passed');
  console.log('Interpreter routing command validation passed');
+ console.log('Interpreter allowance usage command validation passed');
 }

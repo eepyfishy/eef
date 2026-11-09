@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: durable interpreter allowances and usage commands
+
+The [allowance ledger](INTERPRETER-ALLOWANCES.md) adds atomic source claims and
+bounded service reservations in the existing job journal, conservative retained
+usage, exact pre-delivery rechecks and restart uncertainty without replay.
+Owner commands inspect bounded summaries without raw prompts or executable
+grants. Hosted verification is pending. It adds no worker or dependency and does
+not connect ordinary input to automatic delegation. Three-stage broker delivery,
+promotion, cancellation/recovery and the remaining stable acceptance gates stay
+open.
+
 ## Accepted development checkpoint: private routing and received interpreter results
 
 Source `5b9ef3a` passes all four jobs in the

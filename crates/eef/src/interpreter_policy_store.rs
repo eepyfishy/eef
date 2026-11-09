@@ -18,7 +18,7 @@ pub(super) fn bytes(connection: &Connection) -> Result<usize> {
     let value:i64=connection.query_row("SELECT COALESCE(SUM(length(CAST(record_json AS BLOB))+reserved_bytes),0) FROM interpreter_service_policies",[],|row|row.get(0))?;
     Ok(usize::try_from(value)?)
 }
-fn records(connection: &Connection) -> Result<Vec<Authorization>> {
+pub(super) fn records(connection: &Connection) -> Result<Vec<Authorization>> {
     let mut statement=connection.prepare("SELECT policy_id,generation,length(CAST(record_json AS BLOB)),record_json,reserved_bytes,revocation_receipt FROM interpreter_service_policies ORDER BY generation")?;
     let mut rows = statement.query([])?;
     let mut result = Vec::new();

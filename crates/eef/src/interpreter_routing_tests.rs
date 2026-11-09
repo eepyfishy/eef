@@ -271,6 +271,86 @@ async fn private_model_free_origin_resolves_only_disclosed_policy_scoped_current
     assert!(runtime.interpreter_route_preview(invented).await.unwrap()["selected"].is_null());
     assert_eq!(runtime.engine.store.usage().unwrap(), before);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+    // Exercise the real runtime's reservation fence using opaque private-route
+    // snapshots. This remains a synthetic three-node fixture and sends no grant.
+    use crate::interpreter_allowance::{Participants, PolicyPin, Reservation};
+    let capabilities = runtime
+        .disclosed_interpretation_capabilities("input")
+        .await
+        .unwrap();
+    let context = eefn::context::RequestContext::new(
+        uuid::Uuid::new_v4().to_string(),
+        "input".into(),
+        vec!["home".into()],
+    )
+    .unwrap();
+    let raw = crate::request_intent::save(
+        &runtime.engine,
+        json!({"schema_version":1,"original_text":"Check this node"}),
+        &context,
+    )
+    .unwrap();
+    let task = eefn::interpreter_task::Task::new(
+        eefn::interpreter_task::Snapshot {
+            schema_version: 1,
+            job_id: raw["id"].as_str().unwrap().into(),
+            revision: raw["revision"].as_u64().unwrap(),
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            request_context: context,
+            allowed_capabilities: capabilities,
+            source: eefn::interpreter_task::Source::Initial {
+                input: serde_json::from_value(raw["input"].clone()).unwrap(),
+            },
+        },
+        128,
+    )
+    .unwrap();
+    let pin = PolicyPin::from(
+        &serde_json::from_value::<eefn::interpreter_policy::Authorization>(
+            saved["authorization"].clone(),
+        )
+        .unwrap(),
+    );
+    let participants = Participants {
+        origin: runtime
+            .node_server
+            .interpreter_session("input", 30)
+            .await
+            .unwrap(),
+        provider: runtime
+            .node_server
+            .interpreter_session("provider", 30)
+            .await
+            .unwrap(),
+        backend: "ollama".into(),
+        model_id: "chosen".into(),
+    };
+    let hidden = Participants {
+        origin: participants.origin.clone(),
+        provider: runtime
+            .node_server
+            .interpreter_session("hidden", 30)
+            .await
+            .unwrap(),
+        backend: "ollama".into(),
+        model_id: "chosen".into(),
+    };
+    let before = runtime.engine.store.usage().unwrap();
+    assert!(
+        runtime
+            .reserve_interpreter_allowance(task.clone(), pin.clone(), &hidden)
+            .await
+            .is_err()
+    );
+    assert_eq!(runtime.engine.store.usage().unwrap(), before);
+    let Reservation::New(reserved) = runtime
+        .reserve_interpreter_allowance(task, pin.clone(), &participants)
+        .await
+        .unwrap()
+    else {
+        panic!("Missing new in-process reservation")
+    };
+    let original_deadline = reserved.deadline;
     runtime
         .config
         .edit_for_restart(|saved| {
@@ -284,6 +364,12 @@ async fn private_model_free_origin_resolves_only_disclosed_policy_scoped_current
             .await
             .is_err()
     );
+    assert!(
+        runtime
+            .interpreter_delivery_intent(&reserved, &pin, &participants)
+            .await
+            .is_err()
+    );
     runtime
         .config
         .edit_for_restart(|saved| {
@@ -291,6 +377,50 @@ async fn private_model_free_origin_resolves_only_disclosed_policy_scoped_current
             Ok(((), true))
         })
         .unwrap();
+    let dispatch = runtime
+        .interpreter_delivery_intent(&reserved, &pin, &participants)
+        .await
+        .unwrap();
+    assert_eq!(dispatch.deadline(), original_deadline);
+    assert!(
+        runtime
+            .interpreter_delivery_intent(&reserved, &pin, &participants)
+            .await
+            .is_err()
+    );
+    runtime
+        .engine
+        .store
+        .interpreter_report(
+            reserved.id(),
+            eefn::grants::GrantReport::new(
+                dispatch.grant(),
+                eefn::grants::ReceiptState::Rejected,
+                json!(null),
+                Some("fixture_not_sent"),
+            ),
+        )
+        .unwrap();
+    let usage_options = crate::interpreter_usage::Options {
+        id: Some(pin.id.clone()),
+        limit: 25,
+        after_sequence: 0,
+    };
+    let usage = runtime
+        .interpreter_usage(crate::interpreter_usage::Request {
+            schema_version: 1,
+            expected_runtime_id: runtime.runtime_id().into(),
+            command: usage_options.clone(),
+        })
+        .unwrap();
+    assert!(crate::interpreter_usage::confirmed(
+        &usage,
+        &usage_options,
+        runtime.runtime_id()
+    ));
+    assert_eq!(usage["charged"]["calls"], 1);
+    assert_eq!(usage["occupied_slots"], 0);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
     runtime
         .interpreter_policy_command(eefn::interpreter_policy::Request {
             schema_version: 1,

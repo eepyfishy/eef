@@ -26,6 +26,8 @@ mod job_reads;
 pub(crate) use job_finalizations::CommittedIssue;
 pub(crate) use job_finalizations::Slot as WorkloadFinalSlot;
 pub(crate) use job_finalizations::StopCheckpoint as WorkloadStopCheckpoint;
+#[path = "interpreter_allowance_store.rs"]
+mod interpreter_allowances;
 #[path = "interpreter_policy_store.rs"]
 mod interpreter_policies;
 #[path = "model_verification_intents.rs"]
@@ -253,6 +255,7 @@ impl JobStore {
         model_verification_intents::initialize(&connection)?;
         setup_model_checks::initialize(&connection)?;
         interpreter_policies::initialize(&connection)?;
+        interpreter_allowances::initialize(&connection)?;
         let columns = connection
             .prepare("PRAGMA table_info(durable_jobs)")?
             .query_map([], |r| r.get::<_, String>(1))?
@@ -274,6 +277,7 @@ impl JobStore {
             retired: RetirementSignal(tokio::sync::watch::channel(false).0),
         });
         store.validate_automations()?;
+        interpreter_allowances::interrupt_on_open(&store)?;
         automation_schedules::interrupt_on_open(&store)?;
         for plan in store.list()? {
             {
@@ -601,6 +605,17 @@ impl JobStore {
             |r| r.get(0),
         )?;
         let interpreter_policy_bytes = interpreter_policies::bytes(&connection)?;
+        let interpreter_allowance_attempt_count: i64 = connection.query_row(
+            "SELECT count(*) FROM interpreter_allowance_attempts",
+            [],
+            |r| r.get(0),
+        )?;
+        let interpreter_allowance_account_count: i64 = connection.query_row(
+            "SELECT count(*) FROM interpreter_allowance_accounts",
+            [],
+            |r| r.get(0),
+        )?;
+        let interpreter_allowance_bytes = interpreter_allowances::bytes(&connection)?;
         let used = usize::try_from(payload)?
             .saturating_add(usize::try_from(reserved)?)
             .saturating_add(usize::try_from(automation_bytes)?)
@@ -613,7 +628,8 @@ impl JobStore {
             .saturating_add(usize::try_from(trigger_bytes)?)
             .saturating_add(usize::try_from(model_verification_intent_bytes)?)
             .saturating_add(setup_model_check_reserved_bytes)
-            .saturating_add(interpreter_policy_bytes);
+            .saturating_add(interpreter_policy_bytes)
+            .saturating_add(interpreter_allowance_bytes);
         Ok(
             serde_json::json!({"count":count,"automation_count":automation_count,"automation_bytes":automation_bytes,"authorization_count":authorization_count,
                 "authorization_bytes":authorization_bytes,"authorization_reserved_bytes":authorization_reserved_bytes,
@@ -624,6 +640,7 @@ impl JobStore {
                 "model_verification_intent_count":model_verification_intent_count,"model_verification_intent_bytes":model_verification_intent_bytes,
                 "setup_model_check_count":setup_model_check_count,"setup_model_check_reserved_bytes":setup_model_check_reserved_bytes,
                 "interpreter_policy_count":interpreter_policy_count,"interpreter_policy_bytes":interpreter_policy_bytes,
+                "interpreter_allowance_attempt_count":interpreter_allowance_attempt_count,"interpreter_allowance_account_count":interpreter_allowance_account_count,"interpreter_allowance_bytes":interpreter_allowance_bytes,
                 "payload_bytes":payload,"reserved_bytes":reserved,"max_bytes":self.max_bytes,"available_bytes":self.max_bytes.saturating_sub(used),
                 "over_limit":used>self.max_bytes||automations::count(&connection)?>self.max_count}),
         )

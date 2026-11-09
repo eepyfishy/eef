@@ -579,6 +579,10 @@ impl NodeServer {
             .context("Interpreter issuer unavailable")?
             .fingerprint()?;
         Ok(crate::interpreter_service::Session {
+            fresh_until: c
+                .last_seen
+                .checked_add(Duration::from_secs(freshness_seconds))
+                .context("Interpreter freshness overflow")?,
             node_id: node_id.into(),
             runtime_id: offer.runtime_id,
             session_id: c.session_id.to_string(),

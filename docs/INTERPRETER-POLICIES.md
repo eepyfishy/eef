@@ -13,6 +13,7 @@ Use the running coordinator's configuration, as with other owner commands:
 ```powershell
 eef --config <coordinator-config> interpreter-policies show
 eef --config <coordinator-config> interpreter-policies list
+eef --config <coordinator-config> interpreter-policies usage
 eef --config <coordinator-config> interpreter-policies approve --origin <input-node-id> --provider <serving-node-id> --max-calls 20
 eef --config <coordinator-config> interpreter-policies show <policy-id>
 eef --config <coordinator-config> interpreter-policies revoke <policy-id>
@@ -42,8 +43,10 @@ not widen the enclosing execution grant's existing bounds.
 
 `--valid-for-seconds` adds an expiry. Omitting it leaves the policy without a
 time expiry but retains finite aggregate limits. The current increment records
-these limits; durable allowance reservation and consumption are not implemented
-yet, so no service call can use this record as execution authority.
+these limits. The new [internal allowance ledger](INTERPRETER-ALLOWANCES.md)
+implements reservations and read-only usage reporting with verification pending;
+production broker delivery is still absent, so saving approval starts no service
+call.
 
 The CLI reads the current generation/runtime and sends one mutation to that
 same runtime. Concurrent approval with an outdated generation fails. A new

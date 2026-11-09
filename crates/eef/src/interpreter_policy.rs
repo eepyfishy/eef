@@ -6,6 +6,8 @@ use serde_json::Value;
 
 #[derive(Debug, clap::Subcommand)]
 pub enum Action {
+    /// Inspect retained service usage without prompts, grants or inference.
+    Usage(crate::interpreter_usage::Options),
     /// Inspect an eligible advertised interpreter; never reserve or run inference.
     Resolve(crate::interpreter_routing::Options),
     Show {

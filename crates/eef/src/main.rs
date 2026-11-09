@@ -293,6 +293,31 @@ enum ModelsCommand {
 mod credential_cli_tests {
     use super::*;
     #[test]
+    fn interpreter_usage_cli_pins_policy_and_bounded_sequence_page() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let args = Args::try_parse_from([
+            "eef",
+            "interpreter-policies",
+            "usage",
+            &id,
+            "--limit",
+            "1",
+            "--after-sequence",
+            "2",
+        ])
+        .unwrap();
+        let Some(Command::InterpreterPolicies {
+            command: eef::interpreter_policy::Action::Usage(options),
+        }) = args.command
+        else {
+            panic!("Wrong usage command")
+        };
+        options.validate().unwrap();
+        assert_eq!(options.id, Some(id));
+        assert_eq!(options.limit, 1);
+        assert_eq!(options.after_sequence, 2);
+    }
+    #[test]
     fn interpreter_route_cli_keeps_origin_and_explicit_local_model_preferences() {
         let args = Args::try_parse_from([
             "eef",
@@ -1488,6 +1513,19 @@ async fn interpreter_policy_cli(
     use eef::interpreter_policy::Action;
     use eefn::interpreter_policy::{Command as PolicyCommand, Request};
     use serde_json::json;
+    if let Action::Usage(options) = action {
+        options.validate()?;
+        return Ok(owner_automation_exchange(
+            client,
+            base,
+            json!(options),
+            false,
+            "interpreter-usage",
+            "owner_interpreter_usage",
+            |value, runtime| eef::interpreter_usage::confirmed(value, options, runtime),
+        )
+        .await);
+    }
     if let Action::Resolve(options) = action {
         options.validate()?;
         let mut report = owner_automation_exchange(
@@ -1506,7 +1544,7 @@ async fn interpreter_policy_cli(
         return Ok(report);
     }
     let initial = match action {
-        Action::Resolve(_) => unreachable!(),
+        Action::Resolve(_) | Action::Usage(_) => unreachable!(),
         Action::Show { id } => PolicyCommand::Show { id: id.clone() },
         Action::List {
             limit,
@@ -3310,6 +3348,8 @@ async fn main() -> Result<()> {
                     if value["success"] == true {
                         if value["result"]["report_type"] == "interpreter_route_preview" {
                             print!("{}", eef::interpreter_routing::render(&value["result"])?);
+                        } else if value["result"]["report_type"] == "interpreter_allowance_usage" {
+                            print!("{}", eef::interpreter_usage::render(&value["result"])?);
                         } else {
                             print!("{}", eef::interpreter_policy::render(&value["result"])?);
                         }

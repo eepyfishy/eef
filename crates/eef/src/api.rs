@@ -186,6 +186,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(interpreter_route_preview).layer(axum::extract::DefaultBodyLimit::max(16384)),
         )
         .route(
+            "/api/commands/interpreter-usage",
+            post(interpreter_usage).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/commands/automation-occurrences",
             post(automation_occurrence_command),
         )
@@ -394,6 +398,12 @@ async fn interpreter_route_preview(
     Json(request): Json<crate::interpreter_routing::Request>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.interpreter_route_preview(request).await?))
+}
+async fn interpreter_usage(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::interpreter_usage::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.interpreter_usage(request)?))
 }
 async fn automation_occurrence_command(
     State(runtime): State<Arc<Runtime>>,

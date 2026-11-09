@@ -24,6 +24,7 @@ impl Advertisement {
 /// It is intentionally not deserializable and cannot authorize a later send.
 #[derive(Clone, Debug)]
 pub struct Session {
+    pub(crate) fresh_until: std::time::Instant,
     pub(crate) node_id: String,
     pub(crate) runtime_id: String,
     pub(crate) session_id: String,
@@ -33,6 +34,12 @@ pub struct Session {
     pub(crate) models: Vec<PeerModel>,
 }
 impl Session {
+    pub fn is_fresh(&self) -> bool {
+        std::time::Instant::now() < self.fresh_until
+    }
+    pub fn freshness_deadline(&self) -> std::time::Instant {
+        self.fresh_until
+    }
     pub fn node_id(&self) -> &str {
         &self.node_id
     }
@@ -58,7 +65,7 @@ impl Session {
             && self.issuer_id == other.issuer_id
     }
     pub fn serves(&self, backend: &str, model: &str) -> bool {
-        if self.serving.is_none() || !matches!(backend, "ollama" | "llamacpp") {
+        if !self.is_fresh() || self.serving.is_none() || !matches!(backend, "ollama" | "llamacpp") {
             return false;
         }
         // Ambiguous duplicate advertisements cannot select an arbitrary entry.
@@ -114,6 +121,7 @@ mod tests {
             job_memory_limit_mib: None,
         };
         let mut session = Session {
+            fresh_until: std::time::Instant::now() + std::time::Duration::from_secs(30),
             node_id: "owner".into(),
             runtime_id: uuid::Uuid::new_v4().to_string(),
             session_id: uuid::Uuid::new_v4().to_string(),
@@ -126,6 +134,10 @@ mod tests {
             models: vec![model.clone()],
         };
         assert!(session.serves("ollama", "chosen"));
+        let mut expired = session.clone();
+        expired.fresh_until = std::time::Instant::now();
+        assert!(!expired.is_fresh());
+        assert!(!expired.serves("ollama", "chosen"));
         assert!(!session.serves("llamacpp", "chosen"));
         assert_eq!(session.permission_revision(), Some(4));
         session.models.push(model.clone());

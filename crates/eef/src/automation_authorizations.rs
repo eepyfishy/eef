@@ -155,9 +155,11 @@ impl JobStore {
                 .and_then(|n| n.checked_add(usize::try_from(other).ok()?))
                 .context("Authorization size overflow")?;
             let interpreter_bytes = interpreter_policies::bytes(connection)?;
+            let allowance_bytes = interpreter_allowances::bytes(connection)?;
             let intent_bytes = model_verification_intents::bytes(connection)?
                 .checked_add(setup_model_checks::bytes(connection)?)
                 .and_then(|n| n.checked_add(interpreter_bytes))
+                .and_then(|n| n.checked_add(allowance_bytes))
                 .context("Authorization size overflow")?;
             let used = used
                 .checked_add(automation_occurrences::bytes(connection)?)
