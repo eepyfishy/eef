@@ -6,6 +6,8 @@ use serde_json::Value;
 
 #[derive(Debug, clap::Subcommand)]
 pub enum Action {
+    /// Inspect an eligible advertised interpreter; never reserve or run inference.
+    Resolve(crate::interpreter_routing::Options),
     Show {
         id: Option<String>,
     },
@@ -166,7 +168,7 @@ impl Runtime {
     }
 }
 
-fn current_issuer(
+pub(crate) fn current_issuer(
     applied: &eefn::authentication::AuthenticationPolicy,
     saved: &eefn::authentication::AuthenticationPolicy,
 ) -> Result<Option<String>> {

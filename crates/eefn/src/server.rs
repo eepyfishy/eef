@@ -19,6 +19,9 @@ use uuid::Uuid;
 use crate::NodeCrypto;
 use crate::protocol::{PROTOCOL_VERSION, now_ms, read_message, write_message};
 
+#[cfg(test)]
+#[path = "server_interpreter_tests.rs"]
+mod interpreter_routing_tests;
 #[path = "server_report_queue.rs"]
 mod report_queue;
 #[path = "server_report_workers.rs"]
@@ -520,6 +523,70 @@ impl NodeServer {
             json!({"issuer_id":issuer,"session_id":c.session_id.to_string(),"executor_node":node_id,
             "limits":c.state.as_ref().unwrap().registration["execution_grants"]["limits"],"timing_mode":crate::grant_time::MODE}),
         )
+    }
+    /// Fresh independently authenticated registration for interpretation routing.
+    /// Callers must apply disclosure and service policy, then separately reserve
+    /// authority and recheck the exact connection before dispatch.
+    pub async fn interpreter_session(
+        &self,
+        node_id: &str,
+        freshness_seconds: u64,
+    ) -> Result<crate::interpreter_service::Session> {
+        crate::network::validate_remote_node_id(node_id)?;
+        if !(1..=300).contains(&freshness_seconds) {
+            bail!("Invalid interpreter registration freshness")
+        }
+        let connections = self.inner.connections.read().await;
+        let c = connections
+            .get(node_id)
+            .context("Interpreter node is not connected")?;
+        self.check_grant_connection(c)?;
+        self.check_lease_connection(c)?;
+        if c.session_id.is_nil() || c.last_seen.elapsed() >= Duration::from_secs(freshness_seconds)
+        {
+            bail!("Interpreter connection is stale or unbound")
+        }
+        let state = c
+            .state
+            .as_ref()
+            .context("Interpreter registration unavailable")?;
+        let offer: crate::registration::Offer =
+            serde_json::from_value(state.registration["registration_receipt"].clone())?;
+        offer.validate()?;
+        let record = c
+            .advertisement
+            .as_ref()
+            .context("Interpreter model registration unavailable")?;
+        if record.node_id != node_id {
+            bail!("Interpreter registration identity changed")
+        }
+        let limits: crate::grants::GrantPolicy =
+            serde_json::from_value(state.registration["execution_grants"]["limits"].clone())?;
+        limits.validate()?;
+        let serving: Option<crate::interpreter_service::Advertisement> = state
+            .registration
+            .get("interpreter_service")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()?;
+        if let Some(serving) = &serving {
+            serving.validate()?;
+        }
+        let issuer = self
+            .inner
+            .authentication
+            .tls
+            .as_ref()
+            .context("Interpreter issuer unavailable")?
+            .fingerprint()?;
+        Ok(crate::interpreter_service::Session {
+            node_id: node_id.into(),
+            runtime_id: offer.runtime_id,
+            session_id: c.session_id.to_string(),
+            issuer_id: issuer,
+            limits,
+            serving,
+            models: record.models.clone(),
+        })
     }
     pub async fn peer_grant_session(&self, node_id: &str) -> Result<Value> {
         let mut session = self.grant_session(node_id).await?;

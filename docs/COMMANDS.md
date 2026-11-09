@@ -11,6 +11,11 @@ commands record bounded owner consent without a dashboard. See
 limits and receipts. These commands start no model call; automatic network
 interpretation and allowance consumption remain under development.
 
+The additional unreleased `interpreter-policies resolve --origin <node-id>`
+[routing observation](INTERPRETER-ROUTING.md) supports exact provider/backend/model
+preferences and `--local-only`. It starts no inference and is awaiting hosted
+verification.
+
 v0.4.0a6 supports these commands without a browser. Deterministic commands need no LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.

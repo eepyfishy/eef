@@ -182,6 +182,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(interpreter_policy_command).layer(axum::extract::DefaultBodyLimit::max(16384)),
         )
         .route(
+            "/api/commands/interpreter-route",
+            post(interpreter_route_preview).layer(axum::extract::DefaultBodyLimit::max(16384)),
+        )
+        .route(
             "/api/commands/automation-occurrences",
             post(automation_occurrence_command),
         )
@@ -384,6 +388,12 @@ async fn interpreter_policy_command(
     Json(request): Json<eefn::interpreter_policy::Request>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.interpreter_policy_command(request)?))
+}
+async fn interpreter_route_preview(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<crate::interpreter_routing::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.interpreter_route_preview(request).await?))
 }
 async fn automation_occurrence_command(
     State(runtime): State<Arc<Runtime>>,

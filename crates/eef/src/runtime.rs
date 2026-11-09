@@ -255,6 +255,13 @@ impl Runtime {
         )
     }
 
+    pub async fn interpreter_route_preview(
+        &self,
+        request: crate::interpreter_routing::Request,
+    ) -> Result<Value> {
+        crate::interpreter_routing::resolve(self, &self.discovery, request).await
+    }
+
     pub fn request_restart(&self) -> Value {
         let restart = self.restart.clone();
         tokio::spawn(async move {

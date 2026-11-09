@@ -377,6 +377,18 @@ impl NodeEngine {
         Ok(self)
     }
 
+    /// Applied opt-in metadata only; current local checks still gate every grant.
+    pub(crate) fn interpreter_service_advertisement(
+        &self,
+    ) -> Option<crate::interpreter_service::Advertisement> {
+        self.policy
+            .interpreter_sharing
+            .then_some(crate::interpreter_service::Advertisement {
+                schema_version: 1,
+                permission_revision: self.policy.interpreter_sharing_revision,
+            })
+    }
+
     /// Experimental library admission only, not an advertised app capability.
     /// App startup does not enable this until paired jobs, delivery and socket
     /// admission are wired together.

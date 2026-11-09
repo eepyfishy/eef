@@ -293,6 +293,34 @@ enum ModelsCommand {
 mod credential_cli_tests {
     use super::*;
     #[test]
+    fn interpreter_route_cli_keeps_origin_and_explicit_local_model_preferences() {
+        let args = Args::try_parse_from([
+            "eef",
+            "interpreter-policies",
+            "resolve",
+            "--origin",
+            "input",
+            "--local-only",
+            "--backend",
+            "ollama",
+            "--model-id",
+            "chosen",
+        ])
+        .unwrap();
+        let Some(Command::InterpreterPolicies {
+            command: eef::interpreter_policy::Action::Resolve(options),
+        }) = args.command
+        else {
+            panic!("Wrong interpreter route command")
+        };
+        options.validate().unwrap();
+        assert!(options.local_only);
+        assert_eq!(options.origin_node, "input");
+        assert_eq!(options.backend.as_deref(), Some("ollama"));
+        assert_eq!(options.model_id.as_deref(), Some("chosen"));
+        assert!(Args::try_parse_from(["eef", "interpreter-policies", "resolve"]).is_err());
+    }
+    #[test]
     fn interpreter_policy_cli_requires_explicit_nodes_and_derives_bounded_allowances() {
         let args = Args::try_parse_from([
             "eef",
@@ -1460,7 +1488,25 @@ async fn interpreter_policy_cli(
     use eef::interpreter_policy::Action;
     use eefn::interpreter_policy::{Command as PolicyCommand, Request};
     use serde_json::json;
+    if let Action::Resolve(options) = action {
+        options.validate()?;
+        let mut report = owner_automation_exchange(
+            client,
+            base,
+            json!(options),
+            false,
+            "interpreter-route",
+            "owner_interpreter_route_preview",
+            |value, runtime| eef::interpreter_routing::confirmed(value, options, runtime),
+        )
+        .await;
+        report["note"] = json!(
+            "Read-only advertised interpreter selection; no allowance, grant, model call or automatic retry."
+        );
+        return Ok(report);
+    }
     let initial = match action {
+        Action::Resolve(_) => unreachable!(),
         Action::Show { id } => PolicyCommand::Show { id: id.clone() },
         Action::List {
             limit,
@@ -3262,7 +3308,15 @@ async fn main() -> Result<()> {
                 }
                 if !args.json && matches!(command, Command::InterpreterPolicies { .. }) {
                     if value["success"] == true {
-                        print!("{}", eef::interpreter_policy::render(&value["result"])?);
+                        if value["result"]["report_type"] == "interpreter_route_preview" {
+                            print!("{}", eef::interpreter_routing::render(&value["result"])?);
+                        } else {
+                            print!("{}", eef::interpreter_policy::render(&value["result"])?);
+                        }
+                    } else if value["report_type"] == "owner_interpreter_route_preview" {
+                        println!(
+                            "Interpreter routing unavailable. Inspect interpreter-policies show and node diagnostics. No model call was requested."
+                        );
                     } else {
                         println!(
                             "Interpreter policy outcome unconfirmed. Inspect policy history and receipt {} before another approval. No automatic retry or model call was requested.",

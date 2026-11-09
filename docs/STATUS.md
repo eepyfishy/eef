@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: fresh policy-scoped interpreter routing
+
+The new [routing command](INTERPRETER-ROUTING.md) reuses existing model ranking,
+directional disclosure and durable interpreter policy. A single fresh private
+gateway snapshot binds each node's runtime, session, issuer, advertised grant
+limits and optional serving permission revision. Provider selection checks the
+exact current model/role, explicit preferences and policy scope, then rechecks
+the selected connection and policy without substituting another provider.
+Legacy/missing/stale service metadata cannot imply opt-in. The node's actual
+grant checks remain mandatory; routing observations create no authority.
+
+Six new tests cover strict reports/preferences, real private TCP/TLS registration
+of three logical nodes with a model-free origin and no inference, hidden higher
+ranked providers, stale-registry model substitution, saved authentication changes,
+policy revocation, gateway metadata/freshness and CLI parsing. Native command
+coverage adds model-free and revoked-policy routing. Hosted compilation/runtime
+verification is pending. This adds no dependency or background loop and does not
+implement the allowance ledger, automatic broker or physical/model acceptance.
+
 ## Accepted development checkpoint: interpreter policy and private transport
 
 Source `50174aa` passes all four jobs in the

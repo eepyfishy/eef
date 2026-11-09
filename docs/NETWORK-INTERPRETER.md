@@ -121,6 +121,13 @@ discovery restrictions, routing and concurrency machinery. Preserve local-only
 selection and explicit owner preferences; do not infer a role from a model name,
 download a default model or choose a hidden provider outside the origin's scope.
 
+The unreleased [interpreter routing observation](INTERPRETER-ROUTING.md) adds this
+read-only selection boundary through the existing registry and private gateway
+state. Hosted verification is pending. It pins fresh runtime/session/model and
+serving permission metadata, preserves explicit preferences and directional
+disclosure, and rechecks before returning. It reserves no allowance or grant and
+does not connect normal input to a remote interpreter yet.
+
 Capture the selected node, backend, model, runtime/session and relevant policy
 generation before dispatch. A later availability or ranking change does not
 substitute another provider inside that attempt. Avoid recursive interpretation:
