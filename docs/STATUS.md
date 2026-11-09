@@ -3,6 +3,35 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Accepted development checkpoint: interpreter policy and private transport
+
+Source `50174aa` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42552611503) and the
+independent source/log audit: 1,674 Windows/headless Rust tests, one ignored across
+17 unfiltered groups, all 37 native suites and the existing additional gates.
+The [owner policy commands](INTERPRETER-POLICIES.md) retain explicit node scopes,
+finite limits and approval/revocation receipts under shared journal quotas.
+New approval requires the complete saved and applied authentication policies to
+match, including credentials and legacy settings. Retained inspection, revocation
+and receipt reuse do not renew authority.
+
+The shipping node client and private gateway exercise all three interpreter
+stages over pinned TCP/TLS and production fresh-lease admission, including
+source-bound complete output, duplicate refusal, final-response revocation and
+retained results after a new connection session. The model, issuer and observer
+are synthetic fixtures. This accepts node transport mechanics and policy
+persistence; the coordinator allowance/attempt ledger, fresh provider resolution
+and automatic broker are still missing. No model download, dependency or new
+background loop is added. Physical two-PC/model-quality, setup, continuous work,
+installer/security and stable-release requirements remain open.
+
+The earlier camera-fixture successor `ac0f039` and policy source `96cffc8` also
+pass their exact four-job runs and separate audits. The first policy audit
+mistakenly assigned the added CLI test to the node executable's quiet group;
+correcting that mapping reconciles the unchanged 1,672 total. Its failed audit
+log is retained. The earlier camera runtime failure remains failed; the accepted
+fixture correction does not prove its exact original failure cause.
+
 ## In development: interpreter service production-transport coverage
 
 A source review also found that comparing only the coordinator certificate

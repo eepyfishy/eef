@@ -108,7 +108,7 @@ A completed review still needs separate preparation, owner approval and executio
 Interpretation sharing must be an explicit, configurable service permission.
 The unreleased [interpreter policy commands](INTERPRETER-POLICIES.md) now record
 the coordinator owner's explicit node scope and bounded limits in the existing
-journal. This is policy persistence only, pending hosted verification; allowance
+journal. This is policy persistence accepted at `50174aa`; allowance
 reservation, fresh provider resolution and automatic delegation remain open.
 The coordinator owner controls its allowed origins/providers and aggregate use;
 each serving node retains its model/grant policy and the ability to revoke access.
@@ -148,7 +148,7 @@ the receiver must validate the exact grant, model, session and completion before
 accepting output. Validated candidates remain untrusted and cannot authorize
 tool execution. This contract alone does not implement the broker below.
 
-### Node-side serving increment (awaiting verification)
+### Node-side serving increment (accepted development source)
 
 The next source increment adds `eefn permissions allow interpreter-sharing` and
 `eefn permissions deny interpreter-sharing` through the existing feature-wide
@@ -166,19 +166,20 @@ work. A candidate also needs complete validated provider output and unchanged
 current permission at the final response. It remains untrusted and grants no tool
 authority. Direct generic execution of this task is refused.
 
-This is pending node-side execution and command coverage, with synthetic Ollama
-replies and the internal test admission path. It is not acceptance of a production
-network-interpreter lease exchange, physical models or automatic routing. The
-coordinator policy records exist in the pending increment described above, but
-the durable allowance ledger, provider resolution and three-stage broker are
-still missing; ordinary input does not delegate yet.
+Source `50174aa` passes the
+[four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42552611503)
+and independent source/log audit, including node-side execution and actual
+permission commands. Synthetic Ollama replies cover the internal admission path;
+the additional transport test connects the shipping node client and private TLS
+gateway with production fresh-lease admission for all three stages. It checks
+complete source-bound replies, accepted/final observation, revocation, duplicate
+refusal and retained results across a new connection session.
 
-A further transport test (pending hosted verification) connects the shipping node
-client and private TLS gateway and uses production fresh-lease admission for all
-three stages. It checks complete source-bound synthetic replies, accepted/final
-observation, revocation, duplicate refusal and retained results across a new
-connection session. The issuer and observer are fixtures; this does not establish
-the missing coordinator authorization/broker path or physical/model acceptance.
+The issuer, model and observer are fixtures. This does not establish a production
+coordinator broker, physical models or automatic routing. Coordinator policy
+records exist as described above, but the durable allowance ledger, fresh
+provider resolution and three-stage broker remain missing; ordinary input does
+not delegate yet.
 
 An owner-approved service policy must make each inference authorization durable,
 identifiable and bounded before issuance. Record that it derives from a specific

@@ -1,8 +1,10 @@
 # Interpreter service policies
 
 This is an unreleased development increment for command-first network
-interpretation. Hosted verification is pending. It records bounded coordinator
-owner consent; automatic network interpretation is still unavailable.
+interpretation, accepted at source `50174aa` in the
+[four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42552611503)
+and independent source/log audit. It records bounded coordinator owner consent;
+automatic network interpretation is still unavailable.
 
 ## Commands
 
@@ -22,7 +24,9 @@ supports `--limit` (1–100) and `--after-generation`. Add `--json` for the type
 report; ordinary output explains retained approval and revocation state.
 
 New approval requires the coordinator's private credentials to be configured
-and applied. Saved credential changes must be applied before another approval.
+and applied. The complete saved and applied authentication policies must match,
+including credential additions, rotation, revocation and legacy settings.
+Saved authentication changes must be applied before another approval.
 Inspection and revocation remain available without a current model or issuer.
 Saving a policy does not contact the listed nodes or verify current availability.
 
