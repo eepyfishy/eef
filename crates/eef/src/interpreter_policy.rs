@@ -147,35 +147,99 @@ impl Runtime {
                 eefn::protocol::now_ms(),
             );
         }
-        let applied = self
-            .node_server
-            .authentication_policy()
-            .tls
-            .as_ref()
-            .map(|identity| identity.fingerprint())
-            .transpose()?;
+        let applied = self.node_server.authentication_policy();
         // Hold the existing configuration fence through the durable checkpoint;
         // saved credential replacement cannot race approval under an old issuer.
         self.config.edit_for_restart(|saved| {
             let settings = eefn::authentication::AuthenticationPolicy::parse(
                 saved.pointer("/node/authentication"),
             )?;
-            let desired = settings
-                .tls
-                .as_ref()
-                .map(|identity| identity.fingerprint())
-                .transpose()?;
-            let issuer = applied
-                .as_deref()
-                .filter(|current| Some(*current) == desired.as_deref());
+            let issuer = current_issuer(applied, &settings)?;
             let value = self.engine.store.interpreter_policy_command(
                 command.clone(),
                 &self.instance_id,
-                issuer,
+                issuer.as_deref(),
                 eefn::protocol::now_ms(),
             )?;
             Ok((value, false))
         })
+    }
+}
+
+fn current_issuer(
+    applied: &eefn::authentication::AuthenticationPolicy,
+    saved: &eefn::authentication::AuthenticationPolicy,
+) -> Result<Option<String>> {
+    if applied != saved {
+        return Ok(None);
+    }
+    applied
+        .tls
+        .as_ref()
+        .map(|identity| identity.fingerprint())
+        .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn pending_credential_or_legacy_changes_cannot_approve_under_an_unchanged_certificate() {
+        use eefn::authentication::{AuthenticationPolicy, generate_credential};
+        let applied = AuthenticationPolicy {
+            allow_legacy: false,
+            credentials: std::collections::BTreeMap::from([(
+                "input-node".into(),
+                Some(generate_credential()),
+            )]),
+            tls: Some(eefn::tls::CoordinatorIdentity::generate().unwrap()),
+        };
+        let fingerprint = applied.tls.as_ref().unwrap().fingerprint().unwrap();
+        assert_eq!(
+            current_issuer(&applied, &applied).unwrap(),
+            Some(fingerprint.clone())
+        );
+        for edit in ["rotate", "revoke", "add", "remove", "legacy"] {
+            let mut saved = applied.clone();
+            match edit {
+                "rotate" => {
+                    saved
+                        .credentials
+                        .insert("input-node".into(), Some(generate_credential()));
+                }
+                "revoke" => {
+                    saved.credentials.insert("input-node".into(), None);
+                }
+                "add" => {
+                    saved
+                        .credentials
+                        .insert("other-node".into(), Some(generate_credential()));
+                }
+                "remove" => {
+                    saved.credentials.remove("input-node");
+                }
+                "legacy" => saved.allow_legacy = true,
+                _ => unreachable!(),
+            }
+            saved.validate().unwrap();
+            assert_eq!(
+                saved.tls.as_ref().unwrap().fingerprint().unwrap(),
+                fingerprint
+            );
+            assert_eq!(
+                current_issuer(&applied, &saved).unwrap(),
+                None,
+                "edit={edit}"
+            );
+        }
+        assert_eq!(
+            current_issuer(
+                &AuthenticationPolicy::default(),
+                &AuthenticationPolicy::default()
+            )
+            .unwrap(),
+            None
+        );
     }
 }
 

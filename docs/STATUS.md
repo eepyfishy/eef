@@ -5,6 +5,14 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: interpreter service production-transport coverage
 
+A source review also found that comparing only the coordinator certificate
+missed pending credential-only or legacy-authentication changes. New approval
+now requires equality of the complete saved and applied authentication policy
+under the existing configuration fence. One added regression covers credential
+rotation, revocation, addition/removal and legacy changes with an unchanged
+certificate. Existing policy inspection/revocation and receipt reuse stay
+read-only; this does not apply saved settings or restart any service.
+
 A new test connects the shipping node client to a private, certificate-pinned
 gateway over TCP/TLS, using production fresh-lease admission for initial,
 clarification and method tasks. A synthetic model and issuer exercise source-bound
