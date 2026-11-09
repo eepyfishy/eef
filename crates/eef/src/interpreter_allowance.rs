@@ -195,7 +195,7 @@ impl Record {
         )
     }
     pub fn checkpoint_reserve(&self) -> Result<usize> {
-        if matches!(self.phase, Phase::Final | Phase::NotSent) {
+        if !self.holds_slot() {
             return Ok(0);
         }
         self.allocation()?
@@ -321,6 +321,9 @@ impl Record {
                 && serde_json::to_vec(&task)?.len() <= limits.max_task_bytes
                 && task.max_output_tokens <= limits.max_output_tokens
                 && g.limits.max_execution_ms <= limits.max_execution_ms
+                && policy
+                    .expires_at_ms
+                    .is_none_or(|end| g.expires_at_ms <= end)
                 && g.limits.max_result_bytes <= limits.max_result_bytes,
             "Interpreter allowance differs from its retained policy"
         );

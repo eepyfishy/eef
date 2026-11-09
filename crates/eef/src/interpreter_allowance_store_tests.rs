@@ -480,6 +480,10 @@ fn unknown_completion_retains_concurrency_and_never_claims_shared_inference_stop
     let record = store.interpreter_report(r.id(), unknown).unwrap();
     assert_eq!(record.phase, Phase::Final);
     assert!(record.holds_slot());
+    assert!(
+        record.checkpoint_reserve().unwrap() > 0,
+        "Uncertain recovery must retain its original checkpoint space"
+    );
     let next = input(&store, "input");
     assert!(
         store
@@ -886,4 +890,44 @@ fn allowance_escrow_and_automation_approval_share_the_same_admission_budget() {
         }
         assert_eq!(store.usage().unwrap()["authorization_count"], 1);
     }
+}
+
+#[test]
+fn grant_wall_and_monotonic_deadlines_cannot_outlive_policy_expiry() {
+    let store = JobStore::in_memory().unwrap();
+    let runtime = uuid();
+    let p = permit();
+    let now = eefn::protocol::now_ms();
+    let value = store
+        .interpreter_policy_command(
+            Command::Approve {
+                operation_id: uuid(),
+                generation: 0,
+                scope: Scope {
+                    origin_nodes: vec!["input".into()],
+                    provider_nodes: vec!["provider".into()],
+                },
+                limits: limits(),
+                valid_for_ms: Some(30_000),
+            },
+            &runtime,
+            Some(&p.issuer),
+            now - 20_000,
+        )
+        .unwrap();
+    let policy: Authorization = serde_json::from_value(value["authorization"].clone()).unwrap();
+    let pin = PolicyPin::from(&policy);
+    let task = input(&store, "input");
+    let r = reserve_new(&store, task, &pin, &p, &runtime);
+    let g = &r.record.binding.grant;
+    assert_eq!(Some(g.expires_at_ms), policy.expires_at_ms);
+    assert!(g.limits.max_execution_ms <= 10_000);
+    assert_eq!(g.expires_at_ms - g.issued_at_ms, g.limits.max_execution_ms);
+    assert!(r.deadline <= Instant::now() + Duration::from_millis(g.limits.max_execution_ms));
+    let d = store
+        .interpreter_delivery_intent(&r, &p, &runtime, &pin)
+        .unwrap();
+    assert_eq!(d.deadline(), r.deadline);
+    let account = &store.interpreter_allowance_records().unwrap().1[&pin.id];
+    assert_eq!(account.charged.execution_ms, g.limits.max_execution_ms);
 }

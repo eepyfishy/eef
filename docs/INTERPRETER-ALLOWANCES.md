@@ -43,6 +43,8 @@ source-bound attempt. Initial interpretation also claims the raw input in that
 transaction. Failure leaves both source and budget unchanged. Per-call limits
 intersect policy and serving-node limits. Global, origin and provider concurrency
 checks include unresolved work from previous policy generations.
+An expiring policy also caps the grant's wall-clock and monotonic execution
+deadlines at its remaining validity; starting before expiry cannot extend it.
 
 Each reservation charges its worst-case call, output-token, execution-time and
 result-byte budgets. Charges survive known-unsent cancellation, failure, restart,
@@ -79,7 +81,8 @@ separately authenticated explicit recovery path still to be integrated.
 Accepted and final checkpoints use reserved storage. Failed final observations
 retire initial ownership without inventing a successful proposal. An unknown
 completion continues occupying a concurrency slot: an observer timeout does
-not prove shared Ollama computation stopped. Explicit uncertainty resolution
+not prove shared Ollama computation stopped. It also retains its original
+checkpoint headroom for explicit recovery. Explicit uncertainty resolution
 remains part of broker recovery work, not an automatic budget refund.
 
 These source mechanics do not establish physical two-PC operation, actual model

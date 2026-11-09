@@ -362,12 +362,22 @@ impl JobStore {
         let prior = accounts.get(&policy.id);
         let mut account = prior.cloned().unwrap_or(Account::empty(policy)?);
         let effective = GrantLimits {
-            max_execution_ms: limits.max_execution_ms.min(permit.limits.max_duration_ms),
+            max_execution_ms: limits
+                .max_execution_ms
+                .min(permit.limits.max_duration_ms)
+                .min(
+                    policy
+                        .expires_at_ms
+                        .map_or(u64::MAX, |end| end.saturating_sub(now)),
+                ),
             max_result_bytes: limits.max_result_bytes.min(permit.limits.max_result_bytes),
         };
         let deadline = minted
             .checked_add(Duration::from_millis(effective.max_execution_ms))
             .context("Interpreter deadline overflow")?;
+        let expires_at_ms = now
+            .checked_add(effective.max_execution_ms)
+            .context("Interpreter time overflow")?;
         let grant = ExecutionGrant {
             schema_version: 1,
             grant_id: uuid::Uuid::new_v4().to_string(),
@@ -392,9 +402,7 @@ impl JobStore {
             limits: effective,
             reporting: "acceptance_and_completion".into(),
             issued_at_ms: now,
-            expires_at_ms: now
-                .checked_add(limits.max_execution_ms.min(permit.limits.max_duration_ms))
-                .context("Interpreter time overflow")?,
+            expires_at_ms,
         };
         grant.validate()?;
         let mut record = Record {
