@@ -127,6 +127,8 @@ async fn private_model_free_origin_resolves_only_disclosed_policy_scoped_current
         let path = dir.path().join(format!("{node}.json"));
         eefn::setup::write_json(&path, &settings).unwrap();
         let service = eefn::NodeService::new(path, node.into());
+        let generation = uuid::Uuid::new_v4().to_string();
+        service.live.lock().unwrap()["runtime_id"] = json!(generation);
         let engine = Arc::new(
             eefn::NodeEngine::new(false, vec![], dir.path().into())
                 .unwrap()
@@ -141,14 +143,15 @@ async fn private_model_free_origin_resolves_only_disclosed_policy_scoped_current
                     },
                 )
                 .unwrap()
-                .with_service(service),
+                .with_service(service.clone()),
         );
         let client_config:eefn::NodeClientConfig=serde_json::from_value(json!({"node_id":node,"auth_mode":"node_credential","psk":keys[node],
             "coordinator_certificate":identity.certificate,"endpoints":[format!("127.0.0.1:{}",runtime.node_server.port())],
             "ollama_url":url,"ollama_models":if serving{vec![selected]}else{vec![]},"heartbeat_seconds":0.2})).unwrap();
         let client = eefn::NodeClient::new(client_config, engine)
             .unwrap()
-            .with_registration_runtime(&uuid::Uuid::new_v4().to_string())
+            .with_status(service.live.clone())
+            .with_registration_runtime(&generation)
             .unwrap()
             .with_grants(
                 &dir.path().join(format!("{node}-grants.db")),
@@ -177,10 +180,10 @@ async fn private_model_free_origin_resolves_only_disclosed_policy_scoped_current
             {
                 break;
             }
-            assert!(
-                nodes.iter().all(|n| !n.is_finished()),
-                "Private node ended before registration"
-            );
+            if let Some(index) = nodes.iter().position(|n| n.is_finished()) {
+                let ended = nodes.swap_remove(index).await;
+                panic!("Private node ended before registration: {ended:?}");
+            }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })

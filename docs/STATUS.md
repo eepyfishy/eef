@@ -21,6 +21,11 @@ policy revocation, gateway metadata/freshness and CLI parsing. Native command
 coverage adds model-free and revoked-policy routing. Hosted compilation/runtime
 verification is pending. This adds no dependency or background loop and does not
 implement the allowance ledger, automatic broker or physical/model acceptance.
+The first candidate compiled but its Linux integration fixture lost a node before
+registration. The fixture supplied a registration runtime without the matching
+live runtime status required by the existing receipt fence. The successor binds
+both to the same service runtime and reports an ended task's error. Production
+registration/runtime validation remains unchanged; the failed logs are retained.
 
 ## Accepted development checkpoint: interpreter policy and private transport
 
