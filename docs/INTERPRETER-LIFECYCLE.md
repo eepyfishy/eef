@@ -1,7 +1,10 @@
 # Interpreter continuation and stop checkpoints
 
 This is an unreleased internal increment toward the network interpreter broker.
-Hosted verification is pending. It does not add a public inference command,
+Source `b1b1c70` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42630292907) and an
+independent source/log audit, including 1,703 Windows/headless Rust tests and
+all 37 native suites. It does not add a public inference command,
 connect ordinary input to a network model, send a stop itself or complete broker
 delivery, promotion and recovery. The [allowance ledger](INTERPRETER-ALLOWANCES.md)
 remains the authority and storage boundary.

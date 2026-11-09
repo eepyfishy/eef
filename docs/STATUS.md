@@ -11,13 +11,20 @@ active-job lifecycle. Source, policy, configuration and gateway changes wake
 state rechecks without an idle poller. Hosted verification is pending. Its
 synthetic two-node tests do not complete source promotion, public input wiring,
 explicit recovery, physical operation or stable-release acceptance.
+The initial hosted source failed compilation because the ignored journal timing
+fixture lacked the new notification field. The corrected source is being
+verified; the failed run is retained, not treated as passing exchange evidence.
 
-## In development: interpreter cancellation and stop checkpoints
+## Accepted development checkpoint: interpreter cancellation and stop checkpoints
 
 The [lifecycle increment](INTERPRETER-LIFECYCLE.md) adds exact durable stop send
 intents, immutable observations and late-observation storage headroom. It also
 allows active review-only input to be cancelled without entering an invalid
-execution state. Source `b1b1c70` is undergoing hosted verification. These are
+execution state. Source `b1b1c70` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42630292907) and an
+independent source/log audit: 1,703 Windows/headless Rust tests, one ignored
+across 17 unfiltered groups, all 37 native suites and the existing extra gates.
+These are
 internal prerequisites; no broker invocation, public inference command or
 physical-stop proof is added.
 

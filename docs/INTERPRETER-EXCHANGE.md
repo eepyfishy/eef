@@ -4,6 +4,9 @@ This unreleased internal increment connects durable interpreter reservations to
 the existing authenticated grant transport. Hosted verification is pending.
 It is not yet connected to ordinary user input or source promotion and adds no
 public inference command. The complete three-stage broker remains unfinished.
+The first hosted source failed compilation at an ignored timing fixture's
+journal constructor. That missing notification field is corrected in the next
+source; its complete compilation/runtime verification is still pending.
 
 The caller must establish authenticated input ownership and reconstruct an exact
 task from the retained source. A current opaque origin/provider selection and
