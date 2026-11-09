@@ -3,17 +3,23 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: core interpreter service exchange
+## Accepted development checkpoint: core interpreter service exchange
 
 The [exchange driver](INTERPRETER-EXCHANGE.md) joins durable reservations to the
 existing private grant transport, observed journal checkpoints, scheduler and
 active-job lifecycle. Source, policy, configuration and gateway changes wake
-state rechecks without an idle poller. Hosted verification is pending. Its
+state rechecks without an idle poller. Source `97fa922` passes all four jobs in
+the [hosted run](https://github.com/eepyfishy/eef/actions/runs/42637734975) and an
+independent source/log audit: 1,711 Windows/headless Rust tests, one ignored
+across 17 unfiltered groups, all 37 native suites and the existing extra gates. Its
 synthetic two-node tests do not complete source promotion, public input wiring,
 explicit recovery, physical operation or stable-release acceptance.
 The initial hosted source failed compilation because the ignored journal timing
-fixture lacked the new notification field. The corrected source is being
-verified; the failed run is retained, not treated as passing exchange evidence.
+fixture lacked the new notification field. The next revision compiled but
+Windows exposed a durable-failure/RPC-reply race. Both failures remain retained.
+The accepted revision observes its own saved failure without restoring source
+ownership or execution authority, while preserving the policy/session/source
+fences. Source promotion and normal input integration remain required.
 
 ## Accepted development checkpoint: interpreter cancellation and stop checkpoints
 

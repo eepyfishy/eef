@@ -191,8 +191,13 @@ tests, all 37 native suites and independent source/log reconciliation. It pins
 source and policy, reserves usage atomically, caps grants at policy expiry and
 retains unknown outcomes without refund or replay. The production three-stage
 broker still needs to connect these boundaries; ordinary input does not
-delegate yet. Internal [stop checkpoints](INTERPRETER-LIFECYCLE.md) are a further
-increment undergoing verification, not an already connected broker.
+delegate yet. Internal [stop checkpoints](INTERPRETER-LIFECYCLE.md), accepted at
+`b1b1c70`, and the [core service exchange](INTERPRETER-EXCHANGE.md), accepted at
+`97fa922`, connect the ledger to private grant transport and active lifecycle.
+The exchange passes four hosted jobs, 1,711 Windows/headless Rust tests and all
+native gates. Its synthetic model-free input node verifies all three service
+stages, cancellation and no replay. Source promotion, public commands and normal
+input wiring remain missing; this is not complete broker or physical acceptance.
 
 An owner-approved service policy must make each inference authorization durable,
 identifiable and bounded before issuance. Record that it derives from a specific

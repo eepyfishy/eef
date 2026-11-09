@@ -1,12 +1,17 @@
 # Core interpreter service exchange
 
 This unreleased internal increment connects durable interpreter reservations to
-the existing authenticated grant transport. Hosted verification is pending.
+the existing authenticated grant transport. Source `97fa922` passes all four
+jobs in the [hosted run](https://github.com/eepyfishy/eef/actions/runs/42637734975)
+and an independent source/log audit, including 1,711 Windows/headless Rust tests
+and all 37 native suites.
 It is not yet connected to ordinary user input or source promotion and adds no
 public inference command. The complete three-stage broker remains unfinished.
 The first hosted source failed compilation at an ignored timing fixture's
-journal constructor. That missing notification field is corrected in the next
-source; its complete compilation/runtime verification is still pending.
+journal constructor. The next revision compiled but Windows exposed a saved
+failure arriving before its RPC reply. Both failed runs are retained. The
+accepted revision recognizes this exact failure checkpoint without recreating
+source ownership, a successful completion or another inference continuation.
 
 The caller must establish authenticated input ownership and reconstruct an exact
 task from the retained source. A current opaque origin/provider selection and
