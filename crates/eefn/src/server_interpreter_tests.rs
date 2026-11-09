@@ -135,3 +135,43 @@ async fn interpreter_snapshots_pin_runtime_session_and_permission_metadata_witho
     assert!(!current.serves("ollama", "chosen"));
     assert!(server.inner.pending.lock().await.is_empty());
 }
+
+#[tokio::test]
+async fn paired_interpreter_checkpoint_pins_registrations_and_never_calls_back_for_invalid_peers() {
+    let server = fixture().await;
+    let before = server.interpreter_session("owner", 30).await.unwrap();
+    server
+        .with_interpreter_sessions("owner", "owner", 30, |origin, provider| {
+            assert!(origin.same_connection(&before) && provider.same_connection(&before));
+            assert!(
+                server.inner.connections.try_write().is_err(),
+                "Registrations must remain pinned through the callback"
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(server.inner.connections.try_write().is_ok());
+    for (origin, provider, freshness) in [
+        ("absent", "owner", 30),
+        ("owner", "absent", 30),
+        ("owner", "owner", 0),
+    ] {
+        assert!(
+            server
+                .with_interpreter_sessions(origin, provider, freshness, |_, _| -> Result<()> {
+                    panic!("Invalid peer must not enter the checkpoint")
+                })
+                .await
+                .is_err()
+        );
+    }
+    let error = server
+        .with_interpreter_sessions("owner", "owner", 30, |_, _| -> Result<()> {
+            anyhow::bail!("Owner checkpoint rejected")
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "Owner checkpoint rejected");
+    assert!(server.inner.connections.try_write().is_ok());
+}

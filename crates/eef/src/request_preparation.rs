@@ -61,6 +61,26 @@ fn question_checkpoint(
     capabilities: &[String],
 ) -> Result<(Plan, bool)> {
     checkpoint.validate()?;
+    let mut reused = false;
+    let plan = engine.edit_review_checkpoint(
+        &checkpoint.source.evidence.job_id,
+        "Method clarification saved; no execution authorized",
+        |plan| {
+            let changed = apply_question(plan, checkpoint, origin, capabilities)?;
+            reused = !changed;
+            Ok(changed)
+        },
+    )?;
+    Ok((plan, reused))
+}
+
+pub(crate) fn apply_question(
+    plan: &mut Plan,
+    checkpoint: &PreparationCheckpoint,
+    origin: &str,
+    capabilities: &[String],
+) -> Result<bool> {
+    checkpoint.validate()?;
     let e = &checkpoint.source.evidence;
     let question = checkpoint
         .proposal
@@ -70,58 +90,49 @@ fn question_checkpoint(
     if checkpoint.proposal.method.is_some() {
         bail!("Ambiguous preparation candidate")
     }
-    let mut reused = false;
-    let plan = engine.edit_review_checkpoint(
-        &e.job_id,
-        "Method clarification saved; no execution authorized",
-        |plan| {
-            if !owns(plan, origin) {
-                bail!("Request not owned by this origin")
-            }
-            crate::jobs::validate_retained_review(plan)?;
-            if exact_receipt(plan, checkpoint)? {
-                reused = true;
-                return Ok(false);
-            }
-            if plan.status != PlanStatus::Review
-                || plan.revision != e.source_revision
-                || plan.planning.is_some()
-            {
-                bail!("Request state/revision changed before question checkpoint")
-            }
-            let context = plan
-                .goal
-                .request_context
-                .as_ref()
-                .context("Missing immutable origin")?;
-            let draft = plan
-                .request_review
-                .as_mut()
-                .context("Missing reviewed source")?;
-            checkpoint.confirms_source(draft, context, capabilities)?;
-            let mut proposal = draft.current().clone();
-            proposal.needs_clarification = true;
-            proposal.clarification = Some(question.clone());
-            eefn::interpretation::validate(
-                &draft.original_text,
-                &serde_json::to_vec(&proposal)?,
-                capabilities,
-            )?;
-            draft
-                .proposals
-                .push(eefn::request_drafts::ProposalRevision {
-                    operation_id: checkpoint.operation_id.clone(),
-                    proposal,
-                    allowed_capabilities: capabilities.to_vec(),
-                    at_ms: eefn::protocol::now_ms(),
-                    resolution: None,
-                    preparation: Some(checkpoint.source.clone()),
-                });
-            draft.validate()?;
-            Ok(true)
-        },
+    if !owns(plan, origin) {
+        bail!("Request not owned by this origin")
+    }
+    crate::jobs::validate_retained_review(plan)?;
+    if exact_receipt(plan, checkpoint)? {
+        return Ok(false);
+    }
+    if plan.status != PlanStatus::Review
+        || plan.revision != e.source_revision
+        || plan.planning.is_some()
+    {
+        bail!("Request state/revision changed before question checkpoint")
+    }
+    let context = plan
+        .goal
+        .request_context
+        .as_ref()
+        .context("Missing immutable origin")?;
+    let draft = plan
+        .request_review
+        .as_mut()
+        .context("Missing reviewed source")?;
+    checkpoint.confirms_source(draft, context, capabilities)?;
+    let mut proposal = draft.current().clone();
+    proposal.needs_clarification = true;
+    proposal.clarification = Some(question.clone());
+    eefn::interpretation::validate(
+        &draft.original_text,
+        &serde_json::to_vec(&proposal)?,
+        capabilities,
     )?;
-    Ok((plan, reused))
+    draft
+        .proposals
+        .push(eefn::request_drafts::ProposalRevision {
+            operation_id: checkpoint.operation_id.clone(),
+            proposal,
+            allowed_capabilities: capabilities.to_vec(),
+            at_ms: eefn::protocol::now_ms(),
+            resolution: None,
+            preparation: Some(checkpoint.source.clone()),
+        });
+    draft.validate()?;
+    Ok(true)
 }
 
 impl crate::Runtime {

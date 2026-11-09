@@ -23,6 +23,47 @@ fn increment(record: &mut Record) -> Result<()> {
 }
 
 impl JobStore {
+    pub(crate) fn commit_interpreter_result(
+        &self,
+        reserved: &Reserved,
+        permit: &Permit,
+        runtime: &str,
+        pin: &PolicyPin,
+        completed: &Record,
+        edit: impl FnOnce(&mut Plan) -> Result<bool>,
+    ) -> Result<Plan> {
+        self.edit_with_precondition(
+            &reserved.record.binding.grant.job_id,
+            "Interpreter result checkpoint; no execution authorized",
+            None,
+            matches!(
+                reserved.record.task()?.snapshot.source,
+                Source::Initial { .. }
+            ),
+            |connection, plan| {
+                let record = retained(connection, reserved.id(), &reserved.record.binding_sha256)?;
+                let report = record
+                    .report
+                    .as_ref()
+                    .context("Interpreter result unavailable")?;
+                if record.phase != Phase::Final
+                    || record.stop.is_some()
+                    || record.binding.runtime_id != runtime
+                    || Instant::now() >= reserved.deadline
+                    || !report.success
+                    || report.state != ReceiptState::Completed
+                    || !report.confirms(&record.binding.grant)
+                    || json!(record) != json!(completed)
+                {
+                    bail!("Interpreter completion is no longer applicable")
+                }
+                current_participants(&record, permit)?;
+                current_policy(connection, &record, pin, permit)?;
+                source_matches(plan, &record, true)
+            },
+            edit,
+        )
+    }
     pub(crate) fn interpreter_continuation_current(
         &self,
         reserved: &Reserved,

@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: applying live interpreter results
+
+The [source application increment](INTERPRETER-APPLICATION.md) consumes the
+internal exchange's live completion through initial review, clarification,
+method-question and deterministic method-compilation checkpoints. Current
+registrations, authentication, policy, source and original deadline remain
+fenced through the final journal write. Hosted validation is pending. No public
+broker command or automatic normal-input path is connected yet; uncertain-result
+recovery, physical tests and the full stable-release gates remain open.
+
 ## Accepted development checkpoint: core interpreter service exchange
 
 The [exchange driver](INTERPRETER-EXCHANGE.md) joins durable reservations to the

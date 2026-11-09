@@ -537,6 +537,38 @@ impl NodeServer {
             bail!("Invalid interpreter registration freshness")
         }
         let connections = self.inner.connections.read().await;
+        self.interpreter_session_locked(&connections, node_id, freshness_seconds)
+    }
+    /// Run a bounded synchronous checkpoint while both registrations remain
+    /// pinned. The callback must perform no network I/O or model work. These
+    /// observations still require the caller's policy and source checks.
+    pub async fn with_interpreter_sessions<T>(
+        &self,
+        origin: &str,
+        provider: &str,
+        freshness_seconds: u64,
+        checkpoint: impl FnOnce(
+            crate::interpreter_service::Session,
+            crate::interpreter_service::Session,
+        ) -> Result<T>,
+    ) -> Result<T> {
+        crate::network::validate_remote_node_id(origin)?;
+        crate::network::validate_remote_node_id(provider)?;
+        if !(1..=300).contains(&freshness_seconds) {
+            bail!("Invalid interpreter registration freshness")
+        }
+        let connections = self.inner.connections.read().await;
+        let origin = self.interpreter_session_locked(&connections, origin, freshness_seconds)?;
+        let provider =
+            self.interpreter_session_locked(&connections, provider, freshness_seconds)?;
+        checkpoint(origin, provider)
+    }
+    fn interpreter_session_locked(
+        &self,
+        connections: &HashMap<String, Connection>,
+        node_id: &str,
+        freshness_seconds: u64,
+    ) -> Result<crate::interpreter_service::Session> {
         let c = connections
             .get(node_id)
             .context("Interpreter node is not connected")?;

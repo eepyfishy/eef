@@ -24,6 +24,7 @@ struct Model {
     requests: Mutex<Vec<Value>>,
     hold: AtomicBool,
     bad: AtomicBool,
+    method: AtomicBool,
     gate: tokio::sync::Semaphore,
 }
 struct Fixture {
@@ -55,6 +56,7 @@ impl Fixture {
             requests: Mutex::new(vec![]),
             hold: AtomicBool::new(false),
             bad: AtomicBool::new(false),
+            method: AtomicBool::new(false),
             gate: tokio::sync::Semaphore::new(0),
         });
         let called = model.clone();
@@ -77,6 +79,9 @@ impl Fixture {
                             "broken model output".into()
                         } else if body["format"].is_object() {
                             proposal(false).to_string()
+                        } else if model.method.load(Ordering::SeqCst) {
+                            json!({"schema_version":1,"method":{"schema_version":1,
+                                "template":"system_info","params":{},"constraints":{}},"clarification":null}).to_string()
                         } else {
                             json!({"schema_version":1,"method":null,"clarification":"Which node?"})
                                 .to_string()
@@ -382,6 +387,335 @@ async fn real_core_allowances_exchange_all_three_stages_through_private_grants_w
             .calls,
         3
     );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn live_completions_apply_initial_resolution_question_and_concrete_method_without_execution()
+{
+    let f = Fixture::new().await;
+    for (index, stage) in ["initial", "clarification", "method", "concrete"]
+        .into_iter()
+        .enumerate()
+    {
+        f.model.method.store(stage == "concrete", Ordering::SeqCst);
+        let task = f.task(stage).await;
+        let before = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
+        let parties = f.participants().await;
+        let Exchange::Completed(completed) = f
+            .runtime()
+            .exchange_interpreter(task.clone(), f.pin.clone(), &parties)
+            .await
+            .unwrap()
+        else {
+            panic!("Missing live completion: {stage}")
+        };
+        let saved = f
+            .runtime()
+            .apply_interpreter_completion(completed)
+            .await
+            .unwrap();
+        assert_eq!(
+            saved.goal.request_context,
+            Some(task.snapshot.request_context.clone())
+        );
+        assert_eq!(
+            saved.revision,
+            before.revision + if stage == "initial" { 2 } else { 1 }
+        );
+        assert!(saved.approval.is_none() && saved.execution.is_none() && saved.results.is_empty());
+        let draft = saved.request_review.as_ref().unwrap();
+        assert_eq!(draft.original_text, "Inspect node status");
+        match stage {
+            "initial" => {
+                assert_eq!(
+                    saved.input_interpretation.as_ref().unwrap().state,
+                    eefn::request_interpretation::State::Promoted
+                );
+                assert_eq!(draft.proposals.len(), 1);
+                assert_eq!(
+                    draft.proposals[0].operation_id,
+                    task.snapshot.request_context.request_id()
+                );
+            }
+            "clarification" => {
+                let old = before.request_review.as_ref().unwrap();
+                assert_eq!(json!(draft.answers), json!(old.answers));
+                assert_eq!(json!(draft.proposals[0]), json!(old.proposals[0]));
+                let revision = draft.proposals.last().unwrap();
+                assert_eq!(revision.operation_id, task.snapshot.operation_id);
+                assert!(revision.resolution.as_ref().unwrap().confirms_source(old));
+                assert!(!revision.proposal.needs_clarification);
+            }
+            "method" => {
+                assert!(draft.current().needs_clarification);
+                let revision = draft.proposals.last().unwrap();
+                assert_eq!(revision.operation_id, task.snapshot.operation_id);
+                assert!(revision.preparation.is_some());
+                assert_eq!(
+                    json!(draft.answers),
+                    json!(before.request_review.as_ref().unwrap().answers)
+                );
+            }
+            _ => {
+                assert_eq!(saved.status, crate::task::PlanStatus::AwaitingApproval);
+                let planning = saved.planning.as_ref().unwrap();
+                assert_eq!(planning.operation_id, task.snapshot.operation_id);
+                assert_eq!(planning.input.template, "system_info");
+                assert!(planning.preparation.is_some());
+                assert_eq!(saved.tasks.len(), 1);
+                assert_eq!(saved.tasks[0].capability, "system.info");
+                assert_eq!(json!(saved.request_review), json!(before.request_review));
+                crate::request_planning::validate_retained(&saved).unwrap();
+                assert!(f.runtime().engine.enqueue_request(saved.clone()).is_err());
+            }
+        }
+        if stage != "concrete" {
+            assert_eq!(saved.status, crate::task::PlanStatus::Review);
+            assert!(saved.tasks.is_empty() && saved.planning.is_none());
+        }
+        assert!(matches!(
+            f.runtime()
+                .exchange_interpreter(task, f.pin.clone(), &parties)
+                .await
+                .unwrap(),
+            Exchange::Historical(_)
+        ));
+        assert_eq!(f.model.calls.load(Ordering::SeqCst), index + 1);
+        assert!(
+            f.runtime()
+                .registry
+                .find("llm.infer", "run")
+                .iter()
+                .all(|p| p.in_flight == 0)
+        );
+    }
+    assert_eq!(
+        f.runtime()
+            .engine
+            .store
+            .interpreter_allowance_records()
+            .unwrap()
+            .1[&f.pin.id]
+            .charged
+            .calls,
+        4
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn completed_output_cannot_cross_later_source_policy_authentication_peer_or_deadline_changes()
+{
+    for stage in ["initial", "clarification", "method"] {
+        for change in ["source", "policy", "settings", "peer", "deadline"] {
+            let f = Fixture::new().await;
+            let task = f.task(stage).await;
+            let parties = f.participants().await;
+            let Exchange::Completed(mut completed) = f
+                .runtime()
+                .exchange_interpreter(task.clone(), f.pin.clone(), &parties)
+                .await
+                .unwrap()
+            else {
+                panic!("Missing completion")
+            };
+            match change {
+                "source" => {
+                    f.runtime().engine.cancel(&task.snapshot.job_id).unwrap();
+                }
+                "policy" => {
+                    f.runtime()
+                        .interpreter_policy_command(eefn::interpreter_policy::Request {
+                            schema_version: 1,
+                            expected_runtime_id: f.runtime().runtime_id().into(),
+                            command: Command::Revoke {
+                                id: f.pin.id.clone(),
+                                revision: 1,
+                                operation_id: uuid(),
+                            },
+                        })
+                        .unwrap();
+                }
+                "settings" => {
+                    f.runtime()
+                        .config
+                        .edit_for_restart(|saved| {
+                            saved["node"]["authentication"]["credentials"]["input"] = Value::Null;
+                            Ok(((), true))
+                        })
+                        .unwrap();
+                }
+                "peer" => {
+                    f.nodes[1].abort();
+                    tokio::time::timeout(Duration::from_secs(10), async {
+                        while f
+                            .runtime()
+                            .node_server
+                            .interpreter_session("provider", 30)
+                            .await
+                            .is_ok()
+                        {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                    })
+                    .await
+                    .unwrap();
+                }
+                _ => completed.continuation.reserved.deadline = std::time::Instant::now(),
+            }
+            let before = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
+            assert!(
+                f.runtime()
+                    .apply_interpreter_completion(completed)
+                    .await
+                    .is_err(),
+                "{stage}/{change}"
+            );
+            let after = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
+            assert_eq!(
+                json!(after.request_review),
+                json!(before.request_review),
+                "{stage}/{change}"
+            );
+            assert!(
+                after.planning.is_none()
+                    && after.approval.is_none()
+                    && after.execution.is_none()
+                    && after.tasks.is_empty()
+            );
+            if stage == "initial" {
+                assert_eq!(
+                    after.input_interpretation.unwrap().state,
+                    eefn::request_interpretation::State::Unknown
+                );
+            }
+            assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                f.runtime()
+                    .engine
+                    .store
+                    .interpreter_allowance_records()
+                    .unwrap()
+                    .1[&f.pin.id]
+                    .charged
+                    .calls,
+                1
+            );
+            assert!(matches!(
+                f.runtime()
+                    .exchange_interpreter(task, f.pin.clone(), &parties)
+                    .await
+                    .unwrap(),
+                Exchange::Historical(_)
+            ));
+            f.close().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn altered_completion_or_shutdown_cannot_replace_the_saved_source() {
+    for change in ["receipt", "candidate", "shutdown"] {
+        let f = Fixture::new().await;
+        let task = f.task("initial").await;
+        let parties = f.participants().await;
+        let Exchange::Completed(mut completed) = f
+            .runtime()
+            .exchange_interpreter(task.clone(), f.pin.clone(), &parties)
+            .await
+            .unwrap()
+        else {
+            panic!("Missing completion")
+        };
+        let mut closing = None;
+        match change {
+            "receipt" => completed.record.revision += 1,
+            "candidate" => {
+                completed.record.report.as_mut().unwrap().data = Value::Null;
+            }
+            _ => {
+                let engine = f.runtime().engine.clone();
+                let mut observed = engine.shutdown_receiver();
+                closing = Some(tokio::spawn(async move { engine.shutdown().await }));
+                observed.changed().await.unwrap();
+            }
+        }
+        assert!(
+            f.runtime()
+                .apply_interpreter_completion(completed)
+                .await
+                .is_err()
+        );
+        if let Some(closing) = closing {
+            tokio::time::timeout(Duration::from_secs(10), closing)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        let saved = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
+        assert!(
+            saved.request_review.is_none() && saved.tasks.is_empty() && saved.approval.is_none()
+        );
+        assert_eq!(
+            saved.input_interpretation.unwrap().state,
+            eefn::request_interpretation::State::Unknown
+        );
+        assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+        f.close().await;
+    }
+}
+
+#[tokio::test]
+async fn rejected_source_edit_is_atomic_and_keeps_the_original_live_completion_usable() {
+    let f = Fixture::new().await;
+    let task = f.task("initial").await;
+    let parties = f.participants().await;
+    let Exchange::Completed(completed) = f
+        .runtime()
+        .exchange_interpreter(task.clone(), f.pin.clone(), &parties)
+        .await
+        .unwrap()
+    else {
+        panic!("Missing completion")
+    };
+    let before = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
+    let usage = f.runtime().engine.store.usage().unwrap();
+    let permit = f
+        .runtime()
+        .current_interpreter_permit(&task, &parties)
+        .await
+        .unwrap();
+    let rejected = f.runtime().engine.commit_interpreter_result(
+        &completed.continuation.reserved,
+        &permit,
+        f.runtime().runtime_id(),
+        &f.pin,
+        completed.record(),
+        |plan| {
+            plan.status = crate::task::PlanStatus::Cancelled;
+            anyhow::bail!("Source edit rejected before saving")
+        },
+    );
+    assert_eq!(
+        rejected.unwrap_err().to_string(),
+        "Source edit rejected before saving"
+    );
+    assert_eq!(
+        json!(f.runtime().engine.store.get(&task.snapshot.job_id).unwrap()),
+        json!(before)
+    );
+    assert_eq!(f.runtime().engine.store.usage().unwrap(), usage);
+    let saved = f
+        .runtime()
+        .apply_interpreter_completion(completed)
+        .await
+        .unwrap();
+    assert_eq!(
+        saved.input_interpretation.unwrap().state,
+        eefn::request_interpretation::State::Promoted
+    );
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
     f.close().await;
 }
 

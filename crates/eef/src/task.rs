@@ -933,6 +933,22 @@ impl TaskEngine {
             edit,
         )
     }
+    pub(crate) fn commit_interpreter_result(
+        &self,
+        reserved: &crate::interpreter_allowance::Reserved,
+        permit: &crate::interpreter_allowance::Permit,
+        runtime: &str,
+        pin: &crate::interpreter_allowance::PolicyPin,
+        completed: &crate::interpreter_allowance::Record,
+        edit: impl FnOnce(&mut Plan) -> Result<bool>,
+    ) -> Result<Plan> {
+        let active = self.active.lock().expect("active jobs");
+        if active.closing {
+            bail!("Coordinator is stopping; no interpreter result can be applied")
+        }
+        self.store
+            .commit_interpreter_result(reserved, permit, runtime, pin, completed, edit)
+    }
     pub(crate) fn edit_review_checkpoint(
         &self,
         id: &str,

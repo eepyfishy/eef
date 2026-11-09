@@ -1,5 +1,7 @@
-//! Core-only service exchange. Source promotion and public input integration
-//! must consume its live completion; retained history never recreates one.
+//! Core-only service exchange and live source checkpoint. Public input wiring
+//! remains pending; retained history never recreates a completion.
+#[path = "interpreter_application.rs"]
+mod application;
 use crate::{
     Runtime,
     interpreter_allowance::{Participants, PolicyPin, Record, Reservation, Reserved},

@@ -496,8 +496,22 @@ impl JobStore {
         input_transition: bool,
         edit: impl FnOnce(&mut Plan) -> Result<bool>,
     ) -> Result<Plan> {
+        self.edit_with_precondition(id, event, fence, input_transition, |_, _| Ok(()), edit)
+    }
+    fn edit_with_precondition(
+        &self,
+        id: &str,
+        event: &str,
+        fence: Option<(&str, &str)>,
+        input_transition: bool,
+        check: impl FnOnce(&Connection, &Plan) -> Result<()>,
+        edit: impl FnOnce(&mut Plan) -> Result<bool>,
+    ) -> Result<Plan> {
         let connection = self.connection.lock().expect("job journal");
         let mut plan = read(&connection, id)?;
+        // Preconditions and the source write share the journal gate. In
+        // particular, a policy cannot be revoked between checking and saving.
+        check(&connection, &plan)?;
         let old_stop = crate::execution_stop::snapshot(&plan);
         let old_workload = crate::workload_jobs::snapshot(&plan);
         let old_interpretation = json!(plan.input_interpretation);

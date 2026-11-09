@@ -153,7 +153,12 @@ pub fn command(
                             .iter()
                             .find(|a| a.operation_id == context.request_id())
                         {
-                            if answer.text != *text || answer.source.as_ref().is_some_and(|s|s.revision!=*expected_revision) {
+                            if answer.text != *text
+                                || answer
+                                    .source
+                                    .as_ref()
+                                    .is_some_and(|s| s.revision != *expected_revision)
+                            {
                                 bail!("Answer receipt conflicts with retained review")
                             }
                             reused = true;
@@ -175,14 +180,17 @@ pub fn command(
                             .clarification
                             .clone()
                             .context("This proposal has no clarification question")?;
-                        let source=eefn::request_drafts::AnswerSource::from_draft(*expected_revision,draft)?;
+                        let source = eefn::request_drafts::AnswerSource::from_draft(
+                            *expected_revision,
+                            draft,
+                        )?;
                         draft.answers.push(ClarificationAnswer {
                             operation_id: context.request_id().into(),
                             proposal_index: draft.proposals.len() - 1,
                             question,
                             text: text.clone(),
                             at_ms: eefn::protocol::now_ms(),
-                            source:Some(source),
+                            source: Some(source),
                         });
                     }
                     DraftCommand::Revise {
@@ -190,51 +198,31 @@ pub fn command(
                         original_text,
                         proposal,
                         ..
-                    } | DraftCommand::Resolve {expected_revision, original_text, proposal, ..} => {
-                        let resolution = match &command {DraftCommand::Resolve {evidence,..} => Some(evidence.clone()), _ => None};
-                        if original_text != &draft.original_text {
-                            bail!("Original request text is immutable")
-                        }
-                        if let Some(revision) = draft
-                            .proposals
-                            .iter()
-                            .find(|p| p.operation_id == context.request_id())
-                        {
-                            if revision.proposal != *proposal || revision.resolution != resolution || revision.preparation.is_some() {
-                                bail!("Proposal receipt conflicts with retained review")
-                            }
+                    }
+                    | DraftCommand::Resolve {
+                        expected_revision,
+                        original_text,
+                        proposal,
+                        ..
+                    } => {
+                        let resolution = match &command {
+                            DraftCommand::Resolve { evidence, .. } => Some(evidence.clone()),
+                            _ => None,
+                        };
+                        if !append_revision(
+                            draft,
+                            plan.status,
+                            plan.revision,
+                            *expected_revision,
+                            context.request_id(),
+                            original_text,
+                            proposal,
+                            resolution,
+                            capabilities,
+                        )? {
                             reused = true;
                             return Ok(false);
                         }
-                        if draft
-                            .answers
-                            .iter()
-                            .any(|a| a.operation_id == context.request_id())
-                        {
-                            bail!("Receipt already belongs to an answer")
-                        }
-                        if plan.status != PlanStatus::Review || plan.revision != *expected_revision
-                        {
-                            bail!("Draft state or revision changed; inspect it before retrying")
-                        }
-                        if let Some(evidence) = &resolution {
-                            if !evidence.confirms_source(draft) {
-                                bail!("Clarification resolution source changed or has no recorded answer")
-                            }
-                        }
-                        eefn::interpretation::validate(
-                            original_text,
-                            &serde_json::to_vec(proposal)?,
-                            capabilities,
-                        )?;
-                        draft.proposals.push(ProposalRevision {
-                            operation_id: context.request_id().into(),
-                            proposal: proposal.clone(),
-                            allowed_capabilities: capabilities.to_vec(),
-                            at_ms: eefn::protocol::now_ms(),
-                            resolution,
-                            preparation: None,
-                        });
                     }
                     DraftCommand::Get { .. } => unreachable!(),
                 }
@@ -243,6 +231,58 @@ pub fn command(
             })?
     };
     report(&saved, context.request_id(), reused)
+}
+
+pub(crate) fn append_revision(
+    draft: &mut DraftRecord,
+    status: PlanStatus,
+    revision: u64,
+    expected_revision: u64,
+    operation_id: &str,
+    original_text: &str,
+    proposal: &Proposal,
+    resolution: Option<eefn::request_resolution::ResolutionEvidence>,
+    capabilities: &[String],
+) -> Result<bool> {
+    if original_text != draft.original_text {
+        bail!("Original request text is immutable")
+    }
+    if let Some(revision) = draft
+        .proposals
+        .iter()
+        .find(|p| p.operation_id == operation_id)
+    {
+        if revision.proposal != *proposal
+            || revision.resolution != resolution
+            || revision.preparation.is_some()
+        {
+            bail!("Proposal receipt conflicts with retained review")
+        }
+        return Ok(false);
+    }
+    if draft.answers.iter().any(|a| a.operation_id == operation_id) {
+        bail!("Receipt already belongs to an answer")
+    }
+    if status != PlanStatus::Review || revision != expected_revision {
+        bail!("Draft state or revision changed; inspect it before retrying")
+    }
+    if resolution
+        .as_ref()
+        .is_some_and(|e| !e.confirms_source(draft))
+    {
+        bail!("Clarification resolution source changed or has no recorded answer")
+    }
+    eefn::interpretation::validate(original_text, &serde_json::to_vec(proposal)?, capabilities)?;
+    draft.proposals.push(ProposalRevision {
+        operation_id: operation_id.into(),
+        proposal: proposal.clone(),
+        allowed_capabilities: capabilities.to_vec(),
+        at_ms: eefn::protocol::now_ms(),
+        resolution,
+        preparation: None,
+    });
+    draft.validate()?;
+    Ok(true)
 }
 
 #[cfg(test)]

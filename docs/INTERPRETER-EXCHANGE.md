@@ -7,6 +7,9 @@ and an independent source/log audit, including 1,711 Windows/headless Rust tests
 and all 37 native suites.
 It is not yet connected to ordinary user input or source promotion and adds no
 public inference command. The complete three-stage broker remains unfinished.
+The following [source application increment](INTERPRETER-APPLICATION.md) is in
+development and awaits its own hosted validation; it does not change the
+acceptance scope of this exchange checkpoint.
 The first hosted source failed compilation at an ignored timing fixture's
 journal constructor. The next revision compiled but Windows exposed a saved
 failure arriving before its RPC reply. Both failed runs are retained. The

@@ -11,6 +11,12 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use eefn::request_planning::{PlanInput, read_input};
+pub(crate) fn apply_compilation(plan: &mut Plan, compiled: Plan) {
+    plan.goal = compiled.goal;
+    plan.tasks = compiled.tasks;
+    plan.planning = compiled.planning;
+    plan.status = PlanStatus::AwaitingApproval;
+}
 fn identifier(value: &str) -> Result<()> {
     if value.is_empty()
         || value.len() > 64
@@ -721,15 +727,74 @@ impl crate::Runtime {
         if draft.current().workload != eefn::interpretation::Workload::OneShot {
             bail!("Continuous/unknown workloads require the future local pipeline compiler")
         }
-        let mut compiled = unbound_plan(&saved, input)?;
+        let compiled = self
+            .prepare_compilation(&saved, input, operation_id, origin, preparation)
+            .await?;
+        let mut reused = false;
+        let result = self.engine.edit_review_plan(&saved.plan_id, |plan| {
+            if let Some(record) = &plan.planning {
+                if record.operation_id == *operation_id
+                    && record.source_revision == *expected_revision
+                    && record.input == *input
+                    && record.preparation.as_ref() == preparation
+                {
+                    reused = true;
+                    return Ok(false);
+                }
+                bail!("Concurrent concrete plan retained; inspect before retrying")
+            }
+            if plan.status != PlanStatus::Review || plan.revision != *expected_revision {
+                bail!("Request state/revision changed before checkpoint")
+            }
+            if plan.goal.request_context != saved.goal.request_context
+                || json!(plan.request_review) != json!(saved.request_review)
+            {
+                bail!("Request source/context changed before checkpoint")
+            }
+            if let Some(source) = preparation {
+                validate_preparation(plan, input, source)?;
+            }
+            apply_compilation(plan, compiled);
+            Ok(true)
+        })?;
+        Ok(report(result, &request.command, &self.instance_id, reused))
+    }
+
+    /// Build with the ordinary deterministic compiler. Saving is a separate
+    /// source-bound checkpoint, allowing the interpreter to retain its fences
+    /// through the final journal write without holding locks across awaits.
+    pub(crate) async fn prepare_compilation(
+        &self,
+        saved: &Plan,
+        input: &PlanInput,
+        operation_id: &str,
+        origin: Option<&str>,
+        preparation: Option<&eefn::request_preparation::PreparationSource>,
+    ) -> Result<Plan> {
+        let draft = saved
+            .request_review
+            .as_ref()
+            .context("Missing reviewed source")?;
+        if saved.status != PlanStatus::Review
+            || saved.planning.is_some()
+            || draft.current().needs_clarification
+            || draft.current().workload != eefn::interpretation::Workload::OneShot
+        {
+            bail!("Compilation requires a one-shot review with clarification resolved")
+        }
+        input.validate()?;
+        if let Some(source) = preparation {
+            validate_preparation(saved, input, source)?;
+        }
+        let mut compiled = unbound_plan(saved, input)?;
         let permitted = match origin {
             Some(node) => Some(self.disclosed_planning_nodes(node).await?),
             None => None,
         };
         let mut record = PlanningRecord {
             schema_version: 1,
-            operation_id: operation_id.clone(),
-            source_revision: *expected_revision,
+            operation_id: operation_id.into(),
+            source_revision: saved.revision,
             proposal_index: draft.proposals.len() - 1,
             compiled_at_ms: eefn::protocol::now_ms(),
             input: input.clone(),
@@ -757,37 +822,7 @@ impl crate::Runtime {
         record.plan_sha256 = digest(&compiled, &record)?;
         compiled.planning = Some(record);
         validate_retained(&compiled)?;
-        let mut reused = false;
-        let result = self.engine.edit_review_plan(&saved.plan_id, |plan| {
-            if let Some(record) = &plan.planning {
-                if record.operation_id == *operation_id
-                    && record.source_revision == *expected_revision
-                    && record.input == *input
-                    && record.preparation.as_ref() == preparation
-                {
-                    reused = true;
-                    return Ok(false);
-                }
-                bail!("Concurrent concrete plan retained; inspect before retrying")
-            }
-            if plan.status != PlanStatus::Review || plan.revision != *expected_revision {
-                bail!("Request state/revision changed before checkpoint")
-            }
-            if plan.goal.request_context != saved.goal.request_context
-                || json!(plan.request_review) != json!(saved.request_review)
-            {
-                bail!("Request source/context changed before checkpoint")
-            }
-            if let Some(source) = preparation {
-                validate_preparation(plan, input, source)?;
-            }
-            plan.goal = compiled.goal;
-            plan.tasks = compiled.tasks;
-            plan.planning = compiled.planning;
-            plan.status = PlanStatus::AwaitingApproval;
-            Ok(true)
-        })?;
-        Ok(report(result, &request.command, &self.instance_id, reused))
+        Ok(compiled)
     }
 
     pub async fn origin_planning_command(
