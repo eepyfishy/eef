@@ -758,7 +758,10 @@ impl TaskEngine {
                     bail!("Job is already finished")
                 }
                 let pending_workload = workload.is_some() && plan.execution.is_none();
-                plan.status = if has_runner && !pending_workload {
+                // Interpretation can own an active runner while the source is
+                // still review-only. It has no executable plan to put in Stopping.
+                let unissued_review=plan.is_review_request()&&plan.execution.is_none();
+                plan.status = if has_runner && !pending_workload && !unissued_review {
                     PlanStatus::Stopping
                 } else {
                     PlanStatus::Cancelled

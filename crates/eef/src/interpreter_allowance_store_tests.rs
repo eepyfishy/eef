@@ -494,7 +494,7 @@ fn unknown_completion_retains_concurrency_and_never_claims_shared_inference_stop
 
 #[test]
 fn reopen_never_reconstructs_a_continuation_and_recovery_works_below_quota() {
-    for phase in ["reserved", "delivery", "accepted"] {
+    for phase in ["reserved", "delivery", "accepted", "accepted-stopped"] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("jobs.db");
         Connection::open(&path).unwrap();
@@ -508,12 +508,18 @@ fn reopen_never_reconstructs_a_continuation_and_recovery_works_below_quota() {
             let d = store
                 .interpreter_delivery_intent(&r, &p, &runtime, &pin)
                 .unwrap();
-            if phase == "accepted" {
+            if phase == "accepted" || phase == "accepted-stopped" {
                 store
                     .interpreter_report(
                         r.id(),
                         GrantReport::new(d.grant(), ReceiptState::Accepted, json!(null), None),
                     )
+                    .unwrap();
+            }
+            if phase == "accepted-stopped" {
+                store
+                    .interpreter_stop_intent(r.id(), &r.record.binding_sha256)
+                    .unwrap()
                     .unwrap();
             }
         }
@@ -523,6 +529,7 @@ fn reopen_never_reconstructs_a_continuation_and_recovery_works_below_quota() {
         let (records, accounts) = store.interpreter_allowance_records().unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(accounts[&pin.id].charged.calls, 1);
+        assert_eq!(records[0].stop.is_some(), phase == "accepted-stopped");
         assert_eq!(
             records[0].phase,
             if phase == "reserved" {
@@ -930,4 +937,236 @@ fn grant_wall_and_monotonic_deadlines_cannot_outlive_policy_expiry() {
     assert_eq!(d.deadline(), r.deadline);
     let account = &store.interpreter_allowance_records().unwrap().1[&pin.id];
     assert_eq!(account.charged.execution_ms, g.limits.max_execution_ms);
+}
+
+fn stop_report(g: &ExecutionGrant) -> eefn::grants::stop::Report {
+    eefn::grants::stop::Report {
+        schema_version: 1,
+        report_type: "grant_stop_receipt".into(),
+        grant_id: g.grant_id.clone(),
+        grant_sha256: eefn::grants::definition_digest(&json!(g)).unwrap(),
+        issuer_id: g.issuer_id.clone(),
+        session_id: g.session_id.clone(),
+        executor_node: g.executor_node.clone(),
+        job_id: g.job_id.clone(),
+        task_id: g.task_id.clone(),
+        attempt: g.attempt,
+        recorded_at_ms: eefn::protocol::now_ms().max(1),
+        receipt_preexisted: true,
+        reused: false,
+        cancellation_signalled: true,
+        persisted: true,
+        stop_requested: true,
+        execution_stopped: false,
+        external_effects_stopped: false,
+        execution_authorized: false,
+        automatically_retried: false,
+    }
+}
+
+#[test]
+fn unsent_interpreter_stop_is_atomic_without_a_network_send_or_budget_refund() {
+    let store = JobStore::in_memory().unwrap();
+    let runtime = uuid();
+    let pin = policy(&store, &runtime, limits());
+    let p = permit();
+    let task = input(&store, "input");
+    let r = reserve_new(&store, task.clone(), &pin, &p, &runtime);
+    assert!(
+        store
+            .interpreter_stop_intent(r.id(), &"f".repeat(64))
+            .is_err()
+    );
+    assert!(
+        store
+            .interpreter_stop_intent(r.id(), &r.record.binding_sha256)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .interpreter_stop_intent(r.id(), &r.record.binding_sha256)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .interpreter_delivery_intent(&r, &p, &runtime, &pin)
+            .is_err()
+    );
+    let (records, accounts) = store.interpreter_allowance_records().unwrap();
+    assert_eq!(records[0].phase, Phase::NotSent);
+    assert!(records[0].stop.is_none());
+    assert_eq!(accounts[&pin.id].charged.calls, 1);
+    assert_eq!(
+        store
+            .get(&task.snapshot.job_id)
+            .unwrap()
+            .input_interpretation
+            .unwrap()
+            .state,
+        eefn::request_interpretation::State::Unknown
+    );
+}
+
+#[test]
+fn interpreter_stop_intent_precedes_one_send_and_receipts_never_prove_effects_stopped() {
+    let store = JobStore::in_memory().unwrap();
+    let runtime = uuid();
+    let pin = policy(&store, &runtime, limits());
+    let p = permit();
+    let task = input(&store, "input");
+    let r = reserve_new(&store, task, &pin, &p, &runtime);
+    let d = store
+        .interpreter_delivery_intent(&r, &p, &runtime, &pin)
+        .unwrap();
+    assert!(
+        store
+            .interpreter_stop_observed(r.id(), &r.record.binding_sha256, stop_report(d.grant()))
+            .is_err()
+    );
+    let to_send = store
+        .interpreter_stop_intent(r.id(), &r.record.binding_sha256)
+        .unwrap()
+        .unwrap();
+    assert_eq!(json!(to_send), json!(d.grant()));
+    let checkpoint = store.interpreter_allowance_records().unwrap().0.remove(0);
+    assert!(checkpoint.stop.as_ref().unwrap().outcome_unknown);
+    let before = checkpoint.allocation().unwrap();
+    assert!(
+        store
+            .interpreter_stop_intent(r.id(), &r.record.binding_sha256)
+            .unwrap()
+            .is_none()
+    );
+    let mut forged = stop_report(d.grant());
+    forged.execution_stopped = true;
+    assert!(
+        store
+            .interpreter_stop_observed(r.id(), &r.record.binding_sha256, forged)
+            .is_err()
+    );
+    let report = stop_report(d.grant());
+    let saved = store
+        .interpreter_stop_observed(r.id(), &r.record.binding_sha256, report.clone())
+        .unwrap();
+    assert_eq!(saved.allocation().unwrap(), before);
+    assert_eq!(
+        saved.stop.as_ref().unwrap().report.as_ref().unwrap(),
+        &report
+    );
+    assert!(saved.holds_slot());
+    let mut erased = saved.clone();
+    erased.stop = None;
+    erased.revision = 2;
+    erased.validate().unwrap();
+    assert!(
+        update_record(&store.connection.lock().unwrap(), &saved, &erased).is_err(),
+        "Ordinary checkpoints cannot erase stop intent or its receipt"
+    );
+    assert_eq!(
+        store
+            .interpreter_stop_observed(r.id(), &r.record.binding_sha256, report)
+            .unwrap()
+            .revision,
+        saved.revision
+    );
+    let retired = store
+        .retire_interpreter_continuation(r.id(), &r.record.binding_sha256)
+        .unwrap();
+    assert_eq!(retired.phase, Phase::Interrupted);
+    assert_eq!(retired.stop, saved.stop);
+    assert!(retired.holds_slot());
+    let again = store
+        .retire_interpreter_continuation(r.id(), &r.record.binding_sha256)
+        .unwrap();
+    assert_eq!(again.revision, retired.revision);
+    assert!(
+        store
+            .interpreter_delivery_intent(&r, &p, &runtime, &pin)
+            .is_err()
+    );
+}
+
+#[test]
+fn late_interpreter_stop_receipt_fits_original_headroom_after_final_completion() {
+    let mut store = JobStore::in_memory().unwrap();
+    let runtime = uuid();
+    let pin = policy(&store, &runtime, limits());
+    let p = permit();
+    let task = input(&store, "input");
+    let r = reserve_new(&store, task, &pin, &p, &runtime);
+    let d = store
+        .interpreter_delivery_intent(&r, &p, &runtime, &pin)
+        .unwrap();
+    store
+        .interpreter_report(
+            r.id(),
+            GrantReport::new(d.grant(), ReceiptState::Accepted, json!(null), None),
+        )
+        .unwrap();
+    store
+        .interpreter_stop_intent(r.id(), &r.record.binding_sha256)
+        .unwrap()
+        .unwrap();
+    let final_record = store
+        .interpreter_report(
+            r.id(),
+            GrantReport::new(
+                d.grant(),
+                ReceiptState::Completed,
+                json!(null),
+                Some("result_too_large"),
+            ),
+        )
+        .unwrap();
+    assert!(!final_record.holds_slot());
+    assert!(final_record.checkpoint_reserve().unwrap() > 0);
+    Arc::get_mut(&mut store).unwrap().max_bytes = 1024;
+    let before = store.usage().unwrap();
+    assert_eq!(before["over_limit"], true);
+    let stopped = store
+        .interpreter_stop_observed(r.id(), &r.record.binding_sha256, stop_report(d.grant()))
+        .unwrap();
+    assert_eq!(stopped.checkpoint_reserve().unwrap(), 0);
+    assert!(!stopped.stop.unwrap().report.unwrap().execution_stopped);
+    assert!(
+        store.usage().unwrap()["interpreter_allowance_bytes"]
+            .as_u64()
+            .unwrap()
+            < before["interpreter_allowance_bytes"].as_u64().unwrap()
+    );
+}
+
+#[test]
+fn active_unissued_input_can_be_cancelled_without_an_invalid_stopping_state() {
+    let store = JobStore::in_memory().unwrap();
+    let runtime = uuid();
+    let pin = policy(&store, &runtime, limits());
+    let p = permit();
+    let task = input(&store, "input");
+    let r = reserve_new(&store, task.clone(), &pin, &p, &runtime);
+    let engine = TaskEngine::with_store(EventBus::new(10), store.clone());
+    let guard = engine.claim(&task.snapshot.job_id, || Ok(())).unwrap();
+    let cancelled = engine.cancel(&task.snapshot.job_id).unwrap();
+    assert_eq!(cancelled.status, PlanStatus::Cancelled);
+    assert!(cancelled.execution.is_none() && cancelled.tasks.is_empty());
+    let retired = store
+        .retire_interpreter_continuation(r.id(), &r.record.binding_sha256)
+        .unwrap();
+    assert_eq!(retired.phase, Phase::NotSent);
+    assert_eq!(
+        store
+            .get(&task.snapshot.job_id)
+            .unwrap()
+            .input_interpretation
+            .unwrap()
+            .state,
+        eefn::request_interpretation::State::Unknown
+    );
+    drop(guard);
+    assert_eq!(
+        store.get(&task.snapshot.job_id).unwrap().status,
+        PlanStatus::Cancelled
+    );
 }

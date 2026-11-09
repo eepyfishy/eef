@@ -168,6 +168,8 @@ pub(crate) struct Record {
     pub phase: Phase,
     pub delivery_at_ms: Option<u64>,
     pub report: Option<GrantReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<crate::execution_stop::Delivery>,
 }
 impl Record {
     pub fn holds_slot(&self) -> bool {
@@ -195,12 +197,19 @@ impl Record {
         )
     }
     pub fn checkpoint_reserve(&self) -> Result<usize> {
-        if !self.holds_slot() {
+        let pending_stop = self.stop.as_ref().is_some_and(|s| s.report.is_none());
+        if !self.holds_slot() && !pending_stop {
             return Ok(0);
         }
-        self.allocation()?
+        let remaining = self
+            .allocation()?
             .checked_sub(serde_json::to_vec(self)?.len())
-            .context("Interpreter checkpoint exceeded its original allocation")
+            .context("Interpreter checkpoint exceeded its original allocation")?;
+        Ok(if self.holds_slot() {
+            remaining
+        } else {
+            remaining.min(CHECKPOINT_HEADROOM)
+        })
     }
     pub fn allocation(&self) -> Result<usize> {
         let initial = Self {
@@ -211,6 +220,7 @@ impl Record {
             phase: Phase::Reserved,
             delivery_at_ms: None,
             report: None,
+            stop: None,
         };
         serde_json::to_vec(&initial)?
             .len()
@@ -254,11 +264,31 @@ impl Record {
             "Invalid interpreter delivery time"
         );
         let delivered = self.delivery_at_ms.is_some();
+        let stop_revisions = if let Some(stop) = &self.stop {
+            ensure!(
+                delivered
+                    && !matches!(self.phase, Phase::Reserved | Phase::NotSent)
+                    && self
+                        .delivery_at_ms
+                        .is_some_and(|at| stop.send_attempted_at_ms >= at)
+                    && stop.send_attempted_at_ms <= i64::MAX as u64
+                    && stop.outcome_unknown == stop.report.is_none()
+                    && stop.report.as_ref().is_none_or(|r| r.confirms(g)),
+                "Interpreter stop differs from its original grant"
+            );
+            if stop.report.is_some() { 2 } else { 1 }
+        } else {
+            0
+        };
+        let revision = self
+            .revision
+            .checked_sub(stop_revisions)
+            .context("Interpreter stop revision is inconsistent")?;
         let valid_phase = match self.phase {
-            Phase::Reserved => self.revision == 1 && !delivered && self.report.is_none(),
-            Phase::DeliveryIntent => self.revision == 2 && delivered && self.report.is_none(),
+            Phase::Reserved => revision == 1 && !delivered && self.report.is_none(),
+            Phase::DeliveryIntent => revision == 2 && delivered && self.report.is_none(),
             Phase::Accepted => {
-                self.revision == 3
+                revision == 3
                     && delivered
                     && self
                         .report
@@ -266,7 +296,7 @@ impl Record {
                         .is_some_and(|r| r.state == ReceiptState::Accepted)
             }
             Phase::Final => {
-                (3..=5).contains(&self.revision)
+                (3..=5).contains(&revision)
                     && delivered
                     && self
                         .report
@@ -276,11 +306,11 @@ impl Record {
             Phase::Interrupted => {
                 delivered
                     && match &self.report {
-                        None => self.revision == 3,
-                        Some(r) => self.revision == 4 && r.state == ReceiptState::Accepted,
+                        None => revision == 3,
+                        Some(r) => revision == 4 && r.state == ReceiptState::Accepted,
                     }
             }
-            Phase::NotSent => self.revision == 2 && !delivered && self.report.is_none(),
+            Phase::NotSent => revision == 2 && !delivered && self.report.is_none(),
         };
         ensure!(valid_phase, "Invalid interpreter allowance lifecycle");
         self.task()?;

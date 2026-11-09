@@ -1,4 +1,6 @@
 //! Atomic interpreter accounts and attempts in the existing coordinator journal.
+#[path = "interpreter_lifecycle_store.rs"]
+mod lifecycle;
 use super::*;
 use crate::interpreter_allowance::{
     Account, Binding, Dispatch, MAX_RECORD_BYTES, Permit, Phase, PolicyPin, Record, Reservation,
@@ -180,6 +182,14 @@ fn update_record(connection: &Connection, old: &Record, new: &Record) -> Result<
     new.validate()?;
     if old.binding_sha256 != new.binding_sha256 || json!(old.binding) != json!(new.binding) {
         bail!("Interpreter binding is immutable")
+    }
+    if old.stop.as_ref().is_some_and(|saved| {
+        new.stop.as_ref().is_none_or(|next| {
+            saved.send_attempted_at_ms != next.send_attempted_at_ms
+                || saved.report.is_some() && saved != next
+        })
+    }) {
+        bail!("Retained interpreter stop receipt is immutable")
     }
     let encoded = serde_json::to_string(new)?;
     let reserve = new.checkpoint_reserve()?;
@@ -429,6 +439,7 @@ impl JobStore {
             phase: Phase::Reserved,
             delivery_at_ms: None,
             report: None,
+            stop: None,
         };
         record.binding_sha256 = record.digest()?;
         record.matches_policy(policy)?;
