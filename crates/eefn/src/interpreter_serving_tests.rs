@@ -133,6 +133,7 @@ impl Fixture {
             .unwrap();
         let mut config = crate::setup::defaults();
         config["node_id"] = json!("owner");
+        config["name"] = json!("Interpreter fixture");
         config["permissions"]["interpreter_sharing"] = json!(enabled);
         config["models"] = json!({"provider":"ollama","ollama":{"base_url":url,"selected":[selected]},"llamacpp":{"slots":[]}});
         let path = dir.path().join("node.json");
@@ -253,7 +254,13 @@ async fn all_three_granted_stages_use_exact_existing_inputs_and_retained_results
             *f.response.lock().unwrap() = json!({"done":true,"done_reason":"stop","message":{"content":json!({"schema_version":1,"method":{"schema_version":1,"template":"system_info","params":{},"constraints":{}},"clarification":null}).to_string()}});
         }
         let report = f.accept(&g).unwrap().run(&f.engine).await;
-        assert_eq!(report.state, ReceiptState::Completed);
+        assert_eq!(
+            report.state,
+            ReceiptState::Completed,
+            "stage={stage} error={:?} requests={}",
+            report.error_code,
+            f.requests.lock().unwrap().len()
+        );
         assert!(report.success && report.persisted);
         assert_eq!(report.data["job_id"], task.snapshot.job_id);
         assert_eq!(report.data["source_revision"], task.snapshot.revision);

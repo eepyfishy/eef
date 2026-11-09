@@ -132,7 +132,7 @@ pub(crate) async fn execute(
         response["completion_complete"] == true,
         "Interpreter completion is incomplete"
     );
-    let output = response["output"]
+    let output = response["content"]
         .as_str()
         .context("Missing interpreter output")?;
     let candidate = task.candidate(output.as_bytes(), backend, model)?;

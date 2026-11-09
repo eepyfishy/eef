@@ -13,6 +13,10 @@ replay refusal, invalid/incomplete output, and revocation during the final respo
 The CLI preference change has native command coverage. Hosted compilation/runtime
 verification is pending; the production interpreter lease exchange, coordinator
 policy/allowance ledger, provider resolution, broker and physical checks remain open.
+The first serving candidate compiled but failed new tests: the handler read the
+workflow wrapper's `output` field instead of normalized backend `content`, and
+the fixture omitted a valid node name required for configuration saves. Both are
+corrected in the successor; validation and permission checks remain unchanged.
 
 ## Accepted development checkpoint: data-only interpreter task contract
 
@@ -27,14 +31,18 @@ The predecessor's Windows-dashboard setup fixture timed out waiting for HTTP
 activity; it now uses an explicit notification with a bounded startup allowance.
 Production setup timeouts and consent are unchanged; the failed logs remain retained.
 
-## In development: automation approvals include setup-check storage reservations
+## Accepted development checkpoint: shared approval/setup-check storage limits
 
 Reusable automation-policy admission previously omitted the existing reserved
 space for setup-model checks, even though journal usage and other admissions
 counted it. The correction includes those reservations before saving a policy.
-New regression coverage checks both creation orders at an exact one-byte boundary,
+Source `7944701` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42542043064) and the
+independent source/log audit: 1,653 Windows/headless Rust tests, one ignored across
+17 groups, all 37 native suites and the existing additional gates.
+Regression coverage checks both creation orders at an exact one-byte boundary,
 unchanged history on refusal, and revocation/cancellation under lowered quotas.
-Hosted compilation and runtime verification are pending. No new policy, model
+No new policy, model
 call, dependency, service or permission is enabled by this correction.
 
 ## Accepted development checkpoint: normal input saves before inference
