@@ -3,13 +3,29 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: durable interpreter allowances and usage commands
+## In development: interpreter cancellation and stop checkpoints
+
+The [lifecycle increment](INTERPRETER-LIFECYCLE.md) adds exact durable stop send
+intents, immutable observations and late-observation storage headroom. It also
+allows active review-only input to be cancelled without entering an invalid
+execution state. Source `b1b1c70` is undergoing hosted verification. These are
+internal prerequisites; no broker invocation, public inference command or
+physical-stop proof is added.
+
+## Accepted development checkpoint: durable interpreter allowances and usage commands
 
 The [allowance ledger](INTERPRETER-ALLOWANCES.md) adds atomic source claims and
 bounded service reservations in the existing job journal, conservative retained
 usage, exact pre-delivery rechecks and restart uncertainty without replay.
 Owner commands inspect bounded summaries without raw prompts or executable
-grants. Hosted verification is pending. It adds no worker or dependency and does
+grants. Source `af4ba6c` passes all four jobs in the
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42627311859) and an
+independent source/log audit: 1,699 Windows/headless Rust tests, one ignored
+across 17 unfiltered groups, all 37 native suites and the existing extra gates.
+Grants are capped by policy expiry; unknown outcomes retain concurrency and
+checkpoint space. Initial reservations and source claims are atomic. Earlier
+green revisions are retained as superseded evidence, not this exact source's
+acceptance. It adds no worker or dependency and does
 not connect ordinary input to automatic delegation. Three-stage broker delivery,
 promotion, cancellation/recovery and the remaining stable acceptance gates stay
 open.
@@ -34,8 +50,8 @@ nodes verify a model-free origin, an eligible provider and a hidden higher-ranke
 provider without any inference or journal mutation from routing. Earlier failed
 fixtures and the omitted-registration-field failure remain retained.
 
-These are synthetic development checkpoints. The coordinator's durable
-allowance/attempt ledger and three-stage broker still need implementation before
+These are synthetic development checkpoints. The later allowance ledger is
+accepted above; integration of the three-stage broker is still required before
 ordinary input can delegate automatically. Physical/model quality, setup,
 continuous work, installer/security and stable-release acceptance remain open.
 

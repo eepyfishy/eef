@@ -9,12 +9,19 @@ The unreleased coordinator `interpreter-policies show/list/approve/revoke`
 commands record bounded owner consent without a dashboard. See
 [interpreter service policies](INTERPRETER-POLICIES.md) for explicit node scopes,
 limits and receipts. These commands start no model call; automatic network
-interpretation and allowance consumption remain under development.
+interpretation and production broker delivery remain under development.
 
 The additional unreleased `interpreter-policies resolve --origin <node-id>`
 [routing observation](INTERPRETER-ROUTING.md) supports exact provider/backend/model
 preferences and `--local-only`. It starts no inference and passes development
 acceptance at source `0aeb23a`; published alpha installers remain unchanged.
+
+The unreleased `interpreter-policies usage [policy-id]` command inspects retained
+budgets and bounded attempt summaries. Omit the ID for the latest policy; use
+`--limit` (1-100) and `--after-sequence` for history. It needs no working model,
+returns no prompt or executable grant and starts no inference. Its
+[allowance ledger](INTERPRETER-ALLOWANCES.md) passes development acceptance at
+`af4ba6c`; automatic network interpretation is still not connected.
 
 v0.4.0a6 supports these commands without a browser. Deterministic commands need no LM. Run
 from the installation directory, or supply `--config` to select a node config.

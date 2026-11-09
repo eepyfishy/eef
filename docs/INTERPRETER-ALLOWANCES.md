@@ -1,7 +1,10 @@
 # Durable interpreter allowances
 
 This unreleased development increment implements the core journal reservation
-boundary and read-only usage commands. Hosted verification is pending. Ordinary
+boundary and read-only usage commands. Source `af4ba6c` passes all four jobs in
+the [hosted run](https://github.com/eepyfishy/eef/actions/runs/42627311859) and an
+independent source/log audit, including 1,699 Windows/headless Rust tests and
+all 37 native suites. Ordinary
 input does not delegate automatically yet; the three-stage broker still needs
 integration with delivery, result promotion, cancellation and explicit recovery.
 No new dependency, worker, model download, polling service or dashboard logic is

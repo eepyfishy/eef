@@ -108,8 +108,8 @@ A completed review still needs separate preparation, owner approval and executio
 Interpretation sharing must be an explicit, configurable service permission.
 The unreleased [interpreter policy commands](INTERPRETER-POLICIES.md) now record
 the coordinator owner's explicit node scope and bounded limits in the existing
-journal. This is policy persistence accepted at `50174aa`; allowance
-reservation, fresh provider resolution and automatic delegation remain open.
+journal. Policy persistence is accepted at `50174aa`; later routing and
+allowance increments are described below. Automatic delegation remains open.
 The coordinator owner controls its allowed origins/providers and aggregate use;
 each serving node retains its model/grant policy and the ability to revoke access.
 Neither an advertised role, connectivity nor remote-management permission alone
@@ -184,9 +184,15 @@ refusal and retained results across a new connection session.
 
 The issuer, model and observer are fixtures. This does not establish a production
 coordinator broker, physical models or automatic routing. Coordinator policy
-records exist as described above, but the durable allowance ledger, fresh
-provider resolution and three-stage broker remain missing; ordinary input does
-not delegate yet.
+records exist as described above. Subsequent routing and the
+[durable allowance ledger](INTERPRETER-ALLOWANCES.md) are accepted at `0aeb23a`
+and `af4ba6c`. The latter passes four hosted jobs, 1,699 Windows/headless Rust
+tests, all 37 native suites and independent source/log reconciliation. It pins
+source and policy, reserves usage atomically, caps grants at policy expiry and
+retains unknown outcomes without refund or replay. The production three-stage
+broker still needs to connect these boundaries; ordinary input does not
+delegate yet. Internal [stop checkpoints](INTERPRETER-LIFECYCLE.md) are a further
+increment undergoing verification, not an already connected broker.
 
 An owner-approved service policy must make each inference authorization durable,
 identifiable and bounded before issuance. Record that it derives from a specific

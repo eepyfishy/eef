@@ -44,9 +44,15 @@ not widen the enclosing execution grant's existing bounds.
 `--valid-for-seconds` adds an expiry. Omitting it leaves the policy without a
 time expiry but retains finite aggregate limits. The current increment records
 these limits. The new [internal allowance ledger](INTERPRETER-ALLOWANCES.md)
-implements reservations and read-only usage reporting with verification pending;
+implements reservations and read-only usage reporting, accepted at `af4ba6c`;
 production broker delivery is still absent, so saving approval starts no service
 call.
+
+`interpreter-policies usage [policy-id]` inspects conservative reserved budgets
+and bounded attempt summaries without prompts or complete grants. Omit the ID
+for the latest policy; historical and revoked policy usage remains inspectable.
+Use `--limit` and `--after-sequence` to page through retained attempts. Unknown
+completion is not proof that shared inference stopped and retains its slot.
 
 The CLI reads the current generation/runtime and sends one mutation to that
 same runtime. Concurrent approval with an outdated generation fails. A new
@@ -71,8 +77,8 @@ This policy grants no filesystem, process, microphone, camera or other tool
 permission. A serving node must separately enable interpreter sharing and retain
 its local model and grant controls. Advertisements alone grant nothing.
 
-The remaining broker must reserve durable allowances before granting work,
-resolve fresh independently authenticated nodes and exact model selections,
+The remaining broker must integrate the accepted durable reservations and fresh
+independently authenticated provider/model selection before granting work,
 bind every stage to its immutable source and original context, and settle
 uncertain attempts without automatic replay. Those paths and production
 interpreter lease-exchange coverage remain open. See
