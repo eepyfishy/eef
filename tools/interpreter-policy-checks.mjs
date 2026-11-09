@@ -1,0 +1,44 @@
+// Actual shipping owner CLI/API checks; no inference or model installation.
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+export async function checkInterpreterPolicyUnavailable({owner,nodeId}) {
+ const rejected=await owner(['interpreter-policies','approve','--origin',nodeId,'--provider',nodeId],false);
+ assert.equal(rejected.success,false);
+ const state=await owner(['interpreter-policies','show']);
+ assert.equal(state.result.current_generation,0);assert.equal(state.result.authorization,null);
+}
+export async function checkInterpreterPolicy({owner,eef,nodeId}) {
+ const empty=await owner(['interpreter-policies','show']);assert.equal(empty.success,true);
+ assert.equal(empty.result.current_generation,0);assert.equal(empty.result.authorization,null);
+ const operation=randomUUID(),args=['interpreter-policies','approve','--origin',nodeId,'--provider',nodeId,
+  '--operation-id',operation,'--max-calls','2','--max-output-tokens','128','--max-execution-ms','1000','--max-result-bytes','4096'];
+ const saved=await owner(args);assert.equal(saved.success,true);assert.equal(saved.result.changed,true);
+ const record=saved.result.authorization;assert.equal(record.id,operation);assert.equal(record.generation,1);
+ assert.deepEqual(record.creation.scope,{origin_nodes:[nodeId],provider_nodes:[nodeId]});
+ assert.equal(record.creation.limits.max_reserved_output_tokens,256);
+ assert.equal(record.creation.limits.max_reserved_execution_ms,2000);
+ assert.equal(record.creation.limits.max_reserved_result_bytes,8192);
+ for(const flag of ['grants_issued','model_inference_requested','automatically_retried','automatic_delegation_available','allowance_reservation_available'])assert.equal(saved.result[flag],false,flag);
+ const reused=await owner(args);assert.equal(reused.result.reused,true);assert.deepEqual(reused.result.authorization,record);
+ const conflict=[...args];conflict[conflict.indexOf('--origin')+1]='another-node';
+ const rejected=await owner(conflict,false);assert.equal(rejected.success,false);
+ assert.deepEqual((await owner(['interpreter-policies','show',record.id])).result.authorization,record);
+ const payload={schema_version:1,expected_runtime_id:saved.runtime_id,command:{operation:'show',id:record.id}};
+ let response=await fetch(eef+'/api/commands/interpreter-policies',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify(payload)});
+ assert.equal(response.status,403);
+ response=await fetch(eef+'/api/commands/interpreter-policies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,expected_runtime_id:randomUUID()})});
+ assert.equal(response.status,400);
+ response=await fetch(eef+'/api/commands/interpreter-policies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,padding:'x'.repeat(16384)})});
+ assert.equal(response.status,413);
+ const revokeArgs=['interpreter-policies','revoke',record.id,'--operation-id',randomUUID()];
+ const revoked=await owner(revokeArgs);assert.equal(revoked.result.authorization.revision,2);
+ const repeated=await owner(revokeArgs);assert.equal(repeated.result.reused,true);
+ const old=await owner(args);assert.equal(old.result.reused,true);assert.equal(old.result.authorization.revision,2);
+ const listed=await owner(['interpreter-policies','list']);assert.equal(listed.result.items.length,1);
+ assert.equal(listed.result.items[0].revoked,true);
+ const plain=await owner(['interpreter-policies','show',record.id],true,true);
+ assert(plain.out.includes('revoked'));assert(plain.out.includes('Automatic network interpretation is not available yet'));
+ const models=await fetch(eef+'/api/commands/models').then(r=>r.json());
+ assert(models.nodes.every(node=>node.models.length===0));
+ console.log('Interpreter service policy command validation passed');
+}

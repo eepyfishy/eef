@@ -5,6 +5,12 @@ For a shorter introduction, see the [user guide](USER_GUIDE.md), including
 [request-to-result walkthrough](user/REQUESTS.md). This reference includes both
 published commands and individually marked unreleased development features.
 
+The unreleased coordinator `interpreter-policies show/list/approve/revoke`
+commands record bounded owner consent without a dashboard. See
+[interpreter service policies](INTERPRETER-POLICIES.md) for explicit node scopes,
+limits and receipts. These commands start no model call; automatic network
+interpretation and allowance consumption remain under development.
+
 v0.4.0a6 supports these commands without a browser. Deterministic commands need no LM. Run
 from the installation directory, or supply `--config` to select a node config.
 Older v0.4.0a installers do not contain them.

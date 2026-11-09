@@ -8,6 +8,7 @@ import {createServer as tcpServer} from 'node:net';
 import {createServer} from 'node:http';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {reviewedFixture} from './reviewed-fixture.mjs';
+import {checkInterpreterPolicy,checkInterpreterPolicyUnavailable} from './interpreter-policy-checks.mjs';
 const root=resolve(import.meta.dirname,'..'),bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const scratch=await mkdtemp(join(root,'.validation/permission-commands-')),children=[];
 const nodeConfig=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml'),id='permissions-fixture';let node,eef,proxyMode='drop',writes=0;
@@ -85,8 +86,10 @@ try{
  await local(['permissions','deny','http-requests']);await local(['permissions','allow','process-execution']);await local(['restart']);
  await until(async()=>(await json(node+'/api/status')).connection.state==='connected','applied features reconnected');
  assert.equal(feature(await show(),'filesystem_write').applied,'feature_wide');assert.equal(feature(await show(),'process_execution').applied,'feature_wide');
+ await checkInterpreterPolicyUnavailable({owner,nodeId:id});
  const invitation=await owner(['credentials','provision','--node',id,'--address',`127.0.0.1:${gateway}`]);const privateFile=join(scratch,'PRIVATE-pair.json');await writeFile(privateFile,JSON.stringify(invitation));const old=(await json(eef+'/api/diagnostics')).runtime_id;await owner(['restart']);await until(async()=>(await json(eef+'/api/diagnostics')).runtime_id!==old,'coordinator private identity');await local(['connection','pair','--code-file',privateFile]);
  await until(async()=>{const status=await json(node+'/api/status');return status.connection.state==='connected'&&status.connection.transport==='pinned_tls13'&&status.execution_grants.available===true&&status.input_channel==='ready';},'connected private node with ready input and configured receipt support');
+ await checkInterpreterPolicy({owner,eef,nodeId:id});
  const review=reviewedFixture(eef,node,id),effect=join(scratch,'approved-write.txt');
  const plan=await review.save({template:'local_pipeline',constraints:{node_id:id},params:{pipeline:{schema_version:1,max_retained_bytes:2048,steps:[{id:'write',capability:'filesystem',action:'write',params:{path:effect,content:'owner-approved fixture write'}}]}}});
  await review.start(await review.approve(plan));const report=await review.result(plan.id);assert.equal(report.success,true);assert.equal(await readFile(effect,'utf8'),'owner-approved fixture write');

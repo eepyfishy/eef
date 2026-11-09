@@ -178,6 +178,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(automation_policy_command),
         )
         .route(
+            "/api/commands/interpreter-policies",
+            post(interpreter_policy_command).layer(axum::extract::DefaultBodyLimit::max(16384)),
+        )
+        .route(
             "/api/commands/automation-occurrences",
             post(automation_occurrence_command),
         )
@@ -373,6 +377,13 @@ async fn automation_policy_command(
     Json(request): Json<eefn::automation_policy::PolicyRequest>,
 ) -> ApiResult<Value> {
     Ok(Json(runtime.automation_policy_command(request).await?))
+}
+
+async fn interpreter_policy_command(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<eefn::interpreter_policy::Request>,
+) -> ApiResult<Value> {
+    Ok(Json(runtime.interpreter_policy_command(request)?))
 }
 async fn automation_occurrence_command(
     State(runtime): State<Arc<Runtime>>,

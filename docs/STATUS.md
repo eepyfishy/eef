@@ -3,6 +3,19 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: durable owner interpreter service policies
+
+The new [policy commands](INTERPRETER-POLICIES.md) record explicit input/serving
+nodes, finite limits, immutable approval receipts, superseding generations and
+revocation in the existing job journal. New approvals require matching saved
+and applied private coordinator identity. Shared storage accounting includes
+the records and their reserved revocation space; reads and revocation remain
+available under lowered quotas. The API uses the existing local-owner guard,
+strict request schema, runtime fence and bounded body. No dashboard is required.
+Hosted compilation/runtime verification is pending. This increment performs no
+inference or grant issuance and supplies no allowance-consumption ledger,
+provider resolver or automatic network broker.
+
 ## In development: opt-in granted interpreter serving on a node
 
 New source reuses the existing permission commands and accepted-grant driver for
@@ -17,6 +30,14 @@ The first serving candidate compiled but failed new tests: the handler read the
 workflow wrapper's `output` field instead of normalized backend `content`, and
 the fixture omitted a valid node name required for configuration saves. Both are
 corrected in the successor; validation and permission checks remain unchanged.
+The next candidate passed all four hosted jobs, but the model-selection revision
+follow-up failed an existing Windows/headless camera completion fixture. That
+fixture waits through renewal and each durable event acknowledgement inside a
+10-second source bound; only three frames were retained before uncertainty.
+The successor gives this synthetic handshake a reviewed 30-second source bound
+within the unchanged 60-second session and 10-second renewable lease. Production
+source deadlines, permission checks and uncertainty assertions are unchanged.
+The failed run and full log remain retained; full successor acceptance is pending.
 
 ## Accepted development checkpoint: data-only interpreter task contract
 

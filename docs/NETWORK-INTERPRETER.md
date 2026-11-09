@@ -106,6 +106,10 @@ explicit recovery remain required. A claim itself never authorizes inference.
 A completed review still needs separate preparation, owner approval and execution.
 
 Interpretation sharing must be an explicit, configurable service permission.
+The unreleased [interpreter policy commands](INTERPRETER-POLICIES.md) now record
+the coordinator owner's explicit node scope and bounded limits in the existing
+journal. This is policy persistence only, pending hosted verification; allowance
+reservation, fresh provider resolution and automatic delegation remain open.
 The coordinator owner controls its allowed origins/providers and aggregate use;
 each serving node retains its model/grant policy and the ability to revoke access.
 Neither an advertised role, connectivity nor remote-management permission alone

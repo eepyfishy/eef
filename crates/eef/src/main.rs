@@ -57,6 +57,11 @@ enum Command {
         #[command(subcommand)]
         command: eefn::automation_policy::PolicyCommand,
     },
+    /// Save/inspect/revoke explicit bounded interpreter-sharing policy; never dispatch.
+    InterpreterPolicies {
+        #[command(subcommand)]
+        command: eef::interpreter_policy::Action,
+    },
     /// Reserve bounded authority for an independently compiled job, without starting work.
     AutomationOccurrences {
         #[command(subcommand)]
@@ -287,6 +292,64 @@ enum ModelsCommand {
 #[cfg(test)]
 mod credential_cli_tests {
     use super::*;
+    #[test]
+    fn interpreter_policy_cli_requires_explicit_nodes_and_derives_bounded_allowances() {
+        let args = Args::try_parse_from([
+            "eef",
+            "interpreter-policies",
+            "approve",
+            "--origin",
+            "input-node",
+            "--provider",
+            "model-node",
+            "--max-calls",
+            "2",
+            "--max-output-tokens",
+            "128",
+            "--max-execution-ms",
+            "1000",
+            "--max-result-bytes",
+            "4096",
+        ])
+        .unwrap();
+        let Some(Command::InterpreterPolicies {
+            command: eef::interpreter_policy::Action::Approve(options),
+        }) = args.command
+        else {
+            panic!("Wrong interpreter policy command")
+        };
+        let command = options.command(3).unwrap();
+        let eefn::interpreter_policy::Command::Approve {
+            generation,
+            scope,
+            limits,
+            ..
+        } = command
+        else {
+            unreachable!()
+        };
+        assert_eq!(generation, 3);
+        assert_eq!(scope.origin_nodes, vec!["input-node"]);
+        assert_eq!(scope.provider_nodes, vec!["model-node"]);
+        assert_eq!(limits.max_reserved_output_tokens, 256);
+        assert_eq!(limits.max_reserved_execution_ms, 2000);
+        assert_eq!(limits.max_reserved_result_bytes, 8192);
+        for args in [
+            vec!["eef", "interpreter-policies", "approve"],
+            vec![
+                "eef",
+                "interpreter-policies",
+                "approve",
+                "--origin",
+                "input-node",
+            ],
+            vec!["eef", "interpreter-policies", "show", "--execute"],
+            vec!["eef", "interpreter-policies", "revoke", "policy", "--retry"],
+        ] {
+            assert!(Args::try_parse_from(args).is_err());
+        }
+    }
+
     #[test]
     fn remote_camera_source_cli_needs_only_a_node_and_cannot_capture_or_change_permissions() {
         let base = [
@@ -1389,6 +1452,103 @@ mod credential_cli_tests {
     }
 }
 
+async fn interpreter_policy_cli(
+    client: &reqwest::Client,
+    base: &str,
+    action: &eef::interpreter_policy::Action,
+) -> Result<serde_json::Value> {
+    use eef::interpreter_policy::Action;
+    use eefn::interpreter_policy::{Command as PolicyCommand, Request};
+    use serde_json::json;
+    let initial = match action {
+        Action::Show { id } => PolicyCommand::Show { id: id.clone() },
+        Action::List {
+            limit,
+            after_generation,
+        } => PolicyCommand::List {
+            limit: *limit,
+            after_generation: *after_generation,
+        },
+        Action::Approve(_) => PolicyCommand::Show { id: None },
+        Action::Revoke { id, .. } => PolicyCommand::Show {
+            id: Some(id.clone()),
+        },
+    };
+    initial.validate()?;
+    let mut inspected = owner_automation_exchange(
+        client,
+        base,
+        json!(initial),
+        false,
+        "interpreter-policies",
+        "owner_interpreter_policy_command",
+        |value, runtime| eefn::interpreter_policy::confirmed(value, &initial, runtime),
+    )
+    .await;
+    inspected["note"] = json!(
+        "Interpreter policy inspection only; no model call, reservation or execution. Inspect retained receipts before another approval."
+    );
+    if matches!(action, Action::Show { .. } | Action::List { .. }) || inspected["success"] != true {
+        return Ok(inspected);
+    }
+    let runtime = inspected["result"]["runtime_id"]
+        .as_str()
+        .context("Missing inspected policy runtime")?;
+    let command = match action {
+        Action::Approve(options) => options.command(
+            inspected["result"]["current_generation"]
+                .as_u64()
+                .context("Missing policy generation")?,
+        )?,
+        Action::Revoke { id, operation_id } => PolicyCommand::Revoke {
+            id: id.clone(),
+            revision: inspected["result"]["authorization"]["revision"]
+                .as_u64()
+                .context("Missing policy revision")?,
+            operation_id: operation_id
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        },
+        _ => unreachable!(),
+    };
+    command.validate()?;
+    let request = Request {
+        schema_version: 1,
+        expected_runtime_id: runtime.into(),
+        command: command.clone(),
+    };
+    let exchange: std::result::Result<serde_json::Value, &str> = async {
+        let response = client
+            .post(format!("{base}/api/commands/interpreter-policies"))
+            .json(&request)
+            .send()
+            .await
+            .map_err(|_| "interpreter_policy_reply_unconfirmed")?;
+        if !response.status().is_success() {
+            return Err("interpreter_policy_rejected");
+        }
+        let value = eefn::model_manager::bounded_json(response)
+            .await
+            .map_err(|_| "interpreter_policy_reply_unconfirmed")?;
+        if !eefn::interpreter_policy::confirmed(&value, &command, runtime) {
+            return Err("interpreter_policy_reply_unconfirmed");
+        }
+        Ok(value)
+    }
+    .await;
+    let (result, error_code) = match exchange {
+        Ok(value) => (Some(value), None),
+        Err(code) => (None, Some(code)),
+    };
+    let success = result.is_some();
+    Ok(
+        json!({"schema_version":1,"report_type":"owner_interpreter_policy_command","actor":"coordinator_owner",
+        "command":command,"runtime_id":runtime,"success":success,"coordinator_acknowledged":success,
+        "outcome_unknown":!success,"error_code":error_code,"result":result,"grants_issued":false,
+        "model_inference_requested":false,"automatically_retried":false,"automatic_delegation_available":false}),
+    )
+}
+
 async fn owner_automation_exchange(
     client: &reqwest::Client,
     base: &str,
@@ -2291,6 +2451,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
             )
             .await);
         }
+        Command::InterpreterPolicies { command } => {
+            return interpreter_policy_cli(&client, &base, command).await;
+        }
         Command::Requests { command } => {
             if let eef::request_planning::PlanningAction::ApproveSession {
                 id,
@@ -3097,7 +3260,18 @@ async fn main() -> Result<()> {
                         "Private request/plan report: may contain user text, task inputs and target bindings; do not publish it in reports or issues."
                     );
                 }
-                if !args.json
+                if !args.json && matches!(command, Command::InterpreterPolicies { .. }) {
+                    if value["success"] == true {
+                        print!("{}", eef::interpreter_policy::render(&value["result"])?);
+                    } else {
+                        println!(
+                            "Interpreter policy outcome unconfirmed. Inspect policy history and receipt {} before another approval. No automatic retry or model call was requested.",
+                            value["command"]["operation_id"]
+                                .as_str()
+                                .unwrap_or("unavailable")
+                        );
+                    }
+                } else if !args.json
                     && matches!(
                         command,
                         Command::Node {
