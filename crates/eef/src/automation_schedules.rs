@@ -1546,6 +1546,7 @@ mod tests {
             _file_lock: None,
             max_count: 0,
             max_bytes: 0,
+            source_changes: tokio::sync::watch::channel(0).0,
             reads: Default::default(),
             finalizations: Default::default(),
             workload_writes: super::job_finalizations::Queue::for_workload_writes(0, 0),
