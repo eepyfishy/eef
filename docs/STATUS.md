@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: automation approvals include setup-check storage reservations
+
+Reusable automation-policy admission previously omitted the existing reserved
+space for setup-model checks, even though journal usage and other admissions
+counted it. The correction includes those reservations before saving a policy.
+New regression coverage checks both creation orders at an exact one-byte boundary,
+unchanged history on refusal, and revocation/cancellation under lowered quotas.
+Hosted compilation and runtime verification are pending. No new policy, model
+call, dependency, service or permission is enabled by this correction.
+
 ## Accepted development checkpoint: normal input saves before inference
 
 Source `2b650d6` passes all four jobs in the

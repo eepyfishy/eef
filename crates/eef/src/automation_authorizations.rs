@@ -154,7 +154,9 @@ impl JobStore {
                 .checked_add(usize::try_from(definitions)?)
                 .and_then(|n| n.checked_add(usize::try_from(other).ok()?))
                 .context("Authorization size overflow")?;
-            let intent_bytes = model_verification_intents::bytes(connection)?;
+            let intent_bytes = model_verification_intents::bytes(connection)?
+                .checked_add(setup_model_checks::bytes(connection)?)
+                .context("Authorization size overflow")?;
             let used = used
                 .checked_add(automation_occurrences::bytes(connection)?)
                 .and_then(|n| n.checked_add(intent_bytes))
@@ -895,6 +897,164 @@ pub(super) mod tests {
         assert_eq!(store.usage().unwrap()["automation_count"], 1);
         assert_eq!(store.usage().unwrap()["authorization_count"], 1);
     }
+    #[test]
+    fn setup_checks_and_automation_approvals_share_the_exact_byte_boundary_in_both_orders() {
+        for check_first in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("jobs.db");
+            Connection::open(&path).unwrap();
+            let store = JobStore::open(&path, 100, 1024 * 1024).unwrap();
+            let (engine, source, _, record) = fixture(store.clone());
+            let definition = crate::setup_model_check::tests::definition();
+            let runtime = uuid::Uuid::new_v4().to_string();
+            let next_cost = if check_first {
+                assert!(
+                    store
+                        .arm_setup_model_check(definition.clone(), &runtime)
+                        .unwrap()
+                        .1
+                );
+                serde_json::to_vec(&record).unwrap().len() + reserve(&record)
+            } else {
+                save(&store, &record);
+                crate::setup_model_check::RECORD_BYTES
+            };
+            let used =
+                1024 * 1024 - store.usage().unwrap()["available_bytes"].as_u64().unwrap() as usize;
+            let exact_limit = used + next_cost;
+            drop(engine);
+            drop(store);
+
+            let store = JobStore::open(&path, 100, exact_limit - 1).unwrap();
+            let before = store.usage().unwrap();
+            assert_eq!(before["over_limit"], false);
+            if check_first {
+                let error = store
+                    .automation_policy_checkpoint(
+                        record.creation.clone(),
+                        Some(record.clone()),
+                        &record.runtime_id,
+                        record.approved_at_ms,
+                    )
+                    .unwrap_err();
+                assert!(error.to_string().contains("storage is full"));
+                assert_eq!(before["authorization_count"], 0);
+                assert_eq!(
+                    store
+                        .setup_model_check(&definition.node_id, &definition.operation_id)
+                        .unwrap()
+                        .unwrap()
+                        .state,
+                    crate::setup_model_check::State::Waiting
+                );
+            } else {
+                assert!(
+                    store
+                        .arm_setup_model_check(definition.clone(), &runtime)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("history is full")
+                );
+                assert_eq!(before["setup_model_check_count"], 0);
+            }
+            assert_eq!(
+                store.usage().unwrap(),
+                before,
+                "refusal must not consume or release quota"
+            );
+            assert_eq!(
+                json!(store.get(&source.plan_id).unwrap().planning),
+                json!(source.planning)
+            );
+            drop(store);
+
+            let store = JobStore::open(&path, 100, exact_limit).unwrap();
+            if check_first {
+                save(&store, &record);
+            } else {
+                assert!(
+                    store
+                        .arm_setup_model_check(definition.clone(), &runtime)
+                        .unwrap()
+                        .1
+                );
+            }
+            let after = store.usage().unwrap();
+            assert_eq!(after["authorization_count"], 1);
+            assert_eq!(after["setup_model_check_count"], 1);
+            assert_eq!(after["available_bytes"], 0);
+            assert_eq!(after["over_limit"], false);
+        }
+    }
+
+    #[test]
+    fn setup_check_reservations_do_not_block_revocation_after_the_shared_quota_is_lowered() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.db");
+        Connection::open(&path).unwrap();
+        let store = JobStore::open(&path, 100, 1024 * 1024).unwrap();
+        let (engine, _, _, record) = fixture(store.clone());
+        let definition = crate::setup_model_check::tests::definition();
+        let runtime = uuid::Uuid::new_v4().to_string();
+        store
+            .arm_setup_model_check(definition.clone(), &runtime)
+            .unwrap();
+        save(&store, &record);
+        drop(engine);
+        drop(store);
+
+        let store = JobStore::open(&path, 1, 1024).unwrap();
+        assert_eq!(store.usage().unwrap()["over_limit"], true);
+        let revoke = PolicyCommand::Revoke {
+            id: record.id.clone(),
+            revision: 1,
+            operation_id: uuid::Uuid::new_v4().to_string(),
+        };
+        let result = store
+            .automation_policy_checkpoint(
+                revoke.clone(),
+                None,
+                &record.runtime_id,
+                record.approved_at_ms,
+            )
+            .unwrap();
+        assert_eq!(result["authorization"]["state"], "revoked");
+        assert!(
+            store
+                .cancel_setup_model_check_wait(&definition.node_id, &definition.operation_id)
+                .unwrap()
+        );
+        let usage = store.usage().unwrap();
+        assert_eq!(usage["authorization_reserved_bytes"], 0);
+        assert_eq!(
+            usage["setup_model_check_reserved_bytes"],
+            crate::setup_model_check::RECORD_BYTES
+        );
+        assert_eq!(
+            store
+                .setup_model_check(&definition.node_id, &definition.operation_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            crate::setup_model_check::State::Cancelled
+        );
+        assert_eq!(
+            store
+                .automation_policy_checkpoint(
+                    revoke,
+                    None,
+                    &record.runtime_id,
+                    record.approved_at_ms
+                )
+                .unwrap()["reused"],
+            true
+        );
+        assert_eq!(store.usage().unwrap(), usage);
+        let mut next = definition;
+        next.operation_id = uuid::Uuid::new_v4().to_string();
+        assert!(store.arm_setup_model_check(next, &runtime).is_err());
+    }
+
     #[test]
     fn shared_quota_refusal_and_lowered_quota_revocation_use_reserved_headroom() {
         let dir = tempfile::tempdir().unwrap();
