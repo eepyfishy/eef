@@ -164,7 +164,11 @@ async fn full_source_plan(
                     activation_level: 15,
                     deactivation_level: 5,
                     io_timeout_ms: 2000,
-                    max_duration_ms: 10000,
+                    // This fixture deliberately holds the first frame through
+                    // a lease renewal and waits for each durable event save.
+                    // Give that synthetic handshake its own reviewed bound;
+                    // the 10s renewable lease and 60s session stay unchanged.
+                    max_duration_ms: 30000,
                 },
                 limits: template.limits,
                 events: template.events,
