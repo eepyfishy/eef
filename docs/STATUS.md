@@ -32,6 +32,11 @@ The successor validates and retains that field. Clients advertise it only with
 private grant support and a runtime registration offer, preserving older library
 connections without an offer. Selection still requires opt-in metadata; it does
 not infer permission from a model role or weaken the positive assertion.
+That successor reached the later credential-edit check, where saving the
+fixture's ephemeral port zero was correctly refused by the production validator.
+The fixture now persists its actually assigned port before testing saved
+credential changes. Port validation and routing assertions remain unchanged;
+this is not yet full hosted acceptance.
 
 ## Accepted development checkpoint: interpreter policy and private transport
 

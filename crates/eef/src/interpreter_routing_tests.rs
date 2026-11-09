@@ -115,6 +115,16 @@ async fn private_model_free_origin_resolves_only_disclosed_policy_scoped_current
     )
     .await
     .unwrap();
+    // Port zero is only an in-process fixture bind request. Later credential
+    // edits exercise the real saved-config validator, which requires an actual
+    // endpoint. Persist the port assigned to this running fixture first.
+    runtime
+        .config
+        .edit_for_restart(|saved| {
+            saved["node"]["port"] = json!(runtime.node_server.port());
+            Ok(((), true))
+        })
+        .unwrap();
     let mut nodes = Vec::new();
     for node in ["input", "provider", "hidden"] {
         let serving = node != "input";
