@@ -169,8 +169,16 @@ authority. Direct generic execution of this task is refused.
 This is pending node-side execution and command coverage, with synthetic Ollama
 replies and the internal test admission path. It is not acceptance of a production
 network-interpreter lease exchange, physical models or automatic routing. The
-coordinator sharing policy, durable allowance ledger, provider resolution and
-three-stage broker are still missing; ordinary input does not delegate yet.
+coordinator policy records exist in the pending increment described above, but
+the durable allowance ledger, provider resolution and three-stage broker are
+still missing; ordinary input does not delegate yet.
+
+A further transport test (pending hosted verification) connects the shipping node
+client and private TLS gateway and uses production fresh-lease admission for all
+three stages. It checks complete source-bound synthetic replies, accepted/final
+observation, revocation, duplicate refusal and retained results across a new
+connection session. The issuer and observer are fixtures; this does not establish
+the missing coordinator authorization/broker path or physical/model acceptance.
 
 An owner-approved service policy must make each inference authorization durable,
 identifiable and bounded before issuance. Record that it derives from a specific

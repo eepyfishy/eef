@@ -79,7 +79,7 @@ fn grant(task: &Task) -> ExecutionGrant {
     grant
 }
 struct Fixture {
-    engine: NodeEngine,
+    engine: Arc<NodeEngine>,
     ledger: Arc<GrantLedger>,
     service: Arc<crate::NodeService>,
     requests: Arc<Mutex<Vec<Value>>>,
@@ -154,7 +154,7 @@ impl Fixture {
         )
         .unwrap();
         Self {
-            engine,
+            engine: Arc::new(engine),
             ledger,
             service,
             requests,
@@ -174,6 +174,173 @@ impl Fixture {
             &g.executor_node,
         )
     }
+}
+
+// Actual authenticated TCP/TLS and production fresh-lease admission, with a
+// synthetic issuer/provider. This is not a coordinator broker or physical test.
+#[tokio::test]
+async fn pinned_service_tasks_use_production_leases_and_retained_results_across_reconnect() {
+    use crate::grants::{GrantObserver, GrantReport};
+    use std::time::Duration;
+    #[derive(Default)]
+    struct Observer(Mutex<Vec<GrantReport>>);
+    impl GrantObserver for Observer {
+        fn record(&self, report: &GrantReport) -> Result<()> {
+            self.0.lock().unwrap().push(report.clone());
+            Ok(())
+        }
+    }
+    let f = Fixture::new(true, true).await;
+    let identity = crate::tls::CoordinatorIdentity::generate().unwrap();
+    let key = crate::authentication::generate_credential();
+    let gateway = crate::NodeServer::with_authentication(
+        "",
+        "127.0.0.1",
+        0,
+        crate::authentication::AuthenticationPolicy {
+            allow_legacy: false,
+            credentials: std::collections::BTreeMap::from([("owner".into(), Some(key.clone()))]),
+            tls: Some(identity.clone()),
+        },
+    )
+    .unwrap();
+    gateway.start().await.unwrap();
+    let status = Arc::new(Mutex::new(json!({})));
+    let config: crate::NodeClientConfig = serde_json::from_value(json!({
+        "node_id":"owner","auth_mode":"node_credential","psk":key,
+        "coordinator_certificate":identity.certificate,
+        "endpoints":[format!("127.0.0.1:{}",gateway.port())],"heartbeat_seconds":0.2
+    }))
+    .unwrap();
+    let start = || {
+        let client = crate::NodeClient::new(config.clone(), f.engine.clone())
+            .unwrap()
+            .with_status(status.clone())
+            .with_grants(&f._dir.path().join("grants.db"), Default::default());
+        tokio::spawn(async move { client.connect_once().await })
+    };
+    let ready = || async {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                if let Ok(session) = gateway.grant_session("owner").await {
+                    break session;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Private grant connection did not become ready")
+    };
+    let node = start();
+    let session = ready().await;
+    let observer = Arc::new(Observer::default());
+    let mut completed = Vec::new();
+    for stage in ["initial", "clarification", "method", "revoked"] {
+        let task = task(if stage == "revoked" { "initial" } else { stage });
+        let mut g = grant(&task);
+        g.issuer_id = session["issuer_id"].as_str().unwrap().into();
+        g.session_id = session["session_id"].as_str().unwrap().into();
+        g.executor_node = "owner".into();
+        g.issued_at_ms = crate::protocol::now_ms();
+        g.limits.max_execution_ms = 10_000;
+        g.expires_at_ms = g.issued_at_ms + 10_000;
+        let lease_deadline = std::time::Instant::now() + Duration::from_secs(10);
+        if stage == "method" {
+            *f.response.lock().unwrap() = json!({"done":true,"done_reason":"stop","message":{"content":json!({"schema_version":1,"method":{"schema_version":1,"template":"system_info","params":{},"constraints":{}},"clarification":null}).to_string()}});
+        } else {
+            *f.response.lock().unwrap() = json!({"done":true,"done_reason":"stop","message":{"content":proposal(false).to_string()}});
+        }
+        if stage == "revoked" {
+            *f.revoke.lock().unwrap() = Some((f.service.clone(), true));
+        }
+        let before = f.requests.lock().unwrap().len();
+        let response = gateway
+            .invoke_grant_observed(
+                g.clone(),
+                Duration::from_secs(15),
+                observer.clone(),
+                lease_deadline,
+            )
+            .await
+            .unwrap();
+        let report: GrantReport = serde_json::from_value(response["grant"].clone()).unwrap();
+        assert!(report.confirms(&g) && report.persisted);
+        assert_eq!(f.requests.lock().unwrap().len(), before + 1);
+        if stage == "revoked" {
+            assert_eq!(report.state, ReceiptState::Unknown);
+            assert!(!report.success && report.data.is_null());
+        } else {
+            assert_eq!(
+                report.state,
+                ReceiptState::Completed,
+                "stage={stage} error={:?}",
+                report.error_code
+            );
+            assert!(report.success);
+            assert_eq!(report.data["snapshot_sha256"], task.snapshot_sha256);
+            assert_eq!(report.data["candidate"]["stage"], stage);
+            assert_eq!(
+                report.data["candidate"]["candidate"]["model_output_is_untrusted"],
+                true
+            );
+            assert_eq!(report.data["execution_authorized"], false);
+            let requests = f.requests.lock().unwrap();
+            let body = requests.last().unwrap();
+            let spec = task.validate().unwrap();
+            assert_eq!(body["messages"], spec.messages);
+            assert_eq!(body["options"]["num_predict"], spec.max_output_tokens);
+            assert_eq!(body.get("format").cloned(), spec.output_schema);
+        }
+        let reports = observer.0.lock().unwrap();
+        let matching: Vec<_> = reports
+            .iter()
+            .filter(|r| r.grant_id == g.grant_id)
+            .collect();
+        assert_eq!(matching.len(), 2);
+        assert_eq!(matching[0].state, ReceiptState::Accepted);
+        assert_eq!(json!(matching[1]), json!(report));
+        drop(reports);
+        let retained = gateway.inspect_grant_result(&g).await.unwrap();
+        assert!(retained.confirms(&g));
+        assert_eq!(json!(retained.report), json!(Some(report.clone())));
+        let duplicate = gateway
+            .invoke_grant(g.clone(), Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(duplicate["grant"]["state"], "rejected");
+        assert_eq!(f.requests.lock().unwrap().len(), before + 1);
+        completed.push((g, report));
+    }
+    node.abort();
+    let _ = node.await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while gateway.connected_nodes().await.contains_key("owner") {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let node = start();
+    let replacement = ready().await;
+    assert_ne!(replacement["session_id"], session["session_id"]);
+    let calls = f.requests.lock().unwrap().len();
+    for (g, report) in completed {
+        let receipt = gateway.inspect_grant_receipt(&g).await.unwrap();
+        assert!(receipt.confirms(&g));
+        let retained = gateway.inspect_grant_result(&g).await.unwrap();
+        assert!(retained.confirms(&g));
+        assert_eq!(json!(retained.report), json!(Some(report)));
+        assert!(
+            gateway
+                .invoke_grant(g, Duration::from_secs(1))
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(f.requests.lock().unwrap().len(), calls);
+    node.abort();
+    let _ = node.await;
+    gateway.stop().await;
 }
 
 #[test]

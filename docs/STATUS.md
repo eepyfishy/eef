@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: interpreter service production-transport coverage
+
+A new test connects the shipping node client to a private, certificate-pinned
+gateway over TCP/TLS, using production fresh-lease admission for initial,
+clarification and method tasks. A synthetic model and issuer exercise source-bound
+results, accepted/final report observation, retained receipt/result inspection,
+duplicate refusal, final-response permission revocation and session replacement.
+Hosted verification is pending. This adds no production behavior or dependency;
+the issuer/observer are test fixtures, not an implemented coordinator broker or
+durable allowance ledger. Physical devices and real-model quality remain untested.
+
 ## In development: durable owner interpreter service policies
 
 The new [policy commands](INTERPRETER-POLICIES.md) record explicit input/serving
