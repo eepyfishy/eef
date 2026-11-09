@@ -26,6 +26,12 @@ registration. The fixture supplied a registration runtime without the matching
 live runtime status required by the existing receipt fence. The successor binds
 both to the same service runtime and reports an ended task's error. Production
 registration/runtime validation remains unchanged; the failed logs are retained.
+The next fixture reached selection and exposed a production omission: the gateway
+discarded the new serving advertisement from its retained registration fields.
+The successor validates and retains that field. Clients advertise it only with
+private grant support and a runtime registration offer, preserving older library
+connections without an offer. Selection still requires opt-in metadata; it does
+not infer permission from a model role or weaken the positive assertion.
 
 ## Accepted development checkpoint: interpreter policy and private transport
 

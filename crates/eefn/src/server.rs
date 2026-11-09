@@ -1530,6 +1530,23 @@ impl NodeServer {
                             serde_json::from_value(advertisement.clone())?;
                         a.validate()?;
                     }
+                    if let Some(value) = message.get("interpreter_service") {
+                        let serving: crate::interpreter_service::Advertisement =
+                            serde_json::from_value(value.clone())?;
+                        serving.validate()?;
+                        let connections = self.inner.connections.read().await;
+                        if offered.is_none()
+                            || message["execution_grants"]["available"] != true
+                            || message["execution_grants"]["timing_mode"] != crate::grant_time::MODE
+                            || !connections.get(authenticated_id).is_some_and(|c| {
+                                c.session_id == session_id && c.credential_transport
+                            })
+                        {
+                            bail!(
+                                "Interpreter service requires private registered runtime and lease support"
+                            )
+                        }
+                    }
                     if let Some(value) = message.get("grant_stop") {
                         let a: crate::grants::stop::Advertisement =
                             serde_json::from_value(value.clone())?;
@@ -1628,6 +1645,7 @@ impl NodeServer {
                                     "metadata",
                                     "network",
                                     "execution_grants",
+                                    "interpreter_service",
                                     "registration_receipt",
                                     "peer_transfer",
                                     "grant_stop",

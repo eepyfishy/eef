@@ -401,7 +401,7 @@ impl NodeClient {
         message["execution_grants"] = json!({"schema_version":1,"available":self.grant_ledger.is_some() && self.tls_config.is_some(),
             "limits":self.grant_ledger.as_ref().map(|l|l.policy()),"deadline_guarantee":"rpc_future_only","timing_mode":crate::grant_time::MODE,
             "retained_results":self.grant_ledger.is_some() && self.tls_config.is_some()});
-        if self.grant_ledger.is_some() && self.tls_config.is_some() {
+        if self.grant_ledger.is_some() && self.tls_config.is_some() && receipt.is_some() {
             if let Some(serving) = self.engine.interpreter_service_advertisement() {
                 message["interpreter_service"] = json!(serving);
             }
