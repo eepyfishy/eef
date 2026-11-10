@@ -5,6 +5,13 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: separate renewal retirement from historical completion
 
+An additional [interpreter recovery restart regression](INTERPRETER-RESULT-RECOVERY.md)
+reopens the actual temporary coordinator journal and reconnects the model-free
+origin using credentials/TLS. It requires preserved source/receipt/allowance
+history, refusal of the old runtime, fresh explicit recovery and read-only prior
+decisions with no provider reconnection or repeated inference. Hosted validation
+is pending; physical deployment remains separate.
+
 The [renewal retirement follow-up](WORKLOAD-RENEWAL-RETIREMENT.md) stops the pump
 when its exact source receiver closes, then awaits the same bounded final-save
 future. Closure is a private lifetime observation, not a completion or new lease.

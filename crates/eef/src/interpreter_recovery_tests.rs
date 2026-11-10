@@ -3,6 +3,9 @@ use crate::task::PlanStatus;
 use eefn::interpreter_recovery::Command as Recover;
 use eefn::interpreter_recovery_command::{Command as RecoveryCommand, Request as RecoveryRequest};
 
+#[path = "interpreter_recovery_restart_tests.rs"]
+mod restart_tests;
+
 async fn retained(f: &Fixture, stage: &str) -> (Task, Record, Recover) {
     f.model.method.store(stage == "concrete", Ordering::SeqCst);
     let task = f.task(stage).await;

@@ -101,7 +101,15 @@ rejection. CLI parsing and native command/API cases cover model-free inspection,
 missing evidence, source preservation, runtime/node binding and HTTP refusal.
 These additions require fresh hosted validation.
 
-Remaining work includes complete command acceptance, restart and physical
+The restart follow-up adds a real temporary-journal/coordinator restart and
+credential/TLS origin reconnect. It checks that pending completed evidence and
+an earlier recovery receipt survive unchanged, old runtime requests are refused,
+and the new model-free origin can explicitly apply the pending result or read
+its previous decision while the provider remains offline. The original claim's
+runtime attribution and charged inference ledger stay unchanged. This is hosted
+fixture coverage awaiting validation, not physical deployment acceptance.
+
+Remaining work includes complete command/restart acceptance and physical
 multi-PC tests, and investigation of the retained camera failure.
 Real-model/onboarding, continuous workloads, strong
 stop, MSI/signing/Defender and stable-release gates remain open.
