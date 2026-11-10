@@ -9,6 +9,10 @@ runtime's private discovery field. A read-only runtime accessor now supplies the
 same applied freshness value without exposing the field. The tests and source
 gates are unchanged; a fresh complete hosted run is required.
 
+The next candidate `5fb1298` compiled production code but failed compiling the
+new tests because their `PlanStatus` import was missing. That import is now
+explicit; no test assertions or production behavior change for this correction.
+
 A completed network interpretation can be retained even when its source update
 did not finish. The old continuation remains retired. A fresh authenticated
 origin request may explicitly apply the already saved semantic data; it cannot

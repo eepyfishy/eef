@@ -1,4 +1,5 @@
 use super::*;
+use crate::task::PlanStatus;
 use eefn::interpreter_recovery::Command as Recover;
 
 async fn retained(f: &Fixture, stage: &str) -> (Task, Record, Recover) {
