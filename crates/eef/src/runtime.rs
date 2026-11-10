@@ -68,6 +68,10 @@ impl Runtime {
         &self.instance_id
     }
 
+    pub(crate) fn node_freshness_seconds(&self) -> u64 {
+        self.discovery.freshness_seconds
+    }
+
     pub async fn initialize(
         config: Config,
         db_path: impl AsRef<Path>,

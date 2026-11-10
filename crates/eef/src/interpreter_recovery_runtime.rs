@@ -70,7 +70,7 @@ impl Runtime {
             .with_interpreter_sessions(
                 origin.node_id(),
                 origin.node_id(),
-                self.discovery.freshness_seconds,
+                self.node_freshness_seconds(),
                 |current, _| {
                     ensure!(
                         current.session_id() == origin.session_id()
