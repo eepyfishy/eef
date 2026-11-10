@@ -4,6 +4,16 @@ This is unreleased development source awaiting hosted validation. It is not in
 the published alpha installers and does not enable automatic normal-input
 delegation or complete the stable-v0.4 roadmap.
 
+The next admission follow-up exposes a crate-private shared implementation for
+input workflows that already own the node's input slot. The public command
+still acquires that slot; the admitted path borrows it until the correlated
+reply or runtime retirement, repeats target validation, and retains all existing
+runtime and confirmation checks. It adds no public endpoint, permission, worker
+or retry. Hosted regressions cover all three stages, competing public commands,
+invalid/stale targets, retirement and a discarded late reply. This is an
+integration prerequisite awaiting validation; ordinary input still needs its
+own privacy policy, remote-attribution contract and complete stage wiring.
+
 The running input node can request one source-bound stage through an explicitly
 authorized interpreter service. It needs no installed model. The provider needs
 an applied interpreter-sharing permission and an explicitly selected text model

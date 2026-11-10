@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: shared admission for interpreter commands
+
+The [network command follow-up](NETWORK-INTERPRETER-COMMANDS.md) lets a normal
+input workflow borrow its already-owned input slot through the same correlated
+command implementation. Public commands still acquire capacity and competing
+commands remain busy. Three new hosted regressions cover stage forwarding,
+validation and runtime retirement without replay. Hosted acceptance is pending;
+automatic ordinary-input delegation and the remaining stable-release gates
+are still open.
+
 ## In development: caller ceilings for network interpretation
 
 The [caller timing follow-up](INTERPRETER-CALLER-CEILING.md) restricts the existing

@@ -382,10 +382,25 @@ impl crate::NodeService {
             request.expected_node_id == self.node_id,
             "Interpreter command targets another node"
         );
-        let _admission = match self.input_workflow_permit() {
+        let admission = match self.input_workflow_permit() {
             Ok(p) => p,
             Err(_) => return Ok(failure(&request, "busy", false, None)),
         };
+        self.interpreter_command_admitted(request, &admission).await
+    }
+
+    /// Normal input already owns this slot. Keep one command implementation and
+    /// borrow its admission through the correlated reply and runtime fence.
+    pub(crate) async fn interpreter_command_admitted(
+        &self,
+        request: Request,
+        _admission: &tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<Value> {
+        request.validate()?;
+        ensure!(
+            request.expected_node_id == self.node_id,
+            "Interpreter command targets another node"
+        );
         let Some((runtime, _, mut generation)) = self.input_workflow_runtime() else {
             return Ok(failure(&request, "runtime_unavailable", false, None));
         };
@@ -458,6 +473,161 @@ impl crate::NodeService {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn runtime_request(runtime: &str, stage: Stage) -> Request {
+        Request {
+            schema_version: 1,
+            expected_node_id: "owner".into(),
+            expected_runtime_id: runtime.into(),
+            command: Command {
+                id: uuid::Uuid::new_v4().simple().to_string(),
+                stage,
+                expected_revision: (stage != Stage::Initial).then_some(1),
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                preferences: Preferences::default(),
+                maximum_execution_ms: Some(20_000),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn admitted_interpreter_stages_share_one_slot_without_reentering_or_replaying() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = crate::NodeService::new(dir.path().join("node.json"), "owner".into());
+        let engine =
+            std::sync::Arc::new(crate::NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        let runtime = uuid::Uuid::new_v4().to_string();
+        let _guard = service.attach_preview_runtime(&engine, runtime.clone());
+        let mut receiver = service.submissions.connect();
+        let admission = service.input_workflow_permit().unwrap();
+        for stage in [Stage::Initial, Stage::Clarification, Stage::Method] {
+            let request = runtime_request(&runtime, stage);
+            let target = request.clone();
+            let held = &admission;
+            let (reply, ()) = tokio::join!(
+                service.interpreter_command_admitted(request.clone(), held),
+                async {
+                    let submission =
+                        tokio::time::timeout(std::time::Duration::from_secs(5), receiver.recv())
+                            .await
+                            .unwrap()
+                            .unwrap();
+                    assert_eq!(submission.kind, "requests.interpreter");
+                    assert_eq!(
+                        submission.operation_id.as_deref(),
+                        Some(target.command.operation_id.as_str())
+                    );
+                    let wire: WireRequest = serde_json::from_value(submission.payload).unwrap();
+                    assert_eq!(wire.command, target.command);
+                    assert_eq!(wire.origin_runtime_id, runtime);
+                    // A separate public command must still respect the slot
+                    // already owned by this workflow, even while it awaits I/O.
+                    let busy = service.interpreter_command(target.clone()).await.unwrap();
+                    assert!(confirmed_node(&busy, &target));
+                    assert_eq!(busy["error_code"], "busy");
+                    assert_eq!(busy["outcome_unknown"], false);
+                    assert!(receiver.try_recv().is_err());
+                    submission
+                        .reply
+                        .send(Err(crate::submission::SubmissionFailure::Rejected(
+                            "No authorized provider in this fixture".into(),
+                        )
+                        .into()))
+                        .unwrap();
+                }
+            );
+            let reply = reply.unwrap();
+            assert!(confirmed_node(&reply, &request));
+            assert_eq!(reply["error_code"], "coordinator_rejected");
+            assert_eq!(reply["outcome_unknown"], true);
+            assert!(service.input_workflow_permit().is_err());
+            assert!(receiver.try_recv().is_err());
+        }
+        drop(admission);
+        assert!(service.input_workflow_permit().is_ok());
+    }
+
+    #[tokio::test]
+    async fn admitted_interpreter_refuses_invalid_or_stale_requests_before_submission() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = crate::NodeService::new(dir.path().join("node.json"), "owner".into());
+        let engine =
+            std::sync::Arc::new(crate::NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        let runtime = uuid::Uuid::new_v4().to_string();
+        let guard = service.attach_preview_runtime(&engine, runtime.clone());
+        let mut receiver = service.submissions.connect();
+        let admission = service.input_workflow_permit().unwrap();
+        let request = runtime_request(&runtime, Stage::Initial);
+        let mut invalid = request.clone();
+        invalid.command.maximum_execution_ms = Some(0);
+        assert!(
+            service
+                .interpreter_command_admitted(invalid, &admission)
+                .await
+                .is_err()
+        );
+        let mut foreign = request.clone();
+        foreign.expected_node_id = "foreign".into();
+        assert!(
+            service
+                .interpreter_command_admitted(foreign, &admission)
+                .await
+                .is_err()
+        );
+        let mut stale = request.clone();
+        stale.expected_runtime_id = uuid::Uuid::new_v4().to_string();
+        let reply = service
+            .interpreter_command_admitted(stale.clone(), &admission)
+            .await
+            .unwrap();
+        assert!(confirmed_node(&reply, &stale));
+        assert_eq!(reply["error_code"], "runtime_changed");
+        assert_eq!(reply["outcome_unknown"], false);
+        drop(guard);
+        let unavailable = service
+            .interpreter_command_admitted(request.clone(), &admission)
+            .await
+            .unwrap();
+        assert!(confirmed_node(&unavailable, &request));
+        assert_eq!(unavailable["error_code"], "runtime_unavailable");
+        assert_eq!(unavailable["outcome_unknown"], false);
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn admitted_interpreter_retirement_preserves_uncertainty_and_drops_the_late_reply() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = crate::NodeService::new(dir.path().join("node.json"), "owner".into());
+        let engine =
+            std::sync::Arc::new(crate::NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+        let runtime = uuid::Uuid::new_v4().to_string();
+        let guard = service.attach_preview_runtime(&engine, runtime.clone());
+        let mut receiver = service.submissions.connect();
+        let admission = service.input_workflow_permit().unwrap();
+        let request = runtime_request(&runtime, Stage::Initial);
+        let (reply, late) = tokio::join!(
+            service.interpreter_command_admitted(request.clone(), &admission),
+            async {
+                let submission =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), receiver.recv())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                drop(guard);
+                submission.reply
+            }
+        );
+        let reply = reply.unwrap();
+        assert!(confirmed_node(&reply, &request));
+        assert_eq!(reply["error_code"], "runtime_changed");
+        assert_eq!(reply["outcome_unknown"], true);
+        assert!(late.send(Ok(json!({"success":true}))).is_err());
+        assert!(receiver.try_recv().is_err());
+        assert!(service.input_workflow_permit().is_err());
+        drop(admission);
+        assert!(service.input_workflow_permit().is_ok());
+    }
+
     #[test]
     fn interpreter_commands_accept_only_references_and_explicit_bounded_preferences() {
         let value = json!({"id":uuid::Uuid::new_v4().simple().to_string(),"stage":"initial","expected_revision":null,
