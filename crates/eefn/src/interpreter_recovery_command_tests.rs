@@ -143,6 +143,13 @@ fn interpreter_recovery_confirmation_pins_the_new_decision_and_preserves_uncerta
     let unknown = unconfirmed(&req);
     assert!(confirmed_node(&unknown, &req));
     assert!(render(&unknown).unwrap().contains("outcome is unconfirmed"));
+    let plain = render(&unknown).unwrap();
+    assert!(plain.contains(&format!(
+        "eefn requests interpreter-results {}",
+        req.command.id()
+    )));
+    assert!(plain.contains("do not assume the source stayed unchanged"));
+    assert!(!plain.contains("--grant-id"));
     let mut forged = unknown;
     forged["success"] = json!(true);
     assert!(!confirmed_node(&forged, &req));
@@ -168,6 +175,11 @@ async fn interpreter_recovery_shared_admission_and_runtime_retirement_prevent_la
         .await
         .unwrap();
     assert_eq!(busy["error_code"], "busy");
+    assert!(
+        render(&busy)
+            .unwrap()
+            .contains("busy with another input or recovery operation")
+    );
     assert!(!busy["outcome_unknown"].as_bool().unwrap());
     drop(held);
     req.expected_runtime_id = uuid();
@@ -176,6 +188,7 @@ async fn interpreter_recovery_shared_admission_and_runtime_retirement_prevent_la
         .await
         .unwrap();
     assert_eq!(stale["error_code"], "runtime_changed");
+    assert!(render(&stale).unwrap().contains("node runtime changed"));
     assert!(receiver.try_recv().is_err());
     req.expected_runtime_id = service.input_workflow_runtime().unwrap().0;
     let (reply, late) = tokio::join!(service.interpreter_recovery_command(req.clone()), async {

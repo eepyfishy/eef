@@ -128,6 +128,12 @@ async fn explicit_recovery_commands_inspect_then_apply_all_stages_once_without_i
                     .unwrap()
                     .contains("Saved result recovered")
             );
+            assert_eq!(
+                eefn::interpreter_recovery_command::render(&result)
+                    .unwrap()
+                    .contains("previously saved recovery decision"),
+                reused
+            );
         }
         let updated = f.runtime().engine.store.get(&command.id).unwrap();
         assert_eq!(updated.revision, command.expected_revision + 1);
@@ -243,6 +249,11 @@ async fn model_free_recovery_inspection_does_not_start_inference_or_create_an_at
     ));
     assert_eq!(result["success"], true);
     assert_eq!(result["result"]["attempts"], json!([]));
+    assert!(
+        eefn::interpreter_recovery_command::render(&result)
+            .unwrap()
+            .contains("No saved interpreter attempts for this request")
+    );
     assert_eq!(f.model.calls.load(Ordering::SeqCst), 0);
     assert!(
         f.runtime()

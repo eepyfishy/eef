@@ -52,6 +52,15 @@ same-origin policy with an 8 KiB request limit. There is no new worker, model,
 dashboard controller or permission shortcut. Plain output prints validated
 references/status and never turns model text into a suggested command.
 
+The plain-output follow-up distinguishes busy nodes, unavailable or changed
+runtimes, unsent submissions and coordinator refusal using existing closed
+error codes. Unconfirmed replies include only read-only inspection commands,
+never a suggested replacement recovery decision. Empty attempt history is
+explicit, and repeating an applied decision is described as a read of stored
+history. Raw error text, model output and private settings are not printed by
+these additions. Existing real node-pair/runtime tests now assert that wording;
+full hosted acceptance remains required.
+
 A completed network interpretation can be retained even when its source update
 did not finish. The old continuation remains retired. A fresh authenticated
 origin request may explicitly apply the already saved semantic data; it cannot

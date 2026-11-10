@@ -281,6 +281,15 @@ pub fn render(value: &Value) -> Result<String> {
     );
     if !r.success {
         text.push_str(if r.outcome_unknown { "The source outcome is unconfirmed. Inspect before trying again; no inference or tool execution was requested.\n" } else { "The command was not sent. Check the running node and its connection.\n" });
+        text.push_str(match r.error_code.as_deref() {
+            Some("busy") => "The node is busy with another input or recovery operation.\n",
+            Some("runtime_unavailable") => "Start the node before using this command.\n",
+            Some("runtime_changed") => "The node runtime changed; use its current running instance.\n",
+            Some("not_sent") => "The coordinator connection did not accept this submission.\n",
+            Some("coordinator_rejected") => "The coordinator refused this decision. Inspect the current source and retained attempt before deciding what to do.\n",
+            _ => "The reply was not confirmed; do not assume the source stayed unchanged.\n",
+        });
+        text.push_str(&format!("Inspect saved attempts: eefn requests interpreter-results {}\nInspect the request: eefn jobs get {}\n",r.command.id(),r.command.id()));
         return Ok(text);
     }
     let report: Report = serde_json::from_value(r.result.unwrap())?;
@@ -289,9 +298,15 @@ pub fn render(value: &Value) -> Result<String> {
         report.status, report.revision
     ));
     if let Some(receipt) = report.recovery {
+        if report.reused {
+            text.push_str("This reply reads a previously saved recovery decision; no source update was repeated.\n");
+        }
         text.push_str(&format!("Saved result recovered: {}\nApplied revision: {}\nNo new inference or tool execution.\n",receipt.command.grant_id,receipt.applied_revision));
     } else {
         text.push_str("Saved interpreter attempts (inspection only):\n");
+        if report.attempts.is_empty() {
+            text.push_str("No saved interpreter attempts for this request.\n");
+        }
         for item in report.attempts {
             text.push_str(&format!(
                 "  {} | {} | {} | completed result: {} | applied: {}\n",

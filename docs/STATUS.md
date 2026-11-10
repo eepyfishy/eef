@@ -32,6 +32,13 @@ its cause unproven; this does not establish physical or stable-release acceptanc
 
 ## In development: explicit retained interpreter result recovery
 
+The plain-output follow-up explains existing busy/runtime/transport refusal
+codes, points uncertain callers only to read-only inspection, identifies empty
+history, and distinguishes a repeated stored decision. Existing node-pair and
+runtime regressions retain their assertions and add wording checks. It changes
+no DTO, command submission, permission or source mutation. Complete hosted
+acceptance remains pending.
+
 The [recovery core and commands](INTERPRETER-RESULT-RECOVERY.md) apply retained semantic data
 only through a fresh authenticated origin decision. Source and bounded receipt
 share one journal update; the original inference ledger remains unchanged. New
