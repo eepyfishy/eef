@@ -455,7 +455,8 @@ impl NodeService {
                 crate::request_preparation::messages(&view.draft, &view.draft.current().suggested_capabilities)
                     .map_err(|_| "invalid_preparation_context")?;
                 if binding.input_policy.network_interpreter {
-                    self.prepare_network_method(&request, &binding.runtime_id, budget, admission, &mut report).await?;
+                    crate::request_input::within_runtime(&mut generation, &binding.runtime_id,
+                        self.prepare_network_method(&request, &binding.runtime_id, budget, admission, &mut report)).await?;
                     return Ok(());
                 }
                 let _permit = self.preview.capacity.try_acquire().map_err(|_| "interpreter_busy")?;
@@ -510,6 +511,12 @@ impl NodeService {
             Ok(())
         }.await;
         if let Err(code) = result {
+            report["success"] = json!(false);
+            report["coordinator_acknowledged"] = json!(false);
+            report["checkpoint_saved"] = json!(false);
+            if code == "runtime_changed" && report["saving_attempted"] == true {
+                report["outcome_unknown"] = json!(true);
+            }
             report["error_code"] = json!(code);
         }
         annotate_rejection(&mut report);
@@ -588,7 +595,8 @@ impl NodeService {
                 // Fail oversized history before capacity, lookup or inference.
                 crate::interpretation::clarification_messages(&draft, &[]).map_err(|_| "invalid_clarification_context")?;
                 if binding.input_policy.network_interpreter {
-                    self.resolve_network_clarification(&request, &binding.runtime_id, budget, admission, &mut report).await?;
+                    crate::request_input::within_runtime(&mut generation, &binding.runtime_id,
+                        self.resolve_network_clarification(&request, &binding.runtime_id, budget, admission, &mut report)).await?;
                     return Ok(());
                 }
                 let _permit = self.preview.capacity.try_acquire().map_err(|_| "interpreter_busy")?;
@@ -662,6 +670,12 @@ impl NodeService {
             Ok(())
         }.await;
         if let Err(code) = result {
+            report["success"] = json!(false);
+            report["coordinator_acknowledged"] = json!(false);
+            report["proposal_saved"] = json!(false);
+            if code == "runtime_changed" && report["saving_attempted"] == true {
+                report["outcome_unknown"] = json!(true);
+            }
             report["error_code"] = json!(code);
         }
         annotate_rejection(&mut report);

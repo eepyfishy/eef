@@ -67,6 +67,14 @@ tool work still needs separate owner review, approval and execution.
 
 ## Validation scope
 
+The runtime-fence review follow-up observes retirement through the entire
+network preparation/resolution branch, including the final scoped draft read.
+Errors clear success flags while preserving uncertain saves. Applied receipts
+must describe a final attempt, and fresh initial checkpoints must name the
+requesting node runtime. Additional regression coverage retires an actual
+model-free input workflow during a held service call and rejects altered phase
+or runtime attribution. This follow-up also awaits fresh hosted acceptance.
+
 New hosted regressions exercise normal model-free input through interpretation
 and preparation, actual saved-question response through resolution/preparation,
 saved-but-unapplied consent, failure without fallback/replay, origin/source

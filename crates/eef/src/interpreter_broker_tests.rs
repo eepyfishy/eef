@@ -217,6 +217,40 @@ async fn normal_network_model_failure_retains_input_and_never_falls_back_or_repl
     f.close().await;
 }
 
+#[tokio::test]
+async fn retiring_normal_network_input_keeps_uncertainty_and_cannot_continue_preparation() {
+    let mut f = Fixture::with_input_policy(network_input_policy()).await;
+    f.model.hold.store(true, Ordering::SeqCst);
+    let operation = uuid();
+    let local = f.services[0].clone();
+    let submitted = operation.clone();
+    let running = tokio::spawn(async move { local.input_request(normal_input(&submitted)).await });
+    f.called().await;
+    drop(f._preview_guards.remove(0));
+    let result = tokio::time::timeout(Duration::from_secs(10), running)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(result["success"], false);
+    assert_eq!(result["outcome_unknown"], true);
+    assert!(result["preparation"].is_null());
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+    let current = f.services[0].input_request(normal_input(&operation)).await;
+    assert_eq!(current["error_code"], "runtime_unavailable");
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        f.runtime()
+            .engine
+            .store
+            .interpreter_allowance_records()
+            .unwrap()
+            .0
+            .len(),
+        1
+    );
+    f.close().await;
+}
+
 async fn request(f: &Fixture, stage: &str) -> (Task, Request) {
     let task = f.task(stage).await;
     let parties = f.participants().await;
@@ -325,6 +359,18 @@ async fn model_free_node_commands_use_private_grants_for_all_stages_and_reuse_hi
             }
         );
         assert_eq!(f.model.calls.load(Ordering::SeqCst), index + 1);
+        let mut unfinished = result.clone();
+        unfinished["result"]["attempt"]["phase"] = json!("accepted");
+        assert!(!eefn::interpreter_command::confirmed_node(
+            &unfinished,
+            &command
+        ));
+        if stage == "initial" {
+            let mut stale = result.clone();
+            stale["result"]["initial_checkpoint"]["record"]["claim"]["origin_runtime_id"] =
+                json!(uuid());
+            assert!(!eefn::interpreter_command::confirmed_node(&stale, &command));
+        }
         assert!(!result.to_string().contains("grant_sha256"));
         let saved = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
         assert!(saved.approval.is_none() && saved.execution.is_none() && saved.results.is_empty());

@@ -169,6 +169,12 @@ pub fn confirmed(value: &Value, node: &str, command: &Command) -> bool {
             "Interpreter reply differs"
         );
         crate::interpreter_policy::uuid(&r.runtime_id)?;
+        ensure!(
+            !r.source_applied
+                || (r.attempt.phase == "final"
+                    && (r.historical_snapshot || r.model_inference_requested)),
+            "Applied interpreter receipt is not a completed or retained inference"
+        );
         crate::interpreter_policy::uuid(&r.attempt.id)?;
         crate::job_commands::validate_operation_id(&r.attempt.operation_id)?;
         crate::network::validate_remote_node_id(&r.attempt.provider)?;
@@ -335,6 +341,10 @@ pub fn confirmed_node(value: &Value, request: &Request) -> bool {
                 r.error_code.is_none()
                     && r.diagnostic.is_none()
                     && confirmed(&result, &r.node_id, &r.command)
+                    && (result["historical_snapshot"] == true
+                        || result.get("initial_checkpoint").is_none_or(
+                            |c| c["record"]["claim"]["origin_runtime_id"] == r.runtime_id
+                        ))
                     && result["success"] == r.success
                     && result["outcome_unknown"] == r.outcome_unknown,
                 "Unconfirmed coordinator interpreter reply"
