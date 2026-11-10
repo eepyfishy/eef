@@ -115,6 +115,12 @@ that was already a client. Removing that extra call changes no assertions or
 production behavior; the failed source remains retained and fresh complete
 hosted acceptance is required.
 
+The next fixture candidate `56f5baf`, run `42855839190`, failed before reopening
+the runtime: the fixture parsed coordinator settings as JSON even though the
+normal save service writes YAML. It now obtains authentication and runtime
+settings from the existing `Config` loader. Assertions and production code are
+unchanged; this corrects test setup, not an observed product restart failure.
+
 Remaining work includes complete command/restart acceptance and physical
 multi-PC tests, and investigation of the retained camera failure.
 Real-model/onboarding, continuous workloads, strong

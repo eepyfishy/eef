@@ -15,14 +15,11 @@ async fn restart_origin(f: &mut Fixture) {
         .await
         .unwrap();
     let owner_path = f._dir.path().join("owner.json");
-    let owner: Value = serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
-    let runtime = Runtime::initialize(
-        crate::config::Config::load(Some(&owner_path)).unwrap(),
-        f._dir.path().join("owner.db"),
-        false,
-    )
-    .await
-    .unwrap();
+    let config = crate::config::Config::load(Some(&owner_path)).unwrap();
+    let authentication = config.get("node.authentication").unwrap().clone();
+    let runtime = Runtime::initialize(config, f._dir.path().join("owner.db"), false)
+        .await
+        .unwrap();
     let path = f._dir.path().join("input.json");
     let settings: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let url = settings["models"]["ollama"]["base_url"]
@@ -43,8 +40,8 @@ async fn restart_origin(f: &mut Fixture) {
     );
     let config: eefn::NodeClientConfig = serde_json::from_value(json!({
         "node_id":"input","auth_mode":"node_credential",
-        "psk":owner["node"]["authentication"]["credentials"]["input"],
-        "coordinator_certificate":owner["node"]["authentication"]["tls"]["certificate"],
+        "psk":authentication["credentials"]["input"],
+        "coordinator_certificate":authentication["tls"]["certificate"],
         "endpoints":[format!("127.0.0.1:{}",runtime.node_server.port())],
         "ollama_url":url,"ollama_models":[],"heartbeat_seconds":0.2,
     }))
