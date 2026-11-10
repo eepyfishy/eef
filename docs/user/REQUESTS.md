@@ -52,6 +52,23 @@ with `eefn jobs find --operation-id OPERATION_ID`. Reusing an explicit
 `--operation-id` with the same text returns the retained record; changing the
 text is refused. This protection lasts while the job remains in history.
 
+### Use a model on another node
+
+In matching development builds, a node with no local model can explicitly
+interpret its saved input using an authorized network service:
+
+```powershell
+.\eefn.exe requests interpret-network REQUEST_ID
+```
+
+The other node's owner must enable interpreter sharing and select its model;
+the coordinator owner must approve sharing with your input node. See
+[network interpreter setup](../NETWORK-INTERPRETER-COMMANDS.md). The result keeps
+your original request and origin, and still needs review and separate approval
+before tool work. This explicit command is accepted in development; ordinary
+input does not yet select a remote interpreter automatically. Inspect history
+after an uncertain reply rather than changing providers and repeating the work.
+
 To create an executable plan without a model, use an explicit template instead:
 
 This example asks for basic system information using an explicit template. It

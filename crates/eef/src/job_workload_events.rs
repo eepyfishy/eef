@@ -38,6 +38,11 @@ impl JobStore {
                         !reply.is_closed() && std::time::Instant::now() < end,
                         "Workload event observer retired"
                     );
+                    #[cfg(test)]
+                    store
+                        .workload_writes
+                        .event_entered
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     store.edit(
                         &definition.job_id,
                         "Authenticated workload metadata saved; no lease or execution authority",
@@ -80,5 +85,23 @@ impl JobStore {
             let _ = reply.send(result);
         }))?;
         Ok(receiver)
+    }
+    #[cfg(test)]
+    pub(crate) fn workload_event_entered(&self) -> usize {
+        self.workload_writes
+            .event_entered
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+    #[cfg(test)]
+    pub(crate) fn queue_workload_event_test_barrier(
+        &self,
+        ready: oneshot::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) -> Result<()> {
+        self.workload_writes.submit(Box::new(move || {
+            let _ = ready.send(());
+            // Sender drop also releases this synthetic worker on test failure.
+            let _ = release.recv_timeout(std::time::Duration::from_secs(10));
+        }))
     }
 }

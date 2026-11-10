@@ -275,13 +275,18 @@ async fn cancelled_workload_stop_checkpoint_holds_original_capacity_until_native
     engine.cancel(&plan.plan_id).unwrap();
     let saved = engine.store.get(&plan.plan_id).unwrap();
     let capacity = engine.store.workload_ack_available();
+    let entered = engine.store.workload_stop_entered();
     let (held, ready) = hold_workload_journal(engine.store.clone());
     ready.await.unwrap();
     let mut checkpoint = Box::pin(begin_workload_stop(&engine.store, &d));
     tokio::select! {
         biased;
         result=&mut checkpoint=>panic!("Held journal returned: {result:?}"),
-        _=tokio::time::sleep(Duration::from_millis(20))=>{}
+        entered=tokio::time::timeout(Duration::from_secs(2), async {
+            while engine.store.workload_stop_entered() == entered {
+                tokio::task::yield_now().await;
+            }
+        })=>entered.expect("Stop worker did not enter its journal wait"),
     }
     assert_eq!(engine.store.workload_ack_available(), capacity - 1);
     let now = Instant::now();

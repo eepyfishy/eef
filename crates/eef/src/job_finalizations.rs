@@ -41,6 +41,10 @@ pub(super) struct Queue {
     started: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     issuance_started: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    event_entered: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    stop_entered: std::sync::atomic::AtomicUsize,
 }
 impl std::fmt::Debug for Queue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -81,6 +85,10 @@ impl Queue {
             started: Default::default(),
             #[cfg(test)]
             issuance_started: Default::default(),
+            #[cfg(test)]
+            event_entered: Default::default(),
+            #[cfg(test)]
+            stop_entered: Default::default(),
         }
     }
     fn submit(&self, job: Job) -> Result<()> {

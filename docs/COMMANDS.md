@@ -66,6 +66,22 @@ restart or model-role withdrawal. JSON contains private source/review text;
 plain output provides status and any currently unanswered question. Missing
 models leave the raw input available and do not disable core services.
 
+An input node can explicitly use an authorized interpreter on a connected node
+without installing a model locally. The unreleased command and caller-ceiling
+checkpoints passed hosted/source acceptance at `19cc599` and `006e996`:
+
+    eefn requests interpret-network REQUEST_ID
+    eefn requests interpret-network REQUEST_ID --stage clarification --revision REVISION
+    eefn requests interpret-network REQUEST_ID --stage method --revision REVISION
+
+The provider owner must allow interpreter sharing and the coordinator owner
+must approve its origin/provider policy. Optional `--provider`, `--backend`,
+`--model-id` and `--local-only` restrict selection; they grant no permission.
+`--inference-timeout-seconds` narrows the issued grant, subject to stricter
+service/node limits. See [network interpretation](NETWORK-INTERPRETER-COMMANDS.md)
+for setup, receipts and uncertainty. This does not enable automatic delegation
+from ordinary input or skip review and owner approval of tool work.
+
 Normal `requests input` saves raw input before checking for a local interpreter.
 This unreleased integration passed all four hosted jobs and the independent
 source audit at `2b650d6`. Missing models or failed inference retain the source. A repeated input

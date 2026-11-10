@@ -8,29 +8,40 @@ verification boundaries at their own checkpoint, not claims about later code.
 The [network command follow-up](NETWORK-INTERPRETER-COMMANDS.md) lets a normal
 input workflow borrow its already-owned input slot through the same correlated
 command implementation. Public commands still acquire capacity and competing
-commands remain busy. Three new hosted regressions cover stage forwarding,
-validation and runtime retirement without replay. Hosted acceptance is pending;
-automatic ordinary-input delegation and the remaining stable-release gates
-are still open.
+commands remain busy. Three new regressions cover stage forwarding, validation
+and runtime retirement without replay. Source `eeb6aed` passed both Linux jobs
+and Windows dashboard; Windows headless failed an older cancelled-event test.
+The [cancellation-ordering follow-up](WORKLOAD-CANCELLATION-ORDERING.md) adds
+test-only worker-entry observations and separate queued-cancellation coverage.
+Fresh hosted acceptance is pending. Automatic ordinary-input delegation and
+the remaining stable-release gates are still open.
 
-## In development: caller ceilings for network interpretation
+## Accepted development checkpoint: caller ceilings for network interpretation
 
 The [caller timing follow-up](INTERPRETER-CALLER-CEILING.md) restricts the existing
 service grant by the requesting operation's time budget, records the issued
 duration in the receipt, and refuses historical replay under a conflicting
 shorter ceiling. It adds no queue, permission, lease renewal or model dependency.
-Hosted validation is pending. It does not connect automatic input or complete
-recovery, physical operation or stable-release acceptance.
+Source `006e996` passes all four jobs in its
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42731997375) and an
+independent source/log audit: 1,724 Windows/headless Rust tests, one ignored
+across 17 groups, all 37 native suites and existing extra gates. It does not
+connect automatic input or complete recovery, physical operation or
+stable-release acceptance.
 
-## In development: explicit network interpreter command path
+## Accepted development checkpoint: explicit network interpreter command path
 
 The [reference-only node command](NETWORK-INTERPRETER-COMMANDS.md) connects all
 three stages to the private exchange and source handoff through the running
 node. It adds CLI/API parity, immutable origin/source binding, explicit selection
 preferences and read-only historical replies without provider availability.
-Source review and hosted validation are pending. Automatic normal-input
-delegation and uncertain-result reconciliation remain open, alongside physical
-and full stable-release acceptance.
+Source `19cc599` passes all four jobs in its
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42731181964) and an
+independent source/log audit: 1,722 Windows/headless Rust tests, one ignored
+across 17 groups, all 37 native suites and existing extra gates. Earlier fixture
+compilation, history-view, invalid test identity and storage-observation failures
+remain retained. Automatic normal-input delegation and uncertain-result
+reconciliation remain open, alongside physical and full stable-release acceptance.
 
 ## Accepted development checkpoint: applying live interpreter results
 

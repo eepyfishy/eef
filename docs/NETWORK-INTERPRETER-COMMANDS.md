@@ -1,8 +1,12 @@
 # Explicit network interpreter commands
 
-This is unreleased development source awaiting hosted validation. It is not in
-the published alpha installers and does not enable automatic normal-input
-delegation or complete the stable-v0.4 roadmap.
+The explicit command source `19cc599` passed all four jobs in its
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42731181964) and an
+independent source/log audit. Its caller-ceiling follow-up `006e996` also passed
+[all four jobs](https://github.com/eepyfishy/eef/actions/runs/42731997375) and source
+review. These are unreleased development checkpoints, absent from published
+alpha installers. Automatic normal-input delegation and stable-release
+acceptance remain open.
 
 The next admission follow-up exposes a crate-private shared implementation for
 input workflows that already own the node's input slot. The public command

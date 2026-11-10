@@ -1,8 +1,11 @@
 # Caller timing for network interpretation
 
-This unreleased follow-up awaits its own hosted validation. It does not enable
-automatic normal-input delegation or complete interpreter recovery or the
-stable-v0.4 release gates.
+Source `006e996` passed all four jobs in its
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42731997375) and an
+independent source/log audit: 1,724 Windows/headless Rust tests, one ignored
+across 17 groups, all 37 native suites and existing extra gates. This unreleased
+checkpoint does not enable automatic normal-input delegation or complete
+interpreter recovery or the stable-v0.4 release gates.
 
 Network interpreter commands can specify `maximum_execution_ms`, a positive
 ceiling no larger than the existing grant maximum. The field is optional: an

@@ -53,6 +53,11 @@ impl JobStore {
                         "Workload stop checkpoint abandoned before storage"
                     );
                     store.require_workload_reporting()?;
+                    #[cfg(test)]
+                    store
+                        .workload_writes
+                        .stop_entered
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let mut changed = false;
                     store.edit(
                         &definition.job_id,
@@ -142,5 +147,11 @@ impl JobStore {
             "Workload stop checkpoint observed after deadline"
         );
         result
+    }
+    #[cfg(test)]
+    pub(crate) fn workload_stop_entered(&self) -> usize {
+        self.workload_writes
+            .stop_entered
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 }

@@ -116,12 +116,22 @@ async fn cancelled_event_metadata_waiter_keeps_actual_storage_capacity_without_a
     let d = issued.definition().clone();
     let saved = engine.store.get(&plan.plan_id).unwrap();
     let capacity = engine.store.workload_ack_available();
+    let entered = engine.store.workload_event_entered();
     let (held, ready) = hold_workload_journal(engine.store.clone());
     ready.await.unwrap();
     let receiver = engine
         .store
         .queue_workload_event(d, observed_workload_event(), stop_deadline())
         .unwrap();
+    // Capacity is only required to remain occupied after the actual worker
+    // passes its early-cancellation check. It now waits for the held journal.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while engine.store.workload_event_entered() == entered {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Event worker did not enter its journal wait");
     assert_eq!(engine.store.workload_ack_available(), capacity - 1);
     drop(receiver);
     assert_eq!(engine.store.workload_ack_available(), capacity - 1);
@@ -137,6 +147,46 @@ async fn cancelled_event_metadata_waiter_keeps_actual_storage_capacity_without_a
         json!(engine.store.get(&plan.plan_id).unwrap()),
         json!(saved)
     );
+    drop(issued);
+    engine.store.wait_workload_finalizations().unwrap();
+}
+#[tokio::test]
+async fn queued_event_cancellation_releases_capacity_without_entering_or_editing_the_journal() {
+    let (engine, plan, issued) = accepted_event_fixture().await;
+    let saved = engine.store.get(&plan.plan_id).unwrap();
+    let capacity = engine.store.workload_ack_available();
+    let entered = engine.store.workload_event_entered();
+    let (ready, started) = tokio::sync::oneshot::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    engine
+        .store
+        .queue_workload_event_test_barrier(ready, blocked)
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), started)
+        .await
+        .unwrap()
+        .unwrap();
+    let receiver = engine
+        .store
+        .queue_workload_event(
+            issued.definition().clone(),
+            observed_workload_event(),
+            stop_deadline(),
+        )
+        .unwrap();
+    assert_eq!(engine.store.workload_ack_available(), capacity - 1);
+    drop(receiver);
+    assert_eq!(engine.store.workload_ack_available(), capacity - 1);
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while engine.store.workload_ack_available() != capacity {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(engine.store.workload_event_entered(), entered);
+    assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), json!(saved));
     drop(issued);
     engine.store.wait_workload_finalizations().unwrap();
 }
