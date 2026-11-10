@@ -50,7 +50,9 @@ async fn completed_fixture(
         &execute(&plan),
         &uuid::Uuid::new_v4().to_string(),
         &policy(),
-        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
+        // Positive metadata setup is not a two-second storage benchmark. The
+        // separate deadline cases still exercise refusal and late persistence.
+        tokio::time::Instant::now() + std::time::Duration::from_secs(10),
     )
     .await
     .unwrap();

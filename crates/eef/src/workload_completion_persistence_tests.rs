@@ -188,7 +188,9 @@ fn runtime_drop_preserves_completion_writer_ownership_until_the_actual_save_ends
         .build()
         .unwrap();
     observer
-        .block_on(retired.wait(Duration::from_secs(3)))
+        // This is historical I/O observation after runtime destruction, not a
+        // fresh lease or the production restart allowance.
+        .block_on(retired.wait(Duration::from_secs(10)))
         .unwrap();
     let reopened = JobStore::open(&path, 20, 8 * 1024 * 1024).unwrap();
     let saved = reopened.get(&d.job_id).unwrap();

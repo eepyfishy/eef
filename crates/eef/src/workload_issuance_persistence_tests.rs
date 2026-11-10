@@ -410,7 +410,9 @@ fn runtime_drop_keeps_actual_issuance_and_orphan_retirement_ownership() {
         .build()
         .unwrap();
     observer
-        .block_on(retired.wait(Duration::from_secs(3)))
+        // Observe actual release beyond SQLite's five-second busy budget;
+        // this does not change the production restart or issuance deadline.
+        .block_on(retired.wait(Duration::from_secs(10)))
         .unwrap();
     let reopened = JobStore::open(&path, 20, 8 * 1024 * 1024).unwrap();
     let saved = reopened.get(&plan.plan_id).unwrap();
