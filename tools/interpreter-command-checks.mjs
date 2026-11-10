@@ -34,4 +34,27 @@ export async function checkInterpreterCommandUnavailable({local,node,nodeId}) {
  const inspected=await local(['jobs','get',id]);assert.equal(inspected.data.id,id);
  assert.equal(inspected.data.task_count,0);assert(inspected.data.input_interpretation==null);
  console.log('Network interpreter command unavailable-path validation passed');
+ const results=await local(['requests','interpreter-results',id]);
+ assert.equal(results.report_type,'node_interpreter_recovery');assert.equal(results.success,true);
+ assert.equal(results.result.command.action,'inspect');assert.deepEqual(results.result.attempts,[]);
+ const inspectPlain=await local(['requests','interpreter-results',id],true,true);
+ assert(inspectPlain.out.includes('inspection only'));assert(inspectPlain.out.includes('Revision:'));
+ const missing=['requests','recover-interpretation',id,'--revision',String(inspected.data.revision),'--grant-id',randomUUID(),'--operation-id',randomUUID()];
+ const noResult=await local(missing,false);
+ assert.equal(noResult.success,false);assert.equal(noResult.error_code,'coordinator_rejected');
+ for(const flag of ['model_inference_requested','execution_authorized','dispatched','automatically_retried']) {
+  assert.equal(results[flag],false,flag);assert.equal(results.result[flag],false,flag);assert.equal(noResult[flag],false,flag);
+ }
+ const recoveryRequest={schema_version:1,expected_node_id:nodeId,expected_runtime_id:saved.runtime_id,
+  command:{action:'inspect',id,operation_id:randomUUID()}};
+ const recoveryPost=(body,headers={})=>fetch(node+'/api/commands/requests/interpreter-recovery',{
+  method:'POST',headers:{'Content-Type':'application/json',...headers},body:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+ assert.equal((await recoveryPost(recoveryRequest,{Origin:'https://untrusted.example'})).status,403);
+ const retired=await recoveryPost({...recoveryRequest,expected_runtime_id:randomUUID()});assert.equal(retired.status,200);
+ assert.equal((await retired.json()).error_code,'runtime_changed');
+ assert.equal((await recoveryPost({...recoveryRequest,expected_node_id:'another-node'})).status,400);
+ assert([400,422].includes((await recoveryPost({...recoveryRequest,command:{...recoveryRequest.command,proposal:{}}})).status));
+ assert.equal((await recoveryPost({...recoveryRequest,padding:'x'.repeat(8192)})).status,413);
+ assert.deepEqual((await local(['jobs','get',id])).data,inspected.data);
+ console.log('Interpreter recovery command unavailable-path validation passed');
 }

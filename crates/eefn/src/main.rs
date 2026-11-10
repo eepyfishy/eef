@@ -1191,6 +1191,58 @@ async fn execute_network_interpreter(
     Ok(exchange.unwrap_or_else(|_| eefn::interpreter_command::unconfirmed(&request)))
 }
 
+async fn execute_interpreter_recovery(
+    args: &Args,
+    command: eefn::interpreter_recovery_command::Command,
+) -> Result<serde_json::Value> {
+    command.validate()?;
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; interpreter recovery never launches a runtime")
+    }
+    let file = load_file(&args.config)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(150))
+        .build()?;
+    let runtime =
+        eefn::credential_pairing::wait_for_runtime(&client, address, &file.node_id).await?;
+    let request = eefn::interpreter_recovery_command::Request {
+        schema_version: 1,
+        expected_node_id: file.node_id,
+        expected_runtime_id: runtime,
+        command,
+    };
+    request.validate()?;
+    let exchange = async {
+        let response = client
+            .post(format!(
+                "http://{address}/api/commands/requests/interpreter-recovery"
+            ))
+            .json(&request)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Interpreter recovery API refused or unavailable")
+        }
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::interpreter_recovery_command::confirmed_node(&value, &request) {
+            bail!("Interpreter recovery reply unconfirmed")
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| eefn::interpreter_recovery_command::unconfirmed(&request)))
+}
+
 async fn execute_save_input(
     args: &Args,
     command: eefn::request_intent::Command,
@@ -2950,6 +3002,37 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
+            eefn::request_preview::RequestAction::InterpreterResults { id } => {
+                execute_interpreter_recovery(
+                    args,
+                    eefn::interpreter_recovery_command::Command::Inspect {
+                        id: id.clone(),
+                        operation_id: uuid::Uuid::new_v4().to_string(),
+                    },
+                )
+                .await
+            }
+            eefn::request_preview::RequestAction::RecoverInterpretation {
+                id,
+                revision,
+                grant_id,
+                operation_id,
+            } => {
+                execute_interpreter_recovery(
+                    args,
+                    eefn::interpreter_recovery_command::Command::Recover {
+                        command: eefn::interpreter_recovery::Command {
+                            id: id.clone(),
+                            expected_revision: *revision,
+                            grant_id: grant_id.clone(),
+                            operation_id: operation_id
+                                .clone()
+                                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                        },
+                    },
+                )
+                .await
+            }
             eefn::request_preview::RequestAction::SaveInput { text, operation_id } => {
                 execute_save_input(
                     args,
@@ -3663,6 +3746,14 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     }
                 ) {
                     print!("{}", eefn::interpreter_command::render(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::InterpreterResults { .. }
+                            | eefn::request_preview::RequestAction::RecoverInterpretation { .. }
+                    }
+                ) {
+                    print!("{}", eefn::interpreter_recovery_command::render(&value)?);
                 } else if matches!(
                     command,
                     Commands::Requests {
@@ -5606,6 +5697,63 @@ mod tests {
             args.extend(extra);
             assert!(Args::try_parse_from(args).is_err());
         }
+    }
+    #[test]
+    fn interpreter_recovery_cli_keeps_inspection_read_only_and_application_explicit() {
+        let id = "00112233445566778899aabbccddeeff";
+        let grant = uuid::Uuid::new_v4().to_string();
+        let operation = uuid::Uuid::new_v4().to_string();
+        assert!(Args::try_parse_from(["eefn", "requests", "interpreter-results", id]).is_ok());
+        for extra in [
+            vec!["--revision", "4"],
+            vec!["--execute"],
+            vec!["--prompt", "text"],
+        ] {
+            let mut args = vec!["eefn", "requests", "interpreter-results", id];
+            args.extend(extra);
+            assert!(Args::try_parse_from(args).is_err());
+        }
+        let args = [
+            "eefn",
+            "requests",
+            "recover-interpretation",
+            id,
+            "--revision",
+            "4",
+            "--grant-id",
+            &grant,
+            "--operation-id",
+            &operation,
+        ];
+        let parsed = Args::try_parse_from(args).unwrap();
+        let Some(Commands::Requests {
+            command:
+                eefn::request_preview::RequestAction::RecoverInterpretation {
+                    id: source,
+                    revision,
+                    grant_id,
+                    operation_id,
+                },
+        }) = parsed.command
+        else {
+            panic!("Wrong recovery command")
+        };
+        assert_eq!(source, id);
+        assert_eq!(revision, 4);
+        assert_eq!(grant_id, grant);
+        assert_eq!(operation_id.as_deref(), Some(operation.as_str()));
+        assert!(Args::try_parse_from(&args[..8]).is_ok());
+        for extra in [
+            vec!["--execute"],
+            vec!["--approve"],
+            vec!["--prompt", "text"],
+            vec!["--model-id", "chosen"],
+        ] {
+            let mut command = args.to_vec();
+            command.extend(extra);
+            assert!(Args::try_parse_from(command).is_err());
+        }
+        assert!(Args::try_parse_from(["eefn", "requests", "recover-interpretation", id]).is_err());
     }
     #[test]
     fn network_interpreter_cli_selects_only_saved_source_stage_and_explicit_preferences() {

@@ -198,6 +198,11 @@ impl NodeService {
                 post(request_network_interpreter).layer(axum::extract::DefaultBodyLimit::max(8192)),
             )
             .route(
+                "/api/commands/requests/interpreter-recovery",
+                post(request_interpreter_recovery)
+                    .layer(axum::extract::DefaultBodyLimit::max(8192)),
+            )
+            .route(
                 "/api/commands/requests/microphone",
                 post(microphone_submission).layer(axum::extract::DefaultBodyLimit::max(65536)),
             )
@@ -647,6 +652,12 @@ async fn request_network_interpreter(
     Json(request): Json<crate::interpreter_command::Request>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.interpreter_command(request).await?))
+}
+async fn request_interpreter_recovery(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::interpreter_recovery_command::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.interpreter_recovery_command(request).await?))
 }
 async fn request_planning(
     State(state): State<Arc<NodeService>>,

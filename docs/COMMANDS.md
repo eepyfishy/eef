@@ -79,8 +79,21 @@ must approve its origin/provider policy. Optional `--provider`, `--backend`,
 `--model-id` and `--local-only` restrict selection; they grant no permission.
 `--inference-timeout-seconds` narrows the issued grant, subject to stricter
 service/node limits. See [network interpretation](NETWORK-INTERPRETER-COMMANDS.md)
-for setup, receipts and uncertainty. This does not enable automatic delegation
-from ordinary input or skip review and owner approval of tool work.
+for setup, receipts and uncertainty. This command does not change the applied
+normal-input workflow policy or skip review and owner approval of tool work.
+
+The development recovery commands inspect retained interpreter attempts and
+explicitly apply one completed result without new inference:
+
+    eefn requests interpreter-results REQUEST_ID
+    eefn requests recover-interpretation REQUEST_ID --revision REVISION --grant-id ATTEMPT_UUID
+
+Inspect first. A completed result may still be ineligible if the source changed,
+was cancelled, or is active. Recovery prints its generated operation ID; retain
+the exact decision and use `--operation-id` with that same ID after uncertainty.
+This never approves or executes tools and differs from `requests recover-result`
+for tool execution receipts. Full hosted command acceptance is pending. See
+[retained interpreter recovery](INTERPRETER-RESULT-RECOVERY.md).
 
 Normal `requests input` saves raw input before checking for a local interpreter.
 This unreleased integration passed all four hosted jobs and the independent

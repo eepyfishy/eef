@@ -27,6 +27,8 @@ use crate::world::WorldState;
 
 #[path = "interpreter_broker.rs"]
 mod interpreter_broker;
+#[path = "interpreter_recovery_command.rs"]
+mod interpreter_recovery_command;
 
 pub struct Runtime {
     pub config: Config,
@@ -764,6 +766,23 @@ impl Runtime {
                     }
                     Err(_) => Err(anyhow::anyhow!(
                         "Invalid reference-only interpreter command"
+                    )),
+                }
+            }
+            "requests.interpreter_recovery" => {
+                match serde_json::from_value::<eefn::interpreter_recovery_command::WireRequest>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(request) => {
+                        self.origin_interpreter_recovery_command(
+                            request,
+                            &context,
+                            message["gateway_session_id"].as_str().unwrap_or(""),
+                        )
+                        .await
+                    }
+                    Err(_) => Err(anyhow::anyhow!(
+                        "Invalid reference-only interpreter recovery command"
                     )),
                 }
             }

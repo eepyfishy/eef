@@ -1,6 +1,7 @@
 use super::*;
 use crate::task::PlanStatus;
 use eefn::interpreter_recovery::Command as Recover;
+use eefn::interpreter_recovery_command::{Command as RecoveryCommand, Request as RecoveryRequest};
 
 async fn retained(f: &Fixture, stage: &str) -> (Task, Record, Recover) {
     f.model.method.store(stage == "concrete", Ordering::SeqCst);
@@ -34,6 +35,226 @@ async fn origin(f: &Fixture) -> eefn::interpreter_service::Session {
         .interpreter_session("input", 30)
         .await
         .unwrap()
+}
+
+async fn recovery_request(f: &Fixture, command: RecoveryCommand) -> RecoveryRequest {
+    RecoveryRequest {
+        schema_version: 1,
+        expected_node_id: "input".into(),
+        expected_runtime_id: origin(f).await.runtime_id().into(),
+        command,
+    }
+}
+
+#[tokio::test]
+async fn explicit_recovery_commands_inspect_then_apply_all_stages_once_without_inference_or_execution()
+ {
+    let f = Fixture::new().await;
+    for stage in ["initial", "clarification", "method", "concrete"] {
+        let (_, original, command) = retained(&f, stage).await;
+        let before = f.runtime().engine.store.get(&command.id).unwrap();
+        let ledger = f
+            .runtime()
+            .engine
+            .store
+            .interpreter_allowance_records()
+            .unwrap();
+        let inspect = recovery_request(
+            &f,
+            RecoveryCommand::Inspect {
+                id: command.id.clone(),
+                operation_id: uuid(),
+            },
+        )
+        .await;
+        let result = f.services[0]
+            .interpreter_recovery_command(inspect.clone())
+            .await
+            .unwrap();
+        assert!(eefn::interpreter_recovery_command::confirmed_node(
+            &result, &inspect
+        ));
+        assert_eq!(result["success"], true);
+        assert_eq!(result["result"]["attempts"].as_array().unwrap().len(), 1);
+        let header = &result["result"]["attempts"][0];
+        assert_eq!(header["attempt"]["id"], original.id());
+        assert_eq!(header["completed_result"], true);
+        assert_eq!(header["source_applied"], false);
+        for secret in [
+            "Inspect node status",
+            "messages",
+            "binding_sha256",
+            "grant_limits",
+            "source_sha256",
+        ] {
+            assert!(!result.to_string().contains(secret), "{secret}");
+        }
+        assert_eq!(
+            json!(f.runtime().engine.store.get(&command.id).unwrap()),
+            json!(before)
+        );
+        let apply = recovery_request(
+            &f,
+            RecoveryCommand::Recover {
+                command: command.clone(),
+            },
+        )
+        .await;
+        for reused in [false, true] {
+            let result = f.services[0]
+                .interpreter_recovery_command(apply.clone())
+                .await
+                .unwrap();
+            assert!(eefn::interpreter_recovery_command::confirmed_node(
+                &result, &apply
+            ));
+            assert_eq!(result["success"], true);
+            assert_eq!(result["result"]["reused"], reused);
+            assert_eq!(result["result"]["recovery"]["command"], json!(command));
+            for flag in [
+                "model_inference_requested",
+                "execution_authorized",
+                "dispatched",
+                "automatically_retried",
+            ] {
+                assert_eq!(result[flag], false);
+                assert_eq!(result["result"][flag], false);
+            }
+            assert!(
+                eefn::interpreter_recovery_command::render(&result)
+                    .unwrap()
+                    .contains("Saved result recovered")
+            );
+        }
+        let updated = f.runtime().engine.store.get(&command.id).unwrap();
+        assert_eq!(updated.revision, command.expected_revision + 1);
+        assert!(updated.approval.is_none() && updated.execution.is_none());
+        let after = f.services[0]
+            .interpreter_recovery_command(inspect)
+            .await
+            .unwrap();
+        assert_eq!(after["result"]["attempts"][0]["source_applied"], true);
+        assert_eq!(
+            json!(
+                f.runtime()
+                    .engine
+                    .store
+                    .interpreter_allowance_records()
+                    .unwrap()
+            ),
+            json!(ledger)
+        );
+    }
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 4);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn recovery_command_origin_session_runtime_and_revision_fences_preserve_source() {
+    let f = Fixture::new().await;
+    let (_, _, command) = retained(&f, "initial").await;
+    let before = f.runtime().engine.store.get(&command.id).unwrap();
+    let inspect = recovery_request(
+        &f,
+        RecoveryCommand::Inspect {
+            id: command.id.clone(),
+            operation_id: uuid(),
+        },
+    )
+    .await;
+    let mut foreign = inspect.clone();
+    foreign.expected_node_id = "provider".into();
+    foreign.expected_runtime_id = f.participants().await.provider.runtime_id().into();
+    let rejected = f.services[1]
+        .interpreter_recovery_command(foreign)
+        .await
+        .unwrap();
+    assert_eq!(rejected["success"], false);
+    assert_eq!(rejected["error_code"], "coordinator_rejected");
+    assert!(!rejected.to_string().contains("chosen"));
+    assert!(rejected["result"].is_null());
+    let mut stale = inspect.clone();
+    stale.expected_runtime_id = uuid();
+    let rejected = f.services[0]
+        .interpreter_recovery_command(stale)
+        .await
+        .unwrap();
+    assert_eq!(rejected["error_code"], "runtime_changed");
+    assert_eq!(rejected["outcome_unknown"], false);
+    let context = RequestContext::new(
+        inspect.command.operation_id().into(),
+        "input".into(),
+        vec![],
+    )
+    .unwrap();
+    assert!(
+        f.runtime()
+            .origin_interpreter_recovery_command(
+                eefn::interpreter_recovery_command::WireRequest {
+                    schema_version: 1,
+                    origin_runtime_id: inspect.expected_runtime_id,
+                    command: inspect.command,
+                },
+                &context,
+                &uuid()
+            )
+            .await
+            .is_err()
+    );
+    let mut wrong = command.clone();
+    wrong.expected_revision += 1;
+    let apply = recovery_request(&f, RecoveryCommand::Recover { command: wrong }).await;
+    let rejected = f.services[0]
+        .interpreter_recovery_command(apply)
+        .await
+        .unwrap();
+    assert_eq!(rejected["success"], false);
+    assert_eq!(rejected["error_code"], "coordinator_rejected");
+    assert_eq!(
+        json!(f.runtime().engine.store.get(&command.id).unwrap()),
+        json!(before)
+    );
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn model_free_recovery_inspection_does_not_start_inference_or_create_an_attempt() {
+    let f = Fixture::new().await;
+    let task = f.task("initial").await;
+    let before = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
+    let inspect = recovery_request(
+        &f,
+        RecoveryCommand::Inspect {
+            id: task.snapshot.job_id.clone(),
+            operation_id: uuid(),
+        },
+    )
+    .await;
+    let result = f.services[0]
+        .interpreter_recovery_command(inspect.clone())
+        .await
+        .unwrap();
+    assert!(eefn::interpreter_recovery_command::confirmed_node(
+        &result, &inspect
+    ));
+    assert_eq!(result["success"], true);
+    assert_eq!(result["result"]["attempts"], json!([]));
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 0);
+    assert!(
+        f.runtime()
+            .engine
+            .store
+            .interpreter_allowance_records()
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    assert_eq!(
+        json!(f.runtime().engine.store.get(&task.snapshot.job_id).unwrap()),
+        json!(before)
+    );
+    f.close().await;
 }
 
 #[tokio::test]

@@ -38,6 +38,19 @@ pub enum RequestAction {
         #[command(flatten)]
         preferences: crate::interpreter_command::Preferences,
     },
+    /// Inspect saved interpreter attempts without running inference or changing the source.
+    InterpreterResults { id: String },
+    /// Apply one retained completed interpreter result; never infer, approve or execute.
+    RecoverInterpretation {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        grant_id: String,
+        /// Retain this exact decision after uncertainty; inspect before retrying.
+        #[arg(long)]
+        operation_id: Option<String>,
+    },
     /// Answer an exact saved question; resolve/prepare according to applied policy, never execute.
     Respond {
         #[command(flatten)]

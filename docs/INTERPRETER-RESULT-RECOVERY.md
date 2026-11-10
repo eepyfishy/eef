@@ -1,7 +1,7 @@
 # Explicit retained interpreter result recovery
 
-This is unreleased backend work awaiting hosted validation and public adapters.
-There is no user-facing recovery command yet. It extends the existing journal
+This is unreleased backend and command work awaiting complete hosted acceptance.
+It extends the existing journal
 and review/compiler services without adding dependencies or background workers.
 
 The first candidate `de3036f` failed hosted compilation: this module accessed the
@@ -12,6 +12,45 @@ gates are unchanged; a fresh complete hosted run is required.
 The next candidate `5fb1298` compiled production code but failed compiling the
 new tests because their `PlanStatus` import was missing. That import is now
 explicit; no test assertions or production behavior change for this correction.
+
+Candidate `990847c` passed all seven recovery regressions and three complete CI
+jobs. Windows/headless run `42816124759` failed the existing native camera
+workload completion case: it retained five events but returned an unconfirmed
+source outcome. That failed run remains retained. Recovery command work does
+not establish a cause or fix for this separate camera failure, and the candidate
+has not passed full acceptance.
+
+## Commands and inspection
+
+The development node command/API service now exposes:
+
+```text
+eefn requests interpreter-results <request-id>
+eefn requests recover-interpretation <request-id> --revision <current-revision> --grant-id <attempt-id>
+```
+
+Inspection reads the latest 48 origin-owned interpreter attempt headers and the
+source revision/status. It does not start inference or edit the request, including
+when no attempt exists. Headers contain attribution and completion/application
+status, without prompts, grant bodies or credentials. A completed result is not
+a promise that recovery is currently eligible. Use ordinary request/job inspection
+for the resulting review, plan and stored recovery history.
+
+Recovery is an explicit source-edit decision. The CLI generates and prints a new
+operation ID unless `--operation-id` is supplied. Preserve the returned decision,
+revision and attempt references after an uncertain response. Inspect before
+retrying, and use the same `--operation-id` and exact original command to inspect
+an already applied decision; do not generate replacement work automatically.
+The separate `requests recover-result` command concerns executed-tool receipts,
+not interpreter data.
+
+Both commands use the running node's discovered local endpoint, shared input
+admission and runtime fence, then the existing authenticated submission channel.
+The coordinator checks actual gateway session, node runtime and source ownership.
+The local HTTP adapter remains usable headlessly and enforces its existing
+same-origin policy with an 8 KiB request limit. There is no new worker, model,
+dashboard controller or permission shortcut. Plain output prints validated
+references/status and never turns model text into a suggested command.
 
 A completed network interpretation can be retained even when its source update
 did not finish. The old continuation remains retired. A fresh authenticated
@@ -54,7 +93,15 @@ and tampered or erased evidence. Tests use temporary journals, authenticated
 private nodes and a mock model. Expiring a test continuation does not establish
 physical wall-clock lease-expiry or restart acceptance.
 
-Remaining work includes read-only attempt discovery and explicit origin-scoped
-command/API adapters, command validation, runtime retirement, restart and
-physical multi-PC tests. Real-model/onboarding, continuous workloads, strong
+New command regressions cover inspection/application through an authenticated
+private node pair for every stage, unchanged source/allowance accounting on
+inspection, no repeated inference, foreign/stale/session/revision refusals,
+strict schemas and replies, shared admission and retirement with late-reply
+rejection. CLI parsing and native command/API cases cover model-free inspection,
+missing evidence, source preservation, runtime/node binding and HTTP refusal.
+These additions require fresh hosted validation.
+
+Remaining work includes complete command acceptance, restart and physical
+multi-PC tests, and investigation of the retained camera failure.
+Real-model/onboarding, continuous workloads, strong
 stop, MSI/signing/Defender and stable-release gates remain open.

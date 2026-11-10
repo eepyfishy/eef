@@ -5,12 +5,18 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: explicit retained interpreter result recovery
 
-The [recovery core](INTERPRETER-RESULT-RECOVERY.md) applies retained semantic data
+The [recovery core and commands](INTERPRETER-RESULT-RECOVERY.md) apply retained semantic data
 only through a fresh authenticated origin decision. Source and bounded receipt
 share one journal update; the original inference ledger remains unchanged. New
 regressions cover all interpretation stages, offline providers, replay, stale or
-active sources, quota exhaustion, write failure and receipt tampering. Hosted
-validation and the public command/API adapters are pending. This does not complete
+active sources, quota exhaustion, write failure and receipt tampering. The
+development `requests interpreter-results` and `requests recover-interpretation`
+adapters add origin-scoped inspection and explicit recovery through the running
+node. Command tests cover private node-pair exchanges, reference-only schemas,
+runtime retirement and model-free CLI/API refusal paths. Complete hosted
+acceptance is pending. Candidate `990847c` passed the new recovery tests and
+three jobs, but Windows/headless failed an existing native camera completion
+case in run `42816124759`; its cause remains unproven. This does not complete
 recovery usability or any physical, model, installer or stable-release gate.
 
 ## Accepted development checkpoint: interpreter command guidance
