@@ -430,7 +430,7 @@ pub fn render(value: &Value) -> Result<String> {
                 Some("not_sent") => "This attempt was not sent. No replacement interpretation was started.\n",
                 Some("reserved") => "Interpretation was reserved; delivery is not confirmed.\n",
                 Some("final") if !report.outcome_unknown => "The interpreter finished, but its result was not applied to the saved request. Inspect before continuing.\n",
-                _ => "The interpretation outcome is unconfirmed. It may still be running; inspect before starting replacement work.\n",
+                _ => "This attempt has no confirmed result. It may still be running; inspect before starting replacement work.\n",
             });
         }
     } else if report.error_code.as_deref() == Some("busy") {
@@ -444,7 +444,7 @@ pub fn render(value: &Value) -> Result<String> {
     }
     if report.outcome_unknown {
         text.push_str(
-            "An inference or source update may have happened. Inspect before trying again.\n",
+            "The interpretation outcome is unconfirmed. A model or source update may have happened. Inspect before trying again.\n",
         );
     }
     text.push_str(&format!("Inspect: eefn jobs get {}\nStop: eefn jobs stop {}\nOperation: {}\nNo automatic retry or tool execution was requested.\n",

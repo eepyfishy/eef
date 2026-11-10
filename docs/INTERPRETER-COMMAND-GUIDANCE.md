@@ -28,3 +28,11 @@ method-question, concrete-plan and interrupted replies. They require the saved
 question/revision, read-only plan guidance, interpreter identity and no suggested
 continuation during uncertainty. No test count, model provider, command schema,
 permission, execution rule, dependency or background worker changes.
+
+The first guidance source `e808556` failed its new interrupted-output assertion
+in both Linux jobs: the coordinator can return a rejected/unconfirmed command
+without a structured attempt, so the per-attempt message was absent. Those
+terminal logs remain retained. The follow-up emits the same explicit uncertainty
+warning from the overall node receipt, including when no attempt body is
+available. The assertion and all execution rules remain unchanged; fresh hosted
+acceptance is still required.
