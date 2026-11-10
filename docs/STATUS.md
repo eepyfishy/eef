@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: explicit network interpreter command path
+
+The [reference-only node command](NETWORK-INTERPRETER-COMMANDS.md) connects all
+three stages to the private exchange and source handoff through the running
+node. It adds CLI/API parity, immutable origin/source binding, explicit selection
+preferences and read-only historical replies without provider availability.
+Source review and hosted validation are pending. Automatic normal-input
+delegation and uncertain-result reconciliation remain open, alongside physical
+and full stable-release acceptance.
+
 ## In development: applying live interpreter results
 
 The [source application increment](INTERPRETER-APPLICATION.md) consumes the

@@ -1080,6 +1080,58 @@ async fn execute_interpret_saved(
     Ok(exchange.unwrap_or_else(|_| eefn::saved_input::unconfirmed(&request)))
 }
 
+async fn execute_network_interpreter(
+    args: &Args,
+    command: eefn::interpreter_command::Command,
+) -> Result<serde_json::Value> {
+    if eefn::setup::instance_lock(&args.config)?.is_some() {
+        bail!("Start the node first; interpreter commands never launch another runtime")
+    }
+    let file = load_file(&args.config)?;
+    command.validate(&file.node_id)?;
+    let local = file.dashboard.unwrap_or_default();
+    let address = eefn::local_commands::endpoint(
+        &args.config,
+        &file.node_id,
+        &local.host,
+        local.port,
+        local.enabled,
+    )?;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(150))
+        .build()?;
+    let runtime =
+        eefn::credential_pairing::wait_for_runtime(&client, address, &file.node_id).await?;
+    let request = eefn::interpreter_command::Request {
+        schema_version: 1,
+        expected_node_id: file.node_id,
+        expected_runtime_id: runtime,
+        command,
+    };
+    request.validate()?;
+    let exchange = async {
+        let response = client
+            .post(format!(
+                "http://{address}/api/commands/requests/interpreter"
+            ))
+            .json(&request)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            bail!("Network interpreter command API refused or unavailable")
+        }
+        let value = eefn::model_manager::bounded_json(response).await?;
+        if !eefn::interpreter_command::confirmed_node(&value, &request) {
+            bail!("Network interpreter command reply was not confirmed")
+        }
+        Ok::<_, anyhow::Error>(value)
+    }
+    .await;
+    Ok(exchange.unwrap_or_else(|_| eefn::interpreter_command::unconfirmed(&request)))
+}
+
 async fn execute_save_input(
     args: &Args,
     command: eefn::request_intent::Command,
@@ -2810,6 +2862,27 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
+            eefn::request_preview::RequestAction::InterpretNetwork {
+                id,
+                stage,
+                revision,
+                operation_id,
+                preferences,
+            } => {
+                execute_network_interpreter(
+                    args,
+                    eefn::interpreter_command::Command {
+                        id: id.clone(),
+                        stage: *stage,
+                        expected_revision: *revision,
+                        operation_id: operation_id
+                            .clone()
+                            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                        preferences: preferences.clone(),
+                    },
+                )
+                .await
+            }
             eefn::request_preview::RequestAction::SaveInput { text, operation_id } => {
                 execute_save_input(
                     args,
@@ -3516,6 +3589,13 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     }
                 ) {
                     print!("{}", eefn::saved_input::render(&value)?);
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::InterpretNetwork { .. }
+                    }
+                ) {
+                    print!("{}", eefn::interpreter_command::render(&value)?);
                 } else if matches!(
                     command,
                     Commands::Requests {
@@ -5456,6 +5536,67 @@ mod tests {
             vec!["--file", "input.json"],
         ] {
             let mut args = vec!["eefn", "requests", "interpret-saved", id];
+            args.extend(extra);
+            assert!(Args::try_parse_from(args).is_err());
+        }
+    }
+    #[test]
+    fn network_interpreter_cli_selects_only_saved_source_stage_and_explicit_preferences() {
+        let operation = uuid::Uuid::new_v4().to_string();
+        for stage in ["initial", "clarification", "method"] {
+            let parsed = Args::try_parse_from([
+                "eefn",
+                "requests",
+                "interpret-network",
+                "saved",
+                "--stage",
+                stage,
+                "--revision",
+                "3",
+                "--operation-id",
+                &operation,
+                "--provider",
+                "peer",
+                "--backend",
+                "ollama",
+                "--model-id",
+                "chosen",
+            ])
+            .unwrap();
+            let Some(Commands::Requests {
+                command:
+                    eefn::request_preview::RequestAction::InterpretNetwork {
+                        id,
+                        stage: parsed_stage,
+                        revision,
+                        operation_id,
+                        preferences,
+                    },
+            }) = parsed.command
+            else {
+                panic!("Wrong interpreter command")
+            };
+            assert_eq!(id, "saved");
+            assert_eq!(parsed_stage.as_str(), stage);
+            assert_eq!(revision, Some(3));
+            assert_eq!(operation_id.as_deref(), Some(operation.as_str()));
+            let command = eefn::interpreter_command::Command {
+                id,
+                stage: parsed_stage,
+                expected_revision: revision,
+                operation_id: operation_id.unwrap(),
+                preferences,
+            };
+            command.validate("owner").unwrap();
+        }
+        for extra in [
+            vec!["--prompt", "text"],
+            vec!["--grant", "file"],
+            vec!["--execute"],
+            vec!["--approve"],
+            vec!["--permissions", "all"],
+        ] {
+            let mut args = vec!["eefn", "requests", "interpret-network", "saved"];
             args.extend(extra);
             assert!(Args::try_parse_from(args).is_err());
         }

@@ -24,6 +24,18 @@ pub enum RequestAction {
         #[arg(long)]
         operation_id: Option<String>,
     },
+    /// Interpret an exact saved source through an owner-authorized network service; never execute tools.
+    InterpretNetwork {
+        id: String,
+        #[arg(long, value_enum, default_value = "initial")]
+        stage: crate::interpreter_command::Stage,
+        #[arg(long)]
+        revision: Option<u64>,
+        #[arg(long)]
+        operation_id: Option<String>,
+        #[command(flatten)]
+        preferences: crate::interpreter_command::Preferences,
+    },
     /// Answer an exact saved question; resolve/prepare according to applied policy, never execute.
     Respond {
         #[command(flatten)]

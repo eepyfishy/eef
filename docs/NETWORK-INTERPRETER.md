@@ -1,5 +1,9 @@
 # Network interpreter delegation (planned)
 
+The [explicit network command path](NETWORK-INTERPRETER-COMMANDS.md) is now in
+development for initial, clarification and method stages. It awaits its own
+hosted validation; automatic normal-input integration remains planned.
+
 Status: raw saving (`4ef0935`) and explicit saved-input interpretation
 (`2a49073`) passed all four hosted jobs. Automatic delegation remains planned.
 Normal input's raw-first integration passed all four hosted jobs and the

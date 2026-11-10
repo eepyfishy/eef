@@ -25,6 +25,9 @@ use crate::task::{Dispatcher, TaskEngine};
 use crate::update::{UpdatePolicy, UpdateService};
 use crate::world::WorldState;
 
+#[path = "interpreter_broker.rs"]
+mod interpreter_broker;
+
 pub struct Runtime {
     pub config: Config,
     pub bus: EventBus,
@@ -742,6 +745,23 @@ impl Runtime {
             )),
             "requests.intent" => {
                 crate::request_intent::save(&self.engine, message["payload"].clone(), &context)
+            }
+            "requests.interpreter" => {
+                match serde_json::from_value::<eefn::interpreter_command::WireRequest>(
+                    message["payload"].clone(),
+                ) {
+                    Ok(request) => {
+                        self.origin_interpreter_command(
+                            request,
+                            &context,
+                            message["gateway_session_id"].as_str().unwrap_or(""),
+                        )
+                        .await
+                    }
+                    Err(_) => Err(anyhow::anyhow!(
+                        "Invalid reference-only interpreter command"
+                    )),
+                }
             }
             "requests.interpretation_claim" => crate::request_interpretation::claim_command(
                 &self.engine,

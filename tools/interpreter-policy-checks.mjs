@@ -1,6 +1,7 @@
 // Actual shipping owner CLI/API checks; no inference or model installation.
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {checkInterpreterCommandUnavailable} from './interpreter-command-checks.mjs';
 export async function checkInterpreterPolicyUnavailable({owner,nodeId}) {
  const rejected=await owner(['interpreter-policies','approve','--origin',nodeId,'--provider',nodeId],false);
  assert.equal(rejected.success,false);
@@ -9,7 +10,7 @@ export async function checkInterpreterPolicyUnavailable({owner,nodeId}) {
  const usage=await owner(['interpreter-policies','usage']);assert.equal(usage.success,true);
  assert.equal(usage.result.policy,null);assert.equal(usage.result.charged.calls,0);
 }
-export async function checkInterpreterPolicy({owner,eef,nodeId}) {
+export async function checkInterpreterPolicy({owner,eef,nodeId,local,node}) {
  const empty=await owner(['interpreter-policies','show']);assert.equal(empty.success,true);
  assert.equal(empty.result.current_generation,0);assert.equal(empty.result.authorization,null);
  const operation=randomUUID(),args=['interpreter-policies','approve','--origin',nodeId,'--provider',nodeId,
@@ -35,6 +36,7 @@ export async function checkInterpreterPolicy({owner,eef,nodeId}) {
  const route=await owner(['interpreter-policies','resolve','--origin',nodeId]);assert.equal(route.success,true);
  assert.equal(route.result.report_type,'interpreter_route_preview');assert.equal(route.result.origin.node_id,nodeId);
  assert.equal(route.result.selected,null,'A model-free node cannot invent a local or remote interpreter');
+ await checkInterpreterCommandUnavailable({local,node,nodeId});
  for(const flag of ['grants_issued','model_inference_requested','allowance_reserved','automatic_delegation_available','automatically_retried'])assert.equal(route.result[flag],false,flag);
  const routePlain=await owner(['interpreter-policies','resolve','--origin',nodeId,'--local-only'],true,true);
  assert(routePlain.out.includes('No eligible advertised interpreter'));assert(routePlain.out.includes('No allowance, grant or model call'));

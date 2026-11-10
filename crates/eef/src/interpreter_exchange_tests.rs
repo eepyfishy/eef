@@ -33,6 +33,8 @@ struct Fixture {
     server: Option<tokio::task::JoinHandle<()>>,
     model: Arc<Model>,
     pin: PolicyPin,
+    services: Vec<eefn::NodeService>,
+    _preview_guards: Vec<eefn::request_preview::PreviewGuard>,
     _dir: tempfile::TempDir,
 }
 impl Drop for Fixture {
@@ -117,6 +119,8 @@ impl Fixture {
             })
             .unwrap();
         let mut nodes = vec![];
+        let mut services = vec![];
+        let mut preview_guards = vec![];
         for node in ["input", "provider"] {
             let serving = node == "provider";
             let selected:eefn::SelectedModel=serde_json::from_value(json!({"model_id":"chosen","modality":"text","selection":{"roles":["request_interpreter"]}})).unwrap();
@@ -147,8 +151,10 @@ impl Fixture {
                     .with_service(service.clone()),
             );
             let client_config:eefn::NodeClientConfig=serde_json::from_value(json!({"node_id":node,"auth_mode":"node_credential","psk":keys[node],"coordinator_certificate":identity.certificate,"endpoints":[format!("127.0.0.1:{}",runtime.node_server.port())],"ollama_url":url,"ollama_models":if serving{vec![selected]}else{vec![]},"heartbeat_seconds":0.2})).unwrap();
+            preview_guards.push(service.attach_preview_runtime(&engine, generation.clone()));
             let client = eefn::NodeClient::new(client_config, engine)
                 .unwrap()
+                .with_submissions(service.submissions.clone())
                 .with_status(service.live.clone())
                 .with_registration_runtime(&generation)
                 .unwrap()
@@ -157,6 +163,7 @@ impl Fixture {
                     Default::default(),
                 );
             nodes.push(tokio::spawn(async move { client.connect_once().await }));
+            services.push(service);
         }
         tokio::time::timeout(Duration::from_secs(20), async {
             loop {
@@ -212,6 +219,8 @@ impl Fixture {
             server: Some(server),
             model,
             pin,
+            services,
+            _preview_guards: preview_guards,
             _dir: dir,
         }
     }
@@ -304,6 +313,9 @@ impl Fixture {
         }
     }
 }
+
+#[path = "interpreter_broker_tests.rs"]
+mod broker_tests;
 
 #[tokio::test]
 async fn real_core_allowances_exchange_all_three_stages_through_private_grants_without_promotion_or_replay()
