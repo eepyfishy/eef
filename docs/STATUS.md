@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: separate renewal retirement from historical completion
+
+The [renewal retirement follow-up](WORKLOAD-RENEWAL-RETIREMENT.md) stops the pump
+when its exact source receiver closes, then awaits the same bounded final-save
+future. Closure is a private lifetime observation, not a completion or new lease.
+Live expiry still cancels work. Three coordination regressions cover an in-flight
+challenge, late reply, pending-save success/failure and active-source expiry.
+Hosted validation is pending. The earlier camera failure remains retained and
+its cause unproven; this does not establish physical or stable-release acceptance.
+
 ## In development: explicit retained interpreter result recovery
 
 The [recovery core and commands](INTERPRETER-RESULT-RECOVERY.md) apply retained semantic data

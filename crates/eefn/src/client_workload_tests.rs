@@ -41,6 +41,187 @@ struct Fixture {
     _service: Arc<crate::NodeService>,
     _guard: crate::request_preview::PreviewGuard,
 }
+
+#[tokio::test]
+async fn retired_source_cancels_pending_renewal_and_preserves_the_exact_final_save_waiter() {
+    for save_succeeds in [true, false] {
+        let mut f = Fixture::new(true);
+        let d = f.definition.clone();
+        let contract = d.lease_contract().unwrap();
+        let requests = Arc::new(Requests::default());
+        let output = Output {
+            crypto: f.client.crypto.clone(),
+            writer: f.writer.clone(),
+            failed: f.failed.clone(),
+        };
+        let (sender, receiver) = crate::workload_leases::renewal_channel();
+        let (retire, retirement) = tokio::sync::oneshot::channel();
+        let (save, checkpoint) = tokio::sync::oneshot::channel();
+        let (pump_done, pump_retired) = tokio::sync::oneshot::channel();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let source_calls = calls.clone();
+        let source_finished = finished.clone();
+        let source = async move {
+            source_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            retirement.await.unwrap();
+            // The real live supervisor owns this receiver. Its retirement
+            // precedes the separately bounded historical persistence waiter.
+            drop(receiver);
+            checkpoint.await.unwrap();
+            source_finished.store(true, std::sync::atomic::Ordering::SeqCst);
+            if save_succeeds {
+                Ok(17)
+            } else {
+                Err(anyhow::anyhow!("Synthetic final journal save refused"))
+            }
+        };
+        let renewal = async {
+            let outcome = renew(
+                &d,
+                &contract,
+                requests.clone(),
+                &output,
+                sender,
+                Instant::now() + Duration::from_secs(6),
+                Instant::now() + Duration::from_secs(40),
+            )
+            .await;
+            assert!(
+                outcome.is_ok(),
+                "Closed source receiver is not failed source execution"
+            );
+            pump_done.send(()).unwrap();
+            outcome
+        };
+        let (result, ()) = tokio::join!(await_source(source, renewal), async {
+            let frame = timeout(
+                Duration::from_secs(5),
+                read_message(&f.client.crypto, &mut f.peer),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+            assert_eq!(frame["type"], "workload_probe");
+            let query: crate::workload_leases::Query =
+                serde_json::from_value(frame["query"].clone()).unwrap();
+            assert_eq!(query.sequence, 2);
+            retire.send(()).unwrap();
+            timeout(Duration::from_secs(3), pump_retired)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert!(!finished.load(std::sync::atomic::Ordering::SeqCst));
+            // A late correlated reply cannot restart the retired pump or turn
+            // its metadata into fresh source/reporting authority.
+            requests.complete(json!(crate::workload_leases::Reply {
+                kind: "workload_lease".into(),
+                schema_version: 2,
+                id: query.id,
+                contract_sha256: query.contract.digest().unwrap(),
+                sequence: query.sequence,
+                lease_remaining_ms: 1000,
+                session_remaining_ms: 30000,
+            }));
+            save.send(()).unwrap();
+        });
+        assert!(finished.load(std::sync::atomic::Ordering::SeqCst));
+        if save_succeeds {
+            assert_eq!(result.unwrap(), 17)
+        } else {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("final journal save refused")
+            );
+        }
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        f.no_consumption();
+    }
+}
+
+#[tokio::test]
+async fn already_retired_source_stops_renewal_without_a_probe_even_after_the_old_deadline() {
+    use futures_util::FutureExt;
+    let mut f = Fixture::new(true);
+    let d = f.definition.clone();
+    let output = Output {
+        crypto: f.client.crypto.clone(),
+        writer: f.writer.clone(),
+        failed: f.failed.clone(),
+    };
+    let (sender, receiver) = crate::workload_leases::renewal_channel();
+    drop(receiver);
+    timeout(
+        Duration::from_secs(1),
+        renew(
+            &d,
+            &d.lease_contract().unwrap(),
+            Arc::new(Requests::default()),
+            &output,
+            sender,
+            Instant::now(),
+            Instant::now(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        read_message(&f.client.crypto, &mut f.peer)
+            .now_or_never()
+            .is_none()
+    );
+    f.no_consumption();
+}
+
+#[tokio::test]
+async fn live_source_renewal_expiry_still_cancels_source_instead_of_waiting_for_success() {
+    struct Dropped(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let f = Fixture::new(true);
+    let d = f.definition.clone();
+    let output = Output {
+        crypto: f.client.crypto.clone(),
+        writer: f.writer.clone(),
+        failed: f.failed.clone(),
+    };
+    let (sender, receiver) = crate::workload_leases::renewal_channel();
+    let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let guard = Dropped(dropped.clone());
+    let source = async move {
+        let _live = (receiver, guard);
+        std::future::pending::<Result<()>>().await
+    };
+    let error = await_source(
+        source,
+        renew(
+            &d,
+            &d.lease_contract().unwrap(),
+            Arc::new(Requests::default()),
+            &output,
+            sender,
+            Instant::now(),
+            Instant::now() + Duration::from_secs(10),
+        ),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Original workload renewal window expired")
+    );
+    assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    f.no_consumption();
+}
 impl Fixture {
     fn new(credential: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();

@@ -84,6 +84,30 @@ async fn prepare(
         .context("Node source preparation worker unavailable")
 }
 
+/// A local channel lifetime observation, never a lease or completion receipt.
+#[derive(Debug)]
+struct SourceRetired;
+
+async fn await_source<F, R, T>(source: F, renewal: R) -> Result<T>
+where
+    F: std::future::Future<Output = Result<T>>,
+    R: std::future::Future<Output = Result<SourceRetired>>,
+{
+    tokio::pin!(source);
+    tokio::pin!(renewal);
+    tokio::select! {
+        biased;
+        result = &mut source => result,
+        retired = &mut renewal => {
+            retired?;
+            // The exact live receiver is gone. The same source future may
+            // still await its bounded historical save; no source is restarted
+            // and no renewal continues while that receipt is pending.
+            source.await
+        }
+    }
+}
+
 async fn renew(
     definition: &Definition,
     contract: &Contract,
@@ -92,30 +116,31 @@ async fn renew(
     sender: tokio::sync::mpsc::Sender<crate::workload_leases::LeaseProof>,
     mut deadline: Instant,
     session_end: Instant,
-) -> Result<()> {
+) -> Result<SourceRetired> {
     let mut sequence = 2_u64;
     loop {
-        let now = Instant::now();
-        if now >= deadline.min(session_end) {
-            bail!("Original workload renewal window expired")
+        tokio::select! {
+            biased;
+            _ = sender.closed() => return Ok(SourceRetired),
+            result = async {
+                let now = Instant::now();
+                if now >= deadline.min(session_end) {
+                    bail!("Original workload renewal window expired")
+                }
+                // Schedule from the actual last proof's remaining monotonic
+                // budget, never an advertised duration or a new session end.
+                let due = now + deadline.min(session_end).duration_since(now) / 3;
+                tokio::time::sleep_until(tokio::time::Instant::from_std(due)).await;
+                let proof = requests.request(contract, sequence, |query| {
+                    output.probe(&definition.grant_id, query)
+                }).await?;
+                deadline = proof.deadline().min(session_end);
+                // Closure after proof receipt has the same historical meaning.
+                if sender.send(proof).await.is_err() { return Ok(false); }
+                sequence = sequence.checked_add(1).context("Workload renewal sequence exhausted")?;
+                Ok::<_, anyhow::Error>(true)
+            } => if !result? { return Ok(SourceRetired); },
         }
-        // Schedule from the actual last proof's remaining monotonic budget,
-        // never an advertised duration or a newly invented session horizon.
-        let due = now + deadline.min(session_end).duration_since(now) / 3;
-        tokio::time::sleep_until(tokio::time::Instant::from_std(due)).await;
-        let proof = requests
-            .request(contract, sequence, |query| {
-                output.probe(&definition.grant_id, query)
-            })
-            .await?;
-        deadline = proof.deadline().min(session_end);
-        sender
-            .send(proof)
-            .await
-            .context("Original workload runner ended")?;
-        sequence = sequence
-            .checked_add(1)
-            .context("Workload renewal sequence exhausted")?;
     }
 }
 
@@ -226,27 +251,18 @@ impl NodeClient {
                     let (sender, renewals) = crate::workload_leases::renewal_channel();
                     let event_output = output.clone();
                     let event_id = id.clone();
-                    // These two futures share this session-owned task. Source
-                    // completion, failure, stop or cancellation drops the exact
-                    // pending renewal before terminal output; no detached pump.
-                    let outcome = {
-                        let mut running = Box::pin(source.run(consumed, renewals, move |event| {
+                    // The live window closes before historical persistence.
+                    // Stop renewal on that receiver's retirement, then retain
+                    // the same bounded completion waiter until terminal output.
+                    await_source(
+                        Box::pin(source.run(consumed, renewals, move |event| {
                             let output = event_output.clone();
                             let id = event_id.clone();
                             async move { output.send(&json!({"type":"workload_event","schema_version":2,"id":id,"event":event})).await }
-                        }));
-                        let mut renewal = Box::pin(renew(&definition, &contract, requests.clone(), &output,
-                            sender, initial_end, session_end));
-                        tokio::select! {
-                            biased;
-                            result = &mut running => result,
-                            result = &mut renewal => {
-                                result?;
-                                bail!("Workload renewal pump ended without source completion")
-                            }
-                        }
-                    };
-                    outcome
+                        })),
+                        Box::pin(renew(&definition, &contract, requests.clone(), &output,
+                            sender, initial_end, session_end)),
+                    ).await
                 })).await;
                 // A policy cancellation drops its source/renewal scope first.
                 drop(execution);
