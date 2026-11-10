@@ -67,7 +67,9 @@ try{
  const coordinatorConfig=join(coordinator.install,'config/default_identity.yaml'),nodeConfig=join(node.install,'config.json');
  assert.equal(await exists(coordinatorConfig),false);assert.equal(await exists(nodeConfig),false);
  const help=await once(node.exe,['--help'],30000,{EEF_NODE_PSK:'PRIVATE_HELP_PAIRING_KEY',EEF_NODE_OLLAMA:'http://owner:PRIVATE_HELP_PASSWORD@private.invalid:11434'});
- assert.equal(help.code,0,'Node help must exit without starting a runtime');
+ assert.equal(help.code,0,'Node help must exit without starting a runtime; '+JSON.stringify({
+  stack_overflow:help.err.includes('has overflowed its stack'),
+  startup_phase:[...help.err.replace(/\u001b\[[0-9;]*m/g,'').matchAll(/node startup phase: ([a-z_]+)/g)].at(-1)?.[1]??null}));
  assert(help.out.includes('EEF_NODE_PSK')&&help.out.includes('EEF_NODE_OLLAMA'),'Help must retain environment-variable names');
  assert(!(help.out+help.err).includes('PRIVATE_HELP_')&&!(help.out+help.err).includes('private.invalid'),'Help must hide private environment values');
  assert.equal(await exists(nodeConfig),false,'Help cannot initialize node settings');

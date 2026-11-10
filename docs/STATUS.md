@@ -3,6 +3,16 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: split request CLI parser builders
+
+The [request parser follow-up](NODE-REQUEST-PARSER-GROUPS.md) partitions the
+32 request variants into four flattened parser groups while preserving public
+commands/arguments and handlers. Candidate `3c83c1c` passed its 1,751 Windows/
+headless Rust tests but the actual native `eefn --help` process overflowed its
+stack in run `42852782316`. The zero-exit/configuration/privacy assertions remain,
+with bounded failure-phase diagnostics added. Fresh complete hosted acceptance
+is required; no stack budget, dependency, grant or runtime behavior is widened.
+
 ## In development: separate renewal retirement from historical completion
 
 An additional [interpreter recovery restart regression](INTERPRETER-RESULT-RECOVERY.md)

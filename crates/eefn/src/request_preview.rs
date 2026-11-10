@@ -6,8 +6,21 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tokio::sync::{Semaphore, watch};
 
+// Partition clap builders to reduce unoptimized Windows parser stack use.
 #[derive(Debug, clap::Subcommand)]
 pub enum RequestAction {
+    #[command(flatten)]
+    Input(InputAction),
+    #[command(flatten)]
+    Submission(SubmissionAction),
+    #[command(flatten)]
+    Planning(PlanningAction),
+    #[command(flatten)]
+    Review(ReviewAction),
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub enum InputAction {
     /// Save raw input durably without a model, proposal, approval or execution.
     SaveInput {
         #[arg(long)]
@@ -79,17 +92,10 @@ pub enum RequestAction {
         #[command(subcommand)]
         command: crate::request_input::PolicyAction,
     },
-    /// Reconcile one uncertain origin-owned attempt from retained completion; never resume.
-    RecoverResult {
-        id: String,
-        #[arg(long)]
-        revision: u64,
-        #[arg(long)]
-        grant_id: String,
-        /// Keep this exact receipt after an uncertain reply; no automatic retry.
-        #[arg(long)]
-        operation_id: String,
-    },
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub enum SubmissionAction {
     /// Save/compile explicit one-step input without a model; never approve/execute.
     Submit {
         #[arg(long)]
@@ -113,6 +119,21 @@ pub enum RequestAction {
     SubmitMicrophone(Box<crate::microphone_submission::MicrophoneSubmission>),
     /// Prepare a bounded camera-motion request for review; never enable or capture.
     SubmitCamera(Box<crate::camera_submission::CameraSubmission>),
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub enum PlanningAction {
+    /// Reconcile one uncertain origin-owned attempt from retained completion; never resume.
+    RecoverResult {
+        id: String,
+        #[arg(long)]
+        revision: u64,
+        #[arg(long)]
+        grant_id: String,
+        /// Keep this exact receipt after an uncertain reply; no automatic retry.
+        #[arg(long)]
+        operation_id: String,
+    },
     /// Propose and save a source-bound method or clarification; never approve/execute.
     Prepare {
         #[command(flatten)]
@@ -186,6 +207,10 @@ pub enum RequestAction {
         #[arg(long)]
         operation_id: Option<String>,
     },
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub enum ReviewAction {
     /// Interpret and save an origin-owned durable review; never execute it.
     Open {
         #[command(flatten)]

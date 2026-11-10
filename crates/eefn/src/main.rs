@@ -28,14 +28,16 @@ mod network_interpreter_policy_cli_tests {
             .unwrap();
             let Some(Commands::Requests {
                 command:
-                    eefn::request_preview::RequestAction::Workflow {
-                        command:
-                            eefn::request_input::PolicyAction::Set {
-                                prepare_on_input: None,
-                                resolve_on_answer: None,
-                                network_interpreter: Some(enabled),
-                            },
-                    },
+                    eefn::request_preview::RequestAction::Input(
+                        eefn::request_preview::InputAction::Workflow {
+                            command:
+                                eefn::request_input::PolicyAction::Set {
+                                    prepare_on_input: None,
+                                    resolve_on_answer: None,
+                                    network_interpreter: Some(enabled),
+                                },
+                        },
+                    ),
             }) = args.command
             else {
                 panic!("Expected one explicit network preference");
@@ -2935,13 +2937,15 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
     }
     if let Commands::Requests { command } = command {
         return match command {
-            eefn::request_preview::RequestAction::Respond {
-                inference,
-                id,
-                revision,
-                text,
-                operation_id,
-            } => {
+            eefn::request_preview::RequestAction::Input(
+                eefn::request_preview::InputAction::Respond {
+                    inference,
+                    id,
+                    revision,
+                    text,
+                    operation_id,
+                },
+            ) => {
                 execute_response_command(
                     args,
                     eefn::request_response::RespondCommand {
@@ -2956,11 +2960,13 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::InterpretSaved {
-                id,
-                operation_id,
-                inference,
-            } => {
+            eefn::request_preview::RequestAction::Input(
+                eefn::request_preview::InputAction::InterpretSaved {
+                    id,
+                    operation_id,
+                    inference,
+                },
+            ) => {
                 execute_interpret_saved(
                     args,
                     eefn::request_interpretation::Command {
@@ -2973,14 +2979,16 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::InterpretNetwork {
-                inference,
-                id,
-                stage,
-                revision,
-                operation_id,
-                preferences,
-            } => {
+            eefn::request_preview::RequestAction::Input(
+                eefn::request_preview::InputAction::InterpretNetwork {
+                    inference,
+                    id,
+                    stage,
+                    revision,
+                    operation_id,
+                    preferences,
+                },
+            ) => {
                 execute_network_interpreter(
                     args,
                     eefn::interpreter_command::Command {
@@ -3002,7 +3010,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::InterpreterResults { id } => {
+            eefn::request_preview::RequestAction::Input(
+                eefn::request_preview::InputAction::InterpreterResults { id },
+            ) => {
                 execute_interpreter_recovery(
                     args,
                     eefn::interpreter_recovery_command::Command::Inspect {
@@ -3012,12 +3022,14 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::RecoverInterpretation {
-                id,
-                revision,
-                grant_id,
-                operation_id,
-            } => {
+            eefn::request_preview::RequestAction::Input(
+                eefn::request_preview::InputAction::RecoverInterpretation {
+                    id,
+                    revision,
+                    grant_id,
+                    operation_id,
+                },
+            ) => {
                 execute_interpreter_recovery(
                     args,
                     eefn::interpreter_recovery_command::Command::Recover {
@@ -3033,7 +3045,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::SaveInput { text, operation_id } => {
+            eefn::request_preview::RequestAction::Input(
+                eefn::request_preview::InputAction::SaveInput { text, operation_id },
+            ) => {
                 execute_save_input(
                     args,
                     eefn::request_intent::Command {
@@ -3045,11 +3059,13 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Input {
-                text,
-                operation_id,
-                inference,
-            } => {
+            eefn::request_preview::RequestAction::Input(
+                eefn::request_preview::InputAction::Input {
+                    text,
+                    operation_id,
+                    inference,
+                },
+            ) => {
                 execute_input_command(
                     args,
                     text,
@@ -3058,17 +3074,21 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Workflow { command } => {
-                execute_input_policy_command(args, command).await
-            }
-            eefn::request_preview::RequestAction::Plan { id } => {
+            eefn::request_preview::RequestAction::Input(
+                eefn::request_preview::InputAction::Workflow { command },
+            ) => execute_input_policy_command(args, command).await,
+            eefn::request_preview::RequestAction::Planning(
+                eefn::request_preview::PlanningAction::Plan { id },
+            ) => {
                 execute_node_planning_command(
                     args,
                     eefn::request_planning::PlanningCommand::Inspect { id: id.clone() },
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::CompileSaved { id, revision } => {
+            eefn::request_preview::RequestAction::Planning(
+                eefn::request_preview::PlanningAction::CompileSaved { id, revision },
+            ) => {
                 execute_node_planning_command(
                     args,
                     eefn::request_planning::PlanningCommand::CompileSaved {
@@ -3078,14 +3098,16 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Compile {
-                id,
-                revision,
-                file,
-                template,
-                node,
-                operation_id,
-            } => {
+            eefn::request_preview::RequestAction::Planning(
+                eefn::request_preview::PlanningAction::Compile {
+                    id,
+                    revision,
+                    file,
+                    template,
+                    node,
+                    operation_id,
+                },
+            ) => {
                 let input = match file {
                     Some(path) => eefn::request_planning::read_input(path)?,
                     None => eefn::request_planning::PlanInput {
@@ -3111,7 +3133,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Preview { text, inference } => {
+            eefn::request_preview::RequestAction::Review(
+                eefn::request_preview::ReviewAction::Preview { text, inference },
+            ) => {
                 execute_request_command(
                     args,
                     text,
@@ -3122,7 +3146,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Review { text, inference } => {
+            eefn::request_preview::RequestAction::Review(
+                eefn::request_preview::ReviewAction::Review { text, inference },
+            ) => {
                 execute_request_command(
                     args,
                     text,
@@ -3133,7 +3159,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::ReviewProposal { file } => {
+            eefn::request_preview::RequestAction::Review(
+                eefn::request_preview::ReviewAction::ReviewProposal { file },
+            ) => {
                 let supplied = eefn::request_preview::read_proposal(file)?;
                 execute_request_command(
                     args,
@@ -3145,7 +3173,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Open { text, inference } => {
+            eefn::request_preview::RequestAction::Review(
+                eefn::request_preview::ReviewAction::Open { text, inference },
+            ) => {
                 execute_request_command(
                     args,
                     text,
@@ -3156,7 +3186,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::OpenProposal { file } => {
+            eefn::request_preview::RequestAction::Review(
+                eefn::request_preview::ReviewAction::OpenProposal { file },
+            ) => {
                 let input = eefn::request_preview::read_proposal(file)?;
                 execute_request_command(
                     args,
@@ -3168,19 +3200,23 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Draft { id } => {
+            eefn::request_preview::RequestAction::Review(
+                eefn::request_preview::ReviewAction::Draft { id },
+            ) => {
                 execute_draft_command(
                     args,
                     eefn::request_drafts::DraftCommand::Get { id: id.clone() },
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::RecoverResult {
-                id,
-                revision,
-                grant_id,
-                operation_id,
-            } => {
+            eefn::request_preview::RequestAction::Planning(
+                eefn::request_preview::PlanningAction::RecoverResult {
+                    id,
+                    revision,
+                    grant_id,
+                    operation_id,
+                },
+            ) => {
                 execute_recovery_command(
                     args,
                     eefn::request_recovery::RecoverCommand {
@@ -3192,13 +3228,15 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Abandon {
-                id,
-                revision,
-                grant_id,
-                acknowledge_effects_may_continue,
-                operation_id,
-            } => {
+            eefn::request_preview::RequestAction::Planning(
+                eefn::request_preview::PlanningAction::Abandon {
+                    id,
+                    revision,
+                    grant_id,
+                    acknowledge_effects_may_continue,
+                    operation_id,
+                },
+            ) => {
                 execute_abandonment_command(
                     args,
                     eefn::request_abandon::AbandonCommand {
@@ -3213,16 +3251,22 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Receipt { id, grant_id }
-            | eefn::request_preview::RequestAction::Result { id, grant_id }
-            | eefn::request_preview::RequestAction::StopReceipt { id, grant_id } => {
+            eefn::request_preview::RequestAction::Planning(
+                eefn::request_preview::PlanningAction::Receipt { id, grant_id },
+            )
+            | eefn::request_preview::RequestAction::Planning(
+                eefn::request_preview::PlanningAction::Result { id, grant_id },
+            )
+            | eefn::request_preview::RequestAction::Planning(
+                eefn::request_preview::PlanningAction::StopReceipt { id, grant_id },
+            ) => {
                 let query = match command {
-                    eefn::request_preview::RequestAction::Result { .. } => {
-                        eefn::request_receipt::QueryKind::Result
-                    }
-                    eefn::request_preview::RequestAction::StopReceipt { .. } => {
-                        eefn::request_receipt::QueryKind::Stop
-                    }
+                    eefn::request_preview::RequestAction::Planning(
+                        eefn::request_preview::PlanningAction::Result { .. },
+                    ) => eefn::request_receipt::QueryKind::Result,
+                    eefn::request_preview::RequestAction::Planning(
+                        eefn::request_preview::PlanningAction::StopReceipt { .. },
+                    ) => eefn::request_receipt::QueryKind::Stop,
                     _ => eefn::request_receipt::QueryKind::Receipt,
                 };
                 execute_request_receipt_command(
@@ -3235,12 +3279,14 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Execute {
-                id,
-                revision,
-                approval_digest,
-                operation_id,
-            } => {
+            eefn::request_preview::RequestAction::Planning(
+                eefn::request_preview::PlanningAction::Execute {
+                    id,
+                    revision,
+                    approval_digest,
+                    operation_id,
+                },
+            ) => {
                 execute_reviewed_command(
                     args,
                     eefn::request_execution::ExecuteCommand {
@@ -3254,7 +3300,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Answer { id, revision, text } => {
+            eefn::request_preview::RequestAction::Review(
+                eefn::request_preview::ReviewAction::Answer { id, revision, text },
+            ) => {
                 execute_draft_command(
                     args,
                     eefn::request_drafts::DraftCommand::Answer {
@@ -3265,12 +3313,14 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Resolve {
-                inference,
-                id,
-                revision,
-                operation_id,
-            } => {
+            eefn::request_preview::RequestAction::Review(
+                eefn::request_preview::ReviewAction::Resolve {
+                    inference,
+                    id,
+                    revision,
+                    operation_id,
+                },
+            ) => {
                 execute_resolution_command(
                     args,
                     eefn::request_resolution::ResolveCommand {
@@ -3284,12 +3334,14 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::Prepare {
-                inference,
-                id,
-                revision,
-                operation_id,
-            } => {
+            eefn::request_preview::RequestAction::Planning(
+                eefn::request_preview::PlanningAction::Prepare {
+                    inference,
+                    id,
+                    revision,
+                    operation_id,
+                },
+            ) => {
                 execute_preparation_command(
                     args,
                     eefn::request_preparation::PrepareCommand {
@@ -3303,26 +3355,28 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::SubmitProcess(input) => {
-                execute_concrete_command(args, input.command()?).await
-            }
-            eefn::request_preview::RequestAction::SubmitAudio(input) => {
-                execute_audio_command(args, input.command()?).await
-            }
-            eefn::request_preview::RequestAction::SubmitMicrophone(input) => {
-                execute_microphone_command(args, input.command()?).await
-            }
-            eefn::request_preview::RequestAction::SubmitCamera(input) => {
-                execute_camera_command(args, input.command()?).await
-            }
-            eefn::request_preview::RequestAction::Submit {
-                text,
-                title,
-                file,
-                template,
-                node,
-                operation_id,
-            } => {
+            eefn::request_preview::RequestAction::Submission(
+                eefn::request_preview::SubmissionAction::SubmitProcess(input),
+            ) => execute_concrete_command(args, input.command()?).await,
+            eefn::request_preview::RequestAction::Submission(
+                eefn::request_preview::SubmissionAction::SubmitAudio(input),
+            ) => execute_audio_command(args, input.command()?).await,
+            eefn::request_preview::RequestAction::Submission(
+                eefn::request_preview::SubmissionAction::SubmitMicrophone(input),
+            ) => execute_microphone_command(args, input.command()?).await,
+            eefn::request_preview::RequestAction::Submission(
+                eefn::request_preview::SubmissionAction::SubmitCamera(input),
+            ) => execute_camera_command(args, input.command()?).await,
+            eefn::request_preview::RequestAction::Submission(
+                eefn::request_preview::SubmissionAction::Submit {
+                    text,
+                    title,
+                    file,
+                    template,
+                    node,
+                    operation_id,
+                },
+            ) => {
                 let input = if let Some(file) = file {
                     eefn::request_planning::read_input(file)?
                 } else {
@@ -3352,7 +3406,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 )
                 .await
             }
-            eefn::request_preview::RequestAction::ReviseProposal { id, revision, file } => {
+            eefn::request_preview::RequestAction::Review(
+                eefn::request_preview::ReviewAction::ReviseProposal { id, revision, file },
+            ) => {
                 let input = eefn::request_preview::read_proposal(file)?;
                 execute_draft_command(
                     args,
@@ -3728,57 +3784,74 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                 } else if matches!(
                     command,
                     Commands::Requests {
-                        command: eefn::request_preview::RequestAction::Input { .. }
+                        command: eefn::request_preview::RequestAction::Input(
+                            eefn::request_preview::InputAction::Input { .. }
+                        )
                     }
                 ) {
                     println!("{}", eefn::request_input::input_reply(&value));
                 } else if matches!(
                     command,
                     Commands::Requests {
-                        command: eefn::request_preview::RequestAction::InterpretSaved { .. }
+                        command: eefn::request_preview::RequestAction::Input(
+                            eefn::request_preview::InputAction::InterpretSaved { .. }
+                        )
                     }
                 ) {
                     print!("{}", eefn::saved_input::render(&value)?);
                 } else if matches!(
                     command,
                     Commands::Requests {
-                        command: eefn::request_preview::RequestAction::InterpretNetwork { .. }
+                        command: eefn::request_preview::RequestAction::Input(
+                            eefn::request_preview::InputAction::InterpretNetwork { .. }
+                        )
                     }
                 ) {
                     print!("{}", eefn::interpreter_command::render(&value)?);
                 } else if matches!(
                     command,
                     Commands::Requests {
-                        command: eefn::request_preview::RequestAction::InterpreterResults { .. }
-                            | eefn::request_preview::RequestAction::RecoverInterpretation { .. }
+                        command: eefn::request_preview::RequestAction::Input(
+                            eefn::request_preview::InputAction::InterpreterResults { .. }
+                        ) | eefn::request_preview::RequestAction::Input(
+                            eefn::request_preview::InputAction::RecoverInterpretation { .. }
+                        )
                     }
                 ) {
                     print!("{}", eefn::interpreter_recovery_command::render(&value)?);
                 } else if matches!(
                     command,
                     Commands::Requests {
-                        command: eefn::request_preview::RequestAction::SaveInput { .. }
+                        command: eefn::request_preview::RequestAction::Input(
+                            eefn::request_preview::InputAction::SaveInput { .. }
+                        )
                     }
                 ) {
                     print!("{}", eefn::request_intent::render(&value)?);
                 } else if matches!(
                     command,
                     Commands::Requests {
-                        command: eefn::request_preview::RequestAction::SubmitAudio(_)
+                        command: eefn::request_preview::RequestAction::Submission(
+                            eefn::request_preview::SubmissionAction::SubmitAudio(_)
+                        )
                     }
                 ) {
                     print!("{}", eefn::audio_submission::render_node(&value)?);
                 } else if matches!(
                     command,
                     Commands::Requests {
-                        command: eefn::request_preview::RequestAction::SubmitMicrophone(_)
+                        command: eefn::request_preview::RequestAction::Submission(
+                            eefn::request_preview::SubmissionAction::SubmitMicrophone(_)
+                        )
                     }
                 ) {
                     print!("{}", eefn::microphone_submission::render_node(&value)?);
                 } else if matches!(
                     command,
                     Commands::Requests {
-                        command: eefn::request_preview::RequestAction::SubmitCamera(_)
+                        command: eefn::request_preview::RequestAction::Submission(
+                            eefn::request_preview::SubmissionAction::SubmitCamera(_)
+                        )
                     }
                 ) {
                     print!("{}", eefn::camera_submission::render_node(&value)?);
@@ -3859,7 +3932,9 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                 } else if matches!(
                     command,
                     Commands::Requests {
-                        command: eefn::request_preview::RequestAction::StopReceipt { .. }
+                        command: eefn::request_preview::RequestAction::Planning(
+                            eefn::request_preview::PlanningAction::StopReceipt { .. }
+                        )
                     }
                 ) {
                     print!("{}", eefn::request_stop_receipt::render(&value)?);
@@ -5192,7 +5267,10 @@ mod tests {
         ])
         .unwrap();
         let Some(Commands::Requests {
-            command: eefn::request_preview::RequestAction::SubmitAudio(source),
+            command:
+                eefn::request_preview::RequestAction::Submission(
+                    eefn::request_preview::SubmissionAction::SubmitAudio(source),
+                ),
         }) = args.command
         else {
             panic!("wrong audio authoring adapter")
@@ -5232,7 +5310,10 @@ mod tests {
             Args::try_parse_from(["eefn", "requests", "compile-saved", &job, "--revision", "1"])
                 .unwrap();
         let Some(Commands::Requests {
-            command: eefn::request_preview::RequestAction::CompileSaved { id, revision },
+            command:
+                eefn::request_preview::RequestAction::Planning(
+                    eefn::request_preview::PlanningAction::CompileSaved { id, revision },
+                ),
         }) = args.command
         else {
             panic!("Wrong saved compilation adapter")
@@ -5340,7 +5421,10 @@ mod tests {
         ])
         .unwrap();
         let Some(Commands::Requests {
-            command: eefn::request_preview::RequestAction::SubmitCamera(input),
+            command:
+                eefn::request_preview::RequestAction::Submission(
+                    eefn::request_preview::SubmissionAction::SubmitCamera(input),
+                ),
         }) = parsed.command
         else {
             panic!("Wrong camera authoring adapter")
@@ -5381,7 +5465,10 @@ mod tests {
         ])
         .unwrap();
         let Some(Commands::Requests {
-            command: eefn::request_preview::RequestAction::SubmitMicrophone(source),
+            command:
+                eefn::request_preview::RequestAction::Submission(
+                    eefn::request_preview::SubmissionAction::SubmitMicrophone(source),
+                ),
         }) = args.command
         else {
             panic!("Wrong microphone authoring adapter")
@@ -5404,7 +5491,10 @@ mod tests {
         }
         let defaults = Args::try_parse_from(["eefn", "requests", "submit-microphone"]).unwrap();
         let Some(Commands::Requests {
-            command: eefn::request_preview::RequestAction::SubmitMicrophone(source),
+            command:
+                eefn::request_preview::RequestAction::Submission(
+                    eefn::request_preview::SubmissionAction::SubmitMicrophone(source),
+                ),
         }) = defaults.command
         else {
             panic!("Wrong default microphone authoring adapter")
@@ -5664,11 +5754,13 @@ mod tests {
         let id = "00112233445566778899aabbccddeeff";
         let Some(Commands::Requests {
             command:
-                eefn::request_preview::RequestAction::InterpretSaved {
-                    id: parsed,
-                    operation_id,
-                    inference,
-                },
+                eefn::request_preview::RequestAction::Input(
+                    eefn::request_preview::InputAction::InterpretSaved {
+                        id: parsed,
+                        operation_id,
+                        inference,
+                    },
+                ),
         }) = Args::try_parse_from([
             "eefn",
             "requests",
@@ -5728,12 +5820,14 @@ mod tests {
         let parsed = Args::try_parse_from(args).unwrap();
         let Some(Commands::Requests {
             command:
-                eefn::request_preview::RequestAction::RecoverInterpretation {
-                    id: source,
-                    revision,
-                    grant_id,
-                    operation_id,
-                },
+                eefn::request_preview::RequestAction::Input(
+                    eefn::request_preview::InputAction::RecoverInterpretation {
+                        id: source,
+                        revision,
+                        grant_id,
+                        operation_id,
+                    },
+                ),
         }) = parsed.command
         else {
             panic!("Wrong recovery command")
@@ -5783,14 +5877,16 @@ mod tests {
             .unwrap();
             let Some(Commands::Requests {
                 command:
-                    eefn::request_preview::RequestAction::InterpretNetwork {
-                        id,
-                        stage: parsed_stage,
-                        revision,
-                        operation_id,
-                        preferences,
-                        inference,
-                    },
+                    eefn::request_preview::RequestAction::Input(
+                        eefn::request_preview::InputAction::InterpretNetwork {
+                            id,
+                            stage: parsed_stage,
+                            revision,
+                            operation_id,
+                            preferences,
+                            inference,
+                        },
+                    ),
             }) = parsed.command
             else {
                 panic!("Wrong interpreter command")
@@ -5831,7 +5927,10 @@ mod tests {
     #[test]
     fn save_input_cli_cannot_select_a_model_or_authorize_work() {
         let Some(Commands::Requests {
-            command: eefn::request_preview::RequestAction::SaveInput { text, operation_id },
+            command:
+                eefn::request_preview::RequestAction::Input(
+                    eefn::request_preview::InputAction::SaveInput { text, operation_id },
+                ),
         }) = Args::try_parse_from([
             "eefn",
             "requests",
@@ -5884,13 +5983,27 @@ mod tests {
                     panic!()
                 };
                 let inference = match command {
-                    eefn::request_preview::RequestAction::Preview { inference, .. }
-                    | eefn::request_preview::RequestAction::Review { inference, .. }
-                    | eefn::request_preview::RequestAction::Open { inference, .. }
-                    | eefn::request_preview::RequestAction::Input { inference, .. }
-                    | eefn::request_preview::RequestAction::Resolve { inference, .. }
-                    | eefn::request_preview::RequestAction::Prepare { inference, .. }
-                    | eefn::request_preview::RequestAction::Respond { inference, .. } => inference,
+                    eefn::request_preview::RequestAction::Review(
+                        eefn::request_preview::ReviewAction::Preview { inference, .. },
+                    )
+                    | eefn::request_preview::RequestAction::Review(
+                        eefn::request_preview::ReviewAction::Review { inference, .. },
+                    )
+                    | eefn::request_preview::RequestAction::Review(
+                        eefn::request_preview::ReviewAction::Open { inference, .. },
+                    )
+                    | eefn::request_preview::RequestAction::Input(
+                        eefn::request_preview::InputAction::Input { inference, .. },
+                    )
+                    | eefn::request_preview::RequestAction::Review(
+                        eefn::request_preview::ReviewAction::Resolve { inference, .. },
+                    )
+                    | eefn::request_preview::RequestAction::Planning(
+                        eefn::request_preview::PlanningAction::Prepare { inference, .. },
+                    )
+                    | eefn::request_preview::RequestAction::Input(
+                        eefn::request_preview::InputAction::Respond { inference, .. },
+                    ) => inference,
                     _ => panic!(),
                 };
                 assert_eq!(
@@ -6158,7 +6271,10 @@ mod tests {
         ])
         .unwrap();
         let Some(Commands::Requests {
-            command: eefn::request_preview::RequestAction::SubmitProcess(input),
+            command:
+                eefn::request_preview::RequestAction::Submission(
+                    eefn::request_preview::SubmissionAction::SubmitProcess(input),
+                ),
         }) = args.command
         else {
             panic!("wrong adapter")
