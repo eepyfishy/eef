@@ -544,6 +544,16 @@ impl crate::Runtime {
         pin: PolicyPin,
         participants: &Participants,
     ) -> Result<Reservation> {
+        self.reserve_interpreter_allowance_with_ceiling(task, pin, participants, None)
+            .await
+    }
+    pub(crate) async fn reserve_interpreter_allowance_with_ceiling(
+        &self,
+        task: Task,
+        pin: PolicyPin,
+        participants: &Participants,
+        maximum_execution_ms: Option<u64>,
+    ) -> Result<Reservation> {
         let permit = self.current_interpreter_permit(&task, participants).await?;
         self.config.edit_for_restart(|saved| {
             let settings = eefn::authentication::AuthenticationPolicy::parse(
@@ -558,12 +568,15 @@ impl crate::Runtime {
                 "Interpreter authentication changed before reservation"
             );
             Ok((
-                self.engine.store.reserve_interpreter_allowance(
-                    task,
-                    &pin,
-                    &permit,
-                    self.runtime_id(),
-                )?,
+                self.engine
+                    .store
+                    .reserve_interpreter_allowance_with_ceiling(
+                        task,
+                        &pin,
+                        &permit,
+                        self.runtime_id(),
+                        maximum_execution_ms,
+                    )?,
                 false,
             ))
         })

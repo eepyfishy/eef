@@ -70,6 +70,9 @@ pub struct Command {
     pub expected_revision: Option<u64>,
     pub operation_id: String,
     pub preferences: Preferences,
+    /// May only narrow the policy/node lease. Missing retains service limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maximum_execution_ms: Option<u64>,
 }
 impl Command {
     pub fn validate(&self, origin: &str) -> Result<()> {
@@ -77,6 +80,11 @@ impl Command {
         crate::job_commands::validate_operation_id(&self.operation_id)?;
         crate::network::validate_remote_node_id(origin)?;
         self.preferences.validate(origin)?;
+        ensure!(
+            self.maximum_execution_ms
+                .is_none_or(|v| (1..=crate::grants::MAX_DURATION_MS).contains(&v)),
+            "Invalid caller interpreter execution ceiling"
+        );
         ensure!(
             self.expected_revision.is_none_or(|v| v > 0 && v < u64::MAX)
                 && (self.stage == Stage::Initial || self.expected_revision.is_some()),
@@ -118,6 +126,8 @@ pub struct Attempt {
     pub provider: String,
     pub backend: String,
     pub model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_limit_ms: Option<u64>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,6 +172,13 @@ pub fn confirmed(value: &Value, node: &str, command: &Command) -> bool {
         crate::model_selection::validate_id(&r.attempt.model_id)?;
         ensure!(
             r.attempt.source_revision > 0
+                && r.attempt
+                    .execution_limit_ms
+                    .is_none_or(|v| (1..=crate::grants::MAX_DURATION_MS).contains(&v))
+                && command.maximum_execution_ms.is_none_or(|max| r
+                    .attempt
+                    .execution_limit_ms
+                    .is_some_and(|actual| actual <= max))
                 && command
                     .expected_revision
                     .is_none_or(|v| v == r.attempt.source_revision)
@@ -448,6 +465,11 @@ mod tests {
             "provider":null,"backend":null,"model_id":null}});
         let command: Command = serde_json::from_value(value.clone()).unwrap();
         command.validate("owner").unwrap();
+        for invalid in [0, crate::grants::MAX_DURATION_MS + 1, u64::MAX] {
+            let mut bad = command.clone();
+            bad.maximum_execution_ms = Some(invalid);
+            assert!(bad.validate("owner").is_err());
+        }
         for field in [
             "prompt",
             "messages",
@@ -484,6 +506,7 @@ mod tests {
                 expected_revision: None,
                 operation_id: uuid::Uuid::new_v4().to_string(),
                 preferences: Preferences::default(),
+                maximum_execution_ms: None,
             },
         };
         let value = unconfirmed(&request);

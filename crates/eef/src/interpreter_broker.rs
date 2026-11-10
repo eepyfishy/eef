@@ -23,6 +23,12 @@ fn owns(plan: &Plan, origin: &str) -> bool {
 fn preferences(command: &Command, record: &Record) -> Result<()> {
     let grant = &record.binding.grant;
     ensure!(
+        command
+            .maximum_execution_ms
+            .is_none_or(|v| grant.limits.max_execution_ms <= v),
+        "Retained interpreter attempt exceeds the caller ceiling; no replacement"
+    );
+    ensure!(
         command.preferences.matches(
             record.task()?.snapshot.request_context.origin_node(),
             &grant.executor_node,
@@ -166,6 +172,7 @@ impl Runtime {
                     .model_id
                     .clone()
                     .context("Missing interpreter model")?,
+                execution_limit_ms: Some(grant.limits.max_execution_ms),
             },
             success: applied,
             source_applied: applied,
@@ -369,7 +376,14 @@ impl Runtime {
             backend: selected.backend,
             model_id: selected.model_id,
         };
-        let outcome = self.exchange_interpreter(task, pin, &participants).await?;
+        let outcome = self
+            .exchange_interpreter_with_ceiling(
+                task,
+                pin,
+                &participants,
+                command.maximum_execution_ms,
+            )
+            .await?;
         let (record, plan, historical, requested) = match outcome {
             Exchange::Historical(record) => {
                 (*record, self.engine.store.get(&command.id)?, true, false)

@@ -359,6 +359,19 @@ impl JobStore {
         permit: &Permit,
         runtime: &str,
     ) -> Result<Reservation> {
+        self.reserve_interpreter_allowance_with_ceiling(task, pin, permit, runtime, None)
+    }
+    pub(crate) fn reserve_interpreter_allowance_with_ceiling(
+        &self,
+        task: Task,
+        pin: &PolicyPin,
+        permit: &Permit,
+        runtime: &str,
+        maximum_execution_ms: Option<u64>,
+    ) -> Result<Reservation> {
+        if maximum_execution_ms.is_some_and(|v| !(1..=eefn::grants::MAX_DURATION_MS).contains(&v)) {
+            bail!("Invalid caller interpreter execution ceiling")
+        }
         task.validate()?;
         eefn::interpreter_policy::uuid(runtime)?;
         let mut connection = self.connection.lock().expect("job journal");
@@ -376,6 +389,9 @@ impl JobStore {
                 bail!(
                     "Another interpreter intent already owns this source; inspect retained history"
                 )
+            }
+            if maximum_execution_ms.is_some_and(|v| old.binding.grant.limits.max_execution_ms > v) {
+                bail!("Retained interpreter attempt exceeds the caller ceiling; no replacement")
             }
             return Ok(Reservation::Existing(Box::new(old.clone())));
         }
@@ -423,6 +439,7 @@ impl JobStore {
             max_execution_ms: limits
                 .max_execution_ms
                 .min(permit.limits.max_duration_ms)
+                .min(maximum_execution_ms.unwrap_or(u64::MAX))
                 .min(
                     policy
                         .expires_at_ms

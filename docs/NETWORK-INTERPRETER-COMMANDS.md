@@ -44,6 +44,10 @@ restrict existing advertised, authorized models. They do not install models,
 assign roles or permissions, or bypass serving permission for a local provider.
 An unavailable explicit selection is refused without silently choosing another.
 
+The separate [caller-ceiling follow-up](INTERPRETER-CALLER-CEILING.md) adds
+`--inference-timeout-seconds` using the existing 20-second default and narrower
+service/grant limits. That increment awaits its own hosted validation.
+
 Reusing the same stage/source inspects retained history before checking current
 provider/model/policy availability. A completed checkpoint remains inspectable
 after provider loss or policy revocation. Changed source/receipt or conflicting

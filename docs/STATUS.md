@@ -3,6 +3,15 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: caller ceilings for network interpretation
+
+The [caller timing follow-up](INTERPRETER-CALLER-CEILING.md) restricts the existing
+service grant by the requesting operation's time budget, records the issued
+duration in the receipt, and refuses historical replay under a conflicting
+shorter ceiling. It adds no queue, permission, lease renewal or model dependency.
+Hosted validation is pending. It does not connect automatic input or complete
+recovery, physical operation or stable-release acceptance.
+
 ## In development: explicit network interpreter command path
 
 The [reference-only node command](NETWORK-INTERPRETER-COMMANDS.md) connects all

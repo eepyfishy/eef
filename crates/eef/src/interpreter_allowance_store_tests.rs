@@ -105,6 +105,77 @@ fn used(store: &JobStore) -> usize {
 }
 
 #[test]
+fn caller_ceiling_is_durable_charged_and_never_replaces_a_retained_attempt() {
+    let store = JobStore::in_memory().unwrap();
+    let runtime = uuid();
+    let pin = policy(&store, &runtime, limits());
+    let p = permit();
+    let task = input(&store, "input");
+    let before = store.usage().unwrap();
+    let source = store.get(&task.snapshot.job_id).unwrap();
+    for invalid in [0, eefn::grants::MAX_DURATION_MS + 1, u64::MAX] {
+        assert!(
+            store
+                .reserve_interpreter_allowance_with_ceiling(
+                    task.clone(),
+                    &pin,
+                    &p,
+                    &runtime,
+                    Some(invalid)
+                )
+                .is_err()
+        );
+        assert_eq!(store.usage().unwrap(), before);
+        assert_eq!(
+            json!(store.get(&task.snapshot.job_id).unwrap()),
+            json!(source)
+        );
+    }
+    let Reservation::New(reserved) = store
+        .reserve_interpreter_allowance_with_ceiling(task.clone(), &pin, &p, &runtime, Some(20_000))
+        .unwrap()
+    else {
+        panic!("Expected new allowance")
+    };
+    let grant = &reserved.record.binding.grant;
+    assert_eq!(grant.limits.max_execution_ms, 20_000);
+    assert_eq!(grant.expires_at_ms - grant.issued_at_ms, 20_000);
+    assert!(
+        reserved.deadline.saturating_duration_since(Instant::now())
+            <= Duration::from_millis(20_000)
+    );
+    let charged = store.interpreter_allowance_records().unwrap().1[&pin.id]
+        .charged
+        .clone();
+    assert_eq!(charged.execution_ms, 20_000);
+    assert_eq!(charged.calls, 1);
+    let before = store.usage().unwrap();
+    assert!(
+        store
+            .reserve_interpreter_allowance_with_ceiling(
+                task.clone(),
+                &pin,
+                &p,
+                &runtime,
+                Some(19_999)
+            )
+            .is_err()
+    );
+    assert_eq!(store.usage().unwrap(), before);
+    assert!(matches!(
+        store
+            .reserve_interpreter_allowance_with_ceiling(task, &pin, &p, &runtime, Some(20_000))
+            .unwrap(),
+        Reservation::Existing(_)
+    ));
+    store.interpreter_not_sent(reserved).unwrap();
+    assert_eq!(
+        store.interpreter_allowance_records().unwrap().1[&pin.id].charged,
+        charged
+    );
+}
+
+#[test]
 fn reservation_and_input_claim_are_atomic_and_reuse_never_returns_a_continuation() {
     let store = JobStore::in_memory().unwrap();
     let runtime = uuid();

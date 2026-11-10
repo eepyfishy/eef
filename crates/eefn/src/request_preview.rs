@@ -26,6 +26,8 @@ pub enum RequestAction {
     },
     /// Interpret an exact saved source through an owner-authorized network service; never execute tools.
     InterpretNetwork {
+        #[command(flatten)]
+        inference: crate::inference_budget::InferenceOptions,
         id: String,
         #[arg(long, value_enum, default_value = "initial")]
         stage: crate::interpreter_command::Stage,

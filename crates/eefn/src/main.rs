@@ -2863,6 +2863,7 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 .await
             }
             eefn::request_preview::RequestAction::InterpretNetwork {
+                inference,
                 id,
                 stage,
                 revision,
@@ -2879,6 +2880,13 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                             .clone()
                             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
                         preferences: preferences.clone(),
+                        maximum_execution_ms: Some(
+                            eefn::inference_budget::InferenceBudget::new(
+                                inference.inference_timeout_seconds,
+                            )
+                            .map_err(anyhow::Error::msg)?
+                            .grant_ceiling_ms(),
+                        ),
                     },
                 )
                 .await
@@ -5562,6 +5570,8 @@ mod tests {
                 "ollama",
                 "--model-id",
                 "chosen",
+                "--inference-timeout-seconds",
+                "5",
             ])
             .unwrap();
             let Some(Commands::Requests {
@@ -5572,6 +5582,7 @@ mod tests {
                         revision,
                         operation_id,
                         preferences,
+                        inference,
                     },
             }) = parsed.command
             else {
@@ -5587,8 +5598,16 @@ mod tests {
                 expected_revision: revision,
                 operation_id: operation_id.unwrap(),
                 preferences,
+                maximum_execution_ms: Some(
+                    eefn::inference_budget::InferenceBudget::new(
+                        inference.inference_timeout_seconds,
+                    )
+                    .unwrap()
+                    .grant_ceiling_ms(),
+                ),
             };
             command.validate("owner").unwrap();
+            assert_eq!(command.maximum_execution_ms, Some(5000));
         }
         for extra in [
             vec!["--prompt", "text"],

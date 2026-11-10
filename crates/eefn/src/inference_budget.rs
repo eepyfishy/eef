@@ -25,6 +25,12 @@ impl InferenceBudget {
     pub fn duration(self) -> Duration {
         Duration::from_secs(self.0)
     }
+    /// Caller timing can narrow a service grant, never raise its hard limit.
+    pub fn grant_ceiling_ms(self) -> u64 {
+        self.0
+            .saturating_mul(1000)
+            .min(crate::grants::MAX_DURATION_MS)
+    }
     /// Preserve existing backend headroom; the outer inference deadline wins.
     pub fn backend_seconds(self) -> u64 {
         30.max(self.0 + 10)
@@ -45,6 +51,10 @@ mod tests {
             let budget = InferenceBudget::new(value).unwrap();
             assert_eq!(budget.duration().as_secs(), value.unwrap_or(20));
             assert_eq!(budget.backend_seconds(), 30.max(value.unwrap_or(20) + 10));
+            assert_eq!(
+                budget.grant_ceiling_ms(),
+                (value.unwrap_or(20) * 1000).min(crate::grants::MAX_DURATION_MS)
+            );
         }
         for value in [0, 121, u64::MAX] {
             assert!(InferenceBudget::new(Some(value)).is_err());

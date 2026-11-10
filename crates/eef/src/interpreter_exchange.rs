@@ -68,6 +68,20 @@ impl Runtime {
         pin: PolicyPin,
         participants: &Participants,
     ) -> Result<Exchange> {
+        self.exchange_interpreter_with_ceiling(task, pin, participants, None)
+            .await
+    }
+    pub(crate) async fn exchange_interpreter_with_ceiling(
+        &self,
+        task: Task,
+        pin: PolicyPin,
+        participants: &Participants,
+        maximum_execution_ms: Option<u64>,
+    ) -> Result<Exchange> {
+        ensure!(
+            maximum_execution_ms.is_none_or(|v| (1..=eefn::grants::MAX_DURATION_MS).contains(&v)),
+            "Invalid caller interpreter execution ceiling"
+        );
         task.validate()?;
         ensure!(
             task.snapshot.request_context.origin_node() == participants.origin.node_id(),
@@ -84,6 +98,15 @@ impl Runtime {
                 ensure!(
                     json!(old) == json!(task),
                     "Interpreter source receipt conflicts; no replacement"
+                );
+                ensure!(
+                    maximum_execution_ms.is_none_or(|v| record
+                        .binding
+                        .grant
+                        .limits
+                        .max_execution_ms
+                        <= v),
+                    "Retained interpreter attempt exceeds the caller ceiling; no replacement"
                 );
                 return Ok(Exchange::Historical(Box::new(record)));
             }
@@ -103,7 +126,12 @@ impl Runtime {
             "Interpreter capacity cannot substitute another provider"
         );
         let reserved = match self
-            .reserve_interpreter_allowance(task, pin.clone(), participants)
+            .reserve_interpreter_allowance_with_ceiling(
+                task,
+                pin.clone(),
+                participants,
+                maximum_execution_ms,
+            )
             .await?
         {
             Reservation::Existing(record) => return Ok(Exchange::Historical(record)),

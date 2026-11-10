@@ -22,9 +22,55 @@ async fn request(f: &Fixture, stage: &str) -> (Task, Request) {
             },
             operation_id: task.snapshot.operation_id.clone(),
             preferences: Preferences::default(),
+            maximum_execution_ms: None,
         },
     };
     (task, request)
+}
+
+#[tokio::test]
+async fn caller_time_limit_reaches_the_original_grant_and_cannot_be_rewritten_by_replay() {
+    let f = Fixture::new().await;
+    let (_, mut command) = request(&f, "initial").await;
+    command.command.maximum_execution_ms = Some(20_000);
+    let result = f.services[0]
+        .interpreter_command(command.clone())
+        .await
+        .unwrap();
+    assert!(eefn::interpreter_command::confirmed_node(&result, &command));
+    assert_eq!(result["success"], true);
+    assert_eq!(result["result"]["attempt"]["execution_limit_ms"], 20_000);
+    let (attempts, accounts) = f
+        .runtime()
+        .engine
+        .store
+        .interpreter_allowance_records()
+        .unwrap();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].binding.grant.limits.max_execution_ms, 20_000);
+    assert_eq!(accounts[&f.pin.id].charged.execution_ms, 20_000);
+    let mut shorter = command.clone();
+    shorter.command.maximum_execution_ms = Some(19_999);
+    let refused = f.services[0].interpreter_command(shorter).await.unwrap();
+    assert_eq!(refused["success"], false);
+    assert_eq!(refused["error_code"], "coordinator_rejected");
+    let historical = f.services[0].interpreter_command(command).await.unwrap();
+    assert_eq!(historical["success"], true);
+    assert_eq!(historical["result"]["historical_snapshot"], true);
+    assert_eq!(historical["result"]["model_inference_requested"], false);
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        f.runtime()
+            .engine
+            .store
+            .interpreter_allowance_records()
+            .unwrap()
+            .1[&f.pin.id]
+            .charged
+            .execution_ms,
+        20_000
+    );
+    f.close().await;
 }
 
 #[tokio::test]
