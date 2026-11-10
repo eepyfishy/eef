@@ -13,14 +13,18 @@ Source review and hosted validation are pending. Automatic normal-input
 delegation and uncertain-result reconciliation remain open, alongside physical
 and full stable-release acceptance.
 
-## In development: applying live interpreter results
+## Accepted development checkpoint: applying live interpreter results
 
 The [source application increment](INTERPRETER-APPLICATION.md) consumes the
 internal exchange's live completion through initial review, clarification,
 method-question and deterministic method-compilation checkpoints. Current
 registrations, authentication, policy, source and original deadline remain
-fenced through the final journal write. Hosted validation is pending. No public
-broker command or automatic normal-input path is connected yet; uncertain-result
+fenced through the final journal write. Source `d43f5b9` passes all four jobs in
+the [hosted run](https://github.com/eepyfishy/eef/actions/runs/42722639395) and an
+independent source/log audit: 1,716 Windows/headless Rust tests, one ignored
+across 17 unfiltered groups, all 37 native suites and existing extra gates. This
+checkpoint contains no public command or automatic normal-input wiring. The
+explicit command follow-up above awaits its own validation; uncertain-result
 recovery, physical tests and the full stable-release gates remain open.
 
 ## Accepted development checkpoint: core interpreter service exchange

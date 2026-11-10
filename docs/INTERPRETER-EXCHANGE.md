@@ -5,10 +5,12 @@ the existing authenticated grant transport. Source `97fa922` passes all four
 jobs in the [hosted run](https://github.com/eepyfishy/eef/actions/runs/42637734975)
 and an independent source/log audit, including 1,711 Windows/headless Rust tests
 and all 37 native suites.
-It is not yet connected to ordinary user input or source promotion and adds no
-public inference command. The complete three-stage broker remains unfinished.
-The following [source application increment](INTERPRETER-APPLICATION.md) is in
-development and awaits its own hosted validation; it does not change the
+This exchange checkpoint contains no ordinary user input or source promotion
+wiring and adds no public inference command. The complete automatic broker
+remains unfinished. The following
+[source application increment](INTERPRETER-APPLICATION.md), accepted separately
+at `d43f5b9`, consumes live completions through review and deterministic
+compilation. It does not change the
 acceptance scope of this exchange checkpoint.
 The first hosted source failed compilation at an ignored timing fixture's
 journal constructor. The next revision compiled but Windows exposed a saved
@@ -42,8 +44,8 @@ intent. Unknown replies do not imply shared computation stopped.
 A successful reply must confirm the exact issued grant and match its durable
 observation. It returns an opaque in-process completion whose original job and
 capacity guards remain owned. Retained history cannot reconstruct this object.
-Until source promotion is integrated, dropping it retires initial ownership as
-unknown rather than automatically applying or replaying a proposal. Failed or
+Dropping an unconsumed completion retires initial ownership as unknown rather
+than automatically applying or replaying a proposal. Failed or
 malformed results cannot create a review, plan approval or tool execution.
 
 Synthetic tests connect two logical private nodes, one model-free and one with a

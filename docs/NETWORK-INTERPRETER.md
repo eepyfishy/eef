@@ -200,8 +200,13 @@ delegate yet. Internal [stop checkpoints](INTERPRETER-LIFECYCLE.md), accepted at
 `97fa922`, connect the ledger to private grant transport and active lifecycle.
 The exchange passes four hosted jobs, 1,711 Windows/headless Rust tests and all
 native gates. Its synthetic model-free input node verifies all three service
-stages, cancellation and no replay. Source promotion, public commands and normal
-input wiring remain missing; this is not complete broker or physical acceptance.
+stages, cancellation and no replay. The following
+[source handoff](INTERPRETER-APPLICATION.md), accepted at `d43f5b9`, passes all
+four hosted jobs, 1,716 Windows/headless Rust tests, all 37 native suites and an
+independent source/log audit. It applies live results through review and ordinary
+compilation with source/policy/session fences. Explicit public commands are in
+development; automatic input and explicit recovery remain open. This is not
+complete broker, physical or stable-release acceptance.
 
 An owner-approved service policy must make each inference authorization durable,
 identifiable and bounded before issuance. Record that it derives from a specific

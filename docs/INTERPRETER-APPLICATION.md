@@ -1,8 +1,11 @@
 # Live interpreter results and saved requests
 
 This is an internal development increment on top of the accepted
-[private service exchange](INTERPRETER-EXCHANGE.md). Hosted compilation and
-runtime validation are pending. No published installer, command, update feed or
+[private service exchange](INTERPRETER-EXCHANGE.md). Source `d43f5b9` passes all
+four jobs in the [hosted run](https://github.com/eepyfishy/eef/actions/runs/42722639395)
+and its independent source/log audit: 1,716 Windows/headless Rust tests, one
+ignored across 17 unfiltered groups, all 37 native suites and existing extra
+gates. No published installer, command, update feed or
 normal-input behavior changes in this increment.
 
 The backend can consume an in-process successful completion once, using the
