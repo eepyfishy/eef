@@ -33,7 +33,7 @@ struct Fixture {
     server: Option<tokio::task::JoinHandle<()>>,
     model: Arc<Model>,
     pin: PolicyPin,
-    services: Vec<eefn::NodeService>,
+    services: Vec<Arc<eefn::NodeService>>,
     _preview_guards: Vec<eefn::request_preview::PreviewGuard>,
     _dir: tempfile::TempDir,
 }
