@@ -109,6 +109,12 @@ its previous decision while the provider remains offline. The original claim's
 runtime attribution and charged inference ledger stay unchanged. This is hosted
 fixture coverage awaiting validation, not physical deployment acceptance.
 
+The first restart candidate `191288a` failed test compilation in run
+`42855147633`: the fixture redundantly unwrapped a `NodeClient` builder result
+that was already a client. Removing that extra call changes no assertions or
+production behavior; the failed source remains retained and fresh complete
+hosted acceptance is required.
+
 Remaining work includes complete command/restart acceptance and physical
 multi-PC tests, and investigation of the retained camera failure.
 Real-model/onboarding, continuous workloads, strong

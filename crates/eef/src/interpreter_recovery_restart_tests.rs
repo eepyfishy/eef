@@ -64,7 +64,6 @@ async fn restart_origin(f: &mut Fixture) {
         .with_grants(&f._dir.path().join("input-grants.db"), Default::default());
     // Open the existing journal and reconnect only the model-free source node.
     // No provider is restarted and no saved inference policy is broadened.
-    let client = client.unwrap();
     f.nodes
         .push(tokio::spawn(async move { client.connect_once().await }));
     f.services.push(service);
