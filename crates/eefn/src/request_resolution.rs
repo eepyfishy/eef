@@ -83,6 +83,8 @@ impl ResolutionEvidence {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ResolutionReport {
+    #[serde(default)]
+    network_interpreter: Option<Value>,
     schema_version: u32,
     report_type: String,
     node_id: String,
@@ -132,7 +134,6 @@ pub fn confirmed(report: &Value, node: &str, command: &ResolveCommand) -> bool {
         || report.automatically_retried
         || report.outcome_unknown
         || !report.proposal_saved
-        || report.interpretation_source != "node_selected_interpreter"
         || report.interpretation_context != "coordinator_disclosed_network"
         || report.error_code.is_some()
         || report.note.len() > 2048
@@ -156,6 +157,42 @@ pub fn confirmed(report: &Value, node: &str, command: &ResolveCommand) -> bool {
     let Some(evidence) = &revision.resolution else {
         return false;
     };
+    if let Some(network) = &report.network_interpreter {
+        return report.interpretation_source == "coordinator_interpreter_service"
+            && crate::network_interpretation::confirmed_receipt(
+                network,
+                node,
+                runtime,
+                &command.id,
+                crate::interpreter_command::Stage::Clarification,
+                Some(command.expected_revision),
+                &command.operation_id,
+            )
+            && network["success"] == true
+            && ["id", "revision", "status", "draft", "request_context"]
+                .iter()
+                .all(|key| network["result"]["view"][*key] == data[*key])
+            && network["result"]["attempt"]["backend"] == evidence.backend
+            && network["result"]["attempt"]["model_id"] == evidence.model_id
+            && network["result"]["historical_snapshot"] == report.reused
+            && network["result"]["model_inference_requested"] == report.model_inference_requested
+            && report.saving_attempted != report.reused
+            && receipt != &command.operation_id
+            && evidence.source_revision == command.expected_revision
+            && data["revision"]
+                .as_u64()
+                .is_some_and(|r| r > command.expected_revision)
+            && (report.reused
+                || (report.model_inference_requested
+                    && data["status"] == "review"
+                    && data["revision"].as_u64() == command.expected_revision.checked_add(1)
+                    && index + 1 == draft.proposals.len()));
+    }
+    if report.interpretation_source != "node_selected_interpreter"
+        && !(report.reused && report.interpretation_source == "retained_checkpoint")
+    {
+        return false;
+    }
     evidence.source_revision == command.expected_revision
         && data["revision"]
             .as_u64()

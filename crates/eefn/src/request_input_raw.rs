@@ -281,7 +281,8 @@ pub(super) fn confirmed_raw(r: &InputReport, node: &str, input: &str, text: &str
     }
     if let Some(interpreted) = &r.interpretation {
         let ir = interpretation_request(&request, runtime, id);
-        if !crate::saved_input::confirmed(interpreted, &ir)
+        if !matches_interpreter_policy(r.policy.unwrap(), interpreted)
+            || !crate::saved_input::confirmed(interpreted, &ir)
             || interpreted["source"].is_object()
                 && (interpreted["source"]["source_sha256"] != saved["result"]["source_sha256"]
                     || interpreted["source"]["request_context"]
@@ -290,7 +291,9 @@ pub(super) fn confirmed_raw(r: &InputReport, node: &str, input: &str, text: &str
         {
             return false;
         }
-        if interpreted["model_inference_requested"] == true
+        if (interpreted["model_inference_requested"] == true
+            || (interpreted["network_interpreter_requested"] == true
+                && interpreted["success"] == true))
             && (interpreted["source"]["revision"] != saved["result"]["revision"]
                 || !interpreted["source"]["record"].is_null()
                 || interpreted["checkpoint"]["record"]["claim"]["expected_revision"]
@@ -337,6 +340,7 @@ pub(super) fn confirmed_raw(r: &InputReport, node: &str, input: &str, text: &str
             && preparation_receipt(node, input, id)
                 .is_ok_and(|receipt| receipt == command.operation_id)
             && crate::request_preparation::confirmed(prepared, node, command)
+            && matches_interpreter_policy(r.policy.unwrap(), prepared)
             && confirms_preparation_source(prepared, &opened["result"], command)
             && prepared["runtime_id"] == runtime
             && r.result.as_ref() == Some(&prepared["result"])

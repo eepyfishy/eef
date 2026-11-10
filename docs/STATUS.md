@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: normal input through an optional network interpreter
+
+The [normal network workflow](NETWORK-INPUT-WORKFLOW.md) adds an explicit applied
+origin preference and source-bound remote receipts for initial input,
+clarification and method preparation. Model-free input nodes reuse the private
+broker, caller ceilings, journal and shared input admission. Existing settings
+remain local, and no failure retries a model or chooses a replacement provider.
+Source formatting and backend ownership checks pass; compilation, hosted
+regression and independent acceptance are pending. This does not complete
+retained-result recovery, real-model/onboarding, physical, installer or stable
+release gates.
+
 ## In development: shared admission for interpreter commands
 
 The [network command follow-up](NETWORK-INTERPRETER-COMMANDS.md) lets a normal

@@ -16,7 +16,7 @@ pub enum RequestAction {
         #[arg(long)]
         operation_id: Option<String>,
     },
-    /// Interpret one saved raw input with this node's selected interpreter; never execute tools.
+    /// Interpret one saved raw input using applied interpretation policy; never execute tools.
     InterpretSaved {
         #[command(flatten)]
         inference: crate::inference_budget::InferenceOptions,
@@ -405,6 +405,13 @@ impl NodeService {
         &self,
         request: crate::request_preparation::PrepareRequest,
     ) -> Value {
+        self.prepare_request_admitted(request, None).await
+    }
+    pub(crate) async fn prepare_request_admitted(
+        &self,
+        request: crate::request_preparation::PrepareRequest,
+        admission: Option<&tokio::sync::OwnedSemaphorePermit>,
+    ) -> Value {
         use crate::request_planning::{PlanningCommand, PlanningView};
         use crate::request_preparation::{PreparationCheckpoint, PreparationSource};
         let command = &request.command;
@@ -447,6 +454,10 @@ impl NodeService {
                 }
                 crate::request_preparation::messages(&view.draft, &view.draft.current().suggested_capabilities)
                     .map_err(|_| "invalid_preparation_context")?;
+                if binding.input_policy.network_interpreter {
+                    self.prepare_network_method(&request, &binding.runtime_id, budget, admission, &mut report).await?;
+                    return Ok(());
+                }
                 let _permit = self.preview.capacity.try_acquire().map_err(|_| "interpreter_busy")?;
                 let capabilities = tokio::select! {
                     biased;
@@ -510,6 +521,13 @@ impl NodeService {
         &self,
         request: crate::request_resolution::ResolveRequest,
     ) -> Value {
+        self.resolve_request_admitted(request, None).await
+    }
+    pub(crate) async fn resolve_request_admitted(
+        &self,
+        request: crate::request_resolution::ResolveRequest,
+        admission: Option<&tokio::sync::OwnedSemaphorePermit>,
+    ) -> Value {
         use crate::request_drafts::{DraftCommand, DraftRecord};
         use crate::request_resolution::ResolutionEvidence;
         let command = &request.command;
@@ -553,6 +571,7 @@ impl NodeService {
                 report["coordinator_operation_id"] = json!(inspection_id);
                 report["result"] = source;
                 report["reused"] = json!(true);
+                report["interpretation_source"] = json!("retained_checkpoint");
             } else {
                 if draft.answers.iter().any(|a| a.operation_id == command.operation_id) {
                     return Err("resolution_receipt_conflict");
@@ -568,6 +587,10 @@ impl NodeService {
                 }
                 // Fail oversized history before capacity, lookup or inference.
                 crate::interpretation::clarification_messages(&draft, &[]).map_err(|_| "invalid_clarification_context")?;
+                if binding.input_policy.network_interpreter {
+                    self.resolve_network_clarification(&request, &binding.runtime_id, budget, admission, &mut report).await?;
+                    return Ok(());
+                }
                 let _permit = self.preview.capacity.try_acquire().map_err(|_| "interpreter_busy")?;
                 let capabilities = tokio::select! {
                     biased;

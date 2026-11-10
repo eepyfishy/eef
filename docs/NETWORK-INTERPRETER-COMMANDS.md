@@ -16,7 +16,9 @@ runtime and confirmation checks. It adds no public endpoint, permission, worker
 or retry. Hosted regressions cover all three stages, competing public commands,
 invalid/stale targets, retirement and a discarded late reply. This is an
 integration prerequisite awaiting validation; ordinary input still needs its
-own privacy policy, remote-attribution contract and complete stage wiring.
+own acceptance. The [normal-input follow-up](NETWORK-INPUT-WORKFLOW.md) now adds
+an opt-in privacy preference, remote attribution and stage wiring; hosted
+validation of that source remains pending.
 
 The running input node can request one source-bound stage through an explicitly
 authorized interpreter service. It needs no installed model. The provider needs

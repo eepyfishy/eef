@@ -2,6 +2,17 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 export async function checkInterpreterCommandUnavailable({local,node,nodeId}) {
+ const before=await local(['requests','workflow','show']);
+ assert.equal(before.applied_policy.network_interpreter,false);
+ const enabled=await local(['requests','workflow','set','--network-interpreter','true']);
+ assert.equal(enabled.saved_policy.network_interpreter,true);
+ assert.equal(enabled.applied_policy.network_interpreter,false);
+ assert.equal(enabled.restart_required,true);assert.equal(enabled.restart_requested,false);
+ for(const key of ['prepare_on_input','resolve_on_answer'])assert.equal(enabled.saved_policy[key],before.saved_policy[key]);
+ const restored=await local(['requests','workflow','set','--network-interpreter','false']);
+ assert.equal(restored.saved_policy.network_interpreter,false);
+ assert.equal(restored.applied_policy.network_interpreter,false);
+ console.log('Network interpreter workflow policy command validation passed');
  const saved=await local(['requests','save-input','--text','Retain this model-free interpreter fixture']);
  assert.equal(saved.success,true);const id=saved.result.id,operation=randomUUID();
  const rejected=await local(['requests','interpret-network',id,'--operation-id',operation],false);

@@ -4,7 +4,8 @@ The [explicit network command path](NETWORK-INTERPRETER-COMMANDS.md) passes
 four-job hosted validation and independent source/log review at `19cc599` for
 initial, clarification and method stages. Caller-limited grants pass separately
 at `006e996`. These are unreleased development checkpoints; automatic
-normal-input integration remains planned.
+normal-input integration is now a separate
+[development follow-up](NETWORK-INPUT-WORKFLOW.md) awaiting hosted acceptance.
 
 Status: raw saving (`4ef0935`) and explicit saved-input interpretation
 (`2a49073`) passed all four hosted jobs. Automatic delegation remains planned.
@@ -28,7 +29,8 @@ another model call. Source identity/revision/digest are read and pinned by the
 backend; the user does not need to copy JSON or hashes. Missing models leave the
 input saved. Normal `requests input` integrates these stages at the accepted
 development checkpoint `2b650d6`. Automatic remote interpretation for
-model-free nodes is still unimplemented.
+model-free nodes is being integrated under an explicit origin preference; that
+follow-up remains unaccepted pending its own validation.
 
 ## Intended user behavior
 

@@ -19,15 +19,28 @@ pub struct InputPolicy {
     /// Missing in existing configs never enables new answer-triggered inference.
     #[serde(default)]
     pub resolve_on_answer: bool,
+    /// Explicit origin-owner consent to disclose interpretation context to an
+    /// authorized service. Older configs retain local interpretation.
+    #[serde(default)]
+    pub network_interpreter: bool,
+}
+pub(crate) fn matches_interpreter_policy(policy: InputPolicy, report: &Value) -> bool {
+    let remote = report
+        .get("network_interpreter")
+        .is_some_and(Value::is_object);
+    (!remote && report["network_interpreter_requested"] != true || policy.network_interpreter)
+        && !(policy.network_interpreter && report["model_inference_requested"] == true && !remote)
 }
 #[derive(Debug, clap::Subcommand)]
 pub enum PolicyAction {
     Show,
     Set {
-        #[arg(long,action=clap::ArgAction::Set,required_unless_present="resolve_on_answer")]
+        #[arg(long,action=clap::ArgAction::Set,required_unless_present_any=["resolve_on_answer","network_interpreter"])]
         prepare_on_input: Option<bool>,
         #[arg(long,action=clap::ArgAction::Set)]
         resolve_on_answer: Option<bool>,
+        #[arg(long,action=clap::ArgAction::Set)]
+        network_interpreter: Option<bool>,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,6 +52,8 @@ pub enum PolicyCommand {
         prepare_on_input: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resolve_on_answer: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        network_interpreter: Option<bool>,
     },
 }
 #[derive(Serialize, Deserialize)]
@@ -149,7 +164,10 @@ impl NodeService {
             PolicyCommand::Set {
                 prepare_on_input,
                 resolve_on_answer,
-            } => self.save_input_policy(prepare_on_input, resolve_on_answer)?,
+                network_interpreter,
+            } => {
+                self.save_input_policy(prepare_on_input, resolve_on_answer, network_interpreter)?
+            }
         };
         let saved: InputPolicy = serde_json::from_value(
             self.read_config()?
@@ -344,12 +362,15 @@ impl NodeService {
             report["preparation_command"] = json!(command);
             report["status"] = json!("preparation_not_confirmed");
             let prepared = self
-                .prepare_request(crate::request_preparation::PrepareRequest {
-                    schema_version: 1,
-                    expected_node_id: self.node_id.clone(),
-                    command: command.clone(),
-                    inference_timeout_seconds: request.inference_timeout_seconds,
-                })
+                .prepare_request_admitted(
+                    crate::request_preparation::PrepareRequest {
+                        schema_version: 1,
+                        expected_node_id: self.node_id.clone(),
+                        command: command.clone(),
+                        inference_timeout_seconds: request.inference_timeout_seconds,
+                    },
+                    Some(admission),
+                )
                 .await;
             report["preparation"] = prepared.clone();
             report["outcome_unknown"] = prepared["outcome_unknown"].clone();
@@ -717,12 +738,14 @@ mod tests {
         assert!(confirmed_policy(&shown, "node"));
         assert_eq!(shown["saved_policy"]["prepare_on_input"], false);
         assert_eq!(shown["saved_policy"]["resolve_on_answer"], false);
+        assert_eq!(shown["saved_policy"]["network_interpreter"], false);
         assert_eq!(shown["restart_required"], false);
         let before = std::fs::read(&path).unwrap();
         assert_eq!(
             policy(PolicyCommand::Set {
                 prepare_on_input: Some(false),
                 resolve_on_answer: None,
+                network_interpreter: None,
             })["changed"],
             false
         );
@@ -730,6 +753,7 @@ mod tests {
         let saved = policy(PolicyCommand::Set {
             prepare_on_input: Some(true),
             resolve_on_answer: None,
+            network_interpreter: None,
         });
         assert!(confirmed_policy(&saved, "node"));
         assert_eq!(saved["applied_policy"]["prepare_on_input"], false);
@@ -739,6 +763,7 @@ mod tests {
             policy(PolicyCommand::Set {
                 prepare_on_input: Some(true),
                 resolve_on_answer: None,
+                network_interpreter: None,
             })["changed"],
             false
         );
@@ -746,6 +771,7 @@ mod tests {
         let answer_policy = policy(PolicyCommand::Set {
             prepare_on_input: None,
             resolve_on_answer: Some(true),
+            network_interpreter: None,
         });
         assert_eq!(answer_policy["saved_policy"]["prepare_on_input"], true);
         assert_eq!(answer_policy["saved_policy"]["resolve_on_answer"], true);
@@ -753,6 +779,7 @@ mod tests {
         policy(PolicyCommand::Set {
             prepare_on_input: None,
             resolve_on_answer: Some(false),
+            network_interpreter: None,
         });
         assert!(
             service
@@ -761,7 +788,8 @@ mod tests {
                     expected_node_id: "node".into(),
                     command: PolicyCommand::Set {
                         prepare_on_input: None,
-                        resolve_on_answer: None
+                        resolve_on_answer: None,
+                        network_interpreter: None,
                     }
                 })
                 .is_err()
@@ -776,6 +804,21 @@ mod tests {
             },
         );
         assert_eq!(policy(PolicyCommand::Show)["restart_required"], false);
+        let network = policy(PolicyCommand::Set {
+            prepare_on_input: None,
+            resolve_on_answer: None,
+            network_interpreter: Some(true),
+        });
+        assert!(confirmed_policy(&network, "node"));
+        assert_eq!(network["saved_policy"]["network_interpreter"], true);
+        assert_eq!(network["applied_policy"]["network_interpreter"], false);
+        assert_eq!(network["restart_required"], true);
+        assert_eq!(network["restart_requested"], false);
+        policy(PolicyCommand::Set {
+            prepare_on_input: None,
+            resolve_on_answer: None,
+            network_interpreter: Some(false),
+        });
         assert!(serde_json::from_value::<InputPolicy>(json!({"prepare_on_input":"true"})).is_err());
         assert!(
             serde_json::from_value::<InputPolicy>(json!({"prepare_on_input":true,"approve":true}))
@@ -789,6 +832,7 @@ mod tests {
                     command: PolicyCommand::Set {
                         prepare_on_input: Some(false),
                         resolve_on_answer: None,
+                        network_interpreter: None,
                     }
                 })
                 .is_err()

@@ -101,6 +101,7 @@ enum Failure {
     ModelMismatch,
     PromotionUnconfirmed,
     Timeout,
+    NetworkInterpreterUnconfirmed,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,6 +125,10 @@ struct Report {
     execution_authorized: bool,
     dispatched: bool,
     automatically_retried: bool,
+    #[serde(default)]
+    network_interpreter_requested: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    network_interpreter: Option<Value>,
 }
 impl Report {
     fn new(request: &Request) -> Self {
@@ -147,6 +152,8 @@ impl Report {
             execution_authorized: false,
             dispatched: false,
             automatically_retried: false,
+            network_interpreter_requested: false,
+            network_interpreter: None,
         }
     }
 }
@@ -184,6 +191,12 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
         {
             return false;
         }
+    }
+    if r.network_interpreter_requested {
+        return confirmed_network(&r, request);
+    }
+    if r.network_interpreter.is_some() {
+        return false;
     }
     if r.historical_snapshot && r.source.as_ref().is_none_or(|s| s.record.is_none()) {
         return false;
@@ -238,6 +251,59 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
         r.error_code.is_some()
     }
 }
+fn confirmed_network(r: &Report, request: &Request) -> bool {
+    if r.historical_snapshot
+        || r.claim_attempted
+        || r.claim_confirmed
+        || r.model_inference_requested
+        || r.promotion_attempted
+    {
+        return false;
+    }
+    let Some(source) = &r.source else {
+        return false;
+    };
+    if source.record.is_some() || source.status != "review" {
+        return false;
+    }
+    let Some(receipt) = &r.network_interpreter else {
+        return !r.success && r.checkpoint.is_none() && r.error_code.is_some() && r.outcome_unknown;
+    };
+    let Ok(budget) =
+        crate::inference_budget::InferenceBudget::new(request.command.inference_timeout_seconds)
+    else {
+        return false;
+    };
+    let command = crate::network_interpretation::request(
+        &r.node_id,
+        &r.runtime_id,
+        &r.request_id,
+        crate::interpreter_command::Stage::Initial,
+        Some(source.revision),
+        &r.operation_id,
+        budget,
+    );
+    if !crate::interpreter_command::confirmed_node(receipt, &command) {
+        return false;
+    }
+    if !r.success {
+        return r.error_code.is_some()
+            && r.checkpoint.is_none()
+            && (r.outcome_unknown || receipt["outcome_unknown"] == false);
+    }
+    r.error_code.is_none()
+        && !r.outcome_unknown
+        && receipt["success"] == true
+        && receipt["result"]["historical_snapshot"] == false
+        && r.checkpoint.as_ref().is_some_and(|c| {
+            !c.reused
+                && c.record.state == State::Promoted
+                && c.record.claim.origin_runtime_id == r.runtime_id
+                && c.record.claim.operation_id == r.operation_id
+                && c.record.claim.expected_revision == source.revision
+                && json!(c) == receipt["result"]["initial_checkpoint"]
+        })
+}
 pub fn unconfirmed(request: &Request) -> Value {
     let mut report = Report::new(request);
     report.error_code = Some(Failure::ClaimUnconfirmed);
@@ -268,7 +334,7 @@ impl crate::NodeService {
     pub(crate) async fn interpret_saved_input_admitted(
         &self,
         request: Request,
-        _admission: &tokio::sync::OwnedSemaphorePermit,
+        admission: &tokio::sync::OwnedSemaphorePermit,
     ) -> Result<Value> {
         request.validate()?;
         ensure!(
@@ -291,7 +357,7 @@ impl crate::NodeService {
         let outcome = crate::request_input::within_runtime(&mut generation, &runtime, async {
             Ok(tokio::time::timeout(
                 Duration::from_secs(budget.extend_seconds(75, 1)),
-                self.saved_input_inner(&request, &engine, budget, &stages, &mut report),
+                self.saved_input_inner(&request, &engine, budget, &stages, &mut report, admission),
             )
             .await)
         })
@@ -307,6 +373,7 @@ impl crate::NodeService {
             report.error_code = Some(error);
             report.outcome_unknown |= report.model_inference_requested
                 || report.promotion_attempted
+                || (report.network_interpreter_requested && report.network_interpreter.is_none())
                 || (report.claim_attempted
                     && !matches!(error, Failure::ClaimNotSent | Failure::ClaimRefused));
         }
@@ -324,6 +391,7 @@ impl crate::NodeService {
         budget: crate::inference_budget::InferenceBudget,
         generation: &tokio::sync::watch::Receiver<Option<String>>,
         report: &mut Report,
+        admission: &tokio::sync::OwnedSemaphorePermit,
     ) -> std::result::Result<(), Failure> {
         let lookup = tokio::time::timeout(
             Duration::from_secs(10),
@@ -409,6 +477,16 @@ impl crate::NodeService {
         if source.status != "review" {
             return Err(Failure::Cancelled);
         }
+        if self
+            .input_workflow_runtime()
+            .is_some_and(|(runtime, policy, _)| {
+                runtime == request.expected_runtime_id && policy.network_interpreter
+            })
+        {
+            return self
+                .saved_network_input(request, &source, budget, report, admission)
+                .await;
+        }
         let candidates = engine.interpreter_candidates();
         if candidates.is_empty() {
             return Err(Failure::InterpreterUnavailable);
@@ -491,6 +569,63 @@ impl crate::NodeService {
             return Err(Failure::PromotionUnconfirmed);
         }
         report.checkpoint = Some(promoted);
+        report.success = true;
+        report.error_code = None;
+        Ok(())
+    }
+    async fn saved_network_input(
+        &self,
+        request: &Request,
+        source: &Source,
+        budget: crate::inference_budget::InferenceBudget,
+        report: &mut Report,
+        admission: &tokio::sync::OwnedSemaphorePermit,
+    ) -> std::result::Result<(), Failure> {
+        let command = crate::network_interpretation::request(
+            &self.node_id,
+            &request.expected_runtime_id,
+            &source.id,
+            crate::interpreter_command::Stage::Initial,
+            Some(source.revision),
+            &request.command.operation_id,
+            budget,
+        );
+        report.network_interpreter_requested = true;
+        report.outcome_unknown = true;
+        let receipt = self
+            .network_interpretation(command, Some(admission))
+            .await
+            .map_err(|_| Failure::NetworkInterpreterUnconfirmed)?;
+        report.outcome_unknown = receipt["outcome_unknown"] == true;
+        report.network_interpreter = Some(receipt.clone());
+        if receipt["success"] != true {
+            return Err(Failure::NetworkInterpreterUnconfirmed);
+        }
+        // A concurrent retained result is for inspection, never a fresh input
+        // continuation. Repeating the outer receipt will inspect ordinary history.
+        if receipt["result"]["historical_snapshot"] != false {
+            return Err(Failure::ExistingAttempt);
+        }
+        report.outcome_unknown = true;
+        let checkpoint: Checkpoint =
+            serde_json::from_value(receipt["result"]["initial_checkpoint"].clone())
+                .map_err(|_| Failure::NetworkInterpreterUnconfirmed)?;
+        checkpoint
+            .validate(&checkpoint.record.claim, &self.node_id)
+            .map_err(|_| Failure::NetworkInterpreterUnconfirmed)?;
+        if checkpoint.reused
+            || checkpoint.record.state != State::Promoted
+            || checkpoint.record.input != source.input
+            || checkpoint.record.request_context != source.request_context
+            || checkpoint.record.claim.expected_revision != source.revision
+            || checkpoint.record.claim.source_sha256 != source.source_sha256
+            || checkpoint.record.claim.origin_runtime_id != request.expected_runtime_id
+            || checkpoint.record.claim.operation_id != request.command.operation_id
+        {
+            return Err(Failure::NetworkInterpreterUnconfirmed);
+        }
+        report.checkpoint = Some(checkpoint);
+        report.outcome_unknown = false;
         report.success = true;
         report.error_code = None;
         Ok(())

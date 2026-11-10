@@ -493,6 +493,8 @@ pub(crate) fn checkpoint_submission(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PrepareReport {
+    #[serde(default)]
+    network_interpreter: Option<Value>,
     schema_version: u32,
     report_type: String,
     node_id: String,
@@ -550,6 +552,27 @@ pub fn confirmed(report: &Value, node: &str, command: &PrepareCommand) -> bool {
     let Ok(Some(checkpoint)) = saved_checkpoint(&view, command) else {
         return false;
     };
+    if let Some(network) = &r.network_interpreter {
+        return crate::network_interpretation::confirmed_receipt(
+            network,
+            node,
+            runtime,
+            &command.id,
+            crate::interpreter_command::Stage::Method,
+            Some(command.expected_revision),
+            &command.operation_id,
+        ) && network["success"] == true
+            && network["result"]["view"] == *data
+            && network["result"]["historical_snapshot"] == r.inspection_only
+            && network["result"]["model_inference_requested"] == r.model_inference_requested
+            && r.saving_attempted != r.inspection_only
+            && receipt == &command.operation_id
+            && if r.inspection_only {
+                view.revision > command.expected_revision
+            } else {
+                r.model_inference_requested && confirmed_checkpoint(data, node, &checkpoint)
+            };
+    }
     if r.inspection_only {
         !r.saving_attempted
             && !r.model_inference_requested

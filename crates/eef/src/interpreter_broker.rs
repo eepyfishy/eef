@@ -176,6 +176,13 @@ impl Runtime {
             },
             success: applied,
             source_applied: applied,
+            initial_checkpoint: if applied && command.stage == Stage::Initial {
+                Some(serde_json::from_value(
+                    crate::request_interpretation::checkpoint(plan, historical)?,
+                )?)
+            } else {
+                None
+            },
             historical_snapshot: historical,
             model_inference_requested: requested,
             outcome_unknown: matches!(

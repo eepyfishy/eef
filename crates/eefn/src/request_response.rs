@@ -220,6 +220,7 @@ impl NodeService {
                     policy,
                     request.inference_timeout_seconds,
                     &mut report,
+                    &_permit,
                 ),
             )
             .await
@@ -257,6 +258,7 @@ impl NodeService {
         policy: InputPolicy,
         inference_timeout_seconds: Option<u64>,
         report: &mut Value,
+        admission: &tokio::sync::OwnedSemaphorePermit,
     ) -> std::result::Result<(), &'static str> {
         let source = self
             .draft_command(DraftRequest {
@@ -368,12 +370,15 @@ impl NodeService {
             report["resolution_command"] = json!(resolution_command);
             report["status"] = json!("resolution_not_confirmed");
             let resolved = self
-                .resolve_request(crate::request_resolution::ResolveRequest {
-                    schema_version: 1,
-                    expected_node_id: self.node_id.clone(),
-                    command: resolution_command.clone(),
-                    inference_timeout_seconds,
-                })
+                .resolve_request_admitted(
+                    crate::request_resolution::ResolveRequest {
+                        schema_version: 1,
+                        expected_node_id: self.node_id.clone(),
+                        command: resolution_command.clone(),
+                        inference_timeout_seconds,
+                    },
+                    Some(admission),
+                )
                 .await;
             report["resolution"] = resolved.clone();
             report["outcome_unknown"] = resolved["outcome_unknown"].clone();
@@ -410,12 +415,15 @@ impl NodeService {
                 report["preparation_command"] = json!(preparation_command);
                 report["status"] = json!("preparation_not_confirmed");
                 let prepared = self
-                    .prepare_request(crate::request_preparation::PrepareRequest {
-                        schema_version: 1,
-                        expected_node_id: self.node_id.clone(),
-                        command: preparation_command.clone(),
-                        inference_timeout_seconds,
-                    })
+                    .prepare_request_admitted(
+                        crate::request_preparation::PrepareRequest {
+                            schema_version: 1,
+                            expected_node_id: self.node_id.clone(),
+                            command: preparation_command.clone(),
+                            inference_timeout_seconds,
+                        },
+                        Some(admission),
+                    )
                     .await;
                 report["preparation"] = prepared.clone();
                 report["outcome_unknown"] = prepared["outcome_unknown"].clone();
@@ -576,6 +584,8 @@ pub fn confirmed(value: &Value, node: &str, command: &RespondCommand) -> bool {
                 && stage_receipt(false, node, command, c.expected_revision)
                     .is_ok_and(|id| id == c.operation_id)
                 && crate::request_resolution::confirmed(v, node, c)
+                && r.policy
+                    .is_some_and(|p| crate::request_input::matches_interpreter_policy(p, v))
                 && resolution_source(v, a, c)
                 && v["runtime_id"].as_str() == r.runtime_id.as_deref()
         }
@@ -612,6 +622,8 @@ pub fn confirmed(value: &Value, node: &str, command: &RespondCommand) -> bool {
                 && stage_receipt(true, node, command, c.expected_revision)
                     .is_ok_and(|id| id == c.operation_id)
                 && crate::request_preparation::confirmed(v, node, c)
+                && r.policy
+                    .is_some_and(|p| crate::request_input::matches_interpreter_policy(p, v))
                 && v["runtime_id"].as_str() == r.runtime_id.as_deref()
                 && crate::request_input::confirms_preparation_source(v, &resolved["result"], c)
         }
@@ -921,6 +933,7 @@ mod tests {
                 InputPolicy {
                     prepare_on_input: true,
                     resolve_on_answer: true,
+                    network_interpreter: false,
                 },
             );
             let command = command();
@@ -994,6 +1007,7 @@ mod tests {
         let policy = InputPolicy {
             prepare_on_input: true,
             resolve_on_answer: true,
+            network_interpreter: false,
         };
         let guard = service.attach_preview_runtime_with_policy(
             &engine,

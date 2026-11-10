@@ -20,6 +20,12 @@ configuration. Missing node/interpreter/coordinator is an explicit failure.
 
 ## Policy and states
 
+The [network interpretation follow-up](NETWORK-INPUT-WORKFLOW.md), awaiting its
+own hosted validation, adds `workflow set --network-interpreter true|false`.
+Missing values default to local interpretation. Only applied runtime policy
+routes initial input, clarification and preparation through an authorized
+network service; saving the preference alone does not disclose input remotely.
+
 Fresh/example configurations set `input_workflow.prepare_on_input: true`.
 Older/custom configurations missing this field stay review-only (`false`).
 The subsequent [answer workflow](ANSWER-WORKFLOW.md) adds independently configurable

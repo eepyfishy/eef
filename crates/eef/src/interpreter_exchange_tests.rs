@@ -25,6 +25,7 @@ struct Model {
     hold: AtomicBool,
     bad: AtomicBool,
     method: AtomicBool,
+    question: AtomicBool,
     gate: tokio::sync::Semaphore,
 }
 struct Fixture {
@@ -52,6 +53,9 @@ impl Fixture {
         self.runtime.as_ref().unwrap()
     }
     async fn new() -> Self {
+        Self::with_input_policy(Default::default()).await
+    }
+    async fn with_input_policy(input_policy: eefn::request_input::InputPolicy) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let model = Arc::new(Model {
             calls: AtomicUsize::new(0),
@@ -59,6 +63,7 @@ impl Fixture {
             hold: AtomicBool::new(false),
             bad: AtomicBool::new(false),
             method: AtomicBool::new(false),
+            question: AtomicBool::new(false),
             gate: tokio::sync::Semaphore::new(0),
         });
         let called = model.clone();
@@ -80,7 +85,7 @@ impl Fixture {
                         let text = if model.bad.load(Ordering::SeqCst) {
                             "broken model output".into()
                         } else if body["format"].is_object() {
-                            proposal(false).to_string()
+                            proposal(model.question.load(Ordering::SeqCst)).to_string()
                         } else if model.method.load(Ordering::SeqCst) {
                             json!({"schema_version":1,"method":{"schema_version":1,
                                 "template":"system_info","params":{},"constraints":{}},"clarification":null}).to_string()
@@ -128,6 +133,12 @@ impl Fixture {
             settings["node_id"] = json!(node);
             settings["name"] = json!("Exchange fixture");
             settings["permissions"]["interpreter_sharing"] = json!(serving);
+            let applied_input_policy = if serving {
+                Default::default()
+            } else {
+                input_policy
+            };
+            settings["input_workflow"] = json!(applied_input_policy);
             settings["models"] = json!({"provider":"ollama","ollama":{"base_url":url,"selected":if serving{vec![selected.clone()]}else{vec![]}},"llamacpp":{"slots":[]}});
             let path = dir.path().join(format!("{node}.json"));
             eefn::setup::write_json(&path, &settings).unwrap();
@@ -151,7 +162,11 @@ impl Fixture {
                     .with_service(service.clone()),
             );
             let client_config:eefn::NodeClientConfig=serde_json::from_value(json!({"node_id":node,"auth_mode":"node_credential","psk":keys[node],"coordinator_certificate":identity.certificate,"endpoints":[format!("127.0.0.1:{}",runtime.node_server.port())],"ollama_url":url,"ollama_models":if serving{vec![selected]}else{vec![]},"heartbeat_seconds":0.2})).unwrap();
-            preview_guards.push(service.attach_preview_runtime(&engine, generation.clone()));
+            preview_guards.push(service.attach_preview_runtime_with_policy(
+                &engine,
+                generation.clone(),
+                applied_input_policy,
+            ));
             let client = eefn::NodeClient::new(client_config, engine)
                 .unwrap()
                 .with_submissions(service.submissions.clone())

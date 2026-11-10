@@ -140,6 +140,9 @@ pub struct Report {
     pub attempt: Attempt,
     pub success: bool,
     pub source_applied: bool,
+    /// Actual source-bound coordinator checkpoint, never a reconstructed grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_checkpoint: Option<crate::request_interpretation::Checkpoint>,
     pub historical_snapshot: bool,
     pub model_inference_requested: bool,
     pub outcome_unknown: bool,
@@ -201,6 +204,36 @@ pub fn confirmed(value: &Value, node: &str, command: &Command) -> bool {
                 && (r.historical_snapshot || r.attempt.operation_id == command.operation_id),
             "Interpreter attempt differs"
         );
+        if let Some(c) = &r.initial_checkpoint {
+            c.validate(&c.record.claim, node)?;
+            let interpreter = c
+                .record
+                .claim
+                .interpreter
+                .as_ref()
+                .context("Missing interpreter")?;
+            ensure!(
+                command.stage == Stage::Initial
+                    && r.source_applied
+                    && c.id == command.id
+                    && c.record.claim.operation_id == r.attempt.operation_id
+                    && c.record.claim.expected_revision == r.attempt.source_revision
+                    && c.reused == r.historical_snapshot
+                    && interpreter.node_id == r.attempt.provider
+                    && interpreter.backend == r.attempt.backend
+                    && interpreter.model_id == r.attempt.model_id,
+                "Interpreter checkpoint differs from its attempt"
+            );
+            let view = r.view.as_ref().context("Missing checkpoint review")?;
+            ensure!(
+                view["id"] == c.id
+                    && view["revision"] == c.revision
+                    && view["status"] == c.status
+                    && view["draft"] == serde_json::json!(c.draft)
+                    && view["request_context"] == serde_json::json!(c.record.request_context),
+                "Interpreter checkpoint differs from its review"
+            );
+        }
         if let Some(view) = r.view {
             ensure!(
                 crate::request_planning::confirmed(

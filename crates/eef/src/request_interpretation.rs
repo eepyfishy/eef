@@ -15,7 +15,7 @@ pub(crate) enum Transition {
     Interrupt,
 }
 
-fn checkpoint(plan: &Plan, reused: bool) -> Result<serde_json::Value> {
+pub(crate) fn checkpoint(plan: &Plan, reused: bool) -> Result<serde_json::Value> {
     let record = plan
         .input_interpretation
         .as_deref()

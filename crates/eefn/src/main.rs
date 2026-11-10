@@ -11,6 +11,60 @@ use eefn::{
 use serde::Deserialize;
 use tracing::{info, warn};
 
+#[cfg(test)]
+mod network_interpreter_policy_cli_tests {
+    use super::*;
+    #[test]
+    fn network_interpreter_preference_accepts_an_explicit_boolean_without_other_patches() {
+        for value in ["true", "false"] {
+            let args = Args::try_parse_from([
+                "eefn",
+                "requests",
+                "workflow",
+                "set",
+                "--network-interpreter",
+                value,
+            ])
+            .unwrap();
+            let Some(Commands::Requests {
+                command:
+                    eefn::request_preview::RequestAction::Workflow {
+                        command:
+                            eefn::request_input::PolicyAction::Set {
+                                prepare_on_input: None,
+                                resolve_on_answer: None,
+                                network_interpreter: Some(enabled),
+                            },
+                    },
+            }) = args.command
+            else {
+                panic!("Expected one explicit network preference");
+            };
+            assert_eq!(enabled, value == "true");
+        }
+        for input in [
+            vec!["eefn", "requests", "workflow", "set"],
+            vec![
+                "eefn",
+                "requests",
+                "workflow",
+                "set",
+                "--network-interpreter",
+            ],
+            vec![
+                "eefn",
+                "requests",
+                "workflow",
+                "set",
+                "--network-interpreter",
+                "yes",
+            ],
+        ] {
+            assert!(Args::try_parse_from(input).is_err());
+        }
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "eefn", version, about = "Native eef node")]
 struct Args {
@@ -593,9 +647,11 @@ async fn execute_input_policy_command(
         PolicyAction::Set {
             prepare_on_input,
             resolve_on_answer,
+            network_interpreter,
         } => PolicyCommand::Set {
             prepare_on_input: *prepare_on_input,
             resolve_on_answer: *resolve_on_answer,
+            network_interpreter: *network_interpreter,
         },
     };
     let lock = eefn::setup::instance_lock(&args.config)?;
@@ -635,10 +691,13 @@ async fn execute_input_policy_command(
         PolicyAction::Set {
             prepare_on_input,
             resolve_on_answer,
+            network_interpreter,
         } => {
             prepare_on_input.is_none_or(|p| report["saved_policy"]["prepare_on_input"] == p)
                 && resolve_on_answer
                     .is_none_or(|p| report["saved_policy"]["resolve_on_answer"] == p)
+                && network_interpreter
+                    .is_none_or(|p| report["saved_policy"]["network_interpreter"] == p)
         }
     };
     if !ok || !agrees || !eefn::request_input::confirmed_policy(&report, &file.node_id) {

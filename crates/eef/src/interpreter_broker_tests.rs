@@ -1,6 +1,222 @@
 use super::*;
 use eefn::interpreter_command::{Command as InputCommand, Preferences, Request, Stage};
 
+fn normal_input(operation: &str) -> eefn::request_preview::PreviewRequest {
+    eefn::request_preview::PreviewRequest {
+        schema_version: 1,
+        expected_node_id: "input".into(),
+        request_id: operation.into(),
+        text: "Inspect node status".into(),
+        inference_timeout_seconds: Some(20),
+    }
+}
+fn network_input_policy() -> eefn::request_input::InputPolicy {
+    eefn::request_input::InputPolicy {
+        prepare_on_input: true,
+        resolve_on_answer: true,
+        network_interpreter: true,
+    }
+}
+
+#[tokio::test]
+async fn normal_model_free_input_interprets_and_prepares_through_the_authorized_service() {
+    let f = Fixture::with_input_policy(network_input_policy()).await;
+    f.model.method.store(true, Ordering::SeqCst);
+    let operation = uuid();
+    let result = f.services[0].input_request(normal_input(&operation)).await;
+    assert!(eefn::request_input::confirmed(
+        &result,
+        "input",
+        &operation,
+        "Inspect node status"
+    ));
+    assert_eq!(result["success"], true, "{result}");
+    assert_eq!(result["status"], "awaiting_approval");
+    assert_eq!(
+        result["interpretation"]["network_interpreter_requested"],
+        true
+    );
+    assert_eq!(result["interpretation"]["model_inference_requested"], false);
+    for stage in ["interpretation", "preparation"] {
+        assert_eq!(
+            result[stage]["network_interpreter"]["result"]["attempt"]["provider"],
+            "provider"
+        );
+    }
+    let id = result["result"]["id"].as_str().unwrap();
+    let saved = f.runtime().engine.store.get(id).unwrap();
+    assert!(saved.approval.is_none() && saved.execution.is_none());
+    assert_eq!(
+        saved.goal.request_context.as_ref().unwrap().origin_node(),
+        "input"
+    );
+    assert_eq!(
+        saved.request_review.as_ref().unwrap().original_text,
+        "Inspect node status"
+    );
+    let attempts = f
+        .runtime()
+        .engine
+        .store
+        .interpreter_allowance_records()
+        .unwrap()
+        .0;
+    assert_eq!(attempts.len(), 2);
+    assert!(
+        attempts
+            .iter()
+            .all(|r| r.binding.grant.limits.max_execution_ms == 20_000)
+    );
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 2);
+    for field in ["node_id", "policy", "interpretation"] {
+        let mut forged = result.clone();
+        match field {
+            "node_id" => forged["node_id"] = json!("foreign"),
+            "policy" => forged["policy"]["network_interpreter"] = json!(false),
+            _ => {
+                forged["interpretation"]["checkpoint"]["record"]["claim"]["interpreter"]["node_id"] =
+                    json!("foreign")
+            }
+        }
+        assert!(
+            !eefn::request_input::confirmed(&forged, "input", &operation, "Inspect node status"),
+            "{field}"
+        );
+    }
+    f.nodes[1].abort();
+    let historical = f.services[0].input_request(normal_input(&operation)).await;
+    assert_eq!(historical["success"], true, "{historical}");
+    assert_eq!(historical["status"], "historical_snapshot");
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 2);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn normal_network_answer_resolves_and_prepares_without_reentering_input_admission() {
+    let f = Fixture::with_input_policy(network_input_policy()).await;
+    f.model.question.store(true, Ordering::SeqCst);
+    let operation = uuid();
+    let first = f.services[0].input_request(normal_input(&operation)).await;
+    assert_eq!(first["success"], true, "{first}");
+    assert_eq!(first["status"], "clarification_required");
+    f.model.question.store(false, Ordering::SeqCst);
+    f.model.method.store(true, Ordering::SeqCst);
+    let command = eefn::request_response::RespondCommand {
+        id: first["result"]["id"].as_str().unwrap().into(),
+        expected_revision: first["result"]["revision"].as_u64().unwrap(),
+        operation_id: uuid(),
+        text: "The input node".into(),
+    };
+    let submitted = || eefn::request_response::RespondRequest {
+        schema_version: 1,
+        expected_node_id: "input".into(),
+        command: command.clone(),
+        inference_timeout_seconds: Some(20),
+    };
+    let result = f.services[0].respond_request(submitted()).await;
+    assert!(eefn::request_response::confirmed(
+        &result, "input", &command
+    ));
+    assert_eq!(result["success"], true, "{result}");
+    assert_eq!(result["status"], "awaiting_approval");
+    assert_eq!(
+        result["resolution"]["interpretation_source"],
+        "coordinator_interpreter_service"
+    );
+    for stage in ["resolution", "preparation"] {
+        assert_eq!(
+            result[stage]["network_interpreter"]["result"]["attempt"]["provider"],
+            "provider"
+        );
+    }
+    let mut forged = result.clone();
+    forged["policy"]["network_interpreter"] = json!(false);
+    assert!(!eefn::request_response::confirmed(
+        &forged, "input", &command
+    ));
+    let plan = f.runtime().engine.store.get(&command.id).unwrap();
+    assert!(plan.approval.is_none() && plan.execution.is_none());
+    assert_eq!(
+        plan.request_review.as_ref().unwrap().answers[0].text,
+        command.text
+    );
+    assert_eq!(
+        plan.goal.request_context.as_ref().unwrap().request_id(),
+        operation
+    );
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 3);
+    let historical = f.services[0].respond_request(submitted()).await;
+    assert_eq!(historical["success"], true, "{historical}");
+    assert_eq!(historical["answer_reused"], true);
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 3);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn saved_network_preference_does_not_disclose_input_before_runtime_application() {
+    let f = Fixture::new().await;
+    let changed = f.services[0]
+        .input_policy_command(eefn::request_input::PolicyRequest {
+            schema_version: 1,
+            expected_node_id: "input".into(),
+            command: eefn::request_input::PolicyCommand::Set {
+                prepare_on_input: None,
+                resolve_on_answer: None,
+                network_interpreter: Some(true),
+            },
+        })
+        .unwrap();
+    assert_eq!(changed["saved_policy"]["network_interpreter"], true);
+    assert_eq!(changed["applied_policy"]["network_interpreter"], false);
+    assert_eq!(changed["restart_required"], true);
+    let result = f.services[0].input_request(normal_input(&uuid())).await;
+    assert_eq!(result["success"], false);
+    assert_eq!(result["source_confirmed"], true);
+    assert_eq!(result["error_code"], "interpreter_unavailable");
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 0);
+    assert!(
+        f.runtime()
+            .engine
+            .store
+            .interpreter_allowance_records()
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    f.close().await;
+}
+
+#[tokio::test]
+async fn normal_network_model_failure_retains_input_and_never_falls_back_or_replays() {
+    let f = Fixture::with_input_policy(network_input_policy()).await;
+    f.model.bad.store(true, Ordering::SeqCst);
+    let operation = uuid();
+    let result = f.services[0].input_request(normal_input(&operation)).await;
+    assert_eq!(result["success"], false);
+    assert_eq!(result["source_confirmed"], true);
+    assert_eq!(
+        result["interpretation"]["network_interpreter_requested"],
+        true
+    );
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+    let id = result["raw_save"]["result"]["id"].as_str().unwrap();
+    let saved = f.runtime().engine.store.get(id).unwrap();
+    assert!(saved.request_review.is_none() && saved.tasks.is_empty() && saved.execution.is_none());
+    let _inspected = f.services[0].input_request(normal_input(&operation)).await;
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        f.runtime()
+            .engine
+            .store
+            .interpreter_allowance_records()
+            .unwrap()
+            .0
+            .len(),
+        1
+    );
+    f.close().await;
+}
+
 async fn request(f: &Fixture, stage: &str) -> (Task, Request) {
     let task = f.task(stage).await;
     let parties = f.participants().await;
