@@ -1,7 +1,10 @@
 # Node request parser groups
 
-This unreleased parser follow-up awaits complete hosted validation. It changes
-no wire DTO, workflow policy, execution permission, dependency or stack setting.
+This unreleased parser follow-up passes integrated hosted/source acceptance at
+`f3f9ffb` in [run 42857675899](https://github.com/eepyfishy/eef/actions/runs/42857675899):
+all four jobs, 1,755 Windows/headless Rust tests, one ignored across 17 groups,
+37 native suites and existing extra gates. It changes no wire DTO, workflow
+policy, execution permission, dependency or stack setting.
 
 Source `3c83c1c`, run `42852782316`, passed all 1,751 Windows/headless Rust
 tests, one ignored across 17 groups, but failed its first native initialization
@@ -17,9 +20,10 @@ The groups are internal parser structure: command names, arguments, defaults,
 required fields and execution handlers remain the same. Update typed pattern
 matches to unwrap those groups; do not add user-visible command nesting.
 
-This aims to reduce the generated parser's unoptimized Windows stack frames.
-Do not claim it fixes the observed failure until the unchanged native zero-exit
-requirement and full suites pass. Existing parser assertions remain; failure
+This reduces the size of each generated parser group. The integrated checkpoint
+passes the unchanged native zero-exit requirement and full suites; it does not
+identify the exact overflowing frame in the earlier failed source. Existing
+parser assertions remain; failure
 output now adds only a closed startup-phase observation and stack-overflow flag,
 without printing private environment values or raw process output. No thread
 stack is enlarged and no helper process, daemon or runtime is added.

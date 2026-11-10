@@ -1,6 +1,11 @@
 # Explicit retained interpreter result recovery
 
-This is unreleased backend and command work awaiting complete hosted acceptance.
+This unreleased backend and command work passes integrated hosted/source
+acceptance at `f3f9ffb` in
+[run 42857675899](https://github.com/eepyfishy/eef/actions/runs/42857675899):
+all four jobs, 1,755 Windows/headless Rust tests, one ignored across 17 groups,
+37 native suites and existing extra gates. The later plain-output and
+active-inference inspection follow-ups require their own acceptance below.
 It extends the existing journal
 and review/compiler services without adding dependencies or background workers.
 
@@ -120,7 +125,7 @@ inspection, no repeated inference, foreign/stale/session/revision refusals,
 strict schemas and replies, shared admission and retirement with late-reply
 rejection. CLI parsing and native command/API cases cover model-free inspection,
 missing evidence, source preservation, runtime/node binding and HTTP refusal.
-These additions require fresh hosted validation.
+The integrated checkpoint above passes these command regressions.
 
 The restart follow-up adds a real temporary-journal/coordinator restart and
 credential/TLS origin reconnect. It checks that pending completed evidence and
@@ -128,7 +133,8 @@ an earlier recovery receipt survive unchanged, old runtime requests are refused,
 and the new model-free origin can explicitly apply the pending result or read
 its previous decision while the provider remains offline. The original claim's
 runtime attribution and charged inference ledger stay unchanged. This is hosted
-fixture coverage awaiting validation, not physical deployment acceptance.
+fixture coverage passed at the integrated checkpoint above; it does not
+establish physical deployment acceptance.
 
 The first restart candidate `191288a` failed test compilation in run
 `42855147633`: the fixture redundantly unwrapped a `NodeClient` builder result
@@ -142,7 +148,7 @@ normal save service writes YAML. It now obtains authentication and runtime
 settings from the existing `Config` loader. Assertions and production code are
 unchanged; this corrects test setup, not an observed product restart failure.
 
-Remaining work includes complete command/restart acceptance and physical
-multi-PC tests, and investigation of the retained camera failure.
+Remaining work includes acceptance of the later guidance/inspection follow-ups,
+physical multi-PC tests, and investigation of the retained camera failure.
 Real-model/onboarding, continuous workloads, strong
 stop, MSI/signing/Defender and stable-release gates remain open.

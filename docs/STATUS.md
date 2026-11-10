@@ -3,31 +3,48 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: split request CLI parser builders
+## Accepted development checkpoint: retained interpreter recovery and restart
+
+Integrated source `f3f9ffb` passes all four jobs in
+[run 42857675899](https://github.com/eepyfishy/eef/actions/runs/42857675899)
+and an independent source/log audit: 1,755 Windows/headless Rust tests,
+one ignored across 17 groups, all 37 native suites and existing extra gates.
+This covers retained-result recovery core and commands, the real temporary-journal
+restart with authenticated origin reconnect and an offline provider, renewal
+retirement coordination, and the partitioned request parser. The original native
+help zero-exit and privacy assertions pass without larger thread stacks.
+
+The later plain-output and active-inference inspection follow-ups below await
+their own complete acceptance. Earlier failed candidates remain failed; the
+recorded camera failure's cause remains unproven. Physical two-PC/media tests,
+real-model/onboarding, installer/security and stable-release gates remain open.
+
+## Integrated parser follow-up
 
 The [request parser follow-up](NODE-REQUEST-PARSER-GROUPS.md) partitions the
 32 request variants into four flattened parser groups while preserving public
 commands/arguments and handlers. Candidate `3c83c1c` passed its 1,751 Windows/
 headless Rust tests but the actual native `eefn --help` process overflowed its
 stack in run `42852782316`. The zero-exit/configuration/privacy assertions remain,
-with bounded failure-phase diagnostics added. Fresh complete hosted acceptance
-is required; no stack budget, dependency, grant or runtime behavior is widened.
+with bounded failure-phase diagnostics added. The integrated checkpoint above
+passes those unchanged assertions; no stack budget, dependency, grant or runtime
+behavior is widened.
 
-## In development: separate renewal retirement from historical completion
+## Integrated renewal retirement and historical completion
 
 An additional [interpreter recovery restart regression](INTERPRETER-RESULT-RECOVERY.md)
 reopens the actual temporary coordinator journal and reconnects the model-free
 origin using credentials/TLS. It requires preserved source/receipt/allowance
 history, refusal of the old runtime, fresh explicit recovery and read-only prior
-decisions with no provider reconnection or repeated inference. Hosted validation
-is pending; physical deployment remains separate.
+decisions with no provider reconnection or repeated inference. The integrated
+checkpoint above passes this regression; physical deployment remains separate.
 
 The [renewal retirement follow-up](WORKLOAD-RENEWAL-RETIREMENT.md) stops the pump
 when its exact source receiver closes, then awaits the same bounded final-save
 future. Closure is a private lifetime observation, not a completion or new lease.
 Live expiry still cancels work. Three coordination regressions cover an in-flight
 challenge, late reply, pending-save success/failure and active-source expiry.
-Hosted validation is pending. The earlier camera failure remains retained and
+The integrated checkpoint above passes these cases. The earlier camera failure remains retained and
 its cause unproven; this does not establish physical or stable-release acceptance.
 
 ## In development: explicit retained interpreter result recovery
@@ -54,8 +71,8 @@ active sources, quota exhaustion, write failure and receipt tampering. The
 development `requests interpreter-results` and `requests recover-interpretation`
 adapters add origin-scoped inspection and explicit recovery through the running
 node. Command tests cover private node-pair exchanges, reference-only schemas,
-runtime retirement and model-free CLI/API refusal paths. Complete hosted
-acceptance is pending. Candidate `990847c` passed the new recovery tests and
+runtime retirement and model-free CLI/API refusal paths. The integrated
+checkpoint above passes this coverage. Candidate `990847c` passed the new recovery tests and
 three jobs, but Windows/headless failed an existing native camera completion
 case in run `42816124759`; its cause remains unproven. This does not complete
 recovery usability or any physical, model, installer or stable-release gate.

@@ -92,7 +92,9 @@ Inspect first. A completed result may still be ineligible if the source changed,
 was cancelled, or is active. Recovery prints its generated operation ID; retain
 the exact decision and use `--operation-id` with that same ID after uncertainty.
 This never approves or executes tools and differs from `requests recover-result`
-for tool execution receipts. Full hosted command acceptance is pending. See
+for tool execution receipts. Core command/restart coverage passes integrated
+hosted/source acceptance at `f3f9ffb`; later output and active-inference inspection
+follow-ups await their own acceptance. See
 [retained interpreter recovery](INTERPRETER-RESULT-RECOVERY.md).
 
 Normal `requests input` saves raw input before checking for a local interpreter.

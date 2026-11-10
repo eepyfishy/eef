@@ -1,7 +1,10 @@
 # Renewal retirement and historical completion
 
-This unreleased follow-up awaits hosted validation. It changes neither lease
-budgets nor source/journal authorization and adds no dependency or worker.
+This unreleased follow-up passes integrated hosted/source acceptance at
+`f3f9ffb` in [run 42857675899](https://github.com/eepyfishy/eef/actions/runs/42857675899):
+all four jobs, 1,755 Windows/headless Rust tests, one ignored across 17 groups,
+37 native suites and existing extra gates. It changes neither lease budgets
+nor source/journal authorization and adds no dependency or worker.
 
 The live workload supervisor owns the renewal receiver. It drops that receiver
 after the source finishes or fails, before the bounded final journal save returns.
@@ -36,6 +39,6 @@ retained five camera events, observed owned-process exit and source closure, the
 returned `source_unconfirmed` with the generic `workload_unconfirmed` reason.
 Those observations alone do not identify the underlying error. This change fixes
 a source-lifetime race found during that investigation; it does not establish
-that race as the cause of the recorded failure. Keep that failure and its logs,
-require complete fresh CI, and retain physical camera/multi-PC and stable-release
-gates separately.
+that race as the cause of the recorded failure. Keep that failure and its logs.
+The passing integrated run does not close physical camera/multi-PC or
+stable-release gates.
