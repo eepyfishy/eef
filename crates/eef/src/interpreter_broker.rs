@@ -181,7 +181,9 @@ impl Runtime {
                 .as_ref()
                 .is_some_and(|r| r.state == eefn::grants::ReceiptState::Unknown),
             view: if plan.request_review.is_some() {
-                Some(self.node_planning_view(plan, context, historical)?)
+                // This is a fresh inspection, not a reused planning write.
+                // Attempt history is recorded by historical_snapshot above.
+                Some(self.node_planning_view(plan, context, false)?)
             } else {
                 None
             },

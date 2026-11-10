@@ -86,9 +86,19 @@ async fn model_free_node_commands_use_private_grants_for_all_stages_and_reuse_hi
             .await
             .unwrap();
         assert!(eefn::interpreter_command::confirmed_node(&result, &command));
-        assert_eq!(result["success"], true);
+        assert_eq!(
+            result["success"], true,
+            "History stage {:?}: {result}",
+            command.command.stage
+        );
         assert_eq!(result["result"]["historical_snapshot"], true);
         assert_eq!(result["result"]["model_inference_requested"], false);
+        assert_eq!(result["result"]["view"]["reused"], false);
+        let mut forged = result.clone();
+        forged["result"]["view"]["reused"] = json!(true);
+        assert!(!eefn::interpreter_command::confirmed_node(
+            &forged, &command
+        ));
         let mut conflict = command.clone();
         conflict.command.preferences.provider = Some("input".into());
         let denied = f.services[0].interpreter_command(conflict).await.unwrap();
