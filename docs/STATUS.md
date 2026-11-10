@@ -3,6 +3,15 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: interpreter command guidance
+
+The [plain-output follow-up](INTERPRETER-COMMAND-GUIDANCE.md) shows the interpreter
+node, actual unanswered saved question and revision, and a read-only plan command
+when a plan awaits approval. Uncertain attempts get inspection/stop guidance
+without a continuation suggestion. Source formatting and backend ownership
+checks pass; hosted validation is pending. It changes no execution authority
+and does not complete historical-result recovery or stable-release acceptance.
+
 ## In development: normal input through an optional network interpreter
 
 The [normal network workflow](NETWORK-INPUT-WORKFLOW.md) adds an explicit applied
@@ -15,7 +24,7 @@ regression and independent acceptance are pending. This does not complete
 retained-result recovery, real-model/onboarding, physical, installer or stable
 release gates.
 
-## In development: shared admission for interpreter commands
+## Accepted development checkpoint: shared admission for interpreter commands
 
 The [network command follow-up](NETWORK-INTERPRETER-COMMANDS.md) lets a normal
 input workflow borrow its already-owned input slot through the same correlated
@@ -25,8 +34,12 @@ and runtime retirement without replay. Source `eeb6aed` passed both Linux jobs
 and Windows dashboard; Windows headless failed an older cancelled-event test.
 The [cancellation-ordering follow-up](WORKLOAD-CANCELLATION-ORDERING.md) adds
 test-only worker-entry observations and separate queued-cancellation coverage.
-Fresh hosted acceptance is pending. Automatic ordinary-input delegation and
-the remaining stable-release gates are still open.
+Source `e07a023` passes all four jobs in its
+[hosted run](https://github.com/eepyfishy/eef/actions/runs/42804854074) and an
+independent source/log audit: 1,728 Windows/headless Rust tests, one ignored
+across 17 groups, all 37 native suites and existing extra gates. Earlier failed
+source remains failed. Normal-input integration has separate pending validation;
+the remaining stable-release gates stay open.
 
 ## Accepted development checkpoint: caller ceilings for network interpretation
 

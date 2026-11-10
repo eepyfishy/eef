@@ -62,7 +62,8 @@ An unavailable explicit selection is refused without silently choosing another.
 
 The separate [caller-ceiling follow-up](INTERPRETER-CALLER-CEILING.md) adds
 `--inference-timeout-seconds` using the existing 20-second default and narrower
-service/grant limits. That increment awaits its own hosted validation.
+service/grant limits. Exact source `006e996` is accepted as described above;
+the normal-input follow-up has separate pending validation.
 
 Reusing the same stage/source inspects retained history before checking current
 provider/model/policy availability. A completed checkpoint remains inspectable
@@ -84,6 +85,12 @@ uncertainty are preserved. No grants, serving credentials or raw prompts are
 included in the command receipt; its optional source view belongs to the
 authenticated originating node.
 
+The [plain-output follow-up](INTERPRETER-COMMAND-GUIDANCE.md), awaiting hosted
+validation, identifies the interpreter node, displays an actual unanswered saved
+question and its revision, and offers read-only plan guidance when appropriate.
+Uncertain attempts retain inspection/stop guidance without a continuation command.
+JSON output may contain private original input and review data.
+
 The local API is `POST /api/commands/requests/interpreter`, with an 8 KiB body
 limit, existing browser-origin protection, and node/runtime checks. CLI and API
 use the same `NodeService` backend and authenticated node submission path. The
@@ -98,6 +105,6 @@ cross-origin/stale-session/runtime/selection denials, stop/no-replay, CLI parsin
 reply validation, and the shipping model-free CLI/API refusal path. Passing them
 will not prove real-model quality, physical two-PC or release acceptance.
 
-Automatic integration into `requests input`, existing local interpretation and
-clarification/preparation workflows, explicit historical-result recovery,
-physical checks and the remaining release gates are still required.
+Automatic integration into `requests input` and clarification/preparation is in
+[development validation](NETWORK-INPUT-WORKFLOW.md). Explicit historical-result
+recovery, physical checks and the remaining release gates are still required.

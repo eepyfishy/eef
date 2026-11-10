@@ -394,15 +394,49 @@ pub fn render(value: &Value) -> Result<String> {
     };
     text.push_str(&format!("{heading} for request {}\n", report.command.id));
     if let Some(result) = &report.result {
+        if let Some(provider) = result.pointer("/attempt/provider").and_then(Value::as_str) {
+            text.push_str(&format!("Interpreter node: {provider}\n"));
+        }
         if result["historical_snapshot"] == true {
             text.push_str("Retained history; this command did not request another inference.\n");
         }
-        if let Some(status) = result.pointer("/view/status").and_then(Value::as_str) {
-            text.push_str(&format!("Request status: {status}\n"));
+        if let Some(view) = result.get("view").filter(|v| !v.is_null()) {
+            let view: crate::request_planning::PlanningView = serde_json::from_value(view.clone())?;
+            text.push_str(&format!("Request status: {}\n", view.status));
+            if report.success && !report.outcome_unknown && view.status == "review" {
+                if view.draft.state() == "clarification_required" {
+                    if let Some(question) = &view.draft.current().clarification {
+                        for (index, line) in question.lines().enumerate() {
+                            text.push_str(if index == 0 { "Question: " } else { "  " });
+                            text.extend(line.chars().filter(|c| !c.is_control() || *c == '\t'));
+                            text.push('\n');
+                        }
+                        text.push_str(&format!("Answer: eefn requests respond {} --revision {} --text \"YOUR_ANSWER\"\nReplace YOUR_ANSWER with your answer; the node's applied workflow policy controls further interpretation.\n", view.id, view.revision));
+                    }
+                } else if view.draft.state() == "answer_recorded" {
+                    text.push_str("The saved question already has an answer. Inspect the request before continuing.\n");
+                } else {
+                    text.push_str("The interpretation is saved for review. Preparation and tool approval are separate steps.\n");
+                }
+            } else if report.success
+                && !report.outcome_unknown
+                && view.status == "awaiting_approval"
+            {
+                text.push_str(&format!("Review plan: eefn requests plan {}\nSeparate owner approval and execution are required.\n", view.id));
+            }
         }
-        if result["source_applied"] == true {
-            text.push_str("The saved result still needs the ordinary review and approval steps.\n");
+        if result["source_applied"] == false {
+            text.push_str(match result.pointer("/attempt/phase").and_then(Value::as_str) {
+                Some("not_sent") => "This attempt was not sent. No replacement interpretation was started.\n",
+                Some("reserved") => "Interpretation was reserved; delivery is not confirmed.\n",
+                Some("final") if !report.outcome_unknown => "The interpreter finished, but its result was not applied to the saved request. Inspect before continuing.\n",
+                _ => "The interpretation outcome is unconfirmed. It may still be running; inspect before starting replacement work.\n",
+            });
         }
+    } else if report.error_code.as_deref() == Some("busy") {
+        text.push_str("Another input workflow is active. No new interpretation was sent.\n");
+    } else if report.error_code.as_deref() == Some("runtime_unavailable") {
+        text.push_str("Start this node before requesting network interpretation.\n");
     }
     if let Some(diagnostic) = &report.diagnostic {
         text.push_str(diagnostic);

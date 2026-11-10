@@ -359,6 +359,21 @@ async fn model_free_node_commands_use_private_grants_for_all_stages_and_reuse_hi
             }
         );
         assert_eq!(f.model.calls.load(Ordering::SeqCst), index + 1);
+        let plain = eefn::interpreter_command::render(&result).unwrap();
+        assert!(plain.contains("Interpreter node: provider"));
+        if stage == "method" {
+            assert!(plain.contains("Question: Which node?"));
+            assert!(plain.contains(&format!(
+                "eefn requests respond {} --revision {}",
+                task.snapshot.job_id, result["result"]["view"]["revision"]
+            )));
+        } else if stage == "concrete" {
+            assert!(plain.contains(&format!(
+                "Review plan: eefn requests plan {}",
+                task.snapshot.job_id
+            )));
+            assert!(!plain.contains("Question:"));
+        }
         let mut unfinished = result.clone();
         unfinished["result"]["attempt"]["phase"] = json!("accepted");
         assert!(!eefn::interpreter_command::confirmed_node(
@@ -503,6 +518,11 @@ async fn broker_stop_retains_uncertainty_and_repeated_command_cannot_repeat_infe
         .unwrap();
     assert_eq!(result["success"], false);
     assert_eq!(result["outcome_unknown"], true);
+    let plain = eefn::interpreter_command::render(&result).unwrap();
+    assert!(
+        plain.contains("outcome is unconfirmed") && plain.contains("Inspect before trying again")
+    );
+    assert!(!plain.contains("Answer: eefn") && !plain.contains("Review plan:"));
     let reused = f.services[0]
         .interpreter_command(command.clone())
         .await
