@@ -443,7 +443,7 @@ mod tests {
     use serde_json::json;
     #[test]
     fn interpreter_commands_accept_only_references_and_explicit_bounded_preferences() {
-        let value = json!({"id":"saved","stage":"initial","expected_revision":null,
+        let value = json!({"id":uuid::Uuid::new_v4().simple().to_string(),"stage":"initial","expected_revision":null,
             "operation_id":uuid::Uuid::new_v4().to_string(),"preferences":{"local_only":false,
             "provider":null,"backend":null,"model_id":null}});
         let command: Command = serde_json::from_value(value.clone()).unwrap();
@@ -479,7 +479,7 @@ mod tests {
             expected_node_id: "owner".into(),
             expected_runtime_id: uuid::Uuid::new_v4().to_string(),
             command: Command {
-                id: "saved".into(),
+                id: uuid::Uuid::new_v4().simple().to_string(),
                 stage: Stage::Initial,
                 expected_revision: None,
                 operation_id: uuid::Uuid::new_v4().to_string(),
@@ -490,7 +490,8 @@ mod tests {
         assert!(confirmed_node(&value, &request));
         let plain = render(&value).unwrap();
         assert!(
-            plain.contains("eefn jobs get saved") && plain.contains("Inspect before trying again")
+            plain.contains(&format!("eefn jobs get {}", request.command.id))
+                && plain.contains("Inspect before trying again")
         );
         for field in [
             "success",

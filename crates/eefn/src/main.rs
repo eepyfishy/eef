@@ -5542,13 +5542,14 @@ mod tests {
     }
     #[test]
     fn network_interpreter_cli_selects_only_saved_source_stage_and_explicit_preferences() {
+        let request_id = "00112233445566778899aabbccddeeff";
         let operation = uuid::Uuid::new_v4().to_string();
         for stage in ["initial", "clarification", "method"] {
             let parsed = Args::try_parse_from([
                 "eefn",
                 "requests",
                 "interpret-network",
-                "saved",
+                request_id,
                 "--stage",
                 stage,
                 "--revision",
@@ -5576,7 +5577,7 @@ mod tests {
             else {
                 panic!("Wrong interpreter command")
             };
-            assert_eq!(id, "saved");
+            assert_eq!(id, request_id);
             assert_eq!(parsed_stage.as_str(), stage);
             assert_eq!(revision, Some(3));
             assert_eq!(operation_id.as_deref(), Some(operation.as_str()));
@@ -5596,7 +5597,7 @@ mod tests {
             vec!["--approve"],
             vec!["--permissions", "all"],
         ] {
-            let mut args = vec!["eefn", "requests", "interpret-network", "saved"];
+            let mut args = vec!["eefn", "requests", "interpret-network", request_id];
             args.extend(extra);
             assert!(Args::try_parse_from(args).is_err());
         }
