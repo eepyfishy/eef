@@ -1,6 +1,6 @@
 # Plain interpreter command guidance
 
-This unreleased output follow-up awaits hosted validation. It changes the
+This unreleased output follow-up has passed hosted validation. It changes the
 renderer over an already confirmed command receipt; it does not request data,
 run a model, edit the journal, approve work or implement result reconciliation.
 
@@ -34,5 +34,10 @@ in both Linux jobs: the coordinator can return a rejected/unconfirmed command
 without a structured attempt, so the per-attempt message was absent. Those
 terminal logs remain retained. The follow-up emits the same explicit uncertainty
 warning from the overall node receipt, including when no attempt body is
-available. The assertion and all execution rules remain unchanged; fresh hosted
-acceptance is still required.
+available. The assertion and all execution rules remain unchanged. Corrected
+source `cd0fb65` passes all four jobs in
+[run 42809416963](https://github.com/eepyfishy/eef/actions/runs/42809416963),
+plus independent source/log acceptance: 1,734 Windows/headless Rust tests,
+one ignored across 17 groups, 37 native suites and existing extra gates.
+The failed source remains failed; this evidence does not establish physical
+acceptance or stable-release readiness.

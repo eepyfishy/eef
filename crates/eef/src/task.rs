@@ -135,6 +135,8 @@ pub struct TaskResult {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub interpreter_recoveries: Vec<eefn::interpreter_recovery::Record>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_interpretation: Option<Box<crate::request_interpretation::Record>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -273,6 +275,7 @@ impl TaskPlanner {
             });
         }
         Ok(Plan {
+            interpreter_recoveries: vec![],
             input_interpretation: None,
             execution: None,
             approval: None,
@@ -948,6 +951,43 @@ impl TaskEngine {
         }
         self.store
             .commit_interpreter_result(reserved, permit, runtime, pin, completed, edit)
+    }
+    pub(crate) fn interpreter_recovery_source(
+        &self,
+        command: &eefn::interpreter_recovery::Command,
+        origin: &str,
+        original: &crate::interpreter_allowance::Record,
+    ) -> Result<(Plan, bool)> {
+        let active = self.active.lock().expect("active jobs");
+        let plan = self.store.get(&command.id)?;
+        let reused = crate::interpreter_recovery::eligible(
+            &plan,
+            command,
+            eefn::interpreter_recovery::RecoveryActor::OriginNode,
+            Some(origin),
+            original,
+            active.closing || active.contains(&command.id),
+        )?;
+        Ok((plan, reused))
+    }
+    pub(crate) fn commit_interpreter_recovery(
+        &self,
+        command: &eefn::interpreter_recovery::Command,
+        origin: &str,
+        original: &crate::interpreter_allowance::Record,
+        capabilities: &[String],
+        edit: impl FnOnce(&mut Plan) -> Result<bool>,
+    ) -> Result<(Plan, bool)> {
+        let active = self.active.lock().expect("active jobs");
+        self.store.commit_interpreter_recovery(
+            command,
+            eefn::interpreter_recovery::RecoveryActor::OriginNode,
+            Some(origin),
+            original,
+            capabilities,
+            active.closing || active.contains(&command.id),
+            edit,
+        )
     }
     pub(crate) fn edit_review_checkpoint(
         &self,

@@ -22,6 +22,7 @@ pub mod initialization;
 pub(crate) mod interpreter_allowance;
 pub(crate) mod interpreter_exchange;
 pub mod interpreter_policy;
+pub(crate) mod interpreter_recovery;
 pub mod interpreter_routing;
 pub mod interpreter_usage;
 pub mod jobs;

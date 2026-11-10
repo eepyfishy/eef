@@ -56,6 +56,12 @@ impl Fixture {
         Self::with_input_policy(Default::default()).await
     }
     async fn with_input_policy(input_policy: eefn::request_input::InputPolicy) -> Self {
+        Self::with_limits(input_policy, None).await
+    }
+    async fn with_limits(
+        input_policy: eefn::request_input::InputPolicy,
+        max_bytes: Option<usize>,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let model = Arc::new(Model {
             calls: AtomicUsize::new(0),
@@ -108,7 +114,11 @@ impl Fixture {
             ("provider", eefn::authentication::generate_credential()),
         ]);
         let config = dir.path().join("owner.json");
-        std::fs::write(&config,serde_json::to_vec(&json!({"node":{"psk":"","host":"127.0.0.1","port":0,"authentication":{"allow_legacy":false,"tls":identity,"credentials":keys}},"discovery":{"grants":{"input":["provider"]},"freshness_seconds":30},"update":{"policy":"off"},"python":{"plugins":[]},"firmware":{"repository":dir.path().join("firmware")}})).unwrap()).unwrap();
+        let mut settings = json!({"node":{"psk":"","host":"127.0.0.1","port":0,"authentication":{"allow_legacy":false,"tls":identity,"credentials":keys}},"discovery":{"grants":{"input":["provider"]},"freshness_seconds":30},"update":{"policy":"off"},"python":{"plugins":[]},"firmware":{"repository":dir.path().join("firmware")}});
+        if let Some(max_bytes) = max_bytes {
+            settings["jobs"] = json!({"max_count":64,"max_bytes":max_bytes});
+        }
+        std::fs::write(&config, serde_json::to_vec(&settings).unwrap()).unwrap();
         let runtime = Runtime::initialize(
             crate::config::Config::load(Some(&config)).unwrap(),
             dir.path().join("owner.db"),
@@ -331,6 +341,8 @@ impl Fixture {
 
 #[path = "interpreter_broker_tests.rs"]
 mod broker_tests;
+#[path = "interpreter_recovery_tests.rs"]
+mod recovery_tests;
 
 #[tokio::test]
 async fn real_core_allowances_exchange_all_three_stages_through_private_grants_without_promotion_or_replay()

@@ -40,6 +40,7 @@ mod installed_selection;
 pub mod interpretation;
 pub mod interpreter_command;
 pub mod interpreter_policy;
+pub mod interpreter_recovery;
 pub mod interpreter_sampling;
 pub mod interpreter_service;
 mod interpreter_serving;

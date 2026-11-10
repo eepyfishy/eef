@@ -474,6 +474,12 @@ impl JobStore {
         origin: Option<&str>,
         capabilities: &[String],
     ) -> Result<(Plan, bool)> {
+        if matches!(
+            &transition,
+            crate::request_interpretation::Transition::Recover { .. }
+        ) {
+            bail!("Interpreter recovery requires its explicit journal operation")
+        }
         let mut changed = false;
         let plan = self.edit_with_gate(
             id,
@@ -496,7 +502,15 @@ impl JobStore {
         input_transition: bool,
         edit: impl FnOnce(&mut Plan) -> Result<bool>,
     ) -> Result<Plan> {
-        self.edit_with_precondition(id, event, fence, input_transition, |_, _| Ok(()), edit)
+        self.edit_with_precondition(
+            id,
+            event,
+            fence,
+            input_transition,
+            false,
+            |_, _| Ok(()),
+            edit,
+        )
     }
     fn edit_with_precondition(
         &self,
@@ -504,6 +518,7 @@ impl JobStore {
         event: &str,
         fence: Option<(&str, &str)>,
         input_transition: bool,
+        interpreter_recovery: bool,
         check: impl FnOnce(&Connection, &Plan) -> Result<()>,
         edit: impl FnOnce(&mut Plan) -> Result<bool>,
     ) -> Result<Plan> {
@@ -515,6 +530,7 @@ impl JobStore {
         let old_stop = crate::execution_stop::snapshot(&plan);
         let old_workload = crate::workload_jobs::snapshot(&plan);
         let old_interpretation = json!(plan.input_interpretation);
+        let old_recoveries = json!(plan.interpreter_recoveries);
         let raw_input = (plan.goal.template == eefn::request_intent::TEMPLATE)
             .then(|| json!([plan.plan_id, plan.goal]));
         let frozen_source = plan
@@ -542,6 +558,9 @@ impl JobStore {
         if !input_transition && old_interpretation != json!(plan.input_interpretation) {
             bail!("Interpretation ownership requires its source-bound journal transition")
         }
+        if !interpreter_recovery && old_recoveries != json!(plan.interpreter_recoveries) {
+            bail!("Interpreter recovery receipts require their explicit journal operation")
+        }
         if !input_transition
             && raw_input
                 .as_ref()
@@ -565,6 +584,7 @@ impl JobStore {
         }
         stamp(&mut plan, event)?;
         validate_retained_review(&plan)?;
+        interpreter_allowances::validate_recoveries(&connection, &plan)?;
         automation_occurrences::validate_job(&connection, &plan)?;
         let encoded = serde_json::to_string(&plan)?;
         self.check_size(&connection, id, encoded.len(), reserve(&plan))?;
@@ -741,10 +761,12 @@ fn read(connection: &Connection, id: &str) -> Result<Plan> {
     let plan: Plan =
         serde_json::from_str(&raw).context("Damaged job record; retained for recovery")?;
     validate_retained_review(&plan)?;
+    interpreter_allowances::validate_recoveries(connection, &plan)?;
     automation_occurrences::validate_job(connection, &plan)?;
     Ok(plan)
 }
 pub(crate) fn validate_retained_review(plan: &Plan) -> Result<()> {
+    crate::interpreter_recovery::validate_history(plan)?;
     crate::request_interpretation::validate(plan)?;
     if plan.goal.template == eefn::request_intent::TEMPLATE {
         crate::request_intent::validate(plan)?;
@@ -961,6 +983,12 @@ pub fn view(plan: &Plan, details: bool) -> serde_json::Value {
         "completed_tasks": plan.tasks.iter().filter(|t|t.status==TaskStatus::Completed).count(),
         "can_resume": !plan.is_review_request() && matches!(plan.status,PlanStatus::Paused|PlanStatus::Interrupted) && !plan.tasks.iter().any(|t|t.status==TaskStatus::Interrupted&&!crate::task::retry_safe(t)),
     });
+    if !plan.interpreter_recoveries.is_empty() {
+        value["interpreter_recovery_count"] = json!(plan.interpreter_recoveries.len());
+        if details {
+            value["interpreter_recoveries"] = json!(plan.interpreter_recoveries);
+        }
+    }
     if let Some(record) = &plan.input_interpretation {
         value["interpretation_state"] = json!(record.state);
         value["interpretation_operation_id"] = json!(record.claim.operation_id);

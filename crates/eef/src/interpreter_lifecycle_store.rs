@@ -40,6 +40,7 @@ impl JobStore {
                 reserved.record.task()?.snapshot.source,
                 Source::Initial { .. }
             ),
+            false,
             |connection, plan| {
                 let record = retained(connection, reserved.id(), &reserved.record.binding_sha256)?;
                 let report = record

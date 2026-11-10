@@ -1,11 +1,14 @@
 //! Atomic interpreter accounts and attempts in the existing coordinator journal.
 #[path = "interpreter_lifecycle_store.rs"]
 mod lifecycle;
+#[path = "interpreter_recovery_store.rs"]
+mod recovery;
 use super::*;
 use crate::interpreter_allowance::{
     Account, Binding, Dispatch, MAX_RECORD_BYTES, Permit, Phase, PolicyPin, Record, Reservation,
     Reserved, stage,
 };
+use anyhow::ensure;
 use eefn::{
     grants::{ExecutionGrant, GrantLimits, GrantReport, ReceiptState},
     interpreter_task::{Source, Task},
@@ -121,9 +124,30 @@ fn snapshot(connection: &Connection) -> Result<(Vec<Record>, BTreeMap<String, Ac
 pub(super) fn validate_all(connection: &Connection) -> Result<()> {
     snapshot(connection).map(|_| ())
 }
+pub(super) fn validate_recoveries(connection: &Connection, plan: &Plan) -> Result<()> {
+    if plan.interpreter_recoveries.is_empty() {
+        return Ok(());
+    }
+    let records = snapshot(connection)?.0;
+    for recovery in &plan.interpreter_recoveries {
+        let original = records
+            .iter()
+            .find(|r| r.id() == recovery.command.grant_id)
+            .context("Interpreter recovery evidence is missing; retained")?;
+        crate::interpreter_recovery::validate_binding(plan, recovery, original)?;
+    }
+    Ok(())
+}
 
 fn source_matches(plan: &Plan, record: &Record, delivering: bool) -> Result<()> {
     let task = record.task()?;
+    ensure!(
+        !plan
+            .interpreter_recoveries
+            .iter()
+            .any(|r| r.command.operation_id == task.snapshot.operation_id),
+        "Interpreter operation already belongs to explicit recovery"
+    );
     if plan.plan_id != task.snapshot.job_id
         || plan.goal.request_context.as_ref() != Some(&task.snapshot.request_context)
         || plan.status != PlanStatus::Review

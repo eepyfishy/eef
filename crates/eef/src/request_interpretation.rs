@@ -12,6 +12,12 @@ pub(crate) enum Transition {
         expected_revision: u64,
         proposal: Proposal,
     },
+    /// Core-only source edit after a separate, explicit recovery decision.
+    Recover {
+        claim: Claim,
+        expected_revision: u64,
+        proposal: Proposal,
+    },
     Interrupt,
 }
 
@@ -189,9 +195,15 @@ pub(crate) fn apply(
         record.state = State::Unknown;
         return Ok(true);
     }
+    let recovering = matches!(&transition, Transition::Recover { .. });
     let (claim, promotion) = match transition {
         Transition::Claim(claim) => (claim, None),
         Transition::Promote {
+            claim,
+            expected_revision,
+            proposal,
+        } => (claim, Some((expected_revision, proposal))),
+        Transition::Recover {
             claim,
             expected_revision,
             proposal,
@@ -222,7 +234,12 @@ pub(crate) fn apply(
             return Ok(false);
         }
         ensure!(
-            record.state == State::Claimed
+            record.state
+                == (if recovering {
+                    State::Unknown
+                } else {
+                    State::Claimed
+                })
                 && plan.status == PlanStatus::Review
                 && plan.revision == revision,
             "Interpretation is cancelled, uncertain or stale; no replay"

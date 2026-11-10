@@ -1,6 +1,8 @@
 //! Apply a live service completion through ordinary review/compiler transitions.
 //! No public DTO, historical receipt or model output can create this continuation.
 use super::*;
+#[path = "interpreter_recovery_runtime.rs"]
+mod recovery;
 use crate::{
     interpreter_allowance::Permit,
     task::{Plan, PlanStatus},
@@ -36,6 +38,15 @@ impl Mutation {
                     Some(snapshot.request_context.origin_node()),
                     &snapshot.allowed_capabilities,
                 )
+            }
+            other => other.apply_review(plan, task),
+        }
+    }
+    fn apply_review(self, plan: &mut Plan, task: &Task) -> Result<bool> {
+        let snapshot = &task.snapshot;
+        match self {
+            Self::Initial(_) => {
+                anyhow::bail!("Initial input needs its explicit ownership transition")
             }
             Self::Clarification(proposal, evidence) => {
                 let Source::Clarification { draft: source } = &snapshot.source else {
@@ -79,12 +90,8 @@ impl Mutation {
 }
 
 impl Runtime {
-    /// Consume once, before its original deadline. The actual source, latest
-    /// policy, applied/saved authentication and both live registrations remain
-    /// fenced through the same journal write. Failure retires source ownership
-    /// through Completion's existing drop path; it never retries inference.
-    pub(crate) async fn apply_interpreter_completion(&self, completed: Completion) -> Result<Plan> {
-        let record = completed.record();
+    async fn prepare_interpreter_mutation(&self, record: &Record) -> Result<(Task, Mutation)> {
+        record.validate()?;
         let task = record.task()?;
         let grant = &record.binding.grant;
         let report = record
@@ -157,6 +164,25 @@ impl Runtime {
                 }
             }
         };
+        Ok((task, mutation))
+    }
+    /// Consume once, before its original deadline. The actual source, latest
+    /// policy, applied/saved authentication and both live registrations remain
+    /// fenced through the same journal write. Failure retires source ownership
+    /// through Completion's existing drop path; it never retries inference.
+    pub(crate) async fn apply_interpreter_completion(&self, completed: Completion) -> Result<Plan> {
+        let record = completed.record();
+        let (task, mutation) = self.prepare_interpreter_mutation(record).await?;
+        let snapshot = &task.snapshot;
+        let grant = &record.binding.grant;
+        let backend = grant
+            .backend
+            .as_deref()
+            .context("Missing interpreter backend")?;
+        let model = grant
+            .model_id
+            .as_deref()
+            .context("Missing interpreter model")?;
         let origin = snapshot.request_context.origin_node();
         let provider = grant.executor_node.as_str();
         let (capabilities, freshness) = self

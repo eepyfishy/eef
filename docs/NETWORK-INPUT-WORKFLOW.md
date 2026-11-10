@@ -73,13 +73,18 @@ Errors clear success flags while preserving uncertain saves. Applied receipts
 must describe a final attempt, and fresh initial checkpoints must name the
 requesting node runtime. Additional regression coverage retires an actual
 model-free input workflow during a held service call and rejects altered phase
-or runtime attribution. This follow-up also awaits fresh hosted acceptance.
+or runtime attribution. Source `34d7993` passes all four jobs in
+[run 42807522415](https://github.com/eepyfishy/eef/actions/runs/42807522415),
+plus independent source/log acceptance.
 
 New hosted regressions exercise normal model-free input through interpretation
 and preparation, actual saved-question response through resolution/preparation,
 saved-but-unapplied consent, failure without fallback/replay, origin/source
 retention and rejection of altered receipts. CLI parsing and the existing native
 command suite cover the isolated boolean policy patch and readback. These tests
-use a private authenticated node pair and mock model backend. Hosted acceptance
-is pending; they do not establish real-model quality, physical multi-PC behavior,
+use a private authenticated node pair and mock model backend. Initial integration
+`3997e34` also passes [run 42806728479](https://github.com/eepyfishy/eef/actions/runs/42806728479)
+and its independent source/log audit. The fence follow-up passes 1,734
+Windows/headless Rust tests, one ignored across 17 groups, 37 native suites and
+existing extra gates. These checks do not establish real-model quality, physical multi-PC behavior,
 strong computation stop, complete onboarding or stable v0.4.0 readiness.

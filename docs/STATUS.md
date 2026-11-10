@@ -3,24 +3,41 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: interpreter command guidance
+## In development: explicit retained interpreter result recovery
+
+The [recovery core](INTERPRETER-RESULT-RECOVERY.md) applies retained semantic data
+only through a fresh authenticated origin decision. Source and bounded receipt
+share one journal update; the original inference ledger remains unchanged. New
+regressions cover all interpretation stages, offline providers, replay, stale or
+active sources, quota exhaustion, write failure and receipt tampering. Hosted
+validation and the public command/API adapters are pending. This does not complete
+recovery usability or any physical, model, installer or stable-release gate.
+
+## Accepted development checkpoint: interpreter command guidance
 
 The [plain-output follow-up](INTERPRETER-COMMAND-GUIDANCE.md) shows the interpreter
 node, actual unanswered saved question and revision, and a read-only plan command
 when a plan awaits approval. Uncertain attempts get inspection/stop guidance
 without a continuation suggestion. Source formatting and backend ownership
-checks pass; hosted validation is pending. It changes no execution authority
+checks and independent source/log acceptance pass for `cd0fb65` in
+[run 42809416963](https://github.com/eepyfishy/eef/actions/runs/42809416963):
+all four jobs, 1,734 Windows/headless Rust tests, one ignored across 17 groups,
+37 native suites and existing extra gates. It changes no execution authority
 and does not complete historical-result recovery or stable-release acceptance.
 
-## In development: normal input through an optional network interpreter
+## Accepted development checkpoint: normal input through a network interpreter
 
 The [normal network workflow](NETWORK-INPUT-WORKFLOW.md) adds an explicit applied
 origin preference and source-bound remote receipts for initial input,
 clarification and method preparation. Model-free input nodes reuse the private
 broker, caller ceilings, journal and shared input admission. Existing settings
 remain local, and no failure retries a model or chooses a replacement provider.
-Source formatting and backend ownership checks pass; compilation, hosted
-regression and independent acceptance are pending. This does not complete
+Source `3997e34` and runtime-fence follow-up `34d7993` pass their complete hosted
+runs [42806728479](https://github.com/eepyfishy/eef/actions/runs/42806728479) and
+[42807522415](https://github.com/eepyfishy/eef/actions/runs/42807522415), with
+independent source/log acceptance. The latter passes all four jobs, 1,734
+Windows/headless Rust tests, one ignored across 17 groups, 37 native suites and
+existing extra gates. This does not complete
 retained-result recovery, real-model/onboarding, physical, installer or stable
 release gates.
 
@@ -38,7 +55,7 @@ Source `e07a023` passes all four jobs in its
 [hosted run](https://github.com/eepyfishy/eef/actions/runs/42804854074) and an
 independent source/log audit: 1,728 Windows/headless Rust tests, one ignored
 across 17 groups, all 37 native suites and existing extra gates. Earlier failed
-source remains failed. Normal-input integration has separate pending validation;
+source remains failed. Normal-input acceptance is recorded separately above;
 the remaining stable-release gates stay open.
 
 ## Accepted development checkpoint: caller ceilings for network interpretation

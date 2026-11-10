@@ -1,4 +1,5 @@
 //! Authenticated reference-only commands over the existing node submission path.
+use crate::interpreter_recovery::was_applied;
 use crate::{
     Runtime,
     interpreter_allowance::{Participants, PolicyPin, Record},
@@ -9,8 +10,7 @@ use anyhow::{Context, Result, ensure};
 use eefn::{
     context::RequestContext,
     interpreter_command::{Attempt, Command, Report, Stage, WireRequest},
-    interpreter_task::{Candidate, Snapshot, Source, Task},
-    request_preparation::PreparationSource,
+    interpreter_task::{Snapshot, Source, Task},
 };
 use serde_json::{Value, json};
 
@@ -44,92 +44,6 @@ fn preferences(command: &Command, record: &Record) -> Result<()> {
         "Interpreter preferences conflict with the retained attempt; no replacement"
     );
     Ok(())
-}
-
-/// Read only past source evidence. This cannot construct a live Completion or
-/// apply a retained result, including one that was successful before a restart.
-fn was_applied(plan: &Plan, record: &Record) -> Result<bool> {
-    let Some(report) = record.report.as_ref().filter(|r| r.success) else {
-        return Ok(false);
-    };
-    let task = record.task()?;
-    let grant = &record.binding.grant;
-    let backend = grant
-        .backend
-        .as_deref()
-        .context("Missing interpreter backend")?;
-    let model = grant
-        .model_id
-        .as_deref()
-        .context("Missing interpreter model")?;
-    let candidate = task.candidate(
-        &serde_json::to_vec(
-            report
-                .data
-                .pointer("/candidate/candidate/proposal")
-                .context("Missing interpreter semantic proposal")?,
-        )?,
-        backend,
-        model,
-    )?;
-    let Some(draft) = &plan.request_review else {
-        return Ok(false);
-    };
-    let s = &task.snapshot;
-    Ok(match candidate {
-        Candidate::Initial(candidate) => plan.input_interpretation.as_ref().is_some_and(|r| {
-            r.state == eefn::request_interpretation::State::Promoted
-                && r.claim.operation_id == s.operation_id
-                && r.claim.expected_revision == s.revision
-                && r.claim.origin_runtime_id == record.binding.origin_runtime_id
-                && r.claim.interpreter.as_ref().is_some_and(|i| {
-                    i.node_id == grant.executor_node
-                        && i.runtime_id == record.binding.provider_runtime_id
-                        && i.backend == backend
-                        && i.model_id == model
-                })
-                && draft
-                    .proposals
-                    .first()
-                    .is_some_and(|p| p.proposal == candidate.proposal)
-        }),
-        Candidate::Clarification(candidate) => {
-            let Source::Clarification { draft: source } = &s.source else {
-                return Ok(false);
-            };
-            draft.proposals.iter().any(|p| {
-                p.operation_id == s.operation_id
-                    && p.proposal == candidate.proposal
-                    && p.preparation.is_none()
-                    && p.resolution.as_ref().is_some_and(|e| {
-                        e.source_revision == s.revision
-                            && e.backend == backend
-                            && e.model_id == model
-                            && e.confirms_source(source)
-                    })
-            })
-        }
-        Candidate::Method(candidate) => {
-            let source = PreparationSource {
-                evidence: candidate.evidence,
-                request_context: s.request_context.clone(),
-            };
-            if let Some(input) = candidate.proposal.method {
-                plan.planning.as_ref().is_some_and(|p| {
-                    p.operation_id == s.operation_id
-                        && p.source_revision == s.revision
-                        && p.input == input
-                        && p.preparation.as_ref() == Some(&source)
-                })
-            } else {
-                draft.proposals.iter().any(|p| {
-                    p.operation_id == s.operation_id
-                        && p.preparation.as_ref() == Some(&source)
-                        && p.proposal.clarification == candidate.proposal.clarification
-                })
-            }
-        }
-    })
 }
 
 impl Runtime {
