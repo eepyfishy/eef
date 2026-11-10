@@ -1,4 +1,5 @@
 use super::*;
+use crate::interpreter_allowance::Phase;
 use crate::task::PlanStatus;
 use eefn::interpreter_recovery::Command as Recover;
 use eefn::interpreter_recovery_command::{Command as RecoveryCommand, Request as RecoveryRequest};
@@ -47,6 +48,125 @@ async fn recovery_request(f: &Fixture, command: RecoveryCommand) -> RecoveryRequ
         expected_runtime_id: origin(f).await.runtime_id().into(),
         command,
     }
+}
+
+#[tokio::test]
+async fn active_network_inference_remains_inspectable_without_admitting_a_recovery_or_another_model_call()
+ {
+    let f = Fixture::new().await;
+    let task = f.task("initial").await;
+    let source_id = task.snapshot.job_id.clone();
+    let request = eefn::interpreter_command::Request {
+        schema_version: 1,
+        expected_node_id: "input".into(),
+        expected_runtime_id: origin(&f).await.runtime_id().into(),
+        command: eefn::interpreter_command::Command {
+            id: source_id.clone(),
+            stage: eefn::interpreter_command::Stage::Initial,
+            expected_revision: Some(task.snapshot.revision),
+            operation_id: task.snapshot.operation_id.clone(),
+            preferences: Default::default(),
+            maximum_execution_ms: None,
+        },
+    };
+    f.model.hold.store(true, Ordering::SeqCst);
+    let service = f.services[0].clone();
+    let running = tokio::spawn(async move { service.interpreter_command(request).await });
+    f.called().await;
+    let attempt = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(record) = f
+                .runtime()
+                .engine
+                .store
+                .interpreter_allowance_records()
+                .unwrap()
+                .0
+                .into_iter()
+                .find(|r| r.binding.grant.job_id == source_id && r.phase == Phase::Accepted)
+            {
+                break record;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let source = f.runtime().engine.store.get(&source_id).unwrap();
+    let ledger = f
+        .runtime()
+        .engine
+        .store
+        .interpreter_allowance_records()
+        .unwrap();
+    let inspect = recovery_request(
+        &f,
+        RecoveryCommand::Inspect {
+            id: source_id.clone(),
+            operation_id: uuid(),
+        },
+    )
+    .await;
+    let snapshot = tokio::time::timeout(
+        Duration::from_secs(5),
+        f.services[0].interpreter_recovery_command(inspect.clone()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(eefn::interpreter_recovery_command::confirmed_node(
+        &snapshot, &inspect
+    ));
+    assert_eq!(snapshot["success"], true);
+    assert_eq!(
+        snapshot["result"]["attempts"][0]["attempt"]["phase"],
+        "accepted"
+    );
+    assert_eq!(snapshot["result"]["attempts"][0]["completed_result"], false);
+    assert_eq!(snapshot["result"]["attempts"][0]["source_applied"], false);
+    let recover = recovery_request(
+        &f,
+        RecoveryCommand::Recover {
+            command: Recover {
+                id: source_id.clone(),
+                expected_revision: source.revision,
+                operation_id: uuid(),
+                grant_id: attempt.id().into(),
+            },
+        },
+    )
+    .await;
+    let busy = f.services[0]
+        .interpreter_recovery_command(recover)
+        .await
+        .unwrap();
+    assert_eq!(busy["error_code"], "busy");
+    assert_eq!(busy["outcome_unknown"], false);
+    assert_eq!(
+        json!(f.runtime().engine.store.get(&source_id).unwrap()),
+        json!(source)
+    );
+    assert_eq!(
+        json!(
+            f.runtime()
+                .engine
+                .store
+                .interpreter_allowance_records()
+                .unwrap()
+        ),
+        json!(ledger)
+    );
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+    f.model.gate.add_permits(1);
+    let result = tokio::time::timeout(Duration::from_secs(10), running)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(result["success"], true);
+    assert_eq!(result["result"]["source_applied"], true);
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+    f.close().await;
 }
 
 #[tokio::test]

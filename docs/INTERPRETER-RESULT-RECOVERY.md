@@ -44,8 +44,11 @@ an already applied decision; do not generate replacement work automatically.
 The separate `requests recover-result` command concerns executed-tool receipts,
 not interpreter data.
 
-Both commands use the running node's discovered local endpoint, shared input
-admission and runtime fence, then the existing authenticated submission channel.
+Both commands use the running node's discovered local endpoint and runtime
+fence, then the existing authenticated submission channel. Recovery mutations
+share input admission. Read-only inspection remains available while that slot
+is held by inference, subject to the existing eight-entry mailbox, eight pending
+replies and bounded response wait; it creates no new queue or permission.
 The coordinator checks actual gateway session, node runtime and source ownership.
 The local HTTP adapter remains usable headlessly and enforces its existing
 same-origin policy with an 8 KiB request limit. There is no new worker, model,
@@ -60,6 +63,15 @@ explicit, and repeating an applied decision is described as a read of stored
 history. Raw error text, model output and private settings are not printed by
 these additions. Existing real node-pair/runtime tests now assert that wording;
 full hosted acceptance remains required.
+
+The inspection admission follow-up adds an authenticated private-node regression
+with a model request held open after durable acceptance. It requires readable
+in-flight headers, unchanged source and inference ledger, a busy refusal for
+concurrent recovery mutation, and exactly one model call through completion.
+A node-service case separately checks inspection while mutation admission is
+held. The existing busy/retirement case now explicitly targets recovery mutation;
+its refusal, runtime and late-reply assertions remain. Full hosted validation
+of this follow-up is pending.
 
 A completed network interpretation can be retained even when its source update
 did not finish. The old continuation remains retired. A fresh authenticated

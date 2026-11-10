@@ -331,9 +331,16 @@ impl crate::NodeService {
             request.expected_node_id == self.node_id,
             "Recovery targets another node"
         );
-        let _admission = match self.input_workflow_permit() {
-            Ok(p) => p,
-            Err(_) => return Ok(failure(&request, "busy", false)),
+        // Source edits share input admission. Read-only inspection uses the
+        // existing bounded submission/reply channel so in-flight work stays
+        // inspectable without granting another source edit or model call.
+        let _admission = if matches!(&request.command, Command::Recover { .. }) {
+            Some(match self.input_workflow_permit() {
+                Ok(p) => p,
+                Err(_) => return Ok(failure(&request, "busy", false)),
+            })
+        } else {
+            None
         };
         let Some((runtime, _, mut generation)) = self.input_workflow_runtime() else {
             return Ok(failure(&request, "runtime_unavailable", false));

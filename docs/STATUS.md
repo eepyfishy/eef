@@ -32,6 +32,13 @@ its cause unproven; this does not establish physical or stable-release acceptanc
 
 ## In development: explicit retained interpreter result recovery
 
+Read-only interpreter inspection now uses the existing bounded submission/reply
+path independently of input mutation admission. Recovery commands still require
+that slot and the unchanged coordinator source checks. New node-service and
+authenticated node-pair cases inspect a held in-flight inference, require a busy
+refusal for concurrent recovery, preserve source/allowance history and require
+exactly one model call. Complete hosted acceptance is pending.
+
 The plain-output follow-up explains existing busy/runtime/transport refusal
 codes, points uncertain callers only to read-only inspection, identifies empty
 history, and distinguishes a repeated stored decision. Existing node-pair and

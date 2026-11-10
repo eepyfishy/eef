@@ -169,6 +169,14 @@ async fn interpreter_recovery_shared_admission_and_runtime_retirement_prevent_la
     assert_eq!(unavailable["error_code"], "runtime_unavailable");
     let guard = service.attach_preview_runtime(&engine, runtime);
     let mut receiver = service.submissions.connect();
+    req.command = Command::Recover {
+        command: crate::interpreter_recovery::Command {
+            id: req.command.id().into(),
+            expected_revision: 4,
+            operation_id: uuid(),
+            grant_id: uuid(),
+        },
+    };
     let held = service.input_workflow_permit().unwrap();
     let busy = service
         .interpreter_recovery_command(req.clone())
@@ -210,5 +218,37 @@ async fn interpreter_recovery_shared_admission_and_runtime_retirement_prevent_la
     assert_eq!(reply["outcome_unknown"], true);
     assert!(late.send(Ok(report(&req))).is_err());
     assert!(receiver.try_recv().is_err());
+    assert!(service.input_workflow_permit().is_ok());
+}
+
+#[tokio::test]
+async fn interpreter_inspection_uses_bounded_submission_without_borrowing_input_mutation_admission()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let service = crate::NodeService::new(dir.path().join("node.json"), "owner".into());
+    let engine =
+        std::sync::Arc::new(crate::NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+    let req = request();
+    let _guard = service.attach_preview_runtime(&engine, req.expected_runtime_id.clone());
+    let held = service.input_workflow_permit().unwrap();
+    let mut receiver = service.submissions.connect();
+    let (reply, ()) = tokio::join!(service.interpreter_recovery_command(req.clone()), async {
+        let submitted = tokio::time::timeout(std::time::Duration::from_secs(5), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(submitted.kind, "requests.interpreter_recovery");
+        let wire: WireRequest = serde_json::from_value(submitted.payload).unwrap();
+        assert_eq!(wire.command, req.command);
+        assert!(matches!(wire.command, Command::Inspect { .. }));
+        assert!(service.input_workflow_permit().is_err());
+        submitted.reply.send(Ok(report(&req))).unwrap();
+    });
+    let reply = reply.unwrap();
+    assert!(confirmed_node(&reply, &req));
+    assert_eq!(reply["success"], true);
+    assert!(service.input_workflow_permit().is_err());
+    assert!(receiver.try_recv().is_err());
+    drop(held);
     assert!(service.input_workflow_permit().is_ok());
 }
