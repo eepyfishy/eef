@@ -1,8 +1,11 @@
 # Nonblocking interpreter retirement
 
-This unreleased follow-up awaits complete hosted acceptance. It extends existing
-engine lifetimes and journal finalization rather than adding a runner, scheduler,
-worker, configuration switch or execution permission.
+This unreleased follow-up passes complete hosted/source acceptance at `7f1d052`
+in [run 42935544215](https://github.com/eepyfishy/eef/actions/runs/42935544215):
+all four jobs, 1,764 Windows/headless Rust tests, one ignored across 17 groups,
+37 native suites and existing extra gates. It extends existing engine lifetimes
+and journal finalization rather than adding a runner, scheduler, worker,
+configuration switch or execution permission.
 
 Previously, dropping an interpreter continuation synchronously retired its
 journal record. Its generic active-job guard also called the journal on drop.

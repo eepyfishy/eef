@@ -3,15 +3,19 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: nonblocking interpreter retirement
+## Accepted development checkpoint: nonblocking interpreter retirement
 
 The [retirement follow-up](INTERPRETER-RETIREMENT.md) uses the existing in-memory
 workload registration and admission-reserved journal finalizer. Continuation drop
 revokes registration before queuing its exact historical checkpoint, with no
 SQLite access in either drop guard. Reporting capacity stays with actual storage;
 inference charges remain unchanged. Application rechecks the original registration
-under the stop gate, including after failed stop persistence. New real-journal
-regressions and the one-model-slot normal workflow require full hosted validation.
+under the stop gate, including after failed stop persistence. Source `7f1d052`
+passes all four jobs in
+[run 42935544215](https://github.com/eepyfishy/eef/actions/runs/42935544215),
+with exact source/raw-log review: 1,764 Windows/headless Rust tests, one ignored
+across 17 groups, all 37 native suites and existing extra gates. This includes
+the real-journal regressions and the one-model-slot normal workflow.
 This does not close other blocking paths, physical tests or stable-release gates.
 
 ## Accepted development checkpoint: bounded interpreter history reads
@@ -24,8 +28,8 @@ the existing four-slot native journal reader, one inspection deadline through
 origin lookup and final session fencing, and a post-lock waiter/deadline check.
 Actual contention/cancellation cases preserve capacity until storage finishes;
 foreign origins and damaged history remain refused. Recovery mutations retain
-their original path and limits. The later nonblocking-retirement follow-up still
-awaits its own complete acceptance; physical and stable-release gates remain open.
+their original path and limits. The later nonblocking-retirement follow-up has
+its own complete acceptance above; physical and stable-release gates remain open.
 
 ## Accepted development checkpoint: consistent interpreter inspection snapshots
 
@@ -37,8 +41,8 @@ source revision and origin-owned attempt history share one journal lock.
 Coverage includes a later owner answer/revision, inspection of both recovered
 stages after compilation, unchanged charges, foreign origins and damaged history.
 Recovery mutation, execution authority and previous assertions are unchanged.
-The later bounded-reader has its own acceptance above; nonblocking retirement
-remains pending. Physical and stable-release acceptance remain separate.
+The later bounded-reader and nonblocking retirement have their own acceptance
+above. Physical and stable-release acceptance remain separate.
 
 ## Accepted development checkpoint: readable recovery history during inference
 

@@ -97,8 +97,8 @@ for tool execution receipts. Core command/restart coverage passes integrated
 hosted/source acceptance at `f3f9ffb`; output and active-inference inspection
 follow-ups pass their own complete acceptance at `33c9037` and `bee2806`.
 The journal snapshot follow-up passes its own complete acceptance at `6569938`;
-the bounded-reader passes at `474500b`. Subsequent retirement changes remain
-pending. See
+the bounded-reader passes at `474500b`, and nonblocking retirement passes its
+own complete acceptance at `7f1d052`. See
 [retained interpreter recovery](INTERPRETER-RESULT-RECOVERY.md).
 
 Normal `requests input` saves raw input before checking for a local interpreter.
