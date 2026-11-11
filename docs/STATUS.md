@@ -3,6 +3,25 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Accepted development checkpoint: readable recovery history during inference
+
+Source `bee2806` passes all four jobs in
+[run 42862031369](https://github.com/eepyfishy/eef/actions/runs/42862031369)
+and an independent source/log audit: 1,757 Windows/headless Rust tests,
+one ignored across 17 groups, all 37 native suites and existing extra gates.
+An authenticated node-pair regression holds a model call open, inspects its
+durable accepted attempt, refuses concurrent recovery mutation as busy, and
+observes exactly one model call through completion. The existing bounded
+submission path serves inspection without taking input mutation admission.
+
+The preceding output follow-up `33c9037` separately passes
+[run 42859748569](https://github.com/eepyfishy/eef/actions/runs/42859748569)
+and its source/log audit: all four jobs, 1,755 Windows/headless Rust tests,
+one ignored across 17 groups, 37 native suites and existing extra gates.
+It explains refusals, distinguishes stored decisions and empty history, and
+offers only read-only inspection after uncertainty. The later journal snapshot
+follow-up remains pending; physical and stable-release gates remain open.
+
 ## Accepted development checkpoint: retained interpreter recovery and restart
 
 Integrated source `f3f9ffb` passes all four jobs in
@@ -14,8 +33,8 @@ restart with authenticated origin reconnect and an offline provider, renewal
 retirement coordination, and the partitioned request parser. The original native
 help zero-exit and privacy assertions pass without larger thread stacks.
 
-The later plain-output and active-inference inspection follow-ups below await
-their own complete acceptance. Earlier failed candidates remain failed; the
+The later plain-output and active-inference inspection follow-ups have their
+own acceptance above. Earlier failed candidates remain failed; the
 recorded camera failure's cause remains unproven. Physical two-PC/media tests,
 real-model/onboarding, installer/security and stable-release gates remain open.
 
@@ -60,14 +79,14 @@ path independently of input mutation admission. Recovery commands still require
 that slot and the unchanged coordinator source checks. New node-service and
 authenticated node-pair cases inspect a held in-flight inference, require a busy
 refusal for concurrent recovery, preserve source/allowance history and require
-exactly one model call. Complete hosted acceptance is pending.
+exactly one model call. Its complete hosted acceptance is recorded above.
 
 The plain-output follow-up explains existing busy/runtime/transport refusal
 codes, points uncertain callers only to read-only inspection, identifies empty
 history, and distinguishes a repeated stored decision. Existing node-pair and
 runtime regressions retain their assertions and add wording checks. It changes
-no DTO, command submission, permission or source mutation. Complete hosted
-acceptance remains pending.
+no DTO, command submission, permission or source mutation. Its complete hosted
+acceptance is recorded above.
 
 The [recovery core and commands](INTERPRETER-RESULT-RECOVERY.md) apply retained semantic data
 only through a fresh authenticated origin decision. Source and bounded receipt

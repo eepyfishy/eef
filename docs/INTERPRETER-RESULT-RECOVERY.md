@@ -4,8 +4,13 @@ This unreleased backend and command work passes integrated hosted/source
 acceptance at `f3f9ffb` in
 [run 42857675899](https://github.com/eepyfishy/eef/actions/runs/42857675899):
 all four jobs, 1,755 Windows/headless Rust tests, one ignored across 17 groups,
-37 native suites and existing extra gates. The later plain-output and
-active-inference inspection follow-ups require their own acceptance below.
+37 native suites and existing extra gates. The later plain-output follow-up
+`33c9037` passes [run 42859748569](https://github.com/eepyfishy/eef/actions/runs/42859748569)
+with the same counts. Active-inference inspection `bee2806` passes
+[run 42862031369](https://github.com/eepyfishy/eef/actions/runs/42862031369)
+with 1,757 Windows/headless Rust tests and the same other gates. Both have
+independent source/log acceptance; the subsequent journal snapshot follow-up
+remains pending. Physical and stable-release acceptance remain separate.
 It extends the existing journal
 and review/compiler services without adding dependencies or background workers.
 
@@ -66,8 +71,8 @@ error codes. Unconfirmed replies include only read-only inspection commands,
 never a suggested replacement recovery decision. Empty attempt history is
 explicit, and repeating an applied decision is described as a read of stored
 history. Raw error text, model output and private settings are not printed by
-these additions. Existing real node-pair/runtime tests now assert that wording;
-full hosted acceptance remains required.
+these additions. Existing real node-pair/runtime tests assert that wording;
+the plain-output checkpoint above passes complete hosted/source acceptance.
 
 The inspection admission follow-up adds an authenticated private-node regression
 with a model request held open after durable acceptance. It requires readable
@@ -75,8 +80,8 @@ in-flight headers, unchanged source and inference ledger, a busy refusal for
 concurrent recovery mutation, and exactly one model call through completion.
 A node-service case separately checks inspection while mutation admission is
 held. The existing busy/retirement case now explicitly targets recovery mutation;
-its refusal, runtime and late-reply assertions remain. Full hosted validation
-of this follow-up is pending.
+its refusal, runtime and late-reply assertions remain. The active-inference
+inspection checkpoint above passes complete hosted/source acceptance.
 
 The journal snapshot follow-up reads the source revision and its origin-owned
 attempts under one existing journal lock. Separate reads could combine an older
@@ -156,7 +161,7 @@ normal save service writes YAML. It now obtains authentication and runtime
 settings from the existing `Config` loader. Assertions and production code are
 unchanged; this corrects test setup, not an observed product restart failure.
 
-Remaining work includes acceptance of the later guidance/inspection follow-ups,
+Remaining work includes acceptance of the journal snapshot follow-up,
 physical multi-PC tests, and investigation of the retained camera failure.
 Real-model/onboarding, continuous workloads, strong
 stop, MSI/signing/Defender and stable-release gates remain open.

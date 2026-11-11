@@ -93,8 +93,9 @@ was cancelled, or is active. Recovery prints its generated operation ID; retain
 the exact decision and use `--operation-id` with that same ID after uncertainty.
 This never approves or executes tools and differs from `requests recover-result`
 for tool execution receipts. Core command/restart coverage passes integrated
-hosted/source acceptance at `f3f9ffb`; later output and active-inference inspection
-follow-ups await their own acceptance. See
+hosted/source acceptance at `f3f9ffb`; output and active-inference inspection
+follow-ups pass their own complete acceptance at `33c9037` and `bee2806`.
+The subsequent journal snapshot follow-up remains pending. See
 [retained interpreter recovery](INTERPRETER-RESULT-RECOVERY.md).
 
 Normal `requests input` saves raw input before checking for a local interpreter.
