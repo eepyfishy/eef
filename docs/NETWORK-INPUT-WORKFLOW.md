@@ -1,8 +1,10 @@
 # Network interpretation in normal input
 
-This is an unreleased development follow-up awaiting its own hosted validation.
-The earlier accepted explicit network command and caller timing checkpoints do
-not accept this integration. Published alpha installers do not include it.
+This unreleased development integration passes complete hosted/source acceptance
+at `3997e34`, followed by runtime-fence source `34d7993`. Exact runs and coverage
+are recorded under validation scope below. This acceptance is separate from the
+earlier explicit command and caller timing checkpoints. Published alpha
+installers do not include these later changes.
 
 An input node can opt into using an owner-authorized interpreter service for
 initial interpretation, clarification answers and method preparation. The input

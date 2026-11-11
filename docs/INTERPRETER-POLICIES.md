@@ -3,8 +3,11 @@
 This is an unreleased development increment for command-first network
 interpretation, accepted at source `50174aa` in the
 [four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/42552611503)
-and independent source/log audit. It records bounded coordinator owner consent;
-automatic network interpretation is still unavailable.
+and independent source/log audit. It records bounded coordinator owner consent.
+The running-node [explicit commands](NETWORK-INTERPRETER-COMMANDS.md) and
+opt-in [normal input workflow](NETWORK-INPUT-WORKFLOW.md) now consume that consent
+in accepted development source. Published alpha installers do not include these
+later checkpoints; physical, real-model and stable-release gates remain open.
 
 ## Commands
 
@@ -42,11 +45,11 @@ command exposes overrides for all limits; `--help` lists them. These values do
 not widen the enclosing execution grant's existing bounds.
 
 `--valid-for-seconds` adds an expiry. Omitting it leaves the policy without a
-time expiry but retains finite aggregate limits. The current increment records
-these limits. The new [internal allowance ledger](INTERPRETER-ALLOWANCES.md)
-implements reservations and read-only usage reporting, accepted at `af4ba6c`;
-production broker delivery is still absent, so saving approval starts no service
-call.
+time expiry but retains finite aggregate limits. The
+[allowance ledger](INTERPRETER-ALLOWANCES.md) reserves those budgets before
+broker delivery and supports read-only usage reporting. Saving an approval
+itself starts no service call; inference requires a separate source-bound
+running-node request and the serving node's current permission.
 
 `interpreter-policies usage [policy-id]` inspects conservative reserved budgets
 and bounded attempt summaries without prompts or complete grants. Omit the ID
@@ -67,7 +70,7 @@ its shared count/byte limits. Each approval reserves bounded revocation space.
 Revocation and read-only receipt reuse still work after limits are lowered.
 Damaged records are retained and refused rather than replaced with defaults.
 
-## Remaining network interpretation work
+## Use in network interpretation
 
 An additional unreleased [routing command](INTERPRETER-ROUTING.md), accepted at
 `0aeb23a`, can inspect a fresh policy/disclosure-scoped advertised candidate.
@@ -77,9 +80,11 @@ This policy grants no filesystem, process, microphone, camera or other tool
 permission. A serving node must separately enable interpreter sharing and retain
 its local model and grant controls. Advertisements alone grant nothing.
 
-The remaining broker must integrate the accepted durable reservations and fresh
-independently authenticated provider/model selection before granting work,
-bind every stage to its immutable source and original context, and settle
-uncertain attempts without automatic replay. Those paths and production
-interpreter lease-exchange coverage remain open. See
-[network interpretation](NETWORK-INTERPRETER.md).
+The accepted broker binds independently authenticated provider/model selection,
+durable reservations and each stage's immutable source and original context
+before granting work. Uncertain attempts are not automatically replayed.
+An exact completed semantic result may be explicitly applied through
+[retained-result recovery](INTERPRETER-RESULT-RECOVERY.md); that does not renew
+the old continuation or approve tool execution. See
+[current verification boundaries](STATUS.md) for exact accepted checkpoints and
+the remaining real-model, physical, onboarding and stable-release requirements.

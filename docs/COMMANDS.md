@@ -21,7 +21,8 @@ budgets and bounded attempt summaries. Omit the ID for the latest policy; use
 `--limit` (1-100) and `--after-sequence` for history. It needs no working model,
 returns no prompt or executable grant and starts no inference. Its
 [allowance ledger](INTERPRETER-ALLOWANCES.md) passes development acceptance at
-`af4ba6c`; automatic network interpretation is still not connected.
+`af4ba6c`; the later [normal-input workflow](NETWORK-INPUT-WORKFLOW.md) connects
+opt-in network interpretation through separately accepted checkpoints.
 
 v0.4.0a6 supports these commands without a browser. Deterministic commands need no LM. Run
 from the installation directory, or supply `--config` to select a node config.
@@ -105,9 +106,10 @@ This unreleased integration passed all four hosted jobs and the independent
 source audit at `2b650d6`. Missing models or failed inference retain the source. A repeated input
 receipt only reads history; use `interpret-saved` explicitly for a saved request
 that has no attempt after applying a model. Journal revisions include saving and
-claiming, so later commands must use the returned revision. Automatic remote
-interpretation still needs the remaining
-[delegation work](NETWORK-INTERPRETER.md).
+claiming, so later commands must use the returned revision. Opt-in remote
+interpretation is available in later accepted development source through the
+[network input workflow](NETWORK-INPUT-WORKFLOW.md); it requires the provider's
+sharing permission and explicit coordinator-owner service policy.
 Plain `requests input` and `--ask` show status, receipt and setup guidance without
 dumping the retained raw input; `--json` and detailed inspection contain private text.
 

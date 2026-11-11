@@ -5,8 +5,8 @@ The explicit command source `19cc599` passed all four jobs in its
 independent source/log audit. Its caller-ceiling follow-up `006e996` also passed
 [all four jobs](https://github.com/eepyfishy/eef/actions/runs/42731997375) and source
 review. These are unreleased development checkpoints, absent from published
-alpha installers. Automatic normal-input delegation and stable-release
-acceptance remain open.
+alpha installers. Opt-in normal-input delegation has its own accepted checkpoints
+below; stable-release acceptance remains open.
 
 The next admission follow-up exposes a crate-private shared implementation for
 input workflows that already own the node's input slot. The public command
@@ -14,11 +14,12 @@ still acquires that slot; the admitted path borrows it until the correlated
 reply or runtime retirement, repeats target validation, and retains all existing
 runtime and confirmation checks. It adds no public endpoint, permission, worker
 or retry. Hosted regressions cover all three stages, competing public commands,
-invalid/stale targets, retirement and a discarded late reply. This is an
-integration prerequisite awaiting validation; ordinary input still needs its
-own acceptance. The [normal-input follow-up](NETWORK-INPUT-WORKFLOW.md) now adds
-an opt-in privacy preference, remote attribution and stage wiring; hosted
-validation of that source remains pending.
+invalid/stale targets, retirement and a discarded late reply. Shared admission
+passes at `e07a023`. The [normal-input workflow](NETWORK-INPUT-WORKFLOW.md) adds
+an opt-in privacy preference, remote attribution and stage wiring; initial source
+`3997e34` and runtime-fence follow-up `34d7993` pass their own complete hosted
+and source/log acceptance. These are synthetic/private-node checks, separate
+from real-model quality and physical deployment.
 
 The running input node can request one source-bound stage through an explicitly
 authorized interpreter service. It needs no installed model. The provider needs
@@ -63,14 +64,17 @@ An unavailable explicit selection is refused without silently choosing another.
 The separate [caller-ceiling follow-up](INTERPRETER-CALLER-CEILING.md) adds
 `--inference-timeout-seconds` using the existing 20-second default and narrower
 service/grant limits. Exact source `006e996` is accepted as described above;
-the normal-input follow-up has separate pending validation.
+the normal-input workflow has the separate acceptance described above.
 
 Reusing the same stage/source inspects retained history before checking current
 provider/model/policy availability. A completed checkpoint remains inspectable
 after provider loss or policy revocation. Changed source/receipt or conflicting
 preferences are refused; a retained result never recreates a live continuation.
-An interrupted inference or a result whose source update was lost needs explicit
-reconciliation, which remains an open requirement. No automatic replay occurs.
+An interrupted inference is not automatically replayed. If an exact completed
+result was retained but its source application was lost, use the separate
+[explicit recovery commands](INTERPRETER-RESULT-RECOVERY.md) after inspection.
+Recovery still requires an eligible unchanged source and a fresh origin decision;
+it cannot restart inference or authorize execution.
 
 Inspection and cancellation remain ordinary node commands:
 
@@ -85,8 +89,8 @@ uncertainty are preserved. No grants, serving credentials or raw prompts are
 included in the command receipt; its optional source view belongs to the
 authenticated originating node.
 
-The [plain-output follow-up](INTERPRETER-COMMAND-GUIDANCE.md), awaiting hosted
-validation, identifies the interpreter node, displays an actual unanswered saved
+The [plain-output follow-up](INTERPRETER-COMMAND-GUIDANCE.md), accepted at
+`cd0fb65`, identifies the interpreter node, displays an actual unanswered saved
 question and its revision, and offers read-only plan guidance when appropriate.
 Uncertain attempts retain inspection/stop guidance without a continuation command.
 JSON output may contain private original input and review data.
@@ -102,9 +106,10 @@ No browser controller, new worker, idle poller or dependency is introduced.
 Hosted tests include private TLS input/provider clients with synthetic model
 responses, all three stages and concrete compilation, offline history,
 cross-origin/stale-session/runtime/selection denials, stop/no-replay, CLI parsing,
-reply validation, and the shipping model-free CLI/API refusal path. Passing them
-will not prove real-model quality, physical two-PC or release acceptance.
+reply validation, and the shipping model-free CLI/API refusal path. They do not
+prove real-model quality, physical two-PC or release acceptance.
 
-Automatic integration into `requests input` and clarification/preparation is in
-[development validation](NETWORK-INPUT-WORKFLOW.md). Explicit historical-result
-recovery, physical checks and the remaining release gates are still required.
+Opt-in integration into `requests input` and clarification/preparation uses the
+accepted [normal-input workflow](NETWORK-INPUT-WORKFLOW.md). Explicit retained
+semantic-result recovery has separate [accepted checkpoints](INTERPRETER-RESULT-RECOVERY.md).
+Real-model quality, physical checks and the remaining release gates stay open.
