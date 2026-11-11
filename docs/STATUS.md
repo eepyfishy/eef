@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: complete native network input command path
+
+The [public workflow check](NETWORK-INPUT-WORKFLOW.md#native-command-path-follow-up)
+connects a model-free input node to a separately authorized interpreter node,
+review/compiler, explicit owner approval, remote system-information execution
+and retained result reads through the origin. It uses actual Windows commands
+and pinned-TLS logical nodes with fake inference. The original native request
+suite retains all cases and requires this added workflow before success.
+Static syntax checks pass; full hosted validation is pending. This does not
+replace real-model quality, physical two-PC or stable-release acceptance.
+
 ## Accepted development checkpoint: nonblocking interpreter retirement
 
 The [retirement follow-up](INTERPRETER-RETIREMENT.md) uses the existing in-memory

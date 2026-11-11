@@ -1,5 +1,6 @@
 // API-only node -> eef review, using fake inference and isolated local data.
 import {readLoopbackCoordinatorTemplate} from './local-test-network.mjs';
+import {networkInputCommandWorkflow} from './network-input-command-workflow.mjs';
 // Review/preparation stay idle; separate owner-approved grant execution uses a fake backend.
 import assert from 'node:assert/strict';
 import {mkdtemp, readFile, writeFile} from 'node:fs/promises';
@@ -803,7 +804,9 @@ try {
     }
     assert.equal(calls.length,count+1,'evidence recovery must not replay backend work');
   }
+  const publicNetworkInput = await networkInputCommandWorkflow();
   await writeFile(join(scratch, 'results.json'), JSON.stringify({passed: true, api_only: true, node_to_coordinator_review: true,
+    public_model_free_network_workflow: publicNetworkInput,
     original_text_preserved: true, authenticated_origin: true, clarification_returned: true, rejected_authority_fields: true,
     stateless_no_jobs_created: true, durable_inferred_review: true, lost_draft_found_without_replay: true,
     preview_and_compilation_without_execution: true, restart_invalidates_inference: true, lost_reply_not_replayed: true,

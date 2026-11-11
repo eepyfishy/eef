@@ -90,3 +90,25 @@ and its independent source/log audit. The fence follow-up passes 1,734
 Windows/headless Rust tests, one ignored across 17 groups, 37 native suites and
 existing extra gates. These checks do not establish real-model quality, physical multi-PC behavior,
 strong computation stop, complete onboarding or stable v0.4.0 readiness.
+
+### Native command-path follow-up
+
+The next pending check extends `tools/test-request-review.mjs` with an isolated
+two-logical-node workflow in `tools/network-input-command-workflow.mjs`. It uses
+the source-built Windows executables, independent pinned-TLS credentials, the
+public workflow switch and owner service-policy commands. The input node selects
+no model; only the second node serves a fake loopback Ollama response. Exactly
+two source-bound model requests interpret input and prepare a method targeting
+the second node.
+
+The check requires review before execution, refusal before owner approval,
+explicit owner approval through commands, a successful remote `system.info`
+grant, and result retrieval through the original input node. It compares the
+origin's result with the executor's retained grant report, rejects executor
+access to the origin-owned plan, and requires input/execution receipt reuse
+without more inference or a changed execution record. No browser is loaded.
+
+The existing native suite keeps its earlier cases and additionally requires the
+new workflow to finish before recording success. This follow-up awaits its own
+hosted validation. It uses fake inference and two processes on one runner;
+real-model quality and physical two-PC acceptance remain separate requirements.
