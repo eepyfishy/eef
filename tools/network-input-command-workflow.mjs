@@ -14,6 +14,7 @@ export async function networkInputCommandWorkflow() {
   const scratch = await mkdtemp(join(root, '.validation/network-input-commands-'));
   const config = join(scratch, 'eef.yaml'), children = [], usedPorts = new Set();
   const inputId = 'input-' + randomUUID(), providerId = 'provider-' + randomUUID();
+  const providerName = 'serving fixture';
   const env = {...process.env, EEF_NODE_PSK: '', APPDATA: join(scratch, 'appdata'),
     EEF_DISCOVERY_DIR: join(scratch, 'discovery')};
   const calls = [], unexpectedLocalCalls = [], fakeErrors = [];
@@ -43,7 +44,10 @@ export async function networkInputCommandWorkflow() {
         const code = value => typeof value === 'string' && /^[a-z0-9_]{1,100}$/.test(value) ? value : undefined;
         const observation = {app: name, command: args.slice(0, 2), exit_code: result.code,
           error_code: code(report?.error_code), status: code(report?.status),
-          interpretation_error: code(report?.interpretation?.error_code), preparation_error: code(report?.preparation?.error_code)};
+          interpretation_error: code(report?.interpretation?.error_code), preparation_error: code(report?.preparation?.error_code),
+          interpreter_error: code(report?.preparation?.network_interpreter?.error_code),
+          interpreter_phase: code(report?.preparation?.network_interpreter?.result?.attempt?.phase),
+          model_calls: calls.length, local_model_calls: unexpectedLocalCalls.length};
         await writeFile(join(scratch, 'failure.json'), JSON.stringify(observation, null, 2));
         assert.equal(result.code, success ? 0 : 1, JSON.stringify(observation));
       }
@@ -97,8 +101,10 @@ export async function networkInputCommandWorkflow() {
         ? {schema_version: 1, intent: 'information', goal: 'Inspect node status', context_hints: [],
           constraints: [], suggested_capabilities: ['system.info'], complexity: 'simple',
           workload: 'one_shot', needs_clarification: false, clarification: null}
+        // Semantic candidates may name a node; internal routing IDs are bound
+        // later by the deterministic compiler and must not come from a model.
         : {schema_version: 1, method: {schema_version: 1, template: 'system_info', params: {},
-          constraints: {node_id: providerId}}, clarification: null};
+          constraints: {node_name: providerName}}, clarification: null};
       response.end(JSON.stringify({message: {content: JSON.stringify(result)}, done: true, done_reason: 'stop'}));
     } catch (error) {
       fakeErrors.push(String(error));
@@ -119,7 +125,7 @@ export async function networkInputCommandWorkflow() {
       const file = join(scratch, (serving ? 'provider' : 'input') + '.json');
       const apiPort = await port(), api = `http://127.0.0.1:${apiPort}`;
       const value = JSON.parse(await readFile(join(root, 'config/node.example.json'), 'utf8'));
-      Object.assign(value, {node_id: id, name: serving ? 'serving fixture' : 'input fixture', psk: '',
+      Object.assign(value, {node_id: id, name: serving ? providerName : 'input fixture', psk: '',
         endpoints: [], auto_local: false, local_pairing: false, heartbeat_seconds: 0.5,
         metadata: {area: ['fixture', serving ? 'execution' : 'input']}, update: {policy: 'off'},
         input_workflow: {prepare_on_input: true, resolve_on_answer: true, network_interpreter: false},

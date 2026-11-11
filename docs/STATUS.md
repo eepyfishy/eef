@@ -23,7 +23,11 @@ review/compiler, explicit owner approval, remote system-information execution
 and retained result reads through the origin. It uses actual Windows commands
 and pinned-TLS logical nodes with fake inference. The original native request
 suite retains all cases and requires this added workflow before success.
-Static syntax checks pass; full hosted validation is pending. This does not
+The first candidate `f635355` failed native method preparation because its fake
+model supplied a forbidden routing ID. The fixture now suggests the configured
+node name; compiler and exact executor-ID assertions remain unchanged. Its Rust
+jobs passed, but that failed run is not accepted. Static syntax checks pass;
+full hosted validation of the correction is pending. This does not
 replace real-model quality, physical two-PC or stable-release acceptance.
 
 ## Accepted development checkpoint: nonblocking interpreter retirement

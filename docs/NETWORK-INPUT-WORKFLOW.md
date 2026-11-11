@@ -112,3 +112,13 @@ The existing native suite keeps its earlier cases and additionally requires the
 new workflow to finish before recording success. This follow-up awaits its own
 hosted validation. It uses fake inference and two processes on one runner;
 real-model quality and physical two-PC acceptance remain separate requirements.
+
+The first command-path candidate `f635355` failed in
+[run 42941420746](https://github.com/eepyfishy/eef/actions/runs/42941420746)
+during method preparation; its Rust regression jobs passed. The fake method
+supplied `constraints.node_id`, which the existing semantic validator forbids:
+models may suggest `node_name` or `area`, while the compiler binds routing IDs.
+The corrected fixture names its configured serving node and retains the exact
+executor-ID, origin, approval, result and receipt-reuse assertions. Product
+validation is unchanged. The failed run remains evidence, not a passing check;
+the corrected fixture requires a fresh complete hosted run.
