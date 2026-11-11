@@ -91,6 +91,17 @@ authority. Store coverage includes that revision transition, foreign-origin
 refusal and damaged evidence; the authenticated command regression also inspects
 both recovered stages after compilation. Full hosted acceptance is pending.
 
+The bounded-reader follow-up serves this snapshot through the existing native
+journal reader instead of waiting for SQLite on an async runtime thread. It shares
+the existing four read slots and one lazy reader, with a five-second inspection
+deadline spanning origin lookup and the final session check. A timeout or caller
+disconnect does not release a slot or journal still held by an actual read.
+Cancelled or expired reads recheck their waiter after acquiring the journal lock
+and do not start a late snapshot. No synchronous fallback, repeated lookup,
+replacement operation, new queue or permission is added. Read-only snapshots
+cannot recover results or authorize work. Recovery mutations keep their existing
+separate path and limits. Fresh hosted validation remains required.
+
 A completed network interpretation can be retained even when its source update
 did not finish. The old continuation remains retired. A fresh authenticated
 origin request may explicitly apply the already saved semantic data; it cannot

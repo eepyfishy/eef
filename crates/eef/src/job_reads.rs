@@ -64,6 +64,18 @@ impl JobStore {
     /// even if its async waiter times out or disconnects. No source or lease is
     /// passed to the worker; cancellation never creates replacement work.
     pub(crate) async fn get_before(self: &Arc<Self>, id: &str, deadline: Instant) -> Result<Plan> {
+        let id = id.to_owned();
+        self.read_before(deadline, move |store, _current| store.get(&id))
+            .await
+    }
+
+    /// Existing journal reader shared by strictly historical views. The check
+    /// also lets a reader refuse a query after acquiring a contended lock.
+    pub(super) async fn read_before<T, F>(self: &Arc<Self>, deadline: Instant, read: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&JobStore, &dyn Fn() -> bool) -> Result<T> + Send + 'static,
+    {
         if Instant::now() >= deadline {
             bail!("Journal read deadline elapsed before admission")
         }
@@ -75,10 +87,10 @@ impl JobStore {
             .context("Journal read capacity unavailable; no queued retry")?;
         let (reply, receiver) = oneshot::channel();
         let store = self.clone();
-        let id = id.to_owned();
         let original_end = deadline.into_std();
         self.reads.submit(Box::new(move || {
-            if reply.is_closed() || std::time::Instant::now() >= original_end {
+            let current = || !reply.is_closed() && std::time::Instant::now() < original_end;
+            if !current() {
                 // A queued abandoned/expired read cannot start a later query.
                 return;
             }
@@ -87,8 +99,11 @@ impl JobStore {
                 .reads
                 .started
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| store.get(&id)))
-                .unwrap_or_else(|_| Err(anyhow::anyhow!("Journal read failed; evidence retained")));
+            let result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read(&store, &current)))
+                    .unwrap_or_else(|_| {
+                        Err(anyhow::anyhow!("Journal read failed; evidence retained"))
+                    });
             // Do not free capacity when only the network waiter goes away.
             drop(slot);
             // A delivered snapshot no longer needs journal ownership. Release

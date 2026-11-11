@@ -68,6 +68,13 @@ its cause unproven; this does not establish physical or stable-release acceptanc
 
 ## In development: explicit retained interpreter result recovery
 
+The bounded-reader follow-up moves interpreter inspection onto the existing
+four-slot native journal reader and checks its original five-second deadline
+through the final session fence. Real journal contention tests cover async timer
+progress, retained read capacity after cancellation, shared saturation, expired
+queue entries, foreign origins and preserved damaged history. Recovery mutation,
+permissions and execution authority are unchanged; hosted acceptance is pending.
+
 Interpreter inspection now reads its source revision and origin-owned attempt
 history under the same existing journal lock. Store and authenticated command
 cases cover later source revisions, multiple recovered stages, unchanged charges,

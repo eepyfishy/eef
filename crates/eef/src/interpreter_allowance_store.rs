@@ -379,12 +379,38 @@ impl JobStore {
     /// Inspection is one historical view, not a source-edit or execution permit.
     /// Keep the source revision and attempt history under the same journal lock:
     /// a later interpretation must not appear beside an earlier source revision.
+    #[cfg(test)]
     pub(crate) fn interpreter_source_snapshot(
         &self,
         id: &str,
         origin: &str,
     ) -> Result<(Plan, Vec<Record>)> {
+        self.interpreter_source_snapshot_if(id, origin, &|| true)
+    }
+    pub(crate) async fn interpreter_source_snapshot_before(
+        self: &Arc<Self>,
+        id: &str,
+        origin: &str,
+        deadline: tokio::time::Instant,
+    ) -> Result<(Plan, Vec<Record>)> {
+        let id = id.to_owned();
+        let origin = origin.to_owned();
+        self.read_before(deadline, move |store, current| {
+            store.interpreter_source_snapshot_if(&id, &origin, current)
+        })
+        .await
+    }
+    fn interpreter_source_snapshot_if(
+        &self,
+        id: &str,
+        origin: &str,
+        current: &dyn Fn() -> bool,
+    ) -> Result<(Plan, Vec<Record>)> {
         let connection = self.connection.lock().expect("job journal");
+        ensure!(
+            current(),
+            "Interpreter inspection retired before journal read"
+        );
         let source = read(&connection, id)?;
         ensure!(
             source
