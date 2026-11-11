@@ -14,6 +14,19 @@ under the stop gate, including after failed stop persistence. New real-journal
 regressions and the one-model-slot normal workflow require full hosted validation.
 This does not close other blocking paths, physical tests or stable-release gates.
 
+## Accepted development checkpoint: bounded interpreter history reads
+
+Source `474500b` passes all four jobs in
+[run 42933959948](https://github.com/eepyfishy/eef/actions/runs/42933959948):
+1,760 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and existing extra gates. Exact source/raw-log review confirms reuse of
+the existing four-slot native journal reader, one inspection deadline through
+origin lookup and final session fencing, and a post-lock waiter/deadline check.
+Actual contention/cancellation cases preserve capacity until storage finishes;
+foreign origins and damaged history remain refused. Recovery mutations retain
+their original path and limits. The later nonblocking-retirement follow-up still
+awaits its own complete acceptance; physical and stable-release gates remain open.
+
 ## Accepted development checkpoint: consistent interpreter inspection snapshots
 
 Source `6569938` passes all four jobs in
@@ -24,8 +37,8 @@ source revision and origin-owned attempt history share one journal lock.
 Coverage includes a later owner answer/revision, inspection of both recovered
 stages after compilation, unchanged charges, foreign origins and damaged history.
 Recovery mutation, execution authority and previous assertions are unchanged.
-The later bounded-reader and nonblocking-retirement follow-ups remain pending;
-physical and stable-release acceptance remain separate.
+The later bounded-reader has its own acceptance above; nonblocking retirement
+remains pending. Physical and stable-release acceptance remain separate.
 
 ## Accepted development checkpoint: readable recovery history during inference
 
@@ -97,7 +110,8 @@ four-slot native journal reader and checks its original five-second deadline
 through the final session fence. Real journal contention tests cover async timer
 progress, retained read capacity after cancellation, shared saturation, expired
 queue entries, foreign origins and preserved damaged history. Recovery mutation,
-permissions and execution authority are unchanged; hosted acceptance is pending.
+permissions and execution authority are unchanged; full hosted acceptance is
+recorded above.
 
 Interpreter inspection now reads its source revision and origin-owned attempt
 history under the same existing journal lock. Store and authenticated command

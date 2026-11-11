@@ -13,8 +13,11 @@ independent source/log acceptance. Journal snapshot source `6569938` passes
 [run 42932791140](https://github.com/eepyfishy/eef/actions/runs/42932791140):
 all four jobs, 1,758 Windows/headless Rust tests, one ignored across 17 groups,
 37 native suites and existing extra gates, with exact source/raw-log review.
-Later bounded-reader and retirement follow-ups remain pending. Physical and
-stable-release acceptance remain separate.
+Bounded-reader source `474500b` passes
+[run 42933959948](https://github.com/eepyfishy/eef/actions/runs/42933959948):
+all four jobs, 1,760 Windows/headless Rust tests and the same remaining gates,
+with exact source/raw-log review. The later retirement follow-up remains pending.
+Physical and stable-release acceptance remain separate.
 It extends the existing journal
 and review/compiler services without adding dependencies or background workers.
 
@@ -105,7 +108,8 @@ Cancelled or expired reads recheck their waiter after acquiring the journal lock
 and do not start a late snapshot. No synchronous fallback, repeated lookup,
 replacement operation, new queue or permission is added. Read-only snapshots
 cannot recover results or authorize work. Recovery mutations keep their existing
-separate path and limits. Fresh hosted validation remains required.
+separate path and limits. This checkpoint passes full hosted/source acceptance
+above; later retirement changes require their own verification.
 
 The subsequent [retirement follow-up](INTERPRETER-RETIREMENT.md) makes source
 retirement persistence asynchronous after in-memory ownership ends. Inspection
@@ -183,7 +187,7 @@ normal save service writes YAML. It now obtains authentication and runtime
 settings from the existing `Config` loader. Assertions and production code are
 unchanged; this corrects test setup, not an observed product restart failure.
 
-Remaining work includes acceptance of the bounded-reader and retirement follow-ups,
+Remaining work includes acceptance of the retirement follow-up,
 physical multi-PC tests, and investigation of the retained camera failure.
 Real-model/onboarding, continuous workloads, strong
 stop, MSI/signing/Defender and stable-release gates remain open.
