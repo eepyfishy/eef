@@ -11,8 +11,11 @@ and explicit execution select the reviewed source kind; a camera request cannot
 fall back to microphone inspection or preparation. Camera-capable peers advertise
 an explicit version-three source list. Microphone-only peers retain the existing
 version-two wire shape. Fresh readiness withdrawal updates the same authenticated
-connection without restarting work. These changes require hosted verification;
-JSON-free camera resource setup and camera request authoring remain unfinished.
+connection without restarting work. JSON-free resource setup and request
+authoring through the public command lifecycle pass simulated-device hosted
+verification at `cf07f93`. The generated-video decoder case also passes at
+`7f1d052` under an explicit 512 MiB reviewed test grant. Neither result establishes
+physical webcam/RTSP, default-memory, VLM-trigger or full release acceptance.
 See [camera development and acceptance boundaries](CAMERA-MOTION.md).
 
 The earlier implementation checkpoints below retain their original scope.

@@ -10,8 +10,12 @@ The sections below retain the earlier incremental checkpoints and their own
 verification boundaries. A feature described as unavailable at an earlier
 checkpoint is not a claim that later sections or current code omit it.
 
-The next decoder fixture is under development and has not passed hosted runtime
-verification yet. It uses the existing hashed OpenCV/NumPy interpreter and a
+The generated-video decoder fixture passes at accepted source `7f1d052` in
+[run 42935544215](https://github.com/eepyfishy/eef/actions/runs/42935544215).
+Its Windows/headless all-target tests enable `native-test-fixtures`; the node
+test group passes 1,159 tests with none ignored or filtered out. Source/feature
+and raw-log review confirm inclusion of the complete/truncated decoder case.
+It uses the existing hashed OpenCV/NumPy interpreter and a
 generated MJPEG/AVI sequence inside the owned source process. Only acquisition is
 substituted through the existing opt-in native-test prelude; decoding, resizing,
 grayscale comparison, consumed workload authority, durable event delivery and
@@ -63,8 +67,8 @@ the video-only behavior; it adds no audio permission or processing. OpenCV's
 [property contract](https://github.com/opencv/opencv/blob/9e2ede9628a55ec2742a1b180d3e69b0322281b9/modules/videoio/include/opencv2/videoio.hpp)
 also documents audio processing as disabled by default. The generated-video
 fixture now requires the original option list to fail as a control and the
-corrected producer to decode successfully. Hosted verification of the fix is
-pending; the two earlier decoder failures remain retained.
+corrected producer to decode successfully. The generated-codec check passes at
+the accepted checkpoint above; the two earlier decoder failures remain retained.
 The source-byte fix changes the built-in adapter digest. Historical definitions
 keep their original digest and remain readable; execution still requires the
 exact reviewed source bytes. Inspect the current source and review a new request

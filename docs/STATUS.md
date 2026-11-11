@@ -3,6 +3,18 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## Verified existing checkpoint: generated camera codec
+
+Review of source `7f1d052` and its accepted
+[run 42935544215](https://github.com/eepyfishy/eef/actions/runs/42935544215)
+confirms that the Windows/headless all-target test group includes the actual
+OpenCV/NumPy generated-video camera fixture. All 1,159 node tests pass with none
+ignored or filtered out. It verifies five decoded frames and durable motion,
+three-frame truncation remaining unknown, single open/release and no image
+reporting under an explicit 512 MiB test grant. No test was rerun or changed for
+this review. [Camera documentation](CAMERA-MOTION.md) now records that scope;
+physical capture, RTSP, default memory and VLM-trigger acceptance remain open.
+
 ## In development: complete native network input command path
 
 The [public workflow check](NETWORK-INPUT-WORKFLOW.md#native-command-path-follow-up)
