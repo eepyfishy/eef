@@ -556,6 +556,28 @@ async fn recovery_receipts_survive_later_compilation() {
     assert_eq!(compiled.interpreter_recoveries.len(), 2);
     assert_eq!(compiled.interpreter_recoveries[0].command, initial);
     assert_eq!(compiled.interpreter_recoveries[1].command, command);
+    let inspect = recovery_request(
+        &f,
+        RecoveryCommand::Inspect {
+            id: compiled.plan_id.clone(),
+            operation_id: uuid(),
+        },
+    )
+    .await;
+    let view = f.services[0]
+        .interpreter_recovery_command(inspect.clone())
+        .await
+        .unwrap();
+    assert!(eefn::interpreter_recovery_command::confirmed_node(
+        &view, &inspect
+    ));
+    assert_eq!(view["success"], true);
+    assert_eq!(view["result"]["revision"], compiled.revision);
+    let headers = view["result"]["attempts"].as_array().unwrap();
+    assert_eq!(headers.len(), 2);
+    assert!(headers.iter().all(|a| a["source_applied"] == true
+        && a["completed_result"] == true
+        && a["attempt"]["source_revision"].as_u64().unwrap() <= compiled.revision));
     let (history, reused) = f
         .runtime()
         .recover_interpreter_result(&initial, &origin(&f).await)

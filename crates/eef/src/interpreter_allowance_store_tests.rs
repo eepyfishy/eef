@@ -105,6 +105,88 @@ fn used(store: &JobStore) -> usize {
 }
 
 #[test]
+fn interpreter_inspection_pairs_current_source_with_its_attempts_without_charging_or_editing() {
+    let store = JobStore::in_memory().unwrap();
+    let runtime = uuid();
+    let pin = policy(&store, &runtime, limits());
+    let p = permit();
+    let engine = TaskEngine::with_store(EventBus::new(10), store.clone());
+    let context = RequestContext::new(uuid(), "input".into(), vec!["home".into()]).unwrap();
+    let opened = crate::request_drafts::open(
+        &engine,
+        json!({"schema_version":1,"original_text":"Inspect node status","proposal":{
+            "schema_version":1,"intent":"information","goal":"Inspect node status",
+            "context_hints":[],"constraints":[],"suggested_capabilities":["system.info"],
+            "complexity":"simple","workload":"one_shot","needs_clarification":true,
+            "clarification":"Which node?"
+        }}),
+        &context,
+        &p.capabilities,
+    )
+    .unwrap();
+    let id = opened["id"].as_str().unwrap();
+    let (earlier, empty) = store.interpreter_source_snapshot(id, "input").unwrap();
+    assert!(empty.is_empty());
+    let answer_context = RequestContext::new(uuid(), "input".into(), vec!["home".into()]).unwrap();
+    let answered = crate::request_drafts::command(
+        &engine,
+        "requests.draft_answer",
+        json!({"id":id,"expected_revision":earlier.revision,"text":"This node"}),
+        &answer_context,
+        &p.capabilities,
+    )
+    .unwrap();
+    let task = Task::new(
+        Snapshot {
+            schema_version: 1,
+            job_id: id.into(),
+            revision: answered["revision"].as_u64().unwrap(),
+            operation_id: uuid(),
+            request_context: context,
+            allowed_capabilities: p.capabilities.clone(),
+            source: Source::Clarification {
+                draft: Box::new(serde_json::from_value(answered["draft"].clone()).unwrap()),
+            },
+        },
+        128,
+    )
+    .unwrap();
+    let reserved = reserve_new(&store, task.clone(), &pin, &p, &runtime);
+    // Reading the source before this answer/reservation and the ledger after it
+    // would mix different views, producing an invalid inspection response.
+    assert!(reserved.record.task().unwrap().snapshot.revision > earlier.revision);
+    let before_source = store.get(id).unwrap();
+    let before_ledger = store.interpreter_allowance_records().unwrap();
+    let before_usage = store.usage().unwrap();
+    let (current, records) = store.interpreter_source_snapshot(id, "input").unwrap();
+    assert_eq!(json!(current), json!(before_source));
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id(), reserved.id());
+    assert!(
+        records
+            .iter()
+            .all(|r| r.task().unwrap().snapshot.revision <= current.revision)
+    );
+    assert!(
+        store
+            .interpreter_source_snapshot(id, "other-input")
+            .is_err()
+    );
+    assert!(
+        store
+            .interpreter_source_snapshot(&"0".repeat(32), "input")
+            .is_err()
+    );
+    assert_eq!(json!(store.get(id).unwrap()), json!(before_source));
+    assert_eq!(
+        json!(store.interpreter_allowance_records().unwrap()),
+        json!(before_ledger)
+    );
+    assert_eq!(store.usage().unwrap(), before_usage);
+    store.interpreter_not_sent(reserved).unwrap();
+}
+
+#[test]
 fn caller_ceiling_is_durable_charged_and_never_replaces_a_retained_attempt() {
     let store = JobStore::in_memory().unwrap();
     let runtime = uuid();
@@ -715,6 +797,7 @@ fn damaged_history_accounts_columns_or_escrow_fail_closed_without_reset() {
         let pin = policy(&store, &runtime, limits());
         let p = permit();
         let task = input(&store, "input");
+        let source_id = task.snapshot.job_id.clone();
         let _r = reserve_new(&store, task, &pin, &p, &runtime);
         let connection = store.connection.lock().unwrap();
         match corruption {
@@ -731,6 +814,19 @@ fn damaged_history_accounts_columns_or_escrow_fail_closed_without_reset() {
         assert!(
             store.interpreter_allowance_records().is_err(),
             "{corruption}"
+        );
+        assert!(
+            store
+                .interpreter_source_snapshot(&source_id, "input")
+                .is_err(),
+            "{corruption}"
+        );
+        assert_eq!(
+            store
+                .interpreter_source_snapshot(&source_id, "other-input")
+                .unwrap_err()
+                .to_string(),
+            "Interpreter source unavailable for this origin"
         );
         assert!(store.validate_automations().is_err());
         let connection = store.connection.lock().unwrap();

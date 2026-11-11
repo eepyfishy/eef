@@ -49,6 +49,12 @@ its cause unproven; this does not establish physical or stable-release acceptanc
 
 ## In development: explicit retained interpreter result recovery
 
+Interpreter inspection now reads its source revision and origin-owned attempt
+history under the same existing journal lock. Store and authenticated command
+cases cover later source revisions, multiple recovered stages, unchanged charges,
+foreign origins and damaged history. This snapshot follow-up awaits complete
+hosted validation; it changes no recovery or execution authority.
+
 Read-only interpreter inspection now uses the existing bounded submission/reply
 path independently of input mutation admission. Recovery commands still require
 that slot and the unchanged coordinator source checks. New node-service and

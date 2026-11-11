@@ -78,6 +78,14 @@ held. The existing busy/retirement case now explicitly targets recovery mutation
 its refusal, runtime and late-reply assertions remain. Full hosted validation
 of this follow-up is pending.
 
+The journal snapshot follow-up reads the source revision and its origin-owned
+attempts under one existing journal lock. Separate reads could combine an older
+request with an attempt created after an owner answer or subsequent planning.
+Inspection still changes no source or allowance and creates no execution
+authority. Store coverage includes that revision transition, foreign-origin
+refusal and damaged evidence; the authenticated command regression also inspects
+both recovered stages after compilation. Full hosted acceptance is pending.
+
 A completed network interpretation can be retained even when its source update
 did not finish. The old continuation remains retired. A fresh authenticated
 origin request may explicitly apply the already saved semantic data; it cannot

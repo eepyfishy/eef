@@ -376,6 +376,34 @@ impl JobStore {
     ) -> Result<(Vec<Record>, BTreeMap<String, Account>)> {
         snapshot(&self.connection.lock().expect("job journal"))
     }
+    /// Inspection is one historical view, not a source-edit or execution permit.
+    /// Keep the source revision and attempt history under the same journal lock:
+    /// a later interpretation must not appear beside an earlier source revision.
+    pub(crate) fn interpreter_source_snapshot(
+        &self,
+        id: &str,
+        origin: &str,
+    ) -> Result<(Plan, Vec<Record>)> {
+        let connection = self.connection.lock().expect("job journal");
+        let source = read(&connection, id)?;
+        ensure!(
+            source
+                .goal
+                .request_context
+                .as_ref()
+                .is_some_and(|c| c.origin_node() == origin),
+            "Interpreter source unavailable for this origin"
+        );
+        let records = snapshot(&connection)?
+            .0
+            .into_iter()
+            .filter(|r| {
+                r.binding.grant.job_id == source.plan_id
+                    && r.binding.grant.request_context.origin_node() == origin
+            })
+            .collect();
+        Ok((source, records))
+    }
     pub(crate) fn reserve_interpreter_allowance(
         &self,
         task: Task,

@@ -24,30 +24,13 @@ impl Runtime {
                 && origin.runtime_id() == request.origin_runtime_id,
             "Recovery command session/runtime changed"
         );
-        // Scope-check before any attempt lookup, even for an absent/foreign ID.
-        let source = self.engine.store.get(request.command.id())?;
-        ensure!(
-            source
-                .goal
-                .request_context
-                .as_ref()
-                .is_some_and(|c| c.origin_node() == context.origin_node()),
-            "Interpreter source unavailable for this origin"
-        );
         let (plan, attempts, truncated, recovery, reused) = match &request.command {
             Command::Inspect { .. } => {
-                let mut records = self
+                // Scope-check and read both histories under one journal lock.
+                let (source, mut records) = self
                     .engine
                     .store
-                    .interpreter_allowance_records()?
-                    .0
-                    .into_iter()
-                    .filter(|r| {
-                        r.binding.grant.job_id == source.plan_id
-                            && r.binding.grant.request_context.origin_node()
-                                == context.origin_node()
-                    })
-                    .collect::<Vec<_>>();
+                    .interpreter_source_snapshot(request.command.id(), context.origin_node())?;
                 records.sort_by(|a, b| {
                     b.binding
                         .reserved_at_ms
