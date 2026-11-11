@@ -9,6 +9,7 @@ import os as _eef_decode_os
 import pathlib as _eef_decode_pathlib
 
 assert _eef_decode_frames in (3, 5)
+assert _eef_decode_size in ((160, 120), (640, 480))
 _eef_decode_root = _eef_decode_pathlib.Path(_eef_decode_root)
 _eef_decode_video = _eef_decode_root / "generated.avi"
 
@@ -27,11 +28,11 @@ import numpy as _eef_decode_np
 _eef_decode_cv.setNumThreads(1)
 _eef_decode_log("imported")
 _eef_decode_writer = _eef_decode_cv.VideoWriter(
-    str(_eef_decode_video), _eef_decode_cv.VideoWriter_fourcc(*"MJPG"), 5, (160, 120))
+    str(_eef_decode_video), _eef_decode_cv.VideoWriter_fourcc(*"MJPG"), 5, _eef_decode_size)
 assert _eef_decode_writer.isOpened(), "Synthetic encoded-video writer unavailable"
 try:
     for _eef_decode_value in (0, 20, 20, 255, 255)[:_eef_decode_frames]:
-        _eef_decode_writer.write(_eef_decode_np.full((120, 160, 3), _eef_decode_value,
+        _eef_decode_writer.write(_eef_decode_np.full((_eef_decode_size[1], _eef_decode_size[0], 3), _eef_decode_value,
                                                    dtype=_eef_decode_np.uint8))
 finally:
     _eef_decode_writer.release()

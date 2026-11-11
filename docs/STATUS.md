@@ -3,6 +3,15 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: camera decoder at command defaults
+
+A separate native camera fixture now parses the public camera submission
+defaults and attempts five generated 640 x 480 frames under the actual 128 MiB
+owned-process limit. It retains the existing 512 MiB complete/truncated cases and
+their durable-event, completion, privacy and single-release assertions. Source
+formatting passes; hosted execution is pending. No production limit changes or
+physical/default-camera acceptance are claimed. See [scope](CAMERA-MOTION.md).
+
 ## Verified existing checkpoint: generated camera codec
 
 Review of source `7f1d052` and its accepted

@@ -29,6 +29,16 @@ Its explicit 512 MiB test grant does not change production memory defaults.
 This adds a real-codec acceptance case; it does not establish physical camera,
 RTSP transport, two-PC or stable-release acceptance.
 
+A pending follow-up adds a separate five-frame decoder case using the camera
+command's parsed memory and resolution defaults: 128 MiB and 640 x 480. It checks
+the actual prepared Python process limit and requires the same durable motion,
+completion, resource release and no-image reporting as the earlier case. The
+existing 512 MiB complete/truncated cases remain. Encoding occurs inside the
+bounded fixture process too; a failure there must be diagnosed separately from
+capture/decoding. This test is not yet accepted and changes no production limit.
+Even a pass would establish only finite generated-video behavior at that size,
+not physical driver memory use, RTSP, longer sessions or full onboarding.
+
 `python/streams/camera_motion.py` implements a lazy, single-open motion iterator
 for later admitted camera workloads. It samples a small grayscale image, compares
 it with the preceding sample and emits only frame count, optional activity,
