@@ -9,8 +9,12 @@ all four jobs, 1,755 Windows/headless Rust tests, one ignored across 17 groups,
 with the same counts. Active-inference inspection `bee2806` passes
 [run 42862031369](https://github.com/eepyfishy/eef/actions/runs/42862031369)
 with 1,757 Windows/headless Rust tests and the same other gates. Both have
-independent source/log acceptance; the subsequent journal snapshot follow-up
-remains pending. Physical and stable-release acceptance remain separate.
+independent source/log acceptance. Journal snapshot source `6569938` passes
+[run 42932791140](https://github.com/eepyfishy/eef/actions/runs/42932791140):
+all four jobs, 1,758 Windows/headless Rust tests, one ignored across 17 groups,
+37 native suites and existing extra gates, with exact source/raw-log review.
+Later bounded-reader and retirement follow-ups remain pending. Physical and
+stable-release acceptance remain separate.
 It extends the existing journal
 and review/compiler services without adding dependencies or background workers.
 
@@ -89,7 +93,8 @@ request with an attempt created after an owner answer or subsequent planning.
 Inspection still changes no source or allowance and creates no execution
 authority. Store coverage includes that revision transition, foreign-origin
 refusal and damaged evidence; the authenticated command regression also inspects
-both recovered stages after compilation. Full hosted acceptance is pending.
+both recovered stages after compilation. This snapshot checkpoint passes full
+hosted/source acceptance above; it does not establish acceptance of later code.
 
 The bounded-reader follow-up serves this snapshot through the existing native
 journal reader instead of waiting for SQLite on an async runtime thread. It shares
@@ -178,7 +183,7 @@ normal save service writes YAML. It now obtains authentication and runtime
 settings from the existing `Config` loader. Assertions and production code are
 unchanged; this corrects test setup, not an observed product restart failure.
 
-Remaining work includes acceptance of the journal snapshot follow-up,
+Remaining work includes acceptance of the bounded-reader and retirement follow-ups,
 physical multi-PC tests, and investigation of the retained camera failure.
 Real-model/onboarding, continuous workloads, strong
 stop, MSI/signing/Defender and stable-release gates remain open.

@@ -14,6 +14,19 @@ under the stop gate, including after failed stop persistence. New real-journal
 regressions and the one-model-slot normal workflow require full hosted validation.
 This does not close other blocking paths, physical tests or stable-release gates.
 
+## Accepted development checkpoint: consistent interpreter inspection snapshots
+
+Source `6569938` passes all four jobs in
+[run 42932791140](https://github.com/eepyfishy/eef/actions/runs/42932791140):
+1,758 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and existing extra gates. Exact source and raw-log review confirm the
+source revision and origin-owned attempt history share one journal lock.
+Coverage includes a later owner answer/revision, inspection of both recovered
+stages after compilation, unchanged charges, foreign origins and damaged history.
+Recovery mutation, execution authority and previous assertions are unchanged.
+The later bounded-reader and nonblocking-retirement follow-ups remain pending;
+physical and stable-release acceptance remain separate.
+
 ## Accepted development checkpoint: readable recovery history during inference
 
 Source `bee2806` passes all four jobs in
@@ -31,7 +44,7 @@ and its source/log audit: all four jobs, 1,755 Windows/headless Rust tests,
 one ignored across 17 groups, 37 native suites and existing extra gates.
 It explains refusals, distinguishes stored decisions and empty history, and
 offers only read-only inspection after uncertainty. The later journal snapshot
-follow-up remains pending; physical and stable-release gates remain open.
+has its own acceptance above; physical and stable-release gates remain open.
 
 ## Accepted development checkpoint: retained interpreter recovery and restart
 
@@ -89,8 +102,8 @@ permissions and execution authority are unchanged; hosted acceptance is pending.
 Interpreter inspection now reads its source revision and origin-owned attempt
 history under the same existing journal lock. Store and authenticated command
 cases cover later source revisions, multiple recovered stages, unchanged charges,
-foreign origins and damaged history. This snapshot follow-up awaits complete
-hosted validation; it changes no recovery or execution authority.
+foreign origins and damaged history. This snapshot follow-up passes complete
+hosted acceptance as recorded above. It changes no recovery or execution authority.
 
 Read-only interpreter inspection now uses the existing bounded submission/reply
 path independently of input mutation admission. Recovery commands still require

@@ -95,7 +95,8 @@ This never approves or executes tools and differs from `requests recover-result`
 for tool execution receipts. Core command/restart coverage passes integrated
 hosted/source acceptance at `f3f9ffb`; output and active-inference inspection
 follow-ups pass their own complete acceptance at `33c9037` and `bee2806`.
-The subsequent journal snapshot follow-up remains pending. See
+The journal snapshot follow-up passes its own complete acceptance at `6569938`;
+subsequent bounded-reader and retirement changes remain pending. See
 [retained interpreter recovery](INTERPRETER-RESULT-RECOVERY.md).
 
 Normal `requests input` saves raw input before checking for a local interpreter.
