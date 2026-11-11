@@ -343,6 +343,8 @@ impl Fixture {
 mod broker_tests;
 #[path = "interpreter_recovery_tests.rs"]
 mod recovery_tests;
+#[path = "interpreter_retirement_tests.rs"]
+mod retirement_tests;
 
 #[tokio::test]
 async fn real_core_allowances_exchange_all_three_stages_through_private_grants_without_promotion_or_replay()
@@ -386,6 +388,11 @@ async fn real_core_allowances_exchange_all_three_stages_through_private_grants_w
         );
         assert_eq!(json!(plan.request_review), json!(before.request_review));
         drop(completed);
+        f.runtime()
+            .engine
+            .store
+            .wait_workload_finalizations()
+            .unwrap();
         if stage == "initial" {
             assert_eq!(
                 f.runtime()
@@ -513,6 +520,11 @@ async fn live_completions_apply_initial_resolution_question_and_concrete_method_
             assert_eq!(saved.status, crate::task::PlanStatus::Review);
             assert!(saved.tasks.is_empty() && saved.planning.is_none());
         }
+        f.runtime()
+            .engine
+            .store
+            .wait_workload_finalizations()
+            .unwrap();
         assert!(matches!(
             f.runtime()
                 .exchange_interpreter(task, f.pin.clone(), &parties)
@@ -611,6 +623,11 @@ async fn completed_output_cannot_cross_later_source_policy_authentication_peer_o
                     .is_err(),
                 "{stage}/{change}"
             );
+            f.runtime()
+                .engine
+                .store
+                .wait_workload_finalizations()
+                .unwrap();
             let after = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
             assert_eq!(
                 json!(after.request_review),
@@ -692,6 +709,11 @@ async fn altered_completion_or_shutdown_cannot_replace_the_saved_source() {
                 .unwrap()
                 .unwrap();
         }
+        f.runtime()
+            .engine
+            .store
+            .wait_workload_finalizations()
+            .unwrap();
         let saved = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
         assert!(
             saved.request_review.is_none() && saved.tasks.is_empty() && saved.approval.is_none()
@@ -726,6 +748,7 @@ async fn rejected_source_edit_is_atomic_and_keeps_the_original_live_completion_u
         .await
         .unwrap();
     let rejected = f.runtime().engine.commit_interpreter_result(
+        completed.continuation.registration().unwrap(),
         &completed.continuation.reserved,
         &permit,
         f.runtime().runtime_id(),
@@ -773,6 +796,11 @@ async fn dropped_live_exchange_retires_exact_ownership_without_reconstructing_a_
     f.called().await;
     running.abort();
     assert!(matches!(running.await,Err(error) if error.is_cancelled()));
+    f.runtime()
+        .engine
+        .store
+        .wait_workload_finalizations()
+        .unwrap();
     let records = f
         .runtime()
         .engine
@@ -856,6 +884,11 @@ async fn source_policy_settings_and_peer_changes_stop_one_exact_exchange_without
             .unwrap()
             .unwrap();
         assert!(result.is_err(), "{change}");
+        f.runtime()
+            .engine
+            .store
+            .wait_workload_finalizations()
+            .unwrap();
         let records = f
             .runtime()
             .engine

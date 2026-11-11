@@ -171,6 +171,7 @@ impl Runtime {
     /// fenced through the same journal write. Failure retires source ownership
     /// through Completion's existing drop path; it never retries inference.
     pub(crate) async fn apply_interpreter_completion(&self, completed: Completion) -> Result<Plan> {
+        completed.continuation.check()?;
         let record = completed.record();
         let (task, mutation) = self.prepare_interpreter_mutation(record).await?;
         let snapshot = &task.snapshot;
@@ -218,6 +219,7 @@ impl Runtime {
                         "Interpreter authentication changed before source checkpoint"
                     );
                     let plan = self.engine.commit_interpreter_result(
+                        completed.continuation.registration()?,
                         &completed.continuation.reserved,
                         &permit,
                         self.runtime_id(),

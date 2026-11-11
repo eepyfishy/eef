@@ -938,6 +938,7 @@ impl TaskEngine {
     }
     pub(crate) fn commit_interpreter_result(
         &self,
+        registration: &WorkloadJob,
         reserved: &crate::interpreter_allowance::Reserved,
         permit: &crate::interpreter_allowance::Permit,
         runtime: &str,
@@ -949,6 +950,10 @@ impl TaskEngine {
         if active.closing {
             bail!("Coordinator is stopping; no interpreter result can be applied")
         }
+        // Stop and shutdown share this gate; a failed stop checkpoint still
+        // revokes the original in-memory registration before an application.
+        registration.check(&reserved.record.binding.grant.job_id)?;
+        self.store.require_workload_reporting()?;
         self.store
             .commit_interpreter_result(reserved, permit, runtime, pin, completed, edit)
     }

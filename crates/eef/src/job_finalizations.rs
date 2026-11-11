@@ -22,6 +22,8 @@ pub(crate) use workload_stop::StopCheckpoint;
 #[path = "job_workload_issuance.rs"]
 mod workload_issuance;
 pub(crate) use workload_issuance::CommittedIssue;
+#[path = "job_interpreter_retirement.rs"]
+mod interpreter_retirement;
 
 const MAX_FINALIZATIONS: usize = 64;
 type Job = Box<dyn FnOnce() + Send + 'static>;

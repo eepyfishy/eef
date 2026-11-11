@@ -102,6 +102,12 @@ replacement operation, new queue or permission is added. Read-only snapshots
 cannot recover results or authorize work. Recovery mutations keep their existing
 separate path and limits. Fresh hosted validation remains required.
 
+The subsequent [retirement follow-up](INTERPRETER-RETIREMENT.md) makes source
+retirement persistence asynchronous after in-memory ownership ends. Inspection
+can briefly retain the old claimed state while that checkpoint is queued. This
+is not a live continuation or recovery authorization; explicit recovery still
+requires all original source, revision, evidence and current-session checks.
+
 A completed network interpretation can be retained even when its source update
 did not finish. The old continuation remains retired. A fresh authenticated
 origin request may explicitly apply the already saved semantic data; it cannot

@@ -24,6 +24,11 @@ async fn retained(f: &Fixture, stage: &str) -> (Task, Record, Recover) {
     // below is a separately authenticated, explicit source-edit operation.
     completed.continuation.reserved.deadline = std::time::Instant::now();
     drop(completed);
+    f.runtime()
+        .engine
+        .store
+        .wait_workload_finalizations()
+        .unwrap();
     let plan = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
     let command = Recover {
         id: plan.plan_id,
@@ -540,6 +545,11 @@ async fn recovery_receipts_survive_later_compilation() {
     };
     let id = completed.record().id().to_owned();
     drop(completed);
+    f.runtime()
+        .engine
+        .store
+        .wait_workload_finalizations()
+        .unwrap();
     let command = Recover {
         id: review.plan_id.clone(),
         expected_revision: review.revision,
@@ -621,6 +631,11 @@ async fn interpreter_recovery_refuses_live_stale_foreign_and_ordinary_promotion_
         json!(live)
     );
     drop(completed);
+    f.runtime()
+        .engine
+        .store
+        .wait_workload_finalizations()
+        .unwrap();
     let before = f.runtime().engine.store.get(&command.id).unwrap();
     assert!(
         f.runtime()

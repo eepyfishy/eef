@@ -36,15 +36,35 @@ struct Continuation {
     store: Arc<JobStore>,
     reserved: Reserved,
     _capacity: crate::capability::ProviderReservation,
-    _active: crate::task::ActiveJob,
+    active: Option<crate::task::WorkloadJob>,
+    retirement: Option<crate::jobs::WorkloadFinalSlot>,
+}
+impl Continuation {
+    fn registration(&self) -> Result<&crate::task::WorkloadJob> {
+        self.active.as_ref().context("Interpreter lifetime retired")
+    }
+    fn check(&self) -> Result<()> {
+        self.store.require_workload_reporting()?;
+        self.registration()?
+            .check(&self.reserved.record.binding.grant.job_id)
+    }
 }
 impl Drop for Continuation {
     fn drop(&mut self) {
-        if let Err(error) = self.store.retire_interpreter_continuation(
-            self.reserved.id(),
-            &self.reserved.record.binding_sha256,
-        ) {
-            tracing::warn!(grant_id=%self.reserved.id(),%error,"Interpreter continuation checkpoint unavailable; no replay or stop proof");
+        // This guard's drop is in-memory retirement only. Generic ActiveJob
+        // drop also waits on SQLite and must not be used by this path.
+        drop(self.active.take());
+        match self.retirement.take() {
+            Some(slot) => {
+                if let Err(error) = self.store.queue_interpreter_retirement(
+                    self.reserved.id().into(),
+                    self.reserved.record.binding_sha256.clone(),
+                    slot,
+                ) {
+                    tracing::warn!(grant_id=%self.reserved.id(),%error,"Interpreter continuation checkpoint unavailable; no replay or stop proof");
+                }
+            }
+            None => self.store.deny_workload_reporting(),
         }
     }
 }
@@ -111,7 +131,8 @@ impl Runtime {
                 return Ok(Exchange::Historical(Box::new(record)));
             }
         }
-        let active = self.engine.claim(&task.snapshot.job_id, || Ok(()))?;
+        let retirement = self.engine.store.reserve_workload_finalization()?;
+        let active = self.engine.claim_workload(&task.snapshot.job_id)?;
         let capacity = self
             .registry
             .reserve_best_with_context(
@@ -141,8 +162,10 @@ impl Runtime {
             store: self.engine.store.clone(),
             reserved,
             _capacity: capacity,
-            _active: active,
+            active: Some(active),
+            retirement: Some(retirement),
         };
+        continuation.check()?;
         let mut closing = self.engine.shutdown_receiver();
         let mut stops = self.engine.stop_changes.subscribe();
         let mut sources = self.engine.store.source_changes();
@@ -152,6 +175,7 @@ impl Runtime {
         let dispatch = self
             .interpreter_delivery_intent(&continuation.reserved, &pin, participants)
             .await?;
+        continuation.check()?;
         let observer = Arc::new(Observer {
             store: self.engine.store.clone(),
             id: continuation.reserved.id().into(),
@@ -174,6 +198,9 @@ impl Runtime {
             tokio::time::sleep_until(tokio::time::Instant::from_std(dispatch.deadline()));
         tokio::pin!(deadline);
         let reply = loop {
+            if let Err(error) = continuation.check() {
+                break Err(error);
+            }
             tokio::select! {biased;
                 _=closing.changed()=>break Err(anyhow::anyhow!("Coordinator lifecycle changed during interpretation")),
                 _=&mut deadline=>break Err(anyhow::anyhow!("Original interpreter deadline reached; outcome unconfirmed")),
@@ -225,6 +252,7 @@ impl Runtime {
                 "Interpreter completion differs from durable observation"
             );
             if report.success {
+                continuation.check()?;
                 self.interpreter_continuation_current(&continuation.reserved, &pin, participants)
                     .await?;
             }

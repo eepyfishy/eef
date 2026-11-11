@@ -21,6 +21,15 @@ fn network_input_policy() -> eefn::request_input::InputPolicy {
 #[tokio::test]
 async fn normal_model_free_input_interprets_and_prepares_through_the_authorized_service() {
     let f = Fixture::with_input_policy(network_input_policy()).await;
+    let mut provider = f
+        .runtime()
+        .registry
+        .find("llm.infer", "run")
+        .into_iter()
+        .find(|p| p.node_id == "provider")
+        .unwrap();
+    provider.max_concurrent = 1;
+    f.runtime().registry.register(provider);
     f.model.method.store(true, Ordering::SeqCst);
     let operation = uuid();
     let result = f.services[0].input_request(normal_input(&operation)).await;

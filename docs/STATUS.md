@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: nonblocking interpreter retirement
+
+The [retirement follow-up](INTERPRETER-RETIREMENT.md) uses the existing in-memory
+workload registration and admission-reserved journal finalizer. Continuation drop
+revokes registration before queuing its exact historical checkpoint, with no
+SQLite access in either drop guard. Reporting capacity stays with actual storage;
+inference charges remain unchanged. Application rechecks the original registration
+under the stop gate, including after failed stop persistence. New real-journal
+regressions and the one-model-slot normal workflow require full hosted validation.
+This does not close other blocking paths, physical tests or stable-release gates.
+
 ## Accepted development checkpoint: readable recovery history during inference
 
 Source `bee2806` passes all four jobs in
