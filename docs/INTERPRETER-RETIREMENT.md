@@ -52,6 +52,15 @@ The existing normal-input test now requires both stages to succeed with one
 model scheduling slot. Earlier tests keep their assertions and wait for the
 actual asynchronous checkpoint before checking retired history.
 
+A test-only follow-up replaces the blocking checkpoint wait in the interpreter
+test suites with a notification-based async wait, retaining the three-second
+bound and waiting for every actual write. The held-journal case now requires
+another async branch to release storage while the wait is pending, so blocking
+the current-thread runtime would fail the check. Multiple outstanding writes and
+waiters have a separate regression. Hosted verification is pending. This is a
+test coordination improvement, not proof of the cause of the checkpoint timeout
+in `0871daf` [run 42944697616](https://github.com/eepyfishy/eef/actions/runs/42944697616).
+
 Other interpreter journal reads, source application and stop checkpoint paths
 retain their existing behavior; this does not make every coordinator operation
 nonblocking. Physical multi-PC/model/media tests, general strong stop/resource

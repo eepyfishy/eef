@@ -3,14 +3,28 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: camera decoder at command defaults
+## In development: cooperative interpreter test checkpoint waits
+
+The interpreter tests now wait asynchronously for native journal finalization.
+The three-second bound, actual-write counter and historical assertions remain;
+synchronous tests keep their existing wait. The held-journal regression requires
+an async task on the same current-thread runtime to release SQLite while the
+wait is pending. An additional test covers multiple writes and waiters.
+Everything added to the wait machinery is test-only. Hosted verification is
+pending; this does not establish the cause of the earlier intermittent timeout.
+
+## Accepted development checkpoint: camera decoder at command defaults
 
 A separate native camera fixture now parses the public camera submission
 defaults and attempts five generated 640 x 480 frames under the actual 128 MiB
 owned-process limit. It retains the existing 512 MiB complete/truncated cases and
-their durable-event, completion, privacy and single-release assertions. Source
-formatting passes; hosted execution is pending. No production limit changes or
-physical/default-camera acceptance are claimed. See [scope](CAMERA-MOTION.md).
+their durable-event, completion, privacy and single-release assertions. Exact
+source/raw-log review of `bff39d3` and
+[run 42944983996](https://github.com/eepyfishy/eef/actions/runs/42944983996)
+confirms all four jobs pass: 1,765 Windows/headless Rust tests, one ignored across
+17 groups, all 37 native suites and existing extra gates. No production limit
+changes or physical/default-camera acceptance are claimed. See
+[scope](CAMERA-MOTION.md).
 
 ## Verified existing checkpoint: generated camera codec
 
@@ -24,7 +38,7 @@ reporting under an explicit 512 MiB test grant. No test was rerun or changed for
 this review. [Camera documentation](CAMERA-MOTION.md) now records that scope;
 physical capture, RTSP, default memory and VLM-trigger acceptance remain open.
 
-## In development: complete native network input command path
+## Accepted development checkpoint: complete native network input command path
 
 The [public workflow check](NETWORK-INPUT-WORKFLOW.md#native-command-path-follow-up)
 connects a model-free input node to a separately authorized interpreter node,
@@ -35,9 +49,16 @@ suite retains all cases and requires this added workflow before success.
 The first candidate `f635355` failed native method preparation because its fake
 model supplied a forbidden routing ID. The fixture now suggests the configured
 node name; compiler and exact executor-ID assertions remain unchanged. Its Rust
-jobs passed, but that failed run is not accepted. Static syntax checks pass;
-full hosted validation of the correction is pending. This does not
-replace real-model quality, physical two-PC or stable-release acceptance.
+jobs passed, but that failed run is not accepted. Corrected source `0871daf`
+passed the Windows/headless command path in
+[run 42944697616](https://github.com/eepyfishy/eef/actions/runs/42944697616),
+but its Windows/dashboard interpreter-recovery test timed out waiting for a
+journal checkpoint; that complete run remains failed. Source `bff39d3` then
+passes all four jobs and the complete native command gates in
+[run 42944983996](https://github.com/eepyfishy/eef/actions/runs/42944983996),
+with exact source/raw-log review. The later pass does not explain that timeout.
+These checks use fake inference on one runner; real-model quality, physical
+two-PC and stable-release acceptance remain open.
 
 ## Accepted development checkpoint: nonblocking interpreter retirement
 

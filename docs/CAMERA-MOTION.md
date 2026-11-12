@@ -29,15 +29,19 @@ Its explicit 512 MiB test grant does not change production memory defaults.
 This adds a real-codec acceptance case; it does not establish physical camera,
 RTSP transport, two-PC or stable-release acceptance.
 
-A pending follow-up adds a separate five-frame decoder case using the camera
+A follow-up adds a separate five-frame decoder case using the camera
 command's parsed memory and resolution defaults: 128 MiB and 640 x 480. It checks
 the actual prepared Python process limit and requires the same durable motion,
 completion, resource release and no-image reporting as the earlier case. The
 existing 512 MiB complete/truncated cases remain. Encoding occurs inside the
 bounded fixture process too; a failure there must be diagnosed separately from
-capture/decoding. This test is not yet accepted and changes no production limit.
-Even a pass would establish only finite generated-video behavior at that size,
-not physical driver memory use, RTSP, longer sessions or full onboarding.
+capture/decoding. Exact source/raw-log review of `bff39d3` in
+[run 42944983996](https://github.com/eepyfishy/eef/actions/runs/42944983996)
+confirms all four jobs pass, including 1,160 Windows/headless node tests with
+none ignored or filtered out and the native fixture feature enabled. This
+establishes finite generated-video behavior at that size, with no production
+limit change. Physical driver memory use, RTSP, longer sessions and full
+onboarding remain unverified.
 
 `python/streams/camera_motion.py` implements a lazy, single-open motion iterator
 for later admitted camera workloads. It samples a small grayscale image, compares

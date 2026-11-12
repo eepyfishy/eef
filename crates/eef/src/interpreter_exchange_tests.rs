@@ -391,7 +391,8 @@ async fn real_core_allowances_exchange_all_three_stages_through_private_grants_w
         f.runtime()
             .engine
             .store
-            .wait_workload_finalizations()
+            .wait_workload_finalizations_async()
+            .await
             .unwrap();
         if stage == "initial" {
             assert_eq!(
@@ -523,7 +524,8 @@ async fn live_completions_apply_initial_resolution_question_and_concrete_method_
         f.runtime()
             .engine
             .store
-            .wait_workload_finalizations()
+            .wait_workload_finalizations_async()
+            .await
             .unwrap();
         assert!(matches!(
             f.runtime()
@@ -626,7 +628,8 @@ async fn completed_output_cannot_cross_later_source_policy_authentication_peer_o
             f.runtime()
                 .engine
                 .store
-                .wait_workload_finalizations()
+                .wait_workload_finalizations_async()
+                .await
                 .unwrap();
             let after = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
             assert_eq!(
@@ -712,7 +715,8 @@ async fn altered_completion_or_shutdown_cannot_replace_the_saved_source() {
         f.runtime()
             .engine
             .store
-            .wait_workload_finalizations()
+            .wait_workload_finalizations_async()
+            .await
             .unwrap();
         let saved = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
         assert!(
@@ -799,7 +803,8 @@ async fn dropped_live_exchange_retires_exact_ownership_without_reconstructing_a_
     f.runtime()
         .engine
         .store
-        .wait_workload_finalizations()
+        .wait_workload_finalizations_async()
+        .await
         .unwrap();
     let records = f
         .runtime()
@@ -887,7 +892,8 @@ async fn source_policy_settings_and_peer_changes_stop_one_exact_exchange_without
         f.runtime()
             .engine
             .store
-            .wait_workload_finalizations()
+            .wait_workload_finalizations_async()
+            .await
             .unwrap();
         let records = f
             .runtime()

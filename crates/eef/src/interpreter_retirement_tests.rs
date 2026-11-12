@@ -82,8 +82,14 @@ async fn dropped_completion_retires_in_memory_before_blocked_journal_cleanup_and
             .unwrap(),
     );
     assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
-    drop(held);
-    store.wait_workload_finalizations().unwrap();
+    // The default current-thread test runtime must keep polling while storage
+    // is blocked. A synchronous wait here prevents this release from running.
+    let (checkpoint, ()) = tokio::join!(store.wait_workload_finalizations_async(), async {
+        tokio::task::yield_now().await;
+        assert_eq!(store.workload_finalization_available(), available - 1);
+        drop(held);
+    });
+    checkpoint.unwrap();
     assert_eq!(store.workload_finalization_available(), available);
     assert!(
         f.runtime()
@@ -171,7 +177,7 @@ async fn failed_retirement_denies_new_authority_without_rewriting_evidence_or_re
     let ledger = json!(store.interpreter_allowance_records().unwrap());
     store.with_test_journal_lock(|db|db.execute_batch("CREATE TRIGGER fail_interpreter_retire BEFORE UPDATE ON durable_jobs BEGIN SELECT RAISE(FAIL,'synthetic retirement fault'); END;")).unwrap();
     drop(completed);
-    store.wait_workload_finalizations().unwrap();
+    store.wait_workload_finalizations_async().await.unwrap();
     assert!(store.require_workload_reporting().is_err());
     assert_eq!(json!(store.get(&task.snapshot.job_id).unwrap()), source);
     assert_eq!(
@@ -237,7 +243,7 @@ async fn failed_stop_checkpoint_still_revokes_the_original_interpreter_applicati
             .await
             .is_err()
     );
-    store.wait_workload_finalizations().unwrap();
+    store.wait_workload_finalizations_async().await.unwrap();
     let saved = store.get(&task.snapshot.job_id).unwrap();
     assert!(
         saved.request_review.is_none() && saved.planning.is_none() && saved.execution.is_none()

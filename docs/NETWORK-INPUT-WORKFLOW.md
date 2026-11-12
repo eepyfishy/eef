@@ -93,7 +93,7 @@ strong computation stop, complete onboarding or stable v0.4.0 readiness.
 
 ### Native command-path follow-up
 
-The next pending check extends `tools/test-request-review.mjs` with an isolated
+The check extends `tools/test-request-review.mjs` with an isolated
 two-logical-node workflow in `tools/network-input-command-workflow.mjs`. It uses
 the source-built Windows executables, independent pinned-TLS credentials, the
 public workflow switch and owner service-policy commands. The input node selects
@@ -109,8 +109,11 @@ access to the origin-owned plan, and requires input/execution receipt reuse
 without more inference or a changed execution record. No browser is loaded.
 
 The existing native suite keeps its earlier cases and additionally requires the
-new workflow to finish before recording success. This follow-up awaits its own
-hosted validation. It uses fake inference and two processes on one runner;
+new workflow to finish before recording success. Exact source/raw-log review of
+`bff39d3` in [run 42944983996](https://github.com/eepyfishy/eef/actions/runs/42944983996)
+confirms all four jobs and complete native gates pass, including both the new
+workflow and original request-review success markers. It uses fake inference
+and two logical nodes on one runner;
 real-model quality and physical two-PC acceptance remain separate requirements.
 
 The first command-path candidate `f635355` failed in
@@ -121,4 +124,8 @@ models may suggest `node_name` or `area`, while the compiler binds routing IDs.
 The corrected fixture names its configured serving node and retains the exact
 executor-ID, origin, approval, result and receipt-reuse assertions. Product
 validation is unchanged. The failed run remains evidence, not a passing check;
-the corrected fixture requires a fresh complete hosted run.
+the corrected fixture is accepted only through the complete later run above.
+Intermediate source `0871daf` passed the Windows/headless command workflow but
+failed its Windows/dashboard interpreter-recovery checkpoint wait in
+[run 42944697616](https://github.com/eepyfishy/eef/actions/runs/42944697616).
+That failed run is retained; the later pass does not establish its root cause.

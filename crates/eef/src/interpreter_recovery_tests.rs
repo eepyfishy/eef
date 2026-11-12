@@ -27,7 +27,8 @@ async fn retained(f: &Fixture, stage: &str) -> (Task, Record, Recover) {
     f.runtime()
         .engine
         .store
-        .wait_workload_finalizations()
+        .wait_workload_finalizations_async()
+        .await
         .unwrap();
     let plan = f.runtime().engine.store.get(&task.snapshot.job_id).unwrap();
     let command = Recover {
@@ -548,7 +549,8 @@ async fn recovery_receipts_survive_later_compilation() {
     f.runtime()
         .engine
         .store
-        .wait_workload_finalizations()
+        .wait_workload_finalizations_async()
+        .await
         .unwrap();
     let command = Recover {
         id: review.plan_id.clone(),
@@ -634,7 +636,8 @@ async fn interpreter_recovery_refuses_live_stale_foreign_and_ordinary_promotion_
     f.runtime()
         .engine
         .store
-        .wait_workload_finalizations()
+        .wait_workload_finalizations_async()
+        .await
         .unwrap();
     let before = f.runtime().engine.store.get(&command.id).unwrap();
     assert!(

@@ -38,7 +38,7 @@ pub(super) struct Queue {
     capacity: usize,
     failed: AtomicBool,
     #[cfg(test)]
-    pending: Arc<(Mutex<usize>, std::sync::Condvar)>,
+    pending: Arc<PendingState>,
     #[cfg(test)]
     started: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -177,13 +177,18 @@ impl JobStore {
     }
     #[cfg(test)]
     pub(crate) fn wait_workload_finalizations(&self) -> Result<()> {
-        let (count, changed) = &*self.finalizations.pending;
-        let count = count.lock().unwrap();
-        let (count, _) = changed
+        let state = &self.finalizations.pending;
+        let count = state.count.lock().unwrap();
+        let (count, _) = state
+            .changed
             .wait_timeout_while(count, std::time::Duration::from_secs(3), |n| *n != 0)
             .unwrap();
         ensure!(*count == 0, "Actual workload checkpoint has not finished");
         Ok(())
+    }
+    #[cfg(test)]
+    pub(crate) async fn wait_workload_finalizations_async(&self) -> Result<()> {
+        self.finalizations.pending.wait_async().await
     }
     #[cfg(test)]
     pub(crate) fn test_workload_finalization_limit(&mut self, limit: usize) {
@@ -201,18 +206,76 @@ impl JobStore {
 }
 
 #[cfg(test)]
-struct Pending(Arc<(Mutex<usize>, std::sync::Condvar)>);
+#[derive(Default)]
+struct PendingState {
+    count: Mutex<usize>,
+    changed: std::sync::Condvar,
+    async_changed: tokio::sync::Notify,
+}
+#[cfg(test)]
+impl PendingState {
+    async fn wait_async(&self) -> Result<()> {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let changed = self.async_changed.notified();
+                tokio::pin!(changed);
+                // Register before inspecting the count: the native writer may
+                // finish between that inspection and the first await.
+                changed.as_mut().enable();
+                if *self.count.lock().unwrap() == 0 {
+                    return;
+                }
+                changed.await;
+            }
+        })
+        .await
+        .context("Actual workload checkpoint has not finished")
+    }
+}
+#[cfg(test)]
+struct Pending(Arc<PendingState>);
 #[cfg(test)]
 impl Pending {
-    fn new(state: Arc<(Mutex<usize>, std::sync::Condvar)>) -> Self {
-        *state.0.lock().unwrap() += 1;
+    fn new(state: Arc<PendingState>) -> Self {
+        *state.count.lock().unwrap() += 1;
         Self(state)
     }
 }
 #[cfg(test)]
 impl Drop for Pending {
     fn drop(&mut self) {
-        *self.0.0.lock().unwrap() -= 1;
-        self.0.1.notify_all();
+        *self.0.count.lock().unwrap() -= 1;
+        self.0.changed.notify_all();
+        self.0.async_changed.notify_waiters();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn async_checkpoint_wait_tracks_all_writes_and_wakes_all_waiters() {
+        let state = Arc::new(PendingState::default());
+        let first = Pending::new(state.clone());
+        let second = Pending::new(state.clone());
+        let a = tokio::spawn({
+            let state = state.clone();
+            async move { state.wait_async().await }
+        });
+        let b = tokio::spawn({
+            let state = state.clone();
+            async move { state.wait_async().await }
+        });
+        tokio::task::yield_now().await;
+        drop(first);
+        tokio::task::yield_now().await;
+        assert!(!a.is_finished());
+        assert!(!b.is_finished());
+        drop(second);
+        a.await.unwrap().unwrap();
+        b.await.unwrap().unwrap();
+        // Completion before registration must also be observable immediately.
+        state.wait_async().await.unwrap();
     }
 }
