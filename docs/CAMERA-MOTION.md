@@ -16,11 +16,16 @@ Its Windows/headless all-target tests enable `native-test-fixtures`; the node
 test group passes 1,159 tests with none ignored or filtered out. Source/feature
 and raw-log review confirm inclusion of the complete/truncated decoder case.
 It uses the existing hashed OpenCV/NumPy interpreter and a
-generated MJPEG/AVI sequence inside the owned source process. Only acquisition is
+generated MJPEG/AVI sequence inside the owned source process. Acquisition is
 substituted through the existing opt-in native-test prelude; decoding, resizing,
 grayscale comparison, consumed workload authority, durable event delivery and
 completion/error handling use the existing implementation. The source still
 rejects arbitrary file bindings in shipping builds.
+
+The fixture also pins native-library worker environment variables before
+importing OpenCV/NumPy for video generation. The shipping motion iterator limits
+OpenCV transform threads to one after import; this fixture does not establish an
+identical dependency-import memory footprint in an ordinary source process.
 
 The fixture checks a complete five-frame sequence and a three-frame truncated
 sequence against the same five-frame reviewed workload. Truncation must keep the
@@ -39,9 +44,21 @@ capture/decoding. Exact source/raw-log review of `bff39d3` in
 [run 42944983996](https://github.com/eepyfishy/eef/actions/runs/42944983996)
 confirms all four jobs pass, including 1,160 Windows/headless node tests with
 none ignored or filtered out and the native fixture feature enabled. This
-establishes finite generated-video behavior at that size, with no production
-limit change. Physical driver memory use, RTSP, longer sessions and full
+establishes finite generated-video behavior in that fixture environment at that
+size, with no production limit change. Physical driver memory use, RTSP, longer sessions and full
 onboarding remain unverified.
+
+A later run at `4361a7f`,
+[43233858899](https://github.com/eepyfishy/eef/actions/runs/43233858899), fails the
+existing 512 MiB complete decoder case: the trace contains all five reads and
+release but the stream reply is refused. That run is not accepted and its cause
+remains unproven. A pending fixture follow-up makes generated acquisition wait
+for the previous durable callback, then a five-fps period, before reading again.
+This prevents a file decoder from generating a catch-up burst after journal
+delay. The original event-rate refusal, memory/deadline bounds and every
+complete/truncated/privacy/completion assertion remain. Acknowledgement counts
+and numeric delivered positions provide further fixture evidence. This is not a
+production pacing or physical-camera reliability fix.
 
 `python/streams/camera_motion.py` implements a lazy, single-open motion iterator
 for later admitted camera workloads. It samples a small grayscale image, compares

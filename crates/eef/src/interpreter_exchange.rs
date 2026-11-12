@@ -1,5 +1,5 @@
-//! Core-only service exchange and live source checkpoint. Public input wiring
-//! remains pending; retained history never recreates a completion.
+//! Core service exchange and live source checkpoint, entered through the
+//! authenticated interpreter broker. Retained history never recreates a completion.
 #[path = "interpreter_application.rs"]
 mod application;
 use crate::{
@@ -80,8 +80,8 @@ impl GrantObserver for Observer {
 }
 
 impl Runtime {
-    /// No public endpoint: a future input command must first establish its
-    /// authenticated origin and build the exact task from the retained source.
+    /// Internal exchange: the caller must establish its authenticated origin
+    /// and build the exact task from the retained source.
     pub(crate) async fn exchange_interpreter(
         &self,
         task: Task,

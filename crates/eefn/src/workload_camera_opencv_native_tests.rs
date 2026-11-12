@@ -67,12 +67,14 @@ async fn real_decoder_cases(cases: &[(usize, u64, u32, u32)]) {
         let observed = events.clone();
         let saved = ledger.clone();
         let definition = f.definition.clone();
+        let ack_root = trace.path().to_owned();
         let outcome = tokio::time::timeout(
             std::time::Duration::from_secs(20),
             source.run(consumed, renewals, move |event| {
                 let observed = observed.clone();
                 let saved = saved.clone();
                 let definition = definition.clone();
+                let ack_root = ack_root.clone();
                 async move {
                     let durable = saved.workload_events(
                         &definition.issuer_id,
@@ -84,7 +86,9 @@ async fn real_decoder_cases(cases: &[(usize, u64, u32, u32)]) {
                         durable["durable_events"][0]["event"] == json!(event),
                         "Decoded motion callback preceded durable persistence"
                     );
+                    let sequence = event.source_sequence;
                     observed.lock().unwrap().push(event);
+                    tokio::fs::write(ack_root.join(format!("ack-{sequence}")), b"durable").await?;
                     Ok(())
                 }
             }),
@@ -94,7 +98,8 @@ async fn real_decoder_cases(cases: &[(usize, u64, u32, u32)]) {
         if frames == 5 {
             assert!(
                 outcome.is_ok(),
-                "Real decoder workload failed at {width}x{height} / {memory_mib} MiB: {outcome:?}; fixture stages: {:?}",
+                "Real decoder workload failed at {width}x{height} / {memory_mib} MiB: {outcome:?}; delivered positions: {:?}; fixture stages: {:?}",
+                events.lock().unwrap().iter().map(|event| (event.sequence, event.source_sequence, event.elapsed_ms)).collect::<Vec<_>>(),
                 if trace.path().join("trace.jsonl").is_file() {
                     trace_kinds(trace.path())
                 } else {
@@ -176,6 +181,10 @@ async fn real_decoder_cases(cases: &[(usize, u64, u32, u32)]) {
         assert_eq!(kinds.iter().filter(|k| *k == "opened").count(), 1);
         assert_eq!(kinds.iter().filter(|k| *k == "closed").count(), 1);
         assert_eq!(kinds.iter().filter(|k| *k == "read").count(), frames);
+        assert_eq!(
+            kinds.iter().filter(|k| *k == "acknowledged").count(),
+            frames - 1 + usize::from(frames == 3)
+        );
         assert_eq!(
             kinds.iter().filter(|k| *k == "eof").count(),
             usize::from(frames == 3)

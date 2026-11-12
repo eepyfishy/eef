@@ -13,6 +13,28 @@ wait is pending. An additional test covers multiple writes and waiters.
 Everything added to the wait machinery is test-only. Hosted verification is
 pending; this does not establish the cause of the earlier intermittent timeout.
 
+Corrected candidate `4361a7f` passes both Linux jobs, Windows/dashboard and its
+505-test Windows/headless coordinator group in
+[run 43233858899](https://github.com/eepyfishy/eef/actions/runs/43233858899).
+The complete run fails an existing generated-camera decoder case at 512 MiB;
+all five reads and release appear in its trace, but stream completion is refused.
+Its native command suites subsequently pass, including the public network flow.
+This is a failed run, not acceptance of this increment. Earlier candidate
+`c8d93c9` had a test-helper type error; its Linux failures and cancelled Windows
+jobs remain retained. The corrected helper and a camera fixture follow-up require
+fresh complete hosted verification.
+
+## In development: generated-camera acquisition pacing
+
+The encoded-video fixture now waits for each preceding durable callback and then
+its generated five-fps frame period before the next read. File decoding can
+otherwise buffer transitions which arrive too close together after slow storage;
+the existing event-rate gate correctly refuses that burst. The earlier failure's
+cause is not proven. Original memory, deadlines, rate limits, complete/truncated
+cases and exact completion/privacy/release assertions remain. Numeric delivered
+positions are included on failure. This changes test acquisition only; hosted
+verification is pending and production streaming/backpressure remains separate.
+
 ## Accepted development checkpoint: camera decoder at command defaults
 
 A separate native camera fixture now parses the public camera submission
