@@ -5,6 +5,7 @@ import {resolve,join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {verifyCameraMotion} from './camera-motion-checks.mjs';
+import {verifyCameraVision} from './camera-vision-checks.mjs';
 const root=resolve(import.meta.dirname,'..'),python=process.env.EEF_TEST_PYTHON;
 assert(python,'Supply an existing trusted interpreter; no download is attempted');await stat(python);
 await mkdir(join(root,'.validation'),{recursive:true});const scratch=await mkdtemp(join(root,'.validation/microphone-energy-'));
@@ -21,3 +22,4 @@ assert.equal(await stat(join(root,'python/streams/__pycache__')).then(()=>true,(
 await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,tests:11,real_interpreter:true,device_api_fake:true,single_open_and_close_tested:true,gap_uncertainty_and_hysteresis_tested:true,parameters_and_block_sizes_bounded:true,raw_media_emitted:false,physical_capture:false,workload_admission_integrated:false,ambient_capture_enabled:false,continuous_workloads_accepted:false,stable_release_accepted:false},null,2),{flag:'wx'});
 console.log('Microphone energy fake-device validation passed: '+scratch);
 await verifyCameraMotion({root,python});
+await verifyCameraVision({root,python});

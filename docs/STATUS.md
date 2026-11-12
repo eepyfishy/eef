@@ -3,6 +3,17 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: private camera vision source and pipe
+
+The [local event vision work](LOCAL-EVENT-VISION.md) now has a separate single-open
+motion/image iterator and bounded private start/ack pipe. Image size/count/cadence
+and output budgets are explicit; the old motion source and metadata host remain
+unchanged. Eleven fake source tests and ten private protocol cases are wired into
+the existing required native source suite. JavaScript syntax and diff checks pass;
+hosted verification is pending. No source registration, model execution, workload
+authority or startup capture is enabled yet. Owned Rust/grant/model/durable/public
+command integration remains required; this component is not the completed feature.
+
 ## Accepted development checkpoint: bounded interpreter command history admission
 
 The broker's initial source/receipt lookup now uses the existing four-slot native
