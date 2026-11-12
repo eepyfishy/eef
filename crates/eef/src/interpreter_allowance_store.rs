@@ -400,7 +400,35 @@ impl JobStore {
         })
         .await
     }
+    /// Command receipt lookup also needs this origin's other jobs: reusing an
+    /// operation ID for a different source must remain a conflict, not new work.
+    pub(crate) async fn interpreter_command_snapshot_before(
+        self: &Arc<Self>,
+        id: &str,
+        origin: &str,
+        deadline: tokio::time::Instant,
+    ) -> Result<(Plan, Vec<Record>)> {
+        let id = id.to_owned();
+        let origin = origin.to_owned();
+        self.read_before(deadline, move |store, current| {
+            store.interpreter_origin_snapshot_if(&id, &origin, current)
+        })
+        .await
+    }
     fn interpreter_source_snapshot_if(
+        &self,
+        id: &str,
+        origin: &str,
+        current: &dyn Fn() -> bool,
+    ) -> Result<(Plan, Vec<Record>)> {
+        let (source, records) = self.interpreter_origin_snapshot_if(id, origin, current)?;
+        let records = records
+            .into_iter()
+            .filter(|r| r.binding.grant.job_id == source.plan_id)
+            .collect();
+        Ok((source, records))
+    }
+    fn interpreter_origin_snapshot_if(
         &self,
         id: &str,
         origin: &str,
@@ -423,10 +451,7 @@ impl JobStore {
         let records = snapshot(&connection)?
             .0
             .into_iter()
-            .filter(|r| {
-                r.binding.grant.job_id == source.plan_id
-                    && r.binding.grant.request_context.origin_node() == origin
-            })
+            .filter(|r| r.binding.grant.request_context.origin_node() == origin)
             .collect();
         Ok((source, records))
     }

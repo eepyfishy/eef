@@ -76,6 +76,29 @@ result was retained but its source application was lost, use the separate
 Recovery still requires an eligible unchanged source and a fresh origin decision;
 it cannot restart inference or authorize execution.
 
+### Initial history admission follow-up
+
+The initial command source/receipt read now uses the existing bounded journal
+reader shared with job inspection. A single five-second read-phase deadline
+covers origin lookup, SQLite waiting and the final live session/runtime check.
+The native read owns only the journal and historical lookup keys, retaining its
+capacity until actual storage work finishes even after its async waiter expires.
+It cannot claim input, reserve a model, send inference or reconstruct authority.
+
+Source and records come from one validated snapshot. Receipt search includes the
+same origin's other jobs to reject operation-ID reuse against another source;
+ordinary source inspection still exposes only that job's attempts. Full ledger,
+policy and account validation remains, including damage outside the requested
+job. Historical replies are built while the current originating registration is
+pinned. A fresh inference continues through the existing policy, participant,
+source and grant checks after this phase; requested inference limits are unchanged.
+
+The follow-up has contention, expiry/capacity, session-loss, cross-job conflict and
+corruption regressions; full hosted acceptance is pending. This changes the initial
+broker lookup only. Later exchange reads and application/stop/recovery writes
+retain their existing paths. It does not establish general nonblocking command
+handling, real-model quality, physical networking or stable v0.4.0 readiness.
+
 Inspection and cancellation remain ordinary node commands:
 
 ```text

@@ -47,6 +47,88 @@ fn preferences(command: &Command, record: &Record) -> Result<()> {
 }
 
 impl Runtime {
+    /// Read source and history atomically without blocking an async worker.
+    /// This phase owns no inference, source claim, grant or provider capacity.
+    async fn origin_interpreter_history(
+        &self,
+        request: &WireRequest,
+        context: &RequestContext,
+        gateway_session_id: &str,
+    ) -> Result<(eefn::interpreter_service::Session, Plan, Option<Value>)> {
+        let end = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let read = async {
+            let origin = self
+                .node_server
+                .interpreter_session(context.origin_node(), self.discovery.freshness_seconds)
+                .await?;
+            ensure!(
+                origin.session_id() == gateway_session_id
+                    && origin.runtime_id() == request.origin_runtime_id,
+                "Interpreter origin session/runtime changed before admission"
+            );
+            let command = &request.command;
+            let (saved, records) = self
+                .engine
+                .store
+                .interpreter_command_snapshot_before(&command.id, context.origin_node(), end)
+                .await?;
+            let (origin, historical) = self
+                .node_server
+                .with_interpreter_sessions(
+                    origin.node_id(),
+                    origin.node_id(),
+                    self.discovery.freshness_seconds,
+                    |current, _| {
+                        ensure!(
+                            tokio::time::Instant::now() < end,
+                            "Interpreter history expired before admission"
+                        );
+                        ensure!(
+                            current.session_id() == gateway_session_id
+                                && current.runtime_id() == request.origin_runtime_id,
+                            "Interpreter origin changed during history lookup"
+                        );
+                        for record in records {
+                            let task = record.task()?;
+                            if task.snapshot.request_context.origin_node() != context.origin_node()
+                                || record.stage()? != command.stage.as_str()
+                            {
+                                continue;
+                            }
+                            let same_operation = task.snapshot.operation_id == command.operation_id;
+                            let same_source = task.snapshot.job_id == command.id
+                                && (command.expected_revision == Some(task.snapshot.revision)
+                                    || command.stage == Stage::Initial
+                                        && command.expected_revision.is_none());
+                            if same_operation || same_source {
+                                ensure!(
+                                    task.snapshot.job_id == command.id
+                                        && command
+                                            .expected_revision
+                                            .is_none_or(|r| r == task.snapshot.revision),
+                                    "Interpreter receipt conflicts with retained source"
+                                );
+                                let report = self.interpreter_command_report(
+                                    command, context, &record, &saved, true, false,
+                                )?;
+                                return Ok((current, Some(report)));
+                            }
+                        }
+                        Ok((current, None))
+                    },
+                )
+                .await?;
+            Ok::<_, anyhow::Error>((origin, saved, historical))
+        };
+        let result = tokio::time::timeout_at(end, read)
+            .await
+            .context("Interpreter history deadline elapsed; input remains saved")??;
+        ensure!(
+            tokio::time::Instant::now() < end,
+            "Interpreter history completed after its original deadline"
+        );
+        Ok(result)
+    }
     fn interpreter_command_report(
         &self,
         command: &Command,
@@ -139,45 +221,19 @@ impl Runtime {
             "Interpreter operation differs from authenticated origin"
         );
         // A queued command from a retired connection cannot initiate work on its
-        // replacement, even when the stable node ID is unchanged.
-        let origin = self
-            .node_server
-            .interpreter_session(context.origin_node(), self.discovery.freshness_seconds)
+        // replacement, even when the stable node ID is unchanged. History owns
+        // neither fresh model capacity nor a source mutation while storage waits.
+        let (origin, saved, historical) = self
+            .origin_interpreter_history(&request, context, gateway_session_id)
             .await?;
-        ensure!(
-            origin.session_id() == gateway_session_id
-                && origin.runtime_id() == request.origin_runtime_id,
-            "Interpreter origin session/runtime changed before admission"
-        );
+        if let Some(report) = historical {
+            return Ok(report);
+        }
         let command = &request.command;
-        let saved = self.engine.store.get(&command.id)?;
         ensure!(
             owns(&saved, context.origin_node()),
             "Interpreter source unavailable for this origin"
         );
-        for record in self.engine.store.interpreter_allowance_records()?.0 {
-            let task = record.task()?;
-            if task.snapshot.request_context.origin_node() != context.origin_node()
-                || record.stage()? != command.stage.as_str()
-            {
-                continue;
-            }
-            let same_operation = task.snapshot.operation_id == command.operation_id;
-            let same_source = task.snapshot.job_id == command.id
-                && (command.expected_revision == Some(task.snapshot.revision)
-                    || command.stage == Stage::Initial && command.expected_revision.is_none());
-            if same_operation || same_source {
-                ensure!(
-                    task.snapshot.job_id == command.id
-                        && command
-                            .expected_revision
-                            .is_none_or(|r| r == task.snapshot.revision),
-                    "Interpreter receipt conflicts with retained source"
-                );
-                return self
-                    .interpreter_command_report(command, context, &record, &saved, true, false);
-            }
-        }
         ensure!(
             saved.status == PlanStatus::Review
                 && saved.planning.is_none()

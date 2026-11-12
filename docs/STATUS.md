@@ -3,6 +3,24 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: bounded interpreter command history admission
+
+The broker's initial source/receipt lookup now uses the existing four-slot native
+journal reader instead of synchronously waiting for SQLite on an async thread.
+Source and history are read under one lock, with full account/policy/attempt
+validation retained. This lookup includes the origin's other jobs so operation
+reuse across sources remains a conflict. Ordinary source inspection stays limited
+to its own job. A five-second read-phase deadline covers origin lookup, storage
+and the final session/runtime fence. No source claim or model capacity is held
+while this phase waits; busy or expired reads request no replacement work.
+
+Five added regressions cover actual contention with continuing timers, deadline
+and retained native capacity, origin loss during a retained read, cross-job
+operation conflicts and an unrelated corrupt account. Existing queue tests also
+require this reader to share capacity and refuse expired admission. Formatting
+passes; hosted verification is pending. Later exchange reads, journal mutations,
+real-model/physical tests and stable-release requirements remain separate.
+
 ## Accepted development checkpoint: cooperative interpreter test checkpoint waits
 
 The interpreter tests now wait asynchronously for native journal finalization.

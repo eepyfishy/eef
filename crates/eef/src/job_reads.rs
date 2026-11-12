@@ -60,6 +60,14 @@ impl Queue {
 }
 
 impl JobStore {
+    #[cfg(test)]
+    pub(crate) fn journal_reads_started(&self) -> usize {
+        self.reads.started.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    #[cfg(test)]
+    pub(crate) fn journal_read_capacity_available(&self) -> usize {
+        self.reads.slots.available_permits()
+    }
     /// Historical read only. The actual reader retains its slot and journal
     /// even if its async waiter times out or disconnects. No source or lease is
     /// passed to the worker; cancellation never creates replacement work.

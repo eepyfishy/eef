@@ -224,6 +224,14 @@ async fn interpreter_inspection_shares_read_capacity_and_keeps_timers_live_durin
             .to_string()
             .contains("capacity unavailable")
     );
+    assert!(
+        store
+            .interpreter_command_snapshot_before("missing", "input", deadline())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("capacity unavailable")
+    );
     drop(locked);
     tokio::time::timeout(Duration::from_secs(2), async {
         while store.reads.slots.available_permits() != CAPACITY {
@@ -249,6 +257,11 @@ async fn interpreter_inspection_shares_read_capacity_and_keeps_timers_live_durin
 #[tokio::test]
 async fn expired_interpreter_inspection_starts_no_reader_and_preserves_retained_history() {
     let store = JobStore::in_memory().unwrap();
+    let error = store
+        .interpreter_command_snapshot_before("missing", "input", Instant::now())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("before admission"));
     let error = store
         .interpreter_source_snapshot_before("missing", "input", Instant::now())
         .await

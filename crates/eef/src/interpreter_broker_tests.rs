@@ -1,6 +1,9 @@
 use super::*;
 use eefn::interpreter_command::{Command as InputCommand, Preferences, Request, Stage};
 
+#[path = "interpreter_broker_history_tests.rs"]
+mod history_tests;
+
 fn normal_input(operation: &str) -> eefn::request_preview::PreviewRequest {
     eefn::request_preview::PreviewRequest {
         schema_version: 1,
