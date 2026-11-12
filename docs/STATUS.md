@@ -3,15 +3,19 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: cooperative interpreter test checkpoint waits
+## Accepted development checkpoint: cooperative interpreter test checkpoint waits
 
 The interpreter tests now wait asynchronously for native journal finalization.
 The three-second bound, actual-write counter and historical assertions remain;
 synchronous tests keep their existing wait. The held-journal regression requires
 an async task on the same current-thread runtime to release SQLite while the
 wait is pending. An additional test covers multiple writes and waiters.
-Everything added to the wait machinery is test-only. Hosted verification is
-pending; this does not establish the cause of the earlier intermittent timeout.
+Everything added to the wait machinery is test-only. Exact source/raw-log review
+of `5d90895` in
+[run 43240147529](https://github.com/eepyfishy/eef/actions/runs/43240147529)
+confirms all four jobs pass: 1,766 Windows/headless Rust tests, one ignored across
+17 groups, all 37 native suites and the existing extra gates. This does not
+establish the cause of the earlier intermittent timeout.
 
 Corrected candidate `4361a7f` passes both Linux jobs, Windows/dashboard and its
 505-test Windows/headless coordinator group in
@@ -21,10 +25,10 @@ all five reads and release appear in its trace, but stream completion is refused
 Its native command suites subsequently pass, including the public network flow.
 This is a failed run, not acceptance of this increment. Earlier candidate
 `c8d93c9` had a test-helper type error; its Linux failures and cancelled Windows
-jobs remain retained. The corrected helper and a camera fixture follow-up require
-fresh complete hosted verification.
+jobs remain retained. The corrected helper and camera fixture follow-up pass the
+complete later run above; neither failed run is relabeled successful.
 
-## In development: generated-camera acquisition pacing
+## Accepted development checkpoint: generated-camera acquisition pacing
 
 The encoded-video fixture now waits for each preceding durable callback and then
 its generated five-fps frame period before the next read. File decoding can
@@ -32,8 +36,12 @@ otherwise buffer transitions which arrive too close together after slow storage;
 the existing event-rate gate correctly refuses that burst. The earlier failure's
 cause is not proven. Original memory, deadlines, rate limits, complete/truncated
 cases and exact completion/privacy/release assertions remain. Numeric delivered
-positions are included on failure. This changes test acquisition only; hosted
-verification is pending and production streaming/backpressure remains separate.
+positions are included on failure. This changes test acquisition only. Source
+`5d90895` passes the complete run above, including all 1,160 Windows/headless node
+tests with native fixtures enabled and none ignored or filtered out. Source and
+raw-log review confirm the unchanged 512 MiB complete/truncated and default
+128 MiB / 640 x 480 cases, plus the new acknowledgement-count assertion.
+Production streaming/backpressure and physical acceptance remain separate.
 
 ## Accepted development checkpoint: camera decoder at command defaults
 

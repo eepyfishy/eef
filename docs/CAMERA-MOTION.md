@@ -45,20 +45,25 @@ capture/decoding. Exact source/raw-log review of `bff39d3` in
 confirms all four jobs pass, including 1,160 Windows/headless node tests with
 none ignored or filtered out and the native fixture feature enabled. This
 establishes finite generated-video behavior in that fixture environment at that
-size, with no production limit change. Physical driver memory use, RTSP, longer sessions and full
-onboarding remain unverified.
+size, with no production limit change. Physical driver memory use, RTSP, longer
+sessions and full onboarding remain unverified.
 
 A later run at `4361a7f`,
 [43233858899](https://github.com/eepyfishy/eef/actions/runs/43233858899), fails the
 existing 512 MiB complete decoder case: the trace contains all five reads and
 release but the stream reply is refused. That run is not accepted and its cause
-remains unproven. A pending fixture follow-up makes generated acquisition wait
+remains unproven. A fixture follow-up makes generated acquisition wait
 for the previous durable callback, then a five-fps period, before reading again.
 This prevents a file decoder from generating a catch-up burst after journal
 delay. The original event-rate refusal, memory/deadline bounds and every
 complete/truncated/privacy/completion assertion remain. Acknowledgement counts
-and numeric delivered positions provide further fixture evidence. This is not a
-production pacing or physical-camera reliability fix.
+and numeric delivered positions provide further fixture evidence. Source
+`5d90895` passes all four jobs in
+[run 43240147529](https://github.com/eepyfishy/eef/actions/runs/43240147529).
+Exact source/raw-log review confirms 1,160 Windows/headless node tests with native
+fixtures enabled and none ignored or filtered out, retaining all three decoder
+cases and their original limits and assertions. This is not a production pacing
+or physical-camera reliability fix and does not prove the earlier failure's cause.
 
 `python/streams/camera_motion.py` implements a lazy, single-open motion iterator
 for later admitted camera workloads. It samples a small grayscale image, compares

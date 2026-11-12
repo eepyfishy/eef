@@ -57,8 +57,12 @@ test suites with a notification-based async wait, retaining the three-second
 bound and waiting for every actual write. The held-journal case now requires
 another async branch to release storage while the wait is pending, so blocking
 the current-thread runtime would fail the check. Multiple outstanding writes and
-waiters have a separate regression. Hosted verification is pending. This is a
-test coordination improvement, not proof of the cause of the checkpoint timeout
+waiters have a separate regression. Source `5d90895` passes all four jobs in
+[run 43240147529](https://github.com/eepyfishy/eef/actions/runs/43240147529),
+including 1,766 Windows/headless Rust tests, one ignored across 17 groups,
+all 37 native suites and the existing extra gates. Exact source/raw-log review
+confirms the held-journal and shared-state coverage. This is a test coordination
+improvement, not proof of the cause of the checkpoint timeout
 in `0871daf` [run 42944697616](https://github.com/eepyfishy/eef/actions/runs/42944697616).
 
 Other interpreter journal reads, source application and stop checkpoint paths
