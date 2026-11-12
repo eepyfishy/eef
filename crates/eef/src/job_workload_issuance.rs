@@ -228,9 +228,10 @@ impl JobStore {
     }
     #[cfg(test)]
     pub(crate) fn wait_workload_issuance(&self) -> Result<()> {
-        let (count, changed) = &*self.workload_writes.pending;
-        let count = count.lock().unwrap();
-        let (count, _) = changed
+        let state = &self.workload_writes.pending;
+        let count = state.count.lock().unwrap();
+        let (count, _) = state
+            .changed
             .wait_timeout_while(count, std::time::Duration::from_secs(3), |n| *n != 0)
             .unwrap();
         ensure!(*count == 0, "Actual workload issuance has not finished");
