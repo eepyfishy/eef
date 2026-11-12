@@ -94,8 +94,11 @@ pinned. A fresh inference continues through the existing policy, participant,
 source and grant checks after this phase; requested inference limits are unchanged.
 
 The follow-up has contention, expiry/capacity, session-loss, cross-job conflict and
-corruption regressions; full hosted acceptance is pending. This changes the initial
-broker lookup only. Later exchange reads and application/stop/recovery writes
+corruption regressions. Source `8e36ff5` passes all four jobs in
+[run 43247674035](https://github.com/eepyfishy/eef/actions/runs/43247674035),
+with exact source/raw-log review: 1,771 Windows/headless Rust tests, one ignored
+across 17 groups, all 37 native suites and the existing extra gates.
+This changes the initial broker lookup only. Later exchange reads and application/stop/recovery writes
 retain their existing paths. It does not establish general nonblocking command
 handling, real-model quality, physical networking or stable v0.4.0 readiness.
 

@@ -3,7 +3,7 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: bounded interpreter command history admission
+## Accepted development checkpoint: bounded interpreter command history admission
 
 The broker's initial source/receipt lookup now uses the existing four-slot native
 journal reader instead of synchronously waiting for SQLite on an async thread.
@@ -17,8 +17,12 @@ while this phase waits; busy or expired reads request no replacement work.
 Five added regressions cover actual contention with continuing timers, deadline
 and retained native capacity, origin loss during a retained read, cross-job
 operation conflicts and an unrelated corrupt account. Existing queue tests also
-require this reader to share capacity and refuse expired admission. Formatting
-passes; hosted verification is pending. Later exchange reads, journal mutations,
+require this reader to share capacity and refuse expired admission. Exact source
+`8e36ff5` passes all four jobs in
+[run 43247674035](https://github.com/eepyfishy/eef/actions/runs/43247674035),
+with source/raw-log review: 1,771 Windows/headless Rust tests, one ignored across
+17 groups, all 37 native suites and the existing extra gates. The coordinator
+group includes all five added tests. Later exchange reads, journal mutations,
 real-model/physical tests and stable-release requirements remain separate.
 
 ## Accepted development checkpoint: cooperative interpreter test checkpoint waits
