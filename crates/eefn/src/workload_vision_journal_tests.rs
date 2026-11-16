@@ -199,6 +199,7 @@ async fn vision_journal_corruption_and_schema_downgrade_are_retained_without_rep
     for mutation in [
         "UPDATE execution_workload_analyses SET intent_sha256=replace(intent_sha256,substr(intent_sha256,1,1),'z')",
         "UPDATE execution_workload_analyses SET source_sequence=3",
+        "PRAGMA ignore_check_constraints=ON; UPDATE execution_workload_analyses SET source_sequence=-1",
         "UPDATE execution_workload_analyses SET result_sha256='bad'",
         "DELETE FROM execution_workload_analyses",
         "DELETE FROM execution_workload_analysis_state",

@@ -153,8 +153,8 @@ fn rows(db: &Connection, receipt: &Receipt) -> Result<Vec<Row>> {
             (output.len() as u64) < maximum,
             "Vision analysis count exceeds reviewed bound"
         );
-        let sequence: u64 = row.get(0)?;
-        let position: u64 = row.get(1)?;
+        let sequence = u64::try_from(row.get::<_, i64>(0)?)?;
+        let position = u64::try_from(row.get::<_, i64>(1)?)?;
         let size: i64 = row.get(2)?;
         ensure!(
             (1..=HEADROOM as i64).contains(&size),
