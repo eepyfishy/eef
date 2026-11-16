@@ -20,6 +20,8 @@ use crate::updater;
 pub const CAPABILITIES: &[&str] = &["system.ping", "system.info", "node.update"];
 
 const MODEL_CAPABILITIES: &[&str] = &["llm.infer", "vlm.analyze"];
+#[path = "engine_vision.rs"]
+pub(crate) mod vision;
 const POLICY_CAPABILITIES: &[&str] = &[
     "filesystem",
     "process.exec",

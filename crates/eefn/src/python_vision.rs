@@ -91,7 +91,10 @@ impl fmt::Debug for PrivateJpeg {
     }
 }
 impl PrivateJpeg {
-    fn checked(encoded: String, maximum: usize) -> Result<Self> {
+    pub(crate) fn checked(encoded: String, maximum: usize) -> Result<Self> {
+        if !(128..=2 * 1024 * 1024).contains(&maximum) {
+            return Err(BridgeFailure::Reply.into());
+        }
         if encoded.len() > 4 * maximum.div_ceil(3) {
             return Err(BridgeFailure::Reply.into());
         }

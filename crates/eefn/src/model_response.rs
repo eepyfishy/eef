@@ -66,7 +66,7 @@ pub(crate) async fn chat(response: reqwest::Response, backend: Backend) -> Resul
     normalize(&response, backend)
 }
 
-fn normalize(response: &Value, backend: Backend) -> Result<Value> {
+pub(crate) fn normalize(response: &Value, backend: Backend) -> Result<Value> {
     if response.get("error").is_some_and(|value| !value.is_null()) {
         bail!("model backend reported an inference error");
     }

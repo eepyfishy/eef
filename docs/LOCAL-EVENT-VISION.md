@@ -46,6 +46,32 @@ an observed empty owned Windows job; unsupported platforms refuse before spawn.
 Consumer failure, deadline and malformed data retire the same owned process tree.
 This transport supplies lifecycle evidence, not admission or model authority.
 
+## Local model adapter under verification
+
+The private engine adapter binds an explicit already-selected vision-capable
+model and backend. It reuses the existing Ollama/llama.cpp payload builders,
+response normalization, local operation-policy checks and llama.cpp model-use
+pins. It accepts only the applied literal loopback endpoint and uses a separate
+HTTP client with proxies and redirects disabled. It never accepts a caller URL,
+chooses a substitute model, downloads a model, or invokes generated tools.
+
+Ollama calls require the reviewed installed-model digest, one matching nonempty
+installed-model report and no reported remote model/host, checked before and after
+inference. These are reports from the trusted local service, not independently
+measured model files or proof about that service's own external communications.
+The llama.cpp binding retains the existing applied slot and owned-use pin; it
+does not add a new file-integrity or hardware quota claim.
+
+Calls have explicit token, response byte, result byte and time bounds. Current
+authority and local policy are checked around effects and completion; incomplete,
+oversized, changed-identity or failed calls expose neither partial text nor
+provider diagnostics. Calls are never retried by this helper. Its caller must
+persist the analysis intent first, supervise revocation/stop throughout the call,
+and leave uncertainty on interruption. Cancelling HTTP does not prove an external
+shared model stopped. Ten added tests use synthetic HTTP and the existing owned
+model helper, covering both payloads, identity changes, limits, revocation,
+expiry, and refused image-post redirects. Hosted verification is pending.
+
 ## Verification and remaining integration
 
 Eleven source tests use deterministic camera/image/clock fakes. Ten private pipe
@@ -69,6 +95,7 @@ Python, model or application execution is used for this checkpoint.
 
 The feature remains incomplete. No public source registration, startup capture,
 model call, additional permission or network image path is enabled by these files.
+The private adapter is not exposed by a command, grant driver or startup path.
 Next work must connect this owned pipe to the existing workload/grant/lease path,
 bind an explicit selected model and image/call/token/result budgets, enforce local
 endpoint handling, persist analysis decisions before model effects, and deliver
