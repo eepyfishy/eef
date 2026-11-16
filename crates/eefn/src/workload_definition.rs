@@ -10,6 +10,9 @@ use sha2::{Digest, Sha256};
 pub const CAPABILITY: &str = "workload.session";
 pub const TEMPLATE: &str = "continuous_workload";
 
+#[path = "workload_vision_definition.rs"]
+pub mod vision;
+
 /// Exact reviewable source and bounds, before any grant identity is assigned.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,7 +38,8 @@ impl Template {
     }
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.schema_version == 2 && serde_json::to_vec(self)?.len() <= 64 * 1024,
+            self.schema_version == self.source.definition_version()
+                && serde_json::to_vec(self)?.len() <= 64 * 1024,
             "Invalid workload template schema or size"
         );
         validate_components(
@@ -71,19 +75,21 @@ pub struct Definition {
     pub events: Events,
 }
 
-/// Reviewed metadata-producing sources, not arbitrary extension entry points.
-/// No arbitrary plugin path, code, command, model or raw media destination.
+/// Reviewed built-in sources, not arbitrary extension entry points. Vision has
+/// a distinct version and explicit model scope; old metadata grants stay exact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     MicrophoneEnergy,
     CameraMotion,
+    CameraVision,
 }
 impl SourceKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::MicrophoneEnergy => "microphone_energy",
             Self::CameraMotion => "camera_motion",
+            Self::CameraVision => "camera_vision",
         }
     }
 }
@@ -102,9 +108,22 @@ pub enum Source {
         adapter_sha256: String,
         parameters: MotionParameters,
     },
+    CameraVision {
+        resource_id: String,
+        resource_sha256: String,
+        adapter_sha256: String,
+        parameters: vision::Parameters,
+    },
 }
 
 impl Source {
+    pub fn definition_version(&self) -> u32 {
+        if matches!(self, Self::CameraVision { .. }) {
+            3
+        } else {
+            2
+        }
+    }
     pub fn kind(&self) -> &'static str {
         self.source_kind().as_str()
     }
@@ -112,13 +131,14 @@ impl Source {
         match self {
             Self::MicrophoneEnergy { .. } => SourceKind::MicrophoneEnergy,
             Self::CameraMotion { .. } => SourceKind::CameraMotion,
+            Self::CameraVision { .. } => SourceKind::CameraVision,
         }
     }
     pub fn resource_id(&self) -> &str {
         match self {
-            Self::MicrophoneEnergy { resource_id, .. } | Self::CameraMotion { resource_id, .. } => {
-                resource_id
-            }
+            Self::MicrophoneEnergy { resource_id, .. }
+            | Self::CameraMotion { resource_id, .. }
+            | Self::CameraVision { resource_id, .. } => resource_id,
         }
     }
     pub fn resource_sha256(&self) -> &str {
@@ -128,37 +148,42 @@ impl Source {
             }
             | Self::CameraMotion {
                 resource_sha256, ..
+            }
+            | Self::CameraVision {
+                resource_sha256, ..
             } => resource_sha256,
         }
     }
     pub fn adapter_sha256(&self) -> &str {
         match self {
             Self::MicrophoneEnergy { adapter_sha256, .. }
-            | Self::CameraMotion { adapter_sha256, .. } => adapter_sha256,
+            | Self::CameraMotion { adapter_sha256, .. }
+            | Self::CameraVision { adapter_sha256, .. } => adapter_sha256,
         }
     }
     pub fn capability(&self) -> &'static str {
         match self {
             Self::MicrophoneEnergy { .. } => "audio.capture",
-            Self::CameraMotion { .. } => "camera.capture",
+            Self::CameraMotion { .. } | Self::CameraVision { .. } => "camera.capture",
         }
     }
     pub fn frames_per_observation(&self) -> u64 {
         match self {
             Self::MicrophoneEnergy { parameters, .. } => u64::from(parameters.block_frames),
-            Self::CameraMotion { .. } => 1,
+            Self::CameraMotion { .. } | Self::CameraVision { .. } => 1,
         }
     }
     pub fn max_observations(&self) -> u64 {
         match self {
             Self::MicrophoneEnergy { parameters, .. } => u64::from(parameters.max_blocks),
             Self::CameraMotion { parameters, .. } => u64::from(parameters.max_frames),
+            Self::CameraVision { parameters, .. } => u64::from(parameters.capture.max_frames),
         }
     }
     pub fn max_level(&self) -> u16 {
         match self {
             Self::MicrophoneEnergy { .. } => 32768,
-            Self::CameraMotion { .. } => 255,
+            Self::CameraMotion { .. } | Self::CameraVision { .. } => 255,
         }
     }
 }
@@ -348,9 +373,21 @@ pub fn camera_resource_digest(resource: &crate::context::Resource) -> Result<Str
     crate::grants::definition_digest(&json!(resource))
 }
 impl Definition {
+    /// Combined retained metadata and JSON-encoded analysis text reservation.
+    /// Existing metadata-only definitions retain their exact previous value.
+    pub fn max_retained_result_bytes(&self) -> Result<usize> {
+        let analysis = match &self.source {
+            Source::CameraVision { parameters, .. } => parameters.max_total_result_bytes()?,
+            _ => 0,
+        };
+        self.events
+            .max_total_bytes
+            .checked_add(analysis)
+            .ok_or_else(|| anyhow::anyhow!("Workload result reservation overflow"))
+    }
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.schema_version == 2
+            self.schema_version == self.source.definition_version()
                 && digest(&self.plan_sha256)
                 && (-1000..=1000).contains(&self.priority)
                 && serde_json::to_vec(self)?.len() <= 64 * 1024,
@@ -444,6 +481,13 @@ fn validate_components(
                 "Camera source duration exceeds reviewed session"
             );
         }
+        Source::CameraVision { parameters, .. } => {
+            parameters.validate()?;
+            ensure!(
+                parameters.capture.max_duration_ms <= limits.max_session_ms,
+                "Vision source duration exceeds reviewed session"
+            );
+        }
     }
     let prefix = format!("{node}::");
     let local = source.resource_id().strip_prefix(&prefix).unwrap_or("");
@@ -480,6 +524,10 @@ impl Definition {
                 camera_resource_digest(resource)?,
                 parameters.python_parameters()?,
             ),
+            Source::CameraVision { parameters, .. } => (
+                camera_resource_digest(resource)?,
+                parameters.python_parameters()?,
+            ),
         };
         ensure!(
             resource.available
@@ -494,7 +542,11 @@ impl Definition {
             .get("device")
             .cloned()
             .unwrap_or_default();
-        if matches!(&self.source, Source::CameraMotion { .. }) && device.is_null() {
+        if matches!(
+            &self.source,
+            Source::CameraMotion { .. } | Source::CameraVision { .. }
+        ) && device.is_null()
+        {
             device = json!(0);
         }
         request["device"] = device;

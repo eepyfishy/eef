@@ -63,7 +63,7 @@ _f=_t.ModuleType('vision_fixture')
 exec({fake},_f.__dict__)
 _root=_p.Path({root})
 def _log(kind):
-    with (_root/'trace').open('a',encoding='utf8') as out:out.write(kind+'\n')
+    with (_root/'trace').open('a',encoding='utf8',newline='\n') as out:out.write(kind+'\n')
 _camera=_f.Camera([_f.Frame(n) for n in (0,20,20)])
 _camera.on_open=lambda:_log('open')
 _camera.on_read=lambda:_log('read')
@@ -158,12 +158,19 @@ _s.modules['cv2']=_cv
         );
         release.add_permits(1);
     };
+    let checked_run = async {
+        let result = run.await;
+        assert!(
+            result.is_ok(),
+            "Owned capture/model transport failed: {result:?}"
+        );
+        result.unwrap()
+    };
     let (completed, (), ()) = tokio::time::timeout(Duration::from_secs(15), async {
-        tokio::join!(run, peer, inspection)
+        tokio::join!(checked_run, peer, inspection)
     })
     .await
     .unwrap();
-    let completed = completed.unwrap();
     assert_eq!(completed.summary().stream.observations, 3);
     assert_eq!(completed.summary().images, 1);
     assert_eq!(*answers.lock().unwrap(), ["movement detected"]);

@@ -35,7 +35,7 @@ pub(super) fn schema(db: &Connection, version: i64) -> Result<()> {
         ),
     ];
     ensure!(
-        if matches!(version, 4 | 5) {
+        if matches!(version, 4 | 5 | 6) {
             found == expected
         } else {
             found.is_empty()
@@ -63,9 +63,11 @@ pub(super) fn reservation(db: &Connection, definition: &Definition) -> Result<us
         .checked_add(8)
         .and_then(|n| n.checked_mul(page))
         .context("Event reservation overflow")?;
+    let vision = super::vision::reservation(db, definition)?;
     rows.checked_mul(row)
         .and_then(|n| n.checked_add(8 * page))
-        .context("Event reservation overflow")
+        .and_then(|n| n.checked_add(vision))
+        .context("Event or vision reservation overflow")
 }
 pub(super) fn reserved(db: &Connection) -> Result<usize> {
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -91,7 +93,7 @@ pub(super) fn initialize(db: &Connection, definition: &Definition) -> Result<()>
 pub(super) fn upgrade(db: &Connection, node: &str) -> Result<()> {
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     schema(db, version)?;
-    if matches!(version, 4 | 5) {
+    if matches!(version, 4 | 5 | 6) {
         return Ok(());
     }
     ensure!(

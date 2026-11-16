@@ -144,6 +144,11 @@ impl Advertisement {
                     && self.available
                     && !self.source_kinds.is_empty()
                     && self.source_kinds.len() <= 2
+                    && self.source_kinds.iter().all(|kind| matches!(
+                        kind,
+                        crate::workload_leases::definition::SourceKind::MicrophoneEnergy
+                            | crate::workload_leases::definition::SourceKind::CameraMotion
+                    ))
                     && self.source_kinds.windows(2).all(|pair| pair[0] < pair[1])))
                 && self.event_delivery == "bounded_metadata"
                 && !self.restart_authorized,
@@ -185,6 +190,7 @@ impl Offer {
         ensure!(
             self.kind == "execute_workload"
                 && self.schema_version == 2
+                && self.definition.schema_version == 2
                 && self.id == self.definition.grant_id
                 && self.expected_runtime_id == runtime
                 && self

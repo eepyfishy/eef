@@ -11,6 +11,17 @@ use std::collections::HashSet;
 pub(crate) const MICROPHONE_SOURCE: &[u8] =
     include_bytes!("../../../python/streams/microphone_energy.py");
 pub(crate) const CAMERA_SOURCE: &[u8] = include_bytes!("../../../python/streams/camera_motion.py");
+pub(crate) fn vision_source_bytes() -> Vec<u8> {
+    [
+        CAMERA_SOURCE,
+        b"\n",
+        include_bytes!("../../../python/streams/camera_vision.py"),
+    ]
+    .concat()
+}
+pub fn vision_adapter_digest() -> String {
+    hex::encode(Sha256::digest(vision_source_bytes()))
+}
 pub fn camera_adapter_digest() -> String {
     hex::encode(Sha256::digest(CAMERA_SOURCE))
 }
@@ -280,6 +291,7 @@ impl crate::NodeServer {
                 self.camera_workload_sources(&template.executor_node, freshness_seconds)
                     .await?,
             ),
+            SourceKind::CameraVision => bail!("Vision source inspection is not available yet"),
         };
         snapshot.confirms_template(template)?;
         Ok(snapshot)

@@ -16,19 +16,22 @@ mod completion;
 mod event_journal;
 #[path = "workload_finalization.rs"]
 mod finalization;
+#[path = "workload_vision_journal.rs"]
+pub(crate) mod vision;
 pub use completion::Report as CompletionReport;
 pub(crate) fn event_reserved(db: &Connection) -> Result<usize> {
     event_journal::reserved(db)
 }
 pub(crate) fn validate_event_orphans(db: &Connection) -> Result<()> {
-    event_journal::audit_orphans(db)
+    event_journal::audit_orphans(db)?;
+    vision::audit_orphans(db)
 }
 
 pub(crate) fn validate_schema(db: &Connection, version: i64) -> Result<()> {
     let fields = db.prepare("SELECT name,type,\"notnull\",dflt_value FROM pragma_table_info('execution_receipts') WHERE name IN ('receipt_kind','workload_definition') ORDER BY name")?
         .query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,Option<String>>(3)?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    if matches!(version, 3 | 4 | 5) {
+    if matches!(version, 3 | 4 | 5 | 6) {
         if fields
             != [
                 (
@@ -45,7 +48,8 @@ pub(crate) fn validate_schema(db: &Connection, version: i64) -> Result<()> {
     } else if !fields.is_empty() {
         bail!("Unversioned workload receipt columns; retained without migration")
     }
-    event_journal::schema(db, version)
+    event_journal::schema(db, version)?;
+    vision::schema(db, version)
 }
 pub(crate) fn is_workload(db: &Connection, id: &str) -> Result<bool> {
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -67,7 +71,7 @@ pub(crate) fn is_workload(db: &Connection, id: &str) -> Result<bool> {
 fn upgrade(db: &Connection, node: &str) -> Result<()> {
     crate::request_receipt::validate_owner(db, node)?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if matches!(version, 3 | 4 | 5) {
+    if matches!(version, 3 | 4 | 5 | 6) {
         return event_journal::upgrade(db, node);
     }
     if version != 2 {
@@ -133,6 +137,7 @@ impl Receipt {
 pub(crate) fn read(db: &Connection, node: &str, issuer: Option<&str>, id: &str) -> Result<Receipt> {
     let result = read_core(db, node, issuer, id)?;
     event_journal::audit(db, &result)?;
+    vision::audit(db, &result)?;
     Ok(result)
 }
 fn read_core(db: &Connection, node: &str, issuer: Option<&str>, id: &str) -> Result<Receipt> {
@@ -150,8 +155,13 @@ fn read_core(db: &Connection, node: &str, issuer: Option<&str>, id: &str) -> Res
     }
     let raw = raw.context("Workload definition unavailable")?;
     let definition: Definition = serde_json::from_str(&raw)?;
+    let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    ensure!(
+        definition.schema_version == 2 || version == 6,
+        "Vision receipt requires its analysis journal schema; retained without recovery"
+    );
     if serde_json::to_string(&definition)? != raw
-        || usize::try_from(limit)? != definition.events.max_total_bytes
+        || usize::try_from(limit)? != definition.max_retained_result_bytes()?
     {
         bail!("Workload definition or reporting reservation changed")
     }
@@ -396,6 +406,7 @@ impl GrantLedger {
             .map_err(|_| anyhow::anyhow!("Grant journal unavailable"))?;
         let tx = db.unchecked_transaction()?;
         let receipt = read_core(&tx, &self.node_id, Some(issuer), id)?;
+        vision::audit(&tx, &receipt)?;
         let value = event_journal::inspect(&tx, &receipt, after, limit)?;
         tx.commit()?;
         Ok(value)

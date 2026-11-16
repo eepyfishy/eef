@@ -25,6 +25,10 @@ pub struct Report {
 impl Report {
     pub(super) fn validate(&self, receipt: &Receipt) -> Result<()> {
         ensure!(
+            receipt.definition.schema_version == 2,
+            "Vision completion requires analysis and owned-source evidence"
+        );
+        ensure!(
             matches!(
                 (self.schema_version, &self.event_payload_prefix_sha256),
                 (1, None) | (2, Some(_))
@@ -107,7 +111,8 @@ pub(super) fn decode(db: &Connection, id: &str, state: &str) -> Result<Option<Re
     }
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     ensure!(
-        version == 5 && size.is_some_and(|size| (1..=REPORT_HEADROOM as i64).contains(&size)),
+        matches!(version, 5 | 6)
+            && size.is_some_and(|size| (1..=REPORT_HEADROOM as i64).contains(&size)),
         "Missing, oversized or downgraded workload completion report"
     );
     let raw = raw.context("Workload completion unavailable")?;
@@ -140,13 +145,13 @@ pub(super) fn audit_prefix(db: &Connection, receipt: &Receipt) -> Result<()> {
     }
     Ok(())
 }
-fn upgrade(db: &Connection, node: &str) -> Result<()> {
+pub(super) fn upgrade(db: &Connection, node: &str) -> Result<()> {
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     ensure!(
-        matches!(version, 4 | 5),
+        matches!(version, 4 | 5 | 6),
         "Completion requires the current event journal"
     );
-    if version == 5 {
+    if version >= 5 {
         return Ok(());
     }
     // Validate all retained kinds before changing the marker. No row is repaired,

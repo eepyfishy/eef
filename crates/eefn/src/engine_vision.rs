@@ -10,14 +10,14 @@ use tokio::time::{Instant, timeout_at};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ModelSelection {
+pub struct ModelSelection {
     pub backend: Backend,
     pub model_id: String,
     /// Ollama's installed-model report, not an independent file measurement.
     pub installed_digest: Option<String>,
 }
 impl ModelSelection {
-    pub(crate) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         crate::model_selection::validate_id(&self.model_id)?;
         ensure!(
             match self.backend {
@@ -35,14 +35,14 @@ impl ModelSelection {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AnalysisLimits {
+pub struct AnalysisLimits {
     pub max_tokens: u64,
     pub max_response_bytes: usize,
     pub max_result_bytes: usize,
     pub timeout_ms: u64,
 }
 impl AnalysisLimits {
-    pub(crate) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         ensure!(
             (1..=1024).contains(&self.max_tokens)
                 && (1024..=64 * 1024).contains(&self.max_response_bytes)
@@ -279,7 +279,7 @@ impl LocalBinding<'_> {
                 .context("Vision answer missing")?;
             ensure!(
                 !text.trim().is_empty()
-                    && text.len() <= limits.max_result_bytes
+                    && serde_json::to_vec(text)?.len() <= limits.max_result_bytes
                     && !text.contains('\0'),
                 "Vision answer outside approved bounds"
             );

@@ -5,6 +5,15 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+The next vision workload candidate binds a distinct reviewed definition to
+bounded model/image/call scope and adds analysis intent/result storage in the
+existing grant journal. Intent acknowledgments follow durable commit; pending work
+cannot be replayed, and retained counters/checksum prefixes detect missing or
+changed rows. Aggregate metadata and encoded result reservations share owner
+limits. Twelve definition/journal regressions are added; hosted verification is
+pending. Public execution remains disabled until owner policy, the admitted
+runtime, completion evidence and command integration are implemented.
+
 The [local event vision work](LOCAL-EVENT-VISION.md) now has a separate single-open
 motion/image iterator and bounded private start/ack pipe. Image size/count/cadence
 and output budgets are explicit; the old motion source and metadata host remain
@@ -18,7 +27,13 @@ The next Rust candidate adds a private bounded image reader with start/ack pacin
 non-serializable images and exact completion, sharing the existing owned process
 cleanup with metadata streams. Native tests cover held root/descendant processes,
 consumer failure and original-deadline expiry. Hosted verification of that Rust
-candidate is pending. No source registration, model execution, workload authority
+candidate passes exact-source/raw-log acceptance for `7f487b6` in
+[run 43896291907](https://github.com/eepyfishy/eef/actions/runs/43896291907):
+all four jobs, 1,781 Windows/headless Rust tests, one ignored across 17 groups,
+all 37 native suites and the retained extra gates. The later composed
+capture/model test fails the Windows workspace gate for `91951ba` and `3b6b4e2`;
+those runs are not accepted. Its newline/diagnostic correction and the new
+definition/journal path await hosted verification. No source registration, workload authority
 or startup capture is enabled yet. Workload/grant/model/durable/public command
 integration remains required; this component is not the completed feature.
 

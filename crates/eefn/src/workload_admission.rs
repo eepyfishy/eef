@@ -55,10 +55,13 @@ fn save(
     still_waiting(ledger, reply, end)?;
     check_attempt_slot(&tx, scope)?;
     upgrade(&tx, &ledger.node_id)?;
+    if definition.schema_version == 3 {
+        vision::upgrade(&tx, &ledger.node_id)?;
+    }
     check_receipt_budget(
         &tx,
         &ledger.policy,
-        definition.events.max_total_bytes,
+        definition.max_retained_result_bytes()?,
         encoded
             .len()
             .checked_add(event_journal::reservation(&tx, definition)?)
@@ -69,8 +72,11 @@ fn save(
     let now = i64::try_from(crate::protocol::now_ms().max(1))?;
     *attempted = true;
     tx.execute("INSERT INTO execution_receipts(issuer_id,job_id,task_id,attempt,grant_id,grant_digest,state,accepted_ms,updated_ms,max_result_bytes,report,report_sha256,receipt_kind,workload_definition) VALUES(?1,?2,?3,?4,?5,?6,'accepted',?7,?7,?8,NULL,NULL,'workload',?9)",
-        params![definition.issuer_id,definition.job_id,definition.task_id,definition.attempt,definition.grant_id,scope.grant_sha256,now,i64::try_from(definition.events.max_total_bytes)?,encoded])?;
+        params![definition.issuer_id,definition.job_id,definition.task_id,definition.attempt,definition.grant_id,scope.grant_sha256,now,i64::try_from(definition.max_retained_result_bytes()?)?,encoded])?;
     event_journal::initialize(&tx, definition)?;
+    if definition.schema_version == 3 {
+        vision::initialize(&tx, definition)?;
+    }
     still_waiting(ledger, reply, end)?;
     tx.commit()?;
     Ok(())
@@ -139,7 +145,7 @@ impl GrantLedger {
             !self.final_reporting_failed.load(Ordering::Acquire),
             "Workload final reporting failed; inspect retained evidence before admission"
         );
-        if definition.events.max_total_bytes > self.policy.max_result_bytes {
+        if definition.max_retained_result_bytes()? > self.policy.max_result_bytes {
             return Err(GrantDenied("grant_owner_limits_exceeded").into());
         }
         // Reserve before touching SQLite, so a pending final checkpoint refuses

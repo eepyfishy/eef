@@ -34,6 +34,7 @@ impl Kind {
         match source {
             Source::MicrophoneEnergy { .. } => Self::MicrophoneActivity,
             Source::CameraMotion { .. } => Self::CameraMotion,
+            Source::CameraVision { .. } => Self::CameraMotion,
         }
     }
 }

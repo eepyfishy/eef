@@ -317,6 +317,9 @@ impl NodeEngine {
             crate::workload_leases::definition::SourceKind::CameraMotion => {
                 service.prepare_camera(runtime, definition)?
             }
+            crate::workload_leases::definition::SourceKind::CameraVision => {
+                bail!("Vision workload admission requires its analysis journal and runtime")
+            }
         };
         Ok((policy, permit, source))
     }

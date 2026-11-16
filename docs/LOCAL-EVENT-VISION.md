@@ -83,6 +83,32 @@ not exercise workload admission, durable analysis decisions or a physical model.
 
 ## Verification and remaining integration
 
+The next candidate adds a distinct version-three `camera_vision` definition. It
+binds camera and image settings, selected model/backend/digest, prompt, token,
+encoded response/result and per-call time limits. Each image permits at most one
+call; aggregate requested output-token and result reservations derive from the
+reviewed image count. The Python request receives capture/image settings only.
+Old metadata definitions retain version two, their fields and grant hashes.
+
+Analysis persistence uses version six of the existing grant journal, with exact
+schema checks, grant-bound intent/result records, counters and a checksum prefix.
+A single-use acknowledgment follows the committed intent; a pending intent
+prevents duplicate or later analysis. Results require that acknowledgment and
+current reporting authority. No image bytes enter the journal. Combined metadata
+and JSON-encoded result reservations must fit owner limits, with page/row overhead
+reserved before consumption. The existing bounded native worker retains its slot
+until actual completion, including abandoned or expired writes. Historical
+inspection is issuer-bound and cannot recreate an acknowledgment or execution.
+Six definition and six real-journal regressions cover binding, old-format
+preservation, durable order, interrupted history, quotas, corruption/deletion,
+downgrade and actual worker retirement. Hosted verification is pending.
+
+These definitions and journal helpers are not yet an executable network feature.
+Metadata-only offers, source inspection and execution advertisements refuse the
+new kind; the prepared driver also refuses it. Vision completion cannot use a
+metadata-only report. Owner policy, the admitted runtime, joined source/analysis
+completion evidence and public commands remain required before enabling it.
+
 Eleven source tests use deterministic camera/image/clock fakes. Ten private pipe
 cases test start/ack gating, slow consumption, image transfer, legacy EOF before
 start, wrong acknowledgements, oversized/duplicate controls, source hash/error,
@@ -95,12 +121,22 @@ tests, one ignored across 17 groups, and all 37 native suites plus existing gate
 Source and raw-log review accept that Python component only. It is not real-codec,
 physical-camera, model-quality or owned-Rust-process acceptance.
 
-The new Rust candidate adds strict bounds/field/order/image/end checks, local
+The owned Rust transport adds strict bounds/field/order/image/end checks, local
 start/ack backpressure, truncated/oversized output refusal, and redacted consumer
 failure tests. Native fixtures hold real root and descendant process handles to
 check success, failed-consumer retirement and expiry of the original deadline.
-Hosted compilation and execution of this Rust candidate are pending; no local
-Python, model or application execution is used for this checkpoint.
+Exact source `7f487b6` passes all four jobs and source/raw-log review in
+[run 43896291907](https://github.com/eepyfishy/eef/actions/runs/43896291907):
+1,781 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and retained extra gates. This accepts the owned transport only.
+
+The later composed capture/model fixture fails the Windows workspace gate in
+the `91951ba` and `3b6b4e2` runs; neither is accepted. Its trace writer used
+platform-default newlines while the assertion expected LF. The current candidate
+sets LF explicitly and reports a failed source immediately instead of waiting
+for idle peer fixtures. Raw logs confirm the CRLF/LF mismatch in both runs;
+hosted verification of the correction is still required. No local Python, model
+or application execution is used.
 
 The feature remains incomplete. No public source registration, startup capture,
 model call, additional permission or network image path is enabled by these files.
