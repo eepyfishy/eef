@@ -121,6 +121,9 @@ impl NodeEngine {
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
+            // Disable the locked client's default protocol-NACK retries too.
+            // A durable analysis intent must correspond to one exchange.
+            .retry(reqwest::retry::never())
             .build()?;
         Ok(LocalBinding {
             engine: self,

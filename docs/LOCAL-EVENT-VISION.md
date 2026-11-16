@@ -54,6 +54,8 @@ response normalization, local operation-policy checks and llama.cpp model-use
 pins. It accepts only the applied literal loopback endpoint and uses a separate
 HTTP client with proxies and redirects disabled. It never accepts a caller URL,
 chooses a substitute model, downloads a model, or invokes generated tools.
+The locked HTTP client's default protocol retry policy is explicitly disabled;
+absence of an application retry loop alone would not establish this behavior.
 
 Ollama calls require the reviewed installed-model digest, one matching nonempty
 installed-model report and no reported remote model/host, checked before and after
