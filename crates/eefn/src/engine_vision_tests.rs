@@ -7,6 +7,10 @@ use std::sync::{
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
+#[cfg(all(windows, feature = "native-test-fixtures"))]
+#[path = "engine_vision_native_tests.rs"]
+mod native;
+
 fn selection() -> ModelSelection {
     ModelSelection {
         backend: Backend::Ollama,

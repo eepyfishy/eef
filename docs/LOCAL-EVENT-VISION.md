@@ -72,6 +72,13 @@ shared model stopped. Ten added tests use synthetic HTTP and the existing owned
 model helper, covering both payloads, identity changes, limits, revocation,
 expiry, and refused image-post redirects. Hosted verification is pending.
 
+An additional Windows native fixture composes the actual pinned camera vision
+iterator, private Python host, Rust owned transport and local model adapter.
+Its fake camera/encoder and synthetic HTTP provider require one acquisition,
+one image from the triggering frame, no next read while the model reply is held,
+and camera reuse after owned exit. This is transport composition only; it does
+not exercise workload admission, durable analysis decisions or a physical model.
+
 ## Verification and remaining integration
 
 Eleven source tests use deterministic camera/image/clock fakes. Ten private pipe
