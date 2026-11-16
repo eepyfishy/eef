@@ -31,6 +31,21 @@ This component does not mint authority. Its caller must supervise the original
 process deadline, resource reservation and reviewed image/model scope. It grants
 no OS isolation of trusted Python code. It is not the legacy metadata protocol.
 
+## Owned Rust transport under verification
+
+The Rust private reader uses a separate strict frame type, validates sequence,
+image and aggregate byte budgets, and sends start/ack controls only after their
+corresponding checks and consumer completion. Images have a local, non-serializable
+type whose debug output contains only their size. The reader requires exact end
+counts and EOF; a plain summary cannot construct its owned-exit result.
+
+Metadata and private image streams share the existing process ownership and
+cleanup implementation. It retains the original absolute deadline, configured
+job memory ceiling and camera reservation. Successful private completion requires
+an observed empty owned Windows job; unsupported platforms refuse before spawn.
+Consumer failure, deadline and malformed data retire the same owned process tree.
+This transport supplies lifecycle evidence, not admission or model authority.
+
 ## Verification and remaining integration
 
 Eleven source tests use deterministic camera/image/clock fakes. Ten private pipe
@@ -38,12 +53,23 @@ cases test start/ack gating, slow consumption, image transfer, legacy EOF before
 start, wrong acknowledgements, oversized/duplicate controls, source hash/error,
 early end and unsolicited images. The existing required native source suite
 invokes them after its original microphone/motion checks. Local JavaScript syntax
-and diff checks pass; hosted Python/process verification is pending. This is not
-real-codec, physical-camera, model-quality or owned-Rust-process acceptance.
+and diff checks pass. Exact source `cd7ec89` passes all four jobs in
+[run 43259512674](https://github.com/eepyfishy/eef/actions/runs/43259512674),
+including the required Python source/pipe checks, 1,771 Windows/headless Rust
+tests, one ignored across 17 groups, and all 37 native suites plus existing gates.
+Source and raw-log review accept that Python component only. It is not real-codec,
+physical-camera, model-quality or owned-Rust-process acceptance.
+
+The new Rust candidate adds strict bounds/field/order/image/end checks, local
+start/ack backpressure, truncated/oversized output refusal, and redacted consumer
+failure tests. Native fixtures hold real root and descendant process handles to
+check success, failed-consumer retirement and expiry of the original deadline.
+Hosted compilation and execution of this Rust candidate are pending; no local
+Python, model or application execution is used for this checkpoint.
 
 The feature remains incomplete. No public source registration, startup capture,
 model call, additional permission or network image path is enabled by these files.
-Next work must connect this pipe to the existing owned capture/grant/lease path,
+Next work must connect this owned pipe to the existing workload/grant/lease path,
 bind an explicit selected model and image/call/token/result budgets, enforce local
 endpoint handling, persist analysis decisions before model effects, and deliver
 bounded approved results through the existing durable lifecycle. Model absence,

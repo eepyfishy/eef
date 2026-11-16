@@ -5,10 +5,10 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{future::Future, path::Path, process::Stdio, time::Duration};
+use std::{future::Future, path::Path, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader},
-    time::{Instant, timeout, timeout_at},
+    time::{Instant, timeout_at},
 };
 
 const HOST: &str = include_str!("../../../python/eef_stream_host.py");
@@ -42,6 +42,9 @@ impl PinnedStreamSource {
     }
     pub fn digest(&self) -> &str {
         &self.source_sha256
+    }
+    pub(super) fn source_utf8(&self) -> &str {
+        &self.source_utf8
     }
 }
 enum Source<'a> {
@@ -487,83 +490,23 @@ impl PythonRuntime {
                 command.arg("--pinned-source-v1").arg("--reviewed-bytes");
             }
         }
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit_before(
-            &mut command,
-            self.limits.max_job_memory_mib,
-            deadline,
-        )
-        .map_err(super::bridge_spawn_failure)?;
-        let tree = std::sync::Arc::new(tree);
-        let mut capture = reservation.map(|reservation| reservation.bind(tree.clone()));
-        let stdin = child.stdin.take().context("Stream stdin unavailable")?;
-        let stdout = child.stdout.take().context("Stream stdout unavailable")?;
-        let stderr = child.stderr.take().context("Stream stderr unavailable")?;
-        #[allow(unused_mut)]
-        let mut owned_exit = None;
-        let outcome = timeout_at(deadline, async {
-            let (_, summary, _, status) = tokio::try_join!(
-                super::send_input(stdin, &input),
-                read_frames(stdout, stream_id, &bounds, observe),
-                super::read_pipe(
-                    stderr,
-                    self.limits.max_stderr_bytes,
-                    BridgeFailure::StderrLimit
-                ),
-                async {
-                    #[cfg(windows)]
-                    let status = if capture.is_some() {
-                        tree.wait_root_with_coverage_until(&mut child, deadline)
-                            .await
-                            .map_err(super::bridge_wait_failure)?
-                    } else {
-                        child.wait().await.context("Stream child wait failed")?
-                    };
-                    #[cfg(not(windows))]
-                    let status = child.wait().await.context("Stream child wait failed")?;
-                    #[cfg(windows)]
-                    {
-                        if let Some(capture) = &mut capture {
-                            let exit = tree.terminate_and_witness_until(deadline).await?;
-                            capture.observed_exit(&exit)?;
-                            owned_exit = Some(exit);
-                        } else {
-                            // Public transport summaries retain their existing
-                            // cleanup boundary; they cannot mint ObservedStream.
-                            tree.terminate_and_observe_until(deadline).await?;
-                        }
-                    }
-                    Ok::<_, anyhow::Error>(status)
-                }
-            )?;
-            if !status.success() {
-                return Err(BridgeFailure::Process.into());
-            }
-            Ok(summary)
-        })
-        .await
-        .map_err(|_| anyhow::Error::from(BridgeFailure::Deadline))
-        .and_then(|v| v);
-        // Retire the exact owned process before returning even on malformed data,
-        // failed observers, deadline or cancellation. Drop is not external proof.
-        if outcome.is_err() {
-            if let Some(capture) = &mut capture {
-                let _ = capture.retire().await;
-            }
-        }
-        drop(capture);
-        drop(tree);
-        if outcome.is_err() {
-            let _ = child.start_kill();
-            let _ = timeout(Duration::from_secs(1), child.wait()).await;
-        }
-        outcome.map(|summary| StreamOutcome {
-            summary,
-            owned_exit,
+        let outcome = self
+            .run_owned_stream(
+                &mut command,
+                deadline,
+                reservation,
+                |stdin, stdout| async move {
+                    let (_, summary) = tokio::try_join!(
+                        super::send_input(stdin, &input),
+                        read_frames(stdout, stream_id, &bounds, observe)
+                    )?;
+                    Ok(summary)
+                },
+            )
+            .await?;
+        Ok(StreamOutcome {
+            summary: outcome.value,
+            owned_exit: outcome.owned_exit,
         })
     }
 }

@@ -3,16 +3,24 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
-## In development: private camera vision source and pipe
+## In development: owned private camera vision transport
 
 The [local event vision work](LOCAL-EVENT-VISION.md) now has a separate single-open
 motion/image iterator and bounded private start/ack pipe. Image size/count/cadence
 and output budgets are explicit; the old motion source and metadata host remain
 unchanged. Eleven fake source tests and ten private protocol cases are wired into
-the existing required native source suite. JavaScript syntax and diff checks pass;
-hosted verification is pending. No source registration, model execution, workload
-authority or startup capture is enabled yet. Owned Rust/grant/model/durable/public
-command integration remains required; this component is not the completed feature.
+the existing required native source suite. Exact source `cd7ec89` passes all four
+jobs in [run 43259512674](https://github.com/eepyfishy/eef/actions/runs/43259512674),
+including source/raw-log review, 1,771 Windows/headless Rust tests, one ignored
+across 17 groups, all 37 native suites and the existing extra gates.
+
+The next Rust candidate adds a private bounded image reader with start/ack pacing,
+non-serializable images and exact completion, sharing the existing owned process
+cleanup with metadata streams. Native tests cover held root/descendant processes,
+consumer failure and original-deadline expiry. Hosted verification of that Rust
+candidate is pending. No source registration, model execution, workload authority
+or startup capture is enabled yet. Workload/grant/model/durable/public command
+integration remains required; this component is not the completed feature.
 
 ## Accepted development checkpoint: bounded interpreter command history admission
 
