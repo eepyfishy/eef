@@ -5,6 +5,119 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+#[test]
+fn vision_opt_in_preserves_legacy_wire_shape_and_cannot_be_staged_while_disabled() {
+    let raw = json!({"enabled":true,"max_session_ms":60000,"max_lease_ms":10000});
+    let policy: Policy = serde_json::from_value(raw.clone()).unwrap();
+    assert!(!policy.vision_analysis);
+    assert_eq!(json!(policy), raw);
+    let vision = crate::workload_leases::definition::vision::tests::vision();
+    assert!(policy.permits_definition(&vision).is_err());
+    let mut next = json!({"workload_policy":{"enabled":false,"vision_analysis":true}});
+    assert!(preserve(&json!({}), &mut next, false).is_err());
+    let mut enabled = policy.clone();
+    Action::Vision { enabled: true }
+        .apply(&mut enabled)
+        .unwrap();
+    enabled.permits_definition(&vision).unwrap();
+    Action::Disable.apply(&mut enabled).unwrap();
+    assert!(!enabled.vision_analysis);
+    Action::Enable {
+        max_session_ms: None,
+        max_lease_ms: None,
+    }
+    .apply(&mut enabled)
+    .unwrap();
+    assert!(!enabled.vision_analysis);
+    assert!(enabled.permits_definition(&vision).is_err());
+}
+
+#[test]
+fn vision_cli_requires_an_explicit_boolean_and_does_not_implicitly_enable_workloads() {
+    use clap::Parser;
+    #[derive(clap::Parser)]
+    struct Cli {
+        #[command(subcommand)]
+        action: Action,
+    }
+    for value in ["true", "false"] {
+        assert!(Cli::try_parse_from(["test", "vision", "--enabled", value]).is_ok());
+    }
+    for args in [
+        vec!["test", "vision"],
+        vec!["test", "vision", "--enabled"],
+        vec!["test", "vision", "--enabled", "yes"],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+    let mut policy = Policy::default();
+    assert!(Action::Vision { enabled: true }.apply(&mut policy).is_err());
+    assert!(!policy.enabled && !policy.vision_analysis);
+}
+
+#[test]
+fn vision_policy_command_is_cas_checked_and_never_grants_camera_or_model_selection() {
+    let f = Fixture::new();
+    f.enabled();
+    let before = f.config();
+    let mut policy = from_config(&before).unwrap();
+    policy.vision_analysis = true;
+    let request = f.set(policy.clone());
+    let result = f
+        .service
+        .workload_policy_command(request.clone(), false)
+        .unwrap();
+    assert!(confirmed(&result, &request));
+    assert_eq!(result["policy"]["vision_analysis"], true);
+    assert_eq!(f.config()["permissions"], before["permissions"]);
+    assert_eq!(f.config()["models"], before["models"]);
+    assert_eq!(result["capture_started"], false);
+    assert_eq!(result["execution_authorized"], false);
+    assert!(f.service.workload_policy_command(request, false).is_err());
+    let mut generic = f.config();
+    generic["workload_policy"]["vision_analysis"] = json!(false);
+    // Owner policy mutations continue to use the existing typed CAS command.
+    assert!(f.service.save_config(generic).is_err());
+    policy.vision_analysis = false;
+    f.change(policy);
+    assert!(
+        f.config()["workload_policy"]
+            .get("vision_analysis")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn vision_revocation_retires_the_original_policy_permit_without_restoring_it_on_reenable() {
+    let f = Fixture::new();
+    f.enabled();
+    let mut policy = from_config(&f.config()).unwrap();
+    policy.vision_analysis = true;
+    f.change(policy.clone());
+    let old = f.service.workload_gate.permit().unwrap();
+    let active = f.service.workload_gate.permit().unwrap();
+    let dropped = Arc::new(AtomicBool::new(false));
+    struct Owned(Arc<AtomicBool>);
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let owned = Owned(dropped.clone());
+    let mut running = Box::pin(active.supervise(async move {
+        let _owned = owned;
+        std::future::pending::<Result<()>>().await
+    }));
+    assert!(running.as_mut().now_or_never().is_none());
+    policy.vision_analysis = false;
+    f.change(policy.clone());
+    assert!(running.await.is_err());
+    assert!(dropped.load(Ordering::SeqCst));
+    policy.vision_analysis = true;
+    f.change(policy);
+    assert!(old.supervise(async { Ok(()) }).await.is_err());
+}
+
 struct Fixture {
     dir: tempfile::TempDir,
     service: Arc<crate::NodeService>,
@@ -94,6 +207,7 @@ fn typed_policy_command_persists_bounds_without_permission_consent_or_restart_au
     assert!(!f.show()["policy"]["enabled"].as_bool().unwrap());
     let policy = Policy {
         enabled: true,
+        vision_analysis: false,
         max_session_ms: 60000,
         max_lease_ms: 10000,
     };
@@ -293,6 +407,7 @@ async fn changing_bounds_invalidates_original_policy_while_a_fresh_permit_uses_s
     let old = f.service.workload_gate.permit().unwrap();
     let changed = f.change(Policy {
         enabled: true,
+        vision_analysis: false,
         max_session_ms: 60000,
         max_lease_ms: 10000,
     });
@@ -318,16 +433,19 @@ fn invalid_bounds_and_revision_exhaustion_leave_existing_policy_intact() {
     for policy in [
         Policy {
             enabled: true,
+            vision_analysis: false,
             max_session_ms: 0,
             max_lease_ms: 1,
         },
         Policy {
             enabled: true,
+            vision_analysis: false,
             max_session_ms: 100,
             max_lease_ms: 101,
         },
         Policy {
             enabled: true,
+            vision_analysis: false,
             max_session_ms: crate::workload_leases::MAX_SESSION_MS + 1,
             max_lease_ms: 1,
         },

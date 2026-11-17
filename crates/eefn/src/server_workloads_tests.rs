@@ -429,6 +429,7 @@ fn complete(d: &Definition, count: u64) -> Value {
         event_bytes: usize::try_from(count).unwrap().checked_mul(300).unwrap(),
         event_prefix_sha256: "f".repeat(64),
         event_payload_prefix_sha256: None,
+        analysis: None,
         lease_sequence: 1,
         recorded_at_ms: 2,
         owned_process_exit_observed: true,

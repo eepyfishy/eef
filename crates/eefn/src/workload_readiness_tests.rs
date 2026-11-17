@@ -178,6 +178,11 @@ fn source_config_invalidation_tracks_source_inputs_without_following_unrelated_s
     let mut limits = old.clone();
     limits["workload_policy"]["max_lease_ms"] = json!(1000);
     assert!(source_config_changed(&old, &limits));
+    for key in ["models", "model_lifecycle"] {
+        let mut changed = old.clone();
+        changed[key] = json!({"changed":true});
+        assert!(source_config_changed(&old, &changed));
+    }
 }
 
 #[tokio::test]

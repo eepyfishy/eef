@@ -128,6 +128,7 @@ impl GrantLedger {
         node: &str,
         deadline: tokio::time::Instant,
     ) -> Result<Consumption> {
+        policy.permits_definition(&definition)?;
         let contract = definition.lease_contract()?;
         let reporting = crate::workload_leases::ReportingAuthority::new(&contract)?;
         ensure!(

@@ -163,6 +163,8 @@ pub(crate) fn source_config_changed(old: &serde_json::Value, next: &serde_json::
             "metadata",
             "listening",
             "workload_policy",
+            "models",
+            "model_lifecycle",
             "python",
             "python_plugins",
             "python_bridge",

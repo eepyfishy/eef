@@ -8,6 +8,7 @@ fn set(runtime: Option<String>) -> Request {
         command: Command::Set {
             policy: eefn::workload_leases::Policy {
                 enabled: true,
+                vision_analysis: false,
                 max_session_ms: 60000,
                 max_lease_ms: 10000,
             },
@@ -156,6 +157,7 @@ async fn real_credential_tls_node_policy_commands_share_owner_state_without_sour
     request.command = Command::Set {
         policy: eefn::workload_leases::Policy {
             enabled: true,
+            vision_analysis: false,
             max_session_ms: 60000,
             max_lease_ms: 10000,
         },
@@ -184,6 +186,7 @@ async fn real_credential_tls_node_policy_commands_share_owner_state_without_sour
     request.command = Command::Set {
         policy: eefn::workload_leases::Policy {
             enabled: false,
+            vision_analysis: false,
             max_session_ms: 60000,
             max_lease_ms: 10000,
         },
@@ -224,6 +227,7 @@ async fn real_credential_tls_node_policy_commands_share_owner_state_without_sour
     request.command = Command::Set {
         policy: eefn::workload_leases::Policy {
             enabled: true,
+            vision_analysis: false,
             max_session_ms: 60000,
             max_lease_ms: 10000,
         },

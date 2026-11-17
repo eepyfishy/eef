@@ -1,5 +1,6 @@
 //! Historical completion in the existing journal. No source, lease, renewal,
 //! execution or recovery authority enters the final worker.
+pub use super::vision::Summary as VisionSummary;
 use super::*;
 use anyhow::ensure;
 
@@ -17,6 +18,8 @@ pub struct Report {
     /// Payload-only prefix; the existing prefix also binds node lease/time rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_payload_prefix_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<VisionSummary>,
     pub lease_sequence: u64,
     pub recorded_at_ms: u64,
     pub owned_process_exit_observed: bool,
@@ -24,15 +27,27 @@ pub struct Report {
 }
 impl Report {
     pub(super) fn validate(&self, receipt: &Receipt) -> Result<()> {
+        let vision = receipt.definition.schema_version == 3;
         ensure!(
-            receipt.definition.schema_version == 2,
-            "Vision completion requires analysis and owned-source evidence"
+            match (&self.analysis, vision) {
+                (Some(summary), true) => {
+                    summary.validate_complete(
+                        &receipt.definition,
+                        summary.calls,
+                        self.lease_sequence,
+                    )?;
+                    self.schema_version == 3 && self.event_payload_prefix_sha256.is_some()
+                }
+                (None, false) => matches!(
+                    (self.schema_version, &self.event_payload_prefix_sha256),
+                    (1, None) | (2, Some(_))
+                ),
+                _ => false,
+            },
+            "Workload completion schema differs from its source kind"
         );
         ensure!(
-            matches!(
-                (self.schema_version, &self.event_payload_prefix_sha256),
-                (1, None) | (2, Some(_))
-            ) && self.grant_sha256 == receipt.definition.scope()?.grant_sha256
+            self.grant_sha256 == receipt.definition.scope()?.grant_sha256
                 && self.adapter_sha256 == receipt.definition.source.adapter_sha256()
                 && self.source_observations == receipt.definition.source.max_observations()
                 && self.source_frames
@@ -68,6 +83,7 @@ pub(super) struct Evidence {
     adapter_sha256: String,
     observations: u64,
     frames: u64,
+    images: Option<u64>,
     events: crate::workload_events::EventSeal,
 }
 impl Evidence {
@@ -88,6 +104,7 @@ impl Evidence {
             adapter_sha256: source.source_digest().into(),
             observations: source.summary().observations,
             frames: source.summary().source_frames,
+            images: source.images(),
             events,
         })
     }
@@ -140,6 +157,12 @@ pub(super) fn audit_prefix(db: &Connection, receipt: &Receipt) -> Result<()> {
             ensure!(
                 *payload == event_journal::completion_payload_prefix(db, receipt)?,
                 "Workload payload prefix differs from retained records"
+            );
+        }
+        if let Some(analysis) = &report.analysis {
+            ensure!(
+                *analysis == super::vision::audit(db, receipt)?,
+                "Vision completion differs from retained analysis prefix"
             );
         }
     }
@@ -221,13 +244,27 @@ pub(super) fn save(
         evidence.events.confirms(count, bytes, &last) && sequence <= evidence.boundary.sequence(),
         "Finished event prefix differs from filtered source"
     );
+    let analysis = match evidence.images {
+        Some(images) => {
+            let summary = super::vision::audit(&tx, &receipt)?;
+            summary.validate_complete(&receipt.definition, images, evidence.boundary.sequence())?;
+            Some(summary)
+        }
+        None => {
+            ensure!(
+                receipt.definition.schema_version == 2,
+                "Vision source requires its owned image count"
+            );
+            None
+        }
+    };
     upgrade(&tx, &ledger.node_id)?;
     let recorded = crate::protocol::now_ms().max(receipt.receipt.updated_at_ms);
     receipt.schema_version = 3;
     receipt.receipt.state = "completed".into();
     receipt.receipt.updated_at_ms = recorded;
     receipt.completion = Some(Report {
-        schema_version: 2,
+        schema_version: if analysis.is_some() { 3 } else { 2 },
         grant_sha256: scope.grant_sha256.clone(),
         adapter_sha256: evidence.adapter_sha256,
         source_observations: evidence.observations,
@@ -236,6 +273,7 @@ pub(super) fn save(
         event_bytes: bytes,
         event_prefix_sha256: prefix,
         event_payload_prefix_sha256: Some(event_journal::completion_payload_prefix(&tx, &receipt)?),
+        analysis,
         lease_sequence: evidence.boundary.sequence(),
         recorded_at_ms: recorded,
         owned_process_exit_observed: true,

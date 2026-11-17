@@ -112,7 +112,7 @@ pub(crate) struct AnalysisResult {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Summary {
+pub struct Summary {
     pub calls: u64,
     pub completed: u64,
     pub result_bytes: usize,
@@ -120,6 +120,38 @@ pub(crate) struct Summary {
     pub prefix_sha256: String,
     pub last_source_sequence: u64,
     pub last_lease_sequence: u64,
+}
+impl Summary {
+    pub(super) fn validate_complete(&self, d: &Definition, images: u64, lease: u64) -> Result<()> {
+        let p = parameters(d)?;
+        ensure!(
+            self.calls == images
+                && self.completed == self.calls
+                && self.calls <= p.max_calls()
+                && self.reserved_output_tokens
+                    == self
+                        .calls
+                        .checked_mul(p.inference.max_tokens)
+                        .context("Vision token reservation overflow")?
+                && self.result_bytes
+                    <= usize::try_from(self.completed)?
+                        .checked_mul(p.inference.max_result_bytes)
+                        .context("Vision result reservation overflow")?
+                && self.result_bytes >= usize::try_from(self.completed)?.saturating_mul(3)
+                && crate::request_result::valid_digest(&self.prefix_sha256)
+                && self.last_lease_sequence <= lease
+                && if self.calls == 0 {
+                    self.last_source_sequence == 0
+                        && self.last_lease_sequence == 0
+                        && self.prefix_sha256 == hash(d.scope()?.grant_sha256.as_bytes())
+                } else {
+                    (2..=u64::from(p.capture.max_frames)).contains(&self.last_source_sequence)
+                        && self.last_lease_sequence > 0
+                },
+            "Vision completion differs from reviewed analysis scope"
+        );
+        Ok(())
+    }
 }
 struct Row {
     intent: Intent,

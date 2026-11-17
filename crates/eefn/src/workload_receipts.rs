@@ -18,7 +18,7 @@ mod event_journal;
 mod finalization;
 #[path = "workload_vision_journal.rs"]
 pub(crate) mod vision;
-pub use completion::Report as CompletionReport;
+pub use completion::{Report as CompletionReport, VisionSummary};
 pub(crate) fn event_reserved(db: &Connection) -> Result<usize> {
     event_journal::reserved(db)
 }

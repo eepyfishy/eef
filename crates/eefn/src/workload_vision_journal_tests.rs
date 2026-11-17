@@ -12,7 +12,28 @@ fn image() -> crate::python::vision::PrivateJpeg {
     .unwrap()
 }
 async fn consume(ledger: &Arc<GrantLedger>, d: Definition) -> Result<Consumption> {
-    super::super::tests::consume(ledger, d).await
+    let proof = super::super::tests::proof_for(&d, 50_000).await;
+    let policy = Policy {
+        enabled: true,
+        vision_analysis: true,
+        ..Default::default()
+    };
+    let (issuer, session, node) = (
+        d.issuer_id.clone(),
+        d.session_id.clone(),
+        d.executor_node.clone(),
+    );
+    ledger
+        .consume_workload(
+            d,
+            &policy,
+            proof,
+            &issuer,
+            &session,
+            &node,
+            tokio::time::Instant::now() + Duration::from_secs(5),
+        )
+        .await
 }
 fn ledger(path: &Path) -> Arc<GrantLedger> {
     GrantLedger::open(path, Default::default(), "owner").unwrap()
@@ -72,6 +93,15 @@ async fn vision_intent_precedes_effects_and_bounded_result_reopens_without_repla
         .await
         .unwrap();
     let reopened = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+    saved
+        .validate_complete(&d, 1, saved.last_lease_sequence)
+        .unwrap();
+    assert!(
+        saved
+            .validate_complete(&d, 2, saved.last_lease_sequence)
+            .is_err()
+    );
+    assert!(saved.validate_complete(&d, 1, 0).is_err());
     let history = reopened
         .workload_analyses(&d.issuer_id, &d.grant_id, 0, 1)
         .unwrap();

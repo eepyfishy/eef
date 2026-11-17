@@ -5,14 +5,27 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+The private admitted vision driver now joins camera ownership, consumed leases,
+durable analysis intents/results and version-three completion evidence. A separate
+owner opt-in is required and clearing workload sharing clears that approval.
+Original policy/source epochs prevent revocation followed by configuration
+restore from reviving old work. Quiet input makes no model request; incomplete
+calls remain uncertain. Four policy and five native composition tests are added;
+hosted verification is pending. Source/network negotiation, placement and public
+job/result commands remain required. This is not stable-release acceptance.
+
 The next vision workload candidate binds a distinct reviewed definition to
 bounded model/image/call scope and adds analysis intent/result storage in the
 existing grant journal. Intent acknowledgments follow durable commit; pending work
 cannot be replayed, and retained counters/checksum prefixes detect missing or
 changed rows. Aggregate metadata and encoded result reservations share owner
-limits. Twelve definition/journal regressions are added; hosted verification is
-pending. Public execution remains disabled until owner policy, the admitted
-runtime, completion evidence and command integration are implemented.
+limits. Twelve definition/journal regressions are added. Corrected source
+`ac1717c` passes all four hosted jobs in
+[run 43906598633](https://github.com/eepyfishy/eef/actions/runs/43906598633), with
+1,804 Windows/headless Rust tests, one ignored across 17 groups, and all retained
+native/command gates. That result covers the scope/journal component, not the
+later private runtime. Network execution remains disabled pending compatible
+source/transport negotiation, placement and public command integration.
 
 The [local event vision work](LOCAL-EVENT-VISION.md) now has a separate single-open
 motion/image iterator and bounded private start/ack pipe. Image size/count/cadence
@@ -32,10 +45,10 @@ candidate passes exact-source/raw-log acceptance for `7f487b6` in
 all four jobs, 1,781 Windows/headless Rust tests, one ignored across 17 groups,
 all 37 native suites and the retained extra gates. The later composed
 capture/model test fails the Windows workspace gate for `91951ba` and `3b6b4e2`;
-those runs are not accepted. Its newline/diagnostic correction and the new
-definition/journal path await hosted verification. No source registration, workload authority
-or startup capture is enabled yet. Workload/grant/model/durable/public command
-integration remains required; this component is not the completed feature.
+those runs are not accepted. Its newline/diagnostic correction passes in `ac1717c`.
+No public vision source registration or startup capture is enabled. The private
+admitted runtime still needs hosted verification, and public negotiation,
+placement and command integration remain required to complete the feature.
 
 ## Accepted development checkpoint: bounded interpreter command history admission
 

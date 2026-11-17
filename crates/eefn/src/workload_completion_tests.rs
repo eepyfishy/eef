@@ -80,6 +80,7 @@ async fn fixture(
         adapter_sha256: adapter_sha256.clone(),
         observations: 2,
         frames: 160,
+        images: None,
         events: finished.value,
     };
     (ledger, consumed, evidence, d)

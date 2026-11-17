@@ -27,6 +27,9 @@ pub(crate) use reporting::{Checkpoint, ReportingAuthority};
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
     pub enabled: bool,
+    /// Separate owner opt-in; ordinary camera/listening permission is insufficient.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub vision_analysis: bool,
     pub max_session_ms: u64,
     pub max_lease_ms: u64,
 }
@@ -34,6 +37,7 @@ impl Default for Policy {
     fn default() -> Self {
         Self {
             enabled: false,
+            vision_analysis: false,
             max_session_ms: 3_600_000,
             max_lease_ms: MAX_LEASE_MS,
         }
@@ -42,10 +46,19 @@ impl Default for Policy {
 impl Policy {
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            (1..=MAX_SESSION_MS).contains(&self.max_session_ms)
+            (!self.vision_analysis || self.enabled)
+                && (1..=MAX_SESSION_MS).contains(&self.max_session_ms)
                 && (1..=MAX_LEASE_MS).contains(&self.max_lease_ms)
                 && self.max_lease_ms <= self.max_session_ms,
             "Invalid workload lease policy"
+        );
+        Ok(())
+    }
+    pub(crate) fn permits_definition(&self, definition: &definition::Definition) -> Result<()> {
+        definition.lease_contract()?.permitted(self)?;
+        ensure!(
+            definition.schema_version != 3 || self.vision_analysis,
+            "Vision analysis requires a separate owner opt-in"
         );
         Ok(())
     }

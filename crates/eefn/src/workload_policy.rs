@@ -137,6 +137,43 @@ pub enum Action {
         max_lease_ms: Option<u64>,
     },
     Disable,
+    /// Opt in to or revoke model analysis for reviewed camera workloads.
+    Vision {
+        #[arg(long,required=true,action=clap::ArgAction::Set)]
+        enabled: bool,
+    },
+}
+impl Action {
+    /// Apply one explicit command to the inspected policy, without saving it.
+    pub fn apply(&self, policy: &mut Policy) -> Result<()> {
+        match self {
+            Self::Show => {}
+            Self::Disable => {
+                policy.enabled = false;
+                policy.vision_analysis = false;
+            }
+            Self::Enable {
+                max_session_ms,
+                max_lease_ms,
+            } => {
+                policy.enabled = true;
+                if let Some(v) = max_session_ms {
+                    policy.max_session_ms = *v;
+                }
+                if let Some(v) = max_lease_ms {
+                    policy.max_lease_ms = *v;
+                }
+            }
+            Self::Vision { enabled } => {
+                ensure!(
+                    !enabled || policy.enabled,
+                    "Enable continuous workloads before enabling vision analysis"
+                );
+                policy.vision_analysis = *enabled;
+            }
+        }
+        policy.validate()
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
@@ -320,7 +357,7 @@ impl crate::NodeService {
                     "Workload policy runtime changed"
                 );
                 let policy = from_config(config)?;
-                definition.lease_contract()?.permitted(&policy)?;
+                policy.permits_definition(definition)?;
                 Ok((policy, self.workload_gate.permit()?))
             })
         })
@@ -339,9 +376,14 @@ pub fn render(value: &Value) -> Result<String> {
         "Unconfirmed workload policy report"
     );
     Ok(format!(
-        "Node: {}\nContinuous workloads: {}\nMaximum session: {} ms\nMaximum lease: {} ms\nRuntime blocked: {}\nListening consent, microphone permission and an approved workload are still required.\n",
+        "Node: {}\nContinuous workloads: {}\nVision analysis: {}\nMaximum session: {} ms\nMaximum lease: {} ms\nRuntime blocked: {}\nListening consent, source permission and an approved workload are still required.\n",
         r.node_id,
         if r.policy.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        },
+        if r.policy.vision_analysis {
             "enabled"
         } else {
             "disabled"

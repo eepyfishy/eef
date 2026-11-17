@@ -81,9 +81,42 @@ one image from the triggering frame, no next read while the model reply is held,
 and camera reuse after owned exit. This is transport composition only; it does
 not exercise workload admission, durable analysis decisions or a physical model.
 
-## Verification and remaining integration
+## Private admitted runtime under verification
 
-The next candidate adds a distinct version-three `camera_vision` definition. It
+Vision analysis has a separate owner opt-in, defaulting to false and omitted
+from legacy policy serialization. Ordinary workload enablement or camera
+permission does not enable it. Disabling workload sharing also clears vision
+approval; an inactive policy cannot stage a vision approval for later use. The
+existing runtime/revision/epoch checks protect both local and remotely authorized
+policy edits. The permission commands do not start capture or select a model:
+
+```text
+eefn workload-policy vision --enabled true
+eef node workload-policy --node NODE_ID vision --enabled true
+```
+
+Workload sharing must already be enabled. `--enabled false` revokes this feature.
+The complete vision job command path is still in development.
+
+The private prepared driver uses the existing camera pool, consumed ACK, lease
+supervisor and bounded native journal worker. Each image waits for a committed
+intent, a fresh current-authority check, one selected local model call and its
+durable result before capture can proceed. Metadata callbacks also follow durable
+event storage. Quiet input opens no model connection. Permission, runtime,
+resource, Python or model-configuration changes retire the original source;
+restoring the old configuration cannot revive it. External shared model service
+termination remains unproven when an HTTP call is cancelled.
+
+Version-three completion joins the opaque owned source exit/image count, exact
+filtered metadata prefix and the durable completed-analysis prefix. An unfinished
+analysis cannot become successful completion, and historical results cannot
+recreate execution authority. Optional analysis fields remain absent in old
+completion reports. Four policy regressions and five explicit native fixtures
+cover the new path, including held model replies, actual root/child process
+handles, incomplete output, quiet input, revocation and denied preparation.
+Media, encoding and model responses are synthetic; hosted verification is pending.
+
+The reviewed journal revision adds a distinct version-three `camera_vision` definition. It
 binds camera and image settings, selected model/backend/digest, prompt, token,
 encoded response/result and per-call time limits. Each image permits at most one
 call; aggregate requested output-token and result reservations derive from the
@@ -101,13 +134,17 @@ until actual completion, including abandoned or expired writes. Historical
 inspection is issuer-bound and cannot recreate an acknowledgment or execution.
 Six definition and six real-journal regressions cover binding, old-format
 preservation, durable order, interrupted history, quotas, corruption/deletion,
-downgrade and actual worker retirement. Hosted verification is pending.
+downgrade and actual worker retirement. The journal revision `ac1717c` passes all
+four jobs in [run 43906598633](https://github.com/eepyfishy/eef/actions/runs/43906598633),
+including 1,804 Windows/headless Rust tests, one ignored across 17 groups, and the
+retained native and command gates. This does not verify the later private runtime.
 
 These definitions and journal helpers are not yet an executable network feature.
-Metadata-only offers, source inspection and execution advertisements refuse the
-new kind; the prepared driver also refuses it. Vision completion cannot use a
-metadata-only report. Owner policy, the admitted runtime, joined source/analysis
-completion evidence and public commands remain required before enabling it.
+Metadata-only offers, source inspection and execution advertisements still refuse
+the new kind. The private admitted driver and joined completion are now under
+verification, with explicit owner opt-in. Compatible network negotiation, source
+inspection, placement and public job/result commands remain required before
+enabling the network workflow.
 
 Eleven source tests use deterministic camera/image/clock fakes. Ten private pipe
 cases test start/ack gating, slow consumption, image transfer, legacy EOF before
@@ -130,23 +167,24 @@ Exact source `7f487b6` passes all four jobs and source/raw-log review in
 1,781 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
 suites and retained extra gates. This accepts the owned transport only.
 
-The later composed capture/model fixture fails the Windows workspace gate in
+The composed capture/model fixture failed the Windows workspace gate in
 the `91951ba` and `3b6b4e2` runs; neither is accepted. Its trace writer used
 platform-default newlines while the assertion expected LF. The current candidate
 sets LF explicitly and reports a failed source immediately instead of waiting
 for idle peer fixtures. Raw logs confirm the CRLF/LF mismatch in both runs;
-hosted verification of the correction is still required. No local Python, model
-or application execution is used.
+the correction passes in `ac1717c`. No local Python, model or application execution
+is used.
 
-The feature remains incomplete. No public source registration, startup capture,
-model call, additional permission or network image path is enabled by these files.
-The private adapter is not exposed by a command, grant driver or startup path.
-Next work must connect this owned pipe to the existing workload/grant/lease path,
-bind an explicit selected model and image/call/token/result budgets, enforce local
-endpoint handling, persist analysis decisions before model effects, and deliver
-bounded approved results through the existing durable lifecycle. Model absence,
-revocation, expiry, stop, restart and lost replies must not cause fallback or
-replay. Public node commands, separate owner approval, actual native node/ledger
-integration and negative cases are required before calling the workflow delivered.
+## Remaining integration
+
+The network feature remains incomplete. The private admitted driver is available
+to internal preparation and synthetic fixtures; public offers and source discovery
+still refuse vision workloads. Next work needs compatible feature negotiation,
+passive camera/model readiness, placement and command-based job review and result
+retrieval. Approved bounded text can leave the node through the authenticated job
+lifecycle; camera images must stay off coordinator traffic and history. Model
+absence, revocation, expiry, stop, restart and lost replies must not cause fallback
+or replay. Native end-to-end command and network tests are required before calling
+the public workflow delivered.
 The remaining physical, resource/strong-stop, installer and stable-release gates
 remain open. No broader v0.5 information-flow, module or UI design is activated.

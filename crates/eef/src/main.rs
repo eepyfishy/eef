@@ -2316,19 +2316,7 @@ async fn remote_workload_policy_cli(
             serde_json::from_value(inspected["result"]["policy"].clone())?;
         match action {
             Action::Show => return Ok::<_, anyhow::Error>(inspected),
-            Action::Disable => policy.enabled = false,
-            Action::Enable {
-                max_session_ms,
-                max_lease_ms,
-            } => {
-                policy.enabled = true;
-                if let Some(value) = max_session_ms {
-                    policy.max_session_ms = *value;
-                }
-                if let Some(value) = max_lease_ms {
-                    policy.max_lease_ms = *value;
-                }
-            }
+            _ => action.apply(&mut policy)?,
         }
         policy.validate()?;
         request.expected_runtime_id = Some(

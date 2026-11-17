@@ -232,6 +232,7 @@ async fn owner_commands_drive_workload_frames_completion_stop_and_disconnect_wit
                                 event_bytes: summary.bytes,
                                 event_prefix_sha256: "f".repeat(64),
                                 event_payload_prefix_sha256: Some(summary.prefix_sha256),
+                                analysis:None,
                                 lease_sequence: 2,
                                 recorded_at_ms: receipt.receipt.updated_at_ms,
                                 owned_process_exit_observed: true,

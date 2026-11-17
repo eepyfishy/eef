@@ -10,6 +10,8 @@ use crate::{
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use std::{future::Future, sync::Arc};
+#[path = "workload_vision_runtime.rs"]
+mod vision_runtime;
 
 /// Neither serializable nor cloneable. Owns a reservation before consumption;
 /// preparing it imports no device and opens no source.
@@ -23,22 +25,63 @@ pub(crate) struct PreparedSource {
     params: Value,
     bounds: StreamBounds,
     reservation: crate::capture_ownership::Reservation,
+    vision: Option<vision_runtime::PreparedVision>,
 }
 // Preserve the existing microphone driver/test interface while both sources
 // share the same owned grant/lease/event lifecycle. Constructors check kind.
 pub(crate) type PreparedMicrophone = PreparedSource;
 /// Only the exact prepared path can pair owned source exit with its filter seal.
 /// This is local, single-use evidence, never a serializable network parameter.
+pub(crate) enum ObservedSource {
+    Metadata(ObservedStream),
+    Vision(crate::python::vision::ObservedVisionStream),
+}
+impl ObservedSource {
+    pub(crate) fn summary(&self) -> &crate::python::stream::StreamSummary {
+        match self {
+            Self::Metadata(source) => source.summary(),
+            Self::Vision(source) => &source.summary().stream,
+        }
+    }
+    pub(crate) fn source_digest(&self) -> &str {
+        match self {
+            Self::Metadata(source) => source.source_digest(),
+            Self::Vision(source) => source.source_digest(),
+        }
+    }
+    pub(crate) fn images(&self) -> Option<u64> {
+        match self {
+            Self::Metadata(_) => None,
+            Self::Vision(source) => Some(source.summary().images),
+        }
+    }
+}
 pub(crate) struct ObservedWorkload {
-    source: ObservedStream,
+    source: ObservedSource,
     events: crate::workload_events::EventSeal,
 }
 impl ObservedWorkload {
-    pub(crate) fn into_parts(self) -> (ObservedStream, crate::workload_events::EventSeal) {
+    pub(crate) fn into_parts(self) -> (ObservedSource, crate::workload_events::EventSeal) {
         (self.source, self.events)
     }
 }
 impl NodeService {
+    pub(crate) fn prepare_vision(
+        self: &Arc<Self>,
+        runtime_id: &str,
+        definition: Definition,
+    ) -> Result<PreparedSource> {
+        crate::automation_occurrence::uuid(runtime_id)?;
+        definition.validate()?;
+        ensure!(
+            matches!(
+                definition.source,
+                crate::workload_leases::definition::Source::CameraVision { .. }
+            ),
+            "Vision preparation requires its distinct reviewed source"
+        );
+        self.prepare_source(runtime_id, definition)
+    }
     #[allow(dead_code)]
     pub(crate) fn prepare_microphone(
         self: &Arc<Self>,
@@ -81,12 +124,22 @@ impl NodeService {
         let camera = matches!(
             &definition.source,
             crate::workload_leases::definition::Source::CameraMotion { .. }
+                | crate::workload_leases::definition::Source::CameraVision { .. }
+        );
+        let vision = matches!(
+            &definition.source,
+            crate::workload_leases::definition::Source::CameraVision { .. }
         );
         ensure!(
             definition.executor_node == self.node_id,
             "Source belongs to another node"
         );
+        let selected_engine = self.passive_source_engine(runtime_id)?;
         self.with_permission_runtime(runtime_id, |engine| {
+            ensure!(
+                std::ptr::eq(engine, selected_engine.as_ref()),
+                "Prepared source engine changed"
+            );
             self.inspect_grant_configuration(|config| {
                 ensure!(
                     config["node_id"] == self.node_id
@@ -100,13 +153,16 @@ impl NodeService {
                     json!(saved.resources) == json!(engine.applied_resources()),
                     "Source bindings changed; restart and review required"
                 );
+                let vision_bytes = vision.then(crate::workload_sources::vision_source_bytes);
                 let (permission, applied, gate, pool, bytes) = if camera {
                     (
                         "/permissions/media/camera",
                         engine.applied_permissions().media.camera,
                         &self.camera_listening_gate,
                         &self.camera_pool,
-                        crate::workload_sources::CAMERA_SOURCE,
+                        vision_bytes
+                            .as_deref()
+                            .unwrap_or(crate::workload_sources::CAMERA_SOURCE),
                     )
                 } else {
                     (
@@ -161,6 +217,39 @@ impl NodeService {
                     max_source_frames: definition.limits.max_source_frames,
                 };
                 bounds.validate(python.limits())?;
+                let vision = if vision {
+                    crate::workload_policy::from_config(config)?.permits_definition(&definition)?;
+                    let crate::workload_leases::definition::Source::CameraVision {
+                        parameters, ..
+                    } = &definition.source
+                    else {
+                        unreachable!()
+                    };
+                    engine.bind_local_vision(&parameters.model)?;
+                    let bounds = crate::python::vision::VisionBounds {
+                        max_frame_bytes: 4 * parameters.images.max_image_bytes.div_ceil(3) + 1024,
+                        max_stdout_bytes: python.limits().max_stdout_bytes.min(4 * 1024 * 1024),
+                        max_observations: blocks,
+                        max_source_frames: definition.limits.max_source_frames,
+                        max_image_bytes: parameters.images.max_image_bytes,
+                        max_images: parameters.max_calls(),
+                    };
+                    bounds.validate(python.limits())?;
+                    let (policy_epoch, blocked) = self.workload_gate.snapshot();
+                    let source_version = self.source_readiness.version();
+                    ensure!(
+                        !blocked && source_version < u64::MAX,
+                        "Vision source policy or configuration is unavailable"
+                    );
+                    Some(vision_runtime::PreparedVision {
+                        engine: selected_engine.clone(),
+                        bounds,
+                        policy_epoch,
+                        source_version,
+                    })
+                } else {
+                    None
+                };
                 let reservation = pool.reserve()?;
                 Ok(PreparedSource {
                     service: self.clone(),
@@ -172,6 +261,7 @@ impl NodeService {
                     params,
                     bounds,
                     reservation,
+                    vision,
                 })
             })
         })
@@ -189,6 +279,9 @@ impl PreparedSource {
         F: FnMut(crate::workload_events::Event) -> C + Send,
         C: Future<Output = Result<()>> + Send,
     {
+        if self.vision.is_some() {
+            return Box::pin(self.run_vision(consumed, renewals, observe)).await;
+        }
         let ack_deadline = tokio::time::Instant::from_std(consumed.session_deadline()?);
         let receipt = Box::pin(consumed.acknowledgement_before(ack_deadline)).await?;
         ensure!(
@@ -280,7 +373,10 @@ impl PreparedSource {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("Workload filter unavailable"))?
                 .seal(source.summary())?;
-            Ok(ObservedWorkload { source, events })
+            Ok(ObservedWorkload {
+                source: ObservedSource::Metadata(source),
+                events,
+            })
         });
         let controlled: std::pin::Pin<
             Box<dyn Future<Output = Result<ObservedWorkload>> + Send + '_>,
