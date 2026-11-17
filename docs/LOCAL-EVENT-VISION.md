@@ -228,6 +228,15 @@ Six common regressions and an extension to the actual admitted native fixture ar
 pending hosted verification. Public job commands, coordinator persistence and
 vision execution negotiation remain unfinished.
 
+Initial result-read candidate `1782e00` fails three common hosted tests: two
+control requests used hyphenated IDs where the existing frame expects compact
+IDs, and one authenticated fixture timed out without observing its client's
+exit or actual journal availability. The correction keeps the existing compact
+ID contract, waits for the real uncertain checkpoint in its fixture and reports
+early connection/journal failures directly. It also bounds completed-history
+assembly under a caller deadline and redacts retained text in diagnostic
+formatting. This result-read candidate remains unaccepted pending new hosted gates.
+
 Metadata-only execution advertisements retain their exact old policy shape even
 when local vision approval is enabled. That local opt-in cannot imply vision
 support on an older wire version or make strict older peers reject unrelated

@@ -1002,7 +1002,7 @@ impl NodeServer {
                 wire.as_object_mut().unwrap().remove("expected_issuer_id");
                 // invoke_message fills correlation below; validate it before
                 // any send without trusting the historical session as current.
-                wire["id"] = json!(uuid::Uuid::new_v4().to_string());
+                wire["id"] = json!(uuid::Uuid::new_v4().simple().to_string());
                 let wire: crate::vision_result_inspection::WireRequest =
                     serde_json::from_value(wire)?;
                 let issuer = self

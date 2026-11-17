@@ -43,13 +43,26 @@ async fn saved(path: &Path, d: &Definition, complete: bool) -> Arc<GrantLedger> 
         })
         .await
         .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while ledger
+            .workload_receipt(&d.issuer_id, &d.grant_id)
+            .unwrap()
+            .receipt
+            .state
+            != "unknown"
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
     ledger
 }
 fn query(d: &Definition) -> WireRequest {
     WireRequest {
         kind: "workload_analyses".into(),
         schema_version: 1,
-        id: uuid::Uuid::new_v4().to_string(),
+        id: uuid::Uuid::new_v4().simple().to_string(),
         scope: d.scope().unwrap(),
         after_sequence: 0,
         limit: MAX_PAGE,
@@ -71,6 +84,10 @@ async fn paged_retained_results_chain_exact_prefixes_without_turning_unknown_wor
     assert!(first.more);
     assert_eq!(first.receipt.state, "unknown");
     assert_eq!(first.analyses[0].text(), Some("result 1"));
+    assert!(
+        !format!("{first:?}").contains("result 1"),
+        "Diagnostic formatting must not expose retained text"
+    );
     assert!(first.completion.is_none());
     let second = ledger
         .workload_analysis_page(
@@ -313,21 +330,30 @@ async fn authenticated_result_read_survives_reconnect_without_source_permission_
     let config=serde_json::from_value(json!({"node_id":d.executor_node,"psk":credential,"auth_mode":"node_credential",
         "coordinator_certificate":identity.certificate,"endpoints":[format!("127.0.0.1:{}",server.port())],"heartbeat_seconds":0.2})).unwrap();
     let engine = Arc::new(crate::NodeEngine::new(false, vec![], dir.path().into()).unwrap());
+    let status = Arc::new(std::sync::Mutex::new(json!({})));
     let client = crate::NodeClient::new(config, engine)
         .unwrap()
         .with_grants(&path, Default::default())
         .with_registration_runtime(&uuid::Uuid::new_v4().to_string())
-        .unwrap();
-    let running = tokio::spawn(async move { client.connect_once().await });
-    tokio::time::timeout(Duration::from_secs(10), async {
+        .unwrap()
+        .with_status(status.clone());
+    assert_eq!(
+        status.lock().unwrap()["execution_grants"]["available"],
+        true,
+        "Fixture requires its actual reopened journal"
+    );
+    let mut running = tokio::spawn(async move { client.connect_once().await });
+    let ready = tokio::time::timeout(Duration::from_secs(10), async {
         while server.node_state(&d.executor_node).await.is_none()
             || server.grant_session(&d.executor_node).await.is_err()
         {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-    })
-    .await
-    .unwrap();
+    });
+    tokio::select! {
+        result=&mut running=>panic!("Retained-read fixture exited before registration: {result:?}"),
+        result=ready=>result.expect("Retained-read fixture did not register"),
+    }
     let before = ledger
         .workload_analyses(&d.issuer_id, &d.grant_id, 0, 1)
         .unwrap();

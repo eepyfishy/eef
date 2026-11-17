@@ -73,8 +73,16 @@ impl Record {
         Ok(())
     }
 }
+impl std::fmt::Debug for Record {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RetainedVisionRecord")
+            .field("sequence", &self.intent.sequence)
+            .field("result_retained", &self.result.is_some())
+            .finish_non_exhaustive()
+    }
+}
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Page {
     pub schema_version: u32,
@@ -226,7 +234,7 @@ impl Page {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct History {
     pub schema_version: u32,

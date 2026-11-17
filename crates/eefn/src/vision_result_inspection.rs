@@ -85,6 +85,53 @@ impl WireRequest {
     }
 }
 impl crate::NodeServer {
+    /// Assemble only already-completed historical results. This does not create
+    /// a source, extend its session or retry inference; callers own their phase deadline.
+    pub async fn completed_workload_analyses(
+        &self,
+        d: &Definition,
+        deadline: tokio::time::Instant,
+    ) -> Result<crate::grants::workload::VisionHistory> {
+        let maximum = match &d.source {
+            crate::workload_leases::definition::Source::CameraVision { parameters, .. } => {
+                parameters.max_calls()
+            }
+            _ => anyhow::bail!("Completed analysis reads require their exact vision source"),
+        };
+        let mut prefix = VisionPage::seed(d)?;
+        let mut after = 0;
+        let mut pages = Vec::new();
+        let operation = async {
+            loop {
+                ensure!(
+                    tokio::time::Instant::now() < deadline,
+                    "Completed analysis read phase expired"
+                );
+                let page = self
+                    .inspect_workload_analyses(d, after, VISION_MAX_PAGE, &prefix)
+                    .await?;
+                ensure!(
+                    page.receipt.state == "completed" && page.completion.is_some(),
+                    "Analysis execution remains unconfirmed"
+                );
+                let more = page.more;
+                after = page.next_sequence;
+                prefix = page.prefix_after_sha256.clone();
+                pages.push(page);
+                ensure!(
+                    pages.len() as u64 <= maximum.div_ceil(VISION_MAX_PAGE as u64).max(1),
+                    "Completed analysis page count exceeded"
+                );
+                if !more {
+                    break;
+                }
+            }
+            crate::grants::workload::VisionHistory::from_pages(d, pages)
+        };
+        tokio::time::timeout_at(deadline, operation)
+            .await
+            .map_err(|_| anyhow::anyhow!("Completed analysis read phase expired"))?
+    }
     pub async fn inspect_workload_analyses(
         &self,
         d: &Definition,
@@ -97,7 +144,7 @@ impl crate::NodeServer {
         let mut request = serde_json::to_value(WireRequest {
             kind: "workload_analyses".into(),
             schema_version: 1,
-            id: uuid::Uuid::new_v4().to_string(),
+            id: uuid::Uuid::new_v4().simple().to_string(),
             scope,
             after_sequence: after,
             limit,
