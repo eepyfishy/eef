@@ -11,10 +11,15 @@ clearly unconfirmed; model text cannot inject terminal controls or unindented
 status lines. Existing scope/authority cases and shipping origin/owner commands
 exercise the formatter. This candidate awaits hosted verification.
 
-The next executable fixture adds restart/reconnect after durable analysis but
-before source completion. It requires retained text with an interrupted job,
-unknown node evidence and no replay or job rewrite on exact receipt reuse.
-This synthetic extension is pending hosted verification.
+Source `a875b15` passes all four hosted jobs in
+[run 44134810348](https://github.com/eepyfishy/eef/actions/runs/44134810348),
+including 1,848 Windows/headless Rust tests, one ignored across 17 groups, all 37
+native suites and the retained extra gates. Its shipping-command fixture verifies
+restart/reconnect after durable analysis but before source completion: retained
+text with an interrupted job, unknown node evidence, one camera opening and one
+model call, and no replay or job rewrite on exact receipt reuse. This accepts
+the synthetic same-node input/executor restart scope; distinct-node composition,
+real devices/models, capacity and stable release gates remain separate.
 
 Another fixture separates the authenticated input node from the camera/model
 executor for completion, stop and restart. It requires original-context result

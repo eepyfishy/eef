@@ -391,7 +391,11 @@ A further executable fixture extends the same workflow through node restart and
 reconnect. A third camera read is deliberately blocked only after the model text
 has been durably retained. The restart must interrupt the job, preserve that text
 in an explicitly unconfirmed result, and permit exact execution-receipt reads
-without new capture or inference. This extension awaits hosted verification.
+without new capture or inference. Source `a875b15` passes all four hosted jobs in
+[run 44134810348](https://github.com/eepyfishy/eef/actions/runs/44134810348),
+including all 37 native suites and the retained extra gates. Scoped review
+accepts this synthetic same-node input/executor restart workflow. It does not
+establish distinct-node or physical acceptance.
 
 A distinct-node extension runs those scenarios with a separately authenticated
 input node and camera/model executor. It requires immutable input-origin context,
