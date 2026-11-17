@@ -473,6 +473,7 @@ try {
  const cameraLifecycle=await verifyCameraLifecycleCommands({nodeCli,coordinatorCli:(args,success=true)=>cli('eef',eefConfig,args,success),
   nodeId:id,nodeUrl:node,coordinatorUrl:eef,json,until,root,scratch,configPath,inferenceCalls:calls});
  const visionLifecycle=await verifyVisionLifecycleCommands({nodeCli,coordinatorCli:(args,success=true)=>cli('eef',eefConfig,args,success),
+  originText:args=>cli('eefn',configPath,args,true,false),coordinatorText:args=>cli('eef',eefConfig,args,true,false),
   nodeId:id,nodeUrl:node,coordinatorUrl:eef,json,until,root,scratch,configPath,inferenceCalls:calls});
  // The request origin contributes neither a local model nor camera authority.
  // Only the separately approved source node may capture and analyze these jobs.
@@ -484,6 +485,7 @@ try {
  const remoteVisionLifecycle=await verifyVisionLifecycleCommands({
   nodeCli:(args,success=true)=>cli('eefn',peerPath,args,success),originCli:nodeCli,originNodeId:id,
   coordinatorCli:(args,success=true)=>cli('eef',eefConfig,args,success),nodeId:peerId,nodeUrl:`http://127.0.0.1:${peerPort}`,
+  originText:args=>cli('eefn',configPath,args,true,false),coordinatorText:args=>cli('eef',eefConfig,args,true,false),
   coordinatorUrl:eef,json,until,root,scratch,configPath:peerPath,inferenceCalls:calls,
   fixturePython:JSON.parse(await readFile(configPath,'utf8')).python,configureSource:true,tracePrefix:'vision-remote-command'});
  for(const original of jobs){

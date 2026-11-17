@@ -5,6 +5,12 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+A command-output candidate renders workload results as status and analysis text
+by default, keeping `--json` unchanged. Validated interrupted evidence remains
+clearly unconfirmed; model text cannot inject terminal controls or unindented
+status lines. Existing scope/authority cases and shipping origin/owner commands
+exercise the formatter. This candidate awaits hosted verification.
+
 The next executable fixture adds restart/reconnect after durable analysis but
 before source completion. It requires retained text with an interrupted job,
 unknown node evidence and no replay or job rewrite on exact receipt reuse.

@@ -132,6 +132,14 @@ _v_camera.on_read = _vision_wait_for_restart
     const foreign=await f.nodeCli(['requests','result',id,'--grant-id',grant],false);
     assert.equal(foreign.success,false,'An executor is not the request origin');
    }
+   for(const display of [await f.originText(['requests','result',id,'--grant-id',grant]),
+    await f.coordinatorText(['requests','result',id,'--grant-id',grant])]) {
+    assert(display.includes(mode==='complete'?'Status: completed (coordinator checkpoint)':
+     'Status: interrupted; completion unconfirmed'));
+    assert(!display.includes('"report_type"')&&!display.includes('"success"'));
+    if(mode!=='stop')assert(display.includes('movement detected'));
+    else assert(display.includes('pending; outcome unconfirmed'));
+   }
    assert.equal((await originCli(args)).result.reused,true);
    assert.equal(calls.length,before+1,'Exact receipt/result reads cannot repeat model work');
    assert.deepEqual(await job(id),saved,'Inspection cannot reconcile or rewrite the job');
@@ -143,6 +151,7 @@ _v_camera.on_read = _vision_wait_for_restart
   }
   assert.equal(f.inferenceCalls.length,originalInterpreterCalls,'Concrete vision cannot invoke request interpretation');
   console.log('Executable vision lifecycle validation passed: explicit model/policy/review, completed text, pending stop evidence, retained text after restart and receipt reuse without replay; simulated device/provider only.');
+  console.log('Workload result text validation passed: node and owner commands distinguish completed and unconfirmed evidence without JSON; no work resumed.');
   if(originId!==f.nodeId)console.log('Distributed vision lifecycle validation passed: distinct authenticated origin/executor, immutable context, private result ownership and executor restart without replay; simulated devices only.');
   return {vision_executable_completion:true,vision_executable_pending_stop:true,
    vision_executable_restart_retained_text:true,

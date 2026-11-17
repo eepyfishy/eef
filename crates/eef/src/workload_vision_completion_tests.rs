@@ -294,6 +294,28 @@ async fn interrupted_vision_results_remain_unconfirmed_even_with_completed_node_
     assert_eq!(view["analysis_availability"], "retained_snapshot");
     assert_eq!(view["coordinator_attempt_state"], "unknown");
     assert_eq!(view["job_completed"], false);
+    let display = eefn::request_result::render_workload(&view)
+        .unwrap()
+        .unwrap();
+    assert!(
+        display.contains("interrupted; completion unconfirmed")
+            && display.contains("movement detected")
+    );
+    assert!(
+        !display.contains("coordinator_workload_uncertain_result")
+            && !display.contains("\"success\"")
+    );
+    let envelope = json!({"schema_version":1,"report_type":"request_result","node_id":"origin",
+        "request_id":uuid::Uuid::new_v4().to_string(),"id":command.id,"grant_id":command.grant_id,
+        "success":true,"execution_requested":false,"automatically_retried":false,"reconciled":false,
+        "note":"Read-only result inspection","result":view});
+    assert_eq!(
+        eefn::request_result::render_workload(&envelope).unwrap(),
+        Some(display)
+    );
+    let mut foreign = envelope;
+    foreign["node_id"] = json!("other-origin");
+    assert!(eefn::request_result::render_workload(&foreign).is_err());
     assert!(eefn::request_result::confirmed(
         &view,
         &command,
@@ -312,6 +334,10 @@ async fn interrupted_vision_results_remain_unconfirmed_even_with_completed_node_
         changed[field] = json!(true);
         assert!(
             !eefn::request_result::confirmed(&changed, &command, Some("origin"), Some(&runtime)),
+            "{field}"
+        );
+        assert!(
+            eefn::request_result::render_workload(&changed).is_err(),
             "{field}"
         );
     }
@@ -348,6 +374,12 @@ async fn interrupted_vision_results_remain_unconfirmed_even_with_completed_node_
         "unavailable_or_unconfirmed"
     );
     assert!(offline.get("vision").is_none());
+    assert!(
+        eefn::request_result::render_workload(&offline)
+            .unwrap()
+            .unwrap()
+            .contains("Retained analysis unavailable or unconfirmed")
+    );
     assert_eq!(offline["metadata"]["count"], 1);
     let delivered = owner
         .inspect_request_result(command.clone(), Some("origin"))

@@ -7,6 +7,10 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[path = "workload_result_display.rs"]
+mod workload_display;
+pub use workload_display::render as render_workload;
+
 pub use crate::request_receipt::{
     ReceiptCommand as ResultCommand, ReceiptRequest as ResultRequest,
 };

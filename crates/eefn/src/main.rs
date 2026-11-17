@@ -3973,6 +3973,19 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                             Some(&node)
                         )?
                     );
+                } else if matches!(
+                    command,
+                    Commands::Requests {
+                        command: eefn::request_preview::RequestAction::Planning(
+                            eefn::request_preview::PlanningAction::Result { .. }
+                        )
+                    }
+                ) {
+                    if let Some(text) = eefn::request_result::render_workload(&value)? {
+                        print!("{text}");
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&value)?);
+                    }
                 } else if value.get("nodes").is_some() || value.get("report_type").is_some() {
                     println!("{}", serde_json::to_string_pretty(&value)?);
                 } else {

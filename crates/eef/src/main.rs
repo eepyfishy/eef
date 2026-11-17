@@ -3613,6 +3613,19 @@ async fn main() -> Result<()> {
                             "Permission outcome was not confirmed. Inspect this node's permissions before deciding what to do. No retry, fallback, restart or workload was sent."
                         );
                     }
+                } else if !args.json
+                    && matches!(
+                        command,
+                        Command::Requests {
+                            command: eef::request_planning::PlanningAction::Result { .. }
+                        }
+                    )
+                {
+                    if let Some(text) = eefn::request_result::render_workload(&value)? {
+                        print!("{text}");
+                    } else {
+                        println!("{}", serde_json::to_string_pretty(&value)?);
+                    }
                 } else {
                     println!(
                         "{}",
