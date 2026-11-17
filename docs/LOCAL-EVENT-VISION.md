@@ -405,3 +405,8 @@ permission or listening consent; only the source node is configured to capture.
 Both processes use disposable simulated devices
 on the hosted machine; this does not establish physical two-PC acceptance. This
 extension is also pending hosted verification.
+Its initial `9b2673b` native run was refused before review because the fixture
+had not obtained the existing directional disclosure grant. The correction
+retains that denial check, then applies owner approval and the required
+coordinator restart through commands. This changes fixture setup, not source
+disclosure or capability permissions. The corrected source requires fresh tests.

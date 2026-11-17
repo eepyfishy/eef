@@ -55,6 +55,25 @@ export async function verifyVisionLifecycleCommands(f) {
    (await f.json(f.nodeUrl+'/api/status')).connection.state==='connected','vision command runtime');
   const sources=await f.nodeCli(['workloads','vision-sources']);
   assert.equal(sources.configuration_ready,true);assert.equal(sources.capture_started,false);
+  if(originId!==f.nodeId) {
+   // Pairing does not disclose another node to a requester. Verify that gate
+   // before the owner grants this exact direction through the normal command.
+   const operation=randomUUID(),before=calls.length;
+   const denied=await originCli(['requests','submit-vision',...sourceOptions,'--camera','camera',
+    '--backend','ollama','--model',model,'--model-digest',digest,'--prompt','Describe movement',
+    '--operation-id',operation],false);
+   assert.equal(denied.success,false);assert.equal(denied.error_code,'camera_source_unavailable_or_not_disclosed');
+   assert.equal(denied.refusal.review_checkpoint_attempted,false);
+   assert.equal((await originCli(['jobs','find','--operation-id',operation])).data.total,0);
+   assert.equal(calls.length,before,'Undisclosed sources cannot run model work');
+   const grant=await f.coordinatorCli(['discovery','grant','--requester',originId,'--target',f.nodeId]);
+   assert(grant.saved_policy.grants[originId].includes(f.nodeId));
+   const previous=(await f.json(f.coordinatorUrl+'/api/diagnostics')).runtime_id;
+   await f.coordinatorCli(['restart']);
+   await f.until(async()=>{const status=await f.json(f.coordinatorUrl+'/api/diagnostics');
+    return status.runtime_id!==previous&&status.registered_node_count===2;},'apply directional source disclosure');
+   assert.equal(calls.length,before,'Disclosure and reconnect cannot run model work');
+  }
   for(mode of ['complete','stop','restart']) {
    const trace=join(f.scratch,(f.tracePrefix||'vision-command')+'-'+mode);await mkdir(trace);
    const restartBarrier=mode==='restart'?`

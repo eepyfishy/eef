@@ -26,6 +26,12 @@ executor for completion, stop and restart. It requires original-context result
 delivery from an input node without a local model or camera consent, and refuses
 executor-origin result requests for that job. This pending
 synthetic test does not stand in for physical two-PC or real-model acceptance.
+The initial `9b2673b` run passed all workspace configurations but its native
+command fixture was refused before review: it omitted the existing directional
+source-disclosure grant. The backend correctly denied access. The corrected
+fixture checks that refusal first, then applies an exact owner disclosure grant
+and coordinator restart through public commands. No authorization rule is relaxed;
+the corrected composition still requires new hosted verification.
 
 Source `2f9ad02` passes all four hosted jobs in
 [run 44098166237](https://github.com/eepyfishy/eef/actions/runs/44098166237),
