@@ -5,6 +5,16 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+A node-local model request ceiling is in development. Owner policy commands
+save an optional 1-1024 shared exchange limit, applied on explicit restart.
+Ordinary inference, local vision and empty Ollama preload share it; full
+capacity refuses before a new provider call/load/pin, without queuing or retry.
+New tests cover shared backends/capabilities, completion/cancellation release,
+owner/runtime/revision fences and saved/applied separation. Hosted verification
+is pending. This is managed-exchange admission, not measured resource allocation
+or proof that canceled provider-side work stopped. See
+[the policy contract](MODEL-LIFECYCLE-POLICY.md#node-local-model-request-ceiling-under-verification).
+
 Source `7f31139` passes all four hosted jobs in
 [run 44148059639](https://github.com/eepyfishy/eef/actions/runs/44148059639):
 1,849 Windows/headless Rust tests, one ignored across 17 groups, all 37 native

@@ -12,6 +12,47 @@ eefn --json model-lifecycle-policy show
 eef --json node model-lifecycle-policy --node NODE_ID show
 ```
 
+### Node-local model request ceiling (under verification)
+
+```text
+eefn --json model-lifecycle-policy --runtime RUNTIME_UUID request-limit --expected-digest SAVED_DIGEST --max-in-flight 1
+eef --json node model-lifecycle-policy --node NODE_ID --runtime RUNTIME_UUID request-limit --expected-digest SAVED_DIGEST --max-in-flight 2
+eefn --json model-lifecycle-policy --runtime RUNTIME_UUID request-limit --expected-digest SAVED_DIGEST --default
+```
+
+This optional node-wide ceiling bounds simultaneous eef-managed text/vision
+inference exchanges and empty Ollama preload exchanges across selected models
+and both backends in that node runtime. Values are 1-1024; `--default` removes
+this additional ceiling. Old configurations omit it and preserve their prior
+policy serialization/digests. The new field is `max_in_flight_requests` in
+saved/applied policy. Older nodes refuse the new command; no fallback save is
+attempted. This development extension awaits hosted compilation/runtime checks.
+
+Saving uses the same exact digest, current runtime and node-owner management
+approval as other policy changes. It does not resize an active runtime's gate.
+Restart explicitly to apply; the replacement engine must match the applied
+ceiling. A full gate refuses new requests immediately, before a provider call
+or an owned-model load/pin. No waiting request queue, automatic retry, alternate
+model or backend fallback is created. Existing authorized work retains its
+original deadlines and permissions. Status, job control and result inspection
+do not consume these slots.
+
+A slot covers the managed exchange, including demand loading and bounded
+response/identity validation where applicable. Normal completion, error or
+dropping that exchange releases its slot. Cancellation of eef's HTTP exchange
+does not prove that a shared provider stopped processing it; this ceiling is
+not a maximum number of physical inferences, RAM/VRAM/CPU allocation, download
+quota, cross-runtime/global reservation or application isolation boundary.
+Other applications and provider-internal queues are outside it. Measured
+resource admission, busy-node placement and adaptive reclamation remain open.
+
+The new regressions hold an actual loopback model request while refusing text,
+vision and preload calls across both selected backends without another provider
+contact or llama.cpp pin. Both completion and cancellation must release capacity
+for a fresh explicit call; rejected calls must never run later. Separate policy
+tests cover bounds, remote refusal, digest/revision substitution, reset,
+saved/applied separation and failed replacement retaining the existing runtime.
+
 Reports distinguish `saved_policy`/`saved_revision`/`saved_digest` from
 `applied_policy`/`applied_revision` and the running `runtime_id`. Copy the exact current runtime and saved digest when
 saving a running node's policy:

@@ -260,6 +260,7 @@ impl LocalBinding<'_> {
                 "Invalid reviewed vision call scope"
             );
             self.current(granted, deadline, &authorized)?;
+            let _request_slot = self.engine.reserve_model_request()?;
             self.installed().await?;
             self.current(granted, deadline, &authorized)?;
             let model = Some(self.selection.model_id.as_str());

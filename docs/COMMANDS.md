@@ -489,8 +489,8 @@ owned-GGUF job-commit ceiling. Saved/applied separation, explicit restart and
 current owner approval remain mandatory. It is not a RAM/working-set/VRAM budget
 or control of shared Ollama. See [limits and failure semantics](MODEL-MEMORY-LIMITS.md).
 
-`eefn model-lifecycle-policy show|set` and
-`eef node model-lifecycle-policy --node NODE_ID show|set` configure eager/manual/on-demand
+`eefn model-lifecycle-policy show|set|request-limit` and
+`eef node model-lifecycle-policy --node NODE_ID show|set|request-limit` configure eager/manual/on-demand
 startup, optional idle unload and operation bounds in the same backend service.
 Use the exact saved-policy digest and, when running, runtime ID. Saving does not
 restart or infer; explicit restart applies changed policy, while a saved mismatch
@@ -500,6 +500,13 @@ authorized inference. Status, compilation and approval never load them. Loading
 consumes the original request deadline and transfers readiness directly to an
 active-use pin; failure/cancellation never silently retries or switches provider.
 See [choices, bounds and idle timing](MODEL-LIFECYCLE-POLICY.md).
+
+The development `request-limit --expected-digest SAVED_DIGEST --max-in-flight N`
+command saves a node-local ceiling on simultaneous eef text/vision/preload
+exchanges (1-1024); `--default` removes it. The same exact runtime and owner
+approval are required, with explicit restart to apply. A full gate refuses
+without queuing or retrying. This awaits hosted verification and is not a
+physical inference, RAM/VRAM or shared-provider quota; see the policy document.
 
 Shared Ollama inference has a separate applied request preference:
 `set --ollama-keep-alive-seconds SECONDS` (-1 indefinite, 0 after response,

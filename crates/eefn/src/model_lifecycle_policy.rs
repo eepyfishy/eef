@@ -56,6 +56,9 @@ pub struct ModelLifecyclePolicy {
     pub thinking_mode: ThinkingMode,
     #[serde(skip_serializing_if = "crate::interpreter_sampling::InterpreterSampling::is_default")]
     pub interpreter_sampling: crate::interpreter_sampling::InterpreterSampling,
+    /// Node-local eef request exchanges, not provider execution or memory usage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_in_flight_requests: Option<u32>,
 }
 impl Default for ModelLifecyclePolicy {
     fn default() -> Self {
@@ -70,6 +73,7 @@ impl Default for ModelLifecyclePolicy {
             ollama_context_tokens: None,
             thinking_mode: ThinkingMode::Inherit,
             interpreter_sampling: Default::default(),
+            max_in_flight_requests: None,
         }
     }
 }
@@ -77,6 +81,9 @@ impl ModelLifecyclePolicy {
     pub fn validate(&self) -> Result<()> {
         self.interpreter_sampling.validate()?;
         if !(1..=64).contains(&self.queue_capacity)
+            || self
+                .max_in_flight_requests
+                .is_some_and(|n| !(1..=1024).contains(&n))
             || !(1..=4096).contains(&self.receipt_capacity)
             || self.receipt_capacity < self.queue_capacity
             || !(1..=3600).contains(&self.load_timeout_seconds)
@@ -134,6 +141,18 @@ impl ModelLifecyclePolicy {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PolicyCommand {
     Show {},
+    /// Save a node-local ceiling on active eef model exchanges; no request queue.
+    RequestLimit {
+        #[arg(long)]
+        expected_digest: String,
+        #[arg(long, required_unless_present="default", conflicts_with="default",
+            value_parser=clap::value_parser!(u32).range(1..=1024))]
+        max_in_flight: Option<u32>,
+        /// Remove this additional ceiling on explicit restart.
+        #[arg(long)]
+        #[serde(default)]
+        default: bool,
+    },
     /// Save future runtime policy; no automatic restart or inference.
     Set {
         #[arg(long)]
@@ -208,6 +227,22 @@ impl PolicyRequest {
         if let Some(id) = &self.expected_runtime_id {
             crate::automation_occurrence::uuid(id)?;
         }
+        if let PolicyCommand::RequestLimit {
+            expected_digest,
+            max_in_flight,
+            default,
+        } = &self.command
+        {
+            if expected_digest.len() != 64
+                || !expected_digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                || (*default == max_in_flight.is_some())
+                || max_in_flight.is_some_and(|n| !(1..=1024).contains(&n))
+            {
+                bail!("Choose an exact policy digest and one request ceiling or default")
+            }
+        }
         if let PolicyCommand::Set {
             expected_digest,
             startup,
@@ -267,6 +302,19 @@ impl PolicyRequest {
 impl PolicyCommand {
     fn apply(&self, current: &ModelLifecyclePolicy, revision: u64) -> Result<ModelLifecyclePolicy> {
         let mut next = current.clone();
+        if let Self::RequestLimit {
+            expected_digest,
+            max_in_flight,
+            default,
+        } = self
+        {
+            if *expected_digest != current.versioned_digest(revision)?
+                || (*default == max_in_flight.is_some())
+            {
+                bail!("Saved model policy changed or request ceiling is ambiguous")
+            }
+            next.max_in_flight_requests = *max_in_flight;
+        }
         if let Self::Set {
             expected_digest,
             startup,
@@ -353,7 +401,7 @@ impl crate::NodeService {
             .as_ref()
             .is_some_and(|id| Some(id) != runtime_id.as_ref())
             || (!offline
-                && matches!(request.command, PolicyCommand::Set { .. })
+                && !matches!(request.command, PolicyCommand::Show {})
                 && request.expected_runtime_id.is_none())
         {
             bail!("Exact current runtime required; no automatic refresh")
@@ -363,7 +411,7 @@ impl crate::NodeService {
         let result = self.inspect_grant_configuration(|config| {
             if runtime.is_some_and(|r|r.is_closed()) { bail!("Model policy runtime closed before application") }
             if config["node_id"] != self.node_id { bail!("Saved node identity changed") }
-            if remote && matches!(request.command, PolicyCommand::Set {..})
+            if remote && !matches!(request.command, PolicyCommand::Show {})
                 && config.pointer("/management/allow_remote") != Some(&json!(true)) {
                 bail!("Model policy requires current local owner management approval")
             }
@@ -453,6 +501,11 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
     if matches!(request.command, PolicyCommand::Show {}) && r.changed {
         return false;
     }
+    if let PolicyCommand::RequestLimit { max_in_flight, .. } = &request.command {
+        if r.saved_policy.max_in_flight_requests != *max_in_flight {
+            return false;
+        }
+    }
     if let PolicyCommand::Set {
         startup,
         idle_unload_seconds,
@@ -496,6 +549,155 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
 mod tests {
     use super::*;
     use futures_util::FutureExt;
+    #[test]
+    fn request_ceiling_requires_exact_runtime_and_explicit_replacement() {
+        let (directory, service) = fixture();
+        let engine = std::sync::Arc::new(
+            crate::NodeEngine::new(false, vec![], directory.path().into())
+                .unwrap()
+                .with_service(service.clone()),
+        );
+        let runtime = uuid::Uuid::new_v4().to_string();
+        let _guard = service
+            .bind_model_runtime(&engine, runtime.clone())
+            .unwrap();
+        let shown = service
+            .model_lifecycle_policy_command(request(PolicyCommand::Show {}, None), false, false)
+            .unwrap();
+        let command = PolicyCommand::RequestLimit {
+            expected_digest: shown["saved_digest"].as_str().unwrap().into(),
+            max_in_flight: Some(1),
+            default: false,
+        };
+        let before = std::fs::read(directory.path().join("node.json")).unwrap();
+        for id in [None, Some(uuid::Uuid::new_v4().to_string())] {
+            assert!(
+                service
+                    .model_lifecycle_policy_command(request(command.clone(), id), false, false)
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            std::fs::read(directory.path().join("node.json")).unwrap(),
+            before
+        );
+        let exact = request(command, Some(runtime.clone()));
+        let saved = service
+            .model_lifecycle_policy_command(exact.clone(), false, false)
+            .unwrap();
+        assert!(confirmed(&saved, &exact));
+        assert_eq!(saved["restart_required"], true);
+        assert!(
+            saved["applied_policy"]
+                .get("max_in_flight_requests")
+                .is_none()
+        );
+        assert_eq!(
+            engine.applied_model_request_limit(),
+            None,
+            "Saving must not resize the live gate"
+        );
+        assert!(
+            service
+                .bind_model_runtime(&engine, uuid::Uuid::new_v4().to_string())
+                .is_err(),
+            "A changed applied policy cannot bind to the old engine"
+        );
+        let retained = service
+            .model_lifecycle_policy_command(
+                request(PolicyCommand::Show {}, Some(runtime.clone())),
+                false,
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            retained["runtime_id"], runtime,
+            "Failed replacement must retain the original bound runtime"
+        );
+    }
+    #[test]
+    fn request_ceiling_is_explicit_bounded_revision_bound_and_confirmed() {
+        let (directory, service) = fixture();
+        let shown = service
+            .model_lifecycle_policy_command(request(PolicyCommand::Show {}, None), false, true)
+            .unwrap();
+        let original = std::fs::read(directory.path().join("node.json")).unwrap();
+        let digest = shown["saved_digest"].as_str().unwrap().to_owned();
+        for fields in [
+            json!({}),
+            json!({"max_in_flight":0}),
+            json!({"max_in_flight":1025}),
+            json!({"max_in_flight":1,"default":true}),
+            json!({"max_in_flight":"1"}),
+        ] {
+            let mut raw = json!({"operation":"request_limit","expected_digest":digest});
+            for (key, value) in fields.as_object().unwrap() {
+                raw[key] = value.clone();
+            }
+            if let Ok(command) = serde_json::from_value::<PolicyCommand>(raw) {
+                assert!(request(command, None).validate().is_err());
+            }
+        }
+        let command = PolicyCommand::RequestLimit {
+            expected_digest: digest,
+            max_in_flight: Some(1),
+            default: false,
+        };
+        assert!(
+            service
+                .model_lifecycle_policy_command(request(command.clone(), None), true, true)
+                .is_err(),
+            "Remote policy needs current local owner approval"
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("node.json")).unwrap(),
+            original
+        );
+        let set = request(command.clone(), None);
+        let report = service
+            .model_lifecycle_policy_command(set.clone(), false, true)
+            .unwrap();
+        assert!(confirmed(&report, &set));
+        assert_eq!(report["saved_policy"]["max_in_flight_requests"], 1);
+        assert_eq!(report["applied_policy"], Value::Null);
+        assert_eq!(report["restart_requested"], false);
+        assert!(
+            service
+                .model_lifecycle_policy_command(set, false, true)
+                .is_err(),
+            "Stale revision must refuse without replay"
+        );
+        let mut substituted = report.clone();
+        substituted["saved_policy"]["max_in_flight_requests"] = json!(2);
+        let changed: ModelLifecyclePolicy =
+            serde_json::from_value(substituted["saved_policy"].clone()).unwrap();
+        substituted["saved_digest"] = json!(
+            changed
+                .versioned_digest(report["saved_revision"].as_u64().unwrap())
+                .unwrap()
+        );
+        assert!(
+            !confirmed(&substituted, &request(command, None)),
+            "Even a rechecksummed different ceiling is unconfirmed"
+        );
+        let reset = request(
+            PolicyCommand::RequestLimit {
+                expected_digest: report["saved_digest"].as_str().unwrap().into(),
+                max_in_flight: None,
+                default: true,
+            },
+            None,
+        );
+        let reset_report = service
+            .model_lifecycle_policy_command(reset.clone(), false, true)
+            .unwrap();
+        assert!(confirmed(&reset_report, &reset));
+        assert!(
+            reset_report["saved_policy"]
+                .get("max_in_flight_requests")
+                .is_none()
+        );
+    }
     fn command(digest: String) -> PolicyCommand {
         PolicyCommand::Set {
             expected_digest: digest,
@@ -549,6 +751,9 @@ mod tests {
             json!({"load_timeout_seconds":0}),
             json!({"termination_wait_seconds":31}),
             json!({"idle_unload_seconds":0}),
+            json!({"max_in_flight_requests":0}),
+            json!({"max_in_flight_requests":1025}),
+            json!({"max_in_flight_requests":"1"}),
             json!({"startup":"unsupported"}),
             json!({"force":true}),
         ] {

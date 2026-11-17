@@ -253,6 +253,9 @@ impl crate::NodeService {
         if engine.applied_interpreter_sampling() != &policy.interpreter_sampling {
             bail!("Applied interpreter sampling does not match the engine; no runtime replacement")
         }
+        if engine.applied_model_request_limit() != policy.max_in_flight_requests {
+            bail!("Applied model request ceiling does not match the engine; no runtime replacement")
+        }
         let (queue, receiver) = mpsc::channel(policy.queue_capacity);
         let runtime = Arc::new(ModelRuntime {
             id,

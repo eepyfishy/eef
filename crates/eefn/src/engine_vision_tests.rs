@@ -41,6 +41,170 @@ fn tags() -> Value {
 fn answer() -> Value {
     json!({"message":{"content":"movement detected","thinking":"PRIVATE_REASONING"},"done":true,"done_reason":"stop"})
 }
+
+#[tokio::test]
+async fn model_request_ceiling_is_shared_by_text_vision_preparation_and_both_backends() {
+    for finish in ["complete", "cancel", "error"] {
+        let fail_first = finish == "error";
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inspections = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let chat = {
+            let calls = calls.clone();
+            let started = started.clone();
+            let release = release.clone();
+            move || {
+                let calls = calls.clone();
+                let started = started.clone();
+                let release = release.clone();
+                async move {
+                    let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
+                    if first {
+                        started.notify_one();
+                        release.notified().await;
+                    }
+                    (
+                        if first && fail_first {
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                        } else {
+                            axum::http::StatusCode::OK
+                        },
+                        axum::Json(answer()),
+                    )
+                }
+            }
+        };
+        let tags_route = {
+            let inspections = inspections.clone();
+            move || {
+                let inspections = inspections.clone();
+                async move {
+                    inspections.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(tags())
+                }
+            }
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router = axum::Router::new()
+            .route("/api/chat", axum::routing::post(chat.clone()))
+            .route("/v1/chat/completions", axum::routing::post(chat))
+            .route("/api/tags", axum::routing::get(tags_route));
+        let server_task = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let mut owned = crate::ModelServer::test_resident();
+        let slot = &mut Arc::get_mut(&mut owned).unwrap().slots[0];
+        slot.port = address.port();
+        slot.mmproj_path = Some("synthetic-mmproj".into());
+        let policy = crate::model_lifecycle_policy::ModelLifecyclePolicy {
+            max_in_flight_requests: Some(1),
+            ..Default::default()
+        };
+        let owner = engine(format!("http://{address}"))
+            .with_model_server(owned.clone())
+            .with_model_request_preferences(&policy)
+            .unwrap();
+        let mut first = Box::pin(owner.infer_with_schema(
+            "llm.infer",
+            json!({"backend":"ollama","model":"selected","prompt":"hold"}),
+            None,
+            None,
+        ));
+        tokio::time::timeout(Duration::from_secs(2),async {
+            tokio::select! {r=&mut first=>panic!("First model request did not wait: {r:?}"),_=started.notified()=>{}}
+        }).await.unwrap();
+        for (backend, model) in [("ollama", "selected"), ("llamacpp", "owned-model")] {
+            let error = owner
+                .infer_with_schema(
+                    "llm.infer",
+                    json!({"backend":backend,"model":model,"prompt":"must not start"}),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("model_request_capacity_busy"));
+            let selected = ModelSelection {
+                backend: if backend == "ollama" {
+                    Backend::Ollama
+                } else {
+                    Backend::Llamacpp
+                },
+                model_id: model.into(),
+                installed_digest: if backend == "ollama" {
+                    Some("a".repeat(64))
+                } else {
+                    None
+                },
+            };
+            assert!(
+                owner
+                    .bind_local_vision(&selected)
+                    .unwrap()
+                    .analyze(
+                        &image(),
+                        "must not start",
+                        &limits(),
+                        &granted(),
+                        Instant::now() + Duration::from_secs(2),
+                        || Ok(())
+                    )
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(
+            owner
+                .prepare_ollama_checked("selected", &"a".repeat(64), || Ok(()))
+                .await
+                .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            inspections.load(Ordering::SeqCst),
+            0,
+            "Busy vision/preload must not contact a provider"
+        );
+        assert_eq!(
+            owned.snapshot().unwrap()[0]["active_requests"],
+            0,
+            "Busy llama.cpp must not acquire an inference pin"
+        );
+        if finish == "cancel" {
+            drop(first);
+        } else {
+            release.notify_one();
+            assert_eq!(first.await.is_err(), fail_first);
+        }
+        assert_eq!(
+            owner
+                .bind_local_vision(&selection())
+                .unwrap()
+                .analyze(
+                    &image(),
+                    "fresh approved call",
+                    &limits(),
+                    &granted(),
+                    Instant::now() + Duration::from_secs(2),
+                    || Ok(())
+                )
+                .await
+                .unwrap(),
+            "movement detected"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "Rejected calls must never run later"
+        );
+        assert_eq!(inspections.load(Ordering::SeqCst), 2);
+        release.notify_one();
+        server_task.abort();
+        assert!(server_task.await.unwrap_err().is_cancelled());
+    }
+}
 fn response(value: Value) -> String {
     let body = value.to_string();
     format!(

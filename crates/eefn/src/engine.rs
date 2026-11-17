@@ -280,6 +280,8 @@ pub struct NodeEngine {
     ollama_context_tokens: Option<u32>,
     thinking_mode: crate::model_lifecycle_policy::ThinkingMode,
     interpreter_sampling: crate::interpreter_sampling::InterpreterSampling,
+    model_request_limit: Option<u32>,
+    model_request_slots: Option<Arc<tokio::sync::Semaphore>>,
     service: Option<Arc<crate::NodeService>>,
     resource_owner: String,
     resources: Vec<crate::context::Resource>,
@@ -361,6 +363,8 @@ impl NodeEngine {
             ollama_context_tokens: None,
             thinking_mode: Default::default(),
             interpreter_sampling: Default::default(),
+            model_request_limit: None,
+            model_request_slots: None,
             service: None,
             granted_model_config: None,
             pipeline_enabled: false,
@@ -561,7 +565,28 @@ impl NodeEngine {
         self.ollama_context_tokens = policy.ollama_context_tokens;
         self.thinking_mode = policy.thinking_mode;
         self.interpreter_sampling = policy.interpreter_sampling.clone();
+        self.model_request_limit = policy.max_in_flight_requests;
+        self.model_request_slots = policy
+            .max_in_flight_requests
+            .map(|n| Arc::new(tokio::sync::Semaphore::new(n as usize)));
         Ok(self)
+    }
+    pub(crate) fn applied_model_request_limit(&self) -> Option<u32> {
+        self.model_request_limit
+    }
+    pub(crate) fn reserve_model_request(
+        &self,
+    ) -> Result<Option<tokio::sync::OwnedSemaphorePermit>> {
+        self.model_request_slots
+            .as_ref()
+            .map(|slots| {
+                slots.clone().try_acquire_owned().map_err(|_| {
+                    anyhow::anyhow!(
+                        "model_request_capacity_busy: no model exchange started; no queued retry"
+                    )
+                })
+            })
+            .transpose()
     }
     pub(crate) fn applied_thinking_mode(&self) -> crate::model_lifecycle_policy::ThinkingMode {
         self.thinking_mode
@@ -1873,6 +1898,7 @@ impl NodeEngine {
         {
             bail!("Applied Ollama preparation selection/retention unavailable")
         }
+        let _request_slot = self.reserve_model_request()?;
         let inspect = async || -> Result<Value> {
             authorized()?;
             let response = self
@@ -1985,6 +2011,7 @@ impl NodeEngine {
         schema: Option<Value>,
         sampling: Option<&crate::interpreter_sampling::InterpreterSampling>,
     ) -> Result<Value> {
+        let _request_slot = self.reserve_model_request()?;
         let mut payload = self.ollama_payload(params, schema)?;
         if let Some(sampling) = sampling {
             Self::apply_interpreter_sampling(&mut payload, sampling, true);
@@ -2009,6 +2036,7 @@ impl NodeEngine {
         schema: Option<Value>,
         sampling: Option<&crate::interpreter_sampling::InterpreterSampling>,
     ) -> Result<Value> {
+        let _request_slot = self.reserve_model_request()?;
         let model = params.get("model").and_then(Value::as_str);
         let _use_pin = match server.pin(model) {
             Ok(pin) => pin,

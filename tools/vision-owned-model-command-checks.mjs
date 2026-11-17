@@ -10,6 +10,7 @@ export async function verifyOwnedVisionCommands(f) {
  await verifyScenario(f,'model-exit');
  console.log('Owned llama.cpp vision command validation passed: explicit projector selection, real synthetic owned process and active pin, no early capture/model call, private local image payload and durable results without replay.');
  console.log('Owned vision model exit validation passed: observed process exit leaves pending analysis evidence, releases active pins and preserves node controls without retry or invented completion.');
+ console.log('Node-local model request ceiling validation passed: owner commands save one shared exchange slot, explicit restart applies it, and owned vision completion and model exit release their requests.');
  return {vision_owned_llamacpp_commands:true,vision_active_model_pin:true,
   vision_owned_model_exit_no_retry:true,vision_owned_model_quality_accepted:false};
 }
@@ -39,11 +40,16 @@ async function verifyScenario(f,mode) {
  const policy=(await f.sourceCli(['model-lifecycle-policy','show'])).result;
  await f.sourceCli(['model-lifecycle-policy','--runtime',policy.runtime_id,'set','--expected-digest',policy.saved_digest,
   '--startup','eager','--idle-unload-seconds','0']);
+ const ceiling=(await f.sourceCli(['model-lifecycle-policy','show'])).result;
+ await f.sourceCli(['model-lifecycle-policy','--runtime',ceiling.runtime_id,'request-limit',
+  '--expected-digest',ceiling.saved_digest,'--max-in-flight','1']);
  const previous=(await f.json(f.sourceUrl+'/api/diagnostics')).runtime_id;
  await f.sourceCli(['restart','--wait-seconds','20']);
  await f.until(async()=>(await f.json(f.sourceUrl+'/api/diagnostics')).runtime_id!==previous&&
   (await f.json(f.sourceUrl+'/api/status')).connection.state==='connected','owned vision source runtime');
  const runtime=(await f.json(f.sourceUrl+'/api/diagnostics')).runtime_id;
+ const applied=(await f.sourceCli(['model-lifecycle-policy','show'])).result;
+ assert.equal(applied.applied_policy.max_in_flight_requests,1);
  const current=async()=>(await f.sourceCli(['model-lifecycle','show'])).result.models.find(m=>m.model_id===model);
  await f.until(async()=>{const m=await current();return m?.owned_pid&&m.active_requests===0&&['ready','warm_idle'].includes(m.state);},'owned vision model ready');
  const original=await current();assert.equal(original.owned_pid,Number(await readFile(pid,'utf8')));
