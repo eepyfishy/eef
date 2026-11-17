@@ -250,13 +250,54 @@ async fn native_clients_complete_exact_pair_over_peer_tcp_and_refuse_consumed_re
                 .contains("PRIVATE_NATIVE_PEER_PAYLOAD_")
         );
     }
-    tokio::time::timeout(
+    let observed = tokio::time::timeout(
         Duration::from_secs(8),
         driver(&f).drive_peer(&f.plan.plan_id),
     )
-    .await
-    .unwrap()
-    .unwrap();
+    .await;
+    if observed.is_err() {
+        // Failure-only bounded metadata. Do not echo reports, payloads or private
+        // endpoints, and do not extend the original driver/lease/test deadlines.
+        let saved = f
+            .engine
+            .store
+            .get_before(
+                &f.plan.plan_id,
+                tokio::time::Instant::now() + Duration::from_secs(2),
+            )
+            .await
+            .ok();
+        let attempts = saved.as_ref().and_then(|p| p.execution.as_ref()).map(|e| {
+            e.attempts
+                .iter()
+                .map(|a| {
+                    json!({"node":a.grant.executor_node,"state":a.state,
+                "acknowledged":a.acknowledgement.is_some(),"report_retained":a.report.is_some()})
+                })
+                .collect::<Vec<_>>()
+        });
+        let node_states = nodes
+            .status
+            .iter()
+            .map(|s| {
+                let s = s.lock().unwrap();
+                json!({"state":s["last_grant"]["state"],"success":s["last_grant"]["success"],
+                "persisted":s["last_grant"]["persisted"]})
+            })
+            .collect::<Vec<_>>();
+        panic!(
+            "Peer driver observation expired after cancellation: plan={:?}; attempts={}; nodes={}; clients_finished={:?}",
+            saved.as_ref().map(|p| &p.status),
+            json!(attempts),
+            json!(node_states),
+            nodes
+                .clients
+                .iter()
+                .map(|c| c.is_finished())
+                .collect::<Vec<_>>()
+        );
+    }
+    observed.unwrap().unwrap();
     let p = f.engine.store.get(&f.plan.plan_id).unwrap();
     assert_eq!(p.status, PlanStatus::Completed);
     crate::jobs::validate_retained_review(&p).unwrap();

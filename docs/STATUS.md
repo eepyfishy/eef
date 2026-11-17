@@ -5,6 +5,23 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+The next command candidate adds `eefn requests submit-vision`, with explicit
+applied model/backend/digest, prompt and bounded source/image/text settings.
+It uses existing origin-owned review/compilation without a JSON file or any
+capture, inference, model loading, permission or execution effect. Defaults fit
+fresh result policy; owner limits are never raised. A distinct review version
+names the model capability while keeping older private vision records readable
+and inspection-only for fresh work. Four common cases, one coordinator case,
+one CLI case and native command/parser extensions await hosted verification.
+
+Negotiation source `9e47e6f` passes both Linux jobs but is not accepted: Windows
+dashboard hit an existing peer-driver test's eight-second observation deadline
+in [run 44081245690](https://github.com/eepyfishy/eef/actions/runs/44081245690).
+The timeout occurred after registration, during the transfer driver. Its cause
+is unresolved. Failure-only bounded state diagnostics are added; original
+driver, grant and test deadlines are unchanged. Other job outcomes still need
+review before any claim about the new Windows vision case.
+
 The next transport candidate separately negotiates vision definition/offer/report
 versions, owner policy and current runtime, with required journal, stop and
 retained-analysis read support. Current camera/model readiness updates the same

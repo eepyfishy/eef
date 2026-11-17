@@ -120,6 +120,7 @@ pub mod tls;
 pub mod updater;
 pub mod vision_result_inspection;
 pub mod vision_sources;
+pub mod vision_submission;
 mod workload_events;
 pub mod workload_inspection;
 pub mod workload_leases;

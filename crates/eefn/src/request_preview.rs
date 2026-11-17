@@ -119,6 +119,8 @@ pub enum SubmissionAction {
     SubmitMicrophone(Box<crate::microphone_submission::MicrophoneSubmission>),
     /// Prepare a bounded camera-motion request for review; never enable or capture.
     SubmitCamera(Box<crate::camera_submission::CameraSubmission>),
+    /// Prepare bounded local camera/model analysis for review; never capture or infer.
+    SubmitVision(Box<crate::vision_submission::VisionSubmission>),
 }
 
 #[derive(Debug, clap::Subcommand)]

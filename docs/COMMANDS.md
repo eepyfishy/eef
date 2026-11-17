@@ -737,6 +737,18 @@ result delivery passes synthetic hosted verification at `9603e47`; complete
 public vision job authoring/execution acceptance remains open. See
 [vision integration status](LOCAL-EVENT-VISION.md).
 
+The unreleased `eefn requests submit-vision` candidate prepares a camera/model
+request without a JSON file. Required options are `--backend`, `--model` and
+`--prompt`, plus `--model-digest` for Ollama's exact installed identity. Use
+`workloads vision-sources` and `models installed` to inspect the source first.
+The `--camera`/`--source-node` selectors and camera limits match `submit-camera`.
+Additional image/text budgets include `--max-images`, `--image-width`,
+`--image-height`, `--max-image-bytes`, `--image-interval-ms`, `--trigger`,
+`--max-tokens`, `--max-result-bytes`, `--max-response-bytes` and
+`--analysis-timeout-ms`. Images stay on the source node. Authoring only saves
+reviewable intent; it never captures, infers, loads, changes permissions or
+approves execution. See [source workflow and acceptance](WORKLOAD-SOURCES.md).
+
 ## Reply ownership across reconnect (unreleased after alpha.6)
 
 Remote RPC waiters now belong to the exact authenticated gateway session as well

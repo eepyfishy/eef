@@ -359,6 +359,7 @@ pub(crate) fn compile(
         );
         return Ok(saved);
     }
+    input.validate_for_new_work()?;
     ensure!(
         saved.revision == *expected_revision
             && saved.status == PlanStatus::Review
@@ -432,6 +433,12 @@ pub(crate) fn approve(
         );
         return Ok(saved);
     }
+    saved
+        .planning
+        .as_ref()
+        .context("Workload planning missing")?
+        .input
+        .validate_for_new_work()?;
     unique_operation(&saved, &command.operation_id)?;
     ensure!(
         hex(issuer)
@@ -684,6 +691,12 @@ async fn issue_inner(
         .approval
         .as_ref()
         .context("Workload approval missing")?;
+    saved
+        .planning
+        .as_ref()
+        .context("Workload planning missing")?
+        .input
+        .validate_for_new_work()?;
     validate_approval(&saved)?;
     unique_operation(&saved, &command.operation_id)?;
     let issued = Instant::now();

@@ -31,6 +31,25 @@ verification and complete public job authoring/placement integration. This
 inspection does not turn a camera-motion grant into model authority. See
 [local event vision](LOCAL-EVENT-VISION.md) for verification and remaining work.
 
+The next command candidate provides JSON-free vision authoring:
+
+```text
+eefn workloads vision-sources
+eefn models installed
+eefn requests submit-vision --camera CAMERA_ID --backend ollama --model MODEL_ID --model-digest INSTALLED_DIGEST --prompt "Describe activity."
+```
+
+Replace the selectors and digest with the source node's applied selection and
+exact installed-model digest. For an applied llama.cpp vision selection use
+`--backend llamacpp` and omit `--model-digest`. `--source-node NODE_ID` selects a
+different disclosed source; the images and inference stay on that source node.
+The command saves and compiles a request for review. Inspect its job/plan, then
+use the existing separate owner approval and explicit execution steps. It never
+enables a permission, selects/loads a model, contacts a model or starts capture.
+After an uncertain reply, inspect the exact operation receipt before taking
+another action. This candidate still needs complete hosted command/lifecycle
+acceptance; it is not a stable feature declaration.
+
 Inspection lists the applied microphone resources, their private-binding digests,
 and the compiled-in energy adapter digest. It reports saved/applied microphone
 permission, local listening consent/revision/epoch, whether saved resource

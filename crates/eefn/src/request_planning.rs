@@ -122,12 +122,11 @@ pub fn concrete_capabilities(input: &PlanInput) -> Result<Vec<String>> {
     let steps = template_steps(&input.template)?;
     let mut capabilities = vec![steps[0].0.to_owned()];
     if input.template == crate::workload_leases::definition::TEMPLATE {
-        capabilities.push(
-            crate::workload_leases::definition::Template::from_params(&input.params)?
-                .source
-                .capability()
-                .into(),
-        );
+        let template = crate::workload_leases::definition::Template::from_params(&input.params)?;
+        capabilities.push(template.source.capability().into());
+        if template.model_binding().is_some() && input.schema_version == 2 {
+            capabilities.push("vlm.analyze".into());
+        }
     }
     if matches!(
         input.template.as_str(),
@@ -171,14 +170,38 @@ pub struct PlanInput {
     pub constraints: Value,
 }
 impl PlanInput {
+    /// Historical v1 vision reviews keep their exact capability vocabulary for
+    /// inspection. New work needs the explicit v2 model-capability review.
+    pub fn validate_for_new_work(&self) -> Result<()> {
+        self.validate()?;
+        if self.template == crate::workload_leases::definition::TEMPLATE
+            && crate::workload_leases::definition::Template::from_params(&self.params)?
+                .model_binding()
+                .is_some()
+            && self.schema_version != 2
+        {
+            bail!(
+                "Legacy vision review is inspection-only; create a new submit-vision request for explicit model capability review"
+            )
+        }
+        Ok(())
+    }
     pub fn validate(&self) -> Result<()> {
         identifier(&self.template)?;
-        if self.schema_version != 1
+        if !matches!(self.schema_version, 1 | 2)
             || !self.params.is_object()
             || !self.constraints.is_object()
             || serde_json::to_vec(self)?.len() > 64 * 1024
         {
             bail!("Invalid or oversized concrete plan input")
+        }
+        if self.schema_version == 2
+            && (self.template != crate::workload_leases::definition::TEMPLATE
+                || crate::workload_leases::definition::Template::from_params(&self.params)?
+                    .model_binding()
+                    .is_none())
+        {
+            bail!("Version-two plan input requires its distinct vision capability review")
         }
         if self.template == crate::workload_leases::definition::TEMPLATE {
             crate::workload_leases::definition::Template::from_params(&self.params)?;

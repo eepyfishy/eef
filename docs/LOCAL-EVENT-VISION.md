@@ -298,8 +298,28 @@ Windows native synthetic camera/model test exercises actual credential/TLS
 execution, durable pre-inference intent, bounded result reads, owner withdrawal
 and continued historical reads. This candidate awaits hosted verification.
 
+The next command candidate adds `eefn requests submit-vision`: an explicit camera,
+local backend/model, installed Ollama digest, prompt and bounded image/analysis
+budgets create an immutable review through the existing origin mailbox. It uses
+the vision snapshot rather than falling back to camera-only inspection. Model
+selection must already be applied; authoring never queries a provider, installs,
+loads, captures, infers, changes permissions or authorizes execution. The default
+metadata budget is 32 KiB plus at most one 1 KiB text result, within a fresh node's
+64 KiB result policy. Larger reviewed budgets remain limited by owner policy.
+
+The camera intent's new version two contains a strict optional vision block;
+older metadata intents omit it unchanged. Version-two vision plan input explicitly
+reviews `vlm.analyze` alongside the source/session capabilities. Earlier private
+version-one vision reviews retain their original capability vocabulary and remain
+inspectable, but cannot be newly compiled, approved or executed. They need a new
+explicit review, never an automatic rewrite or renewed grant. Exact retained
+receipts stay historical. Four common authoring regressions, an authenticated
+coordinator mailbox/journal case, a CLI case, the one-MiB parser gate and an
+actual CLI refusal without a selected model accompany this candidate. Hosted
+verification remains pending.
+
 The public workflow remains incomplete. Next work needs model placement/capacity
-integration and JSON-free job authoring. Interrupted outcome
+integration and complete command lifecycle acceptance. Interrupted outcome
 inspection and the full command/network workflow still need integration tests.
 Approved bounded text can leave the node through the authenticated job
 lifecycle; camera images must stay off coordinator traffic and history. Model

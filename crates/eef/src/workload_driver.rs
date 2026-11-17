@@ -18,6 +18,12 @@ impl Runtime {
         command: &eefn::request_execution::ExecuteCommand,
         origin: Option<&str>,
     ) -> Result<Value> {
+        saved
+            .planning
+            .as_ref()
+            .context("Workload planning missing")?
+            .input
+            .validate_for_new_work()?;
         let template = Template::from_params(&saved.goal.params)?;
         if let Some(origin) = origin {
             ensure!(

@@ -72,11 +72,20 @@ impl crate::Runtime {
                     RefusalReason::SourceUnavailableOrNotDisclosed,
                 );
             }
-            let snapshot = match self.node_server.camera_workload_sources(source, 5).await {
-                Ok(snapshot) => snapshot,
-                Err(_) => return refuse(&input, context, RefusalReason::SourceUnavailable),
+            let resolved = if input.vision.is_some() {
+                let snapshot = match self.node_server.vision_workload_sources(source, 5).await {
+                    Ok(snapshot) => snapshot,
+                    Err(_) => return refuse(&input, context, RefusalReason::SourceUnavailable),
+                };
+                input.resolve_vision(context.origin_node(), &snapshot)
+            } else {
+                let snapshot = match self.node_server.camera_workload_sources(source, 5).await {
+                    Ok(snapshot) => snapshot,
+                    Err(_) => return refuse(&input, context, RefusalReason::SourceUnavailable),
+                };
+                input.resolve(context.origin_node(), &snapshot)
             };
-            match input.resolve(context.origin_node(), &snapshot) {
+            match resolved {
                 Ok(concrete) => concrete,
                 Err(error) => {
                     return refuse(

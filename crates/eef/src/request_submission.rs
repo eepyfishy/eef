@@ -127,6 +127,7 @@ impl crate::Runtime {
             )?;
             (saved, true)
         } else {
+            input.input.validate_for_new_work()?;
             let mut capabilities = self
                 .disclosed_interpretation_capabilities(context.origin_node())
                 .await?;
@@ -268,6 +269,7 @@ mod tests {
     include!("workload_origin_admission_tests.rs");
     include!("workload_microphone_authoring_tests.rs");
     include!("workload_camera_authoring_tests.rs");
+    include!("workload_vision_authoring_tests.rs");
     include!("node_camera_control_tests.rs");
     fn input() -> ConcreteInput {
         ConcreteInput {

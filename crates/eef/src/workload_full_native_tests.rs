@@ -153,6 +153,7 @@ async fn full_source_plan(
                 title: "Bounded camera source".into(),
                 source_node: None,
                 camera: None,
+                vision: None,
                 priority: 0,
                 parameters: eefn::workload_leases::definition::MotionParameters {
                     width: 640,

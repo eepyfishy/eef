@@ -3,6 +3,7 @@
 fn vision_input(large: bool) -> PlanInput {
     use eefn::{model_selection::Backend, workload_leases::definition::vision::*};
     let mut input = template_input();
+    input.schema_version = 2;
     let mut t = Template::from_params(&input.params).unwrap();
     t.schema_version = 3;
     t.limits.max_source_frames = if large { 101 } else { 3 };

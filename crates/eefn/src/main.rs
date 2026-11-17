@@ -3365,6 +3365,9 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
                 eefn::request_preview::SubmissionAction::SubmitCamera(input),
             ) => execute_camera_command(args, input.command()?).await,
             eefn::request_preview::RequestAction::Submission(
+                eefn::request_preview::SubmissionAction::SubmitVision(input),
+            ) => execute_camera_command(args, input.command()?).await,
+            eefn::request_preview::RequestAction::Submission(
                 eefn::request_preview::SubmissionAction::Submit {
                     text,
                     title,
@@ -3848,6 +3851,7 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     Commands::Requests {
                         command: eefn::request_preview::RequestAction::Submission(
                             eefn::request_preview::SubmissionAction::SubmitCamera(_)
+                                | eefn::request_preview::SubmissionAction::SubmitVision(_)
                         )
                     }
                 ) {
@@ -5476,6 +5480,50 @@ mod tests {
             assert!(Args::try_parse_from(["eefn", "requests", "submit-camera", flag]).is_err());
         }
     }
+
+    #[test]
+    fn submit_vision_cli_preserves_exact_local_model_and_review_only_parameters() {
+        let digest = "a".repeat(64);
+        let parsed = Args::try_parse_from([
+            "eefn",
+            "requests",
+            "submit-vision",
+            "--model",
+            "selected",
+            "--backend",
+            "ollama",
+            "--model-digest",
+            digest.as_str(),
+            "--prompt",
+            "Describe movement",
+            "--camera",
+            "camera",
+            "--max-images",
+            "2",
+            "--max-result-bytes",
+            "2048",
+        ])
+        .unwrap();
+        let Some(Commands::Requests {
+            command:
+                eefn::request_preview::RequestAction::Submission(
+                    eefn::request_preview::SubmissionAction::SubmitVision(input),
+                ),
+        }) = parsed.command
+        else {
+            panic!("Wrong vision authoring adapter")
+        };
+        let command = input.command().unwrap();
+        assert_eq!(command.input.schema_version, 2);
+        let analysis = command.input.vision.unwrap();
+        assert_eq!(analysis.model.model_id, "selected");
+        assert_eq!(
+            analysis.model.installed_digest.as_deref(),
+            Some(digest.as_str())
+        );
+        assert_eq!(analysis.images.max_images, 2);
+        assert_eq!(analysis.inference.max_result_bytes, 2048);
+    }
     #[test]
     fn submit_microphone_cli_needs_no_file_model_or_authority_flags() {
         let args = Args::try_parse_from([
@@ -5648,6 +5696,17 @@ mod tests {
                     vec![
                         "eefn",
                         "requests",
+                        "submit-vision",
+                        "--model",
+                        "selected",
+                        "--backend",
+                        "llamacpp",
+                        "--prompt",
+                        "Describe movement",
+                    ],
+                    vec![
+                        "eefn",
+                        "requests",
                         "submit-camera",
                         "--camera",
                         "camera",
@@ -5692,6 +5751,8 @@ mod tests {
                     vec!["eefn", "--help"],
                     vec!["eefn", "--version"],
                     vec!["eefn", "requests", "submit-camera", "--help"],
+                    vec!["eefn", "requests", "submit-vision", "--help"],
+                    vec!["eefn", "requests", "submit-vision", "--execute"],
                     vec!["eefn", "requests", "submit-camera", "--execute"],
                     vec![
                         "eefn",

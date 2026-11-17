@@ -15,6 +15,12 @@ impl SourceAdmission {
         Self::with_metadata(metadata).await
     }
     async fn with_metadata(metadata: eefn::context::NodeMetadata) -> Self {
+        Self::with_selection(metadata, None).await
+    }
+    async fn with_selection(
+        metadata: eefn::context::NodeMetadata,
+        selected: Option<eefn::SelectedModel>,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let identity = eefn::tls::CoordinatorIdentity::generate().unwrap();
         let credential = eefn::authentication::generate_credential();
@@ -38,22 +44,23 @@ impl SourceAdmission {
         .await
         .unwrap();
         let node_path = dir.path().join("node.json");
-        std::fs::write(
-            &node_path,
-            serde_json::to_vec(&json!({
-                "node_id":"origin","metadata":metadata
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+        let mut node_config = json!({"node_id":"origin","metadata":metadata});
+        if let Some(selected) = &selected {
+            node_config["models"] = json!({"provider":"ollama","ollama":{"base_url":"http://127.0.0.1:9","selected":[selected]}});
+        }
+        std::fs::write(&node_path, serde_json::to_vec(&node_config).unwrap()).unwrap();
         let service = eefn::NodeService::new(node_path.clone(), "origin".into());
-        let engine = std::sync::Arc::new(
-            eefn::NodeEngine::new(false, vec![], dir.path().into())
-                .unwrap()
-                .with_resources("origin".into(), metadata.clone())
-                .unwrap()
-                .with_service(service.clone()),
-        );
+        let mut engine = eefn::NodeEngine::new(false, vec![], dir.path().into())
+            .unwrap()
+            .with_resources("origin".into(), metadata.clone())
+            .unwrap()
+            .with_service(service.clone());
+        if let Some(selected) = selected {
+            engine = engine
+                .with_ollama("http://127.0.0.1:9".into(), [selected])
+                .unwrap();
+        }
+        let engine = std::sync::Arc::new(engine);
         let generation = uuid::Uuid::new_v4().to_string();
         let binding = service.attach_preview_runtime(&engine, generation.clone());
         service.live.lock().unwrap()["runtime_id"] = json!(generation);

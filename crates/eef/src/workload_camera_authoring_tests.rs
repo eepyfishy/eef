@@ -9,6 +9,7 @@ fn camera_intent() -> eefn::camera_submission::CameraInput {
         title: "Camera motion".into(),
         source_node: None,
         camera: None,
+        vision: None,
         priority: 0,
         parameters: MotionParameters {
             width: 640,

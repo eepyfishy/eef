@@ -38,6 +38,15 @@ export async function verifyVisionSourceCommands(f) {
   assert.equal(attempts.length,2,'one diagnostic and one vision read; no retry or fallback');
  }
  assert.deepEqual(await f.nodeCli(command),report);
+ const operation=randomUUID(),model='unselected-vision-fixture';
+ const refused=await f.nodeCli(['requests','submit-vision','--model',model,'--backend','ollama',
+  '--model-digest','a'.repeat(64),'--prompt','Describe movement','--operation-id',operation],false);
+ assert.equal(refused.report_type,'node_camera_request');assert.equal(refused.success,false);
+ assert.equal(refused.outcome_unknown,false);assert.equal(refused.coordinator_acknowledged,true);
+ assert.equal(refused.error_code,'camera_vision_model_unavailable');
+ assert.equal(refused.command.input.schema_version,2);assert.equal(refused.command.input.vision.model.model_id,model);
+ for(const flag of ['execution_authorized','dispatched','automatically_retried'])assert.equal(refused[flag],false);
+ assert.equal((await f.nodeCli(['jobs','find','--operation-id',operation])).data.total,0);
  assert.equal(f.inferenceCalls.length,inferenceCount);assert.equal(await readFile(f.configPath,'utf8'),before);
  console.log('Vision source command validation passed: passive camera/model configuration, owner approval, pinned commands and old/forged/lost replies; no probes or execution.');
  return {vision_source_commands:true,vision_source_no_probe:true,vision_source_no_fallback_or_retry:true};

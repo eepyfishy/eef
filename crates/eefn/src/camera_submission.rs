@@ -26,6 +26,9 @@ pub struct CameraInput {
     pub parameters: MotionParameters,
     pub limits: Limits,
     pub events: Events,
+    /// Distinct schema-two intent; omitted byte-for-byte for metadata requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision: Option<crate::vision_submission::Analysis>,
 }
 fn resource(node: &str, id: &str) -> Result<String> {
     let local = if let Some((owner, local)) = id.split_once("::") {
@@ -50,14 +53,22 @@ impl CameraInput {
     }
     fn template(&self, node: &str, id: String, binding: String, adapter: String) -> Template {
         Template {
-            schema_version: 2,
+            schema_version: if self.vision.is_some() { 3 } else { 2 },
             executor_node: node.into(),
             priority: self.priority,
-            source: Source::CameraMotion {
-                resource_id: id,
-                resource_sha256: binding,
-                adapter_sha256: adapter,
-                parameters: self.parameters.clone(),
+            source: match &self.vision {
+                Some(analysis) => Source::CameraVision {
+                    resource_id: id,
+                    resource_sha256: binding,
+                    adapter_sha256: adapter,
+                    parameters: analysis.parameters(self.parameters.clone()),
+                },
+                None => Source::CameraMotion {
+                    resource_id: id,
+                    resource_sha256: binding,
+                    adapter_sha256: adapter,
+                    parameters: self.parameters.clone(),
+                },
             },
             limits: self.limits.clone(),
             events: self.events.clone(),
@@ -79,8 +90,10 @@ impl CameraInput {
             resource(owner, id)?;
         }
         ensure!(
-            self.schema_version == 1
-                && !self.title.trim().is_empty()
+            matches!(
+                (self.schema_version, self.vision.is_some()),
+                (1, false) | (2, true)
+            ) && !self.title.trim().is_empty()
                 && self.title.len() <= 512
                 && !self.title.chars().any(char::is_control)
                 && serde_json::to_vec(self)?.len() <= 32 * 1024,
@@ -103,14 +116,27 @@ impl CameraInput {
             .as_deref()
             .or(origin)
             .unwrap_or(&template.executor_node);
-        let Source::CameraMotion {
-            resource_id,
-            resource_sha256,
-            adapter_sha256,
-            ..
-        } = &template.source
-        else {
-            bail!("Camera intent cannot bind a microphone workload")
+        let (resource_id, resource_sha256, adapter_sha256) = match (&self.vision, &template.source)
+        {
+            (
+                None,
+                Source::CameraMotion {
+                    resource_id,
+                    resource_sha256,
+                    adapter_sha256,
+                    ..
+                },
+            )
+            | (
+                Some(_),
+                Source::CameraVision {
+                    resource_id,
+                    resource_sha256,
+                    adapter_sha256,
+                    ..
+                },
+            ) => (resource_id, resource_sha256, adapter_sha256),
+            _ => bail!("Camera intent kind differs from the reviewed workload"),
         };
         ensure!(
             template.executor_node == node
@@ -131,7 +157,7 @@ impl CameraInput {
             original_text: self.original_text.clone(),
             title: self.title.clone(),
             input: crate::request_planning::PlanInput {
-                schema_version: 1,
+                schema_version: if self.vision.is_some() { 2 } else { 1 },
                 template: crate::workload_leases::definition::TEMPLATE.into(),
                 params: json!({"workload":template}),
                 constraints: json!({}),
@@ -145,6 +171,54 @@ impl CameraInput {
         origin: &str,
         snapshot: &crate::camera_sources::Report,
     ) -> Result<ConcreteInput> {
+        ensure!(
+            self.vision.is_none(),
+            "Vision intent requires its separate model/source snapshot"
+        );
+        let selected = self.select_camera(origin, snapshot)?;
+        let template = self.template(
+            self.source(origin),
+            selected.resource_id.clone(),
+            selected.resource_sha256.clone().unwrap(),
+            snapshot.adapter_sha256.clone(),
+        );
+        self.concrete(&template, Some(origin))
+    }
+    pub fn resolve_vision(
+        &self,
+        origin: &str,
+        snapshot: &crate::vision_sources::Report,
+    ) -> Result<ConcreteInput> {
+        self.validate()?;
+        ensure!(
+            self.vision.is_some(),
+            "Metadata intent cannot acquire vision authority"
+        );
+        snapshot.validate(&crate::workload_sources::Request {
+            schema_version: 2,
+            expected_node_id: self.source(origin).into(),
+            expected_runtime_id: snapshot.runtime_id.clone(),
+        })?;
+        if !snapshot.model_bindings_current {
+            return Err(outcomes::RefusalReason::BindingNotApplied.into());
+        }
+        let selected = self.select_camera(origin, &snapshot.camera)?;
+        let template = self.template(
+            self.source(origin),
+            selected.resource_id.clone(),
+            selected.resource_sha256.clone().unwrap(),
+            snapshot.adapter_sha256.clone(),
+        );
+        snapshot
+            .confirms_template(&template)
+            .map_err(|_| outcomes::RefusalReason::VisionModelUnavailable)?;
+        self.concrete(&template, Some(origin))
+    }
+    fn select_camera<'a>(
+        &self,
+        origin: &str,
+        snapshot: &'a crate::camera_sources::Report,
+    ) -> Result<&'a crate::workload_sources::Resource> {
         self.validate()?;
         let node = self.source(origin);
         snapshot.validate(&crate::workload_sources::Request {
@@ -175,14 +249,7 @@ impl CameraInput {
         if choices.len() != 1 {
             return Err(outcomes::RefusalReason::ResourceAmbiguous.into());
         }
-        let selected = choices[0];
-        let template = self.template(
-            node,
-            selected.resource_id.clone(),
-            selected.resource_sha256.clone().unwrap(),
-            snapshot.adapter_sha256.clone(),
-        );
-        self.concrete(&template, Some(origin))
+        Ok(choices[0])
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -285,6 +352,7 @@ impl CameraSubmission {
                 title: source.title.clone(),
                 source_node: source.source_node.clone(),
                 camera: source.camera.clone(),
+                vision: None,
                 priority: source.priority,
                 parameters: MotionParameters {
                     width: capture.width,

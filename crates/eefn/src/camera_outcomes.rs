@@ -18,6 +18,8 @@ pub enum RefusalReason {
     ResourceAmbiguous,
     #[error("The source node has unapplied resource settings.")]
     BindingNotApplied,
+    #[error("The selected local vision model is not applied or available for review.")]
+    VisionModelUnavailable,
     #[error("This operation ID already belongs to different saved input.")]
     IntentConflict,
     #[error("The saved request has no compiled plan; inspect its current status.")]
@@ -31,6 +33,7 @@ impl RefusalReason {
             Self::ResourceUnavailable => "camera_resource_unavailable",
             Self::ResourceAmbiguous => "camera_resource_ambiguous",
             Self::BindingNotApplied => "camera_binding_not_applied",
+            Self::VisionModelUnavailable => "camera_vision_model_unavailable",
             Self::IntentConflict => "camera_intent_conflict",
             Self::PreparationIncomplete => "camera_preparation_incomplete",
         }
@@ -51,6 +54,9 @@ impl RefusalReason {
             }
             Self::BindingNotApplied => {
                 "Apply the saved source configuration with an explicit source-node restart: eefn restart"
+            }
+            Self::VisionModelUnavailable => {
+                "Inspect eefn workloads vision-sources on the source node and select an applied local vision model. Review any pending model settings before requesting a new job."
             }
             Self::IntentConflict => {
                 "Inspect the original receipt. Changed settings require a separately intended new request and operation ID."
