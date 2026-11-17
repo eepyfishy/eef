@@ -19,8 +19,11 @@ dashboard hit an existing peer-driver test's eight-second observation deadline
 in [run 44081245690](https://github.com/eepyfishy/eef/actions/runs/44081245690).
 The timeout occurred after registration, during the transfer driver. Its cause
 is unresolved. Failure-only bounded state diagnostics are added; original
-driver, grant and test deadlines are unchanged. Other job outcomes still need
-review before any claim about the new Windows vision case.
+driver, grant and test deadlines are unchanged. Windows/headless also failed to
+compile the new vision fixture: the issuer needs a standard-library `Instant`,
+while the inherited test import selected Tokio's type. The fixture now uses the
+explicit standard-library clock; no production deadline changes. The new native
+vision execution case remains unaccepted pending a corrected hosted run.
 
 The next transport candidate separately negotiates vision definition/offer/report
 versions, owner policy and current runtime, with required journal, stop and

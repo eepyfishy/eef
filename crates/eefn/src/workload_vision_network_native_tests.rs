@@ -77,7 +77,7 @@ async fn authenticated_vision_execution_negotiates_then_retains_bounded_results_
     let mut issuer = crate::workload_leases::IssuerWindow::new(
         d.lease_contract().unwrap(),
         &session.policy,
-        Instant::now() + budget,
+        std::time::Instant::now() + budget,
     )
     .unwrap();
     assert!(!f.root().join("trace").exists());

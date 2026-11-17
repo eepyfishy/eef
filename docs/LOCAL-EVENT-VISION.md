@@ -297,6 +297,10 @@ substitution, missing dependencies, runtime fencing and route preparation. A
 Windows native synthetic camera/model test exercises actual credential/TLS
 execution, durable pre-inference intent, bounded result reads, owner withdrawal
 and continued historical reads. This candidate awaits hosted verification.
+The initial run passed Linux, but Windows found an issuer-deadline fixture type
+error and a separate peer-driver observation timeout. The fixture now names the
+correct standard-library clock, and the peer test adds failure-only state
+diagnostics without changing its deadlines. Neither failure is a passing gate.
 
 The next command candidate adds `eefn requests submit-vision`: an explicit camera,
 local backend/model, installed Ollama digest, prompt and bounded image/analysis
