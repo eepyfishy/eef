@@ -293,7 +293,10 @@ impl crate::NodeServer {
                 self.camera_workload_sources(&template.executor_node, freshness_seconds)
                     .await?,
             ),
-            SourceKind::CameraVision => bail!("Vision source inspection is not available yet"),
+            SourceKind::CameraVision => SourceSnapshot::Vision(
+                self.vision_workload_sources(&template.executor_node, freshness_seconds)
+                    .await?,
+            ),
         };
         snapshot.confirms_template(template)?;
         Ok(snapshot)
@@ -364,12 +367,14 @@ impl crate::NodeServer {
 pub enum SourceSnapshot {
     Microphone(Report),
     Camera(crate::camera_sources::Report),
+    Vision(crate::vision_sources::Report),
 }
 impl SourceSnapshot {
     pub fn runtime_id(&self) -> &str {
         match self {
             Self::Microphone(report) => &report.runtime_id,
             Self::Camera(report) => &report.runtime_id,
+            Self::Vision(report) => &report.runtime_id,
         }
     }
     pub fn confirms_template(
@@ -379,6 +384,7 @@ impl SourceSnapshot {
         match self {
             Self::Microphone(report) => report.confirms_template(template),
             Self::Camera(report) => report.confirms_template(template),
+            Self::Vision(report) => report.confirms_template(template),
         }
     }
     pub fn confirms_execution(
@@ -406,6 +412,9 @@ impl SourceSnapshot {
                     && r.applied_camera_permission
                     && r.python_configured
             }
+            // Passive configuration supports review only. A future execution
+            // protocol must independently negotiate vision admission/results.
+            Self::Vision(_) => false,
         };
         ensure!(
             ready && self.runtime_id() == runtime,

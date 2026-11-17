@@ -70,10 +70,10 @@ impl Report {
             restart_authorized: false,
         }
         .validate()?;
-        if self.definition.schema_version == 3 {
+        if self.completion.event_payload_prefix_sha256.is_some() {
             ensure!(
                 self.metadata.is_some(),
-                "Vision result lacks its durable metadata"
+                "Workload result lacks its durable metadata"
             );
         }
         if let Some(events) = &self.metadata {

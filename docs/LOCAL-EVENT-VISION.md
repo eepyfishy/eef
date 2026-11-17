@@ -258,6 +258,14 @@ when the executing node is offline. Four coordinator regressions exercise
 issuance/opt-in, durable reopen/origin checks, incomplete/mismatched completion
 and storage refusal before issuance. Hosted verification is pending.
 
+Generic source review now selects the existing authenticated vision inspection
+endpoint for a vision template and checks the exact camera/model binding. The
+typed snapshot remains review-only: configuration readiness never satisfies
+execution readiness, and a camera-motion advertisement cannot authorize vision.
+The existing authenticated snapshot regression also exercises this selection
+and rejection of an unselected model. Payload-bound metadata results must retain
+their summary; only legacy completion records can omit that newer evidence.
+
 Metadata-only execution advertisements retain their exact old policy shape even
 when local vision approval is enabled. That local opt-in cannot imply vision
 support on an older wire version or make strict older peers reject unrelated

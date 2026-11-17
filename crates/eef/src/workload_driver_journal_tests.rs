@@ -108,6 +108,19 @@ async fn workload_event_history_is_bounded_immutable_and_completion_confirms_exa
     let completed = finish(&mut issued, receipt).await.unwrap();
     assert_eq!(completed.status, PlanStatus::Completed);
     assert_eq!(completed.execution.as_ref().unwrap().schema_version, 5);
+    let command = eefn::request_result::ResultCommand {
+        id: plan.plan_id.clone(),
+        grant_id: d.grant_id.clone(),
+    };
+    let runtime = uuid::Uuid::new_v4().to_string();
+    let result = crate::workload_job_inspection::result(
+        &completed, &command, Some("origin"), &runtime,
+    ).unwrap();
+    assert!(eefn::request_result::confirmed(&result, &command, Some("origin"), Some(&runtime)));
+    let mut missing = result.clone();
+    missing.as_object_mut().unwrap().remove("metadata");
+    assert!(!eefn::request_result::confirmed(&missing, &command, Some("origin"), Some(&runtime)),
+        "Payload-bound metadata results cannot omit their retained summary");
     assert!(lease(&mut issued, 2).await.is_err());
 }
 #[tokio::test]

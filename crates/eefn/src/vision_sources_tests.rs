@@ -265,6 +265,23 @@ async fn authenticated_vision_snapshot_uses_pinned_node_session_without_enabling
     let report = server.vision_workload_sources("node", 5).await.unwrap();
     assert_eq!(json!(report), json!(f.inspect()));
     assert!(!report.capture_started && !report.model_contacted && !report.execution_available);
+    let snapshot = server.workload_source(&f.template(), 5).await.unwrap();
+    assert!(matches!(
+        &snapshot,
+        crate::workload_sources::SourceSnapshot::Vision(_)
+    ));
+    assert_eq!(snapshot.runtime_id(), f.runtime);
+    snapshot.confirms_template(&f.template()).unwrap();
+    assert!(
+        snapshot
+            .confirms_execution(&f.template(), &f.runtime)
+            .is_err()
+    );
+    let mut changed = f.template();
+    if let Source::CameraVision { parameters, .. } = &mut changed.source {
+        parameters.model.model_id = "unselected".into();
+    }
+    assert!(server.workload_source(&changed, 5).await.is_err());
     assert!(server.workload_session(&f.template(), 5).await.is_err());
     assert!(server.vision_workload_sources("node", 0).await.is_err());
     assert_eq!(std::fs::read(&f.service.config_path).unwrap(), before);

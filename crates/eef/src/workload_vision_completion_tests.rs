@@ -356,6 +356,7 @@ async fn completed_vision_output_reopens_for_original_origin_without_contacting_
         ("/reconciled", json!(true)),
         ("/execution_requested", json!(true)),
         ("/read_only", json!(false)),
+        ("/metadata", serde_json::Value::Null),
         (
             "/definition/source/parameters/model/model_id",
             json!("other"),

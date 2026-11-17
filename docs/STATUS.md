@@ -12,6 +12,9 @@ success. Existing result commands read that checkpoint for the original origin,
 including while the executing node is offline. Four coordinator cases and
 legacy metadata-result checks await hosted verification. The result-read
 fixture's stale runtime advertisement is corrected without relaxing its fence.
+Generic source review now selects the authenticated vision snapshot while
+retaining its execution refusal; payload-bound results require their metadata
+summary. These extensions await hosted verification.
 Compatible vision execution negotiation, placement, JSON-free authoring and
 full public command/network acceptance remain open.
 
