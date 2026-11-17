@@ -392,3 +392,12 @@ reconnect. A third camera read is deliberately blocked only after the model text
 has been durably retained. The restart must interrupt the job, preserve that text
 in an explicitly unconfirmed result, and permit exact execution-receipt reads
 without new capture or inference. This extension awaits hosted verification.
+
+A distinct-node extension runs those scenarios with a separately authenticated
+input node and camera/model executor. It requires immutable input-origin context,
+results delivered only to that origin, executor restart/reconnect with retained
+text, and no fallback or replay. The input node has no local model, camera
+permission or listening consent; only the source node is configured to capture.
+Both processes use disposable simulated devices
+on the hosted machine; this does not establish physical two-PC acceptance. This
+extension is also pending hosted verification.

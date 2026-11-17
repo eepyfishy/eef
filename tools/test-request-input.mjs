@@ -474,11 +474,23 @@ try {
   nodeId:id,nodeUrl:node,coordinatorUrl:eef,json,until,root,scratch,configPath,inferenceCalls:calls});
  const visionLifecycle=await verifyVisionLifecycleCommands({nodeCli,coordinatorCli:(args,success=true)=>cli('eef',eefConfig,args,success),
   nodeId:id,nodeUrl:node,coordinatorUrl:eef,json,until,root,scratch,configPath,inferenceCalls:calls});
+ // The request origin contributes neither a local model nor camera authority.
+ // Only the separately approved source node may capture and analyze these jobs.
+ await nodeCli(['models','remove','--backend','ollama','--model','fixture-vision']);
+ await nodeCli(['permissions','deny','camera']);await nodeCli(['listening','disable']);
+ await nodeCli(['restart','--wait-seconds','20']);
+ await until(async()=>{const status=await json(node+'/api/status');return status.connection.state==='connected'&&status.models.length===0;},
+  'model-free input origin without camera permission');
+ const remoteVisionLifecycle=await verifyVisionLifecycleCommands({
+  nodeCli:(args,success=true)=>cli('eefn',peerPath,args,success),originCli:nodeCli,originNodeId:id,
+  coordinatorCli:(args,success=true)=>cli('eef',eefConfig,args,success),nodeId:peerId,nodeUrl:`http://127.0.0.1:${peerPort}`,
+  coordinatorUrl:eef,json,until,root,scratch,configPath:peerPath,inferenceCalls:calls,
+  fixturePython:JSON.parse(await readFile(configPath,'utf8')).python,configureSource:true,tracePrefix:'vision-remote-command'});
  for(const original of jobs){
   const job=await json(eef+'/api/jobs/'+original.id);assert.equal(job.id,original.id);assert.equal(job.request_context.origin_node,id);
   assert.equal(job.review_only,true,'Camera grants cannot authorize existing input jobs');assert.equal(job.completed_tasks,0);
  }
- evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,...remoteCamera,...cameraLifecycle,...visionLifecycle,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
+ evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,...remoteCamera,...cameraLifecycle,...visionLifecycle,...remoteVisionLifecycle,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
   normal_input_saved_before_any_inference:true,missing_model_retains_raw_input:true,failed_initial_inference_retains_raw_input:true,
