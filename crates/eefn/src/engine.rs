@@ -555,7 +555,8 @@ impl NodeEngine {
     ) -> Result<Self> {
         self.with_model_request_preferences(policy)
     }
-    /// Snapshot applied owner hints. Saving policy does not mutate this runtime.
+    /// Snapshot owner request preferences and the local exchange ceiling.
+    /// Saving policy does not mutate this runtime.
     pub fn with_model_request_preferences(
         mut self,
         policy: &crate::model_lifecycle_policy::ModelLifecyclePolicy,
