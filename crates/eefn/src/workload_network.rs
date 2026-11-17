@@ -114,13 +114,18 @@ impl Advertisement {
     }
     pub fn for_sources(
         runtime: &str,
-        policy: Policy,
+        mut policy: Policy,
         kinds: Vec<crate::workload_leases::definition::SourceKind>,
     ) -> Result<Self> {
         use crate::workload_leases::definition::SourceKind;
         if kinds.is_empty() {
             return Ok(Self::unavailable());
         }
+        policy.validate()?;
+        // These wire versions negotiate metadata sources only. Keep the new
+        // local opt-in out of their strict legacy policy shape; a future vision
+        // route must explicitly negotiate its own definition/report support.
+        policy.vision_analysis = false;
         let mut value = Self::unavailable();
         value.available = true;
         value.runtime_id = Some(runtime.into());
@@ -159,6 +164,10 @@ impl Advertisement {
         }
         if let Some(policy) = &self.policy {
             policy.validate()?;
+            ensure!(
+                !policy.vision_analysis,
+                "Metadata workload advertisement cannot imply vision support"
+            );
         }
         ensure!(
             !self.available

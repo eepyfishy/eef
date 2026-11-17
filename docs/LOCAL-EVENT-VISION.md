@@ -116,6 +116,15 @@ cover the new path, including held model replies, actual root/child process
 handles, incomplete output, quiet input, revocation and denied preparation.
 Media, encoding and model responses are synthetic; hosted verification is pending.
 
+The initial admitted-runtime run `43989699329` passes both Linux jobs and
+Windows/dashboard, but Windows/headless fails to compile two native fixture calls
+to a test helper with sibling-inaccessible visibility. Its later independent
+native diagnostics also observe exit 101 from the quiet node service, without
+capturing the reason. That run is not accepted. The correction widens only the
+test-only helper's visibility and adds failure-only startup diagnostics; an
+observed exit or redirected diagnostic launch can never satisfy the quiet-service
+acceptance gate. The startup cause remains unresolved pending a new hosted run.
+
 The reviewed journal revision adds a distinct version-three `camera_vision` definition. It
 binds camera and image settings, selected model/backend/digest, prompt, token,
 encoded response/result and per-call time limits. Each image permits at most one
@@ -188,6 +197,12 @@ returned, and installed digests remain unverified until actual analysis. This
 configuration read grants no execution authority. Six source regressions, two
 CLI cases and extensions to control-capacity, legacy-session and native readiness
 checks are pending hosted verification.
+
+Metadata-only execution advertisements retain their exact old policy shape even
+when local vision approval is enabled. That local opt-in cannot imply vision
+support on an older wire version or make strict older peers reject unrelated
+microphone/camera-motion registration. Vision execution still requires distinct
+compatible negotiation; no network fallback is enabled.
 
 The network feature remains incomplete. The private admitted driver is available
 to internal preparation and synthetic fixtures; public offers and automatic source discovery

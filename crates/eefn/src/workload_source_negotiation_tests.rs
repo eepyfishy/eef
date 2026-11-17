@@ -48,6 +48,40 @@ fn source_lists_are_explicit_while_microphone_only_advertisements_keep_the_exact
         "source_kind":"microphone_energy","event_delivery":"bounded_metadata","restart_authorized":false,"completion_payload_prefix":true})
     );
     mic.confirms_source(&microphone().source).unwrap();
+    let mut vision_policy = policy();
+    vision_policy.vision_analysis = true;
+    for kinds in [
+        vec![SourceKind::MicrophoneEnergy],
+        vec![SourceKind::CameraMotion],
+    ] {
+        let reviewed = Advertisement::for_sources(&runtime, policy(), kinds.clone()).unwrap();
+        let local_vision =
+            Advertisement::for_sources(&runtime, vision_policy.clone(), kinds).unwrap();
+        assert_eq!(
+            json!(local_vision),
+            json!(reviewed),
+            "Local vision approval cannot alter an older metadata registration"
+        );
+        assert!(
+            json!(local_vision)["policy"]
+                .get("vision_analysis")
+                .is_none()
+        );
+        assert!(
+            local_vision
+                .confirms_source(
+                    &crate::workload_leases::definition::vision::tests::vision().source
+                )
+                .is_err()
+        );
+        let mut forged = local_vision;
+        forged.policy.as_mut().unwrap().vision_analysis = true;
+        assert!(forged.validate().is_err());
+    }
+    assert!(
+        vision_policy.vision_analysis,
+        "Registration must not clear the owner's saved approval"
+    );
     assert!(mic.confirms_source(&camera().source).is_err());
     let cam =
         Advertisement::for_sources(&runtime, policy(), vec![SourceKind::CameraMotion]).unwrap();

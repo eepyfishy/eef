@@ -129,7 +129,7 @@ pub(crate) fn definition() -> Definition {
         },
     }
 }
-pub(super) async fn proof_for(d: &Definition, remaining_ms: u64) -> LeaseProof {
+pub(crate) async fn proof_for(d: &Definition, remaining_ms: u64) -> LeaseProof {
     let c = d.lease_contract().unwrap();
     let mut issuer = IssuerWindow::new(
         c.clone(),

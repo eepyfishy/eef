@@ -64,7 +64,19 @@ async function quietService(role,source){
   let exit;try{exit=JSON.parse(await text(exitFile));}catch{}
   const observation={role,process_live:!!pid&&(await processes()).some(p=>p.ProcessId===pid),launcher_exit_code:started.exitCode,service_exit:exit??null,distinct_endpoint_ports:api!==gateway};
   await writeFile(join(install,'PRIVATE-startup-observation.json'),JSON.stringify(observation,null,2));
-  console.error('Quiet service startup observation: '+JSON.stringify(observation));throw error;
+  console.error('Quiet service startup observation: '+JSON.stringify(observation));
+  // Diagnostic only after the original gate already failed. Redirecting a
+  // second launch changes console ownership and can never satisfy that gate.
+  // Capture an ordinary panic/error rather than guessing from exit 101.
+  if(exit?.observed_exit){
+   const diagnostic=launch(exe,['--config',config,'--no-ui',...(role==='eef'?['--no-brain','--database',join(install,'quiet.db')]:[])]);
+   const timer=setTimeout(()=>diagnostic.kill(),3000);
+   const result=await diagnostic.result.finally(()=>clearTimeout(timer));
+   const clean=s=>s.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').slice(-8192);
+   await writeFile(join(install,'PRIVATE-startup-diagnostic.json'),JSON.stringify({diagnostic_only:true,...result},null,2));
+   console.error('Failed quiet startup diagnostic (not acceptance): '+JSON.stringify({role,code:result.code,out:clean(result.out),err:clean(result.err)}));
+  }
+  throw error;
  }finally{
   await writeFile(monitorDone,'done');const result=await started.result;assert.equal(result.code,0,'Quiet process observer must complete');await processes(true);
  }
