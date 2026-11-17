@@ -452,6 +452,19 @@ async fn authenticated_result_read_survives_reconnect_without_source_permission_
     let before = ledger
         .workload_analyses(&d.issuer_id, &d.grant_id, 0, 1)
         .unwrap();
+    let expired = tokio::time::Instant::now() - Duration::from_millis(1);
+    assert!(
+        server
+            .retained_workload_analyses(&d, expired)
+            .await
+            .is_err()
+    );
+    assert!(
+        server
+            .completed_workload_analyses(&d, expired)
+            .await
+            .is_err()
+    );
     let page = server
         .inspect_workload_analyses(&d, 0, MAX_PAGE, &Page::seed(&d).unwrap())
         .await

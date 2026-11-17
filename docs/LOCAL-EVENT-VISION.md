@@ -359,6 +359,15 @@ lease renewal or replay. Scope is checked before and after the bounded node wait
 missing/changed pages are not stitched into a supposed complete history.
 This interrupted-result candidate awaits hosted verification.
 
+An additional shipping-executable fixture now configures the owner-selected VLM
+and vision policy through commands, authors and approves an explicit review,
+and exercises completed text delivery and a stop during a pending model request.
+It requires original receipt reuse to leave both the job and model-call count
+unchanged. Only the disposable Python dependency and loopback model endpoint are
+test setup; no hardware or actual model participates. This newer fixture also
+awaits hosted verification. Bounded result assembly now checks the caller's same
+read deadline after full validation, and expired-phase reads have regressions.
+
 The public workflow remains incomplete. Next work needs model placement/capacity
 integration and complete command lifecycle acceptance. Interrupted command
 composition and the full command/network workflow still need acceptance.

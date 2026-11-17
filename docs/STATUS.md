@@ -24,6 +24,13 @@ after the remote wait. New tests cover cross-page ordering, empty/pending
 evidence, reconnect reads and offline coordinator result delivery. This newer
 candidate still needs hosted verification.
 
+A further shipping-command fixture covers positive vision completion and owner
+stop during a pending model request, with explicit owner model/policy selection,
+origin review, approval, read-only output and execution receipt reuse. It is
+synthetic and pending hosted verification. Result assembly also preserves the
+original read deadline through final validation; expired reads cannot return
+late success. No command, application or device was run locally for these checks.
+
 A new Windows native command-service case joins review/approval, the real
 coordinator issuer, pinned node execution and durable result delivery, including
 lease renewal, originating-node output and checkpoint reads after the executor

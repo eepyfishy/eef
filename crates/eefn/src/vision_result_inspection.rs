@@ -93,7 +93,12 @@ impl crate::NodeServer {
         deadline: tokio::time::Instant,
     ) -> Result<crate::grants::workload::VisionHistory> {
         let pages = self.workload_analysis_pages(d, deadline, true).await?;
-        crate::grants::workload::VisionHistory::from_pages(d, pages)
+        let history = crate::grants::workload::VisionHistory::from_pages(d, pages)?;
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "Retained analysis read phase expired"
+        );
+        Ok(history)
     }
     /// Read one frozen retained prefix without asserting completion, resuming
     /// a source or creating authority from historical evidence.
@@ -103,7 +108,12 @@ impl crate::NodeServer {
         deadline: tokio::time::Instant,
     ) -> Result<crate::grants::workload::VisionInspection> {
         let pages = self.workload_analysis_pages(d, deadline, false).await?;
-        crate::grants::workload::VisionInspection::from_pages(d, pages)
+        let inspection = crate::grants::workload::VisionInspection::from_pages(d, pages)?;
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "Retained analysis read phase expired"
+        );
+        Ok(inspection)
     }
     async fn workload_analysis_pages(
         &self,
