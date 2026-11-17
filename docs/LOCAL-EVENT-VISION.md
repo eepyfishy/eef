@@ -421,5 +421,17 @@ A further command fixture closes the model connection after receiving one
 analysis request. It requires an interrupted job with a pending retained intent,
 no analysis text or fabricated completion, working node controls and unchanged
 camera/model counts after result and exact-receipt reads. It runs for both the
-same-node and distinct-node layouts. This lost-reply extension awaits hosted
-verification and does not claim termination of an independent model service.
+same-node and distinct-node layouts. Source `7f31139` passes all four hosted
+jobs in [run 44148059639](https://github.com/eepyfishy/eef/actions/runs/44148059639),
+including 1,849 Windows/headless Rust tests, all 37 native suites and retained
+extra gates. Scoped review accepts this synthetic lost-reply case. It does not
+claim termination of an independent model service.
+
+The next fixture covers the owned llama.cpp branch through the same public
+commands. Owner-selected synthetic GGUF/projector files configure a test-only
+server process; the fixture checks its model alias, multimodal request, active
+request pin and refusal to unload during analysis. Completion must release the
+pin and retain bounded text without another model POST or camera opening on
+receipt reuse. Hosted verification is pending. This tests owned lifecycle and
+command composition, not actual inference, node-wide resource allocation or
+physical camera support; the synthetic server is never packaged.

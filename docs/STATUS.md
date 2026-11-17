@@ -5,11 +5,21 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
-A lost-model-reply fixture is in development: the provider receives one request
-then closes the connection. Public result/receipt reads must retain pending
-uncertainty without another model request or camera opening, and node controls
-must remain available. The same-node and distinct-node extension is pending
-hosted verification.
+Source `7f31139` passes all four hosted jobs in
+[run 44148059639](https://github.com/eepyfishy/eef/actions/runs/44148059639):
+1,849 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and the retained extra gates. Scoped review accepts the synthetic lost
+model reply in both same-node and distinct-node layouts. The provider receives
+one request, then closes the connection; results stay interrupted/unconfirmed
+with one retained intent and no analysis text. Result/receipt reads repeat
+neither inference nor capture, and node controls remain available. This does
+not establish recovery from termination of a separate model process.
+
+An owned llama.cpp vision command fixture is now pending hosted verification.
+It selects a synthetic GGUF/projector through owner commands, starts an owned
+test-only model process, checks the local image request and active model pin,
+then requires durable text and exact-receipt reads without replay. It uses no
+real weights or camera and adds no production fixture hook or resource quota.
 
 Source `fe3a642` passes all four hosted jobs in
 [run 44141704685](https://github.com/eepyfishy/eef/actions/runs/44141704685):

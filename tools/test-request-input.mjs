@@ -8,6 +8,7 @@ import {verifyCameraAuthoringCommands} from './camera-authoring-command-checks.m
 import {verifyRemoteCameraCommands} from './remote-camera-command-checks.mjs';
 import {verifyCameraLifecycleCommands} from './camera-lifecycle-command-checks.mjs';
 import {verifyVisionLifecycleCommands} from './vision-lifecycle-command-checks.mjs';
+import {verifyOwnedVisionCommands} from './vision-owned-model-command-checks.mjs';
 // Explicit owner TLS pairing. Input stays review-only; a separate camera fixture
 // explicitly approves bounded work. No UI controller or raw workload RPC.
 import assert from 'node:assert/strict';
@@ -20,7 +21,7 @@ const root=resolve(import.meta.dirname,'..'),scratch=await mkdtemp(join(root,'.v
 const bin=resolve(process.env.EEF_TEST_BINARY_DIR||join(root,'target/debug'));
 const configPath=join(scratch,'node.json'),eefConfig=join(scratch,'eef.yaml'),marker=configPath+'.api.json';
 const children=[],calls=[],proxyCalls=[],gates=new Set();let node='',mode='valid',proxyMode='drop',inferenceObserver=null;
-const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),
+const env={...process.env,EEF_NODE_PSK:'',APPDATA:join(scratch,'appdata'),EEF_DISCOVERY_DIR:join(scratch,'discovery'),EEF_MODEL_STARTUP_FIXTURE:'1',
  PATH:join(root,'.tooling/llvm-mingw-20260616-ucrt-x86_64/bin')+';'+process.env.PATH};
 function launch(name,args,extra={}) {
  const child=spawn(join(bin,name+'.exe'),args,{cwd:root,windowsHide:true,env:{...env,...extra},stdio:['ignore','pipe','pipe']});
@@ -488,11 +489,14 @@ try {
   originText:args=>cli('eefn',configPath,args,true,false),coordinatorText:args=>cli('eef',eefConfig,args,true,false),
   coordinatorUrl:eef,json,until,root,scratch,configPath:peerPath,inferenceCalls:calls,
   fixturePython:JSON.parse(await readFile(configPath,'utf8')).python,configureSource:true,tracePrefix:'vision-remote-command'});
+ const ownedVision=await verifyOwnedVisionCommands({sourceCli:(args,success=true)=>cli('eefn',peerPath,args,success),
+  originCli:nodeCli,owner:(args,success=true)=>cli('eef',eefConfig,args,success),sourcePath:peerPath,sourceId:peerId,
+  sourceUrl:`http://127.0.0.1:${peerPort}`,originId:id,coordinatorUrl:eef,json,until,root,scratch,bin});
  for(const original of jobs){
   const job=await json(eef+'/api/jobs/'+original.id);assert.equal(job.id,original.id);assert.equal(job.request_context.origin_node,id);
   assert.equal(job.review_only,true,'Camera grants cannot authorize existing input jobs');assert.equal(job.completed_tasks,0);
  }
- evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,...remoteCamera,...cameraLifecycle,...visionLifecycle,...remoteVisionLifecycle,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
+ evidence={...microphone.evidence,...cameraAuthoring.evidence,...cameraSources,...cameraSetup,...remoteCamera,...cameraLifecycle,...visionLifecycle,...remoteVisionLifecycle,...ownedVision,passed:true,physical_two_pc:false,real_inference:false,pinned_tls:true,api_only:true,fresh_input_prepares_without_execution:true,
   clarification_consistent_generation_schema:true,method_generation_unchanged:true,explicit_timing_propagates_to_all_model_stages:true,
   changing_wait_on_retained_receipts_never_replays_inference:true,short_timing_preserves_partial_answer_and_source:true,
   normal_input_saved_before_any_inference:true,missing_model_retains_raw_input:true,failed_initial_inference_retains_raw_input:true,
