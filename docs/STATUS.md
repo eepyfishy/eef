@@ -5,6 +5,12 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+A lost-model-reply fixture is in development: the provider receives one request
+then closes the connection. Public result/receipt reads must retain pending
+uncertainty without another model request or camera opening, and node controls
+must remain available. The same-node and distinct-node extension is pending
+hosted verification.
+
 A command-output candidate renders workload results as status and analysis text
 by default, keeping `--json` unchanged. Validated interrupted evidence remains
 clearly unconfirmed; model text cannot inject terminal controls or unindented

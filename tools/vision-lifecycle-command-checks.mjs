@@ -23,6 +23,7 @@ export async function verifyVisionLifecycleCommands(f) {
    assert.deepEqual(body.messages[0].images,['/9gBAgME/9k=']);
    const call={mode,release:null};calls.push(call);
    await new Promise(r=>{call.release=r;waiting.push(r);});
+   if(call.mode==='response-loss') {res.destroy();return;}
    res.end(JSON.stringify({message:{content:'movement detected'},done:true,done_reason:'stop'}));
   } catch(error) {problem=error;res.writeHead(500);res.end('{}');}
  });
@@ -74,7 +75,7 @@ export async function verifyVisionLifecycleCommands(f) {
     return status.runtime_id!==previous&&status.registered_node_count===2;},'apply directional source disclosure');
    assert.equal(calls.length,before,'Disclosure and reconnect cannot run model work');
   }
-  for(mode of ['complete','stop','restart']) {
+  for(mode of ['complete','stop','restart','response-loss']) {
    const trace=join(f.scratch,(f.tracePrefix||'vision-command')+'-'+mode);await mkdir(trace);
    const restartBarrier=mode==='restart'?`
 import time as _vision_time
@@ -139,9 +140,9 @@ _v_camera.on_read = _vision_wait_for_restart
     assert.equal(value.report_type,'coordinator_workload_uncertain_result');assert.equal(value.job_completed,false);
     assert.equal(value.outcome_confirmed,false);assert.equal(value.analysis_availability,'retained_snapshot');
     assert.equal(value.vision.summary.calls,1);assert.equal(value.vision.completion,null);
-    if(mode==='stop') {
+    if(mode!=='restart') {
      assert.equal(value.vision.summary.completed,0);assert.equal(value.vision.analyses[0].result,null);
-     calls.at(-1).release();
+     if(mode==='stop')calls.at(-1).release();
     } else {
      assert.equal(value.vision.receipt.state,'unknown');assert.equal(value.vision.summary.completed,1);
      assert.equal(value.vision.analyses[0].result.text,'movement detected');
@@ -156,7 +157,7 @@ _v_camera.on_read = _vision_wait_for_restart
     assert(display.includes(mode==='complete'?'Status: completed (coordinator checkpoint)':
      'Status: interrupted; completion unconfirmed'));
     assert(!display.includes('"report_type"')&&!display.includes('"success"'));
-    if(mode!=='stop')assert(display.includes('movement detected'));
+    if(mode==='complete'||mode==='restart')assert(display.includes('movement detected'));
     else assert(display.includes('pending; outcome unconfirmed'));
    }
    assert.equal((await originCli(args)).result.reused,true);
@@ -164,6 +165,13 @@ _v_camera.on_read = _vision_wait_for_restart
    assert.deepEqual(await job(id),saved,'Inspection cannot reconcile or rewrite the job');
    assert.equal((await readFile(join(trace,'trace'),'utf8')).split('\n').filter(line=>line==='open').length,1,
     'Receipt/result reads and reconnect cannot reopen the camera');
+   if(mode==='response-loss') {
+    assert.equal((await f.json(f.nodeUrl+'/api/status')).connection.state,'connected');
+    const passive=await f.nodeCli(['workloads','vision-sources']);
+    assert.equal(passive.capture_started,false);assert.equal(passive.model_contacted,false);
+    assert.equal(calls.length,before+1,'Lost model replies and passive inspection cannot retry inference');
+    console.log('Lost vision reply validation passed: one model request, pending retained evidence, usable node controls and no implicit retry.');
+   }
    const raw=JSON.stringify({saved,result});
    for(const secret of ['PRIVATE_CAMERA_PASSWORD','rtsp://','/9gBAgME/9k=','image_base64'])assert(!raw.includes(secret));
    if(problem)throw problem;
@@ -174,6 +182,7 @@ _v_camera.on_read = _vision_wait_for_restart
   if(originId!==f.nodeId)console.log('Distributed vision lifecycle validation passed: distinct authenticated origin/executor, immutable context, private result ownership and executor restart without replay; simulated devices only.');
   return {vision_executable_completion:true,vision_executable_pending_stop:true,
    vision_executable_restart_retained_text:true,
+   vision_lost_model_reply_no_retry:true,
    vision_distinct_origin_executor:originId!==f.nodeId,
    vision_executable_no_replay:true,vision_physical_accepted:false,vision_real_model_accepted:false};
  } finally {

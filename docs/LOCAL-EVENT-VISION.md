@@ -410,3 +410,10 @@ had not obtained the existing directional disclosure grant. The correction
 retains that denial check, then applies owner approval and the required
 coordinator restart through commands. This changes fixture setup, not source
 disclosure or capability permissions. The corrected source requires fresh tests.
+
+A further command fixture closes the model connection after receiving one
+analysis request. It requires an interrupted job with a pending retained intent,
+no analysis text or fabricated completion, working node controls and unchanged
+camera/model counts after result and exact-receipt reads. It runs for both the
+same-node and distinct-node layouts. This lost-reply extension awaits hosted
+verification and does not claim termination of an independent model service.
