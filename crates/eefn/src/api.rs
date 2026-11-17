@@ -136,6 +136,10 @@ impl NodeService {
                 post(camera_workload_sources).layer(axum::extract::DefaultBodyLimit::max(4096)),
             )
             .route(
+                "/api/commands/vision-workload-sources",
+                post(vision_workload_sources).layer(axum::extract::DefaultBodyLimit::max(4096)),
+            )
+            .route(
                 "/api/commands/camera-setup",
                 post(camera_setup).layer(axum::extract::DefaultBodyLimit::max(8192)),
             )
@@ -371,6 +375,12 @@ async fn camera_workload_sources(
     Json(request): Json<crate::camera_sources::Request>,
 ) -> Result<Json<Value>, ApiError> {
     Ok(Json(state.camera_workload_sources(request)?))
+}
+async fn vision_workload_sources(
+    State(state): State<Arc<NodeService>>,
+    Json(request): Json<crate::vision_sources::Request>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(state.vision_workload_sources(request)?))
 }
 async fn workload_policy(
     State(state): State<Arc<NodeService>>,

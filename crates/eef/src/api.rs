@@ -255,6 +255,10 @@ pub fn router_with_ui(runtime: Arc<Runtime>, ui_enabled: bool) -> Router {
             post(node_camera_workload_sources).layer(axum::extract::DefaultBodyLimit::max(4096)),
         )
         .route(
+            "/api/commands/node/vision-workload-sources",
+            post(node_vision_workload_sources).layer(axum::extract::DefaultBodyLimit::max(4096)),
+        )
+        .route(
             "/api/commands/node/relay",
             post(node_relay).layer(axum::extract::DefaultBodyLimit::max(8192)),
         )
@@ -632,6 +636,19 @@ async fn node_camera_workload_sources(
     let report = runtime
         .node_server
         .camera_workload_sources(&request.node_id, 5)
+        .await?;
+    Ok(Json(serde_json::json!(report)))
+}
+async fn node_vision_workload_sources(
+    State(runtime): State<Arc<Runtime>>,
+    Json(request): Json<NodeSourceRequest>,
+) -> ApiResult<Value> {
+    if request.schema_version != 2 {
+        return Err(anyhow::anyhow!("Unsupported vision source inspection schema").into());
+    }
+    let report = runtime
+        .node_server
+        .vision_workload_sources(&request.node_id, 5)
         .await?;
     Ok(Json(serde_json::json!(report)))
 }

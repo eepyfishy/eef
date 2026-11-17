@@ -34,6 +34,8 @@ pub enum Action {
     Sources,
     /// Inspect configured camera resources without opening a device.
     CameraSources,
+    /// Inspect camera and applied vision model configuration; no probes or work.
+    VisionSources,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -177,10 +177,22 @@ is used.
 
 ## Remaining integration
 
+The next passive inspection candidate adds `eefn workloads vision-sources` and
+`eef node vision-workload-sources --node NODE_ID`, backed by the local and
+coordinator command APIs. A strict, bounded report composes camera configuration
+with applied local vision model selections and owner policy. Saved/applied model
+differences require restart and review. Runtime/session/freshness checks surround
+the independently authenticated remote read; legacy peers cannot fall back to
+camera-only inspection. No device or model is contacted, no private URL/path is
+returned, and installed digests remain unverified until actual analysis. This
+configuration read grants no execution authority. Six source regressions, two
+CLI cases and extensions to control-capacity, legacy-session and native readiness
+checks are pending hosted verification.
+
 The network feature remains incomplete. The private admitted driver is available
-to internal preparation and synthetic fixtures; public offers and source discovery
+to internal preparation and synthetic fixtures; public offers and automatic source discovery
 still refuse vision workloads. Next work needs compatible feature negotiation,
-passive camera/model readiness, placement and command-based job review and result
+source selection, placement and command-based job review and result
 retrieval. Approved bounded text can leave the node through the authenticated job
 lifecycle; camera images must stay off coordinator traffic and history. Model
 absence, revocation, expiry, stop, restart and lost replies must not cause fallback

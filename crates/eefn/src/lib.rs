@@ -118,6 +118,7 @@ pub mod startup;
 pub mod submission;
 pub mod tls;
 pub mod updater;
+pub mod vision_sources;
 mod workload_events;
 pub mod workload_inspection;
 pub mod workload_leases;

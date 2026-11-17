@@ -86,6 +86,37 @@ pub(crate) struct LocalBinding<'a> {
     client: reqwest::Client,
 }
 impl NodeEngine {
+    pub(crate) fn passive_vision_models(
+        &self,
+        saved: &Value,
+    ) -> Result<(Vec<crate::vision_sources::Model>, bool)> {
+        let mut rows = Vec::new();
+        for (model_id, metadata) in &self.ollama_models {
+            if metadata.supports("vlm.analyze") && metadata.routable() {
+                rows.push(crate::vision_sources::Model {
+                    backend: Backend::Ollama,
+                    model_id: model_id.clone(),
+                    local_endpoint_configured: local_base(&self.ollama_url).is_ok(),
+                });
+            }
+        }
+        if let Some(server) = &self.model_server {
+            for slot in &server.slots {
+                let metadata = slot.selection_metadata()?;
+                if metadata.supports("vlm.analyze") && metadata.routable() {
+                    rows.push(crate::vision_sources::Model {
+                        backend: Backend::Llamacpp,
+                        model_id: slot.model_id.clone(),
+                        local_endpoint_configured: server
+                            .base_url(Some(&slot.model_id))
+                            .is_some_and(|url| local_base(&url).is_ok()),
+                    });
+                }
+            }
+        }
+        rows.sort_by(|a, b| (a.backend.name(), &a.model_id).cmp(&(b.backend.name(), &b.model_id)));
+        Ok((rows, self.granted_model_config.as_ref() == Some(saved)))
+    }
     pub(crate) fn bind_local_vision(&self, selection: &ModelSelection) -> Result<LocalBinding<'_>> {
         selection.validate()?;
         let base = match selection.backend {

@@ -2771,7 +2771,13 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
             source_command,
             eefn::workload_sources::Action::CameraSources
         );
-        let operation = if camera {
+        let vision = matches!(
+            source_command,
+            eefn::workload_sources::Action::VisionSources
+        );
+        let operation = if vision {
+            "vision-workload-sources"
+        } else if camera {
             "camera-workload-sources"
         } else {
             "workload-sources"
@@ -2783,7 +2789,10 @@ async fn execute_command(args: &Args, command: &Commands) -> Result<serde_json::
             .await?
             .error_for_status()?;
         let value = eefn::model_manager::bounded_json(response).await?;
-        if camera {
+        if vision {
+            let report: eefn::vision_sources::Report = serde_json::from_value(value.clone())?;
+            report.validate(&request)?;
+        } else if camera {
             let report: eefn::camera_sources::Report = serde_json::from_value(value.clone())?;
             report.validate(&request)?;
         } else {
@@ -3871,6 +3880,13 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
                     if matches!(
                         command,
                         Commands::Workloads {
+                            command: eefn::workload_sources::Action::VisionSources
+                        }
+                    ) {
+                        print!("{}", eefn::vision_sources::render(&value)?);
+                    } else if matches!(
+                        command,
+                        Commands::Workloads {
                             command: eefn::workload_sources::Action::CameraSources
                         }
                     ) {
@@ -4912,6 +4928,30 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn vision_source_cli_is_a_passive_read_without_selection_or_execution_options() {
+        use clap::Parser;
+        let base = ["eefn", "workloads", "vision-sources"];
+        let args = super::Args::try_parse_from(base).unwrap();
+        assert!(!args.is_service());
+        assert!(matches!(
+            args.command,
+            Some(super::Commands::Workloads {
+                command: eefn::workload_sources::Action::VisionSources
+            })
+        ));
+        for flag in [
+            "--allow",
+            "--device",
+            "--execute",
+            "--model-id",
+            "--download",
+            "--restart",
+            "--grant",
+        ] {
+            assert!(super::Args::try_parse_from(base.into_iter().chain([flag])).is_err());
+        }
+    }
     #[test]
     fn camera_source_cli_is_a_read_without_capture_permission_or_execution_options() {
         use clap::Parser;

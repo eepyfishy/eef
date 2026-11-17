@@ -1080,6 +1080,7 @@ impl NodeClient {
                     action.as_str(),
                     "workload_sources"
                         | "camera_workload_sources"
+                        | "vision_workload_sources"
                         | "camera_setup"
                         | "camera_setup_status"
                         | "camera_check"
@@ -1547,6 +1548,7 @@ mod tests {
         for action in [
             "workload_sources",
             "camera_workload_sources",
+            "vision_workload_sources",
             "camera_setup",
             "camera_setup_status",
             "camera_check",

@@ -90,6 +90,7 @@ impl RequestBudget {
                         | "python_policy_status"
                         | "workload_sources"
                         | "camera_workload_sources"
+                        | "vision_workload_sources"
                         | "camera_setup_status"
                         | "camera_setup"
                         | "workload_policy_status"
@@ -272,7 +273,21 @@ mod tests {
                 .is_none()
         );
         assert!(budget.admit("node.configure", "workload_sources").is_none());
+        assert!(
+            budget
+                .admit("node.configure", "vision_workload_sources")
+                .is_none()
+        );
         drop(read);
+        let vision = budget
+            .admit("node.configure", "vision_workload_sources")
+            .unwrap();
+        assert!(
+            budget
+                .admit("node.configure", "camera_workload_sources")
+                .is_none()
+        );
+        drop(vision);
         assert!(budget.admit("node.configure", "workload_sources").is_some());
         assert!(budget.admit("llm.infer", "run").is_none());
         drop(work);

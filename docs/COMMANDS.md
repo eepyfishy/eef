@@ -246,6 +246,18 @@ revocation epoch when camera settings are present; enabling consent uses that
 fresh epoch and refuses stale decisions, including after a failed permission save.
 See [camera integration status](CAMERA-MOTION.md).
 
+The unreleased vision inspection path adds applied model configuration:
+
+    eefn workloads vision-sources
+    eef node vision-workload-sources --node NODE_ID
+
+These inspect camera bindings, local vision-capable model selections, owner
+approval and settings that need a restart. They contact neither camera nor model,
+change no permission, and reveal no private endpoint, device binding or model
+file path. `configuration_ready` describes the applied configuration; it does
+not verify installed model identity, model quality or physical devices. Network
+vision execution remains unavailable. See [vision integration status](LOCAL-EVENT-VISION.md).
+
 ## Continuous-workload policy (in development)
 
     eefn workload-policy show

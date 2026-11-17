@@ -262,6 +262,23 @@ async fn admitted_vision_saves_intent_before_model_and_completes_exact_source_an
 {
     let (listener, url) = listener().await;
     let f = Fixture::new(url, false);
+    let readiness: crate::vision_sources::Report = serde_json::from_value(
+        f.service
+            .vision_workload_sources(crate::vision_sources::Request {
+                schema_version: 2,
+                expected_node_id: "node".into(),
+                expected_runtime_id: f.runtime.clone(),
+            })
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(readiness.configuration_ready);
+    assert!(
+        !readiness.model_contacted && !readiness.capture_started && !readiness.execution_available
+    );
+    readiness
+        .confirms_template(&f.definition.template())
+        .unwrap();
     let source = f.prepare().unwrap();
     assert!(!f.root().join("trace").exists());
     let (ledger, consumed) = f.consume().await;

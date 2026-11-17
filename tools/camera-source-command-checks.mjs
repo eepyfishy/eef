@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {readFile,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
+import {verifyVisionSourceCommands} from './vision-source-command-checks.mjs';
 
 export async function verifyCameraSourceCommands(f) {
  const before=await readFile(f.configPath,'utf8'),inferenceCount=f.inferenceCalls.length;
@@ -47,5 +48,6 @@ export async function verifyCameraSourceCommands(f) {
  assert.deepEqual(await f.nodeCli(command),report);
  assert.equal(f.inferenceCalls.length,inferenceCount);assert.equal(await readFile(f.configPath,'utf8'),before);
  console.log('Camera source command validation passed: passive bindings, scoped API, human output and old/forged/lost replies; no capture or inference.');
- return {camera_source_commands:true,camera_source_private_bindings:true,camera_source_no_fallback_or_retry:true};
+ const vision=await verifyVisionSourceCommands(f);
+ return {...vision,camera_source_commands:true,camera_source_private_bindings:true,camera_source_no_fallback_or_retry:true};
 }

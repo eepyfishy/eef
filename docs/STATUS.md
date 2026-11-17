@@ -5,6 +5,14 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+The next command candidate adds passive local/coordinator `vision-sources`
+inspection, reporting camera/model bindings, explicit owner approval and pending
+restart differences. Inspection neither probes the provider/device nor changes
+permissions; configured readiness is separate from installed-model and physical
+readiness. Six source and two CLI regressions plus extensions to existing
+authentication/control/native tests await hosted verification. Automatic vision
+source selection and network execution remain disabled.
+
 The private admitted vision driver now joins camera ownership, consumed leases,
 durable analysis intents/results and version-three completion evidence. A separate
 owner opt-in is required and clearing workload sharing clears that approval.

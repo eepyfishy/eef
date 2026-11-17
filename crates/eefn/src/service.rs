@@ -1058,6 +1058,9 @@ impl NodeService {
         if action == "camera_workload_sources" {
             return self.camera_workload_sources(serde_json::from_value(params)?);
         }
+        if action == "vision_workload_sources" {
+            return self.vision_workload_sources(serde_json::from_value(params)?);
+        }
         if action == "workload_sources" {
             return self.workload_sources(serde_json::from_value(params)?);
         }

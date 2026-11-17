@@ -83,10 +83,11 @@ const fake=createServer(async(req,res)=>{
 });
 const proxy=createServer(async(req,res)=>{
  proxyCalls.push({url:req.url,mode:proxyMode});
- if(proxyMode.startsWith('camera-')&&req.url==='/api/diagnostics'){
+ if((proxyMode.startsWith('camera-')||proxyMode.startsWith('vision-'))&&req.url==='/api/diagnostics'){
   const response=await fetch(node+req.url);res.writeHead(response.status,{'Content-Type':'application/json'});return res.end(await response.text());
  }
  if(proxyMode==='camera-old'){res.writeHead(404);return res.end('{}');}
+ if(proxyMode==='vision-old'){res.writeHead(404);return res.end('{}');}
  if(proxyMode==='camera-setup-old'){res.writeHead(404);return res.end('{}');}
  if(proxyMode==='old'){res.writeHead(404);return res.end('{}');}
  try {
@@ -97,6 +98,7 @@ const proxy=createServer(async(req,res)=>{
    if(proxyMode==='camera-setup-forge') {value.request_sha256='f'.repeat(64);res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   }
   if(proxyMode==='camera-forge'){value.source_kind='microphone_energy';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
+  if(proxyMode==='vision-forge'){value.source_kind='camera_motion';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='microphone-forge'){value.command.input.title='Forged microphone title';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='camera-authoring-forge'){value.command.input.title='Forged camera title';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
   if(proxyMode==='corrupt'){value.result.request_context.origin_node='forged';res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(value));}
