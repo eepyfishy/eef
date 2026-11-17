@@ -237,6 +237,27 @@ early connection/journal failures directly. It also bounds completed-history
 assembly under a caller deadline and redacts retained text in diagnostic
 formatting. This result-read candidate remains unaccepted pending new hosted gates.
 
+The next hosted run isolates the remaining failure: the fixture's advertised
+runtime and live runtime status differed, so the existing registration fence
+correctly rejected it. The fixture now pins the same generated runtime in both
+places; production registration checks are unchanged.
+
+The coordinator persistence candidate records the selected model/backend in
+planning and assignment, preserves the reviewed definition version and reserves
+combined text/metadata storage before issuance. Vision completion requires both
+the original durable event prefix and a full matching completed analysis history.
+Missing or changed results cannot complete work, and a saved result cannot create
+a new issuer. Metadata-only completion serialization remains unchanged.
+
+The existing `requests result JOB_ID --grant-id GRANT_UUID` command reads completed
+workload data from the coordinator journal, including approved analysis text when
+present. It checks the immutable origin and exact grant without contacting the
+executing node. Event metadata is summarized to keep command replies bounded;
+the full event prefix remains validated in the journal. Results remain readable
+when the executing node is offline. Four coordinator regressions exercise
+issuance/opt-in, durable reopen/origin checks, incomplete/mismatched completion
+and storage refusal before issuance. Hosted verification is pending.
+
 Metadata-only execution advertisements retain their exact old policy shape even
 when local vision approval is enabled. That local opt-in cannot imply vision
 support on an older wire version or make strict older peers reject unrelated
@@ -246,8 +267,9 @@ compatible negotiation; no network fallback is enabled.
 The network feature remains incomplete. The private admitted driver is available
 to internal preparation and synthetic fixtures; public offers and automatic source discovery
 still refuse vision workloads. Next work needs compatible feature negotiation,
-source selection, placement and command-based job review and result
-retrieval. Approved bounded text can leave the node through the authenticated job
+source selection, placement and JSON-free job authoring. Interrupted outcome
+inspection and the full command/network workflow still need integration tests.
+Approved bounded text can leave the node through the authenticated job
 lifecycle; camera images must stay off coordinator traffic and history. Model
 absence, revocation, expiry, stop, restart and lost replies must not cause fallback
 or replay. Native end-to-end command and network tests are required before calling

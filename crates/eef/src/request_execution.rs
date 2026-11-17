@@ -180,12 +180,14 @@ pub(crate) fn reserved_bytes(plan: &Plan) -> usize {
                 .definition
                 .events
                 .max_total_bytes
-                .saturating_add(2 * 65536 + 8192 + crate::workload_jobs::COMPLETION_RESERVE),
+                .saturating_add(2 * 65536 + 8192)
+                .saturating_add(crate::workload_jobs::completion_reserve(&w.definition)),
             AttemptState::Accepted => w
                 .definition
                 .events
                 .max_total_bytes
-                .saturating_add(8192 + crate::workload_jobs::COMPLETION_RESERVE),
+                .saturating_add(8192)
+                .saturating_add(crate::workload_jobs::completion_reserve(&w.definition)),
             _ => 0,
         };
     }
@@ -1072,6 +1074,18 @@ impl crate::Runtime {
         command.validate()?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         let plan = self.engine.store.get_before(&command.id, deadline).await?;
+        if plan
+            .execution
+            .as_ref()
+            .is_some_and(|e| e.workload.is_some())
+        {
+            return crate::workload_job_inspection::result(
+                &plan,
+                &command,
+                origin,
+                &self.instance_id,
+            );
+        }
         let attempt = receipt_attempt(&plan, &command, origin)?;
         let result = inspect_before(
             deadline,

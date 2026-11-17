@@ -85,3 +85,42 @@ pub(crate) fn report(
     }
     Ok(report)
 }
+pub(crate) fn result(
+    plan: &Plan,
+    command: &eefn::request_result::ResultCommand,
+    origin: Option<&str>,
+    runtime: &str,
+) -> Result<Value> {
+    let execution = retained(plan, command, origin)?;
+    let completion = execution.completion.as_ref().context(
+        "Workload has no coordinator-persisted completion; inspect its receipt without replay",
+    )?;
+    let report = eefn::workload_result::Report {
+        schema_version: 1,
+        report_type: "coordinator_workload_result".into(),
+        success: true,
+        runtime_id: runtime.into(),
+        id: plan.plan_id.clone(),
+        revision: plan.revision,
+        request_context: execution.definition.request_context.clone(),
+        definition: execution.definition.clone(),
+        receipt: completion.receipt.clone(),
+        completion: completion.report.clone(),
+        metadata: if execution.observations.is_empty() {
+            None
+        } else {
+            Some(eefn::workload_network::summarize_events(
+                &execution.definition,
+                &execution.observations,
+            )?)
+        },
+        vision: completion.vision.clone(),
+        read_only: true,
+        execution_requested: false,
+        automatically_retried: false,
+        reconciled: false,
+        note: eefn::workload_result::NOTE.into(),
+    };
+    report.validate(command, origin, Some(runtime))?;
+    Ok(json!(report))
+}

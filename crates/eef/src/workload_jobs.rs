@@ -30,6 +30,15 @@ mod completion;
 mod leases;
 pub use completion::Completion;
 pub(crate) const COMPLETION_RESERVE: usize = 16 * 1024;
+pub(crate) fn completion_reserve(d: &Definition) -> usize {
+    if d.schema_version == 3 {
+        eefn::grants::workload::VisionHistory::max_bytes(d)
+            .map(|n| n.saturating_add(COMPLETION_RESERVE))
+            .unwrap_or(usize::MAX)
+    } else {
+        COMPLETION_RESERVE
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -141,13 +150,13 @@ fn template(plan: &Plan) -> Result<Template> {
     );
     Template::from_params(&plan.goal.params)
 }
-fn mirror(w: &Template) -> GrantLimits {
+fn mirror(w: &Template) -> Result<GrantLimits> {
     // These schema-two fields mirror the short window/reporting budget for
     // compatibility of the common record. scope() refuses them as v1 authority.
-    GrantLimits {
+    Ok(GrantLimits {
         max_execution_ms: w.limits.max_lease_ms,
-        max_result_bytes: w.events.max_total_bytes,
-    }
+        max_result_bytes: w.max_retained_result_bytes()?,
+    })
 }
 fn unique_operation(plan: &Plan, id: &str) -> Result<()> {
     eefn::automation_occurrence::uuid(id)?;
@@ -181,7 +190,7 @@ pub(crate) fn validate_approval(plan: &Plan) -> Result<()> {
             && p.schema_version == 2
             && a.plan_sha256 == p.plan_sha256
             && hex(&a.issuer_id)
-            && a.limits == mirror(&w)
+            && a.limits == mirror(&w)?
             && a.source_revision > p.source_revision
             && a.source_revision < plan.revision
             && a.approved_at_ms >= p.compiled_at_ms
@@ -259,8 +268,8 @@ pub(crate) fn validate_execution(plan: &Plan) -> Result<()> {
         assignment.attempt == 1
             && assignment.node_id == t.executor_node
             && assignment.resource_id.as_deref() == Some(t.resource_id())
-            && assignment.model_id.is_none()
-            && assignment.backend.is_none()
+            && assignment.model_id.as_deref() == t.model_binding().map(|(m, _)| m)
+            && assignment.backend.as_deref() == t.model_binding().map(|(_, b)| b)
             && assignment.assigned_at_ms == w.issued_at_ms,
         "Workload assignment changed"
     );
@@ -381,8 +390,8 @@ pub(crate) fn compile(
             task_id: compiled.tasks[0].task_id.clone(),
             node_id: w.executor_node.clone(),
             resource_id: Some(w.resource_id().into()),
-            model_id: None,
-            backend: None,
+            model_id: w.model_binding().map(|(m, _)| m.into()),
+            backend: w.model_binding().map(|(_, b)| b.into()),
         }],
         plan_sha256: String::new(),
         preparation: None,
@@ -448,7 +457,7 @@ pub(crate) fn approve(
         expires_at_ms: now
             .checked_add(command.valid_for_ms)
             .context("Approval time overflow")?,
-        limits: mirror(&w),
+        limits: mirror(&w)?,
         approval_sha256: String::new(),
         delegation: None,
         workload: Some(w),
@@ -695,7 +704,7 @@ async fn issue_inner(
         .checked_add(Duration::from_millis(w.limits.max_session_ms))
         .context("Session deadline overflow")?;
     let definition = Definition {
-        schema_version: 2,
+        schema_version: w.schema_version,
         grant_id: uuid::Uuid::new_v4().to_string(),
         issuer_id: a.issuer_id.clone(),
         session_id: session.into(),
@@ -716,6 +725,7 @@ async fn issue_inner(
     };
     // Keep this one original window on the caller, including across native
     // persistence and post-commit inspection. Journal bytes cannot recreate it.
+    policy.permits_definition(&definition)?;
     let window = IssuerWindow::new(definition.lease_contract()?, policy, deadline)?;
     let observed_until = observation_deadline.min(tokio::time::Instant::from_std(deadline));
     let mut checkpoint: crate::jobs::CommittedIssue = store

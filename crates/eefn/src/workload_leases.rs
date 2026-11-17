@@ -54,7 +54,8 @@ impl Policy {
         );
         Ok(())
     }
-    pub(crate) fn permits_definition(&self, definition: &definition::Definition) -> Result<()> {
+    /// Pure bounds/opt-in validation, not a grant or proof of current owner consent.
+    pub fn permits_definition(&self, definition: &definition::Definition) -> Result<()> {
         definition.lease_contract()?.permitted(self)?;
         ensure!(
             definition.schema_version != 3 || self.vision_analysis,

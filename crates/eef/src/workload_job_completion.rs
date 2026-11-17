@@ -9,6 +9,8 @@ pub struct Completion {
     pub schema_version: u32,
     pub receipt: eefn::request_receipt::ConsumedReceipt,
     pub report: eefn::grants::workload::CompletionReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision: Option<eefn::grants::workload::VisionHistory>,
     pub last_issued_lease_sequence: u64,
     pub recorded_at_ms: u64,
 }
@@ -18,12 +20,17 @@ impl Completion {
         definition: &Definition,
         events: &[eefn::workload_network::Event],
     ) -> Result<()> {
+        ensure!(
+            definition.schema_version != 3 || !events.is_empty(),
+            "Vision completion requires its durable metadata prefix"
+        );
         if !events.is_empty() {
             let summary = eefn::workload_network::summarize_events(definition, events)?;
             ensure!(
                 self.report.event_count == summary.count
                     && self.report.event_bytes == summary.bytes
-                    && self.report.schema_version == 2
+                    && self.report.schema_version
+                        == (if definition.schema_version == 3 { 3 } else { 2 })
                     && self.report.event_payload_prefix_sha256.as_deref()
                         == Some(summary.prefix_sha256.as_str()),
                 "Workload completion differs from the retained event prefix"
@@ -49,9 +56,24 @@ impl Completion {
     ) -> Result<()> {
         ack.validate()?;
         self.node_receipt(definition).validate()?;
+        match (&self.vision, definition.schema_version) {
+            (Some(history), 3) => {
+                history.validate(definition)?;
+                ensure!(
+                    self.schema_version == 2
+                        && history.receipt == self.receipt
+                        && json!(history.completion) == json!(self.report),
+                    "Vision completion differs from its retained results"
+                );
+            }
+            (None, 2) => ensure!(
+                self.schema_version == 1,
+                "Unsupported metadata completion schema"
+            ),
+            _ => bail!("Workload completion lacks its exact source results"),
+        }
         ensure!(
-            self.schema_version == 1
-                && ack.definition == *definition
+            ack.definition == *definition
                 && ack.receipt.state == "accepted"
                 && self.receipt.state == "completed"
                 && self.receipt.accepted_at_ms == ack.receipt.accepted_at_ms
@@ -59,13 +81,19 @@ impl Completion {
                 && self.report.recorded_at_ms >= ack.receipt.updated_at_ms
                 && self.report.lease_sequence <= self.last_issued_lease_sequence
                 && self.recorded_at_ms >= issued_at_ms
-                && serde_json::to_vec(self)?.len() <= COMPLETION_RESERVE - 1024,
+                && serde_json::to_vec(self)?.len()
+                    <= completion_reserve(definition).saturating_sub(1024),
             "Completed workload differs from its consumed ACK or issued lease history"
         );
         Ok(())
     }
-    fn confirms(&self, receipt: &NodeReceipt) -> bool {
+    fn confirms(
+        &self,
+        receipt: &NodeReceipt,
+        vision: &Option<eefn::grants::workload::VisionHistory>,
+    ) -> bool {
         json!(self.node_receipt(&receipt.definition)) == json!(receipt)
+            && json!(self.vision) == json!(vision)
     }
 }
 impl Issued {
@@ -74,6 +102,30 @@ impl Issued {
     pub async fn complete(
         &mut self,
         receipt: NodeReceipt,
+        issuer: &str,
+        session: &str,
+        node: &str,
+        deadline: tokio::time::Instant,
+    ) -> Result<Plan> {
+        self.complete_inner(receipt, None, issuer, session, node, deadline)
+            .await
+    }
+    pub(crate) async fn complete_with_vision(
+        &mut self,
+        receipt: NodeReceipt,
+        history: eefn::grants::workload::VisionHistory,
+        issuer: &str,
+        session: &str,
+        node: &str,
+        deadline: tokio::time::Instant,
+    ) -> Result<Plan> {
+        self.complete_inner(receipt, Some(history), issuer, session, node, deadline)
+            .await
+    }
+    async fn complete_inner(
+        &mut self,
+        receipt: NodeReceipt,
+        vision: Option<eefn::grants::workload::VisionHistory>,
         issuer: &str,
         session: &str,
         node: &str,
@@ -100,7 +152,7 @@ impl Issued {
                 .and_then(|w| w.completion.as_ref());
             ensure!(
                 saved.status == PlanStatus::Completed
-                    && completed.is_some_and(|old| old.confirms(&receipt)),
+                    && completed.is_some_and(|old| old.confirms(&receipt, &vision)),
                 "Retired workload cannot accept new completion or restore an issuer"
             );
             return Ok(saved);
@@ -139,9 +191,10 @@ impl Issued {
                 .as_ref()
                 .context("Missing typed node completion")?;
             let candidate = Completion {
-                schema_version: 1,
+                schema_version: if vision.is_some() { 2 } else { 1 },
                 receipt: receipt.receipt.clone(),
                 report: report.clone(),
+                vision,
                 last_issued_lease_sequence: report.lease_sequence,
                 recorded_at_ms: eefn::protocol::now_ms().max(saved.updated_at_ms),
             };

@@ -146,8 +146,14 @@ impl JobStore {
                                 attempt: 1,
                                 node_id: definition.executor_node.clone(),
                                 resource_id: Some(definition.template().resource_id().into()),
-                                model_id: None,
-                                backend: None,
+                                model_id: definition
+                                    .template()
+                                    .model_binding()
+                                    .map(|(m, _)| m.into()),
+                                backend: definition
+                                    .template()
+                                    .model_binding()
+                                    .map(|(_, b)| b.into()),
                                 assigned_at_ms: issued_at_ms,
                             });
                             Ok(())

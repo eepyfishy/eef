@@ -126,6 +126,7 @@ pub mod workload_leases;
 pub mod workload_network;
 pub mod workload_policy;
 mod workload_readiness;
+pub mod workload_result;
 mod workload_runtime;
 pub mod workload_sources;
 

@@ -93,6 +93,11 @@ async fn completed_workload_is_durable_idempotent_terminal_and_never_restores_an
     let w = done.execution.as_ref().unwrap().workload.as_ref().unwrap();
     assert_eq!(w.state, AttemptState::Completed);
     let report = w.completion.as_ref().unwrap();
+    assert!(json!(report).get("vision").is_none(),"Legacy completion bytes omit the new result field");
+    let command=eefn::request_result::ResultCommand{id:done.plan_id.clone(),grant_id:issued.definition().grant_id.clone()};
+    let runtime=uuid::Uuid::new_v4().to_string();
+    let retained=crate::workload_job_inspection::result(&done,&command,Some("origin"),&runtime).unwrap();
+    assert!(eefn::request_result::confirmed(&retained,&command,Some("origin"),Some(&runtime)));
     assert_eq!(report.last_issued_lease_sequence, 2);
     assert_eq!(
         report.receipt.accepted_at_ms, 42,

@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Historical metadata only. Hashes and event rows cannot mint source/exit evidence.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EventSummary {
     pub count: u64,
     pub bytes: usize,

@@ -222,15 +222,35 @@ impl Driver {
                         "Completed source lacks its required durable event prefix"
                     );
                     let receipt = serde_json::from_value(frame.message()["receipt"].clone())?;
-                    issued
-                        .complete(
-                            receipt,
-                            peer.issuer(),
-                            peer.session(),
-                            peer.node(),
-                            deadline,
-                        )
-                        .await?;
+                    if d.schema_version == 3 {
+                        let history = self
+                            .server
+                            .completed_workload_analyses(
+                                &d,
+                                deadline.min(Instant::now() + Duration::from_secs(10)),
+                            )
+                            .await?;
+                        issued
+                            .complete_with_vision(
+                                receipt,
+                                history,
+                                peer.issuer(),
+                                peer.session(),
+                                peer.node(),
+                                deadline,
+                            )
+                            .await?;
+                    } else {
+                        issued
+                            .complete(
+                                receipt,
+                                peer.issuer(),
+                                peer.session(),
+                                peer.node(),
+                                deadline,
+                            )
+                            .await?;
+                    }
                     return Ok(());
                 }
                 Some("workload_rejected") => bail!(

@@ -17,6 +17,7 @@ include!("workload_issuance_persistence_tests.rs");
 include!("workload_engine_ownership_tests.rs");
 include!("workload_stop_tests.rs");
 include!("workload_driver_journal_tests.rs");
+include!("workload_vision_completion_tests.rs");
 
 pub(crate) fn template_input() -> PlanInput {
     PlanInput {

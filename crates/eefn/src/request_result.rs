@@ -33,6 +33,9 @@ pub fn confirmed(
     origin: Option<&str>,
     runtime: Option<&str>,
 ) -> bool {
+    if value["report_type"] == "coordinator_workload_result" {
+        return crate::workload_result::confirmed(value, cmd, origin, runtime);
+    }
     let Ok(r) = serde_json::from_value::<ResultReport>(value.clone()) else {
         return false;
     };

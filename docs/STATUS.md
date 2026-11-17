@@ -5,6 +5,16 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+The next coordinator candidate preserves vision model/backend bindings and the
+reviewed schema through issuance, reserves complete result storage before work,
+and requires matching events and completed analysis history before checkpointing
+success. Existing result commands read that checkpoint for the original origin,
+including while the executing node is offline. Four coordinator cases and
+legacy metadata-result checks await hosted verification. The result-read
+fixture's stale runtime advertisement is corrected without relaxing its fence.
+Compatible vision execution negotiation, placement, JSON-free authoring and
+full public command/network acceptance remain open.
+
 Exact source `943b67b` now passes all four jobs and scoped source/raw-log review in
 [run 43991650485](https://github.com/eepyfishy/eef/actions/runs/43991650485):
 1,821 Windows/headless Rust tests, one ignored across 17 groups, all 37 native

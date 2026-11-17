@@ -330,11 +330,12 @@ async fn authenticated_result_read_survives_reconnect_without_source_permission_
     let config=serde_json::from_value(json!({"node_id":d.executor_node,"psk":credential,"auth_mode":"node_credential",
         "coordinator_certificate":identity.certificate,"endpoints":[format!("127.0.0.1:{}",server.port())],"heartbeat_seconds":0.2})).unwrap();
     let engine = Arc::new(crate::NodeEngine::new(false, vec![], dir.path().into()).unwrap());
-    let status = Arc::new(std::sync::Mutex::new(json!({})));
+    let runtime = uuid::Uuid::new_v4().to_string();
+    let status = Arc::new(std::sync::Mutex::new(json!({"runtime_id":runtime})));
     let client = crate::NodeClient::new(config, engine)
         .unwrap()
         .with_grants(&path, Default::default())
-        .with_registration_runtime(&uuid::Uuid::new_v4().to_string())
+        .with_registration_runtime(&runtime)
         .unwrap()
         .with_status(status.clone());
     assert_eq!(

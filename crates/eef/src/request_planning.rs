@@ -301,8 +301,8 @@ pub(crate) fn validate_retained(plan: &Plan) -> Result<()> {
             let w = eefn::workload_leases::definition::Template::from_params(&params)?;
             if binding.node_id != w.executor_node
                 || binding.resource_id.as_deref() != Some(w.resource_id())
-                || binding.model_id.is_some()
-                || binding.backend.is_some()
+                || binding.model_id.as_deref() != w.model_binding().map(|(m, _)| m)
+                || binding.backend.as_deref() != w.model_binding().map(|(_, b)| b)
             {
                 bail!("Workload binding differs from its reviewed source")
             }

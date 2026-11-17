@@ -53,6 +53,17 @@ impl Template {
     pub fn resource_id(&self) -> &str {
         self.source.resource_id()
     }
+    pub fn model_binding(&self) -> Option<(&str, &str)> {
+        match &self.source {
+            Source::CameraVision { parameters, .. } => {
+                Some((&parameters.model.model_id, parameters.model.backend.name()))
+            }
+            _ => None,
+        }
+    }
+    pub fn max_retained_result_bytes(&self) -> Result<usize> {
+        retained_result_bytes(&self.source, &self.events)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -372,18 +383,21 @@ pub fn camera_resource_digest(resource: &crate::context::Resource) -> Result<Str
     ensure!(permitted, "Invalid private camera device binding");
     crate::grants::definition_digest(&json!(resource))
 }
+fn retained_result_bytes(source: &Source, events: &Events) -> Result<usize> {
+    let analysis = match source {
+        Source::CameraVision { parameters, .. } => parameters.max_total_result_bytes()?,
+        _ => 0,
+    };
+    events
+        .max_total_bytes
+        .checked_add(analysis)
+        .ok_or_else(|| anyhow::anyhow!("Workload result reservation overflow"))
+}
 impl Definition {
     /// Combined retained metadata and JSON-encoded analysis text reservation.
     /// Existing metadata-only definitions retain their exact previous value.
     pub fn max_retained_result_bytes(&self) -> Result<usize> {
-        let analysis = match &self.source {
-            Source::CameraVision { parameters, .. } => parameters.max_total_result_bytes()?,
-            _ => 0,
-        };
-        self.events
-            .max_total_bytes
-            .checked_add(analysis)
-            .ok_or_else(|| anyhow::anyhow!("Workload result reservation overflow"))
+        retained_result_bytes(&self.source, &self.events)
     }
     pub fn validate(&self) -> Result<()> {
         ensure!(

@@ -728,6 +728,14 @@ Legacy/missing output is reported honestly. Schema-2 storage contains private
 output: back up data, stop old runtimes and do not downgrade the journal. See
 [full contract and quota semantics](RETAINED-RESULTS.md).
 
+The continuous-workload persistence candidate also uses this result command.
+Completed workload results come from the coordinator journal, so the executing
+node can be offline. They include a bounded metadata summary and, for an approved
+vision workload, the retained analysis text. Reads enforce the original request
+origin and exact grant, and do not contact the model or restart work. This
+candidate awaits hosted verification; network vision authoring/execution is not
+enabled yet. See [vision integration status](LOCAL-EVENT-VISION.md).
+
 ## Reply ownership across reconnect (unreleased after alpha.6)
 
 Remote RPC waiters now belong to the exact authenticated gateway session as well
