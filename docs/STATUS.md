@@ -5,6 +5,11 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+The next executable fixture adds restart/reconnect after durable analysis but
+before source completion. It requires retained text with an interrupted job,
+unknown node evidence and no replay or job rewrite on exact receipt reuse.
+This synthetic extension is pending hosted verification.
+
 Source `2f9ad02` passes all four hosted jobs in
 [run 44098166237](https://github.com/eepyfishy/eef/actions/runs/44098166237),
 including 1,848 Windows/headless Rust tests, one ignored across 17 groups, all 37

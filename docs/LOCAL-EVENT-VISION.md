@@ -386,3 +386,9 @@ or replay. Native end-to-end command and network tests are required before calli
 the public workflow delivered.
 The remaining physical, resource/strong-stop, installer and stable-release gates
 remain open. No broader v0.5 information-flow, module or UI design is activated.
+
+A further executable fixture extends the same workflow through node restart and
+reconnect. A third camera read is deliberately blocked only after the model text
+has been durably retained. The restart must interrupt the job, preserve that text
+in an explicitly unconfirmed result, and permit exact execution-receipt reads
+without new capture or inference. This extension awaits hosted verification.

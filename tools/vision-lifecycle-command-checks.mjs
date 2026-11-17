@@ -47,13 +47,22 @@ export async function verifyVisionLifecycleCommands(f) {
    (await f.json(f.nodeUrl+'/api/status')).connection.state==='connected','vision command runtime');
   const sources=await f.nodeCli(['workloads','vision-sources']);
   assert.equal(sources.configuration_ready,true);assert.equal(sources.capture_started,false);
-  for(mode of ['complete','stop']) {
+  for(mode of ['complete','stop','restart']) {
    const trace=join(f.scratch,'vision-command-'+mode);await mkdir(trace);
-   await writeFile(join(site,'cv2.py'),`_eef_vision_fake_source=${JSON.stringify(fake)}\n_eef_vision_root=${JSON.stringify(trace)}\n_eef_vision_quiet=False\n${prepared}`);
+   const restartBarrier=mode==='restart'?`
+import time as _vision_time
+def _vision_wait_for_restart():
+    _v_log("read")
+    if _v_camera.reads == 3:
+        _v_log("blocked")
+        _vision_time.sleep(30)
+_v_camera.on_read = _vision_wait_for_restart
+`:'';
+   await writeFile(join(site,'cv2.py'),`_eef_vision_fake_source=${JSON.stringify(fake)}\n_eef_vision_root=${JSON.stringify(trace)}\n_eef_vision_quiet=False\n${prepared}\n${restartBarrier}`);
    const before=calls.length,operation=randomUUID();
    const submitted=await f.nodeCli(['requests','submit-vision','--camera','camera','--backend','ollama',
     '--model',model,'--model-digest',digest,'--prompt','Describe movement','--frames','3',
-    '--interval-ms','200','--analysis-timeout-ms','15000','--max-duration-ms','20000',
+    '--interval-ms','200','--io-timeout-ms','8000','--analysis-timeout-ms','15000','--max-duration-ms','20000',
     '--max-tokens','32','--max-result-bytes','256','--operation-id',operation]);
    assert.equal(submitted.success,true);assert.equal(submitted.execution_authorized,false);assert.equal(submitted.dispatched,false);
    const id=submitted.result.result.plan.id,planned=(await f.nodeCli(['requests','plan',id])).result;
@@ -70,11 +79,24 @@ export async function verifyVisionLifecycleCommands(f) {
     if(problem)throw problem;
     const state=await job(id);return state.workload?.acknowledged===true&&calls.length===before+1&&!!calls.at(-1).release;
    },'vision model request after consumed ACK');
-   if(mode==='complete')calls.at(-1).release();
-   else await f.nodeCli(['jobs','stop',id]);
+   if(mode==='stop')await f.nodeCli(['jobs','stop',id]);
+   else calls.at(-1).release();
+   if(mode==='restart') {
+    // The third source read follows fsynced analysis completion and its ACK.
+    // Hold it before source completion, then restart through the user command.
+    await f.until(async()=>(await readFile(join(trace,'trace'),'utf8')).split('\n').includes('blocked'),
+     'vision analysis retained before blocked third frame');
+    const active=await job(id);
+    assert(!['completed','interrupted','failed','cancelled','abandoned'].includes(active.status));
+    assert.notEqual(active.workload.state,'unknown','Restart must follow an active retained analysis');
+    const previous=(await f.json(f.nodeUrl+'/api/diagnostics')).runtime_id;
+    await f.nodeCli(['restart','--wait-seconds','20']);
+    assert.notEqual((await f.json(f.nodeUrl+'/api/diagnostics')).runtime_id,previous);
+    await f.until(async()=>(await f.json(f.nodeUrl+'/api/status')).connection.state==='connected','vision node reconnects after restart');
+   }
    let saved;
    await f.until(async()=>{saved=await job(id);return mode==='complete'?saved.status==='completed':
-    saved.status==='interrupted'&&saved.workload?.state==='unknown'&&!!saved.workload.stop?.report;},'vision command terminal evidence');
+    saved.status==='interrupted'&&saved.workload?.state==='unknown'&&(mode!=='stop'||!!saved.workload.stop?.report);},'vision command terminal evidence');
    const grant=saved.workload.grant_id;
    const result=await f.nodeCli(['requests','result',id,'--grant-id',grant]);assert.equal(result.success,true);
    const value=result.result;
@@ -87,20 +109,28 @@ export async function verifyVisionLifecycleCommands(f) {
    } else {
     assert.equal(value.report_type,'coordinator_workload_uncertain_result');assert.equal(value.job_completed,false);
     assert.equal(value.outcome_confirmed,false);assert.equal(value.analysis_availability,'retained_snapshot');
-    assert.equal(value.vision.summary.calls,1);assert.equal(value.vision.summary.completed,0);
-    assert.equal(value.vision.analyses[0].result,null);assert.equal(value.vision.completion,null);
-    calls.at(-1).release();
+    assert.equal(value.vision.summary.calls,1);assert.equal(value.vision.completion,null);
+    if(mode==='stop') {
+     assert.equal(value.vision.summary.completed,0);assert.equal(value.vision.analyses[0].result,null);
+     calls.at(-1).release();
+    } else {
+     assert.equal(value.vision.receipt.state,'unknown');assert.equal(value.vision.summary.completed,1);
+     assert.equal(value.vision.analyses[0].result.text,'movement detected');
+    }
    }
    assert.equal((await f.nodeCli(args)).result.reused,true);
    assert.equal(calls.length,before+1,'Exact receipt/result reads cannot repeat model work');
    assert.deepEqual(await job(id),saved,'Inspection cannot reconcile or rewrite the job');
+   assert.equal((await readFile(join(trace,'trace'),'utf8')).split('\n').filter(line=>line==='open').length,1,
+    'Receipt/result reads and reconnect cannot reopen the camera');
    const raw=JSON.stringify({saved,result});
    for(const secret of ['PRIVATE_CAMERA_PASSWORD','rtsp://','/9gBAgME/9k=','image_base64'])assert(!raw.includes(secret));
    if(problem)throw problem;
   }
   assert.equal(f.inferenceCalls.length,originalInterpreterCalls,'Concrete vision cannot invoke request interpretation');
-  console.log('Executable vision lifecycle validation passed: explicit model/policy/review, completed text, pending stop evidence and receipt reuse without replay; simulated device/provider only.');
+  console.log('Executable vision lifecycle validation passed: explicit model/policy/review, completed text, pending stop evidence, retained text after restart and receipt reuse without replay; simulated device/provider only.');
   return {vision_executable_completion:true,vision_executable_pending_stop:true,
+   vision_executable_restart_retained_text:true,
    vision_executable_no_replay:true,vision_physical_accepted:false,vision_real_model_accepted:false};
  } finally {
   for(const release of waiting)release();provider.closeAllConnections();await new Promise(r=>provider.close(r));
