@@ -4,14 +4,14 @@ use std::time::Duration;
 fn definition() -> Definition {
     crate::workload_leases::definition::vision::tests::vision()
 }
-fn image() -> crate::python::vision::PrivateJpeg {
+pub(super) fn image() -> crate::python::vision::PrivateJpeg {
     crate::python::vision::PrivateJpeg::checked(
         STANDARD.encode([0xff, 0xd8, 1, 2, 3, 4, 0xff, 0xd9]),
         128,
     )
     .unwrap()
 }
-async fn consume(ledger: &Arc<GrantLedger>, d: Definition) -> Result<Consumption> {
+pub(super) async fn consume(ledger: &Arc<GrantLedger>, d: Definition) -> Result<Consumption> {
     let proof = super::super::tests::proof_for(&d, 50_000).await;
     let policy = Policy {
         enabled: true,

@@ -81,7 +81,7 @@ one image from the triggering frame, no next read while the model reply is held,
 and camera reuse after owned exit. This is transport composition only; it does
 not exercise workload admission, durable analysis decisions or a physical model.
 
-## Private admitted runtime under verification
+## Private admitted runtime checkpoint
 
 Vision analysis has a separate owner opt-in, defaulting to false and omitted
 from legacy policy serialization. Ordinary workload enablement or camera
@@ -114,7 +114,16 @@ recreate execution authority. Optional analysis fields remain absent in old
 completion reports. Four policy regressions and five explicit native fixtures
 cover the new path, including held model replies, actual root/child process
 handles, incomplete output, quiet input, revocation and denied preparation.
-Media, encoding and model responses are synthetic; hosted verification is pending.
+Media, encoding and model responses are synthetic; verification is scoped below.
+
+The corrected private runtime and passive commands at `943b67b` pass all four jobs
+and scoped source/raw-log review in
+[run 43991650485](https://github.com/eepyfishy/eef/actions/runs/43991650485):
+1,821 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and retained extra gates. This covers explicit owner policy, admitted
+synthetic capture/model composition, joined completion and passive commands.
+The earlier quiet-startup exit was not reproduced in the next two command runs;
+its cause is still unproven. No physical device/model or stable release is accepted.
 
 The initial admitted-runtime run `43989699329` passes both Linux jobs and
 Windows/dashboard, but Windows/headless fails to compile two native fixture calls
@@ -150,9 +159,9 @@ retained native and command gates. This does not verify the later private runtim
 
 These definitions and journal helpers are not yet an executable network feature.
 Metadata-only offers, source inspection and execution advertisements still refuse
-the new kind. The private admitted driver and joined completion are now under
-verification, with explicit owner opt-in. Compatible network negotiation, source
-inspection, placement and public job/result commands remain required before
+the new kind. The private admitted driver and joined completion have scoped
+synthetic verification, with explicit owner opt-in. Compatible network
+negotiation, source selection, placement and public job/result commands remain required before
 enabling the network workflow.
 
 Eleven source tests use deterministic camera/image/clock fakes. Ten private pipe
@@ -186,7 +195,7 @@ is used.
 
 ## Remaining integration
 
-The next passive inspection candidate adds `eefn workloads vision-sources` and
+The verified passive inspection path adds `eefn workloads vision-sources` and
 `eef node vision-workload-sources --node NODE_ID`, backed by the local and
 coordinator command APIs. A strict, bounded report composes camera configuration
 with applied local vision model selections and owner policy. Saved/applied model
@@ -196,7 +205,28 @@ camera-only inspection. No device or model is contacted, no private URL/path is
 returned, and installed digests remain unverified until actual analysis. This
 configuration read grants no execution authority. Six source regressions, two
 CLI cases and extensions to control-capacity, legacy-session and native readiness
-checks are pending hosted verification.
+checks pass at the `943b67b` checkpoint above.
+
+## Bounded result delivery in development
+
+The next backend candidate adds separately negotiated historical analysis pages
+over the existing pinned credential channel. Each read binds the original issuer,
+node and exact historical grant scope; the old session is evidence, not current
+execution authority. Pages carry at most 16 records below the existing 128 KiB
+control bound, with exact cursor and checksum-prefix correlation. Records contain
+approved bounded text, image digests and metadata, never camera bytes or private
+bindings. Existing receipt inspection keeps its old wire shape. Older peers have
+no result-read fallback.
+
+Node reads use the existing bounded receipt-control allowance, retained by the
+actual native reader after waiter loss. They do not write, repair, renew, replay
+or reconcile a job. Interrupted/pending history remains explicitly uncertain.
+A completed-history value verifies every record, full ordering, aggregate bytes,
+the joined completion and consistent headers across pages; deserializing that
+value cannot manufacture the journal's private source witness or analysis permit.
+Six common regressions and an extension to the actual admitted native fixture are
+pending hosted verification. Public job commands, coordinator persistence and
+vision execution negotiation remain unfinished.
 
 Metadata-only execution advertisements retain their exact old policy shape even
 when local vision approval is enabled. That local opt-in cannot imply vision

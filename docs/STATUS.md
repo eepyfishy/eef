@@ -5,6 +5,22 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+Exact source `943b67b` now passes all four jobs and scoped source/raw-log review in
+[run 43991650485](https://github.com/eepyfishy/eef/actions/runs/43991650485):
+1,821 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and retained extra gates. This accepts the private admitted runtime and
+passive commands under synthetic devices/models. The earlier unexplained quiet
+startup exit did not recur, but its cause remains unresolved.
+
+The next result-delivery candidate adds bounded, separately negotiated historical
+analysis reads and complete-history validation on the existing credential/control
+transport. Six common cases cover paging, scope/checksum substitution, pending
+history, cross-page validation and authenticated reads without restoring work.
+The admitted native fixture also checks the resulting completed-history value.
+These changes await hosted verification; public vision job commands and result
+persistence still need integration. No real model, physical or release acceptance
+is implied by these component checkpoints.
+
 The next command candidate adds passive local/coordinator `vision-sources`
 inspection, reporting camera/model bindings, explicit owner approval and pending
 restart differences. Inspection neither probes the provider/device nor changes

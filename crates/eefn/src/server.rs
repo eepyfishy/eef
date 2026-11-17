@@ -913,7 +913,7 @@ impl NodeServer {
         }
         Ok(receipt)
     }
-    async fn invoke_message(
+    pub(crate) async fn invoke_message(
         &self,
         node_id: &str,
         message: Value,
@@ -980,8 +980,40 @@ impl NodeServer {
             || message["type"] == "stop_grant"
             || message["type"] == "inspect_grant_stop"
             || message["type"] == "workload_receipt"
+            || message["type"] == "workload_analyses"
         {
             self.check_grant_connection(&connection)?;
+            if message["type"] == "workload_analyses" {
+                let support: crate::vision_result_inspection::Advertisement =
+                    serde_json::from_value(
+                        connection
+                            .state
+                            .as_ref()
+                            .context("Vision result inspection registration unavailable")?
+                            .registration["workload_vision_results"]
+                            .clone(),
+                    )?;
+                support.validate()?;
+                if !support.available {
+                    bail!("Node does not advertise retained vision reads; no fallback");
+                }
+                let mut wire = message.clone();
+                wire.as_object_mut().unwrap().remove("expected_node_id");
+                wire.as_object_mut().unwrap().remove("expected_issuer_id");
+                // invoke_message fills correlation below; validate it before
+                // any send without trusting the historical session as current.
+                wire["id"] = json!(uuid::Uuid::new_v4().to_string());
+                let wire: crate::vision_result_inspection::WireRequest =
+                    serde_json::from_value(wire)?;
+                let issuer = self
+                    .inner
+                    .authentication
+                    .tls
+                    .as_ref()
+                    .context("Vision issuer unavailable")?
+                    .fingerprint()?;
+                wire.validate(&issuer, node_id)?;
+            }
             if message["type"] == "workload_receipt" {
                 let support: crate::workload_inspection::Advertisement = serde_json::from_value(
                     connection
@@ -1086,6 +1118,7 @@ impl NodeServer {
             if message["type"] == "stop_grant"
                 || message["type"] == "inspect_grant_stop"
                 || message["type"] == "workload_receipt"
+                || message["type"] == "workload_analyses"
             {
                 message.as_object_mut().unwrap().remove("expected_node_id");
                 message
@@ -1608,6 +1641,14 @@ impl NodeServer {
                             bail!("Workload inspection requires a grant receipt journal")
                         }
                     }
+                    if let Some(value) = message.get("workload_vision_results") {
+                        let support: crate::vision_result_inspection::Advertisement =
+                            serde_json::from_value(value.clone())?;
+                        support.validate()?;
+                        if support.available && message["execution_grants"]["available"] != true {
+                            bail!("Vision result inspection requires a grant receipt journal");
+                        }
+                    }
                     if let Some(value) = message.get("workload_execution") {
                         let support: crate::workload_network::Advertisement =
                             serde_json::from_value(value.clone())?;
@@ -1687,6 +1728,7 @@ impl NodeServer {
                                     "grant_stop",
                                     "grant_stop_read",
                                     "workload_receipts",
+                                    "workload_vision_results",
                                     "workload_execution",
                                 ],
                                 received_at_ms,

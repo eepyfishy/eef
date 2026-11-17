@@ -19,6 +19,10 @@ mod finalization;
 #[path = "workload_vision_journal.rs"]
 pub(crate) mod vision;
 pub use completion::{Report as CompletionReport, VisionSummary};
+pub use vision::{
+    History as VisionHistory, MAX_PAGE as VISION_MAX_PAGE, MAX_PAGE_BYTES as VISION_MAX_PAGE_BYTES,
+    Page as VisionPage, Record as VisionRecord,
+};
 pub(crate) fn event_reserved(db: &Connection) -> Result<usize> {
     event_journal::reserved(db)
 }

@@ -375,6 +375,19 @@ async fn admitted_vision_saves_intent_before_model_and_completes_exact_source_an
         history["analyses"][0]["result"]["text"],
         "movement detected"
     );
+    let page = reopened
+        .workload_analysis_page(
+            &f.definition.issuer_id,
+            &f.definition,
+            0,
+            crate::grants::workload::VISION_MAX_PAGE,
+            &crate::grants::workload::VisionPage::seed(&f.definition).unwrap(),
+        )
+        .unwrap();
+    let complete =
+        crate::grants::workload::VisionHistory::from_pages(&f.definition, vec![page]).unwrap();
+    complete.validate(&f.definition).unwrap();
+    assert_eq!(complete.analyses[0].text(), Some("movement detected"));
     let raw = history.to_string() + &serde_json::to_string(&receipt).unwrap();
     for private in [
         "PRIVATE_CAMERA_PASSWORD",

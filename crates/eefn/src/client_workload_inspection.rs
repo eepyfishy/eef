@@ -11,7 +11,13 @@ impl NodeClient {
         issuer: Option<&str>,
     ) -> Result<()> {
         let request_id = message["id"].as_str().unwrap_or("").to_owned();
-        let parsed = serde_json::from_value::<crate::workload_inspection::WireRequest>(message);
+        let parsed = if message["type"] == "workload_analyses" {
+            serde_json::from_value::<crate::vision_result_inspection::WireRequest>(message)
+                .map(Inspection::Analyses)
+        } else {
+            serde_json::from_value::<crate::workload_inspection::WireRequest>(message)
+                .map(Inspection::Receipt)
+        };
         let prepared = match (
             parsed,
             self.request_budget.admit_receipt(),
@@ -19,7 +25,8 @@ impl NodeClient {
             issuer.map(str::to_owned),
         ) {
             (Ok(request), Some(permit), Some(ledger), Some(issuer))
-                if request.validate(&issuer, &self.config.node_id).is_ok() =>
+                if self.tls_config.is_some()
+                    && request.validate(&issuer, &self.config.node_id).is_ok() =>
             {
                 Some((request, permit, ledger, issuer))
             }
@@ -48,5 +55,24 @@ impl NodeClient {
             write_session_frame(&self.crypto, writer, write_failed, &response).await?;
         }
         Ok(())
+    }
+}
+
+enum Inspection {
+    Receipt(crate::workload_inspection::WireRequest),
+    Analyses(crate::vision_result_inspection::WireRequest),
+}
+impl Inspection {
+    fn validate(&self, issuer: &str, node: &str) -> Result<()> {
+        match self {
+            Self::Receipt(r) => r.validate(issuer, node),
+            Self::Analyses(r) => r.validate(issuer, node),
+        }
+    }
+    fn read(&self, ledger: &crate::grants::GrantLedger, issuer: &str, node: &str) -> Result<Value> {
+        match self {
+            Self::Receipt(r) => Ok(json!(r.read(ledger, issuer, node)?)),
+            Self::Analyses(r) => Ok(json!(r.read(ledger, issuer, node)?)),
+        }
     }
 }

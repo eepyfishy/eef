@@ -2,6 +2,9 @@
 //! No image, model process, lease renewal or replay factory enters this worker.
 use super::*;
 use crate::workload_leases::definition::{Source, vision::Parameters};
+#[path = "workload_vision_results.rs"]
+mod results;
+pub use results::{History, MAX_PAGE, MAX_PAGE_BYTES, Page, Record};
 
 const STATE_SQL: &str = "CREATE TABLE execution_workload_analysis_state(grant_id TEXT NOT NULL PRIMARY KEY REFERENCES execution_receipts(grant_id),grant_digest TEXT NOT NULL,call_count INTEGER NOT NULL,result_count INTEGER NOT NULL,result_bytes INTEGER NOT NULL,reserved_output_tokens INTEGER NOT NULL,prefix_sha256 TEXT NOT NULL)";
 const SQL: &str = "CREATE TABLE execution_workload_analyses(grant_id TEXT NOT NULL REFERENCES execution_workload_analysis_state(grant_id),sequence INTEGER NOT NULL CHECK(sequence>0),source_sequence INTEGER NOT NULL CHECK(source_sequence>0),intent TEXT NOT NULL,intent_sha256 TEXT NOT NULL,result TEXT,result_sha256 TEXT,PRIMARY KEY(grant_id,sequence),UNIQUE(grant_id,source_sequence))";
@@ -593,6 +596,78 @@ impl EventWriter {
 }
 
 impl GrantLedger {
+    pub fn workload_analysis_page(
+        &self,
+        issuer: &str,
+        d: &Definition,
+        after: u64,
+        limit: usize,
+        previous: &str,
+    ) -> Result<Page> {
+        ensure!(
+            (1..=MAX_PAGE).contains(&limit)
+                && after <= parameters(d)?.max_calls()
+                && crate::request_result::valid_digest(previous),
+            "Invalid analysis page request"
+        );
+        let db = self
+            .connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Grant journal unavailable"))?;
+        let tx = db.unchecked_transaction()?;
+        let receipt = super::read(&tx, &self.node_id, Some(issuer), &d.grant_id)?;
+        ensure!(
+            receipt.definition == *d,
+            "Analysis page differs from exact issued definition"
+        );
+        let summary = audit(&tx, &receipt)?;
+        ensure!(
+            after <= summary.calls,
+            "Analysis page cursor outside retained prefix"
+        );
+        let end = summary.calls.min(after.saturating_add(limit as u64));
+        let mut prefix = Page::seed(d)?;
+        let mut prefix_before = prefix.clone();
+        let mut analyses = Vec::new();
+        for row in rows(&tx, &receipt)? {
+            let record = Record {
+                intent: row.intent,
+                intent_sha256: row.checksum,
+                result: row.result,
+                result_sha256: row.result_checksum,
+            };
+            prefix = record.next_prefix(&prefix);
+            if record.sequence() <= after {
+                prefix_before = prefix.clone();
+            } else if record.sequence() <= end {
+                analyses.push(record);
+            }
+            if analyses.last().is_some_and(|r| r.sequence() == end) {
+                break;
+            }
+        }
+        let more = end < summary.calls;
+        let page = Page {
+            schema_version: 2,
+            grant_id: d.grant_id.clone(),
+            grant_sha256: d.scope()?.grant_sha256,
+            receipt: receipt.receipt,
+            completion: receipt.completion,
+            summary,
+            after_sequence: after,
+            prefix_before_sha256: prefix_before,
+            analyses,
+            next_sequence: end,
+            prefix_after_sha256: prefix,
+            more,
+            execution_authorized: false,
+            restart_authorized: false,
+            model_replay_authorized: false,
+        };
+        page.validate(d, after, limit, previous)?;
+        tx.commit()?;
+        Ok(page)
+    }
     /// Historical analysis only, bound to the authenticated issuer. This cannot
     /// recover an AnalysisPermit or re-run an incomplete model call.
     pub fn workload_analyses(
@@ -629,6 +704,9 @@ impl GrantLedger {
     }
 }
 
+#[cfg(test)]
+#[path = "workload_vision_results_tests.rs"]
+mod result_tests;
 #[cfg(test)]
 #[path = "workload_vision_journal_tests.rs"]
 mod tests;
