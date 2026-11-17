@@ -1015,4 +1015,5 @@ mod workload_full_native_acceptance {
     };
     use eefn::workload_leases::definition::{EnergyParameters, Template};
     include!("workload_full_native_tests.rs");
+    include!("workload_vision_full_native_tests.rs");
 }

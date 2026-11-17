@@ -5,6 +5,13 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+A new Windows native command-service case joins review/approval, the real
+coordinator issuer, pinned node execution and durable result delivery, including
+lease renewal, originating-node output and checkpoint reads after the executor
+disconnects. It also checks exact execution receipt reuse, result origin and
+private-data exclusion. It uses synthetic camera/model dependencies and awaits
+hosted verification; physical/model quality and stable acceptance remain open.
+
 The next command candidate adds `eefn requests submit-vision`, with explicit
 applied model/backend/digest, prompt and bounded source/image/text settings.
 It uses existing origin-owned review/compilation without a JSON file or any

@@ -332,6 +332,17 @@ fixture initialization keep nested callers bounded. A fixed 64 KiB future-size
 check accompanies the actual admission tests; no larger thread stack or changed
 execution/cancellation policy is used. Windows verification remains pending.
 
+An additional Windows native command-service case now follows the complete
+review, owner approval, original coordinator issuer, authenticated node execution
+and result delivery path. It uses the shipping source with disposable synthetic
+camera/encoder and model endpoints. The model asserts a durable intent exists
+before its request; a held response exercises lease renewal. The coordinator
+must persist matching events and analysis, deliver text to the originating node,
+refuse a mismatched result origin, and read its checkpoint after the executing
+node disconnects. Reusing execution must leave the job and model-call count
+unchanged, and camera bytes/private endpoints must be absent from stored/output
+data. This is a new pending hosted check, not physical/model-quality acceptance.
+
 The public workflow remains incomplete. Next work needs model placement/capacity
 integration and complete command lifecycle acceptance. Interrupted outcome
 inspection and the full command/network workflow still need integration tests.
