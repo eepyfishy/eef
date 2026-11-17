@@ -195,8 +195,24 @@ From the input node, author a bounded request using that exact model and digest:
 .\eefn.exe requests plan REQUEST_ID
 ```
 
-The model must be available on the camera node. For another node's camera, use
-`--source-node NODE_ID` and that node's applied model selection. Review the source,
+The model must be available on the camera node. For another node's camera, the
+coordinator owner must first allow source discovery in that exact direction:
+
+```powershell
+.\eef.exe discovery grant --requester INPUT_NODE_ID --target SOURCE_NODE_ID
+.\eef.exe restart
+```
+
+Use the stable IDs from the input and source nodes' status. Review pending
+settings and active work before restarting eef, then wait for both nodes to
+reconnect. Pairing alone does not grant this disclosure, and the reverse
+direction is not implied. Disclosure does not enable capture or approve a job;
+the source node's camera/model permissions and the separate review/approval
+still apply. The full distinct-node vision workflow remains under hosted
+verification.
+
+Submit with `--source-node SOURCE_NODE_ID` and that node's applied model selection.
+Review the source,
 model, prompt, frame/image limits and text budget. Then use the same separate
 owner approval and input-node execution steps above. Changing a model, digest or
 prompt requires a new review. Authoring and approval do not contact the camera
