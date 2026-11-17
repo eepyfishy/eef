@@ -377,8 +377,9 @@ Bounded result assembly checks the caller's same read deadline after full
 validation, and expired-phase reads have regressions.
 
 The public workflow remains incomplete. Next work needs model placement/capacity
-integration and complete command lifecycle acceptance. Full vision restart/
-reconnect composition and the remaining command/network cases still need acceptance.
+integration and the remaining command/network failure cases, including lost model
+replies. Completed, stopped and restarted command workflows now have synthetic
+acceptance as recorded below; real models/devices remain separate.
 Approved bounded text can leave the node through the authenticated job
 lifecycle; camera images must stay off coordinator traffic and history. Model
 absence, revocation, expiry, stop, restart and lost replies must not cause fallback
@@ -403,13 +404,18 @@ results delivered only to that origin, executor restart/reconnect with retained
 text, and no fallback or replay. The input node has no local model, camera
 permission or listening consent; only the source node is configured to capture.
 Both processes use disposable simulated devices
-on the hosted machine; this does not establish physical two-PC acceptance. This
-extension is also pending hosted verification.
+on the hosted machine; this does not establish physical two-PC acceptance.
 Its initial `9b2673b` native run was refused before review because the fixture
 had not obtained the existing directional disclosure grant. The correction
 retains that denial check, then applies owner approval and the required
 coordinator restart through commands. This changes fixture setup, not source
-disclosure or capability permissions. The corrected source requires fresh tests.
+disclosure or capability permissions. Corrected source `fe3a642` passes all four
+hosted jobs in [run 44141704685](https://github.com/eepyfishy/eef/actions/runs/44141704685),
+including 1,849 Windows/headless Rust tests, all 37 native suites and the retained
+extra gates. Scoped review accepts this distributed command workflow and the
+validated readable node/owner result output, with unchanged explicit `--json`.
+The intermediate `c6b3566` run reached passing same-node text commands but retained
+the missing disclosure and failed overall; this later success does not relabel it.
 
 A further command fixture closes the model connection after receiving one
 analysis request. It requires an interrupted job with a pending retained intent,

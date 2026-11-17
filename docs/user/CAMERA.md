@@ -208,8 +208,8 @@ settings and active work before restarting eef, then wait for both nodes to
 reconnect. Pairing alone does not grant this disclosure, and the reverse
 direction is not implied. Disclosure does not enable capture or approve a job;
 the source node's camera/model permissions and the separate review/approval
-still apply. The full distinct-node vision workflow remains under hosted
-verification.
+still apply. The distinct-node vision workflow passes synthetic hosted command
+tests; actual two-PC camera/model acceptance remains open.
 
 Submit with `--source-node SOURCE_NODE_ID` and that node's applied model selection.
 Review the source,
@@ -224,6 +224,10 @@ Read the result with:
 ```powershell
 .\eefn.exe requests result REQUEST_ID --grant-id GRANT_ID
 ```
+
+The default view shows job status, source node and retained or pending analyses.
+Use `--json` when a script needs the complete structured report. A successful
+read of an interrupted result still leaves completion unconfirmed.
 
 Completed results remain readable when the camera node is offline. An interrupted
 result can contain pending analyses or retained text without confirming that the

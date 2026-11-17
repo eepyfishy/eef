@@ -185,6 +185,9 @@ Retained node text, even with a completed node receipt, does not settle the
 coordinator's interrupted job. Unavailable analysis does not prove no effects.
 This extension passes synthetic hosted verification; see the
 [result contract](../RETAINED-RESULTS.md#continuous-workload-results-development).
+Workload results show readable status and analyses by default; add `--json` for
+the structured report used by scripts. A readable pending analysis is not a
+request to resume or retry it.
 
 ## Keep command receipts after uncertainty
 

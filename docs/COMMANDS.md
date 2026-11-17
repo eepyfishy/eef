@@ -746,13 +746,14 @@ the job. The same origin/grant checks apply before and after a bounded node read
 The core and shipping-command vision/stop composition pass synthetic hosted
 verification at `2f9ad02`; real models/devices and stable acceptance remain open.
 
-The next command-output candidate makes workload `requests result` readable
+Workload `requests result` is readable
 without `--json`: completed checkpoint versus interrupted/unconfirmed status,
 retained/pending analyses and explicit unavailable evidence. Both origin-node and
 owner commands use the same validated formatter. Model text preserves ordinary
 Unicode and indented newlines while escaping terminal control/override characters.
-`--json` keeps its existing report shape for automation. This text-output change
-awaits hosted verification.
+`--json` keeps its existing report shape for automation. This output and the
+distinct-node vision command workflow pass synthetic hosted verification at
+`fe3a642`; real models/devices, resource and stable release gates remain open.
 
 The unreleased `eefn requests submit-vision` candidate prepares a camera/model
 request without a JSON file. Required options are `--backend`, `--model` and

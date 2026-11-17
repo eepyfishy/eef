@@ -11,11 +11,16 @@ uncertainty without another model request or camera opening, and node controls
 must remain available. The same-node and distinct-node extension is pending
 hosted verification.
 
-A command-output candidate renders workload results as status and analysis text
-by default, keeping `--json` unchanged. Validated interrupted evidence remains
-clearly unconfirmed; model text cannot inject terminal controls or unindented
-status lines. Existing scope/authority cases and shipping origin/owner commands
-exercise the formatter. This candidate awaits hosted verification.
+Source `fe3a642` passes all four hosted jobs in
+[run 44141704685](https://github.com/eepyfishy/eef/actions/runs/44141704685):
+1,849 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and the retained extra gates. Scoped review accepts distinct-node vision
+completion/stop/restart with a model-free, camera-denied input node, explicit
+directional owner disclosure and original-context result ownership. The input
+node and coordinator owner also receive validated readable results by default;
+`--json` is unchanged. Interrupted results stay unconfirmed, and model text is
+indented with terminal control/override characters escaped. Lost model replies,
+capacity/resource policies, real models/devices and stable gates remain separate.
 
 Source `a875b15` passes all four hosted jobs in
 [run 44134810348](https://github.com/eepyfishy/eef/actions/runs/44134810348),
@@ -30,14 +35,17 @@ real devices/models, capacity and stable release gates remain separate.
 Another fixture separates the authenticated input node from the camera/model
 executor for completion, stop and restart. It requires original-context result
 delivery from an input node without a local model or camera consent, and refuses
-executor-origin result requests for that job. This pending
-synthetic test does not stand in for physical two-PC or real-model acceptance.
+executor-origin result requests for that job. This synthetic test does not stand
+in for physical two-PC or real-model acceptance.
 The initial `9b2673b` run passed all workspace configurations but its native
 command fixture was refused before review: it omitted the existing directional
 source-disclosure grant. The backend correctly denied access. The corrected
 fixture checks that refusal first, then applies an exact owner disclosure grant
 and coordinator restart through public commands. No authorization rule is relaxed;
-the corrected composition still requires new hosted verification.
+the corrected composition is verified above at `fe3a642`. The intermediate
+`c6b3566` run also passed all workspace configurations and same-node readable
+result commands, then failed at that same omitted fixture approval; it is not
+an overall passing run.
 
 Source `2f9ad02` passes all four hosted jobs in
 [run 44098166237](https://github.com/eepyfishy/eef/actions/runs/44098166237),

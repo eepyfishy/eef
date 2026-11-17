@@ -110,5 +110,8 @@ This verifies the bounded reader, independent evidence semantics and coordinator
 offline-metadata path. The positive shipping-executable vision/stop composition
 and final assembly-deadline check also pass all four jobs at `2f9ad02` in
 [run 44098166237](https://github.com/eepyfishy/eef/actions/runs/44098166237).
-Full vision restart/reconnect composition, real models/devices and stable release
-acceptance remain open.
+Same-node and distinct-node vision restart/reconnect, immutable result ownership
+and validated readable node/owner output also pass all four jobs at `fe3a642` in
+[run 44141704685](https://github.com/eepyfishy/eef/actions/runs/44141704685).
+Explicit `--json` is unchanged. Lost model replies, real models/devices, broader
+resources and stable release acceptance remain open.
