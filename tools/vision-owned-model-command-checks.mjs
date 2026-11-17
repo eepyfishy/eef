@@ -6,12 +6,21 @@ import {dirname,join,resolve} from 'node:path';
 import {randomUUID} from 'node:crypto';
 
 export async function verifyOwnedVisionCommands(f) {
- const root=join(f.scratch,'vision-owned-model');await mkdir(root);
+ await verifyScenario(f,'complete');
+ await verifyScenario(f,'model-exit');
+ console.log('Owned llama.cpp vision command validation passed: explicit projector selection, real synthetic owned process and active pin, no early capture/model call, private local image payload and durable results without replay.');
+ console.log('Owned vision model exit validation passed: observed process exit leaves pending analysis evidence, releases active pins and preserves node controls without retry or invented completion.');
+ return {vision_owned_llamacpp_commands:true,vision_active_model_pin:true,
+  vision_owned_model_exit_no_retry:true,vision_owned_model_quality_accepted:false};
+}
+
+async function verifyScenario(f,mode) {
+ const root=join(f.scratch,'vision-owned-model-'+mode);await mkdir(root);
  const trace=join(root,'camera');await mkdir(trace);
  const model='fixture-owned-vision',artifact=join(root,'synthetic.gguf'),projector=join(root,'synthetic-mmproj.gguf');
  const ready=join(root,'ready'),pid=join(root,'model.pid'),started=join(root,'started'),release=join(root,'release'),requests=join(root,'request.json');
  await writeFile(artifact,JSON.stringify({ready_file:ready,pid_file:pid,
-  vision_fixture:{model,started,release,requests}}));
+  vision_fixture:{model,started,release,requests,exit_after_release:mode==='model-exit'}}));
  await writeFile(projector,'synthetic projector only');await writeFile(ready,'synthetic health ready');
  const config=JSON.parse(await readFile(f.sourcePath,'utf8')),python=resolve(config.python);
  assert(python.toLowerCase().startsWith(resolve(f.scratch).toLowerCase()+'\\'));
@@ -23,7 +32,7 @@ export async function verifyOwnedVisionCommands(f) {
  // selection, policy, restart, review and execution use owner/user commands.
  config.models.llamacpp={...config.models.llamacpp,binary:join(f.bin,'examples','model_startup_fixture.exe')};
  await writeFile(f.sourcePath,JSON.stringify(config));
- await f.sourceCli(['models','remove','--backend','ollama','--model','fixture-vision']);
+ if(mode==='complete')await f.sourceCli(['models','remove','--backend','ollama','--model','fixture-vision']);
  await f.sourceCli(['models','provider','llamacpp']);
  await f.sourceCli(['models','select-gguf','--model',model,'--file',artifact,'--projector',projector,
   '--context','1024','--gpu-layers','0','--cpu-threads','2']);
@@ -66,19 +75,33 @@ export async function verifyOwnedVisionCommands(f) {
   {type:'image_url',image_url:{url:'data:image/jpeg;base64,/9gBAgME/9k='}}]);
  await writeFile(release,'explicit synthetic response release');
  let saved;await f.until(async()=>{saved=await job();return ['completed','interrupted','failed','cancelled','abandoned'].includes(saved.status);},'owned vision completion');
- assert.equal(saved.status,'completed');
+ assert.equal(saved.status,mode==='complete'?'completed':'interrupted');
  const result=await f.originCli(['requests','result',id,'--grant-id',saved.workload.grant_id]);
  assert.equal(result.success,true);assert.equal(result.result.definition.executor_node,f.sourceId);
  assert.equal(result.result.definition.source.parameters.model.backend,'llamacpp');
  assert.equal(result.result.definition.source.parameters.model.model_id,model);
  assert.deepEqual(result.result.request_context,plan.request_context);
- assert.equal(result.result.vision.analyses[0].result.text,'movement detected');
- assert.equal((await current()).active_requests,0);
+ assert.equal(result.result.vision.summary.calls,1);
+ if(mode==='complete') {
+  assert.equal(result.result.vision.summary.completed,1);
+  assert.equal(result.result.vision.analyses[0].result.text,'movement detected');
+  assert.equal((await current()).active_requests,0);
+ } else {
+  assert.equal(saved.workload.state,'unknown');
+  assert.equal(result.result.report_type,'coordinator_workload_uncertain_result');
+  assert.equal(result.result.job_completed,false);assert.equal(result.result.outcome_confirmed,false);
+  assert.equal(result.result.vision.summary.completed,0);
+  assert.equal(result.result.vision.analyses[0].result,null);assert.equal(result.result.vision.completion,null);
+  await f.until(async()=>{const m=await current();return m.active_requests===0&&m.state==='error'&&m.owned_pid===null;},
+   'owned model exit observed without an active pin');
+  assert.equal((await f.json(f.sourceUrl+'/api/diagnostics')).runtime_id,runtime);
+  assert.equal((await f.json(f.sourceUrl+'/api/status')).connection.state,'connected');
+  const passive=await f.sourceCli(['workloads','vision-sources']);
+  assert.equal(passive.capture_started,false);assert.equal(passive.model_contacted,false);
+ }
  assert.equal((await f.originCli(execute)).result.reused,true);
  assert.deepEqual(await job(),saved);assert.deepEqual(JSON.parse(await readFile(requests,'utf8')),received);
  assert.equal((await readFile(join(root,'request.attempts'),'utf8')).trim().split('\n').length,1);
  assert.equal((await readFile(join(trace,'trace'),'utf8')).split('\n').filter(x=>x==='open').length,1);
  const raw=JSON.stringify({saved,result});for(const secret of ['PRIVATE_CAMERA_PASSWORD','rtsp://','/9gBAgME/9k='])assert(!raw.includes(secret));
- console.log('Owned llama.cpp vision command validation passed: explicit projector selection, real synthetic owned process and active pin, no early capture/model call, private local image payload and durable results without replay.');
- return {vision_owned_llamacpp_commands:true,vision_active_model_pin:true,vision_owned_model_quality_accepted:false};
 }

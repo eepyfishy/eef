@@ -85,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
                     if tokio::time::Instant::now()>=deadline {return Json(json!({"error":"synthetic vision gate expired"}));}
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
+                if vision["exit_after_release"] == true {std::process::exit(27);}
                 return Json(json!({"choices":[{"message":{"content":"movement detected"},"finish_reason":"stop"}]}));
             }
             let prompt = request["messages"].as_array().and_then(|v|v.last()).and_then(|v|v["content"].as_str());

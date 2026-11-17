@@ -20,6 +20,10 @@ It selects a synthetic GGUF/projector through owner commands, starts an owned
 test-only model process, checks the local image request and active model pin,
 then requires durable text and exact-receipt reads without replay. It uses no
 real weights or camera and adds no production fixture hook or resource quota.
+Its follow-up also terminates the synthetic owned model during a fresh analysis.
+It requires observed model error without an active pin, unchanged connected node
+runtime, pending retained evidence and no implicit model/camera replay. That
+process-exit extension is separately pending hosted verification.
 
 Source `fe3a642` passes all four hosted jobs in
 [run 44141704685](https://github.com/eepyfishy/eef/actions/runs/44141704685):

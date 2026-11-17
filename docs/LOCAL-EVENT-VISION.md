@@ -435,3 +435,12 @@ pin and retain bounded text without another model POST or camera opening on
 receipt reuse. Hosted verification is pending. This tests owned lifecycle and
 command composition, not actual inference, node-wide resource allocation or
 physical camera support; the synthetic server is never packaged.
+
+A further owned-process case exits that server after receiving its one image
+request and after an explicit fixture release, before returning text. It uses a
+fresh reviewed job and a fresh owner-selected artifact followed by restart.
+The node must observe the process exit, release the active pin, remain on the
+same connected runtime and expose pending retained evidence without retrying
+inference or reopening the camera. This command composition is also pending
+hosted verification; process termination does not prove physical effects stopped
+or authorize automatic recovery of an uncertain job.
