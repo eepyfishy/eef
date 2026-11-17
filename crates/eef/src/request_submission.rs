@@ -67,195 +67,201 @@ impl crate::Runtime {
         self.origin_concrete_request_with_all_sources(input, context, None, None, Some(camera))
             .await
     }
-    async fn origin_concrete_request_with_all_sources(
-        &self,
+    fn origin_concrete_request_with_all_sources<'a>(
+        &'a self,
         input: ConcreteInput,
-        context: &RequestContext,
+        context: &'a RequestContext,
         source: Option<eefn::audio_submission::AudioInput>,
         workload: Option<eefn::microphone_submission::MicrophoneInput>,
         camera: Option<eefn::camera_submission::CameraInput>,
-    ) -> Result<Value> {
-        if [source.is_some(), workload.is_some(), camera.is_some()]
-            .into_iter()
-            .filter(|v| *v)
-            .count()
-            > 1
-        {
-            bail!("Multiple typed request sources")
-        }
-        input.validate()?;
-        if let Some(source) = &camera {
-            let template =
-                eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
-            if source.concrete(&template, Some(context.origin_node()))? != input {
-                bail!("Typed camera intent differs from concrete input");
+    ) -> futures_util::future::BoxFuture<'a, Result<Value>> {
+        // Keep one heap-owned command phase as source/review types grow. This
+        // preserves the same awaited ownership and cancellation on Windows.
+        Box::pin(async move {
+            if [source.is_some(), workload.is_some(), camera.is_some()]
+                .into_iter()
+                .filter(|v| *v)
+                .count()
+                > 1
+            {
+                bail!("Multiple typed request sources")
             }
-        }
-        if let Some(source) = &workload {
-            let template =
-                eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
-            if source.concrete(&template, Some(context.origin_node()))? != input {
-                bail!("Typed microphone intent differs from concrete input")
+            input.validate()?;
+            if let Some(source) = &camera {
+                let template =
+                    eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
+                if source.concrete(&template, Some(context.origin_node()))? != input {
+                    bail!("Typed camera intent differs from concrete input");
+                }
             }
-        }
-        if let Some(source) = &source {
-            let pair = eefn::peer::plan::Pair::from_params(&input.input.params)?;
-            if source.concrete(&pair, Some(context.origin_node()))? != input {
-                bail!("Typed audio source differs from concrete input")
+            if let Some(source) = &workload {
+                let template =
+                    eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
+                if source.concrete(&template, Some(context.origin_node()))? != input {
+                    bail!("Typed microphone intent differs from concrete input")
+                }
             }
-        }
-        eefn::job_commands::validate_operation_id(context.request_id())?;
-        // Historical exact receipts remain usable without current model/provider
-        // availability. A missing receipt is not proof of never-submitted work.
-        let mut matches = self.engine.store.list()?.into_iter().filter(|p| {
-            p.goal.request_context.as_ref().is_some_and(|c| {
-                c.origin_node() == context.origin_node() && c.request_id() == context.request_id()
-            })
-        });
-        let previous = matches.next();
-        if matches.next().is_some() {
-            bail!("Ambiguous retained request receipt")
-        }
-        let (saved, creation_reused) = if let Some(saved) = previous {
-            crate::jobs::validate_retained_review(&saved)?;
+            if let Some(source) = &source {
+                let pair = eefn::peer::plan::Pair::from_params(&input.input.params)?;
+                if source.concrete(&pair, Some(context.origin_node()))? != input {
+                    bail!("Typed audio source differs from concrete input")
+                }
+            }
+            eefn::job_commands::validate_operation_id(context.request_id())?;
+            // Historical exact receipts remain usable without current model/provider
+            // availability. A missing receipt is not proof of never-submitted work.
+            let mut matches = self.engine.store.list()?.into_iter().filter(|p| {
+                p.goal.request_context.as_ref().is_some_and(|c| {
+                    c.origin_node() == context.origin_node()
+                        && c.request_id() == context.request_id()
+                })
+            });
+            let previous = matches.next();
+            if matches.next().is_some() {
+                bail!("Ambiguous retained request receipt")
+            }
+            let (saved, creation_reused) = if let Some(saved) = previous {
+                crate::jobs::validate_retained_review(&saved)?;
+                matches_source(
+                    &saved,
+                    &input,
+                    source.as_ref(),
+                    workload.as_ref(),
+                    camera.as_ref(),
+                )?;
+                (saved, true)
+            } else {
+                input.input.validate_for_new_work()?;
+                let mut capabilities = self
+                    .disclosed_interpretation_capabilities(context.origin_node())
+                    .await?;
+                // This wrapper is a concrete reviewed template, not a node's
+                // executable capability or a semantic method advertised to a model.
+                if input.input.template == eefn::workload_leases::definition::TEMPLATE {
+                    let template = eefn::workload_leases::definition::Template::from_params(
+                        &input.input.params,
+                    )?;
+                    if !self
+                        .disclosed_planning_nodes(context.origin_node())
+                        .await?
+                        .contains(&template.executor_node)
+                    {
+                        bail!("Continuous source node unavailable or not disclosed")
+                    }
+                    // These built-in sources are independent of one-shot media
+                    // plugin. Review binds its own authenticated passive snapshot;
+                    // permission/listening/policy and live execution stay separate.
+                    self.node_server.workload_source(&template, 5).await?;
+                    if !self
+                        .disclosed_planning_nodes(context.origin_node())
+                        .await?
+                        .contains(&template.executor_node)
+                    {
+                        bail!("Continuous source disclosure changed during inspection")
+                    }
+                    // The retained review describes both the session wrapper and
+                    // its reviewed media operation. This source-scoped vocabulary is
+                    // justified by the snapshot above, not the one-shot plugin.
+                    for capability in eefn::request_planning::concrete_capabilities(&input.input)? {
+                        if !capabilities.contains(&capability) {
+                            capabilities.push(capability);
+                        }
+                    }
+                }
+                let proposal = input.proposal()?;
+                eefn::interpretation::validate_concrete(&input, &capabilities)?;
+                let draft = eefn::request_drafts::DraftRecord {
+                    schema_version: 1,
+                    original_text: input.original_text.clone(),
+                    concrete_input: Some(input.input.clone()),
+                    audio_source: source.clone(),
+                    workload_source: workload.clone(),
+                    camera_source: camera.clone(),
+                    proposals: vec![eefn::request_drafts::ProposalRevision {
+                        operation_id: context.request_id().into(),
+                        proposal,
+                        allowed_capabilities: capabilities,
+                        at_ms: eefn::protocol::now_ms(),
+                        resolution: None,
+                        preparation: None,
+                    }],
+                    answers: vec![],
+                };
+                let admission = crate::request_drafts::store_review(&self.engine, draft, context)?;
+                (admission.plan, admission.reused)
+            };
+            let receipt = eefn::request_submission::compilation_receipt(
+                context.origin_node(),
+                context.request_id(),
+                &saved.plan_id,
+            )?;
+            let command = eefn::request_planning::PlanningCommand::Compile {
+                id: saved.plan_id.clone(),
+                expected_revision: 1,
+                operation_id: receipt.clone(),
+                input: input.input.clone(),
+            };
+            let compile_context = RequestContext::new(
+                receipt.clone(),
+                context.origin_node().into(),
+                context.origin_area().to_vec(),
+            )?;
+            let value = self
+                .origin_planning_command(command, &compile_context)
+                .await?;
+            let plan = self.engine.store.get(&saved.plan_id)?;
             matches_source(
-                &saved,
+                &plan,
                 &input,
                 source.as_ref(),
                 workload.as_ref(),
                 camera.as_ref(),
             )?;
-            (saved, true)
-        } else {
-            input.input.validate_for_new_work()?;
-            let mut capabilities = self
-                .disclosed_interpretation_capabilities(context.origin_node())
-                .await?;
-            // This wrapper is a concrete reviewed template, not a node's
-            // executable capability or a semantic method advertised to a model.
-            if input.input.template == eefn::workload_leases::definition::TEMPLATE {
-                let template =
-                    eefn::workload_leases::definition::Template::from_params(&input.input.params)?;
-                if !self
-                    .disclosed_planning_nodes(context.origin_node())
-                    .await?
-                    .contains(&template.executor_node)
-                {
-                    bail!("Continuous source node unavailable or not disclosed")
-                }
-                // These built-in sources are independent of one-shot media
-                // plugin. Review binds its own authenticated passive snapshot;
-                // permission/listening/policy and live execution stay separate.
-                self.node_server.workload_source(&template, 5).await?;
-                if !self
-                    .disclosed_planning_nodes(context.origin_node())
-                    .await?
-                    .contains(&template.executor_node)
-                {
-                    bail!("Continuous source disclosure changed during inspection")
-                }
-                // The retained review describes both the session wrapper and
-                // its reviewed media operation. This source-scoped vocabulary is
-                // justified by the snapshot above, not the one-shot plugin.
-                for capability in eefn::request_planning::concrete_capabilities(&input.input)? {
-                    if !capabilities.contains(&capability) {
-                        capabilities.push(capability);
-                    }
-                }
-            }
-            let proposal = input.proposal()?;
-            eefn::interpretation::validate_concrete(&input, &capabilities)?;
-            let draft = eefn::request_drafts::DraftRecord {
+            let result = json!(ConcreteReport {
                 schema_version: 1,
-                original_text: input.original_text.clone(),
-                concrete_input: Some(input.input.clone()),
-                audio_source: source.clone(),
-                workload_source: workload.clone(),
-                camera_source: camera.clone(),
-                proposals: vec![eefn::request_drafts::ProposalRevision {
-                    operation_id: context.request_id().into(),
-                    proposal,
-                    allowed_capabilities: capabilities,
-                    at_ms: eefn::protocol::now_ms(),
-                    resolution: None,
-                    preparation: None,
-                }],
-                answers: vec![],
+                report_type: "coordinator_concrete_request".into(),
+                operation_id: context.request_id().into(),
+                compilation_operation_id: receipt,
+                creation_reused,
+                plan: serde_json::from_value(value)?,
+                job: crate::jobs::view(&plan, true),
+                execution_authorized: false,
+                dispatched: false,
+                automatically_retried: false
+            });
+            let command = ConcreteCommand {
+                operation_id: context.request_id().into(),
+                request: input,
             };
-            let admission = crate::request_drafts::store_review(&self.engine, draft, context)?;
-            (admission.plan, admission.reused)
-        };
-        let receipt = eefn::request_submission::compilation_receipt(
-            context.origin_node(),
-            context.request_id(),
-            &saved.plan_id,
-        )?;
-        let command = eefn::request_planning::PlanningCommand::Compile {
-            id: saved.plan_id.clone(),
-            expected_revision: 1,
-            operation_id: receipt.clone(),
-            input: input.input.clone(),
-        };
-        let compile_context = RequestContext::new(
-            receipt.clone(),
-            context.origin_node().into(),
-            context.origin_area().to_vec(),
-        )?;
-        let value = self
-            .origin_planning_command(command, &compile_context)
-            .await?;
-        let plan = self.engine.store.get(&saved.plan_id)?;
-        matches_source(
-            &plan,
-            &input,
-            source.as_ref(),
-            workload.as_ref(),
-            camera.as_ref(),
-        )?;
-        let result = json!(ConcreteReport {
-            schema_version: 1,
-            report_type: "coordinator_concrete_request".into(),
-            operation_id: context.request_id().into(),
-            compilation_operation_id: receipt,
-            creation_reused,
-            plan: serde_json::from_value(value)?,
-            job: crate::jobs::view(&plan, true),
-            execution_authorized: false,
-            dispatched: false,
-            automatically_retried: false
-        });
-        let command = ConcreteCommand {
-            operation_id: context.request_id().into(),
-            request: input,
-        };
-        let confirmed = if let Some(camera) = &camera {
-            eefn::request_submission::confirmed_with_camera(
-                &result,
-                context.origin_node(),
-                &command,
-                camera,
-            )
-        } else if let Some(workload) = &workload {
-            eefn::request_submission::confirmed_with_workload(
-                &result,
-                context.origin_node(),
-                &command,
-                workload,
-            )
-        } else {
-            eefn::request_submission::confirmed_with_source(
-                &result,
-                context.origin_node(),
-                &command,
-                source.as_ref(),
-            )
-        };
-        if !confirmed {
-            bail!(
-                "Concrete request checkpoint changed or failed confirmation; inspect retained history"
-            )
-        }
-        Ok(result)
+            let confirmed = if let Some(camera) = &camera {
+                eefn::request_submission::confirmed_with_camera(
+                    &result,
+                    context.origin_node(),
+                    &command,
+                    camera,
+                )
+            } else if let Some(workload) = &workload {
+                eefn::request_submission::confirmed_with_workload(
+                    &result,
+                    context.origin_node(),
+                    &command,
+                    workload,
+                )
+            } else {
+                eefn::request_submission::confirmed_with_source(
+                    &result,
+                    context.origin_node(),
+                    &command,
+                    source.as_ref(),
+                )
+            };
+            if !confirmed {
+                bail!(
+                    "Concrete request checkpoint changed or failed confirmation; inspect retained history"
+                )
+            }
+            Ok(result)
+        })
     }
 }
 

@@ -1,5 +1,27 @@
 // Actual origin mailbox and credential/TLS node source inspection. No Python,
 // model, media plugin, device access, approval or execution participates.
+fn admission_future_bytes<T>(_: T) -> usize {
+    std::mem::size_of::<T>()
+}
+#[test]
+fn source_admission_constructor_futures_fit_the_command_stack_budget() {
+    for (phase, size) in [
+        ("default", admission_future_bytes(SourceAdmission::new())),
+        (
+            "metadata",
+            admission_future_bytes(SourceAdmission::with_metadata(Default::default())),
+        ),
+        (
+            "selection",
+            admission_future_bytes(SourceAdmission::with_selection(Default::default(), None)),
+        ),
+    ] {
+        assert!(
+            size <= 64 * 1024,
+            "{phase} fixture constructor future grew to {size} bytes"
+        );
+    }
+}
 struct SourceAdmission {
     _dir: tempfile::TempDir,
     runtime: std::sync::Arc<crate::Runtime>,
@@ -15,7 +37,7 @@ impl SourceAdmission {
         Self::with_metadata(metadata).await
     }
     async fn with_metadata(metadata: eefn::context::NodeMetadata) -> Self {
-        Self::with_selection(metadata, None).await
+        Box::pin(Self::with_selection(metadata, None)).await
     }
     async fn with_selection(
         metadata: eefn::context::NodeMetadata,
@@ -36,11 +58,11 @@ impl SourceAdmission {
             .unwrap(),
         )
         .unwrap();
-        let runtime = crate::Runtime::initialize(
+        let runtime = Box::pin(crate::Runtime::initialize(
             crate::config::Config::load(Some(&owner_path)).unwrap(),
             dir.path().join("owner.db"),
             false,
-        )
+        ))
         .await
         .unwrap();
         let node_path = dir.path().join("node.json");
@@ -223,6 +245,23 @@ async fn continuous_source_origin_admission_needs_no_one_shot_plugin_or_executio
     let mut f = SourceAdmission::new().await;
     assert!(!f.engine.capabilities().contains(&"audio.capture".into()));
     let input = f.input().await;
+    let context =
+        RequestContext::new(uuid::Uuid::new_v4().to_string(), "origin".into(), vec![]).unwrap();
+    for (phase, size) in [
+        (
+            "concrete",
+            admission_future_bytes(f.runtime.origin_concrete_request(input.clone(), &context)),
+        ),
+        (
+            "camera",
+            admission_future_bytes(f.runtime.origin_camera_request(camera_intent(), &context)),
+        ),
+    ] {
+        assert!(
+            size <= 64 * 1024,
+            "{phase} command future grew to {size} bytes"
+        );
+    }
     let (command, result) = f.submit(input.clone()).await;
     assert_eq!(result["success"], true, "Origin authoring failed: {result}");
     assert!(eefn::request_submission::confirmed(

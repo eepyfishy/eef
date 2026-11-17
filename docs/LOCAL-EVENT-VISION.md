@@ -326,6 +326,11 @@ rule that refused workload model bindings. It now checks the exact nested vision
 selection, including the generic binding validation pass. Missing/substituted
 model IDs or backends still deny confirmation; metadata and one-shot rules keep
 their prior scope. The corrected path requires new hosted verification.
+The corrected authoring code passes Linux at `5fb4712`; Windows exposed a stack
+overflow in shared admission setup. A heap-owned common command phase and boxed
+fixture initialization keep nested callers bounded. A fixed 64 KiB future-size
+check accompanies the actual admission tests; no larger thread stack or changed
+execution/cancellation policy is used. Windows verification remains pending.
 
 The public workflow remains incomplete. Next work needs model placement/capacity
 integration and complete command lifecycle acceptance. Interrupted outcome

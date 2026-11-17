@@ -17,6 +17,12 @@ The first authoring run exposed a node-side confirmation gap: workload views
 still refused all model bindings and expected one-shot model parameter paths.
 The validator now checks the exact nested vision model/backend while retaining
 metadata and one-shot checks; substituted or missing bindings have regressions.
+Both Linux jobs pass that correction at `5fb4712`. Windows/dashboard then exposed
+a stack overflow in the shared source-admission fixture. The common concrete
+command phase now has a heap-owned future, and the fixture bounds its nested
+constructor. Ownership, cancellation, thread stack limits and command behavior
+are unchanged. A 64 KiB future-size regression and the actual admission cases
+must pass on the corrected hosted candidate before accepting this path.
 
 Negotiation source `9e47e6f` passes both Linux jobs but is not accepted: Windows
 dashboard hit an existing peer-driver test's eight-second observation deadline
