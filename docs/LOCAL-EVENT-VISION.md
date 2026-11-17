@@ -357,20 +357,28 @@ is unavailable. Even a completed node report leaves `job_completed` and
 `outcome_confirmed` false. There is no reconciliation, source/model execution,
 lease renewal or replay. Scope is checked before and after the bounded node wait;
 missing/changed pages are not stitched into a supposed complete history.
-This interrupted-result candidate awaits hosted verification.
+The interrupted-result core at `b16e053` passes all four hosted jobs in
+[run 44096657632](https://github.com/eepyfishy/eef/actions/runs/44096657632),
+including 1,848 Windows/headless Rust tests, all 37 native suites and the retained
+extra gates. Scoped review accepts the bounded historical reader, independent
+evidence semantics and offline metadata path. Joined executable vision/stop
+delivery and the assembly-deadline follow-up below remain separately pending.
 
 An additional shipping-executable fixture now configures the owner-selected VLM
 and vision policy through commands, authors and approves an explicit review,
 and exercises completed text delivery and a stop during a pending model request.
 It requires original receipt reuse to leave both the job and model-call count
 unchanged. Only the disposable Python dependency and loopback model endpoint are
-test setup; no hardware or actual model participates. This newer fixture also
-awaits hosted verification. Bounded result assembly now checks the caller's same
-read deadline after full validation, and expired-phase reads have regressions.
+test setup; no hardware or actual model participates. Source `2f9ad02` passes all
+four hosted jobs in [run 44098166237](https://github.com/eepyfishy/eef/actions/runs/44098166237),
+including all 37 native suites and the retained extra gates. Scoped review
+accepts positive executable completion and pending-stop result delivery.
+Bounded result assembly checks the caller's same read deadline after full
+validation, and expired-phase reads have regressions.
 
 The public workflow remains incomplete. Next work needs model placement/capacity
-integration and complete command lifecycle acceptance. Interrupted command
-composition and the full command/network workflow still need acceptance.
+integration and complete command lifecycle acceptance. Full vision restart/
+reconnect composition and the remaining command/network cases still need acceptance.
 Approved bounded text can leave the node through the authenticated job
 lifecycle; camera images must stay off coordinator traffic and history. Model
 absence, revocation, expiry, stop, restart and lost replies must not cause fallback

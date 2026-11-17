@@ -163,3 +163,55 @@ authorized node work remain independently available.
 For detailed bounds and checkpoint history, see
 [the camera source](../CAMERA-MOTION.md) and
 [combined command acceptance](../WORKLOAD-FULL-COMMAND-ACCEPTANCE.md).
+
+## Optional local image analysis (development)
+
+Matching development builds can analyze selected camera frames with an existing
+local vision model. The command workflow passes synthetic hosted verification;
+real camera/model acceptance remains open. It is absent from the published alpha
+installers and does not install or choose a model for you. Complete the camera
+setup above first.
+
+On the camera node, select your installed Ollama vision model, enable the
+additional workload permission, and apply the selection with a restart:
+
+```powershell
+.\eefn.exe models select-ollama --model MODEL_ID --modality vlm
+.\eefn.exe workload-policy vision --enabled true
+.\eefn.exe restart --wait-seconds 20
+.\eefn.exe models installed
+.\eefn.exe workloads vision-sources
+```
+
+Replace `MODEL_ID` with your model's installed ID. Copy its installed digest from
+the inventory. A restart interrupts current work; inspect pending changes first.
+The source inspection must show matching applied model and camera configuration.
+Enabling vision alone grants no capture, model call or model download.
+
+From the input node, author a bounded request using that exact model and digest:
+
+```powershell
+.\eefn.exe requests submit-vision --camera camera --backend ollama --model MODEL_ID --model-digest INSTALLED_DIGEST --prompt 'Describe movement' --frames 30
+.\eefn.exe requests plan REQUEST_ID
+```
+
+The model must be available on the camera node. For another node's camera, use
+`--source-node NODE_ID` and that node's applied model selection. Review the source,
+model, prompt, frame/image limits and text budget. Then use the same separate
+owner approval and input-node execution steps above. Changing a model, digest or
+prompt requires a new review. Authoring and approval do not contact the camera
+or model. Images remain on the camera node; approved bounded analysis text can
+be returned to the request's origin and stored in its private history.
+
+Read the result with:
+
+```powershell
+.\eefn.exe requests result REQUEST_ID --grant-id GRANT_ID
+```
+
+Completed results remain readable when the camera node is offline. An interrupted
+result can contain pending analyses or retained text without confirming that the
+job completed. If analysis is unavailable, its absence does not prove that
+nothing happened. Reading never resumes capture or model work. Keep the same
+job and receipt after uncertainty; a new session needs separate review/approval.
+See [current acceptance and limits](../LOCAL-EVENT-VISION.md).

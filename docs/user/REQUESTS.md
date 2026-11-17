@@ -177,6 +177,15 @@ Read-only executor receipt inspection is also available with
 rerun work or automatically settle an interrupted coordinator record. Advanced
 explicit settlement is described in [result recovery](../RESULT-RECOVERY.md).
 
+Continuous workloads use this command too. Completed results come from eef's
+saved checkpoint and can be read with the executing node offline. In the newer
+interrupted-result development workflow, a successful read can instead return
+partial evidence with `job_completed: false` and `outcome_confirmed: false`.
+Retained node text, even with a completed node receipt, does not settle the
+coordinator's interrupted job. Unavailable analysis does not prove no effects.
+This extension passes synthetic hosted verification; see the
+[result contract](../RETAINED-RESULTS.md#continuous-workload-results-development).
+
 ## Keep command receipts after uncertainty
 
 Commands that accept `--operation-id` can use an ID you generate before sending.

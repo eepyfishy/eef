@@ -104,4 +104,11 @@ If a read cannot establish that consistency, it returns metadata with unavailabl
 analysis. The coordinator rechecks job/origin/grant scope after the remote wait.
 Reading does not write a new checkpoint, reconcile, retry, renew a lease or start
 a source/model. Already-completed checkpoint reads retain their existing format.
-The interrupted-result extension awaits hosted verification.
+The interrupted-result core passes all four hosted jobs at `b16e053` in
+[run 44096657632](https://github.com/eepyfishy/eef/actions/runs/44096657632).
+This verifies the bounded reader, independent evidence semantics and coordinator
+offline-metadata path. The positive shipping-executable vision/stop composition
+and final assembly-deadline check also pass all four jobs at `2f9ad02` in
+[run 44098166237](https://github.com/eepyfishy/eef/actions/runs/44098166237).
+Full vision restart/reconnect composition, real models/devices and stable release
+acceptance remain open.

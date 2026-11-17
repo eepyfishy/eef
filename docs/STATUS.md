@@ -5,6 +5,26 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+Source `2f9ad02` passes all four hosted jobs in
+[run 44098166237](https://github.com/eepyfishy/eef/actions/runs/44098166237),
+including 1,848 Windows/headless Rust tests, one ignored across 17 groups, all 37
+native suites and the retained extra gates. Scoped review accepts interrupted
+result reads and the shipping-executable synthetic vision completion/pending-stop
+workflow. It checks explicit model/policy/review/approval, bounded text delivery,
+private-image exclusion and unchanged execution receipt reuse without replay.
+Final result validation retains the caller's read deadline. This supersedes
+the pending verification below. Full vision restart/reconnect command composition,
+placement/capacity, real models/devices and stable release acceptance remain open.
+
+Interrupted-result core source `b16e053` passes all four hosted jobs in
+[run 44096657632](https://github.com/eepyfishy/eef/actions/runs/44096657632):
+1,848 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and the retained extra gates. Scoped review accepts bounded historical
+inspection, authenticated node reads, origin/grant checks and offline coordinator
+metadata without completing or reconciling an interrupted job. Its assembly
+deadline and positive executable follow-up are verified above at `2f9ad02`.
+Older pending notes below retain their original checkpoint meaning.
+
 Exact source `e2f269b` passes all four hosted configurations in
 [run 44090075565](https://github.com/eepyfishy/eef/actions/runs/44090075565).
 The complete Windows/headless log verifies 1,845 Rust tests, one ignored across

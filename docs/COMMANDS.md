@@ -737,6 +737,15 @@ result delivery passes synthetic hosted verification at `9603e47`; complete
 public vision job authoring/execution acceptance remains open. See
 [vision integration status](LOCAL-EVENT-VISION.md).
 
+Interrupted workloads return a distinct read-only snapshot with
+`job_completed: false` and `outcome_confirmed: false`. `success` confirms only
+the read. Available analyses can contain a pending last call; a missing snapshot
+is `unavailable_or_unconfirmed`, not proof that no work occurred. Metadata-only
+workloads report `not_applicable`. Even completed node evidence cannot reconcile
+the job. The same origin/grant checks apply before and after a bounded node read.
+The core and shipping-command vision/stop composition pass synthetic hosted
+verification at `2f9ad02`; real models/devices and stable acceptance remain open.
+
 The unreleased `eefn requests submit-vision` candidate prepares a camera/model
 request without a JSON file. Required options are `--backend`, `--model` and
 `--prompt`, plus `--model-digest` for Ollama's exact installed identity. Use
