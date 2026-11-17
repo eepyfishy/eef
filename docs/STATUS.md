@@ -5,6 +5,25 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+Exact source `e2f269b` passes all four hosted configurations in
+[run 44090075565](https://github.com/eepyfishy/eef/actions/runs/44090075565).
+The complete Windows/headless log verifies 1,845 Rust tests, one ignored across
+17 groups, all 37 native suites and the retained extra gates. Scoped source
+review accepts typed vision authoring, separate protocol negotiation and the
+synthetic command-service completion path, including offline checkpoint reads.
+This supersedes the pending verification below. It does not establish real-model
+quality, physical input, positive binary vision execution or stable readiness;
+the earlier peer-driver timeout's cause remains unresolved.
+
+A further candidate extends `requests result` to interrupted workloads. It reads
+an authenticated bounded node analysis snapshot when available and returns the
+coordinator's retained metadata when it is not. It explicitly reports unknown
+completion, including when the node independently retained completed evidence.
+Reads neither reconcile nor resume work, and recheck the stored origin/grant
+after the remote wait. New tests cover cross-page ordering, empty/pending
+evidence, reconnect reads and offline coordinator result delivery. This newer
+candidate still needs hosted verification.
+
 A new Windows native command-service case joins review/approval, the real
 coordinator issuer, pinned node execution and durable result delivery, including
 lease renewal, originating-node output and checkpoint reads after the executor

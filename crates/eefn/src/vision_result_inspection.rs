@@ -92,11 +92,30 @@ impl crate::NodeServer {
         d: &Definition,
         deadline: tokio::time::Instant,
     ) -> Result<crate::grants::workload::VisionHistory> {
+        let pages = self.workload_analysis_pages(d, deadline, true).await?;
+        crate::grants::workload::VisionHistory::from_pages(d, pages)
+    }
+    /// Read one frozen retained prefix without asserting completion, resuming
+    /// a source or creating authority from historical evidence.
+    pub async fn retained_workload_analyses(
+        &self,
+        d: &Definition,
+        deadline: tokio::time::Instant,
+    ) -> Result<crate::grants::workload::VisionInspection> {
+        let pages = self.workload_analysis_pages(d, deadline, false).await?;
+        crate::grants::workload::VisionInspection::from_pages(d, pages)
+    }
+    async fn workload_analysis_pages(
+        &self,
+        d: &Definition,
+        deadline: tokio::time::Instant,
+        completed_only: bool,
+    ) -> Result<Vec<VisionPage>> {
         let maximum = match &d.source {
             crate::workload_leases::definition::Source::CameraVision { parameters, .. } => {
                 parameters.max_calls()
             }
-            _ => anyhow::bail!("Completed analysis reads require their exact vision source"),
+            _ => anyhow::bail!("Retained analysis reads require their exact vision source"),
         };
         let mut prefix = VisionPage::seed(d)?;
         let mut after = 0;
@@ -105,13 +124,14 @@ impl crate::NodeServer {
             loop {
                 ensure!(
                     tokio::time::Instant::now() < deadline,
-                    "Completed analysis read phase expired"
+                    "Retained analysis read phase expired"
                 );
                 let page = self
                     .inspect_workload_analyses(d, after, VISION_MAX_PAGE, &prefix)
                     .await?;
                 ensure!(
-                    page.receipt.state == "completed" && page.completion.is_some(),
+                    !completed_only
+                        || (page.receipt.state == "completed" && page.completion.is_some()),
                     "Analysis execution remains unconfirmed"
                 );
                 let more = page.more;
@@ -120,17 +140,17 @@ impl crate::NodeServer {
                 pages.push(page);
                 ensure!(
                     pages.len() as u64 <= maximum.div_ceil(VISION_MAX_PAGE as u64).max(1),
-                    "Completed analysis page count exceeded"
+                    "Retained analysis page count exceeded"
                 );
                 if !more {
                     break;
                 }
             }
-            crate::grants::workload::VisionHistory::from_pages(d, pages)
+            Ok(pages)
         };
         tokio::time::timeout_at(deadline, operation)
             .await
-            .map_err(|_| anyhow::anyhow!("Completed analysis read phase expired"))?
+            .map_err(|_| anyhow::anyhow!("Retained analysis read phase expired"))?
     }
     pub async fn inspect_workload_analyses(
         &self,

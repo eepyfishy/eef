@@ -1079,11 +1079,53 @@ impl crate::Runtime {
             .as_ref()
             .is_some_and(|e| e.workload.is_some())
         {
-            return crate::workload_job_inspection::result(
-                &plan,
+            let workload = crate::workload_job_inspection::retained(&plan, &command, origin)?;
+            if workload.completion.is_some() {
+                return crate::workload_job_inspection::result(
+                    &plan,
+                    &command,
+                    origin,
+                    &self.instance_id,
+                );
+            }
+            if workload.state != AttemptState::Unknown {
+                bail!("Workload has no retained completion; inspect its current receipt/progress")
+            }
+            // One bounded historical read, never preparation, lease renewal or
+            // model execution. Keep time for the final journal/scope check.
+            let vision = if workload.definition.schema_version == 3 {
+                self.node_server
+                    .retained_workload_analyses(
+                        &workload.definition,
+                        deadline.min(tokio::time::Instant::now() + Duration::from_secs(7)),
+                    )
+                    .await
+                    .ok()
+            } else {
+                None
+            };
+            // Removal or a changed scope while awaiting the node cannot return
+            // stale private data or turn an inspection into reconciliation.
+            let latest = self.engine.store.get_before(&command.id, deadline).await?;
+            if latest
+                .execution
+                .as_ref()
+                .and_then(|e| e.workload.as_ref())
+                .is_some_and(|w| w.completion.is_some())
+            {
+                return crate::workload_job_inspection::result(
+                    &latest,
+                    &command,
+                    origin,
+                    &self.instance_id,
+                );
+            }
+            return crate::workload_job_inspection::uncertain_result(
+                &latest,
                 &command,
                 origin,
                 &self.instance_id,
+                vision,
             );
         }
         let attempt = receipt_attempt(&plan, &command, origin)?;

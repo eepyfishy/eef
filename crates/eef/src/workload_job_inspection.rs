@@ -1,6 +1,6 @@
 //! Existing receipt commands can inspect workload history without a live issuer.
 use crate::{Runtime, task::Plan};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
 pub(crate) fn retained<'a>(
@@ -120,6 +120,56 @@ pub(crate) fn result(
         automatically_retried: false,
         reconciled: false,
         note: eefn::workload_result::NOTE.into(),
+    };
+    report.validate(command, origin, Some(runtime))?;
+    Ok(json!(report))
+}
+pub(crate) fn uncertain_result(
+    plan: &Plan,
+    command: &eefn::request_result::ResultCommand,
+    origin: Option<&str>,
+    runtime: &str,
+    vision: Option<eefn::grants::workload::VisionInspection>,
+) -> Result<Value> {
+    use eefn::workload_uncertain_result::{AnalysisAvailability, Report};
+    let execution = retained(plan, command, origin)?;
+    ensure!(
+        execution.state == crate::request_execution::AttemptState::Unknown
+            && execution.completion.is_none()
+            && plan.status == crate::task::PlanStatus::Interrupted,
+        "Only interrupted workload evidence can use uncertain result inspection"
+    );
+    let analysis_availability = match (execution.definition.schema_version, vision.is_some()) {
+        (2, false) => AnalysisAvailability::NotApplicable,
+        (3, false) => AnalysisAvailability::UnavailableOrUnconfirmed,
+        (3, true) => AnalysisAvailability::RetainedSnapshot,
+        _ => bail!("Interrupted source and analysis evidence differ"),
+    };
+    let report = Report {
+        schema_version: 1,
+        report_type: "coordinator_workload_uncertain_result".into(),
+        success: true,
+        runtime_id: runtime.into(),
+        id: plan.plan_id.clone(),
+        revision: plan.revision,
+        request_context: execution.definition.request_context.clone(),
+        definition: execution.definition.clone(),
+        job_status: "interrupted".into(),
+        coordinator_attempt_state: "unknown".into(),
+        metadata: eefn::workload_network::summarize_events(
+            &execution.definition,
+            &execution.observations,
+        )?,
+        analysis_availability,
+        vision,
+        job_completed: false,
+        outcome_confirmed: false,
+        read_only: true,
+        execution_requested: false,
+        automatically_retried: false,
+        reconciled: false,
+        model_replay_authorized: false,
+        note: eefn::workload_uncertain_result::NOTE.into(),
     };
     report.validate(command, origin, Some(runtime))?;
     Ok(json!(report))

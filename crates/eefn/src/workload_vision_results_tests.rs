@@ -71,6 +71,84 @@ fn query(d: &Definition) -> WireRequest {
 }
 
 #[tokio::test]
+async fn retained_inspection_rejects_cross_page_order_even_with_valid_page_checksums() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = definition(20);
+    let ledger = saved(&dir.path().join("journal.db"), &d, true).await;
+    let seed = Page::seed(&d).unwrap();
+    let mut first = ledger
+        .workload_analysis_page(&d.issuer_id, &d, 0, MAX_PAGE, &seed)
+        .unwrap();
+    let mut second = ledger
+        .workload_analysis_page(&d.issuer_id, &d, 16, MAX_PAGE, &first.prefix_after_sha256)
+        .unwrap();
+    // Both pages remain internally ordered and checksummed. Only the joined
+    // inspection can detect reuse of the preceding page's source observation.
+    let row = &mut second.analyses[0];
+    row.intent.source_sequence = first.analyses[15].intent.source_sequence;
+    row.intent_sha256 = hash(&serde_json::to_vec(&row.intent).unwrap());
+    let result = row.result.as_mut().unwrap();
+    result.intent_sha256 = row.intent_sha256.clone();
+    row.result_sha256 = Some(hash(&serde_json::to_vec(result).unwrap()));
+    let prefix = second
+        .analyses
+        .iter()
+        .fold(first.prefix_after_sha256.clone(), |p, r| r.next_prefix(&p));
+    first.summary.prefix_sha256 = prefix.clone();
+    second.summary.prefix_sha256 = prefix.clone();
+    second.prefix_after_sha256 = prefix;
+    first.validate(&d, 0, MAX_PAGE, &seed).unwrap();
+    second
+        .validate(&d, 16, MAX_PAGE, &first.prefix_after_sha256)
+        .unwrap();
+    assert!(Inspection::from_pages(&d, vec![first, second]).is_err());
+}
+
+#[tokio::test]
+async fn empty_retained_inspection_keeps_zero_evidence_and_never_creates_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = definition(1);
+    let ledger = GrantLedger::open(
+        &dir.path().join("journal.db"),
+        Default::default(),
+        &d.executor_node,
+    )
+    .unwrap();
+    let consumed = super::tests::consume(&ledger, d.clone()).await.unwrap();
+    let (_sender, renewals) = crate::workload_leases::renewal_channel();
+    consumed
+        .supervise(renewals, async { Ok(()) })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while ledger
+            .workload_receipt(&d.issuer_id, &d.grant_id)
+            .unwrap()
+            .receipt
+            .state
+            != "unknown"
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let page = query(&d)
+        .read(&ledger, &d.issuer_id, &d.executor_node)
+        .unwrap();
+    let inspection = Inspection::from_pages(&d, vec![page.clone()]).unwrap();
+    assert_eq!(inspection.summary.calls, 0);
+    assert_eq!(inspection.summary.result_bytes, 0);
+    assert_eq!(inspection.summary.prefix_sha256, Page::seed(&d).unwrap());
+    assert!(inspection.analyses.is_empty() && inspection.completion.is_none());
+    assert!(History::from_pages(&d, vec![page]).is_err());
+    let mut changed = inspection;
+    changed.summary.last_source_sequence = 2;
+    assert!(changed.validate(&d).is_err());
+    assert!(super::tests::consume(&ledger, d).await.is_err());
+}
+
+#[tokio::test]
 async fn paged_retained_results_chain_exact_prefixes_without_turning_unknown_work_into_completion()
 {
     let dir = tempfile::tempdir().unwrap();
@@ -105,6 +183,10 @@ async fn paged_retained_results_chain_exact_prefixes_without_turning_unknown_wor
         .validate(&d, 16, MAX_PAGE, &first.prefix_after_sha256)
         .unwrap();
     assert_eq!(second.prefix_after_sha256, second.summary.prefix_sha256);
+    let inspection = Inspection::from_pages(&d, vec![first.clone(), second.clone()]).unwrap();
+    assert_eq!(inspection.receipt.state, "unknown");
+    assert_eq!(inspection.analyses.len(), 20);
+    assert!(inspection.completion.is_none());
     assert!(History::from_pages(&d, vec![first.clone(), second]).is_err());
     assert!(
         ledger
@@ -262,6 +344,18 @@ async fn pending_analysis_read_is_explicitly_uncertain_and_cannot_supply_a_compl
     assert_eq!(page.summary.completed, 0);
     assert_eq!(page.analyses[0].text(), None);
     assert!(page.completion.is_none());
+    let inspection = Inspection::from_pages(&d, vec![page.clone()]).unwrap();
+    assert_eq!(inspection.summary.completed, 0);
+    assert_eq!(inspection.analyses[0].text(), None);
+    let mut changed = inspection.clone();
+    changed.summary.completed = 1;
+    assert!(changed.validate(&d).is_err());
+    let mut changed = inspection.clone();
+    changed.receipt.state = "completed".into();
+    assert!(changed.validate(&d).is_err());
+    let mut changed = json!(inspection);
+    changed["execution_authorized"] = json!(true);
+    assert!(serde_json::from_value::<Inspection>(changed).is_err());
     assert!(History::from_pages(&d, vec![page]).is_err());
     assert!(super::tests::consume(&ledger, d).await.is_err());
 }
@@ -364,6 +458,18 @@ async fn authenticated_result_read_survives_reconnect_without_source_permission_
         .unwrap();
     assert_eq!(page.receipt.state, "unknown");
     assert_eq!(page.analyses[0].text(), Some("result 1"));
+    let inspection = server
+        .retained_workload_analyses(&d, tokio::time::Instant::now() + Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(inspection.receipt.state, "unknown");
+    assert_eq!(inspection.analyses[0].text(), Some("result 1"));
+    assert!(
+        server
+            .completed_workload_analyses(&d, tokio::time::Instant::now() + Duration::from_secs(5),)
+            .await
+            .is_err()
+    );
     assert!(
         !page.execution_authorized && !page.restart_authorized && !page.model_replay_authorized
     );

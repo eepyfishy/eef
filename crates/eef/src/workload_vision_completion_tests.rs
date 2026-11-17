@@ -232,6 +232,151 @@ async fn vision_issued(
     let (node, history) = vision_values(issued.definition(), &ack);
     (issued, node, history)
 }
+
+#[tokio::test]
+async fn interrupted_vision_results_remain_unconfirmed_even_with_completed_node_evidence() {
+    use eefn::{grants::workload::VisionInspection, workload_uncertain_result::Report};
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("owner.json");
+    let identity = eefn::tls::CoordinatorIdentity::generate().unwrap();
+    let credential = eefn::authentication::generate_credential();
+    std::fs::write(
+        &config_path,
+        serde_json::to_vec(&json!({
+            "node":{"psk":"","host":"127.0.0.1","port":0,"authentication":{
+                "allow_legacy":false,"tls":identity,"credentials":{"executor":credential}}},
+            "update":{"policy":"off"},"python":{"plugins":[]},
+            "firmware":{"repository":dir.path().join("firmware")}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let owner = Box::pin(crate::Runtime::initialize(
+        crate::config::Config::load(Some(&config_path)).unwrap(),
+        dir.path().join("vision.db"),
+        false,
+    ))
+    .await
+    .unwrap();
+    let store = owner.engine.store.clone();
+    let (mut issued, _, history) = vision_issued(&store, true).await;
+    let d = issued.definition().clone();
+    issued.retire();
+    assert!(lease(&mut issued, 2).await.is_err());
+    store.wait_workload_finalizations().unwrap();
+    let saved = store.get(&d.job_id).unwrap();
+    let before = json!(saved);
+    let command = eefn::request_result::ResultCommand {
+        id: d.job_id.clone(),
+        grant_id: d.grant_id.clone(),
+    };
+    let runtime = uuid::Uuid::new_v4().to_string();
+    let evidence = VisionInspection {
+        schema_version: 1,
+        receipt: history.receipt.clone(),
+        completion: Some(history.completion.clone()),
+        summary: history.summary.clone(),
+        analyses: history.analyses.clone(),
+    };
+    let view = crate::workload_job_inspection::uncertain_result(
+        &saved,
+        &command,
+        Some("origin"),
+        &runtime,
+        Some(evidence.clone()),
+    )
+    .unwrap();
+    assert_eq!(view["vision"]["receipt"]["state"], "completed");
+    assert_eq!(
+        view["vision"]["analyses"][0]["result"]["text"],
+        "movement detected"
+    );
+    assert_eq!(view["analysis_availability"], "retained_snapshot");
+    assert_eq!(view["coordinator_attempt_state"], "unknown");
+    assert_eq!(view["job_completed"], false);
+    assert!(eefn::request_result::confirmed(
+        &view,
+        &command,
+        Some("origin"),
+        Some(&runtime)
+    ));
+    for field in [
+        "job_completed",
+        "outcome_confirmed",
+        "execution_requested",
+        "automatically_retried",
+        "reconciled",
+        "model_replay_authorized",
+    ] {
+        let mut changed = view.clone();
+        changed[field] = json!(true);
+        assert!(
+            !eefn::request_result::confirmed(&changed, &command, Some("origin"), Some(&runtime)),
+            "{field}"
+        );
+    }
+    assert!(!eefn::request_result::confirmed(
+        &view,
+        &command,
+        Some("other-origin"),
+        Some(&runtime)
+    ));
+    assert!(
+        crate::workload_job_inspection::uncertain_result(
+            &saved,
+            &command,
+            Some("other-origin"),
+            &runtime,
+            Some(evidence),
+        )
+        .is_err()
+    );
+    let offline = crate::workload_job_inspection::uncertain_result(
+        &saved,
+        &command,
+        Some("origin"),
+        &runtime,
+        None,
+    )
+    .unwrap();
+    let report: Report = serde_json::from_value(offline.clone()).unwrap();
+    report
+        .validate(&command, Some("origin"), Some(&runtime))
+        .unwrap();
+    assert_eq!(
+        offline["analysis_availability"],
+        "unavailable_or_unconfirmed"
+    );
+    assert!(offline.get("vision").is_none());
+    assert_eq!(offline["metadata"]["count"], 1);
+    let delivered = owner
+        .inspect_request_result(command.clone(), Some("origin"))
+        .await
+        .unwrap();
+    assert!(eefn::request_result::confirmed(
+        &delivered,
+        &command,
+        Some("origin"),
+        Some(owner.runtime_id())
+    ));
+    assert_eq!(
+        delivered["analysis_availability"],
+        "unavailable_or_unconfirmed"
+    );
+    assert!(delivered.get("vision").is_none());
+    assert!(
+        owner
+            .inspect_request_result(command.clone(), Some("other-origin"))
+            .await
+            .is_err()
+    );
+    assert_eq!(json!(store.get(&d.job_id).unwrap()), before);
+    assert!(lease(&mut issued, 2).await.is_err());
+    assert!(
+        crate::workload_job_inspection::result(&saved, &command, Some("origin"), &runtime).is_err()
+    );
+    owner.shutdown().await;
+}
 async fn finish_vision(
     issued: &mut Issued,
     node: eefn::grants::workload::Receipt,

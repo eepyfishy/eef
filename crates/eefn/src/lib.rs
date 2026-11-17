@@ -130,6 +130,7 @@ mod workload_readiness;
 pub mod workload_result;
 mod workload_runtime;
 pub mod workload_sources;
+pub mod workload_uncertain_result;
 pub mod workload_vision_network;
 
 pub use client::{

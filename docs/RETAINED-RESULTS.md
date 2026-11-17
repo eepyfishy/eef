@@ -81,3 +81,27 @@ Existing local-owner/cross-site guards apply. Other origins, changed issuers/sco
 and damaged reports reject. Reads use consistent SQLite snapshots and check stored
 size before materializing/parsing report text. Missing evidence never proves no
 effects and never authorizes inference, grant renewal or automatic recovery.
+
+## Continuous workload results (development)
+
+Completed workloads use the same `requests result` command to read the
+coordinator's persisted event summary and approved bounded analysis text. This
+path works with the executor offline. It does not query a model or device.
+
+An interrupted workload instead returns a distinct
+`coordinator_workload_uncertain_result` snapshot. `success: true` confirms the
+read, while `job_completed: false`, `outcome_confirmed: false` and
+`coordinator_attempt_state: "unknown"` retain the job's uncertainty. A completed
+node receipt alone cannot complete the coordinator job. `analysis_availability`
+is `retained_snapshot`, `unavailable_or_unconfirmed`, or `not_applicable` for a
+metadata-only workload. An unavailable snapshot does not prove that no analysis
+or effects occurred. No node receipt is invented when the executor is unavailable.
+
+Vision inspection uses existing authenticated original-issuer reads and fixed
+page/aggregate limits. All pages must describe the same receipt, completion and
+summary; checksums, full-prefix order and pending rows are validated together.
+If a read cannot establish that consistency, it returns metadata with unavailable
+analysis. The coordinator rechecks job/origin/grant scope after the remote wait.
+Reading does not write a new checkpoint, reconcile, retry, renew a lease or start
+a source/model. Already-completed checkpoint reads retain their existing format.
+The interrupted-result extension awaits hosted verification.

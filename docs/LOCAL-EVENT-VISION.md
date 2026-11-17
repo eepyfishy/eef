@@ -341,11 +341,27 @@ must persist matching events and analysis, deliver text to the originating node,
 refuse a mismatched result origin, and read its checkpoint after the executing
 node disconnects. Reusing execution must leave the job and model-call count
 unchanged, and camera bytes/private endpoints must be absent from stored/output
-data. This is a new pending hosted check, not physical/model-quality acceptance.
+data. Exact source `e2f269b` now passes all four hosted configurations in
+[run 44090075565](https://github.com/eepyfishy/eef/actions/runs/44090075565),
+including all 37 native suites and the retained extra command/camera gates.
+Scoped review accepts this synthetic command-service completion path, typed
+authoring and separate negotiation. It does not accept physical/model quality,
+positive binary vision execution or stable readiness. Earlier pending notes
+above describe their original checkpoints; the peer timeout's cause is unresolved.
+
+The next result candidate distinguishes an interrupted coordinator job from its
+node's retained evidence. `requests result` can read a bounded frozen analysis
+prefix, including pending/unknown rows, through the existing authenticated
+original-issuer route. It returns retained coordinator metadata if the executor
+is unavailable. Even a completed node report leaves `job_completed` and
+`outcome_confirmed` false. There is no reconciliation, source/model execution,
+lease renewal or replay. Scope is checked before and after the bounded node wait;
+missing/changed pages are not stitched into a supposed complete history.
+This interrupted-result candidate awaits hosted verification.
 
 The public workflow remains incomplete. Next work needs model placement/capacity
-integration and complete command lifecycle acceptance. Interrupted outcome
-inspection and the full command/network workflow still need integration tests.
+integration and complete command lifecycle acceptance. Interrupted command
+composition and the full command/network workflow still need acceptance.
 Approved bounded text can leave the node through the authenticated job
 lifecycle; camera images must stay off coordinator traffic and history. Model
 absence, revocation, expiry, stop, restart and lost replies must not cause fallback

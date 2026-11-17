@@ -4,7 +4,7 @@ use super::*;
 use crate::workload_leases::definition::{Source, vision::Parameters};
 #[path = "workload_vision_results.rs"]
 mod results;
-pub use results::{History, MAX_PAGE, MAX_PAGE_BYTES, Page, Record};
+pub use results::{History, Inspection, MAX_PAGE, MAX_PAGE_BYTES, Page, Record};
 
 const STATE_SQL: &str = "CREATE TABLE execution_workload_analysis_state(grant_id TEXT NOT NULL PRIMARY KEY REFERENCES execution_receipts(grant_id),grant_digest TEXT NOT NULL,call_count INTEGER NOT NULL,result_count INTEGER NOT NULL,result_bytes INTEGER NOT NULL,reserved_output_tokens INTEGER NOT NULL,prefix_sha256 TEXT NOT NULL)";
 const SQL: &str = "CREATE TABLE execution_workload_analyses(grant_id TEXT NOT NULL REFERENCES execution_workload_analysis_state(grant_id),sequence INTEGER NOT NULL CHECK(sequence>0),source_sequence INTEGER NOT NULL CHECK(source_sequence>0),intent TEXT NOT NULL,intent_sha256 TEXT NOT NULL,result TEXT,result_sha256 TEXT,PRIMARY KEY(grant_id,sequence),UNIQUE(grant_id,source_sequence))";

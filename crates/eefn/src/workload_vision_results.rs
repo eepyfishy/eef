@@ -243,6 +243,132 @@ pub struct History {
     pub summary: Summary,
     pub analyses: Vec<Record>,
 }
+/// A bounded historical read, including pending/unknown outcomes. Unlike
+/// History, this value does not assert node completion or coordinator recovery.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Inspection {
+    pub schema_version: u32,
+    pub receipt: crate::request_receipt::ConsumedReceipt,
+    pub completion: Option<super::super::CompletionReport>,
+    pub summary: Summary,
+    pub analyses: Vec<Record>,
+}
+impl Inspection {
+    pub fn validate(&self, d: &Definition) -> Result<()> {
+        ensure!(
+            self.schema_version == 1
+                && self.analyses.len() as u64 == self.summary.calls
+                && self.summary.calls <= parameters(d)?.max_calls()
+                && serde_json::to_vec(self)?.len() <= History::max_bytes(d)?,
+            "Invalid retained analysis inspection size or count"
+        );
+        let mut prefix = Page::seed(d)?;
+        let mut after = 0;
+        let mut previous_source = 0;
+        let mut previous_lease = 0;
+        let mut previous_time = self.receipt.accepted_at_ms;
+        let mut bytes = 0usize;
+        let mut completed = 0u64;
+        loop {
+            let end = self.analyses.len().min(after + MAX_PAGE);
+            let records = &self.analyses[after..end];
+            let before = prefix.clone();
+            for row in records {
+                ensure!(
+                    row.intent.source_sequence > previous_source
+                        && row.intent.lease_sequence >= previous_lease
+                        && row.intent.recorded_at_ms >= previous_time,
+                    "Analysis inspection order changed across pages"
+                );
+                previous_source = row.intent.source_sequence;
+                previous_lease = row
+                    .result
+                    .as_ref()
+                    .map_or(row.intent.lease_sequence, |r| r.lease_sequence);
+                previous_time = row
+                    .result
+                    .as_ref()
+                    .map_or(row.intent.recorded_at_ms, |r| r.recorded_at_ms);
+                if let Some(result) = &row.result {
+                    completed += 1;
+                    bytes = bytes
+                        .checked_add(serde_json::to_vec(&result.text)?.len())
+                        .context("Inspection result size overflow")?;
+                }
+                prefix = row.next_prefix(&prefix);
+            }
+            // Reuse the strict wire validator, without widening its page bound
+            // or constructing a completion for pending/unknown node evidence.
+            Page {
+                schema_version: 2,
+                grant_id: d.grant_id.clone(),
+                grant_sha256: d.scope()?.grant_sha256,
+                receipt: self.receipt.clone(),
+                completion: self.completion.clone(),
+                summary: self.summary.clone(),
+                after_sequence: after as u64,
+                prefix_before_sha256: before.clone(),
+                analyses: records.to_vec(),
+                next_sequence: end as u64,
+                prefix_after_sha256: prefix.clone(),
+                more: end < self.analyses.len(),
+                execution_authorized: false,
+                restart_authorized: false,
+                model_replay_authorized: false,
+            }
+            .validate(d, after as u64, MAX_PAGE, &before)?;
+            after = end;
+            if after == self.analyses.len() {
+                break;
+            }
+        }
+        ensure!(
+            completed == self.summary.completed
+                && bytes == self.summary.result_bytes
+                && previous_source == self.summary.last_source_sequence
+                && previous_lease == self.summary.last_lease_sequence
+                && prefix == self.summary.prefix_sha256,
+            "Analysis inspection differs from its complete retained prefix"
+        );
+        Ok(())
+    }
+    pub fn from_pages(d: &Definition, pages: Vec<Page>) -> Result<Self> {
+        ensure!(
+            !pages.is_empty()
+                && pages.len()
+                    <= parameters(d)?.max_calls().div_ceil(MAX_PAGE as u64).max(1) as usize,
+            "Invalid retained analysis inspection page count"
+        );
+        let first = &pages[0];
+        let mut result = Self {
+            schema_version: 1,
+            receipt: first.receipt.clone(),
+            completion: first.completion.clone(),
+            summary: first.summary.clone(),
+            analyses: Vec::new(),
+        };
+        let count = pages.len();
+        let mut after = 0;
+        let mut prefix = Page::seed(d)?;
+        for (index, page) in pages.into_iter().enumerate() {
+            page.validate(d, after, MAX_PAGE, &prefix)?;
+            ensure!(
+                page.receipt == result.receipt
+                    && page.summary == result.summary
+                    && serde_json::to_value(&page.completion)?
+                        == serde_json::to_value(&result.completion)?
+                    && page.more == (index + 1 < count),
+                "Analysis inspection changed between pages"
+            );
+            after = page.next_sequence;
+            prefix = page.prefix_after_sha256;
+            result.analyses.extend(page.analyses);
+        }
+        result.validate(d)?;
+        Ok(result)
+    }
+}
 impl History {
     pub fn validate(&self, d: &Definition) -> Result<()> {
         let p = parameters(d)?;

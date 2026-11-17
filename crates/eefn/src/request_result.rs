@@ -1,4 +1,4 @@
-//! Explicit read-only terminal evidence/output. Never renews or replays a grant.
+//! Explicit read-only retained evidence/output. Never renews or replays a grant.
 use crate::{
     grants::{GrantReport, REPORT_HEADROOM, ReceiptState},
     request_receipt::ConsumedReceipt,
@@ -33,6 +33,9 @@ pub fn confirmed(
     origin: Option<&str>,
     runtime: Option<&str>,
 ) -> bool {
+    if value["report_type"] == "coordinator_workload_uncertain_result" {
+        return crate::workload_uncertain_result::confirmed(value, cmd, origin, runtime);
+    }
     if value["report_type"] == "coordinator_workload_result" {
         return crate::workload_result::confirmed(value, cmd, origin, runtime);
     }
@@ -121,7 +124,7 @@ impl crate::NodeService {
         let mut report = serde_json::json!({"schema_version":1,"report_type":"request_result","node_id":self.node_id,
             "request_id":req.request_id,"id":req.command.id,"grant_id":req.command.grant_id,"success":false,
             "execution_requested":false,"automatically_retried":false,"reconciled":false,
-            "note":"Explicit read-only final report/output, not proof external effects stopped. No job change, reconciliation, replay or fallback."});
+            "note":"Explicit read-only report/output snapshot, not proof of completion or stopped effects. No job change, reconciliation, replay or fallback."});
         match result {
             Ok(value) if confirmed(&value, &req.command, Some(&self.node_id), None) => {
                 report["success"] = serde_json::json!(true);
