@@ -50,6 +50,7 @@ pub(crate) struct Snapshot {
     version: Version,
     pub(crate) report: Report,
     pub(crate) camera_report: crate::camera_sources::Report,
+    pub(crate) vision_report: Option<crate::vision_sources::Report>,
     pub(crate) policy: Policy,
 }
 impl Snapshot {
@@ -76,6 +77,10 @@ impl Snapshot {
             && self.version == service.source_version()
             && self.report.runtime_id == runtime
             && self.camera_report.runtime_id == runtime
+            && self
+                .vision_report
+                .as_ref()
+                .is_none_or(|r| r.runtime_id == runtime)
     }
 }
 
@@ -133,10 +138,25 @@ impl NodeService {
                             })?)?;
                         let policy =
                             self.inspect_grant_configuration(crate::workload_policy::from_config)?;
+                        ensure!(!reply.is_closed(), "Source readiness observer retired");
+                        // A vision-only readiness failure cannot remove unrelated
+                        // metadata sources. It leaves this separate protocol unavailable.
+                        let vision_report = if policy.enabled && policy.vision_analysis {
+                            self.vision_workload_sources(Request {
+                                schema_version: 2,
+                                expected_node_id: self.node_id.clone(),
+                                expected_runtime_id: runtime.clone(),
+                            })
+                            .and_then(|v| Ok(serde_json::from_value(v)?))
+                            .ok()
+                        } else {
+                            None
+                        };
                         let snapshot = Snapshot {
                             version,
                             report,
                             camera_report,
+                            vision_report,
                             policy,
                         };
                         ensure!(

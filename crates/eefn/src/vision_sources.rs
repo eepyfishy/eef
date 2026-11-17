@@ -39,7 +39,7 @@ pub struct Report {
     pub capture_started: bool,
     pub model_contacted: bool,
     pub execution_authorized: bool,
-    /// Remains false until the distinct network workflow is implemented.
+    /// This passive view does not negotiate the separate execution protocol.
     pub execution_available: bool,
 }
 impl Report {
@@ -282,7 +282,7 @@ pub fn render(value: &Value) -> Result<String> {
             model.local_endpoint_configured
         ));
     }
-    text.push_str("Configuration inspection only. No camera or model was contacted; installed model identity and hardware availability remain unchecked. Network vision execution is not available yet.\n");
+    text.push_str("Configuration inspection only. No camera or model was contacted; installed model identity and hardware availability remain unchecked. Execution requires a separately reviewed job and current node support.\n");
     Ok(text)
 }
 

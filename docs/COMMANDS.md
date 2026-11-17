@@ -733,8 +733,9 @@ Completed workload results come from the coordinator journal, so the executing
 node can be offline. They include a bounded metadata summary and, for an approved
 vision workload, the retained analysis text. Reads enforce the original request
 origin and exact grant, and do not contact the model or restart work. This
-candidate awaits hosted verification; network vision authoring/execution is not
-enabled yet. See [vision integration status](LOCAL-EVENT-VISION.md).
+result delivery passes synthetic hosted verification at `9603e47`; complete
+public vision job authoring/execution acceptance remains open. See
+[vision integration status](LOCAL-EVENT-VISION.md).
 
 ## Reply ownership across reconnect (unreleased after alpha.6)
 

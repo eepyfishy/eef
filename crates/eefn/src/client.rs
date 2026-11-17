@@ -239,6 +239,8 @@ impl NodeClient {
             json!(crate::vision_result_inspection::Advertisement::new(
                 self.grant_ledger.is_some() && self.tls_config.is_some()
             ));
+        self.status.lock().expect("status")["workload_vision_execution"] =
+            json!(crate::workload_vision_network::Advertisement::unavailable());
         self.status.lock().expect("status")["grant_stop_read"] =
             json!(crate::grants::stop::inspection::Advertisement::new(
                 self.grant_ledger.is_some() && self.tls_config.is_some()
@@ -618,6 +620,8 @@ impl NodeClient {
         let mut model_changes = self.engine.model_server.as_ref().map(|s| s.subscribe());
         let mut source_readiness = source_readiness::Readiness::new(self);
         let mut advertised_workload = json!(crate::workload_network::Advertisement::unavailable());
+        let mut advertised_vision =
+            json!(crate::workload_vision_network::Advertisement::unavailable());
         if let Some(changes) = &mut model_changes {
             changes.mark_changed();
         }
@@ -691,11 +695,14 @@ impl NodeClient {
                         let registration=source_readiness.decorate(self.registration(&self.config.node_id,
                             if self.config.name.is_empty() {&self.config.node_id} else {&self.config.name},
                             crate::VERSION,&capabilities,&specs,&models,receipt_offer.as_ref(),peer_advertisement.as_ref()));
-                        if registration["workload_execution"]!=advertised_workload {
+                        if registration["workload_execution"]!=advertised_workload
+                            || registration["workload_vision_execution"]!=advertised_vision {
                             write_session_frame(&self.crypto,&writer,&output_write_failed,&registration).await.context("source registration refresh failed")?;
                             advertised_workload=registration["workload_execution"].clone();
+                            advertised_vision=registration["workload_vision_execution"].clone();
                             let mut status=self.status.lock().expect("source registration status");
                             status["workload_execution"]=advertised_workload.clone();
+                            status["workload_vision_execution"]=advertised_vision.clone();
                             status["capabilities"]=registration["capabilities"].clone();
                         }
                     }
@@ -716,9 +723,12 @@ impl NodeClient {
                             .await.context("model registration refresh failed")?;
                         models = updated;
                         advertised_workload=registration["workload_execution"].clone();
+                        advertised_vision=registration["workload_vision_execution"].clone();
                         let mut status = self.status.lock().expect("status");
                         status["models"] = json!(models);
                         status["capabilities"] = registration["capabilities"].clone();
+                        status["workload_execution"] = advertised_workload.clone();
+                        status["workload_vision_execution"] = advertised_vision.clone();
                     }
                     Some(command) = local.recv() => {
                         replies.retain(|_, reply| !reply.is_closed());

@@ -117,7 +117,7 @@ async fn passive_vision_inspection_never_contacts_model_captures_or_exposes_priv
     ] {
         assert!(!raw.contains(private));
     }
-    assert!(raw.contains("Network vision execution is not available yet"));
+    assert!(raw.contains("Execution requires a separately reviewed job and current node support"));
     assert_eq!(std::fs::read(&f.service.config_path).unwrap(), before);
 }
 

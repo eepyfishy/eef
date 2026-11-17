@@ -385,18 +385,15 @@ impl NodeServer {
             .as_ref()
             .context("Workload registration unavailable")?
             .registration;
-        let support: Advertisement =
-            serde_json::from_value(registered["workload_execution"].clone())?;
-        support.confirms_source(&template.source)?;
+        let (runtime, policy) =
+            crate::workload_vision_network::registered_support(registered, &template.source)?;
         let stop: crate::grants::stop::Advertisement =
             serde_json::from_value(registered["grant_stop"].clone())?;
         stop.validate()?;
         ensure!(
-            support.available && stop.available && support.completion_payload_prefix,
+            stop.available,
             "Node does not advertise compatible workload completion and stop support"
         );
-        let runtime = support.runtime_id.context("Workload runtime unavailable")?;
-        let policy = support.policy.context("Workload policy unavailable")?;
         ensure!(
             registered["registration_receipt"]["runtime_id"] == runtime
                 && registered["capabilities"]
@@ -476,16 +473,10 @@ impl NodeServer {
             .as_ref()
             .context("Workload node has not registered")?
             .registration;
-        let support: Advertisement =
-            serde_json::from_value(registered["workload_execution"].clone())?;
-        support.confirms_source(&definition.source)?;
+        let (runtime, policy) =
+            crate::workload_vision_network::registered_support(registered, &definition.source)?;
         ensure!(
-            support.available,
-            "Node has no authenticated workload execution support; no fallback"
-        );
-        let runtime = support.runtime_id.as_ref().unwrap();
-        ensure!(
-            registered["registration_receipt"]["runtime_id"] == *runtime
+            registered["registration_receipt"]["runtime_id"] == runtime
                 && registered["capabilities"]
                     .as_array()
                     .is_some_and(|caps| caps
@@ -493,7 +484,7 @@ impl NodeServer {
                         .any(|c| c == crate::workload_leases::definition::CAPABILITY)),
             "Workload registration generation or capability changed"
         );
-        let policy = support.policy.as_ref().unwrap();
+        policy.permits_definition(&definition)?;
         ensure!(
             definition.limits.max_session_ms <= policy.max_session_ms
                 && definition.limits.max_lease_ms <= policy.max_lease_ms,
@@ -501,7 +492,7 @@ impl NodeServer {
         );
         let offer = Offer {
             kind: "execute_workload".into(),
-            schema_version: 2,
+            schema_version: definition.schema_version,
             id: definition.grant_id.clone(),
             expected_runtime_id: runtime.clone(),
             definition: definition.clone(),
@@ -510,7 +501,7 @@ impl NodeServer {
             &issuer,
             &connection.session_id.to_string(),
             &connection.info.node_id,
-            runtime,
+            &runtime,
         )?;
         let generation = Uuid::new_v4();
         let contract_sha256 = definition.lease_contract()?.digest()?;

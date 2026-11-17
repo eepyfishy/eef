@@ -25,7 +25,9 @@ The later vision candidate adds `eefn workloads vision-sources` and
 configuration reads over the existing command services. They separate applied
 bindings, owner approval and configuration readiness from installed-model or
 physical readiness, without probing a device/provider or exposing private
-endpoints. The distinct vision network execution workflow remains disabled; this
+endpoints. A later transport candidate independently negotiates vision execution
+through a separate versioned advertisement and offer; it still needs hosted
+verification and complete public job authoring/placement integration. This
 inspection does not turn a camera-motion grant into model authority. See
 [local event vision](LOCAL-EVENT-VISION.md) for verification and remaining work.
 

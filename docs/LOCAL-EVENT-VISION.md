@@ -256,12 +256,18 @@ executing node. Event metadata is summarized to keep command replies bounded;
 the full event prefix remains validated in the journal. Results remain readable
 when the executing node is offline. Four coordinator regressions exercise
 issuance/opt-in, durable reopen/origin checks, incomplete/mismatched completion
-and storage refusal before issuance. Hosted verification is pending.
+and storage refusal before issuance. Exact commit `9603e47` passes all four hosted
+jobs in [run 44003140181](https://github.com/eepyfishy/eef/actions/runs/44003140181),
+including 1,831 Windows/headless Rust tests, one ignored across 17 groups,
+all 37 native suites and the retained extra command/camera gates. This accepts
+synthetic result transport/persistence and passive review, not physical/model
+quality or full public vision execution.
 
 Generic source review now selects the existing authenticated vision inspection
 endpoint for a vision template and checks the exact camera/model binding. The
-typed snapshot remains review-only: configuration readiness never satisfies
-execution readiness, and a camera-motion advertisement cannot authorize vision.
+typed snapshot at that checkpoint remains review-only: configuration readiness
+alone never satisfies execution readiness, and a camera-motion advertisement
+cannot authorize vision.
 The existing authenticated snapshot regression also exercises this selection
 and rejection of an unselected model. Payload-bound metadata results must retain
 their summary; only legacy completion records can omit that newer evidence.
@@ -272,10 +278,28 @@ support on an older wire version or make strict older peers reject unrelated
 microphone/camera-motion registration. Vision execution still requires distinct
 compatible negotiation; no network fallback is enabled.
 
-The network feature remains incomplete. The private admitted driver is available
-to internal preparation and synthetic fixtures; public offers and automatic source discovery
-still refuse vision workloads. Next work needs compatible feature negotiation,
-source selection, placement and JSON-free job authoring. Interrupted outcome
+The next transport candidate adds a distinct `workload_vision_execution`
+advertisement, binding runtime, owner policy and definition/offer/completion/read
+versions. It is separate from unchanged metadata advertisements. Readiness is
+published only for current applied camera/model configuration and explicit owner
+opt-in, and updates in place after revocation. A vision-only inspection failure
+does not remove unrelated metadata sources. Configuration readiness does not
+prove a provider/model/device is physically available.
+
+Vision routing requires the separate protocol plus current grant journal,
+retained-analysis reads and stop support. Vision definitions use offer version
+three; metadata definitions retain version two. Neither path can upgrade or
+downgrade to the other. Source review joins its passive configuration view with
+the separately negotiated support; source preparation and live inference retain
+their existing node-local permissions, epochs, digest checks and lease bounds.
+Images remain node-local. Five common regressions cover negotiation, version
+substitution, missing dependencies, runtime fencing and route preparation. A
+Windows native synthetic camera/model test exercises actual credential/TLS
+execution, durable pre-inference intent, bounded result reads, owner withdrawal
+and continued historical reads. This candidate awaits hosted verification.
+
+The public workflow remains incomplete. Next work needs model placement/capacity
+integration and JSON-free job authoring. Interrupted outcome
 inspection and the full command/network workflow still need integration tests.
 Approved bounded text can leave the node through the authenticated job
 lifecycle; camera images must stay off coordinator traffic and history. Model

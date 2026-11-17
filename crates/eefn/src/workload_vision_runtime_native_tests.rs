@@ -1,5 +1,6 @@
 //! Real node/lease/journal/process composition; fake camera, JPEG and model only.
 use super::*;
+include!("workload_vision_network_native_tests.rs");
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 

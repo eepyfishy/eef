@@ -1,4 +1,5 @@
 use super::*;
+include!("server_vision_workloads_tests.rs");
 use crate::workload_leases::{Policy, definition::*};
 
 fn policy() -> Policy {

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -1664,6 +1664,24 @@ impl NodeServer {
                             bail!("Workload support lacks its exact registered runtime/capability")
                         }
                     }
+                    if let Some(value) = message.get("workload_vision_execution") {
+                        let support: crate::workload_vision_network::Advertisement =
+                            serde_json::from_value(value.clone())?;
+                        support.validate_registration(&message)?;
+                        if support.available {
+                            ensure!(
+                                offered.as_ref().is_some_and(
+                                    |o| Some(&o.runtime_id) == support.runtime_id.as_ref()
+                                ) && capabilities
+                                    .iter()
+                                    .any(|c| c == crate::workload_leases::definition::CAPABILITY)
+                                    && message["execution_grants"]["available"] == true
+                                    && message["workload_vision_results"]["available"] == true
+                                    && message["grant_stop"]["available"] == true,
+                                "Vision support lacks its runtime, journal, stop or result protocol"
+                            );
+                        }
+                    }
                     if let Some(value) = message.get("peer_transfer") {
                         let support: crate::peer::plan::Advertisement =
                             serde_json::from_value(value.clone())?;
@@ -1730,6 +1748,7 @@ impl NodeServer {
                                     "workload_receipts",
                                     "workload_vision_results",
                                     "workload_execution",
+                                    "workload_vision_execution",
                                 ],
                                 received_at_ms,
                             ),

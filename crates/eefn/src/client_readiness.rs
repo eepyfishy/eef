@@ -60,6 +60,7 @@ impl Readiness {
     }
     pub(super) fn decorate(&self, mut message: Value) -> Value {
         let mut advertisement = crate::workload_network::Advertisement::unavailable();
+        let mut vision = crate::workload_vision_network::Advertisement::unavailable();
         if let (Some(service), Some(snapshot)) = (&self.service, &self.snapshot) {
             let kinds = snapshot.supported_sources(service, &self.runtime);
             if let Ok(current) = crate::workload_network::Advertisement::for_sources(
@@ -69,15 +70,28 @@ impl Readiness {
             ) {
                 advertisement = current;
             }
+            if snapshot.current(service, &self.runtime) {
+                if let Ok(current) = crate::workload_vision_network::Advertisement::for_runtime(
+                    &self.runtime,
+                    snapshot.policy.clone(),
+                    snapshot
+                        .vision_report
+                        .as_ref()
+                        .is_some_and(|r| r.configuration_ready),
+                ) {
+                    vision = current;
+                }
+            }
         }
         let caps = message["capabilities"]
             .as_array_mut()
             .expect("registration capabilities");
         caps.retain(|v| v != crate::workload_leases::definition::CAPABILITY);
-        if advertisement.available {
+        if advertisement.available || vision.available {
             caps.push(json!(crate::workload_leases::definition::CAPABILITY));
         }
         message["workload_execution"] = json!(advertisement);
+        message["workload_vision_execution"] = json!(vision);
         message
     }
 }

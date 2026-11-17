@@ -15,7 +15,7 @@ export async function verifyVisionSourceCommands(f) {
  assert.equal(report.model_bindings_current,true);assert.equal(report.camera.resources.length,1);
  const raw=JSON.stringify(report),text=await f.nodeText(command,true);
  assert(!raw.includes('PRIVATE_CAMERA')&&!raw.includes('rtsp://'));
- assert(text.includes('vision configuration'));assert(text.includes('Network vision execution is not available yet'));
+ assert(text.includes('vision configuration'));assert(text.includes('Execution requires a separately reviewed job and current node support'));
  assert(!text.includes('PRIVATE_CAMERA'));
  for(const mutation of [
   value=>{value.expected_node_id='other-node';},

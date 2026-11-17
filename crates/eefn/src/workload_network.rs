@@ -200,8 +200,10 @@ impl Offer {
         crate::automation_occurrence::uuid(&self.expected_runtime_id)?;
         ensure!(
             self.kind == "execute_workload"
-                && self.schema_version == 2
-                && self.definition.schema_version == 2
+                && matches!(
+                    (self.schema_version, self.definition.schema_version),
+                    (2, 2) | (3, 3)
+                )
                 && self.id == self.definition.grant_id
                 && self.expected_runtime_id == runtime
                 && self

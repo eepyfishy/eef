@@ -5,6 +5,22 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+The next transport candidate separately negotiates vision definition/offer/report
+versions, owner policy and current runtime, with required journal, stop and
+retained-analysis read support. Current camera/model readiness updates the same
+authenticated connection. Metadata wire shapes remain unchanged, and neither
+offer version can substitute for the other. Five common cases and one Windows
+native credential/TLS synthetic camera/model execution case await hosted tests.
+JSON-free vision authoring, placement/capacity, interrupted outcomes and complete
+public workflow acceptance remain open.
+
+Exact source `9603e47` passes all four jobs and retained raw gates in
+[run 44003140181](https://github.com/eepyfishy/eef/actions/runs/44003140181):
+1,831 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and extra gates. This accepts historical result transport, coordinator
+persistence and passive generic review under synthetic fixtures. It does not
+accept real models, physical inputs or stable release readiness.
+
 The next coordinator candidate preserves vision model/backend bindings and the
 reviewed schema through issuance, reserves complete result storage before work,
 and requires matching events and completed analysis history before checkpointing

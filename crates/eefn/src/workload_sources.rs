@@ -293,10 +293,24 @@ impl crate::NodeServer {
                 self.camera_workload_sources(&template.executor_node, freshness_seconds)
                     .await?,
             ),
-            SourceKind::CameraVision => SourceSnapshot::Vision(
-                self.vision_workload_sources(&template.executor_node, freshness_seconds)
-                    .await?,
-            ),
+            SourceKind::CameraVision => {
+                let session = self.grant_session(&template.executor_node).await?;
+                let report = self
+                    .vision_workload_sources(&template.executor_node, freshness_seconds)
+                    .await?;
+                let state = self
+                    .node_state(&template.executor_node)
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("Vision source registration retired"))?;
+                ensure!(
+                    self.grant_session(&template.executor_node).await? == session,
+                    "Vision source session changed during protocol inspection"
+                );
+                SourceSnapshot::Vision(VisionSnapshot::from_registered(
+                    report,
+                    &state.registration,
+                )?)
+            }
         };
         snapshot.confirms_template(template)?;
         Ok(snapshot)
@@ -364,17 +378,47 @@ impl crate::NodeServer {
 }
 
 /// Local typed result, never another serializable execution authority.
+pub struct VisionSnapshot {
+    pub report: crate::vision_sources::Report,
+    execution: Option<crate::workload_vision_network::Advertisement>,
+}
+impl VisionSnapshot {
+    pub(crate) fn from_registered(
+        report: crate::vision_sources::Report,
+        registration: &Value,
+    ) -> Result<Self> {
+        ensure!(
+            registration["registration_receipt"]["runtime_id"] == report.runtime_id,
+            "Vision source registration runtime changed"
+        );
+        let execution = registration
+            .get("workload_vision_execution")
+            .map(|v| {
+                serde_json::from_value::<crate::workload_vision_network::Advertisement>(v.clone())
+            })
+            .transpose()?;
+        if let Some(support) = &execution {
+            support.validate_registration(registration)?;
+            ensure!(
+                !support.available
+                    || support.runtime_id.as_deref() == Some(report.runtime_id.as_str()),
+                "Vision execution advertisement belongs to another runtime"
+            );
+        }
+        Ok(Self { report, execution })
+    }
+}
 pub enum SourceSnapshot {
     Microphone(Report),
     Camera(crate::camera_sources::Report),
-    Vision(crate::vision_sources::Report),
+    Vision(VisionSnapshot),
 }
 impl SourceSnapshot {
     pub fn runtime_id(&self) -> &str {
         match self {
             Self::Microphone(report) => &report.runtime_id,
             Self::Camera(report) => &report.runtime_id,
-            Self::Vision(report) => &report.runtime_id,
+            Self::Vision(snapshot) => &snapshot.report.runtime_id,
         }
     }
     pub fn confirms_template(
@@ -384,7 +428,7 @@ impl SourceSnapshot {
         match self {
             Self::Microphone(report) => report.confirms_template(template),
             Self::Camera(report) => report.confirms_template(template),
-            Self::Vision(report) => report.confirms_template(template),
+            Self::Vision(snapshot) => snapshot.report.confirms_template(template),
         }
     }
     pub fn confirms_execution(
@@ -412,9 +456,16 @@ impl SourceSnapshot {
                     && r.applied_camera_permission
                     && r.python_configured
             }
-            // Passive configuration supports review only. A future execution
-            // protocol must independently negotiate vision admission/results.
-            Self::Vision(_) => false,
+            Self::Vision(snapshot) => {
+                snapshot.report.configuration_ready
+                    && snapshot.execution.as_ref().is_some_and(|support| {
+                        support.confirms(&template.source, runtime).is_ok()
+                            && support.policy.as_ref().is_some_and(|p| {
+                                template.limits.max_session_ms <= p.max_session_ms
+                                    && template.limits.max_lease_ms <= p.max_lease_ms
+                            })
+                    })
+            }
         };
         ensure!(
             ready && self.runtime_id() == runtime,
