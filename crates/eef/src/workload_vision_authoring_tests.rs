@@ -63,6 +63,19 @@ async fn vision_authoring_preserves_explicit_model_intent_and_retained_retry_wit
         "{report}"
     );
     assert_eq!(report["success"], true, "{report}");
+    for (pointer, value) in [
+        ("/result/result/plan/bindings/0/model_id", json!("other")),
+        ("/result/result/plan/bindings/0/backend", json!("llamacpp")),
+        ("/result/result/plan/bindings/0/model_id", Value::Null),
+        ("/result/result/plan/bindings/0/backend", Value::Null),
+    ] {
+        let mut forged = report.clone();
+        *forged.pointer_mut(pointer).unwrap() = value;
+        assert!(
+            !eefn::camera_submission::confirmed_node(&forged, "origin", &command),
+            "{pointer}"
+        );
+    }
     let id = report["result"]["result"]["plan"]["id"].as_str().unwrap();
     let saved = f.runtime.engine.store.get(id).unwrap();
     assert_eq!(saved.status, PlanStatus::AwaitingApproval);

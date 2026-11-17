@@ -321,6 +321,11 @@ receipts stay historical. Four common authoring regressions, an authenticated
 coordinator mailbox/journal case, a CLI case, the one-MiB parser gate and an
 actual CLI refusal without a selected model accompany this candidate. Hosted
 verification remains pending.
+An initial end-to-end authoring failure also exposed the old node-side plan-view
+rule that refused workload model bindings. It now checks the exact nested vision
+selection, including the generic binding validation pass. Missing/substituted
+model IDs or backends still deny confirmation; metadata and one-shot rules keep
+their prior scope. The corrected path requires new hosted verification.
 
 The public workflow remains incomplete. Next work needs model placement/capacity
 integration and complete command lifecycle acceptance. Interrupted outcome

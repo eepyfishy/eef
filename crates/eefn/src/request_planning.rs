@@ -560,14 +560,22 @@ pub fn confirmed(value: &Value, node: &str, receipt: &str, command: &PlanningCom
                         != json!({"node_id":w.executor_node,"resource_id":w.resource_id()})
                     || b.node_id != w.executor_node
                     || b.resource_id.as_deref() != Some(w.resource_id())
-                    || b.model_id.is_some()
-                    || b.backend.is_some()
+                    || b.model_id.as_deref() != w.model_binding().map(|(m, _)| m)
+                    || b.backend.as_deref() != w.model_binding().map(|(_, b)| b)
                 {
                     return false;
                 }
             }
             let mut ids = std::collections::BTreeSet::new();
             for (task, binding) in view.tasks.iter().zip(&view.bindings) {
+                let workload = if input.template == crate::workload_leases::definition::TEMPLATE
+                    && task.capability == crate::workload_leases::definition::CAPABILITY
+                {
+                    crate::workload_leases::definition::Template::from_params(&task.params).ok()
+                } else {
+                    None
+                };
+                let workload_model = workload.as_ref().and_then(|w| w.model_binding());
                 if crate::request_drafts::validate_id(&task.task_id).is_err()
                     || task.dependencies.iter().any(|d| !ids.contains(d))
                     || task
@@ -589,7 +597,8 @@ pub fn confirmed(value: &Value, node: &str, receipt: &str, command: &PlanningCom
                         .suggested_capabilities
                         .contains(&task.capability)
                     || task.timeout_ms == 0
-                    || matches!(task.capability.as_str(), "llm.infer" | "vlm.analyze")
+                    || (matches!(task.capability.as_str(), "llm.infer" | "vlm.analyze")
+                        || workload_model.is_some())
                         != (binding.model_id.is_some() && binding.backend.is_some())
                     || binding.model_id.is_some() != binding.backend.is_some()
                     || binding
@@ -613,11 +622,17 @@ pub fn confirmed(value: &Value, node: &str, receipt: &str, command: &PlanningCom
                     || binding
                         .model_id
                         .as_ref()
-                        .is_some_and(|m| task.params["model_id"] != *m)
+                        .is_some_and(|m| match workload_model {
+                            Some((expected, _)) => m != expected,
+                            None => task.params["model_id"] != *m,
+                        })
                     || binding
                         .backend
                         .as_ref()
-                        .is_some_and(|b| task.constraints["backend"] != *b)
+                        .is_some_and(|b| match workload_model {
+                            Some((_, expected)) => b != expected,
+                            None => task.constraints["backend"] != *b,
+                        })
                     || binding.resource_id.as_ref().is_some_and(|r| {
                         let resource =
                             if task.capability == crate::workload_leases::definition::CAPABILITY {

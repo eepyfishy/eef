@@ -13,6 +13,10 @@ fresh result policy; owner limits are never raised. A distinct review version
 names the model capability while keeping older private vision records readable
 and inspection-only for fresh work. Four common cases, one coordinator case,
 one CLI case and native command/parser extensions await hosted verification.
+The first authoring run exposed a node-side confirmation gap: workload views
+still refused all model bindings and expected one-shot model parameter paths.
+The validator now checks the exact nested vision model/backend while retaining
+metadata and one-shot checks; substituted or missing bindings have regressions.
 
 Negotiation source `9e47e6f` passes both Linux jobs but is not accepted: Windows
 dashboard hit an existing peer-driver test's eight-second observation deadline
