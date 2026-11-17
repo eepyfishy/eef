@@ -62,6 +62,7 @@ async function verifyScenario(f,mode) {
   '--valid-for-ms','120000','--operation-id',randomUUID()]);assert.equal(approved.success,true);
  assert.equal(await exists(requests),false);assert.equal(await exists(join(trace,'pids.json')),false);
  const execute=['requests','execute',id,'--revision',String(approved.plan.revision),'--approval-digest',approved.plan.approval.approval_sha256,'--operation-id',randomUUID()];
+ const beforeExecution=await f.json(f.sourceUrl+'/api/diagnostics');
  assert.equal((await f.originCli(execute)).success,true);
  const job=()=>f.json(f.coordinatorUrl+'/api/jobs/'+id);
  await f.until(async()=>await exists(started)&&(await job()).workload?.acknowledged===true,'owned vision request and consumed ACK');
@@ -94,7 +95,9 @@ async function verifyScenario(f,mode) {
   assert.equal(result.result.vision.analyses[0].result,null);assert.equal(result.result.vision.completion,null);
   await f.until(async()=>{const m=await current();return m.active_requests===0&&m.state==='error'&&m.owned_pid===null;},
    'owned model exit observed without an active pin');
-  assert.equal((await f.json(f.sourceUrl+'/api/diagnostics')).runtime_id,runtime);
+  const diagnostics=await f.json(f.sourceUrl+'/api/diagnostics');
+  assert.equal(diagnostics.runtime_id,runtime);
+  assert.equal(diagnostics.successful_connections,beforeExecution.successful_connections);
   assert.equal((await f.json(f.sourceUrl+'/api/status')).connection.state,'connected');
   const passive=await f.sourceCli(['workloads','vision-sources']);
   assert.equal(passive.capture_started,false);assert.equal(passive.model_contacted,false);
