@@ -1,5 +1,5 @@
-//! Original coordinator windows/journal, synthetic authenticated result values.
-//! These fixtures do not create native source witnesses or claim model quality.
+// Original coordinator windows/journal, synthetic authenticated result values.
+// These fixtures do not create native source witnesses or claim model quality.
 fn vision_input(large: bool) -> PlanInput {
     use eefn::{model_selection::Backend, workload_leases::definition::vision::*};
     let mut input = template_input();
@@ -118,7 +118,7 @@ fn vision_values(
         lease_sequence: u64,
         recorded_at_ms: u64,
     }
-    let hash = |raw: &[u8]| hex::encode(Sha256::digest(raw));
+    let hash = |raw: &[u8]| format!("{:x}", Sha256::digest(raw));
     let scope = d.scope().unwrap();
     let intent = Intent {
         schema_version: 1,
