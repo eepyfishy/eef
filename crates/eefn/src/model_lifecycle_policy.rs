@@ -7,15 +7,21 @@ use sha2::{Digest, Sha256};
 /// One local gate observation. It provides no reservation or backend stop proof.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RequestAdmission {
-    pub(crate) schema_version: u32,
-    pub(crate) limit: u32,
-    pub(crate) in_flight: u32,
-    pub(crate) available: u32,
-    pub(crate) queueing: bool,
-    pub(crate) provider_execution_observed: bool,
+pub struct RequestAdmission {
+    pub schema_version: u32,
+    pub limit: u32,
+    pub in_flight: u32,
+    pub available: u32,
+    pub queueing: bool,
+    pub provider_execution_observed: bool,
 }
 impl RequestAdmission {
+    pub fn validate(&self) -> Result<()> {
+        if !self.confirms(self.limit) {
+            bail!("Invalid model request admission observation")
+        }
+        Ok(())
+    }
     fn confirms(&self, limit: u32) -> bool {
         self.schema_version == 1
             && self.limit == limit

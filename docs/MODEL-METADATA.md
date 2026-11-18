@@ -42,6 +42,58 @@ into peer discovery or the model inventory command.
 
 ## Compatibility and current behavior
 
+### Busy placement hints (under verification)
+
+With an applied node-local model request ceiling, the next development increment
+adds optional registration field `model_request_admission`. Its schema-one
+limit, occupied/free exchange counts and explicit false queue/provider-execution
+flags use the same bounded observation as owner policy inspection. The node's
+model metadata, capabilities, permissions and registration receipt stay unchanged.
+This separation matters: availability and capabilities also participate in
+checks of already admitted interpreter continuations. A full gate must not
+invalidate the exchange that filled it.
+
+Acquisition and release notify one coalesced watch owned by the current node
+connection. Registration refreshes in place using the same authenticated session
+and receipt context, without restarting or replaying work. This also covers
+Ollama, whose model snapshot otherwise has no owned-process lifecycle watch.
+The current partial incoming frame is retained across refreshes. No detached
+publication loop, provider probe or waiting request queue is added.
+The gateway derives whether registration is a same-session refresh; it overrides
+any peer-supplied classification. Such refreshes update observers without
+re-emitting `node.connected` connection automation events.
+
+The gateway validates the optional hint before accepting registration; the model
+registry validates and replaces models and their admission observation together.
+Unsupported versions/fields, inconsistent counts or invented provider execution
+are rejected without replacing the prior model snapshot. Missing legacy hints
+mean unknown extra capacity, not a retained full gate or proof of free resources.
+Uncapped registrations omit the field. Capacity-change refreshes require the
+authenticated coordinator's `model_admission_updates` schema-one offer; missing
+or unsupported offers cause no extra capacity refreshes. Older coordinators can
+ignore the optional initial hint while the executing node still enforces its
+local ceiling. The hint is not projected into
+peer discovery as additional authority or private assistant context.
+
+New route selection skips a reported full node without rewriting lifecycle,
+model availability, roles or capabilities. Only changed admission observations
+are published after the initial subscribed refresh. If no
+eligible model remains, route inspection returns no candidates; this does not
+authorize another node, fallback, migration or retry. Hints can become stale at
+once, so the executing node's atomic admission still decides whether a new
+exchange may start. Admitted source leases and historical result access remain
+independent. General resource placement and measured allocation remain open.
+
+Hosted verification is pending. New command checks hold Ollama and owned llama.cpp
+requests, require route withdrawal while the workload remains active, inspect
+controls/results and check restoration without reconnect. A private interpreter
+exchange test also requires its active continuation to remain authorized and
+complete while its capacity advertisement excludes new placement. Completion, stop,
+restart, lost replies and owned-process exit retain their original uncertainty
+and no-replay checks. Synthetic fixtures do not establish physical acceptance.
+
+### Existing registration behavior
+
 - No `model_metadata`: normalize explicit `text`/`vlm` labels using the previous
   compatibility rules. Unknown/missing labels provide no capability hints.
 - Present `model_metadata`: it is authoritative for capability filtering, even

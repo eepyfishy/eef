@@ -142,6 +142,7 @@ struct RegistryState {
     models: BTreeMap<String, Vec<ModelSpec>>,
     loads: HashMap<String, f64>,
     latencies: HashMap<String, f64>,
+    request_admission: HashMap<String, eefn::model_lifecycle_policy::RequestAdmission>,
 }
 
 #[derive(Clone, Default)]
@@ -158,6 +159,24 @@ impl ModelRegistry {
     }
 
     pub fn register_remote(&self, node_id: &str, models: &[Value]) -> Result<()> {
+        self.register_snapshot(node_id, models, None)
+    }
+    pub fn register_snapshot(
+        &self,
+        node_id: &str,
+        models: &[Value],
+        admission: Option<&Value>,
+    ) -> Result<()> {
+        let admission = admission
+            .map(
+                |raw| -> Result<eefn::model_lifecycle_policy::RequestAdmission> {
+                    let snapshot: eefn::model_lifecycle_policy::RequestAdmission =
+                        serde_json::from_value(raw.clone())?;
+                    snapshot.validate()?;
+                    Ok(snapshot)
+                },
+            )
+            .transpose()?;
         // Validate the complete snapshot before replacing any live entries.
         let record = eefn::network::PeerRecord::from_registration(
             &json!({"node_id":node_id,"models":models}),
@@ -210,6 +229,11 @@ impl ModelRegistry {
             });
         }
         let mut state = self.state.write().expect("model lock");
+        if let Some(admission) = admission {
+            state.request_admission.insert(node_id.into(), admission);
+        } else {
+            state.request_admission.remove(node_id);
+        }
         state.models.retain(|_, specs| {
             specs.retain(|spec| spec.node_id != node_id);
             !specs.is_empty()
@@ -232,6 +256,7 @@ impl ModelRegistry {
         });
         state.loads.remove(node_id);
         state.latencies.remove(node_id);
+        state.request_admission.remove(node_id);
     }
 
     /// Includes metrics-only nodes so missed disconnects cannot retain their
@@ -245,6 +270,7 @@ impl ModelRegistry {
             .map(|spec| spec.node_id.clone())
             .chain(state.loads.keys().cloned())
             .chain(state.latencies.keys().cloned())
+            .chain(state.request_admission.keys().cloned())
             .collect()
     }
 
@@ -284,7 +310,13 @@ impl ModelRegistry {
         };
         for id in &ids {
             let mut providers = state.models.get(id).cloned().unwrap_or_default();
-            providers.retain(|spec| available(spec, request));
+            providers.retain(|spec| {
+                available(spec, request)
+                    && !state
+                        .request_admission
+                        .get(&spec.node_id)
+                        .is_some_and(|a| a.available == 0)
+            });
             providers.sort_by(|left, right| {
                 model_score(right, &state).total_cmp(&model_score(left, &state))
             });
@@ -295,7 +327,14 @@ impl ModelRegistry {
                 .models
                 .values()
                 .flatten()
-                .filter(|spec| !ids.contains(&spec.model_id) && available(spec, request))
+                .filter(|spec| {
+                    !ids.contains(&spec.model_id)
+                        && available(spec, request)
+                        && !state
+                            .request_admission
+                            .get(&spec.node_id)
+                            .is_some_and(|a| a.available == 0)
+                })
                 .cloned()
                 .collect::<Vec<_>>();
             extra.sort_by(|left, right| {
@@ -600,6 +639,95 @@ impl Default for ChatOptions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn request_admission_filters_only_new_routes_and_updates_atomically_with_models() {
+        use super::*;
+        let registry = ModelRegistry::default();
+        let model = json!({"model_id":"selected","backend":"ollama","modality":"text"});
+        let full = json!({"schema_version":1,"limit":1,"in_flight":1,"available":0,"queueing":false,"provider_execution_observed":false});
+        let mut free = full.clone();
+        free["in_flight"] = json!(0);
+        free["available"] = json!(1);
+        let request = ModelRequest {
+            modality: Modality::Text,
+            tier: None,
+            model_id: Some("selected".into()),
+            constraints: json!({}),
+        };
+        registry.register_remote("a", &[model.clone()]).unwrap();
+        registry.register_remote("b", &[model.clone()]).unwrap();
+        let list = || {
+            let mut rows = registry.list();
+            rows.sort_by(|a, b| a.node_id.cmp(&b.node_id));
+            json!(rows)
+        };
+        let original = list();
+        registry
+            .register_snapshot("a", &[model.clone()], Some(&full))
+            .unwrap();
+        assert_eq!(
+            list(),
+            original,
+            "Capacity must not alter lifecycle, capabilities or model evidence"
+        );
+        assert_eq!(
+            registry
+                .route(&request, &Default::default())
+                .iter()
+                .map(|s| s.node_id.as_str())
+                .collect::<Vec<_>>(),
+            ["b"]
+        );
+        registry
+            .register_snapshot("b", &[model.clone()], Some(&full))
+            .unwrap();
+        assert!(registry.route(&request, &Default::default()).is_empty());
+        for (key, value) in [
+            ("schema_version", json!(2)),
+            ("limit", json!(0)),
+            ("available", json!(1)),
+            ("in_flight", json!(u32::MAX)),
+            ("queueing", json!(true)),
+            ("provider_execution_observed", json!(true)),
+            ("extra", json!(true)),
+        ] {
+            let mut forged = full.clone();
+            forged[key] = value;
+            assert!(registry.register_snapshot("a", &[], Some(&forged)).is_err());
+            assert_eq!(
+                list(),
+                original,
+                "Invalid hint must not replace an existing model snapshot"
+            );
+            assert!(registry.route(&request, &Default::default()).is_empty());
+        }
+        let mut overflow = full.clone();
+        overflow["in_flight"] = json!(u32::MAX);
+        overflow["available"] = json!(2);
+        assert!(
+            registry
+                .register_snapshot("a", &[], Some(&overflow))
+                .is_err(),
+            "Wrapping counts must not imitate a valid limit"
+        );
+        assert_eq!(list(), original);
+        registry
+            .register_snapshot("a", &[model.clone()], Some(&free))
+            .unwrap();
+        assert_eq!(
+            registry.route(&request, &Default::default())[0].node_id,
+            "a"
+        );
+        registry.register_remote("b", &[model.clone()]).unwrap();
+        assert_eq!(
+            registry.route(&request, &Default::default()).len(),
+            2,
+            "Missing legacy hints are unknown, not a retained full gate"
+        );
+        registry.remove_node("a");
+        registry.register_remote("a", &[model]).unwrap();
+        assert_eq!(registry.route(&request, &Default::default()).len(), 2);
+    }
     #[test]
     fn resident_metadata_warms_existing_score_without_inventing_legacy_readiness() {
         use super::*;

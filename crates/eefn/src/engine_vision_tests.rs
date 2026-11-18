@@ -106,6 +106,7 @@ async fn model_request_ceiling_is_shared_by_text_vision_preparation_and_both_bac
             .with_model_server(owned.clone())
             .with_model_request_preferences(&policy)
             .unwrap();
+        let mut request_changes = owner.subscribe_model_requests().unwrap();
         assert_eq!(
             json!(owner.model_request_admission()),
             json!({"schema_version":1,"limit":1,"in_flight":0,"available":1,
@@ -120,6 +121,8 @@ async fn model_request_ceiling_is_shared_by_text_vision_preparation_and_both_bac
         tokio::time::timeout(Duration::from_secs(2),async {
             tokio::select! {r=&mut first=>panic!("First model request did not wait: {r:?}"),_=started.notified()=>{}}
         }).await.unwrap();
+        assert!(request_changes.has_changed().unwrap());
+        request_changes.borrow_and_update();
         assert_eq!(owner.model_request_admission().unwrap().in_flight, 1);
         assert_eq!(owner.model_request_admission().unwrap().available, 0);
         for (backend, model) in [("ollama", "selected"), ("llamacpp", "owned-model")] {
@@ -179,12 +182,20 @@ async fn model_request_ceiling_is_shared_by_text_vision_preparation_and_both_bac
             0,
             "Busy llama.cpp must not acquire an inference pin"
         );
+        assert!(
+            !request_changes.has_changed().unwrap(),
+            "Busy refusals must not publish acquired requests"
+        );
         if finish == "cancel" {
             drop(first);
         } else {
             release.notify_one();
             assert_eq!(first.await.is_err(), fail_first);
         }
+        assert!(
+            request_changes.has_changed().unwrap(),
+            "Completion, HTTP error and cancellation must publish released capacity"
+        );
         assert_eq!(owner.model_request_admission().unwrap().in_flight, 0);
         assert_eq!(owner.model_request_admission().unwrap().available, 1);
         assert_eq!(

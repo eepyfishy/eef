@@ -12,6 +12,7 @@ export async function verifyOwnedVisionCommands(f) {
  console.log('Owned vision model exit validation passed: observed process exit leaves pending analysis evidence, releases active pins and preserves node controls without retry or invented completion.');
  console.log('Node-local model request ceiling validation passed: owner commands save one shared exchange slot, explicit restart applies it, and owned vision completion and model exit release their requests.');
  console.log('Model request admission observation validation passed: owner inspection shows empty, occupied and released exchange slots during actual owned vision commands without claiming provider execution or reserving capacity.');
+ console.log('Owned model busy placement hint validation passed: a held exchange withdraws the exact route without reconnect, completion restores it, and model exit remains unavailable without retry.');
  return {vision_owned_llamacpp_commands:true,vision_active_model_pin:true,
   vision_owned_model_exit_no_retry:true,vision_owned_model_quality_accepted:false};
 }
@@ -49,12 +50,14 @@ async function verifyScenario(f,mode) {
  await f.until(async()=>(await f.json(f.sourceUrl+'/api/diagnostics')).runtime_id!==previous&&
   (await f.json(f.sourceUrl+'/api/status')).connection.state==='connected','owned vision source runtime');
  const runtime=(await f.json(f.sourceUrl+'/api/diagnostics')).runtime_id;
+ const route=()=>f.owner(['models','route','--capability','vlm.analyze','--node',f.sourceId,'--backend','llamacpp','--model',model]);
  const applied=(await f.sourceCli(['model-lifecycle-policy','show'])).result;
  assert.equal(applied.applied_policy.max_in_flight_requests,1);
  assert.deepEqual(applied.request_admission,{schema_version:1,limit:1,in_flight:0,available:1,queueing:false,provider_execution_observed:false});
  const current=async()=>(await f.sourceCli(['model-lifecycle','show'])).result.models.find(m=>m.model_id===model);
  await f.until(async()=>{const m=await current();return m?.owned_pid&&m.active_requests===0&&['ready','warm_idle'].includes(m.state);},'owned vision model ready');
  const original=await current();assert.equal(original.owned_pid,Number(await readFile(pid,'utf8')));
+ await f.until(async()=>(await route()).candidates.length===1,'owned model initial route');
  const passive=await f.sourceCli(['workloads','vision-sources']);assert.equal(passive.configuration_ready,true);
  assert.equal(passive.capture_started,false);assert.equal(passive.model_contacted,false);
  const exists=path=>readFile(path).then(()=>true,()=>false);
@@ -77,6 +80,11 @@ async function verifyScenario(f,mode) {
  const active=await current();assert.equal(active.active_requests,1);assert.equal(active.owned_pid,original.owned_pid);
  const occupied=(await f.sourceCli(['model-lifecycle-policy','show'])).result.request_admission;
  assert.equal(occupied.in_flight,1);assert.equal(occupied.available,0);assert.equal(occupied.provider_execution_observed,false);
+ await f.until(async()=>(await route()).candidates.length===0,'owned model full gate withdraws placement hint');
+ assert.equal((await f.owner(['models','route','--capability','vlm.analyze'])).candidates.length,0,
+  'No fallback vision model may be invented while the only eligible node is full');
+ assert(!['completed','interrupted','failed','cancelled','abandoned'].includes((await job()).status),
+  'Busy withdrawal must not interrupt admitted work');
  const unload=await f.sourceCli(['model-lifecycle','--runtime',runtime,'unload','--model',model,
   '--generation',String(active.generation),'--operation-id',randomUUID()],false);
  assert.equal(unload.success,false,'An active analysis pin must prevent unload');
@@ -97,6 +105,7 @@ async function verifyScenario(f,mode) {
   assert.equal(result.result.vision.summary.completed,1);
   assert.equal(result.result.vision.analyses[0].result.text,'movement detected');
   assert.equal((await current()).active_requests,0);
+  await f.until(async()=>(await route()).candidates.length===1,'completed owned model restores placement hint');
  } else {
   assert.equal(saved.workload.state,'unknown');
   assert.equal(result.result.report_type,'coordinator_workload_uncertain_result');
@@ -105,6 +114,7 @@ async function verifyScenario(f,mode) {
   assert.equal(result.result.vision.analyses[0].result,null);assert.equal(result.result.vision.completion,null);
   await f.until(async()=>{const m=await current();return m.active_requests===0&&m.state==='error'&&m.owned_pid===null;},
    'owned model exit observed without an active pin');
+  await f.until(async()=>(await route()).candidates.length===0,'exited owned model stays unavailable');
   const diagnostics=await f.json(f.sourceUrl+'/api/diagnostics');
   assert.equal(diagnostics.runtime_id,runtime);
   assert.equal(diagnostics.successful_connections,beforeExecution.successful_connections);
@@ -115,6 +125,8 @@ async function verifyScenario(f,mode) {
  assert.equal((await f.originCli(execute)).result.reused,true);
  const released=(await f.sourceCli(['model-lifecycle-policy','show'])).result.request_admission;
  assert.equal(released.in_flight,0);assert.equal(released.available,1);
+ const connection=await f.json(f.sourceUrl+'/api/diagnostics');
+ assert.equal(connection.runtime_id,runtime);assert.equal(connection.successful_connections,beforeExecution.successful_connections);
  assert.deepEqual(await job(),saved);assert.deepEqual(JSON.parse(await readFile(requests,'utf8')),received);
  assert.equal((await readFile(join(root,'request.attempts'),'utf8')).trim().split('\n').length,1);
  assert.equal((await readFile(join(trace,'trace'),'utf8')).split('\n').filter(x=>x==='open').length,1);

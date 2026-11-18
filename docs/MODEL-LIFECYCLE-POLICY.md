@@ -57,7 +57,7 @@ for a fresh explicit call; rejected calls must never run later. Separate policy
 tests cover bounds, remote refusal, digest/revision substitution, reset,
 saved/applied separation and failed replacement retaining the existing runtime.
 
-#### Read-only slot observation (under verification)
+#### Read-only slot observation (unreleased)
 
 The next development increment adds optional `request_admission` to owner policy
 reports while a capped engine is available. It contains schema version 1, the
@@ -74,7 +74,12 @@ does not mean zero use or free capacity. Uncapped/offline reports keep their
 previous shape. Provider-side work may continue after an exchange ends, so
 these are not physical inference or resource-use counters.
 
-Hosted verification is pending. The owner-command fixture checks empty, full
+Exact source `7551fb0` passes all four jobs in
+[run 44227169903](https://github.com/eepyfishy/eef/actions/runs/44227169903),
+including 1,852 Windows/headless Rust tests, all 37 native suites and retained
+extra gates. Scoped review accepts this owner observation. The separate
+[placement-hint extension](MODEL-METADATA.md#busy-placement-hints-under-verification)
+remains under verification. The owner-command fixture checks empty, full
 and released snapshots during owned vision completion/process-exit cases.
 Service tests reject substituted limits, inconsistent/overflowed counts,
 unsupported fields/schema and invented queue/provider observations; a missing

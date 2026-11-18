@@ -264,6 +264,19 @@ mod dispatch_frame_tests {
     }
 }
 
+pub(crate) struct ModelRequestPermit {
+    slot: Option<tokio::sync::OwnedSemaphorePermit>,
+    changes: tokio::sync::watch::Sender<()>,
+}
+impl Drop for ModelRequestPermit {
+    fn drop(&mut self) {
+        // Publish only after capacity is actually released. The watch is a
+        // coalesced placement hint, never a request queue or lease authority.
+        drop(self.slot.take());
+        self.changes.send_replace(());
+    }
+}
+
 pub struct NodeEngine {
     policy: NodePolicy,
     pub model_server: Option<Arc<ModelServer>>,
@@ -282,6 +295,7 @@ pub struct NodeEngine {
     interpreter_sampling: crate::interpreter_sampling::InterpreterSampling,
     model_request_limit: Option<u32>,
     model_request_slots: Option<Arc<tokio::sync::Semaphore>>,
+    model_request_changes: tokio::sync::watch::Sender<()>,
     service: Option<Arc<crate::NodeService>>,
     resource_owner: String,
     resources: Vec<crate::context::Resource>,
@@ -365,6 +379,7 @@ impl NodeEngine {
             interpreter_sampling: Default::default(),
             model_request_limit: None,
             model_request_slots: None,
+            model_request_changes: tokio::sync::watch::channel(()).0,
             service: None,
             granted_model_config: None,
             pipeline_enabled: false,
@@ -590,19 +605,27 @@ impl NodeEngine {
             provider_execution_observed: false,
         })
     }
-    pub(crate) fn reserve_model_request(
-        &self,
-    ) -> Result<Option<tokio::sync::OwnedSemaphorePermit>> {
+    pub(crate) fn reserve_model_request(&self) -> Result<Option<ModelRequestPermit>> {
         self.model_request_slots
             .as_ref()
             .map(|slots| {
-                slots.clone().try_acquire_owned().map_err(|_| {
+                let slot = slots.clone().try_acquire_owned().map_err(|_| {
                     anyhow::anyhow!(
                         "model_request_capacity_busy: no model exchange started; no queued retry"
                     )
+                })?;
+                self.model_request_changes.send_replace(());
+                Ok(ModelRequestPermit {
+                    slot: Some(slot),
+                    changes: self.model_request_changes.clone(),
                 })
             })
             .transpose()
+    }
+    pub(crate) fn subscribe_model_requests(&self) -> Option<tokio::sync::watch::Receiver<()>> {
+        self.model_request_slots
+            .as_ref()
+            .map(|_| self.model_request_changes.subscribe())
     }
     pub(crate) fn applied_thinking_mode(&self) -> crate::model_lifecycle_policy::ThinkingMode {
         self.thinking_mode

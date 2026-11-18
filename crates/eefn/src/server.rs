@@ -1410,6 +1410,7 @@ impl NodeServer {
             &mut writer,
             &json!({"type": "ok", "protocol": PROTOCOL_VERSION,"grant_session_id":session_id.to_string(),
                 "coordinator_runtime_id":self.inner.runtime_id,
+                "model_admission_updates":{"schema_version":1},
                 "registration_receipts":{"schema_version":1}}),
         )
         .await?;
@@ -1737,6 +1738,7 @@ impl NodeServer {
                                     "specs",
                                     "capabilities",
                                     "models",
+                                    "model_request_admission",
                                     "metadata",
                                     "network",
                                     "execution_grants",
@@ -1758,6 +1760,8 @@ impl NodeServer {
                         });
                         connection.last_seen = Instant::now();
                     }
+                    // Derived from this socket, never trusted from wire input.
+                    message["gateway_registration_refresh"] = json!(registered);
                     registered = true;
                     receipt_offer = offered;
                     message["node_id"] = Value::String(authenticated_id.into());
@@ -2632,8 +2636,8 @@ mod tests {
                 .unwrap();
             let runtime = Uuid::new_v4().to_string();
             let offer = crate::registration::Offer::new(&runtime).unwrap();
-            let registration =
-                json!({"type":"register","node_id":"stable","registration_receipt":offer});
+            let mut registration_events = server.subscribe();
+            let registration = json!({"type":"register","node_id":"stable","registration_receipt":offer,"gateway_registration_refresh":true});
             write_message(crypto, &mut writer, &registration)
                 .await
                 .unwrap();
@@ -2650,7 +2654,12 @@ mod tests {
             )
             .unwrap();
             assert_eq!(server.connection_counts().await.registered_node_count, 1);
+            let NodeEvent::Registered(first) = registration_events.recv().await.unwrap() else {
+                panic!("Missing first registration")
+            };
+            assert_eq!(first["gateway_registration_refresh"], false);
             let mut refreshed = registration;
+            refreshed["gateway_registration_refresh"] = json!(false);
             if change_context {
                 refreshed["registration_receipt"] =
                     json!(crate::registration::Offer::new(&runtime).unwrap());
@@ -2675,6 +2684,11 @@ mod tests {
                     .unwrap();
                 let refreshed: crate::registration::Receipt =
                     serde_json::from_value(refreshed).unwrap();
+                let NodeEvent::Registered(update) = registration_events.recv().await.unwrap()
+                else {
+                    panic!("Missing registration refresh")
+                };
+                assert_eq!(update["gateway_registration_refresh"], true);
                 refreshed
                     .validate(
                         "stable",

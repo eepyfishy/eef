@@ -62,6 +62,13 @@ impl Fixture {
         input_policy: eefn::request_input::InputPolicy,
         max_bytes: Option<usize>,
     ) -> Self {
+        Self::with_model_ceiling(input_policy, max_bytes, None).await
+    }
+    async fn with_model_ceiling(
+        input_policy: eefn::request_input::InputPolicy,
+        max_bytes: Option<usize>,
+        model_limit: Option<u32>,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let model = Arc::new(Model {
             calls: AtomicUsize::new(0),
@@ -150,6 +157,13 @@ impl Fixture {
             };
             settings["input_workflow"] = json!(applied_input_policy);
             settings["models"] = json!({"provider":"ollama","ollama":{"base_url":url,"selected":if serving{vec![selected.clone()]}else{vec![]}},"llamacpp":{"slots":[]}});
+            let model_policy = eefn::model_lifecycle_policy::ModelLifecyclePolicy {
+                max_in_flight_requests: if serving { model_limit } else { None },
+                ..Default::default()
+            };
+            if model_limit.is_some() && serving {
+                settings["model_lifecycle"] = json!(model_policy);
+            }
             let path = dir.path().join(format!("{node}.json"));
             eefn::setup::write_json(&path, &settings).unwrap();
             let service = eefn::NodeService::new(path, node.into());
@@ -169,7 +183,9 @@ impl Fixture {
                         },
                     )
                     .unwrap()
-                    .with_service(service.clone()),
+                    .with_service(service.clone())
+                    .with_model_request_preferences(&model_policy)
+                    .unwrap(),
             );
             let client_config:eefn::NodeClientConfig=serde_json::from_value(json!({"node_id":node,"auth_mode":"node_credential","psk":keys[node],"coordinator_certificate":identity.certificate,"endpoints":[format!("127.0.0.1:{}",runtime.node_server.port())],"ollama_url":url,"ollama_models":if serving{vec![selected]}else{vec![]},"heartbeat_seconds":0.2})).unwrap();
             preview_guards.push(service.attach_preview_runtime_with_policy(
@@ -782,6 +798,100 @@ async fn rejected_source_edit_is_atomic_and_keeps_the_original_live_completion_u
         eefn::request_interpretation::State::Promoted
     );
     assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+    f.close().await;
+}
+
+#[tokio::test]
+async fn full_request_hint_excludes_new_placement_without_retiring_the_active_interpreter() {
+    let f = Fixture::with_model_ceiling(Default::default(), None, Some(1)).await;
+    f.model.hold.store(true, Ordering::SeqCst);
+    let task = f.task("initial").await;
+    let participants = f.participants().await;
+    let original = participants.provider.clone();
+    let connected_before = f
+        .runtime()
+        .bus
+        .history(500)
+        .await
+        .iter()
+        .filter(|e| e.topic == "node.connected")
+        .count();
+    let (runtime, pin, request) = (f.runtime().clone(), f.pin.clone(), task.clone());
+    let running = tokio::spawn(async move {
+        runtime
+            .exchange_interpreter(request, pin, &participants)
+            .await
+    });
+    f.called().await;
+    let route = crate::model::ModelRequest {
+        modality: crate::model::Modality::Text,
+        tier: None,
+        model_id: Some("chosen".into()),
+        constraints: json!({}),
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !f
+            .runtime()
+            .model_registry
+            .route(&route, &Default::default())
+            .is_empty()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let current = f.participants().await;
+    assert!(original.same_connection(&current.provider));
+    assert!(current.provider.serves("ollama", "chosen"));
+    f.runtime()
+        .current_interpreter_permit(&task, &current)
+        .await
+        .unwrap();
+    assert!(
+        !running.is_finished(),
+        "Capacity publication must not cancel its own admitted exchange"
+    );
+    f.model.gate.add_permits(1);
+    let Exchange::Completed(completed) = running.await.unwrap().unwrap() else {
+        panic!("Active interpreter did not complete")
+    };
+    let saved = f
+        .runtime()
+        .apply_interpreter_completion(completed)
+        .await
+        .unwrap();
+    assert_eq!(
+        saved.goal.request_context,
+        Some(task.snapshot.request_context)
+    );
+    assert!(saved.approval.is_none());
+    assert_eq!(f.model.calls.load(Ordering::SeqCst), 1);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while f
+            .runtime()
+            .model_registry
+            .route(&route, &Default::default())
+            .len()
+            != 1
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(original.same_connection(&f.participants().await.provider));
+    assert_eq!(
+        f.runtime()
+            .bus
+            .history(500)
+            .await
+            .iter()
+            .filter(|e| e.topic == "node.connected")
+            .count(),
+        connected_before,
+        "Capacity refreshes must not replay connection-triggered automation"
+    );
     f.close().await;
 }
 

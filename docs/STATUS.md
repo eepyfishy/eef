@@ -5,13 +5,29 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
-Read-only model admission observations are now under development. Owner policy
-reports may expose the capped runtime's applied limit and current occupied/free
-exchange slots, without acquiring capacity or contacting a provider. Missing
-observations remain unavailable, and no provider execution/resource proof is
-inferred. Counter consistency, runtime/policy binding, forgery rejection and
-owned vision command observations await hosted verification. The accepted
-request ceiling below is the preceding exact source, without this extension.
+Busy model placement hints are now under development. A separate optional
+admission observation refreshes the current authenticated registration on
+acquire/release, including Ollama. New model routes skip a reported full gate;
+model availability/capabilities remain unchanged so the exchange that filled it
+keeps its existing continuation checks. No grant, queued work, provider probe
+or physical resource guarantee is added. Candidate tests require
+route withdrawal during an active exchange, empty routing when the only eligible
+vision node is full, and restoration without reconnect or replay. Hosted checks
+are pending. See [the registration contract](MODEL-METADATA.md#busy-placement-hints-under-verification).
+Same-session refreshes are also classified by the gateway so capacity updates
+cannot replay connection-triggered automation. A held private interpreter
+exchange regression checks that new placement is excluded while its existing
+continuation remains authorized and completes normally.
+
+Read-only model admission source `7551fb0` passes all four hosted jobs in
+[run 44227169903](https://github.com/eepyfishy/eef/actions/runs/44227169903):
+1,852 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and retained extra gates. Scoped review accepts owner observations of
+the applied limit and occupied/free exchange slots without acquiring capacity
+or contacting a provider, consistency/runtime/policy checks, forgery rejection
+and no invented zero use for a missing engine. Owned vision commands exercise
+empty/full/released counters. This does not establish provider execution or
+resource use, and it predates the pending separate placement-hint extension.
 
 Source `9b6dfa5` passes all four hosted jobs in
 [run 44157667334](https://github.com/eepyfishy/eef/actions/runs/44157667334):

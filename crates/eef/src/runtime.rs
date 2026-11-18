@@ -437,7 +437,14 @@ impl Runtime {
                 match events.recv().await {
                     Ok(NodeEvent::Registered(message)) => {
                         if let Some(id) = message["node_id"].as_str() {
-                            runtime.sync_node_state(id, true).await;
+                            // Same-session metadata/capacity refreshes update
+                            // observers, not connection-triggered automation.
+                            runtime
+                                .sync_node_state(
+                                    id,
+                                    message["gateway_registration_refresh"] != json!(true),
+                                )
+                                .await;
                         }
                     }
                     Ok(NodeEvent::Heartbeat(message)) => {
@@ -579,7 +586,11 @@ impl Runtime {
             .and_then(Value::as_array)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
-        if let Err(error) = self.model_registry.register_remote(node_id, models) {
+        if let Err(error) = self.model_registry.register_snapshot(
+            node_id,
+            models,
+            message.get("model_request_admission"),
+        ) {
             warn!(%error, "invalid registered model snapshot");
         }
         self.publish_or_observe_node(

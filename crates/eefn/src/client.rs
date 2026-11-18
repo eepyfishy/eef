@@ -398,6 +398,9 @@ impl NodeClient {
         }
         message["metadata"] = json!(metadata);
         message["network"] = json!(self.config.network);
+        if let Some(admission) = self.engine.model_request_admission() {
+            message["model_request_admission"] = json!(admission);
+        }
         if let Some(receipt) = receipt {
             message["registration_receipt"] = json!(receipt);
         }
@@ -613,11 +616,25 @@ impl NodeClient {
             status["models"] = json!(models);
             status["capabilities"] = json!(capabilities);
             status["request_limits"] = json!(self.config.request_limits);
+            status["model_request_admission"] = json!(self.engine.model_request_admission());
         }
 
         // Subscribe before the first refresh. A startup transition that happened
         // during authentication must not be lost between snapshot and subscription.
         let mut model_changes = self.engine.model_server.as_ref().map(|s| s.subscribe());
+        // Older coordinators may treat every registration as a new connection.
+        // Local admission still applies; publish extra updates only when offered.
+        let mut request_changes = if reply["model_admission_updates"]["schema_version"] == 1 {
+            self.engine.subscribe_model_requests()
+        } else {
+            None
+        };
+        // Seed one refresh after subscribing, closing the authentication race.
+        // Capacity is separate from model availability and continuation authority.
+        let mut advertised_admission = Value::Null;
+        if let Some(changes) = &mut request_changes {
+            changes.mark_changed();
+        }
         let mut source_readiness = source_readiness::Readiness::new(self);
         let mut advertised_workload = json!(crate::workload_network::Advertisement::unavailable());
         let mut advertised_vision =
@@ -700,10 +717,12 @@ impl NodeClient {
                             write_session_frame(&self.crypto,&writer,&output_write_failed,&registration).await.context("source registration refresh failed")?;
                             advertised_workload=registration["workload_execution"].clone();
                             advertised_vision=registration["workload_vision_execution"].clone();
+                            advertised_admission=registration.get("model_request_admission").cloned().unwrap_or(Value::Null);
                             let mut status=self.status.lock().expect("source registration status");
                             status["workload_execution"]=advertised_workload.clone();
                             status["workload_vision_execution"]=advertised_vision.clone();
                             status["capabilities"]=registration["capabilities"].clone();
+                            status["model_request_admission"]=registration["model_request_admission"].clone();
                         }
                     }
                     _ = async {
@@ -722,13 +741,36 @@ impl NodeClient {
                         write_session_frame(&self.crypto,&writer,&output_write_failed,&registration)
                             .await.context("model registration refresh failed")?;
                         models = updated;
+                        advertised_admission=registration.get("model_request_admission").cloned().unwrap_or(Value::Null);
                         advertised_workload=registration["workload_execution"].clone();
                         advertised_vision=registration["workload_vision_execution"].clone();
                         let mut status = self.status.lock().expect("status");
                         status["models"] = json!(models);
+                        status["model_request_admission"]=registration["model_request_admission"].clone();
                         status["capabilities"] = registration["capabilities"].clone();
                         status["workload_execution"] = advertised_workload.clone();
                         status["workload_vision_execution"] = advertised_vision.clone();
+                    }
+                    _=async {
+                        if let Some(changes)=&mut request_changes {let _=changes.changed().await;}
+                        else {std::future::pending::<()>().await;}
+                    }=>{
+                        if let Some(changes)=&mut request_changes {changes.borrow_and_update();}
+                        let capabilities=self.session_capabilities(&models,peer_advertisement.as_ref());
+                        let registration=source_readiness.decorate(self.registration(&self.config.node_id,
+                            if self.config.name.is_empty(){&self.config.node_id}else{&self.config.name},
+                            crate::VERSION,&capabilities,&specs,&models,receipt_offer.as_ref(),peer_advertisement.as_ref()));
+                        if registration.get("model_request_admission").cloned().unwrap_or(Value::Null)==advertised_admission {continue;}
+                        write_session_frame(&self.crypto,&writer,&output_write_failed,&registration)
+                            .await.context("model admission registration refresh failed")?;
+                        advertised_admission=registration.get("model_request_admission").cloned().unwrap_or(Value::Null);
+                        advertised_workload=registration["workload_execution"].clone();
+                        advertised_vision=registration["workload_vision_execution"].clone();
+                        let mut status=self.status.lock().expect("model admission status");
+                        status["model_request_admission"]=registration["model_request_admission"].clone();
+                        status["capabilities"]=registration["capabilities"].clone();
+                        status["workload_execution"]=advertised_workload.clone();
+                        status["workload_vision_execution"]=advertised_vision.clone();
                     }
                     Some(command) = local.recv() => {
                         replies.retain(|_, reply| !reply.is_closed());
@@ -1533,6 +1575,85 @@ mod tests {
             Arc::new(NodeEngine::new(false, vec![], std::env::temp_dir()).unwrap()),
         )
         .unwrap()
+    }
+    #[test]
+    fn capacity_registration_is_separate_from_model_authority_and_legacy_frames() {
+        let mut client = probe_client("127.0.0.1:1".into());
+        let models = vec![json!({"model_id":"chosen","backend":"ollama","modality":"text"})];
+        let caps = vec!["system.ping".into(), "llm.infer".into()];
+        let offer = crate::registration::Offer::new(&Uuid::new_v4().to_string()).unwrap();
+        let legacy = client.registration(
+            "probe-test",
+            "Node",
+            "test",
+            &caps,
+            &json!({}),
+            &models,
+            Some(&offer),
+            None,
+        );
+        assert!(legacy.get("model_request_admission").is_none());
+        client.engine = Arc::new(
+            NodeEngine::new(false, vec![], std::env::temp_dir())
+                .unwrap()
+                .with_model_request_preferences(
+                    &crate::model_lifecycle_policy::ModelLifecyclePolicy {
+                        max_in_flight_requests: Some(1),
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+        );
+        let free = client.registration(
+            "probe-test",
+            "Node",
+            "test",
+            &caps,
+            &json!({}),
+            &models,
+            Some(&offer),
+            None,
+        );
+        let slot = client.engine.reserve_model_request().unwrap();
+        let full = client.registration(
+            "probe-test",
+            "Node",
+            "test",
+            &caps,
+            &json!({}),
+            &models,
+            Some(&offer),
+            None,
+        );
+        assert_eq!(full["model_request_admission"]["available"], 0);
+        for key in [
+            "models",
+            "capabilities",
+            "metadata",
+            "registration_receipt",
+            "execution_grants",
+            "workload_vision_results",
+        ] {
+            assert_eq!(full[key], legacy[key], "Capacity cannot change {key}");
+        }
+        crate::network::PeerRecord::from_registration(&full).unwrap();
+        let mut invalid = full.clone();
+        invalid["model_request_admission"]["provider_execution_observed"] = json!(true);
+        assert!(crate::network::PeerRecord::from_registration(&invalid).is_err());
+        drop(slot);
+        assert_eq!(
+            client.registration(
+                "probe-test",
+                "Node",
+                "test",
+                &caps,
+                &json!({}),
+                &models,
+                Some(&offer),
+                None
+            ),
+            free
+        );
     }
     #[tokio::test]
     async fn registration_receipt_observation_clears_on_clean_socket_close() {

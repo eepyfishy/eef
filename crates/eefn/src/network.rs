@@ -290,6 +290,11 @@ impl PeerRecord {
         let node_id = field(message, "node_id", 128)?
             .ok_or_else(|| anyhow::anyhow!("registration needs node_id"))?;
         validate_remote_node_id(&node_id)?;
+        if let Some(raw) = message.get("model_request_admission") {
+            let admission: crate::model_lifecycle_policy::RequestAdmission =
+                serde_json::from_value(raw.clone())?;
+            admission.validate()?;
+        }
         let display_name = field(message, "name", 256)?.unwrap_or_else(|| node_id.clone());
         let network: NetworkAdvertisement = serde_json::from_value(
             message
