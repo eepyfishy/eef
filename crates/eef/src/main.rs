@@ -7,6 +7,9 @@ use tracing::info;
 #[derive(Debug, Parser)]
 #[command(name = "eef", version, about = "eef native coordinator")]
 struct Args {
+    /// Record one redacted service panic to a new local file; never overwrite.
+    #[arg(long)]
+    panic_report: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
     #[arg(long, global = true)]
@@ -3359,6 +3362,13 @@ async fn main() -> Result<()> {
         }
     }
     let mut args = parsed.unwrap_or_else(|error| error.exit());
+    if let Some(path) = &args.panic_report {
+        if args.command.is_some() {
+            bail!("Panic reports require a service launch, not a command")
+        }
+        eefn::panic_report::install(path, "eef")?;
+        eefn::panic_report::phase("service_start");
+    }
     args.config = eefn::runtime_layout::RuntimeLayout::from_executable(&executable)?.configuration(
         &args.config,
         std::path::Path::new("config/default_identity.yaml"),

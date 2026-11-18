@@ -1938,6 +1938,16 @@ exactly-once side-effect guarantee is introduced. Loopback-owner creation withou
 node origin is unchanged. Lookup scans retained records under the journal lock;
 it adds no unbounded tombstone collection or separate job framework.
 
+## Service panic observation (unreleased)
+
+`eefn --panic-report NEW_FILE --no-ui` and
+`eef --panic-report NEW_FILE --no-ui` opt a local service launch into a bounded,
+redacted first-panic observation. Use your usual configuration/service options.
+The parent directory must exist; existing files are refused. Commands cannot use
+this option. Default behavior creates no report. This grants no execution or
+recovery authority. Hosted verification is pending; see
+[the exact record, native gate and limits](SERVICE-STARTUP.md#quiet-startup-investigation-development).
+
 ## Added in v0.4.0a3: model route inspection
 
 `eef models route --capability llm.infer --role request_interpreter --json`

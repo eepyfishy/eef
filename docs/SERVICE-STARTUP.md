@@ -1,5 +1,53 @@
 # Service startup and concurrent offline commands
 
+## Quiet startup investigation (development)
+
+The separate capacity-hint candidate `c9ac8f4` passes its workspace tests, but
+[run 44233145113](https://github.com/eepyfishy/eef/actions/runs/44233145113)
+fails the native shell gate: the original quiet eef node exits with code 101.
+The redirected diagnostic launch remains alive during its three-second sample
+and does not explain that original exit. The run is failed, and its later native
+vision checks were not reached. This is not evidence that the capacity feature
+caused the exit, nor that an earlier startup issue is resolved.
+
+The next diagnostic increment adds an explicit local launch option, currently
+pending hosted verification:
+
+```powershell
+.\eefn.exe --panic-report .\node-panic.json --no-ui
+.\eef.exe --panic-report .\coordinator-panic.json --no-ui
+```
+
+Use the same configuration and other service options as the intended launch.
+Select a new file in an existing directory you own. The app refuses an existing
+target instead of overwriting or appending to it; commands reject this service
+option without creating a file. No file is created by default. The selected
+package installs the observer after handoff, not an old bootstrap process.
+
+The observer records at most one JSON document of 2 KiB from the first Rust panic
+observed in that process. It includes the role, process ID, a best-effort startup
+phase and source filename/line/column. It excludes full source/configuration
+paths, panic payloads, backtraces, requests and credentials. Phase is the most
+recent startup label, not proof of which task caused a fault. The already-open
+handle is used once; panic handling never reopens or replaces the chosen path.
+
+Normal panic handling and process behavior remain in effect. This does not catch
+a panic, enable automatic recovery, replay work or change console handles. A
+worker panic does not by itself establish that the whole service exited. An empty,
+missing, malformed or unwritten report proves neither successful startup nor
+absence of a fault; recording is best effort and cannot cover forced termination,
+every native crash or failures before observer installation.
+
+The native shell fixture now asks the original unredirected quiet process for
+this observation. Its existing live API/process/no-console gate and deadline are
+unchanged. A separate disposable example requires a real panic exit and verifies
+redaction and refusal to overwrite owner data; it cannot satisfy quiet startup.
+The cause of the observed code-101 exit remains open until actual evidence
+identifies it. The earlier lock-contention fix below addresses a different proven
+failure and does not explain this one.
+
+## Earlier lock-contention correction
+
 This development follow-up fixes a reproduced silent-start failure. An offline
 command and the service used the same configuration instance lock. If the
 command won that lock just before launch, the service treated it as an existing

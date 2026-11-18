@@ -73,6 +73,7 @@ mod network_interpretation;
 pub mod package_health;
 pub mod package_repair;
 pub mod package_setup;
+pub mod panic_report;
 pub mod peer;
 pub mod permission_commands;
 pub mod pipeline;

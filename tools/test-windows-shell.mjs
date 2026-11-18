@@ -25,6 +25,20 @@ async function text(path){const b=await readFile(path);return b[0]===255&&b[1]==
 async function json(url){const r=await fetch(url,{signal:AbortSignal.timeout(8000)});assert(r.ok);return r.json();}
 async function until(fn,label){const end=Date.now()+30000;while(Date.now()<end){try{if(await fn())return;}catch{}await new Promise(r=>setTimeout(r,100));}throw Error('Timeout: '+label);}
 async function subsystem(exe){const file=await open(exe,'r');try{const dos=Buffer.alloc(64);await file.read(dos,0,64,0);assert.equal(dos.toString('ascii',0,2),'MZ');const pe=Buffer.alloc(96);await file.read(pe,0,96,dos.readUInt32LE(60));assert.equal(pe.toString('ascii',0,4),'PE\0\0');return pe.readUInt16LE(92);}finally{await file.close();}}
+async function panicObservation(path,role,pid){
+ const bytes=await readFile(path);assert(bytes.length<=2048);
+ if(!bytes.length)return null;
+ const value=JSON.parse(bytes);assert.equal(value.schema_version,1);
+ assert.equal(value.report_type,'service_panic_observation');assert.equal(value.program,role);
+ assert.equal(value.process_id,pid);assert.equal(value.panic_payload_recorded,false);
+ assert.equal(value.backtrace_recorded,false);assert.equal(value.execution_authorized,false);
+ assert.equal(value.outcome_confirmed,false);
+ assert(value.phase===null||/^[a-z_]{1,64}$/.test(value.phase));
+ if(value.location!==null){assert(/^[A-Za-z0-9._-]{1,128}$/.test(value.location.file_basename));
+  assert(Number.isInteger(value.location.line)&&value.location.line>0);
+  assert(Number.isInteger(value.location.column)&&value.location.column>0);}
+ return {phase:value.phase,location:value.location,panic_payload_recorded:false};
+}
 async function shell(exe,args,label,input){
  const output=join(scratch,label+'.stdout'),error=join(scratch,label+'.stderr');
  const script=`$global:LASTEXITCODE=$null; ${input===undefined?'':literal(input)+' | '}& ${literal(exe)} ${args.map(literal).join(' ')} 1> ${literal(output)} 2> ${literal(error)}; $result=$LASTEXITCODE; [ordered]@{exit_code=$result;completed=$true} | ConvertTo-Json -Compress`;
@@ -42,7 +56,8 @@ async function quietService(role,source){
  const {api,gateway}=await endpoints(),config=join(install,role==='eef'?'quiet.yaml':'quiet.json');
  if(role==='eef')await writeFile(config,coordinatorTemplatePorts(source.toString(),api,gateway));
  else{const value=JSON.parse(source.toString());value.dashboard.port=api;await writeFile(config,JSON.stringify(value));}
- const args=['--config','"'+config+'"','--no-ui',...(role==='eef'?['--no-brain','--database','"'+join(install,'quiet.db')+'"']:[])];
+ const panicFile=join(install,'panic.json');
+ const args=['--config','"'+config+'"','--panic-report','"'+panicFile+'"','--no-ui',...(role==='eef'?['--no-brain','--database','"'+join(install,'quiet.db')+'"']:[])];
  const pidFile=join(install,'process.json'),probeFile=join(install,'console.json'),exitFile=join(install,'exit.json'),monitorDone=join(install,'monitor.done');
  // Keep the actual Process handle to distinguish a failed launch from a live
  // service that never became ready. Do not redirect handles: that would change
@@ -59,10 +74,12 @@ async function quietService(role,source){
  const result=JSON.parse(await text(probeFile));assert.equal(result.attached,false,'Background service must not keep an allocated console');
  assert.equal(result.error_code,6,'The verified live service has no console; a missing/exited process is not a pass');
  assert((await processes()).some(p=>p.ProcessId===pid),'The quiet service must still be running');
+ assert.equal(await panicObservation(panicFile,role,pid),null,'A live quiet service must not have reported a panic');
  quietCases.push({role,live_service_without_console:true});
  }catch(error){
   let exit;try{exit=JSON.parse(await text(exitFile));}catch{}
-  const observation={role,process_live:!!pid&&(await processes()).some(p=>p.ProcessId===pid),launcher_exit_code:started.exitCode,service_exit:exit??null,distinct_endpoint_ports:api!==gateway};
+  let panic=null;try{panic=await panicObservation(panicFile,role,pid);}catch{panic={unavailable_or_invalid:true};}
+  const observation={role,process_live:!!pid&&(await processes()).some(p=>p.ProcessId===pid),launcher_exit_code:started.exitCode,service_exit:exit??null,panic_observation:panic,distinct_endpoint_ports:api!==gateway};
   await writeFile(join(install,'PRIVATE-startup-observation.json'),JSON.stringify(observation,null,2));
   console.error('Quiet service startup observation: '+JSON.stringify(observation));
   // Diagnostic only after the original gate already failed. Redirecting a
@@ -82,6 +99,18 @@ async function quietService(role,source){
  }
 }
 try {
+ const syntheticReport=join(scratch,'synthetic-panic.json');
+ const synthetic=launch(join(bin,'examples','panic-report-fixture.exe'),[syntheticReport]);
+ const syntheticResult=await synthetic.result;
+ assert.equal(syntheticResult.code,101,'A recorded panic must retain normal failing process exit');
+ const syntheticObservation=await panicObservation(syntheticReport,'eefn',synthetic.pid);
+ assert.equal(syntheticObservation.phase,'synthetic_failure');
+ assert.equal(syntheticObservation.location.file_basename,'panic-report-fixture.rs');
+ assert(!(await text(syntheticReport)).includes('PRIVATE_SYNTHETIC_REQUEST_PAYLOAD'));
+ const sentinel=join(scratch,'owner-existing.json');await writeFile(sentinel,'owner data');
+ const rejected=await launch(join(bin,'examples','panic-report-fixture.exe'),[sentinel]).result;
+ assert.equal(rejected.code,1);assert.equal(await text(sentinel),'owner data');
+ console.log('Service panic report validation passed: real failing child exit, bounded redacted location, no payload or overwrite; quiet startup still independently required.');
  for(const role of ['eef','eefn']){
   const install=join(scratch,role),exe=join(install,role+'.exe');await alias(join(bin,role+'.exe'),exe);
   assert.equal(await subsystem(exe),3,'The public command entrypoint must use the Windows console subsystem');
@@ -107,6 +136,10 @@ try {
    const invalid=await shell(exe,['--not-an-eef-option'],prefix+'-invalid');assert.equal(invalid.code,2);assert(invalid.err.includes('unexpected argument'));
    const inspect=await shell(exe,['--config',config,'--json',...(role==='eef'?['diagnostics']:['setup'])],prefix+'-json');assert.equal(inspect.code,0);
    const report=JSON.parse(inspect.out);assert.equal(report.success,true);assert.equal(report.runtime_id,observation.runtime_id);
+   const invalidReport=join(scratch,prefix+'-invalid-panic.json');
+   const invalidDiagnostic=await shell(exe,['--config',config,'--panic-report',invalidReport,...(role==='eef'?['diagnostics']:['setup'])],prefix+'-panic-command');
+   assert.equal(invalidDiagnostic.code,1);assert(invalidDiagnostic.err.includes('Panic reports require a service launch'));
+   assert.equal(await readFile(invalidReport).then(()=>true,()=>false),false,'Commands cannot create service panic files');
    if(role==='eef'){
     const missing=await shell(exe,['--config',config,'--json','node','verify-model','--node','absent-node','inspect','--operation-id',operation],prefix+'-receipt');
     assert.equal(missing.code,1);const report=JSON.parse(missing.out);assert.equal(report.state,'not_found');assert.equal(report.operation_id,operation);assert.equal(report.historical,true);assert.equal(report.execution_requested,false);
@@ -127,7 +160,7 @@ try {
   await processes(true);
   await quietService(role,before);
  }
- assert.equal(cases.length,24);
+ assert.equal(cases.length,28);
  assert.equal(quietCases.length,2);
  await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,windows_only:true,roles:['eef','eefn'],console_entrypoints:true,
   real_powershell_wait_and_exit:true,stdout_help_and_json:true,stderr_and_nonzero_exit:true,

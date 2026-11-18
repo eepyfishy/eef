@@ -5,6 +5,17 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+The busy-placement candidate `c9ac8f4` fails native acceptance in
+[run 44233145113](https://github.com/eepyfishy/eef/actions/runs/44233145113):
+the workspace gate passes, but the original quiet eef node exits with code 101
+during the shell suite. Its redirected diagnostic remains live and does not
+explain the exit. Later vision command suites are not reached; this is not a
+passing capacity-hint checkpoint. The next diagnostic candidate adds an explicit
+bounded, redacted service panic observation to the original quiet process,
+retaining the live/no-console gate and deadline. See
+[the investigation](SERVICE-STARTUP.md#quiet-startup-investigation-development).
+Runtime verification and the startup cause remain open.
+
 Read-only route explanations are the next development increment, pending hosted
 verification. `eef models route` distinguishes no matching model from matching
 connected models excluded by reported full exchange gates. Counts honor the

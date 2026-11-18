@@ -80,6 +80,9 @@ struct Args {
 // share the subcommand builder's caller frame on Windows' one-MiB main stack.
 #[derive(Debug, clap::Args)]
 struct ServiceOptions {
+    /// Record one redacted service panic to a new local file; never overwrite.
+    #[arg(long)]
+    panic_report: Option<PathBuf>,
     #[arg(long, global = true, help = "Print command results as JSON")]
     json: bool,
     #[arg(
@@ -3682,6 +3685,7 @@ fn default_llama_binary() -> PathBuf {
 
 #[inline(never)]
 fn startup_phase(phase: &'static str) {
+    eefn::panic_report::phase(phase);
     tracing::debug!(target: "eefn::startup", "node startup phase: {phase}");
 }
 
@@ -3714,6 +3718,12 @@ fn main() -> Result<()> {
     let parsed = parse_args_from(std::env::args_os());
     startup_phase("parsed");
     let service = parsed.as_ref().is_ok_and(Args::is_service);
+    if parsed
+        .as_ref()
+        .is_ok_and(|args| args.panic_report.is_some() && !args.is_service())
+    {
+        bail!("Panic reports require a service launch, not a command")
+    }
     if service {
         eefn::console::detach_owned_service_console();
     }
@@ -3740,6 +3750,9 @@ fn main() -> Result<()> {
     // Only local repair bypasses handoff. Normal parse errors are deferred so
     // the selected application, not the old root bootstrap, owns its syntax.
     let args = parsed.unwrap_or_else(|error| error.exit());
+    if let Some(path) = &args.panic_report {
+        eefn::panic_report::install(path, "eefn")?;
+    }
     run(args, install_dir)
 }
 

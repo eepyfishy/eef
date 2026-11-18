@@ -24,6 +24,27 @@ If you use a custom configuration, pass the same full `--config` path that the
 service uses. Do not change a port number or start duplicate app copies to fix
 local discovery. If an app just restarted, wait for it to return before checking.
 
+## Capture a disappearing service's failure location
+
+Matching development builds add an optional `--panic-report` service flag;
+hosted verification is pending. From the app's installation folder, launch the
+intended service with a new local report filename:
+
+```powershell
+.\eefn.exe --panic-report .\node-panic.json --no-ui
+```
+
+For eef, use `eef.exe` and a different filename. Keep your usual `--config` and
+other service options if customized. Existing report files are refused; choose
+a new name when making a separate diagnostic launch. Do not launch a duplicate
+service while the original is running.
+
+If a Rust panic is observed, the small report identifies its process, startup
+phase and source location without recording request text or the panic message.
+The report is local and is not uploaded automatically. An empty or missing report
+does not prove that startup succeeded. This option does not fix, retry or restart
+the service. See [startup investigation and limits](../SERVICE-STARTUP.md#quiet-startup-investigation-development).
+
 ## eef is waiting for a node, or the node is disconnected
 
 1. Confirm eef and the intended node app are running.
