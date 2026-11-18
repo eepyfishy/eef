@@ -28,8 +28,17 @@ Three fault/order regressions exercise clearing before release, failed clearing
 and failed detachment. A separate native helper uses an actual owned console,
 requires null slots after detachment, then writes stdout/stderr while holding a
 new unrelated file. Its sentinel must remain unchanged. The original real quiet
-service/API/no-console gate, report parser and deadlines stay intact. Hosted
-verification is pending; the older code-101 cause remains open.
+service/API/no-console gate, report parser and deadlines stay intact.
+
+Exact source `50741ad` passes all four jobs in
+[run 44301576706](https://github.com/eepyfishy/eef/actions/runs/44301576706),
+including 1,863 Windows/headless Rust tests, one ignored across 18 groups, all 37
+native suites and retained extra gates. Scoped source/raw-log review accepts
+the actual console/sentinel case and both live quiet service checks, with empty
+reports and preserved redirected command I/O. This also verifies the panic
+observer and interruption correction below in the complete hosted suite. It is
+not installed/physical-device or stable-release acceptance; the older code-101
+cause remains open.
 
 ## Quiet startup investigation (development)
 
@@ -41,8 +50,8 @@ and does not explain that original exit. The run is failed, and its later native
 vision checks were not reached. This is not evidence that the capacity feature
 caused the exit, nor that an earlier startup issue is resolved.
 
-The next diagnostic increment adds an explicit local launch option, currently
-pending hosted verification:
+The unreleased diagnostic increment adds an explicit local launch option,
+verified at the `50741ad` checkpoint above:
 
 ```powershell
 .\eefn.exe --panic-report .\node-panic.json --no-ui
@@ -91,8 +100,9 @@ cleanup path.
 
 Two controlled-source regressions cover a successful signal result and a
 failed listener with a later explicit management notification, including exactly
-one listener attempt. Hosted verification is pending. This source-level result
-does not identify the cause of the earlier quiet process's code-101 exit.
+one listener attempt. The complete `50741ad` hosted checkpoint above also passes
+the existing command restart/control and cleanup regressions. This result does
+not identify the cause of the earlier quiet process's code-101 exit.
 
 ## Earlier lock-contention correction
 

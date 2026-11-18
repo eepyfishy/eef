@@ -26,8 +26,9 @@ local discovery. If an app just restarted, wait for it to return before checking
 
 ## Capture a disappearing service's failure location
 
-Matching development builds add an optional `--panic-report` service flag;
-hosted verification is pending. From the app's installation folder, launch the
+Matching development builds add an optional `--panic-report` service flag.
+Its scoped hosted checks pass at `50741ad`; it is absent from published alpha.6
+installers. From the app's installation folder, launch the
 intended service with a new local report filename:
 
 ```powershell

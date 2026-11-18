@@ -1945,7 +1945,7 @@ it adds no unbounded tombstone collection or separate job framework.
 redacted first-panic observation. Use your usual configuration/service options.
 The parent directory must exist; existing files are refused. Commands cannot use
 this option. Default behavior creates no report. This grants no execution or
-recovery authority. Hosted verification is pending; see
+recovery authority. Exact source `50741ad` passes scoped hosted verification; see
 [the exact record, native gate and limits](SERVICE-STARTUP.md#quiet-startup-investigation-development).
 
 ## Added in v0.4.0a3: model route inspection

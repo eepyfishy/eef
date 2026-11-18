@@ -5,6 +5,22 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+Source `50741ad` passes all four hosted jobs in
+[run 44301576706](https://github.com/eepyfishy/eef/actions/runs/44301576706):
+1,863 Windows/headless Rust tests, one ignored across 18 groups, all 37 native
+suites and retained extra gates. Scoped immutable-source/raw-log review accepts
+exclusive-console standard-handle clearing, failure restoration and preservation
+of redirected command I/O. An actual owned-console helper verifies null slots
+and an unchanged new-file sentinel after stdout/stderr writes. Both real service
+executables pass live API/process/no-console checks with empty panic reports.
+The shared interruption helper preserves explicit controls on a failed listener;
+normal interruption retains existing cleanup. Opt-in panic reports pass a real
+synthetic panic exit, bounded/redacted location and existing-file preservation.
+All model/vision command and no-replay gates remain passing. This accepts Windows
+mechanics and synthetic command composition, not physical media/model quality,
+measured resource allocation, general strong stop or stable release. The earlier
+code-101 exit still has no proven cause.
+
 Source `214b6aa` passes all four hosted jobs in
 [run 44235567267](https://github.com/eepyfishy/eef/actions/runs/44235567267):
 1,856 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
@@ -28,11 +44,11 @@ gate for a live quiet coordinator in
 Both workspace gates pass, including the controlled signal/record tests, and the
 synthetic panic child passes; neither source has full native acceptance.
 
-The correction now clears exclusively owned console standard-handle slots before
-detachment, preserving inherited terminals and redirected streams. Checked
+The accepted correction clears exclusively owned console standard-handle slots
+before detachment, preserving inherited terminals and redirected streams. Checked
 entrypoints propagate failure; no old console handle is manually closed. Three
-fault/order tests and a native console/new-file sentinel case accompany the
-original live/no-console and strict report checks. Hosted verification is pending.
+fault/order tests and the native console/new-file sentinel case accompany the
+original live/no-console and strict report checks at the `50741ad` checkpoint above.
 See [handle contamination and evidence](SERVICE-STARTUP.md#standard-handle-detachment-correction-development).
 
 Earlier busy-placement source `c9ac8f4` remains failed in
@@ -41,8 +57,9 @@ the original quiet node exits with code 101; its redirected diagnostic stays liv
 and does not explain that exit. The later observed log contamination is a real
 separate defect, not proof of that earlier panic's exact cause. No unchanged run
 was replayed. The separate console-listener correction preserves management on
-setup failure and ordinary graceful interruption; its full runtime acceptance is
-still pending. See [startup investigation](SERVICE-STARTUP.md#quiet-startup-investigation-development).
+setup failure and ordinary graceful interruption; its scoped full hosted
+acceptance is recorded at `50741ad` above. See
+[startup investigation](SERVICE-STARTUP.md#quiet-startup-investigation-development).
 
 Read-only model admission source `7551fb0` passes all four hosted jobs in
 [run 44227169903](https://github.com/eepyfishy/eef/actions/runs/44227169903):
