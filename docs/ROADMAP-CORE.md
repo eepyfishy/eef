@@ -29,6 +29,17 @@ change the current stable v0.4.0 implementation and acceptance requirements.
 
 ## Direction and policy changes
 
+One-shot stop persistence passes scoped source acceptance at `117c750` in
+[run 44318762717](https://github.com/eepyfishy/eef/actions/runs/44318762717):
+1,879 Windows/headless Rust tests plus one ignored test, all 37 native suites and
+retained extra gates. Existing bounded native journal services keep the delivery
+driver's reads and writes off the async worker. Cancellation retains actual
+storage capacity; the first stop attempt is latched before persistence so another
+job's notification cannot retry it. The original grant/session and intent-only
+receipt semantics remain. Initial `TaskEngine.cancel` persistence and other
+synchronous callers, general strong stop and physical/release gates stay open.
+See [scope and evidence](GRANT-STOP.md#bounded-coordinator-delivery-persistence-development).
+
 Optional Python job CPU ceilings pass scoped source acceptance at `cfea8cc` in
 [run 44311686952](https://github.com/eepyfishy/eef/actions/runs/44311686952):
 1,872 Windows/headless Rust tests plus one ignored test, all 37 native suites and

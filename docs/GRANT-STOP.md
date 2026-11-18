@@ -64,8 +64,13 @@ Seven regressions cover exact single-send/receipt history, real held-journal
 cancellation and expiry, retained capacity, bounded pre-dispatch reads, runtime
 destruction and independence from a workload-reporting fault. The original driver
 latches its first observed stop attempt even when persistence admission fails;
-unrelated jobs' notifications cannot retry it. Hosted verification
-is pending. These synthetic coordinator journal tests do not prove physical stop.
+unrelated jobs' notifications cannot retry it. Exact source `117c750` passes all
+four jobs in [run 44318762717](https://github.com/eepyfishy/eef/actions/runs/44318762717):
+1,879 Windows/headless Rust tests plus one ignored test, all 37 native suites and
+retained extra gates. Scoped immutable-source/raw-log review retains the original
+public process-stop and paired-audio command checks. The synthetic held-journal
+regressions and native command checks have different scopes; neither establishes
+physical two-PC stop or universal termination.
 The initial `TaskEngine.cancel` transaction and other synchronous journal callers
 still need separate asynchronous work; this is not a claim that every public
 command is immune to storage contention. Broader strong-stop, continuous/media,

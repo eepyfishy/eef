@@ -5,12 +5,26 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
-The one-shot stop driver now moves its send/receipt persistence and retained-intent
-reads onto existing bounded native journal services. Seven new journal regressions
-await hosted validation, alongside the unchanged public process-stop, paired
-audio, model and inherited native gates. No grant/schema or physical-stop promise
-changes. Initial public cancellation and other synchronous journal callers remain
-separate work. See [the delivery contract](GRANT-STOP.md#bounded-coordinator-delivery-persistence-development).
+Source `117c750` passes all four hosted jobs in
+[run 44318762717](https://github.com/eepyfishy/eef/actions/runs/44318762717):
+1,879 Windows/headless Rust tests, one ignored across 18 groups, all 37 native
+suites and retained extra gates. Scoped source/raw-log review accepts bounded
+native one-shot stop reservations, receipt persistence and retained-intent reads.
+Seven added regressions cover actual journal contention, cancellation, expiry,
+capacity retention, runtime loss, exact immutable history and a latched first
+attempt. Unrelated notifications cannot retry failed stop admission. The original
+public process-stop and paired-audio commands, CPU and console gates remain
+passing. This changes no grant/schema or physical-stop promise; initial public
+cancellation and other synchronous journal callers remain separate work. See
+[the delivery contract](GRANT-STOP.md#bounded-coordinator-delivery-persistence-development).
+
+Preceding `ca02222` also passes its four-job
+[run 44318078178](https://github.com/eepyfishy/eef/actions/runs/44318078178),
+including 1,878 Windows/headless Rust tests and the native gates. Source review
+identified that an unrelated stop notification could retry failed metadata
+admission. That source was superseded before acceptance; `117c750` adds the
+in-memory first-attempt latch and its seventh regression. Passing the earlier
+tests alone did not establish this behavior.
 
 Source `cfea8cc` passes all four hosted jobs in
 [run 44311686952](https://github.com/eepyfishy/eef/actions/runs/44311686952):
