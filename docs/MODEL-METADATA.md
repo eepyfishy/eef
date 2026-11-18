@@ -92,6 +92,15 @@ complete while its capacity advertisement excludes new placement. Completion, st
 restart, lost replies and owned-process exit retain their original uncertainty
 and no-replay checks. Synthetic fixtures do not establish physical acceptance.
 
+A subsequent read-only command increment is also pending hosted verification:
+`eef models route` reports `placement_observation`, distinguishing no matching
+model from matching connected models excluded by full gates. Counts use the
+same model/role/backend filters and one registry snapshot; several models on
+one full node do not become several full nodes. Candidate counts and display
+limits retain their existing meaning. Missing hints remain unknown. This
+observation never reserves capacity or changes scheduling/continuation authority;
+see [command details](COMMANDS.md#added-in-v040a3-model-route-inspection).
+
 ### Existing registration behavior
 
 - No `model_metadata`: normalize explicit `text`/`vlm` labels using the previous

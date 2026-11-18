@@ -246,22 +246,22 @@ impl Runtime {
         {
             bail!("node is not connected")
         }
-        let candidates = self
-            .model_registry
-            .route(&request, &Default::default())
-            .into_iter()
-            .filter(|spec| connected.contains_key(&spec.node_id))
-            .collect::<Vec<_>>();
-        let matched = candidates.len();
-        let models=candidates.into_iter().take(query.limit).map(|spec|json!({
-            "instance":{"node_id":spec.node_id,"backend":spec.backend,"model_id":spec.model_id},
-            "model_metadata":spec.model_metadata,
-        })).collect::<Vec<_>>();
-        Ok(
-            json!({"schema_version":1,"success":true,"report_type":"model_route_preview","runtime_id":self.instance_id,
-            "capability":query.capability,"role":query.role,"candidates":models,"matched_count":matched,"truncated":matched>query.limit,
-            "execution_authorized":false,"note":"Current connected registry candidates in existing load/latency order, not an execution grant, model reservation or readiness check. State may change before dispatch."}),
-        )
+        let mut report = self.model_registry.preview(
+            &request,
+            |node_id| connected.contains_key(node_id),
+            query.limit,
+        );
+        report["schema_version"] = json!(1);
+        report["success"] = json!(true);
+        report["report_type"] = json!("model_route_preview");
+        report["runtime_id"] = json!(self.instance_id);
+        report["capability"] = json!(query.capability);
+        report["role"] = json!(query.role);
+        report["execution_authorized"] = json!(false);
+        report["note"] = json!(
+            "Current connected registry candidates in existing load/latency order. Full managed-exchange gate counts are node-reported snapshots, not provider execution or measured resources. Missing capacity hints remain unknown. No execution grant or model reservation; state may change before dispatch. No work was loaded, queued or retried."
+        );
+        Ok(report)
     }
 
     pub async fn interpreter_route_preview(

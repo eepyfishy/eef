@@ -5,6 +5,14 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+Read-only route explanations are the next development increment, pending hosted
+verification. `eef models route` distinguishes no matching model from matching
+connected models excluded by reported full exchange gates. Counts honor the
+existing filters, distinguish node and model totals and retain unknown legacy
+capacity. Inspection does not load, reserve, queue or retry work. Focused Rust
+coverage and held-provider command regressions have been added; no runtime
+acceptance is claimed for this extension yet.
+
 Busy model placement hints are now under development. A separate optional
 admission observation refreshes the current authenticated registration on
 acquire/release, including Ollama. New model routes skip a reported full gate;

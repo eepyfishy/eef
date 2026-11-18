@@ -81,6 +81,7 @@ export async function verifyVisionLifecycleCommands(f) {
   }
   for(mode of ['complete','stop','restart','response-loss']) {
    await f.until(async()=>(await route()).candidates.length===1,'Ollama model initial placement hint');
+   assert.equal((await route()).placement_observation.status,'candidates');
    const trace=join(f.scratch,(f.tracePrefix||'vision-command')+'-'+mode);await mkdir(trace);
    const restartBarrier=mode==='restart'?`
 import time as _vision_time
@@ -114,6 +115,8 @@ _v_camera.on_read = _vision_wait_for_restart
     const state=await job(id);return state.workload?.acknowledged===true&&calls.length===before+1&&!!calls.at(-1).release;
    },'vision model request after consumed ACK');
    await f.until(async()=>(await route()).candidates.length===0,'Ollama full gate withdraws placement hint');
+   assert.deepEqual((await route()).placement_observation,{schema_version:1,status:'all_matching_gates_full',
+    full_gate_model_count:1,full_gate_node_count:1,capacity_reserved:false});
    assert.equal((await f.coordinatorCli(['models','route','--capability','vlm.analyze'])).candidates.length,0,
     'No other eligible vision model may be invented when this network is busy');
    assert(!['completed','interrupted','failed','cancelled','abandoned'].includes((await job(id)).status),
@@ -189,6 +192,7 @@ _v_camera.on_read = _vision_wait_for_restart
     console.log('Lost vision reply validation passed: one model request, pending retained evidence, usable node controls and no implicit retry.');
    }
    await f.until(async()=>(await route()).candidates.length===1,'Ollama released gate restores placement hint');
+   assert.equal((await route()).placement_observation.status,'candidates');
    if(mode!=='restart')assert.equal((await f.json(f.nodeUrl+'/api/diagnostics')).successful_connections,beforeConnection.successful_connections);
    const raw=JSON.stringify({saved,result});
    for(const secret of ['PRIVATE_CAMERA_PASSWORD','rtsp://','/9gBAgME/9k=','image_base64'])assert(!raw.includes(secret));
@@ -197,6 +201,7 @@ _v_camera.on_read = _vision_wait_for_restart
   assert.equal(f.inferenceCalls.length,originalInterpreterCalls,'Concrete vision cannot invoke request interpretation');
   console.log('Executable vision lifecycle validation passed: explicit model/policy/review, completed text, pending stop evidence, retained text after restart and receipt reuse without replay; simulated device/provider only.');
   console.log('Workload result text validation passed: node and owner commands distinguish completed and unconfirmed evidence without JSON; no work resumed.');
+  console.log('Model route capacity observation validation passed: commands distinguish matching full gates from missing models, without reserving or retrying work.');
   console.log('Ollama busy placement hint validation passed: empty/full/restored routes and usable admitted vision without reconnect or provider/camera replay, including lost replies.');
   if(originId!==f.nodeId)console.log('Distributed vision lifecycle validation passed: distinct authenticated origin/executor, immutable context, private result ownership and executor restart without replay; simulated devices only.');
   return {vision_executable_completion:true,vision_executable_pending_stop:true,

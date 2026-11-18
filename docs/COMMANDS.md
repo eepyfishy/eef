@@ -1947,6 +1947,23 @@ capabilities are `llm.infer` and `vlm.analyze`. A role must match an explicit ow
 label; unknown roles do not match. This grants no execution or reservation and
 does not prove model readiness. State may change before actual dispatch.
 
+The next development increment (hosted verification pending) adds
+`placement_observation` to this command's response. `status` is `candidates`,
+`all_matching_gates_full`, or `no_matching_model`. The second value means matching
+connected models were excluded by a reported full node-local model request gate;
+it does not mean models are missing or need downloading. Full-gate node and model
+counts respect the same capability, role, node, backend and model filters.
+One node with several matching models counts once as a node. Counts include all
+matching connected entries before the candidate display limit; disconnected,
+incompatible and lifecycle-unavailable models do not contribute.
+
+These are snapshots, not resource measurements or reservations. A node without a
+capacity hint can remain a candidate with unknown capacity. Inspect again later
+and explicitly start work when appropriate; inspection never loads, queues or
+retries it. The executing node still makes the final admission decision. Existing
+`candidates`, `matched_count`, `truncated` and authorization fields keep their
+meaning; this is an additive observation, not a new execution protocol.
+
 Durable jobs may use `generate_text` or `analyze_image` with
 `constraints.model_role` and the existing node/model constraints. Routing does
 not escape the requested role/backend when falling back across tiers. Image

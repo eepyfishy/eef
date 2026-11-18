@@ -12,6 +12,7 @@ export async function verifyOwnedVisionCommands(f) {
  console.log('Owned vision model exit validation passed: observed process exit leaves pending analysis evidence, releases active pins and preserves node controls without retry or invented completion.');
  console.log('Node-local model request ceiling validation passed: owner commands save one shared exchange slot, explicit restart applies it, and owned vision completion and model exit release their requests.');
  console.log('Model request admission observation validation passed: owner inspection shows empty, occupied and released exchange slots during actual owned vision commands without claiming provider execution or reserving capacity.');
+ console.log('Model route capacity observation validation passed: commands distinguish matching full gates from missing models, without reserving or retrying work.');
  console.log('Owned model busy placement hint validation passed: a held exchange withdraws the exact route without reconnect, completion restores it, and model exit remains unavailable without retry.');
  return {vision_owned_llamacpp_commands:true,vision_active_model_pin:true,
   vision_owned_model_exit_no_retry:true,vision_owned_model_quality_accepted:false};
@@ -58,6 +59,7 @@ async function verifyScenario(f,mode) {
  await f.until(async()=>{const m=await current();return m?.owned_pid&&m.active_requests===0&&['ready','warm_idle'].includes(m.state);},'owned vision model ready');
  const original=await current();assert.equal(original.owned_pid,Number(await readFile(pid,'utf8')));
  await f.until(async()=>(await route()).candidates.length===1,'owned model initial route');
+ assert.equal((await route()).placement_observation.status,'candidates');
  const passive=await f.sourceCli(['workloads','vision-sources']);assert.equal(passive.configuration_ready,true);
  assert.equal(passive.capture_started,false);assert.equal(passive.model_contacted,false);
  const exists=path=>readFile(path).then(()=>true,()=>false);
@@ -81,6 +83,8 @@ async function verifyScenario(f,mode) {
  const occupied=(await f.sourceCli(['model-lifecycle-policy','show'])).result.request_admission;
  assert.equal(occupied.in_flight,1);assert.equal(occupied.available,0);assert.equal(occupied.provider_execution_observed,false);
  await f.until(async()=>(await route()).candidates.length===0,'owned model full gate withdraws placement hint');
+ assert.deepEqual((await route()).placement_observation,{schema_version:1,status:'all_matching_gates_full',
+  full_gate_model_count:1,full_gate_node_count:1,capacity_reserved:false});
  assert.equal((await f.owner(['models','route','--capability','vlm.analyze'])).candidates.length,0,
   'No fallback vision model may be invented while the only eligible node is full');
  assert(!['completed','interrupted','failed','cancelled','abandoned'].includes((await job()).status),
@@ -106,6 +110,7 @@ async function verifyScenario(f,mode) {
   assert.equal(result.result.vision.analyses[0].result.text,'movement detected');
   assert.equal((await current()).active_requests,0);
   await f.until(async()=>(await route()).candidates.length===1,'completed owned model restores placement hint');
+  assert.equal((await route()).placement_observation.status,'candidates');
  } else {
   assert.equal(saved.workload.state,'unknown');
   assert.equal(result.result.report_type,'coordinator_workload_uncertain_result');
@@ -115,6 +120,8 @@ async function verifyScenario(f,mode) {
   await f.until(async()=>{const m=await current();return m.active_requests===0&&m.state==='error'&&m.owned_pid===null;},
    'owned model exit observed without an active pin');
   await f.until(async()=>(await route()).candidates.length===0,'exited owned model stays unavailable');
+  assert.deepEqual((await route()).placement_observation,{schema_version:1,status:'no_matching_model',
+   full_gate_model_count:0,full_gate_node_count:0,capacity_reserved:false});
   const diagnostics=await f.json(f.sourceUrl+'/api/diagnostics');
   assert.equal(diagnostics.runtime_id,runtime);
   assert.equal(diagnostics.successful_connections,beforeExecution.successful_connections);

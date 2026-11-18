@@ -297,6 +297,60 @@ impl ModelRegistry {
         tiers: &BTreeMap<String, Vec<String>>,
     ) -> Vec<ModelSpec> {
         let state = self.state.read().expect("model lock");
+        Self::matching_routes(&state, request, tiers)
+            .into_iter()
+            .filter(|spec| !Self::gate_full(&state, &spec.node_id))
+            .collect()
+    }
+
+    fn gate_full(state: &RegistryState, node_id: &str) -> bool {
+        state
+            .request_admission
+            .get(node_id)
+            .is_some_and(|a| a.available == 0)
+    }
+
+    /// Read-only explanation from one registry snapshot. Counts are node-reported
+    /// managed exchange gates, not measured resources or reserved capacity.
+    pub(crate) fn preview(
+        &self,
+        request: &ModelRequest,
+        connected: impl Fn(&str) -> bool,
+        limit: usize,
+    ) -> Value {
+        let state = self.state.read().expect("model lock");
+        let mut models = Vec::new();
+        let mut matched = 0;
+        let mut full_models = 0;
+        let mut full_nodes = std::collections::BTreeSet::new();
+        for spec in Self::matching_routes(&state, request, &Default::default()) {
+            if !connected(&spec.node_id) {
+                continue;
+            }
+            if Self::gate_full(&state, &spec.node_id) {
+                full_models += 1;
+                full_nodes.insert(spec.node_id);
+                continue;
+            }
+            matched += 1;
+            if models.len() < limit {
+                models.push(json!({
+                    "instance":{"node_id":spec.node_id,"backend":spec.backend,"model_id":spec.model_id},
+                    "model_metadata":spec.model_metadata,
+                }));
+            }
+        }
+        json!({"candidates":models,"matched_count":matched,"truncated":matched>limit,
+            "placement_observation":{"schema_version":1,
+                "status":if matched>0 {"candidates"} else if full_models>0 {"all_matching_gates_full"} else {"no_matching_model"},
+                "full_gate_model_count":full_models,"full_gate_node_count":full_nodes.len(),"capacity_reserved":false}})
+    }
+
+    fn matching_routes(
+        state: &RegistryState,
+        request: &ModelRequest,
+        tiers: &BTreeMap<String, Vec<String>>,
+    ) -> Vec<ModelSpec> {
         let mut chain = Vec::new();
         let ids = if let Some(id) = &request.model_id {
             vec![id.clone()]
@@ -310,15 +364,9 @@ impl ModelRegistry {
         };
         for id in &ids {
             let mut providers = state.models.get(id).cloned().unwrap_or_default();
-            providers.retain(|spec| {
-                available(spec, request)
-                    && !state
-                        .request_admission
-                        .get(&spec.node_id)
-                        .is_some_and(|a| a.available == 0)
-            });
+            providers.retain(|spec| available(spec, request));
             providers.sort_by(|left, right| {
-                model_score(right, &state).total_cmp(&model_score(left, &state))
+                model_score(right, state).total_cmp(&model_score(left, state))
             });
             chain.extend(providers);
         }
@@ -327,19 +375,12 @@ impl ModelRegistry {
                 .models
                 .values()
                 .flatten()
-                .filter(|spec| {
-                    !ids.contains(&spec.model_id)
-                        && available(spec, request)
-                        && !state
-                            .request_admission
-                            .get(&spec.node_id)
-                            .is_some_and(|a| a.available == 0)
-                })
+                .filter(|spec| !ids.contains(&spec.model_id) && available(spec, request))
                 .cloned()
                 .collect::<Vec<_>>();
             extra.sort_by(|left, right| {
-                model_score(right, &state)
-                    .total_cmp(&model_score(left, &state))
+                model_score(right, state)
+                    .total_cmp(&model_score(left, state))
                     .then_with(|| left.model_id.cmp(&right.model_id))
             });
             chain.extend(extra);
@@ -639,6 +680,103 @@ impl Default for ChatOptions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn route_preview_distinguishes_full_gates_from_missing_models_without_reserving() {
+        let registry = ModelRegistry::default();
+        let model = |id| json!({"model_id":id,"backend":"ollama","modality":"text"});
+        let full = json!({"schema_version":1,"limit":1,"in_flight":1,"available":0,
+            "queueing":false,"provider_execution_observed":false});
+        registry
+            .register_snapshot("a", &[model("chosen"), model("spare")], Some(&full))
+            .unwrap();
+        registry.register_remote("b", &[model("chosen")]).unwrap();
+        registry
+            .register_snapshot("offline", &[model("chosen")], Some(&full))
+            .unwrap();
+        let request = text_request();
+        let connected = |id: &str| id != "offline";
+        let original = json!(registry.list());
+        let report = registry.preview(&request, connected, 1);
+        assert_eq!(report["matched_count"], 1);
+        assert_eq!(report["candidates"][0]["instance"]["node_id"], "b");
+        assert_eq!(
+            report["placement_observation"],
+            json!({"schema_version":1,"status":"candidates",
+            "full_gate_model_count":2,"full_gate_node_count":1,"capacity_reserved":false})
+        );
+        assert_eq!(report["truncated"], false);
+
+        let exact = ModelRequest {
+            model_id: Some("chosen".into()),
+            ..request.clone()
+        };
+        assert_eq!(
+            registry.preview(&exact, connected, 1)["placement_observation"]["full_gate_model_count"],
+            1
+        );
+        for constraints in [
+            json!({"backend":"llamacpp"}),
+            json!({"model_role":"absent"}),
+            json!({"node_id":"offline"}),
+        ] {
+            let filtered = ModelRequest {
+                constraints,
+                ..request.clone()
+            };
+            let report = registry.preview(&filtered, connected, 1);
+            assert_eq!(report["matched_count"], 0);
+            assert_eq!(
+                report["placement_observation"]["status"],
+                "no_matching_model"
+            );
+            assert_eq!(report["placement_observation"]["full_gate_node_count"], 0);
+        }
+        let disconnected = registry.preview(&request, |_| false, 1);
+        assert_eq!(
+            disconnected["placement_observation"]["status"],
+            "no_matching_model"
+        );
+        assert_eq!(
+            disconnected["placement_observation"]["full_gate_model_count"],
+            0
+        );
+        assert_eq!(
+            json!(registry.list()),
+            original,
+            "Inspection must not alter model state"
+        );
+        assert_eq!(registry.route(&exact, &Default::default())[0].node_id, "b");
+
+        registry
+            .register_snapshot("b", &[model("chosen")], Some(&full))
+            .unwrap();
+        let busy = registry.preview(&request, connected, 1);
+        assert_eq!(busy["matched_count"], 0);
+        assert_eq!(busy["candidates"], json!([]));
+        assert_eq!(
+            busy["placement_observation"],
+            json!({"schema_version":1,"status":"all_matching_gates_full",
+            "full_gate_model_count":3,"full_gate_node_count":2,"capacity_reserved":false})
+        );
+        assert!(
+            registry
+                .route(&request, &Default::default())
+                .iter()
+                .all(|s| !connected(&s.node_id))
+        );
+
+        // Absent legacy capacity is unknown; it neither retains the previous full
+        // observation nor establishes actual free provider resources.
+        registry
+            .register_remote("b", &[model("chosen"), model("spare")])
+            .unwrap();
+        let legacy = registry.preview(&request, connected, 1);
+        assert_eq!(legacy["matched_count"], 2);
+        assert_eq!(legacy["candidates"].as_array().unwrap().len(), 1);
+        assert_eq!(legacy["truncated"], true);
+        assert_eq!(legacy["placement_observation"]["status"], "candidates");
+        assert!(legacy.get("resources_available").is_none());
+    }
     #[test]
     fn request_admission_filters_only_new_routes_and_updates_atomically_with_models() {
         use super::*;
