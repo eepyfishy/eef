@@ -59,6 +59,7 @@ async fn main() -> Result<()> {
             max_stdout_bytes: 32768,
             max_stderr_bytes: 1024,
             max_job_memory_mib: Some(128),
+            ..Default::default()
         })?;
     let plugin = eefn::PythonPlugin {
         path: input.plugin,

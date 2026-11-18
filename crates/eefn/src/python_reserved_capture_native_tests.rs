@@ -48,6 +48,7 @@ def handle(action,params):
             max_stdout_bytes: 1048576,
             max_stderr_bytes: 1024,
             max_job_memory_mib: None,
+            ..Default::default()
         })
         .unwrap();
     let plugin = PythonPlugin {
