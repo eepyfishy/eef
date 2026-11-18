@@ -16,6 +16,14 @@ retaining the live/no-console gate and deadline. See
 [the investigation](SERVICE-STARTUP.md#quiet-startup-investigation-development).
 Runtime verification and the startup cause remain open.
 
+A separate interruption-handling correction is pending hosted verification.
+Both service entrypoints previously treated console-listener failure as an exit
+request. The shared listener now keeps management/restart controls available on
+setup error without a retry loop, and still exits through existing cleanup on a
+successful interrupt. This is a source-identified shutdown defect; it does not
+explain the retained code-101 failure above. See
+[the distinction and controlled-source tests](SERVICE-STARTUP.md#console-interruption-availability-development).
+
 Read-only route explanations are the next development increment, pending hosted
 verification. `eef models route` distinguishes no matching model from matching
 connected models excluded by reported full exchange gates. Counts honor the

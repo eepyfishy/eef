@@ -3776,7 +3776,7 @@ async fn main() -> Result<()> {
         let result = axum::serve(listener, eef::api::router_with_ui(runtime.clone(), !args.no_ui && runtime.config.bool("web.ui_enabled", true))
             .into_make_service_with_connect_info::<std::net::SocketAddr>())
         .with_graceful_shutdown(async move {
-            tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=restart.notified()=>{requested.store(true,std::sync::atomic::Ordering::Relaxed);} }
+            tokio::select! { _=eefn::console::interruption()=>{}, _=restart.notified()=>{requested.store(true,std::sync::atomic::Ordering::Relaxed);} }
             let _ = repair_stop.send(true);
             // Stop runners before graceful HTTP draining; an in-flight job must
             // not keep a requested restart waiting for its entire timeout.

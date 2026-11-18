@@ -46,6 +46,23 @@ The cause of the observed code-101 exit remains open until actual evidence
 identifies it. The earlier lock-contention fix below addresses a different proven
 failure and does not explain this one.
 
+## Console interruption availability (development)
+
+A subsequent source review found a separate defect: both service entrypoints
+discarded the `ctrl_c` listener's error result and treated any completion as an
+exit request. The node's attention/restart wait had the same behavior.
+The correction uses one shared interruption future that completes on a real
+interrupt. If listener setup fails, it records a fixed warning and stays pending,
+leaving normal management/restart controls available. It does not retry in a
+ready-error loop. The node retains that future across nonterminal activation
+notifications. Ordinary observed Ctrl+C still follows the existing graceful
+cleanup path.
+
+Two controlled-source regressions cover a successful signal result and a
+failed listener with a later explicit management notification, including exactly
+one listener attempt. Hosted verification is pending. This source-level result
+does not identify the cause of the earlier quiet process's code-101 exit.
+
 ## Earlier lock-contention correction
 
 This development follow-up fixes a reproduced silent-start failure. An offline

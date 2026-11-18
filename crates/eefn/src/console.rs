@@ -1,5 +1,18 @@
-//! Console ownership for the native command entrypoints, not UI control.
+//! Console ownership and interruption for the native service entrypoints.
 //! Never detach an inherited terminal or discard redirected command/log handles.
+
+/// Complete only for an observed console interrupt. Listener failure must not
+/// become an exit request, spin on a ready error or disable management controls.
+pub async fn interruption() {
+    interruption_from(tokio::signal::ctrl_c()).await
+}
+
+async fn interruption_from(signal: impl std::future::Future<Output = std::io::Result<()>>) {
+    if signal.await.is_err() {
+        tracing::warn!("Console interrupt listener unavailable; service controls remain active");
+        std::future::pending::<()>().await;
+    }
+}
 
 #[cfg(any(windows, test))]
 fn may_detach(count: u32, first: u32, current: u32, redirected: bool) -> bool {
@@ -64,6 +77,41 @@ pub fn detach_owned_service_console() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::FutureExt;
+
+    #[test]
+    fn observed_interrupt_still_completes_the_shutdown_signal() {
+        assert!(
+            interruption_from(std::future::ready(Ok(())))
+                .now_or_never()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn failed_listener_does_not_request_exit_retry_or_block_explicit_control() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let attempts = AtomicUsize::new(0);
+        let control = tokio::sync::Notify::new();
+        let signal = async {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        };
+        let mut lifecycle = Box::pin(async {
+            tokio::select! {
+                biased;
+                _ = interruption_from(signal) => panic!("Listener failure requested exit"),
+                _ = control.notified() => {},
+            }
+        });
+        assert!((&mut lifecycle).now_or_never().is_none());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert!((&mut lifecycle).now_or_never().is_none());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1, "No listener retry loop");
+        control.notify_one();
+        assert!((&mut lifecycle).now_or_never().is_some());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
     #[test]
     fn only_an_exclusive_owned_service_console_can_be_detached() {
         assert!(may_detach(1, 42, 42, false));

@@ -4173,10 +4173,12 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
         }
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let signal = async {
+            let interrupted = eefn::console::interruption();
+            tokio::pin!(interrupted);
             loop {
                 tokio::select! {
                     biased;
-                    _ = tokio::signal::ctrl_c() => {dashboard.cancel_model_activation();break StopReason::Exit},
+                    _ = &mut interrupted => {dashboard.cancel_model_activation();break StopReason::Exit},
                     _ = dashboard.restart.notified() => {dashboard.cancel_model_activation();break StopReason::Restart},
                     _ = dashboard.model_activation_ready.notified()=>match dashboard.claim_model_activation() {
                         Ok(Some(configuration))=>{*next_startup.lock().unwrap()=Some(configuration);break StopReason::ModelActivation},
@@ -4221,7 +4223,7 @@ async fn run_application(mut args: Args, install_dir: PathBuf) -> Result<()> {
             }
             // An uncertain cleanup never automatically starts another runtime.
             // A subsequent explicit restart retries the same retained barrier.
-            tokio::select! { _=dashboard.restart.notified()=>{}, _=tokio::signal::ctrl_c()=>break }
+            tokio::select! { _=dashboard.restart.notified()=>{}, _=eefn::console::interruption()=>break }
         }
         if !model_only_restart
             && shutdown_barrier.lock().unwrap().is_none()
