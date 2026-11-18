@@ -1,4 +1,18 @@
 use super::*;
+
+#[test]
+fn camera_dependency_check_keeps_the_applied_cpu_ceiling() {
+    let applied = crate::python::BridgeLimits {
+        timeout_seconds: 3,
+        max_job_memory_mib: Some(96),
+        max_job_cpu_percent: Some(25),
+        ..Default::default()
+    };
+    let effective = Settings::default().limits(&applied);
+    assert_eq!(effective.max_job_cpu_percent, Some(25));
+    assert_eq!(effective.max_job_memory_mib, Some(96));
+    assert_eq!(effective.timeout_seconds, 3);
+}
 use std::sync::Arc;
 
 fn request() -> Request {

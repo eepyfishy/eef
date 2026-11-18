@@ -34,9 +34,10 @@ impl PythonRuntime {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
-        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit_before(
+        let (mut child, tree) = crate::process_lifetime::spawn_with_job_limits_before(
             command,
             self.limits.max_job_memory_mib,
+            self.limits.max_job_cpu_percent,
             deadline,
         )
         .map_err(super::bridge_spawn_failure)?;

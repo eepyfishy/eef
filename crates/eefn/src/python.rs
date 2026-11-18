@@ -34,6 +34,8 @@ pub struct BridgeLimits {
     pub max_stderr_bytes: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_job_memory_mib: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_job_cpu_percent: Option<u32>,
 }
 impl Default for BridgeLimits {
     fn default() -> Self {
@@ -43,12 +45,14 @@ impl Default for BridgeLimits {
             max_stdout_bytes: 36 * 1024 * 1024,
             max_stderr_bytes: 64 * 1024,
             max_job_memory_mib: None,
+            max_job_cpu_percent: None,
         }
     }
 }
 impl BridgeLimits {
     pub fn validate(&self) -> Result<()> {
         crate::model_memory::validate(self.max_job_memory_mib)?;
+        crate::process_cpu::validate(self.max_job_cpu_percent)?;
         if !(1..=300).contains(&self.timeout_seconds)
             || !(1024..=64 * 1024 * 1024).contains(&self.max_request_bytes)
             || !(1024..=64 * 1024 * 1024).contains(&self.max_stdout_bytes)
@@ -105,6 +109,7 @@ impl BridgeFailure {
 pub enum AvailabilityFailure {
     InvalidLimits,
     UnsupportedMemoryLimit,
+    UnsupportedCpuLimit,
     Spawn,
     Wait,
     Deadline,
@@ -116,6 +121,7 @@ impl std::fmt::Display for AvailabilityFailure {
         f.write_str(match self {
             Self::InvalidLimits => "Python availability limits are invalid",
             Self::UnsupportedMemoryLimit => "Python availability memory limit is unsupported",
+            Self::UnsupportedCpuLimit => "Python availability CPU ceiling is unsupported",
             Self::Spawn => "Python availability process could not start",
             Self::Wait => "Python availability process wait failed",
             Self::Deadline => "Python availability deadline exceeded",
@@ -281,6 +287,8 @@ impl PythonRuntime {
             .map_err(|_| AvailabilityFailure::InvalidLimits)?;
         crate::model_memory::supported(self.limits.max_job_memory_mib)
             .map_err(|_| AvailabilityFailure::UnsupportedMemoryLimit)?;
+        crate::process_cpu::supported(self.limits.max_job_cpu_percent)
+            .map_err(|_| AvailabilityFailure::UnsupportedCpuLimit)?;
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut command = self.command();
         command
@@ -290,9 +298,10 @@ impl PythonRuntime {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit_before(
+        let (mut child, tree) = crate::process_lifetime::spawn_with_job_limits_before(
             &mut command,
             self.limits.max_job_memory_mib,
+            self.limits.max_job_cpu_percent,
             deadline,
         )
         .map_err(|error| availability_spawn_failure(&error))?;
@@ -456,6 +465,7 @@ impl PythonRuntime {
         self.limits.validate()?;
         // Never silently drop an explicitly requested native ceiling.
         crate::model_memory::supported(self.limits.max_job_memory_mib)?;
+        crate::process_cpu::supported(self.limits.max_job_cpu_percent)?;
         let stdout_limit = stdout_limit.min(self.limits.max_stdout_bytes);
         let started = Instant::now();
         let local_deadline = started + Duration::from_secs(self.limits.timeout_seconds);
@@ -490,9 +500,10 @@ impl PythonRuntime {
             return Err(BridgeFailure::Deadline.into());
         }
         let spawn_started = Instant::now();
-        let (mut child, tree) = crate::process_lifetime::spawn_with_job_memory_limit_before(
+        let (mut child, tree) = crate::process_lifetime::spawn_with_job_limits_before(
             &mut command,
             self.limits.max_job_memory_mib,
+            self.limits.max_job_cpu_percent,
             deadline,
         )
         .map_err(bridge_spawn_failure)

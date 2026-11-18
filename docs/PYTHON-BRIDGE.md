@@ -11,6 +11,8 @@ The running node exposes typed budget commands without JSON editing:
 
     eefn python show
     eefn python configure --memory-mib 256 --timeout-seconds 30
+    eefn python configure --cpu-percent 25
+    eefn python configure --default-cpu
     eefn python configure --max-stdout-bytes 8388608
     eefn python configure --default-memory
     eef node python --node NODE_ID show
@@ -84,6 +86,44 @@ Concurrent bridge calls have separate trees/ceilings; their budgets do not form
 an aggregate quota. Allocation failure may be handled by Python or fail a call;
 it does not undo effects, prove a grant unconsumed or authorize replay. Defaults
 remain unchanged. A Job Object is not a security sandbox.
+
+### Optional CPU rate ceiling (development)
+
+`--cpu-percent 1..100` saves `max_job_cpu_percent`, a Windows hard CPU rate ceiling
+for each owned Python job and its descendants. `--default-cpu` removes only this
+ceiling. It preserves memory, time and pipe limits; an explicit node restart
+applies pending changes. Remote configuration requires current local management
+consent. No configuration command probes or executes Python.
+
+The node sets `ENABLE | HARD_CAP` and reads the rate back before spawning the
+suspended child. Failure refuses execution; there is no unlimited fallback.
+Availability checks, metadata inspection, normal calls, bounded streams, private
+image exchange and camera dependency checks retain the applied ceiling. Existing
+absolute deadlines and owned-tree retirement still apply. Configuring a very low
+rate can cause those unchanged deadlines to expire sooner during useful work.
+
+Omitted/null CPU limits stay omitted when serialized, preserving legacy default
+limit digests and policy report shape. Reports include CPU platform support and
+the additional scope explanation only when saved or applied CPU limits are set.
+This indicates API availability, not confirmation that an individual job accepted
+the rate; each spawn must independently set and verify it. Old clients/nodes may
+reject CPU-bearing messages; they must not strip the field or retry without it.
+Non-Windows saves refuse an explicit CPU cap; a pre-existing cap prevents Python
+startup while leaving the Rust node core available.
+
+The percentage applies to Windows scheduling intervals and, with nested jobs,
+the enclosing job's CPU allotment. Some environments, including Remote Desktop
+Dynamic Fair Share Scheduling, do not support this control. See Microsoft's
+[CPU rate semantics](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_cpu_rate_control_information)
+and [job information query](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-queryinformationjobobject).
+It is not a reservation, priority setting, aggregate quota across simultaneous
+Python calls, GPU cap, measured utilization, sandbox or adaptive reclamation for
+gaming. Model servers and ordinary process capabilities do not acquire this Python
+policy. Generic resource sharing remains a separate 0.5+ design direction.
+
+Hosted acceptance is pending for this increment. The native fixtures check rate
+readback in actual owned root/descendant processes and command save/apply behavior;
+they do not measure achieved CPU throughput or validate owner hardware.
 
 The request/stdout/stderr settings remain **encoded pipe/data bounds**. Parent grants tighten stdout
 to their result budget, and pipeline stages to the existing retained-data budget,

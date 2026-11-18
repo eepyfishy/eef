@@ -22,7 +22,7 @@ const proxy=createServer(async(req,res)=>{
   if(mutation){writes++;if(mode==='old'){res.writeHead(404);return res.end('{}');}}
   const response=await fetch(node+req.url,{method:req.method,headers:{'Content-Type':'application/json'},body:body||undefined,signal:AbortSignal.timeout(10000)});
   const value=await response.json();
-  if(mutation){if(mode==='drop')return res.destroy();if(mode==='corrupt')value.saved.max_job_memory_mib=256;if(mode==='prose')value.note='PRIVATE-PYTHON-POLICY-MUST-NOT-ECHO';}
+  if(mutation){if(mode==='drop')return res.destroy();if(mode==='corrupt')value.saved.max_job_memory_mib=256;if(mode==='cpu-evidence')delete value.cpu_rate_control_supported;if(mode==='prose')value.note='PRIVATE-PYTHON-POLICY-MUST-NOT-ECHO';}
   res.writeHead(response.status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));
  }catch{res.destroy();}
 });
@@ -41,23 +41,23 @@ async function until(fn,label){const end=Date.now()+30000;while(Date.now()<end){
 const show=async()=>(await local(['python','show'])).result;
 try{
  await new Promise(r=>proxy.listen(0,'127.0.0.1',r));const [api,gateway,web]=await Promise.all([port(),port(),port()]);node=`http://127.0.0.1:${api}`;
- await writeFile(plugin,`from pathlib import Path\nCAPABILITY='fixture.budget'\nACTIONS=['run']\nwith Path(__file__).with_name('plugin-imports').open('ab') as f: f.write(b'I')\ndef invoke(action,params): return {'synthetic': True}\n`);
+ await writeFile(plugin,"from pathlib import Path\nimport ctypes\nfrom ctypes import wintypes\nclass CpuInfo(ctypes.Structure):\n    _fields_=[('flags',wintypes.DWORD),('rate',wintypes.DWORD)]\nq=ctypes.WinDLL('kernel32',use_last_error=True).QueryInformationJobObject\nq.argtypes=[wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)]\nq.restype=wintypes.BOOL\ncpu=CpuInfo()\nsize=wintypes.DWORD()\nif not q(None,15,ctypes.byref(cpu),ctypes.sizeof(cpu),ctypes.byref(size)):\n    raise RuntimeError('owned job CPU query failed')\nif size.value!=ctypes.sizeof(cpu): raise RuntimeError('owned job CPU query length changed')\nimport json\nPath(__file__).with_name('cpu-evidence.json').write_text(json.dumps({'flags':cpu.flags,'rate':cpu.rate}))\nCAPABILITY='fixture.budget'\nACTIONS=['run']\nwith Path(__file__).with_name('plugin-imports').open('ab') as f: f.write(b'I')\ndef invoke(action,params): return {'synthetic': True}\n");
  const config=JSON.parse(await readFile(join(root,'config/node.example.json'),'utf8'));config.node_id=id;config.dashboard.port=api;config.update.policy='off';config.models.provider='llamacpp';config.models.ollama.base_url='http://127.0.0.1:1';config.custom={preserve:true};config.python_plugins=[plugin];
  await writeFile(nodeConfig,JSON.stringify(config));
  const yaml=(await readLoopbackCoordinatorTemplate()).replace('port: 51334',`port: ${web}`).replace('port: 51335',`port: ${gateway}`).replace('policy: prompt','policy: off');await writeFile(eefConfig,yaml);
  launch('eef',['--config',eefConfig,'--database',join(scratch,'eef.db'),'--no-brain','--no-ui'],{EEF_NODE_PSK:randomBytes(32).toString('hex')});
  launch('eefn',['--config',nodeConfig,'--no-ui','--python',python]);
  await until(async()=>(await json(node+'/api/status')).connection.state==='connected','connected');
- const initial=await show();assert.equal(initial.saved.max_job_memory_mib,undefined);assert.deepEqual(initial.saved,initial.applied);assert.equal(initial.memory_ceiling_supported,true);
+ const initial=await show();assert.equal(initial.saved.max_job_cpu_percent,undefined);assert.equal(initial.cpu_rate_control_supported,undefined);assert.equal(initial.saved.max_job_memory_mib,undefined);assert.deepEqual(initial.saved,initial.applied);assert.equal(initial.memory_ceiling_supported,true);
  const imports=await readFile(marker,'utf8');assert.match(imports,/^I+$/,'synthetic plugin inspected during initial node startup');
- const saved=(await local(['python','configure','--memory-mib','128','--timeout-seconds','8'])).result;
- assert.equal(saved.saved.max_job_memory_mib,128);assert.equal(saved.applied.max_job_memory_mib,undefined);assert.equal(saved.restart_required,true);assert.equal(saved.restart_requested,false);
+ const saved=(await local(['python','configure','--memory-mib','128','--cpu-percent','50','--timeout-seconds','8'])).result;
+ assert.equal(saved.saved.max_job_cpu_percent,50);assert.equal(saved.applied.max_job_cpu_percent,undefined);assert.equal(saved.cpu_rate_control_supported,true);assert.equal(saved.saved.max_job_memory_mib,128);assert.equal(saved.applied.max_job_memory_mib,undefined);assert.equal(saved.restart_required,true);assert.equal(saved.restart_requested,false);
  const noOpBefore=await readFile(nodeConfig,'utf8');assert.equal((await local(['python','configure','--memory-mib','128'])).result.changed,false);assert.equal(await readFile(nodeConfig,'utf8'),noOpBefore);
  const localPlain=await local(['python','show'],true,true);assert(localPlain.out.includes('Node '+id+' Python bridge'));assert(localPlain.out.includes('128 MiB'));
  assert.equal((await remote(['show'])).result.saved.max_job_memory_mib,128);
  const deniedBefore=await readFile(nodeConfig,'utf8');assert.equal((await remote(['configure','--timeout-seconds','9'],false)).success,false);assert.equal(await readFile(nodeConfig,'utf8'),deniedBefore);
  await local(['permissions','allow','remote-management']);
- const approved=await remote(['configure','--max-stderr-bytes','2048']);assert.equal(approved.result.saved.max_stderr_bytes,2048);assert.equal(approved.result.saved.max_job_memory_mib,128);
+ const approved=await remote(['configure','--max-stderr-bytes','2048']);assert.equal(approved.result.saved.max_job_cpu_percent,50);assert.equal(approved.result.saved.max_stderr_bytes,2048);assert.equal(approved.result.saved.max_job_memory_mib,128);
  assert((await remote(['show'],true,true)).out.includes('128 MiB'));
  await local(['permissions','deny','remote-management']);const revoked=await readFile(nodeConfig,'utf8');await remote(['configure','--default-memory'],false);assert.equal(await readFile(nodeConfig,'utf8'),revoked);
  const current=await show();const request={schema_version:1,expected_node_id:id,expected_runtime_id:current.runtime_id,command:{operation:'configure',limits:{...current.saved,timeout_seconds:11},expected_digest:current.saved_digest}};
@@ -67,7 +67,7 @@ try{
  assert.equal((await http(url,request,{Origin:'https://untrusted.example'})).status,403);
  assert.equal((await http(url,{...request,padding:'x'.repeat(8192)})).status,413);
  assert.equal((await http(url,{...request,command:{...request.command,restart:true}})).status,422);
- for(const [i,next] of ['drop','corrupt','prose','old'].entries()){
+ for(const [i,next] of ['drop','corrupt','prose','old','cpu-evidence'].entries()){
   const apiMarker=nodeConfig+'.api.json',original=await readFile(apiMarker,'utf8');mode=next;const count=writes,seconds=12+i;
   await writeFile(apiMarker,JSON.stringify({...JSON.parse(original),address:'127.0.0.1:'+proxy.address().port}));
   try{const response=await local(['python','configure','--timeout-seconds',String(seconds)],false);assert.equal(response.outcome_unknown,true);assert.equal(response.automatically_retried,false);assert.equal(response.command.limits.timeout_seconds,seconds);assert.equal(writes,count+1);assert(!JSON.stringify(response).includes('PRIVATE-PYTHON-POLICY-MUST-NOT-ECHO'));}
@@ -83,11 +83,15 @@ try{
  assert.equal(await readFile(marker,'utf8'),imports,'configuration commands cannot inspect/import/execute Python');
  assert.equal((await show()).runtime_id,initial.runtime_id,'no automatic restart');
  await local(['restart','--wait-seconds','30']);
- await until(async()=>{const r=await show();return r.runtime_id!==initial.runtime_id&&r.applied?.max_job_memory_mib===128&&r.applied?.timeout_seconds===14;},'explicitly restarted limits applied');
+ await until(async()=>{const r=await show();return r.runtime_id!==initial.runtime_id&&r.applied?.max_job_memory_mib===128&&r.applied?.timeout_seconds===16&&r.applied?.max_job_cpu_percent===50;},'explicitly restarted limits applied');
  assert.equal(await readFile(marker,'utf8'),imports+'I','only the explicit restart imports the plugin again');
- const defaulted=(await local(['python','configure','--default-memory'])).result;assert.equal(defaulted.saved.max_job_memory_mib,undefined);assert.equal(defaulted.applied.max_job_memory_mib,128);assert.equal(defaulted.saved.timeout_seconds,14);
+ assert.deepEqual(JSON.parse(await readFile(join(scratch,'cpu-evidence.json'),'utf8')),{flags:5,rate:5000},'restarted metadata inspection must run inside the applied CPU job');
+ const cpuDefault=(await local(['python','configure','--default-cpu'])).result;
+ assert.equal(cpuDefault.saved.max_job_cpu_percent,undefined);assert.equal(cpuDefault.applied.max_job_cpu_percent,50);assert.equal(cpuDefault.cpu_rate_control_supported,true);assert.equal(cpuDefault.restart_required,true);assert.equal(cpuDefault.saved.max_job_memory_mib,128);
+ console.log('Python policy CPU ceiling command validation passed: '+scratch);
+ const defaulted=(await local(['python','configure','--default-memory'])).result;assert.equal(defaulted.saved.max_job_memory_mib,undefined);assert.equal(defaulted.applied.max_job_memory_mib,128);assert.equal(defaulted.saved.timeout_seconds,16);
  const final=JSON.parse(await readFile(nodeConfig,'utf8'));assert.deepEqual(final.permissions,{...config.permissions});assert.deepEqual(final.models,config.models);assert.deepEqual(final.python_plugins,[plugin]);assert.deepEqual(final.custom,{preserve:true});
- await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,no_models_or_devices:true,local_and_remote_commands:true,owner_consent_and_revocation:true,saved_applied_limits:true,explicit_restart_only:true,strict_origin_runtime_digest_body:true,lost_corrupt_unsupported_reply_no_retry:true,unsupported_inspection_before_any_write:true,unrelated_settings_preserved:true,native_commit_enforcement:'separate test-python-bridge.mjs'},null,2));
+ await writeFile(join(scratch,'results.json'),JSON.stringify({passed:true,physical_two_pc:false,no_models_or_devices:true,local_and_remote_commands:true,owner_consent_and_revocation:true,saved_applied_limits:true,cpu_rate_command_and_native_readback:true,legacy_default_shape:true,missing_cpu_evidence_no_retry:true,per_job_not_node_wide_cpu:true,measured_cpu_throughput:false,explicit_restart_only:true,strict_origin_runtime_digest_body:true,lost_corrupt_unsupported_reply_no_retry:true,unsupported_inspection_before_any_write:true,unrelated_settings_preserved:true,native_commit_enforcement:'separate test-python-bridge.mjs'},null,2));
  console.log('Python policy command validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;}
 finally{for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));proxy.closeAllConnections();await new Promise(r=>proxy.close(r));}

@@ -447,6 +447,7 @@ impl PythonRuntime {
     {
         bounds.validate(&self.limits)?;
         crate::model_memory::supported(self.limits.max_job_memory_mib)?;
+        crate::process_cpu::supported(self.limits.max_job_cpu_percent)?;
         crate::job_commands::validate_operation_id(stream_id)?;
         if uuid::Uuid::parse_str(stream_id)?.is_nil() || !params.is_object() {
             return Err(BridgeFailure::RequestLimit.into());

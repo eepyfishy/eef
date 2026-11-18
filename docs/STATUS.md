@@ -5,6 +5,13 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+The next resource increment adds an optional owner-configured hard CPU rate per
+owned Python job, with native set/readback before spawn, descendant coverage and
+existing command consent/digest/restart fences. Defaults preserve the legacy
+serialized shape. Source/static review is in progress; hosted acceptance is
+pending. This is not node-wide allocation, measured throughput, GPU control or
+adaptive reclamation. See [scope and compatibility](PYTHON-BRIDGE.md#optional-cpu-rate-ceiling-development).
+
 Source `50741ad` passes all four hosted jobs in
 [run 44301576706](https://github.com/eepyfishy/eef/actions/runs/44301576706):
 1,863 Windows/headless Rust tests, one ignored across 18 groups, all 37 native

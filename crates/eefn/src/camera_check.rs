@@ -37,6 +37,7 @@ impl Settings {
                 self.max_job_memory_mib
                     .min(applied.max_job_memory_mib.unwrap_or(u64::MAX)),
             ),
+            max_job_cpu_percent: applied.max_job_cpu_percent,
             max_request_bytes: 1024,
             max_stdout_bytes: 1024,
             max_stderr_bytes: 1024,

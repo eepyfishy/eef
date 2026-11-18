@@ -9,13 +9,23 @@ assert.equal(process.platform,'win32','This native owned-job acceptance fixture 
 assert(python,'Set EEF_TEST_PYTHON to an existing trusted interpreter; no download is attempted');
 await stat(python);
 const scratch=await mkdtemp(join(root,'.validation/python-bridge-'));
-const plugin=join(scratch,'plugin.py'),children=[],memoryResults=[];let probeNumber=0,deadlineParentStarted=false,deadlineChildStarted=false;
+const plugin=join(scratch,'plugin.py'),children=[],memoryResults=[],cpuResults=[];let probeNumber=0,deadlineParentStarted=false,deadlineChildStarted=false;
 await writeFile(plugin,`import os,sys,time,subprocess,pathlib
 CAPABILITY='camera.capture'
 ACTIONS=['run']
 ROOT=pathlib.Path(__file__).parent
 def handle(action,params):
     mode=params.get('mode','ok')
+    if mode in ('cpu','child-cpu'):
+        code="import ctypes\\nfrom ctypes import wintypes\\nclass CpuInfo(ctypes.Structure):\\n    _fields_=[('flags',wintypes.DWORD),('rate',wintypes.DWORD)]\\nq=ctypes.WinDLL('kernel32',use_last_error=True).QueryInformationJobObject\\nq.argtypes=[wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)]\\nq.restype=wintypes.BOOL\\ncpu=CpuInfo()\\nsize=wintypes.DWORD()\\nif not q(None,15,ctypes.byref(cpu),ctypes.sizeof(cpu),ctypes.byref(size)):\\n    raise RuntimeError('owned job CPU query failed')\\nif size.value!=ctypes.sizeof(cpu): raise RuntimeError('owned job CPU query length changed')\\nimport json\\nprint(json.dumps({'flags':cpu.flags,'rate':cpu.rate}))\\n"
+        if mode=='child-cpu':
+            import json
+            child=subprocess.run([sys.executable,'-I','-c',code],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=5)
+            if child.returncode!=0: raise RuntimeError('child CPU query failed')
+            return json.loads(child.stdout)
+        values={}
+        exec(code.rsplit('import json',1)[0],values)
+        return {'flags':values['cpu'].flags,'rate':values['cpu'].rate}
     if mode=='memory':
         try: memory=bytearray(192*1024*1024)
         except MemoryError: return {'allocation_succeeded':False}
@@ -72,6 +82,12 @@ try{
   memoryResults.push({mode,allocation_bytes:192*1024*1024,ceiling_mib:128,uncapped_allocation_succeeded:control,capped_allocation_succeeded:capped});
  }
  assert.equal((await probe({text:'bounded startup'},{max_job_memory_mib:128})).result.success,true);
+ for(const mode of ['cpu','child-cpu']){
+  const actual=successfulData(await probe({mode},{max_job_cpu_percent:25,max_job_memory_mib:128}),mode+' capped');
+  assert.deepEqual(actual,{flags:5,rate:2500},'actual owned root/descendant must inherit the hard CPU rate');
+  cpuResults.push({mode,flags:actual.flags,rate:actual.rate});
+ }
+ console.log('Python owned-job CPU rate validation passed: '+scratch);
  const unicode='สวัสดี世界🌊'.repeat(250);
  assert.equal(successfulData(await probe({text:unicode}),'UTF-8 probe').request,unicode,'UTF-8 content must round-trip within its byte budget without locale decoding or ASCII-escape expansion');
  for(const [mode,expected] of [['stdout','StdoutLimit'],['stderr','StderrLimit'],['invalid','Reply'],['error','Process']]){
@@ -124,7 +140,7 @@ try{
  await new Promise(r=>setTimeout(r,3300));
  assert.equal(await stat(join(scratch,'late-child-effect')).then(()=>true,()=>false),false);
  assert.equal((await probe({text:'still usable'})).result.success,true);
- await writeFile(join(scratch,'result.json'),JSON.stringify({passed:true,scope:'real-interpreter, bounded synthetic plugin; no hardware or grant authority',memoryResults,
+ await writeFile(join(scratch,'result.json'),JSON.stringify({passed:true,scope:'real-interpreter, bounded synthetic plugin; no hardware or grant authority',memoryResults,cpuResults,per_job_not_node_wide_cpu:true,measured_cpu_throughput:false,
   ordinary_probe_timeout_seconds:8,explicit_deadline_seconds:1,deadlineParentStarted,deadlineChildStarted,
   deadline_post_start_not_assumed:true,post_start_deadline_seconds:8,post_start_deadline_parent_and_child_retired:true,
   marker_triggered_cancel_requires_parent_and_child:true,managed_bytecode_writes_disabled:true,plugin_import_cache_not_created:true}));

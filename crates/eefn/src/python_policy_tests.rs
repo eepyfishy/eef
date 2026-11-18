@@ -173,21 +173,144 @@ fn python_policy_patch_retains_other_budgets_and_memory_default_is_explicit() {
         max_stderr_bytes: None,
         memory_mib: None,
         default_memory: false,
+        cpu_percent: None,
+        default_cpu: false,
     };
     assert!(settings.merge(BridgeLimits::default()).is_err());
     settings.timeout_seconds = Some(3);
     let original = BridgeLimits {
         max_job_memory_mib: Some(128),
+        max_job_cpu_percent: Some(25),
         ..Default::default()
     };
     let merged = settings.merge(original.clone()).unwrap();
     assert_eq!(merged.timeout_seconds, 3);
     assert_eq!(merged.max_job_memory_mib, Some(128));
+    assert_eq!(merged.max_job_cpu_percent, Some(25));
     assert_eq!(merged.max_stdout_bytes, original.max_stdout_bytes);
     settings.default_memory = true;
-    assert_eq!(settings.merge(original).unwrap().max_job_memory_mib, None);
+    assert_eq!(
+        settings.merge(original.clone()).unwrap().max_job_memory_mib,
+        None
+    );
+    settings.default_memory = false;
+    settings.cpu_percent = Some(50);
+    let capped = settings.merge(original.clone()).unwrap();
+    assert_eq!(capped.max_job_cpu_percent, Some(50));
+    assert_eq!(capped.max_job_memory_mib, Some(128));
+    settings.default_cpu = true;
+    assert!(settings.merge(original.clone()).is_err());
+    settings.cpu_percent = None;
+    let uncapped = settings.merge(original).unwrap();
+    assert_eq!(uncapped.max_job_cpu_percent, None);
+    assert_eq!(uncapped.max_job_memory_mib, Some(128));
+    settings.default_memory = true;
     settings.memory_mib = Some(128);
     assert!(settings.merge(BridgeLimits::default()).is_err());
+}
+
+#[test]
+fn cpu_policy_defaults_preserve_legacy_report_and_limit_digest() {
+    let f = Fixture::new();
+    let report = f.show();
+    assert!(report.get("cpu_rate_control_supported").is_none());
+    assert_eq!(report["note"], NOTE);
+    let legacy = json!({"timeout_seconds":30,"max_request_bytes":36*1024*1024,
+        "max_stdout_bytes":36*1024*1024,"max_stderr_bytes":64*1024});
+    assert_eq!(json!(BridgeLimits::default()), legacy);
+    assert_eq!(
+        digest(&BridgeLimits::default()).unwrap(),
+        crate::grants::definition_digest(&legacy).unwrap()
+    );
+}
+
+#[test]
+fn cpu_policy_rejects_invalid_or_unsupported_caps_without_writing() {
+    let f = Fixture::new();
+    let before = f.bytes();
+    for percent in [0, 101, u32::MAX] {
+        let mut request = f.configure(BridgeLimits::default());
+        if let Command::Configure { limits, .. } = &mut request.command {
+            limits.max_job_cpu_percent = Some(percent);
+        }
+        assert!(f.service.python_policy(request, false).is_err());
+        assert_eq!(f.bytes(), before);
+    }
+    #[cfg(not(windows))]
+    {
+        let request = f.configure(BridgeLimits {
+            max_job_cpu_percent: Some(25),
+            ..Default::default()
+        });
+        assert!(f.service.python_policy(request, false).is_err());
+        assert_eq!(f.bytes(), before);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn cpu_policy_requires_consent_current_digest_and_explicit_restart() {
+    let mut f = Fixture::new();
+    let limits = BridgeLimits {
+        max_job_cpu_percent: Some(25),
+        max_job_memory_mib: Some(128),
+        ..Default::default()
+    };
+    let request = f.configure(limits.clone());
+    let before = f.bytes();
+    assert!(f.service.python_policy(request.clone(), true).is_err());
+    assert_eq!(f.bytes(), before);
+    let report = f.service.python_policy(request.clone(), false).unwrap();
+    assert!(confirmed(&report, &request));
+    assert_eq!(report["saved"], json!(limits));
+    assert_eq!(report["applied"], json!(BridgeLimits::default()));
+    assert_eq!(report["cpu_rate_control_supported"], true);
+    assert_eq!(report["restart_required"], true);
+    let saved = f.bytes();
+    assert!(f.service.python_policy(request, false).is_err());
+    assert_eq!(f.bytes(), saved);
+    let next = f.configure(BridgeLimits::default());
+    drop(f.guard.take());
+    assert!(f.service.python_policy(next, false).is_err());
+    assert_eq!(f.bytes(), saved);
+}
+
+#[cfg(windows)]
+#[test]
+fn cpu_policy_confirmation_rejects_missing_support_forged_application_and_note() {
+    let f = Fixture::new();
+    let request = f.configure(BridgeLimits {
+        max_job_cpu_percent: Some(25),
+        ..Default::default()
+    });
+    let report = f.service.python_policy(request.clone(), false).unwrap();
+    for value in [Value::Null, json!(false)] {
+        let mut bad = report.clone();
+        bad["cpu_rate_control_supported"] = value;
+        assert!(!confirmed(&bad, &request));
+    }
+    let mut bad = report.clone();
+    bad.as_object_mut()
+        .unwrap()
+        .remove("cpu_rate_control_supported");
+    assert!(!confirmed(&bad, &request));
+    let mut bad = report.clone();
+    bad["restart_required"] = json!(false);
+    assert!(!confirmed(&bad, &request));
+    let mut bad = report.clone();
+    bad["note"] = json!(NOTE);
+    assert!(!confirmed(&bad, &request));
+    // An uncapped saved policy with a still-applied cap must retain CPU evidence.
+    f.service.live.lock().unwrap()["python_bridge"] = json!(BridgeLimits {
+        max_job_cpu_percent: Some(25),
+        ..Default::default()
+    });
+    let reset = f.configure(BridgeLimits::default());
+    let report = f.service.python_policy(reset.clone(), false).unwrap();
+    assert!(confirmed(&report, &reset));
+    assert_eq!(report["applied"]["max_job_cpu_percent"], 25);
+    assert_eq!(report["restart_required"], true);
+    assert!(render(&report).unwrap().contains("CPU ceiling 25%"));
 }
 
 #[test]

@@ -5,6 +5,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const NOTE: &str = "Python bridge preferences only. Saved limits apply after a separate node restart; no permissions, plugins, pairing, model, workload or update setting changed. No probe, process, restart or retry was started. Job memory means Windows owned-job commit, not RAM/VRAM usage or a sandbox.";
+const CPU_NOTE: &str = " CPU means an optional hard rate ceiling per owned Python job including descendants, relative to any enclosing job's CPU allotment; not node-wide allocation, reserved capacity or adaptive reclamation. Runtime support must be confirmed before each process starts.";
+
+fn cpu_relevant(saved: &BridgeLimits, applied: Option<&BridgeLimits>) -> bool {
+    saved.max_job_cpu_percent.is_some()
+        || applied.is_some_and(|limits| limits.max_job_cpu_percent.is_some())
+}
+fn note(cpu: bool) -> String {
+    if cpu {
+        format!("{NOTE}{CPU_NOTE}")
+    } else {
+        NOTE.into()
+    }
+}
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Settings {
@@ -22,6 +35,12 @@ pub struct Settings {
     /// Remove the optional commit ceiling; other limits remain unchanged.
     #[arg(long, conflicts_with = "memory_mib")]
     pub default_memory: bool,
+    /// Windows-only hard CPU rate ceiling per owned Python process job (1-100%).
+    #[arg(long, conflicts_with="default_cpu", value_parser=clap::value_parser!(u32).range(1..=100))]
+    pub cpu_percent: Option<u32>,
+    /// Remove only the optional CPU ceiling; other limits remain unchanged.
+    #[arg(long, conflicts_with = "cpu_percent")]
+    pub default_cpu: bool,
 }
 impl Settings {
     pub fn merge(&self, mut limits: BridgeLimits) -> Result<BridgeLimits> {
@@ -31,11 +50,16 @@ impl Settings {
             && self.max_stderr_bytes.is_none()
             && self.memory_mib.is_none()
             && !self.default_memory
+            && self.cpu_percent.is_none()
+            && !self.default_cpu
         {
             bail!("Choose at least one Python limit; use show to inspect")
         }
         if self.memory_mib.is_some() && self.default_memory {
             bail!("Choose a memory ceiling or explicit default, not both")
+        }
+        if self.cpu_percent.is_some() && self.default_cpu {
+            bail!("Choose a CPU ceiling or explicit default, not both")
         }
         if let Some(value) = self.timeout_seconds {
             limits.timeout_seconds = value;
@@ -53,6 +77,11 @@ impl Settings {
             limits.max_job_memory_mib = None;
         } else if let Some(value) = self.memory_mib {
             limits.max_job_memory_mib = Some(value);
+        }
+        if self.default_cpu {
+            limits.max_job_cpu_percent = None;
+        } else if let Some(value) = self.cpu_percent {
+            limits.max_job_cpu_percent = Some(value);
         }
         limits.validate()?;
         Ok(limits)
@@ -119,6 +148,10 @@ struct Report {
     applied: Option<BridgeLimits>,
     saved_digest: String,
     memory_ceiling_supported: bool,
+    // Omitted for legacy/default policies so existing serialized reports stay stable.
+    // Platform API availability is not proof that a particular job accepted the cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cpu_rate_control_supported: Option<bool>,
     changed: bool,
     restart_required: bool,
     execution_authorized: bool,
@@ -151,11 +184,16 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
             || r.applied
                 .as_ref()
                 .is_none_or(|l| l.max_job_memory_mib.is_none()))
+        && (r.cpu_rate_control_supported.is_some() == cpu_relevant(&r.saved, r.applied.as_ref()))
+        && (r.cpu_rate_control_supported == Some(true)
+            || r.applied
+                .as_ref()
+                .is_none_or(|l| l.max_job_cpu_percent.is_none()))
         && (r.applied.as_ref().is_none_or(|a| a == &r.saved) || r.restart_required)
         && !r.execution_authorized
         && !r.restart_requested
         && !r.automatically_retried
-        && r.note == NOTE
+        && r.note == note(cpu_relevant(&r.saved, r.applied.as_ref()))
         && match &request.command {
             Command::Show => !r.changed,
             Command::Configure {
@@ -166,6 +204,8 @@ pub fn confirmed(value: &Value, request: &Request) -> bool {
                     && r.changed == (r.saved_digest != *expected_digest)
                     && (!r.changed || r.restart_required)
                     && (r.memory_ceiling_supported || r.saved.max_job_memory_mib.is_none())
+                    && (r.cpu_rate_control_supported == Some(true)
+                        || r.saved.max_job_cpu_percent.is_none())
             }
         }
 }
@@ -205,6 +245,7 @@ impl crate::NodeService {
                         )
                     }
                     crate::model_memory::supported(limits.max_job_memory_mib)?;
+                    crate::process_cpu::supported(limits.max_job_cpu_percent)?;
                     if digest(&saved)? != *expected_digest {
                         bail!("Python policy changed; inspect before deciding what to do")
                     }
@@ -217,6 +258,7 @@ impl crate::NodeService {
                         saved = limits.clone();
                     }
                 }
+                let cpu = cpu_relevant(&saved, applied.as_ref());
                 let report = json!(Report {
                     schema_version: 1,
                     report_type: "node_python_policy".into(),
@@ -230,11 +272,12 @@ impl crate::NodeService {
                     saved,
                     applied,
                     memory_ceiling_supported: cfg!(windows),
+                    cpu_rate_control_supported: cpu.then_some(cfg!(windows)),
                     changed,
                     execution_authorized: false,
                     restart_requested: false,
                     automatically_retried: false,
-                    note: NOTE.into(),
+                    note: note(cpu),
                 });
                 if !confirmed(&report, &request) {
                     bail!("Python policy reply unconfirmed; inspect saved state")
@@ -258,7 +301,7 @@ pub fn render(value: &Value) -> Result<String> {
         bail!("Unconfirmed Python policy report")
     }
     let describe = |l: &BridgeLimits| {
-        format!(
+        let mut text = format!(
             "{}s; request {} bytes; stdout {} bytes; stderr {} bytes; job commit {}",
             l.timeout_seconds,
             l.max_request_bytes,
@@ -267,10 +310,14 @@ pub fn render(value: &Value) -> Result<String> {
             l.max_job_memory_mib
                 .map(|n| format!("{n} MiB"))
                 .unwrap_or_else(|| "no explicit ceiling".into())
-        )
+        );
+        if let Some(percent) = l.max_job_cpu_percent {
+            text.push_str(&format!("; owned-job CPU ceiling {percent}%"));
+        }
+        text
     };
     Ok(format!(
-        "Node {} Python bridge\nSaved: {}\nApplied: {}\nMemory ceiling supported: {}\nRestart required: {}\n{}\n",
+        "Node {} Python bridge\nSaved: {}\nApplied: {}\nMemory ceiling supported: {}\nRestart required: {}\n{}{}\n",
         r.node_id,
         describe(&r.saved),
         r.applied
@@ -279,7 +326,10 @@ pub fn render(value: &Value) -> Result<String> {
             .unwrap_or_else(|| "Python bridge not active".into()),
         r.memory_ceiling_supported,
         r.restart_required,
-        NOTE
+        r.cpu_rate_control_supported
+            .map(|supported| format!("CPU rate control platform support: {supported}\n"))
+            .unwrap_or_default(),
+        r.note
     ))
 }
 

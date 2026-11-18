@@ -279,6 +279,9 @@ fn limits_are_compatible_bounded_and_strict() {
         json!({"max_stderr_bytes":1024*1024+1}),
         json!({"max_job_memory_mib":63}),
         json!({"max_job_memory_mib":1048577}),
+        json!({"max_job_cpu_percent":0}),
+        json!({"max_job_cpu_percent":101}),
+        json!({"max_job_cpu_percent":u32::MAX}),
     ] {
         assert!(
             serde_json::from_value::<BridgeLimits>(value)
@@ -288,6 +291,30 @@ fn limits_are_compatible_bounded_and_strict() {
         );
     }
     assert!(serde_json::from_value::<BridgeLimits>(json!({"unbounded":true})).is_err());
+    for value in [json!("25"), json!(25.5), json!(-1), json!(true)] {
+        assert!(
+            serde_json::from_value::<BridgeLimits>(json!({"max_job_cpu_percent":value})).is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn cpu_limit_refusal_precedes_interpreter_spawn_without_private_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut runtime =
+        PythonRuntime::discover(Some(dir.path().join("PRIVATE-never-started.exe"))).unwrap();
+    runtime.limits.max_job_cpu_percent = Some(0);
+    let failure = runtime.check_availability().await.unwrap_err();
+    assert_eq!(failure, AvailabilityFailure::InvalidLimits);
+    assert!(!failure.to_string().contains("PRIVATE"));
+    #[cfg(not(windows))]
+    {
+        runtime.limits.max_job_cpu_percent = Some(25);
+        assert_eq!(
+            runtime.check_availability().await.unwrap_err(),
+            AvailabilityFailure::UnsupportedCpuLimit
+        );
+    }
 }
 #[test]
 fn request_encoding_refuses_overflow_before_start_and_reply_errors_are_private() {

@@ -49,7 +49,7 @@ pub(crate) fn spawn_with_job_memory_limit(
     command: &mut Command,
     limit_mib: Option<u64>,
 ) -> Result<(Child, ProcessTree)> {
-    spawn_limited(command, limit_mib, None)
+    spawn_limited(command, limit_mib, None, None)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -80,24 +80,35 @@ pub(crate) fn spawn_with_job_memory_limit_before(
     limit_mib: Option<u64>,
     deadline: tokio::time::Instant,
 ) -> Result<(Child, ProcessTree)> {
-    spawn_limited(command, limit_mib, Some(deadline))
+    spawn_limited(command, limit_mib, None, Some(deadline))
+}
+
+pub(crate) fn spawn_with_job_limits_before(
+    command: &mut Command,
+    limit_mib: Option<u64>,
+    cpu_percent: Option<u32>,
+    deadline: tokio::time::Instant,
+) -> Result<(Child, ProcessTree)> {
+    spawn_limited(command, limit_mib, cpu_percent, Some(deadline))
 }
 
 fn spawn_limited(
     command: &mut Command,
     limit_mib: Option<u64>,
+    cpu_percent: Option<u32>,
     deadline: Option<tokio::time::Instant>,
 ) -> Result<(Child, ProcessTree)> {
     let limit = crate::model_memory::bytes(limit_mib)?;
+    let cpu_rate = crate::process_cpu::native_rate(cpu_percent)?;
     check_start_deadline(deadline)?;
     command.kill_on_drop(true);
     #[cfg(windows)]
     {
-        windows::spawn(command, limit, deadline)
+        windows::spawn(command, limit, cpu_rate, deadline)
     }
     #[cfg(not(windows))]
     {
-        let _ = limit;
+        let _ = (limit, cpu_rate);
         // A requested limit was rejected before spawn. No non-Windows tree guarantee.
         check_start_deadline(deadline)?;
         Ok((command.spawn()?, ProcessTree))
@@ -148,9 +159,11 @@ mod windows {
         Foundation::{HANDLE, INVALID_HANDLE_VALUE},
         System::{
             JobObjects::{
-                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_JOB_MEMORY,
+                AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
+                JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP, JOB_OBJECT_LIMIT_JOB_MEMORY,
                 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
-                JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicAccountingInformation,
+                JOBOBJECT_CPU_RATE_CONTROL_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                JobObjectBasicAccountingInformation, JobObjectCpuRateControlInformation,
                 JobObjectExtendedLimitInformation, QueryInformationJobObject,
                 SetInformationJobObject, TerminateJobObject,
             },
@@ -352,7 +365,7 @@ mod windows {
                 .await;
             }
         }
-        fn new(memory_bytes: Option<usize>) -> Result<Self> {
+        fn new(memory_bytes: Option<usize>, cpu_rate: Option<u32>) -> Result<Self> {
             // SAFETY: null attributes/name create an unnamed, non-inheritable job.
             let job = owned(
                 unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) },
@@ -383,7 +396,55 @@ mod windows {
             {
                 bail!("Owned job limits not confirmed before spawn; no unlimited fallback")
             }
+            if let Some(rate) = cpu_rate {
+                let mut information = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION::default();
+                information.ControlFlags =
+                    JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+                information.Anonymous.CpuRate = rate;
+                // SAFETY: live owned job and fully initialized CPU-rate structure.
+                if unsafe {
+                    SetInformationJobObject(
+                        tree.0.as_raw_handle(),
+                        JobObjectCpuRateControlInformation,
+                        (&information as *const JOBOBJECT_CPU_RATE_CONTROL_INFORMATION).cast(),
+                        std::mem::size_of_val(&information) as u32,
+                    )
+                } == 0
+                {
+                    return Err(std::io::Error::last_os_error())
+                        .context("Set owned-job CPU ceiling before spawn");
+                }
+                let actual = tree.cpu_information()?;
+                // SAFETY: the flags select the CpuRate union member.
+                if actual.ControlFlags != information.ControlFlags
+                    || unsafe { actual.Anonymous.CpuRate } != rate
+                {
+                    bail!("Owned-job CPU ceiling unconfirmed before spawn; no unlimited fallback")
+                }
+            }
             Ok(tree)
+        }
+        pub(super) fn cpu_information(&self) -> Result<JOBOBJECT_CPU_RATE_CONTROL_INFORMATION> {
+            let mut information = JOBOBJECT_CPU_RATE_CONTROL_INFORMATION::default();
+            let mut bytes = 0;
+            // SAFETY: live owned job and correctly sized initialized output buffer.
+            if unsafe {
+                QueryInformationJobObject(
+                    self.0.as_raw_handle(),
+                    JobObjectCpuRateControlInformation,
+                    (&mut information as *mut JOBOBJECT_CPU_RATE_CONTROL_INFORMATION).cast(),
+                    std::mem::size_of_val(&information) as u32,
+                    &mut bytes,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error())
+                    .context("Read back owned-job CPU ceiling");
+            }
+            if bytes as usize != std::mem::size_of_val(&information) {
+                bail!("Owned-job CPU response length changed")
+            }
+            Ok(information)
         }
         pub(super) fn memory_information(&self) -> Result<JOBOBJECT_EXTENDED_LIMIT_INFORMATION> {
             let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
@@ -429,19 +490,21 @@ mod windows {
     pub(super) fn spawn(
         command: &mut Command,
         memory_bytes: Option<usize>,
+        cpu_rate: Option<u32>,
         deadline: Option<tokio::time::Instant>,
     ) -> Result<(Child, ProcessTree)> {
-        spawn_checked(command, memory_bytes, |tree, child| {
+        spawn_checked(command, memory_bytes, cpu_rate, |tree, child| {
             tree.attach_and_resume(child, |_| check_start_deadline(deadline))
         })
     }
     fn spawn_checked(
         command: &mut Command,
         memory_bytes: Option<usize>,
+        cpu_rate: Option<u32>,
         contain: impl FnOnce(&ProcessTree, &Child) -> Result<()>,
     ) -> Result<(Child, ProcessTree)> {
         let started = std::time::Instant::now();
-        let tree = ProcessTree::new(memory_bytes)?;
+        let tree = ProcessTree::new(memory_bytes, cpu_rate)?;
         let prepared = std::time::Instant::now();
         command.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW);
         let mut child = command
@@ -467,7 +530,7 @@ mod windows {
     }
     #[cfg(test)]
     pub(super) fn refuse_before_resume(command: &mut Command) -> Result<(Child, ProcessTree)> {
-        spawn_checked(command, None, |_, _| {
+        spawn_checked(command, None, None, |_, _| {
             bail!("isolated pre-resume containment refusal")
         })
     }
@@ -476,7 +539,7 @@ mod windows {
         command: &mut Command,
         inspect: impl FnOnce(&Child, &OwnedHandle) -> Result<()>,
     ) -> Result<(Child, ProcessTree)> {
-        spawn_checked(command, None, |tree, child| {
+        spawn_checked(command, None, None, |tree, child| {
             tree.attach_and_resume(child, |thread| inspect(child, thread))
         })
     }
@@ -799,6 +862,59 @@ pub(crate) mod tests {
     }
     fn params(mode: &str, root: &Path) -> Value {
         json!({"program":std::env::current_exe().unwrap(), "args":args(mode, root)})
+    }
+    #[tokio::test]
+    async fn cpu_job_ceiling_is_read_back_with_memory_and_descendants_retire() {
+        use windows_sys::Win32::System::JobObjects::{
+            JOB_OBJECT_CPU_RATE_CONTROL_ENABLE, JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (mut child, tree) = spawn_with_job_limits_before(
+            &mut command("loop", dir.path()),
+            Some(128),
+            Some(25),
+            tokio::time::Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        let processes = Processes::observe(dir.path()).await;
+        processes.alive();
+        let cpu = tree.cpu_information().unwrap();
+        assert_eq!(
+            cpu.ControlFlags,
+            JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP
+        );
+        // SAFETY: the read-back flags select this union field.
+        assert_eq!(unsafe { cpu.Anonymous.CpuRate }, 2500);
+        assert_eq!(
+            tree.memory_information().unwrap().JobMemoryLimit,
+            128 * 1024 * 1024
+        );
+        let crate::job_accounting::JobAccounting::Available {
+            active_processes, ..
+        } = tree.accounting()
+        else {
+            panic!("Owned job accounting unavailable")
+        };
+        assert!(active_processes >= 2);
+        drop(tree);
+        let _ = child.wait().await;
+        processes.exited().await;
+    }
+    #[tokio::test]
+    async fn invalid_cpu_cap_never_starts_the_owned_root() {
+        let dir = tempfile::tempdir().unwrap();
+        for percent in [0, 101, u32::MAX] {
+            assert!(
+                spawn_with_job_limits_before(
+                    &mut command("loop", dir.path()),
+                    None,
+                    Some(percent),
+                    tokio::time::Instant::now() + Duration::from_secs(5)
+                )
+                .is_err()
+            );
+            assert!(!dir.path().join("pids.json").exists());
+        }
     }
     #[tokio::test]
     async fn accounting_observes_only_the_owned_job_without_retiring_it() {
