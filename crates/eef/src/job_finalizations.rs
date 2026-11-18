@@ -19,6 +19,9 @@ mod workload_events;
 #[path = "job_workload_stop.rs"]
 mod workload_stop;
 pub(crate) use workload_stop::StopCheckpoint;
+#[path = "job_grant_stop.rs"]
+mod grant_stop;
+pub(crate) use grant_stop::GrantStopCheckpoint;
 #[path = "job_workload_issuance.rs"]
 mod workload_issuance;
 pub(crate) use workload_issuance::CommittedIssue;
@@ -47,6 +50,8 @@ pub(super) struct Queue {
     event_entered: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     stop_entered: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    grant_stop_entered: std::sync::atomic::AtomicUsize,
 }
 impl std::fmt::Debug for Queue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -91,6 +96,8 @@ impl Queue {
             event_entered: Default::default(),
             #[cfg(test)]
             stop_entered: Default::default(),
+            #[cfg(test)]
+            grant_stop_entered: Default::default(),
         }
     }
     fn submit(&self, job: Job) -> Result<()> {

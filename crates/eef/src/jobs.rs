@@ -24,6 +24,7 @@ mod job_finalizations;
 #[path = "job_reads.rs"]
 mod job_reads;
 pub(crate) use job_finalizations::CommittedIssue;
+pub(crate) use job_finalizations::GrantStopCheckpoint;
 pub(crate) use job_finalizations::Slot as WorkloadFinalSlot;
 pub(crate) use job_finalizations::StopCheckpoint as WorkloadStopCheckpoint;
 #[path = "interpreter_allowance_store.rs"]

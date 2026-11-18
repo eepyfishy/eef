@@ -137,76 +137,47 @@ impl Driver {
         }
     }
     async fn stop_one(&self, id: &str, g: &ExecutionGrant) -> Result<()> {
-        let mut send = false;
-        self.engine.store.edit(
-            id,
-            "Exact stop delivery saved before one network attempt",
-            |p| {
-                let Some(e) = &mut p.execution else {
-                    bail!("Missing execution issuance")
-                };
-                let Some(requested) = e.stop_requested_at_ms else {
-                    return Ok(false);
-                };
-                let a = e
-                    .attempts
-                    .iter_mut()
-                    .find(|a| a.grant.grant_id == g.grant_id)
-                    .ok_or_else(|| anyhow::anyhow!("Stop grant is not issued"))?;
-                if a.grant != *g {
-                    bail!("Stop cannot retarget changed issuance")
-                }
-                if a.stop.is_some() {
-                    return Ok(false);
-                }
-                a.stop = Some(Delivery {
-                    send_attempted_at_ms: eefn::protocol::now_ms().max(requested),
-                    report: None,
-                    outcome_unknown: true,
-                });
-                send = true;
-                Ok(true)
-            },
-        )?;
+        use crate::jobs::GrantStopCheckpoint;
+        // One control-observation budget covers persistence, the original
+        // session's single send, and its receipt. It extends no execution lease.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let send = self
+            .engine
+            .store
+            .checkpoint_grant_stop_before(id, g.clone(), GrantStopCheckpoint::Begin, deadline)
+            .await?;
         if !send {
             return Ok(());
         }
-        // A failed or dropped send remains uncertain; never try another
-        // session, node, ordinary RPC, restart or replacement grant.
-        if let Ok(report) = self.server.stop_grant(g).await {
-            self.engine.store.edit(
-                id,
-                "Exact durable node stop intent acknowledged; effects remain unknown",
-                |p| {
-                    let a = p
-                        .execution
-                        .as_mut()
-                        .and_then(|e| {
-                            e.attempts
-                                .iter_mut()
-                                .find(|a| a.grant.grant_id == g.grant_id)
-                        })
-                        .ok_or_else(|| anyhow::anyhow!("Stop issuance vanished"))?;
-                    if a.grant != *g || !report.confirms(g) {
-                        bail!("Stop receipt scope changed")
-                    }
-                    let saved = a
-                        .stop
-                        .as_mut()
-                        .ok_or_else(|| anyhow::anyhow!("Stop send checkpoint missing"))?;
-                    if let Some(existing) = &saved.report {
-                        if *existing != report {
-                            bail!("Stop receipt already differs")
-                        }
-                        return Ok(false);
-                    }
-                    saved.report = Some(report);
-                    saved.outcome_unknown = false;
-                    Ok(true)
-                },
-            )?;
+        anyhow::ensure!(
+            tokio::time::Instant::now() < deadline,
+            "Stop send deadline elapsed; no retry"
+        );
+        // A failed or dropped send keeps its durable reservation. Never try a
+        // replacement session, ordinary RPC, restart or another grant.
+        if let Ok(Ok(report)) = tokio::time::timeout_at(deadline, self.server.stop_grant(g)).await {
+            self.engine
+                .store
+                .checkpoint_grant_stop_before(
+                    id,
+                    g.clone(),
+                    GrantStopCheckpoint::Receipt(report),
+                    deadline,
+                )
+                .await?;
         }
         Ok(())
+    }
+    async fn stop_requested(&self, id: &str) -> Result<bool> {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        Ok(self
+            .engine
+            .store
+            .get_before(id, deadline)
+            .await?
+            .execution
+            .as_ref()
+            .is_some_and(|e| e.stop_requested_at_ms.is_some()))
     }
     pub(crate) async fn wait_with_stop<F, T>(
         &self,
@@ -218,14 +189,7 @@ impl Driver {
         F: std::future::Future<Output = Result<T>>,
     {
         let mut changes = self.engine.stop_changes.subscribe();
-        let stopping = || {
-            self.engine.store.get(id).map(|p| {
-                p.execution
-                    .as_ref()
-                    .is_some_and(|e| e.stop_requested_at_ms.is_some())
-            })
-        };
-        if stopping()? {
+        if self.stop_requested(id).await? {
             self.stop_issued(id, grants).await?;
             bail!(
                 "Stop requested before further dispatch; inspect retained stop/consumption evidence"
@@ -237,7 +201,7 @@ impl Driver {
                 biased;
                 changed=changes.changed()=>{
                     if changed.is_err() { bail!("Stop observer unavailable; no continuation") }
-                    if stopping()? {
+                    if self.stop_requested(id).await? {
                         if self.stop_issued(id,grants).await.is_err() {
                             tracing::warn!(job_id=%id,"Stop delivery checkpoint unavailable; no retry or stop proof");
                         }
@@ -257,6 +221,7 @@ mod tests {
         task::{PlanStatus, TaskEngine},
     };
     use serde_json::json;
+    include!("grant_stop_persistence_tests.rs");
     fn stopping(engine: &TaskEngine) -> (Plan, ExecutionGrant) {
         let (plan, g, _) = crate::request_execution::tests::issued(engine);
         let plan = engine

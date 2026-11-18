@@ -36,6 +36,39 @@ unconfirmed stop, never an ordinary-RPC, permission, restart or update fallback.
 Actual stop delivery additionally requires the original pinned credential-TLS
 session; knowing a grant ID, address, process name or PID is not authority.
 
+## Bounded coordinator delivery persistence (development)
+
+The one-shot grant driver now uses the existing bounded native journal writer
+for send reservations and node receipts, and the existing bounded reader for
+retained stop checks. SQLite waits on these paths do not run on the async worker.
+Peer-pair targets still run concurrently. The same original-session network send
+and exact grant/intent checks remain; no schema, registration promise or execution
+permission changes.
+
+One five-second control-observation budget covers each target's send reservation,
+single network attempt and receipt persistence. It does not extend the execution
+grant or renew a lease. Missing capacity refuses before queuing; deadline expiry,
+cancelled observation or runtime loss cannot authorize a replacement send. Native
+storage retains its capacity and journal ownership until it actually exits.
+An abandoned/expired waiter is checked again after journal acquisition. A commit
+already underway may finish after observation ends; its reservation remains
+conservative history, never retry authority. A lost receipt leaves uncertainty.
+
+This shares existing bounded metadata-write capacity. Heavy journal contention
+can therefore make delivery unavailable; it does not create extra unbounded
+workers or a priority bypass. A continuous-workload reporting fault does not
+disable one-shot stop control or get cleared by it. The prior public command and
+node-side stop/owned-process observation guarantees remain separately required.
+
+Six regressions cover exact single-send/receipt history, real held-journal
+cancellation and expiry, retained capacity, bounded pre-dispatch reads, runtime
+destruction and independence from a workload-reporting fault. Hosted verification
+is pending. These synthetic coordinator journal tests do not prove physical stop.
+The initial `TaskEngine.cancel` transaction and other synchronous journal callers
+still need separate asynchronous work; this is not a claim that every public
+command is immune to storage contention. Broader strong-stop, continuous/media,
+physical and stable-release requirements remain open.
+
 ## Admission races and node persistence
 
 The node records exact stop identity in an independently versioned adjunct of

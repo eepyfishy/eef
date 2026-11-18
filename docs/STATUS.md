@@ -5,6 +5,13 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
+The one-shot stop driver now moves its send/receipt persistence and retained-intent
+reads onto existing bounded native journal services. Six new journal regressions
+await hosted validation, alongside the unchanged public process-stop, paired
+audio, model and inherited native gates. No grant/schema or physical-stop promise
+changes. Initial public cancellation and other synchronous journal callers remain
+separate work. See [the delivery contract](GRANT-STOP.md#bounded-coordinator-delivery-persistence-development).
+
 Source `cfea8cc` passes all four hosted jobs in
 [run 44311686952](https://github.com/eepyfishy/eef/actions/runs/44311686952):
 1,872 Windows/headless Rust tests, one ignored across 18 groups, all 37 native
