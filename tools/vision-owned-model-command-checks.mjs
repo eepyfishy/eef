@@ -119,7 +119,10 @@ async function verifyScenario(f,mode) {
   assert.equal(result.result.vision.analyses[0].result,null);assert.equal(result.result.vision.completion,null);
   await f.until(async()=>{const m=await current();return m.active_requests===0&&m.state==='error'&&m.owned_pid===null;},
    'owned model exit observed without an active pin');
-  await f.until(async()=>(await route()).candidates.length===0,'exited owned model stays unavailable');
+  await f.until(async()=>{
+   const report=await route();
+   return report.candidates.length===0&&report.placement_observation.status==='no_matching_model';
+  },'exited owned model publishes unavailable rather than a stale full gate');
   assert.deepEqual((await route()).placement_observation,{schema_version:1,status:'no_matching_model',
    full_gate_model_count:0,full_gate_node_count:0,capacity_reserved:false});
   const diagnostics=await f.json(f.sourceUrl+'/api/diagnostics');
