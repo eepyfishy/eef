@@ -575,6 +575,21 @@ impl NodeEngine {
     pub(crate) fn applied_model_request_limit(&self) -> Option<u32> {
         self.model_request_limit
     }
+    pub(crate) fn model_request_admission(
+        &self,
+    ) -> Option<crate::model_lifecycle_policy::RequestAdmission> {
+        let limit = self.model_request_limit?;
+        let available =
+            u32::try_from(self.model_request_slots.as_ref()?.available_permits()).ok()?;
+        Some(crate::model_lifecycle_policy::RequestAdmission {
+            schema_version: 1,
+            limit,
+            in_flight: limit.checked_sub(available)?,
+            available,
+            queueing: false,
+            provider_execution_observed: false,
+        })
+    }
     pub(crate) fn reserve_model_request(
         &self,
     ) -> Result<Option<tokio::sync::OwnedSemaphorePermit>> {

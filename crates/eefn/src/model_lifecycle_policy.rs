@@ -4,6 +4,28 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+/// One local gate observation. It provides no reservation or backend stop proof.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RequestAdmission {
+    pub(crate) schema_version: u32,
+    pub(crate) limit: u32,
+    pub(crate) in_flight: u32,
+    pub(crate) available: u32,
+    pub(crate) queueing: bool,
+    pub(crate) provider_execution_observed: bool,
+}
+impl RequestAdmission {
+    fn confirms(&self, limit: u32) -> bool {
+        self.schema_version == 1
+            && self.limit == limit
+            && (1..=1024).contains(&limit)
+            && self.in_flight.checked_add(self.available) == Some(limit)
+            && !self.queueing
+            && !self.provider_execution_observed
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum StartupMode {
@@ -408,7 +430,7 @@ impl crate::NodeService {
         }
         let applied = runtime.map(|r| r.policy().clone());
         let applied_revision = runtime.map(|r| r.policy_revision());
-        let result = self.inspect_grant_configuration(|config| {
+        let mut result = self.inspect_grant_configuration(|config| {
             if runtime.is_some_and(|r|r.is_closed()) { bail!("Model policy runtime closed before application") }
             if config["node_id"] != self.node_id { bail!("Saved node identity changed") }
             if remote && !matches!(request.command, PolicyCommand::Show {})
@@ -432,6 +454,9 @@ impl crate::NodeService {
                 "execution_authorized":false,"model_inference_requested":false,"restart_requested":false,"automatically_retried":false,
                 "note":"Saved policy applies on explicit runtime restart (or next offline start). A saved mismatch prevents new automatic idle unloads immediately. No selection, download, inference, provider switch or restart was sent."}))
         })?;
+        if let Some(admission) = runtime.and_then(|r| r.request_admission()) {
+            result["request_admission"] = json!(admission);
+        }
         if !confirmed(&result, &request) {
             bail!("Model policy report not confirmed; inspect saved policy")
         }
@@ -451,6 +476,7 @@ struct Report {
     saved_revision: u64,
     applied_policy: Option<ModelLifecyclePolicy>,
     applied_revision: Option<u64>,
+    request_admission: Option<RequestAdmission>,
     changed: bool,
     restart_required: bool,
     execution_authorized: bool,
@@ -491,6 +517,13 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
             .is_some_and(|id| Some(id) != r.runtime_id.as_ref())
         || r.runtime_id.is_some() != r.applied_policy.is_some()
         || r.runtime_id.is_some() != r.applied_revision.is_some()
+        || r.request_admission.as_ref().is_some_and(|a| {
+            r.runtime_id.is_none()
+                || r.applied_policy
+                    .as_ref()
+                    .and_then(|p| p.max_in_flight_requests)
+                    .is_none_or(|limit| !a.confirms(limit))
+        })
         || r.restart_required
             != r.applied_policy.as_ref().is_some_and(|p| {
                 *p != r.saved_policy || r.applied_revision != Some(r.saved_revision)
@@ -613,6 +646,60 @@ mod tests {
         assert_eq!(
             retained["runtime_id"], runtime,
             "Failed replacement must retain the original bound runtime"
+        );
+        assert!(
+            retained.get("request_admission").is_none(),
+            "An uncapped applied engine must preserve the old report shape"
+        );
+        let applied = ModelLifecyclePolicy::from_config(&service.read_config().unwrap()).unwrap();
+        let replacement = std::sync::Arc::new(
+            crate::NodeEngine::new(false, vec![], directory.path().into())
+                .unwrap()
+                .with_service(service.clone())
+                .with_model_request_preferences(&applied)
+                .unwrap(),
+        );
+        let replacement_id = uuid::Uuid::new_v4().to_string();
+        let _replacement = service
+            .bind_model_runtime(&replacement, replacement_id.clone())
+            .unwrap();
+        let inspect = request(PolicyCommand::Show {}, Some(replacement_id));
+        let slot = replacement.reserve_model_request().unwrap();
+        let observed = service
+            .model_lifecycle_policy_command(inspect.clone(), false, false)
+            .unwrap();
+        assert!(confirmed(&observed, &inspect));
+        assert_eq!(observed["request_admission"]["in_flight"], 1);
+        assert_eq!(observed["request_admission"]["available"], 0);
+        for (key, value) in [
+            ("schema_version", json!(2)),
+            ("limit", json!(2)),
+            ("in_flight", json!(u32::MAX)),
+            ("available", json!(1)),
+            ("queueing", json!(true)),
+            ("provider_execution_observed", json!(true)),
+            ("extra", json!(true)),
+        ] {
+            let mut forged = observed.clone();
+            forged["request_admission"][key] = value;
+            assert!(
+                !confirmed(&forged, &inspect),
+                "Unconfirmed admission claim: {key}"
+            );
+        }
+        drop(slot);
+        let released = service
+            .model_lifecycle_policy_command(inspect.clone(), false, false)
+            .unwrap();
+        assert_eq!(released["request_admission"]["in_flight"], 0);
+        assert_eq!(released["request_admission"]["available"], 1);
+        drop(replacement);
+        let unavailable = service
+            .model_lifecycle_policy_command(inspect, false, false)
+            .unwrap();
+        assert!(
+            unavailable.get("request_admission").is_none(),
+            "A missing engine must not fabricate zero use"
         );
     }
     #[test]

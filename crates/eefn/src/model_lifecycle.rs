@@ -493,6 +493,14 @@ impl ModelRuntime {
     pub(crate) fn policy_revision(&self) -> u64 {
         self.policy_revision
     }
+    pub(crate) fn request_admission(
+        &self,
+    ) -> Option<crate::model_lifecycle_policy::RequestAdmission> {
+        if self.is_closed() {
+            return None;
+        }
+        self.engine.upgrade()?.model_request_admission()
+    }
     fn close(&self) {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;

@@ -11,6 +11,7 @@ export async function verifyOwnedVisionCommands(f) {
  console.log('Owned llama.cpp vision command validation passed: explicit projector selection, real synthetic owned process and active pin, no early capture/model call, private local image payload and durable results without replay.');
  console.log('Owned vision model exit validation passed: observed process exit leaves pending analysis evidence, releases active pins and preserves node controls without retry or invented completion.');
  console.log('Node-local model request ceiling validation passed: owner commands save one shared exchange slot, explicit restart applies it, and owned vision completion and model exit release their requests.');
+ console.log('Model request admission observation validation passed: owner inspection shows empty, occupied and released exchange slots during actual owned vision commands without claiming provider execution or reserving capacity.');
  return {vision_owned_llamacpp_commands:true,vision_active_model_pin:true,
   vision_owned_model_exit_no_retry:true,vision_owned_model_quality_accepted:false};
 }
@@ -50,6 +51,7 @@ async function verifyScenario(f,mode) {
  const runtime=(await f.json(f.sourceUrl+'/api/diagnostics')).runtime_id;
  const applied=(await f.sourceCli(['model-lifecycle-policy','show'])).result;
  assert.equal(applied.applied_policy.max_in_flight_requests,1);
+ assert.deepEqual(applied.request_admission,{schema_version:1,limit:1,in_flight:0,available:1,queueing:false,provider_execution_observed:false});
  const current=async()=>(await f.sourceCli(['model-lifecycle','show'])).result.models.find(m=>m.model_id===model);
  await f.until(async()=>{const m=await current();return m?.owned_pid&&m.active_requests===0&&['ready','warm_idle'].includes(m.state);},'owned vision model ready');
  const original=await current();assert.equal(original.owned_pid,Number(await readFile(pid,'utf8')));
@@ -73,6 +75,8 @@ async function verifyScenario(f,mode) {
  const job=()=>f.json(f.coordinatorUrl+'/api/jobs/'+id);
  await f.until(async()=>await exists(started)&&(await job()).workload?.acknowledged===true,'owned vision request and consumed ACK');
  const active=await current();assert.equal(active.active_requests,1);assert.equal(active.owned_pid,original.owned_pid);
+ const occupied=(await f.sourceCli(['model-lifecycle-policy','show'])).result.request_admission;
+ assert.equal(occupied.in_flight,1);assert.equal(occupied.available,0);assert.equal(occupied.provider_execution_observed,false);
  const unload=await f.sourceCli(['model-lifecycle','--runtime',runtime,'unload','--model',model,
   '--generation',String(active.generation),'--operation-id',randomUUID()],false);
  assert.equal(unload.success,false,'An active analysis pin must prevent unload');
@@ -109,6 +113,8 @@ async function verifyScenario(f,mode) {
   assert.equal(passive.capture_started,false);assert.equal(passive.model_contacted,false);
  }
  assert.equal((await f.originCli(execute)).result.reused,true);
+ const released=(await f.sourceCli(['model-lifecycle-policy','show'])).result.request_admission;
+ assert.equal(released.in_flight,0);assert.equal(released.available,1);
  assert.deepEqual(await job(),saved);assert.deepEqual(JSON.parse(await readFile(requests,'utf8')),received);
  assert.equal((await readFile(join(root,'request.attempts'),'utf8')).trim().split('\n').length,1);
  assert.equal((await readFile(join(trace,'trace'),'utf8')).split('\n').filter(x=>x==='open').length,1);

@@ -106,6 +106,11 @@ async fn model_request_ceiling_is_shared_by_text_vision_preparation_and_both_bac
             .with_model_server(owned.clone())
             .with_model_request_preferences(&policy)
             .unwrap();
+        assert_eq!(
+            json!(owner.model_request_admission()),
+            json!({"schema_version":1,"limit":1,"in_flight":0,"available":1,
+            "queueing":false,"provider_execution_observed":false})
+        );
         let mut first = Box::pin(owner.infer_with_schema(
             "llm.infer",
             json!({"backend":"ollama","model":"selected","prompt":"hold"}),
@@ -115,6 +120,8 @@ async fn model_request_ceiling_is_shared_by_text_vision_preparation_and_both_bac
         tokio::time::timeout(Duration::from_secs(2),async {
             tokio::select! {r=&mut first=>panic!("First model request did not wait: {r:?}"),_=started.notified()=>{}}
         }).await.unwrap();
+        assert_eq!(owner.model_request_admission().unwrap().in_flight, 1);
+        assert_eq!(owner.model_request_admission().unwrap().available, 0);
         for (backend, model) in [("ollama", "selected"), ("llamacpp", "owned-model")] {
             let error = owner
                 .infer_with_schema(
@@ -178,6 +185,8 @@ async fn model_request_ceiling_is_shared_by_text_vision_preparation_and_both_bac
             release.notify_one();
             assert_eq!(first.await.is_err(), fail_first);
         }
+        assert_eq!(owner.model_request_admission().unwrap().in_flight, 0);
+        assert_eq!(owner.model_request_admission().unwrap().available, 1);
         assert_eq!(
             owner
                 .bind_local_vision(&selection())

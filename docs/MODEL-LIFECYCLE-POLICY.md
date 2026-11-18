@@ -57,6 +57,30 @@ for a fresh explicit call; rejected calls must never run later. Separate policy
 tests cover bounds, remote refusal, digest/revision substitution, reset,
 saved/applied separation and failed replacement retaining the existing runtime.
 
+#### Read-only slot observation (under verification)
+
+The next development increment adds optional `request_admission` to owner policy
+reports while a capped engine is available. It contains schema version 1, the
+applied `limit`, `in_flight` and `available` exchange counts, and explicit
+`queueing: false` and `provider_execution_observed: false`. The two counts come
+from one local gate observation and sum to the applied limit. They are validated
+against the parent report's runtime/applied policy, including during a saved
+policy change that is still awaiting restart.
+
+Inspection neither acquires a slot nor contacts a provider. The observation
+can become stale immediately and grants no reservation, execution or retry
+authority. Absence means there is no available capped-engine observation; it
+does not mean zero use or free capacity. Uncapped/offline reports keep their
+previous shape. Provider-side work may continue after an exchange ends, so
+these are not physical inference or resource-use counters.
+
+Hosted verification is pending. The owner-command fixture checks empty, full
+and released snapshots during owned vision completion/process-exit cases.
+Service tests reject substituted limits, inconsistent/overflowed counts,
+unsupported fields/schema and invented queue/provider observations; a missing
+engine must not fabricate zero use. Existing loopback tests now also inspect
+the held and released exchange counts after completion, error and cancellation.
+
 Reports distinguish `saved_policy`/`saved_revision`/`saved_digest` from
 `applied_policy`/`applied_revision` and the running `runtime_id`. Copy the exact current runtime and saved digest when
 saving a running node's policy:
