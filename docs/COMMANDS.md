@@ -435,7 +435,8 @@ whole node. See [limits, platform support and uncertainty](PYTHON-BRIDGE.md).
 The optional development CPU percentage is a hard rate per owned Python job,
 including descendants. It takes effect after an explicit restart and fails closed
 when unsupported; it is not a node-wide quota or reserved capacity. Removing it
-with `--default-cpu` preserves other limits. Hosted acceptance is pending.
+with `--default-cpu` preserves other limits. Source `cfea8cc` passes scoped hosted
+acceptance; see the linked contract for evidence and remaining resource limits.
 
 ## Plain-language setup inspection (unreleased after alpha.6)
 

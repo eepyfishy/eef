@@ -108,6 +108,8 @@ the additional scope explanation only when saved or applied CPU limits are set.
 This indicates API availability, not confirmation that an individual job accepted
 the rate; each spawn must independently set and verify it. Old clients/nodes may
 reject CPU-bearing messages; they must not strip the field or retry without it.
+CPU-bearing saved configuration also requires a compatible node binary; no
+automatic conversion for an older binary is introduced.
 Non-Windows saves refuse an explicit CPU cap; a pre-existing cap prevents Python
 startup while leaving the Rust node core available.
 
@@ -121,9 +123,16 @@ Python calls, GPU cap, measured utilization, sandbox or adaptive reclamation for
 gaming. Model servers and ordinary process capabilities do not acquire this Python
 policy. Generic resource sharing remains a separate 0.5+ design direction.
 
-Hosted acceptance is pending for this increment. The native fixtures check rate
-readback in actual owned root/descendant processes and command save/apply behavior;
-they do not measure achieved CPU throughput or validate owner hardware.
+Source `cfea8cc` passes the complete
+[four-job hosted run](https://github.com/eepyfishy/eef/actions/runs/44311686952),
+including 1,872 Windows/headless Rust tests plus one ignored test, all 37 native
+suites and retained extra gates. Actual owned Python root/descendant processes
+report a 25% cap, and metadata inspection after an explicit command-driven restart
+reports its selected 50% cap. Default compatibility, owner consent, saved/applied
+separation, preserved budgets and missing-proof uncertainty without retry also
+pass scoped source review. These checks do not measure achieved CPU throughput,
+validate owner hardware or accept a stable release. The earlier failed fixture
+compilation remains recorded in [status](STATUS.md).
 
 The request/stdout/stderr settings remain **encoded pipe/data bounds**. Parent grants tighten stdout
 to their result budget, and pipeline stages to the existing retained-data budget,

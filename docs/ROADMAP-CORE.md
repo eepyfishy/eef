@@ -29,6 +29,16 @@ change the current stable v0.4.0 implementation and acceptance requirements.
 
 ## Direction and policy changes
 
+Optional Python job CPU ceilings pass scoped source acceptance at `cfea8cc` in
+[run 44311686952](https://github.com/eepyfishy/eef/actions/runs/44311686952):
+1,872 Windows/headless Rust tests plus one ignored test, all 37 native suites and
+retained extra gates. Owner commands preserve consent, saved/applied settings,
+legacy default digests and explicit restart. Actual Windows root/descendant jobs
+report the cap configured before process start. This is one finite CPU-budget
+increment, not aggregate node quotas, reserved capacity, GPU control, adaptive
+reclamation, physical acceptance or the full resource milestone. See
+[the Python budget contract](PYTHON-BRIDGE.md#optional-cpu-rate-ceiling-development).
+
 The bounded local-vision checkpoint `2f9ad02` passes all four hosted jobs in
 [run 44098166237](https://github.com/eepyfishy/eef/actions/runs/44098166237):
 1,848 Windows/headless Rust tests plus one ignored test, all 37 native suites
