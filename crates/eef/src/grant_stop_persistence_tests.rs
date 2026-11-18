@@ -335,3 +335,70 @@ async fn workload_reporting_failure_does_not_disable_one_shot_stop_control() {
         "Stopping does not clear a reporting fault"
     );
 }
+
+#[tokio::test]
+async fn unrelated_stop_notifications_cannot_retry_failed_stop_admission() {
+    use std::{future::Future, pin::Pin};
+    let mut store = JobStore::in_memory().unwrap();
+    Arc::get_mut(&mut store).unwrap().test_workload_ack_limit(0);
+    let engine = TaskEngine::with_store(EventBus::new(20), store);
+    let (plan, g, _) = crate::request_execution::tests::issued(&engine);
+    let server = eefn::NodeServer::new("private-stop-latch-fixture", "127.0.0.1", 0).unwrap();
+    let driver = Driver::peer_fixture(engine.clone(), server, Default::default());
+    let (finish, mut finishing) = tokio::sync::oneshot::channel::<()>();
+    let (polls, mut observed) = tokio::sync::watch::channel(0usize);
+    let id = plan.plan_id.clone();
+    let executing = tokio::spawn(async move {
+        driver
+            .wait_with_stop(
+                &id,
+                &[g],
+                std::future::poll_fn(move |cx| {
+                    polls.send_modify(|count| *count += 1);
+                    Pin::new(&mut finishing)
+                        .poll(cx)
+                        .map(|value| value.map_err(anyhow::Error::from))
+                }),
+            )
+            .await
+    });
+    async fn polled(observed: &mut tokio::sync::watch::Receiver<usize>, minimum: usize) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while *observed.borrow_and_update() < minimum {
+                observed.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+    }
+    polled(&mut observed, 1).await;
+    engine
+        .store
+        .change(&plan.plan_id, "Exact synthetic stop intent", |p| {
+            p.status = PlanStatus::Stopping;
+            let e = p.execution.as_mut().unwrap();
+            e.stop_requested_at_ms = Some(eefn::protocol::now_ms().max(e.started_at_ms));
+            Ok(())
+        })
+        .unwrap();
+    engine.stop_changes.send_modify(|v| *v = v.wrapping_add(1));
+    // A second operation poll proves the changed-notification branch has
+    // completed its failed zero-capacity stop attempt and returned to select.
+    polled(&mut observed, 2).await;
+    let reads = engine.store.journal_reads_started();
+    let before = json!(engine.store.get(&plan.plan_id).unwrap());
+    engine.stop_changes.send_modify(|v| *v = v.wrapping_add(1));
+    finish.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), executing)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        engine.store.journal_reads_started(),
+        reads,
+        "Unrelated notification cannot restart stop inspection/admission"
+    );
+    assert_eq!(engine.store.grant_stop_entered(), 0);
+    assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), before);
+}

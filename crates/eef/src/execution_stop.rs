@@ -196,12 +196,16 @@ impl Driver {
             )
         }
         tokio::pin!(future);
+        let mut stop_delivery_attempted = false;
         loop {
             tokio::select! {
                 biased;
-                changed=changes.changed()=>{
+                changed=changes.changed(),if !stop_delivery_attempted=>{
                     if changed.is_err() { bail!("Stop observer unavailable; no continuation") }
                     if self.stop_requested(id).await? {
+                        // The intent is immutable. Another job's notification
+                        // cannot retry failed admission or restart this send.
+                        stop_delivery_attempted = true;
                         if self.stop_issued(id,grants).await.is_err() {
                             tracing::warn!(job_id=%id,"Stop delivery checkpoint unavailable; no retry or stop proof");
                         }

@@ -60,9 +60,11 @@ workers or a priority bypass. A continuous-workload reporting fault does not
 disable one-shot stop control or get cleared by it. The prior public command and
 node-side stop/owned-process observation guarantees remain separately required.
 
-Six regressions cover exact single-send/receipt history, real held-journal
+Seven regressions cover exact single-send/receipt history, real held-journal
 cancellation and expiry, retained capacity, bounded pre-dispatch reads, runtime
-destruction and independence from a workload-reporting fault. Hosted verification
+destruction and independence from a workload-reporting fault. The original driver
+latches its first observed stop attempt even when persistence admission fails;
+unrelated jobs' notifications cannot retry it. Hosted verification
 is pending. These synthetic coordinator journal tests do not prove physical stop.
 The initial `TaskEngine.cancel` transaction and other synchronous journal callers
 still need separate asynchronous work; this is not a claim that every public
