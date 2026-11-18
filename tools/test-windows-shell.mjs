@@ -111,6 +111,16 @@ try {
  const rejected=await launch(join(bin,'examples','panic-report-fixture.exe'),[sentinel]).result;
  assert.equal(rejected.code,1);assert.equal(await text(sentinel),'owner data');
  console.log('Service panic report validation passed: real failing child exit, bounded redacted location, no payload or overwrite; quiet startup still independently required.');
+ const detachedRoot=join(scratch,'detached-console');await mkdir(detachedRoot);
+ const detachment=`$ErrorActionPreference='Stop'; $p=Start-Process -FilePath ${literal(join(bin,'examples','process-fixture.exe'))} -ArgumentList @('console-detach',${literal('"'+detachedRoot+'"')}) -WorkingDirectory ${literal(detachedRoot)} -WindowStyle Hidden -PassThru; $finished=$p.WaitForExit(10000); if(-not $finished){$p.Kill(); $null=$p.WaitForExit(5000)}; $p.Refresh(); [ordered]@{id=$p.Id;finished=$finished;exit_code=$p.ExitCode} | ConvertTo-Json -Compress`;
+ const detachObserver=await launch('powershell.exe',['-NoProfile','-NonInteractive','-Command',detachment]).result;
+ assert.equal(detachObserver.code,0);const detached=JSON.parse(detachObserver.out);
+ assert.equal(detached.finished,true);assert.equal(detached.exit_code,0,'The actual console/filesystem regression must complete');
+ assert.deepEqual(JSON.parse(await text(join(detachedRoot,'detached-console.json'))),{
+  schema_version:1,process_id:detached.id,console_detached:true,standard_handles_null:true,
+  new_file_unmodified_by_standard_writes:true});
+ assert.equal(await text(join(detachedRoot,'detached-console-sentinel.bin')),'owner sentinel');
+ console.log('Detached console standard-handle validation passed: actual console detachment clears all standard slots before new files, and stdout/stderr cannot corrupt a held sentinel.');
  for(const role of ['eef','eefn']){
   const install=join(scratch,role),exe=join(install,role+'.exe');await alias(join(bin,role+'.exe'),exe);
   assert.equal(await subsystem(exe),3,'The public command entrypoint must use the Windows console subsystem');

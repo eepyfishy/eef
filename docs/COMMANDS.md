@@ -1957,8 +1957,8 @@ capabilities are `llm.infer` and `vlm.analyze`. A role must match an explicit ow
 label; unknown roles do not match. This grants no execution or reservation and
 does not prove model readiness. State may change before actual dispatch.
 
-The next development increment (hosted verification pending) adds
-`placement_observation` to this command's response. `status` is `candidates`,
+Unreleased development source `214b6aa` passes scoped hosted verification and
+includes `placement_observation` in this command's response. `status` is `candidates`,
 `all_matching_gates_full`, or `no_matching_model`. The second value means matching
 connected models were excluded by a reported full node-local model request gate;
 it does not mean models are missing or need downloading. Full-gate node and model

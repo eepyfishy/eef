@@ -51,6 +51,54 @@ fn main() -> anyhow::Result<()> {
         bail!("Existing absolute isolated fixture directory required")
     }
     match mode.to_str().context("Invalid mode")? {
+        "console-detach" => {
+            use std::io::Write;
+            use windows_sys::Win32::System::Console::{
+                GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+            };
+            assert!(
+                eefn::console::attached(),
+                "An actual owned console is required"
+            );
+            let kinds = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE];
+            assert!(eefn::console::detach_owned_service_console_checked()?);
+            assert!(!eefn::console::attached());
+            assert!(
+                kinds
+                    .iter()
+                    .all(|kind| unsafe { GetStdHandle(*kind).is_null() })
+            );
+            let target = root.join("detached-console-sentinel.bin");
+            let mut held = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&target)?;
+            std::io::stdout().write_all(b"stdout must not become file content")?;
+            std::io::stderr().write_all(b"stderr must not become file content")?;
+            assert_eq!(
+                held.metadata()?.len(),
+                0,
+                "Detached standard writes corrupted an unrelated file"
+            );
+            held.write_all(b"owner sentinel")?;
+            held.flush()?;
+            std::io::stdout().write_all(b"later stdout must remain detached")?;
+            std::io::stderr().write_all(b"later stderr must remain detached")?;
+            assert_eq!(std::fs::read(&target)?, b"owner sentinel");
+            assert!(
+                kinds
+                    .iter()
+                    .all(|kind| unsafe { GetStdHandle(*kind).is_null() })
+            );
+            std::fs::write(
+                root.join("detached-console.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "schema_version":1,"process_id":std::process::id(),"console_detached":true,
+                    "standard_handles_null":true,"new_file_unmodified_by_standard_writes":true
+                }))?,
+            )?;
+        }
         "child" => {
             println!("isolated descendant holding inherited output");
             std::thread::sleep(Duration::from_secs(30));

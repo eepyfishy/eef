@@ -3725,7 +3725,7 @@ fn main() -> Result<()> {
         bail!("Panic reports require a service launch, not a command")
     }
     if service {
-        eefn::console::detach_owned_service_console();
+        eefn::console::detach_owned_service_console_checked()?;
     }
     if parsed.as_ref().is_ok_and(|args| {
         matches!(

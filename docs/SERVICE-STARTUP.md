@@ -1,5 +1,36 @@
 # Service startup and concurrent offline commands
 
+## Standard-handle detachment correction (development)
+
+The diagnostic runs for `14be628` and `601213f` expose a concrete corruption
+problem: ordinary startup log bytes appear in the newly opened panic-report
+file while the original quiet service is still live. Both fail the strict JSON
+report gate. This explains those report-parse failures; it does not establish
+the cause of the earlier `c9ac8f4` process exit with code 101.
+
+Windows stores standard-handle values in a process table and validates them on
+use; handle copies can be retained by code. See Microsoft's
+[standard-handle lifetime guidance](https://learn.microsoft.com/en-us/windows/console/getstdhandle).
+Rust documents null standard handles as the detached-console state, with standard
+reads/writes completing without I/O. See
+[Rust's Windows stderr behavior](https://doc.rust-lang.org/std/io/fn.stderr.html).
+The old helper called `FreeConsole` while leaving the process's standard slots
+unchanged, allowing later file handles to be reached through stale standard I/O.
+
+The correction clears stdin, stdout and stderr slots before detaching only an
+exclusively owned console with no redirected streams. It never manually closes
+the old console handles. Checked service entrypoints propagate a failure instead
+of starting after an unsuccessful transition. Failed slot updates do not detach;
+if detachment fails, restoring the prior slots is best effort. Inherited terminals,
+redirected pipes/files, command I/O and the legacy boolean helper remain compatible.
+
+Three fault/order regressions exercise clearing before release, failed clearing
+and failed detachment. A separate native helper uses an actual owned console,
+requires null slots after detachment, then writes stdout/stderr while holding a
+new unrelated file. Its sentinel must remain unchanged. The original real quiet
+service/API/no-console gate, report parser and deadlines stay intact. Hosted
+verification is pending; the older code-101 cause remains open.
+
 ## Quiet startup investigation (development)
 
 The separate capacity-hint candidate `c9ac8f4` passes its workspace tests, but

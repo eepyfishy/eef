@@ -48,7 +48,8 @@ does not prove that a shared provider stopped processing it; this ceiling is
 not a maximum number of physical inferences, RAM/VRAM/CPU allocation, download
 quota, cross-runtime/global reservation or application isolation boundary.
 Other applications and provider-internal queues are outside it. Measured
-resource admission, busy-node placement and adaptive reclamation remain open.
+resource admission and adaptive reclamation remain open. Basic full-gate placement
+uses the separately verified observation below.
 
 The new regressions hold an actual loopback model request while refusing text,
 vision and preload calls across both selected backends without another provider
@@ -59,8 +60,8 @@ saved/applied separation and failed replacement retaining the existing runtime.
 
 #### Read-only slot observation (unreleased)
 
-The next development increment adds optional `request_admission` to owner policy
-reports while a capped engine is available. It contains schema version 1, the
+Unreleased development policy reports include optional `request_admission`
+while a capped engine is available. It contains schema version 1, the
 applied `limit`, `in_flight` and `available` exchange counts, and explicit
 `queueing: false` and `provider_execution_observed: false`. The two counts come
 from one local gate observation and sum to the applied limit. They are validated
@@ -78,8 +79,8 @@ Exact source `7551fb0` passes all four jobs in
 [run 44227169903](https://github.com/eepyfishy/eef/actions/runs/44227169903),
 including 1,852 Windows/headless Rust tests, all 37 native suites and retained
 extra gates. Scoped review accepts this owner observation. The separate
-[placement-hint extension](MODEL-METADATA.md#busy-placement-hints-under-verification)
-remains under verification. The owner-command fixture checks empty, full
+[placement-hint extension](MODEL-METADATA.md#busy-placement-hints-unreleased)
+passes scoped synthetic hosted acceptance at `214b6aa`. The owner-command fixture checks empty, full
 and released snapshots during owned vision completion/process-exit cases.
 Service tests reject substituted limits, inconsistent/overflowed counts,
 unsupported fields/schema and invented queue/provider observations; a missing

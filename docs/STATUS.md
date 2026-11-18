@@ -5,46 +5,44 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
-The busy-placement candidate `c9ac8f4` fails native acceptance in
+Source `214b6aa` passes all four hosted jobs in
+[run 44235567267](https://github.com/eepyfishy/eef/actions/runs/44235567267):
+1,856 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and retained extra gates. Scoped immutable-source/raw-log review accepts
+separate node-local exchange-capacity hints, exclusion of full gates from new
+model routes, restoration without reconnect, and preservation of admitted
+interpreter authority. Same-session refreshes do not replay connection automation.
+Read-only route reports distinguish matching full gates from no matching model,
+respect existing filters and retain unknown legacy capacity. Held Ollama and
+owned llama.cpp command checks retain context, controls, uncertainty and no replay.
+These are synthetic exchange/command guarantees, not measured physical resources,
+provider-side stop proof, real model/camera quality or stable release acceptance.
+See [the registration contract](MODEL-METADATA.md#busy-placement-hints-unreleased).
+
+Newer panic-observation source `14be628` fails the native shell gate in
+[run 44237138554](https://github.com/eepyfishy/eef/actions/runs/44237138554):
+the original quiet eef node is live, but its report file contains ordinary startup
+logs instead of JSON. Interruption-handling source `601213f` has the same failed
+gate for a live quiet coordinator in
+[run 44238576539](https://github.com/eepyfishy/eef/actions/runs/44238576539).
+Both workspace gates pass, including the controlled signal/record tests, and the
+synthetic panic child passes; neither source has full native acceptance.
+
+The correction now clears exclusively owned console standard-handle slots before
+detachment, preserving inherited terminals and redirected streams. Checked
+entrypoints propagate failure; no old console handle is manually closed. Three
+fault/order tests and a native console/new-file sentinel case accompany the
+original live/no-console and strict report checks. Hosted verification is pending.
+See [handle contamination and evidence](SERVICE-STARTUP.md#standard-handle-detachment-correction-development).
+
+Earlier busy-placement source `c9ac8f4` remains failed in
 [run 44233145113](https://github.com/eepyfishy/eef/actions/runs/44233145113):
-the workspace gate passes, but the original quiet eef node exits with code 101
-during the shell suite. Its redirected diagnostic remains live and does not
-explain the exit. Later vision command suites are not reached; this is not a
-passing capacity-hint checkpoint. The next diagnostic candidate adds an explicit
-bounded, redacted service panic observation to the original quiet process,
-retaining the live/no-console gate and deadline. See
-[the investigation](SERVICE-STARTUP.md#quiet-startup-investigation-development).
-Runtime verification and the startup cause remain open.
-
-A separate interruption-handling correction is pending hosted verification.
-Both service entrypoints previously treated console-listener failure as an exit
-request. The shared listener now keeps management/restart controls available on
-setup error without a retry loop, and still exits through existing cleanup on a
-successful interrupt. This is a source-identified shutdown defect; it does not
-explain the retained code-101 failure above. See
-[the distinction and controlled-source tests](SERVICE-STARTUP.md#console-interruption-availability-development).
-
-Read-only route explanations are the next development increment, pending hosted
-verification. `eef models route` distinguishes no matching model from matching
-connected models excluded by reported full exchange gates. Counts honor the
-existing filters, distinguish node and model totals and retain unknown legacy
-capacity. Inspection does not load, reserve, queue or retry work. Focused Rust
-coverage and held-provider command regressions have been added; no runtime
-acceptance is claimed for this extension yet.
-
-Busy model placement hints are now under development. A separate optional
-admission observation refreshes the current authenticated registration on
-acquire/release, including Ollama. New model routes skip a reported full gate;
-model availability/capabilities remain unchanged so the exchange that filled it
-keeps its existing continuation checks. No grant, queued work, provider probe
-or physical resource guarantee is added. Candidate tests require
-route withdrawal during an active exchange, empty routing when the only eligible
-vision node is full, and restoration without reconnect or replay. Hosted checks
-are pending. See [the registration contract](MODEL-METADATA.md#busy-placement-hints-under-verification).
-Same-session refreshes are also classified by the gateway so capacity updates
-cannot replay connection-triggered automation. A held private interpreter
-exchange regression checks that new placement is excluded while its existing
-continuation remains authorized and completes normally.
+the original quiet node exits with code 101; its redirected diagnostic stays live
+and does not explain that exit. The later observed log contamination is a real
+separate defect, not proof of that earlier panic's exact cause. No unchanged run
+was replayed. The separate console-listener correction preserves management on
+setup failure and ordinary graceful interruption; its full runtime acceptance is
+still pending. See [startup investigation](SERVICE-STARTUP.md#quiet-startup-investigation-development).
 
 Read-only model admission source `7551fb0` passes all four hosted jobs in
 [run 44227169903](https://github.com/eepyfishy/eef/actions/runs/44227169903):
@@ -54,7 +52,7 @@ the applied limit and occupied/free exchange slots without acquiring capacity
 or contacting a provider, consistency/runtime/policy checks, forgery rejection
 and no invented zero use for a missing engine. Owned vision commands exercise
 empty/full/released counters. This does not establish provider execution or
-resource use, and it predates the pending separate placement-hint extension.
+resource use, and it predates the separate placement-hint extension accepted above.
 
 Source `9b6dfa5` passes all four hosted jobs in
 [run 44157667334](https://github.com/eepyfishy/eef/actions/runs/44157667334):

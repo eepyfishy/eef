@@ -41,36 +41,87 @@ pub fn attached() -> bool {
 /// Explorer/startup may allocate this console; an existing shell remains owned
 /// by its other client process and is deliberately left alone.
 pub fn detach_owned_service_console() -> bool {
+    detach_owned_service_console_checked().unwrap_or(false)
+}
+
+#[cfg(any(windows, test))]
+fn clear_then_detach<H: Copy>(
+    original: [H; 3],
+    mut replace: impl FnMut(usize, Option<H>) -> std::io::Result<()>,
+    detach: impl FnOnce() -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    for index in 0..original.len() {
+        if let Err(error) = replace(index, None) {
+            for (slot, handle) in original.iter().copied().enumerate().take(index + 1) {
+                let _ = replace(slot, Some(handle));
+            }
+            return Err(error);
+        }
+    }
+    if let Err(error) = detach() {
+        for (slot, handle) in original.into_iter().enumerate() {
+            let _ = replace(slot, Some(handle));
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Checked service entrypoint. Clear only exclusively owned console handles
+/// before detaching, so later files cannot inherit stale standard-handle slots.
+/// Inherited terminals and redirected input/output are left untouched. No handle
+/// is manually closed; FreeConsole owns the old console handles' lifetime.
+pub fn detach_owned_service_console_checked() -> std::io::Result<bool> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::{
             Foundation::INVALID_HANDLE_VALUE,
             System::Console::{
                 FreeConsole, GetConsoleMode, GetConsoleProcessList, GetStdHandle, STD_ERROR_HANDLE,
-                STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+                STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
             },
         };
         let mut processes = [0u32; 2];
-        // SAFETY: buffers are valid; handles are borrowed, never closed or
-        // replaced. FreeConsole is reached only for our exclusive console.
+        // SAFETY: valid buffers and borrowed handles. We replace only this
+        // process's slots after proving exclusive console ownership/no redirects.
+        // No OS/file handles are allocated between clearing and FreeConsole.
         unsafe {
             let count = GetConsoleProcessList(processes.as_mut_ptr(), processes.len() as u32);
-            let redirected = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE]
-                .iter()
-                .any(|kind| {
-                    let handle = GetStdHandle(*kind);
-                    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
-                        return false;
+            let kinds = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE];
+            let original = kinds.map(|kind| GetStdHandle(kind));
+            let redirected = original.iter().any(|handle| {
+                if handle.is_null() || *handle == INVALID_HANDLE_VALUE {
+                    return false;
+                }
+                let mut mode = 0;
+                GetConsoleMode(*handle, &mut mode) == 0
+            });
+            if !may_detach(count, processes[0], std::process::id(), redirected) {
+                return Ok(false);
+            }
+            clear_then_detach(
+                original,
+                |index, handle| {
+                    if SetStdHandle(kinds[index], handle.unwrap_or(std::ptr::null_mut())) == 0 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(())
                     }
-                    let mut mode = 0;
-                    GetConsoleMode(handle, &mut mode) == 0
-                });
-            may_detach(count, processes[0], std::process::id(), redirected) && FreeConsole() != 0
+                },
+                || {
+                    if FreeConsole() == 0 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                },
+            )?;
+            Ok(true)
         }
     }
     #[cfg(not(windows))]
     {
-        false
+        Ok(false)
     }
 }
 
@@ -78,6 +129,71 @@ pub fn detach_owned_service_console() -> bool {
 mod tests {
     use super::*;
     use futures_util::FutureExt;
+
+    #[test]
+    fn standard_slots_are_cleared_before_console_handles_can_be_reused() {
+        let slots = std::cell::RefCell::new([Some(10), Some(20), Some(20)]);
+        let detached = std::cell::Cell::new(false);
+        clear_then_detach(
+            [10, 20, 20],
+            |index, handle| {
+                assert!(!detached.get());
+                slots.borrow_mut()[index] = handle;
+                Ok(())
+            },
+            || {
+                assert_eq!(*slots.borrow(), [None, None, None]);
+                detached.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(detached.get());
+        assert_eq!(*slots.borrow(), [None, None, None]);
+    }
+
+    #[test]
+    fn failed_slot_clear_restores_prior_slots_without_detaching() {
+        for fail in 0..3 {
+            let original = [10, 20, 20];
+            let slots = std::cell::RefCell::new(original.map(Some));
+            let result = clear_then_detach(
+                original,
+                |index, handle| {
+                    if index == fail && handle.is_none() {
+                        return Err(std::io::ErrorKind::PermissionDenied.into());
+                    }
+                    slots.borrow_mut()[index] = handle;
+                    Ok(())
+                },
+                || panic!("Cannot detach after failed standard-slot clearing"),
+            );
+            assert_eq!(
+                result.unwrap_err().kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+            assert_eq!(*slots.borrow(), original.map(Some));
+        }
+    }
+
+    #[test]
+    fn failed_console_detach_restores_still_attached_standard_slots() {
+        let original = [10, 20, 20];
+        let slots = std::cell::RefCell::new(original.map(Some));
+        let result = clear_then_detach(
+            original,
+            |index, handle| {
+                slots.borrow_mut()[index] = handle;
+                Ok(())
+            },
+            || {
+                assert_eq!(*slots.borrow(), [None, None, None]);
+                Err(std::io::ErrorKind::Other.into())
+            },
+        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::Other);
+        assert_eq!(*slots.borrow(), original.map(Some));
+    }
 
     #[test]
     fn observed_interrupt_still_completes_the_shutdown_signal() {

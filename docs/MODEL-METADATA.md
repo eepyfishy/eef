@@ -42,10 +42,12 @@ into peer discovery or the model inventory command.
 
 ## Compatibility and current behavior
 
-### Busy placement hints (under verification)
+<a id="busy-placement-hints-under-verification"></a>
 
-With an applied node-local model request ceiling, the next development increment
-adds optional registration field `model_request_admission`. Its schema-one
+### Busy placement hints (unreleased)
+
+With an applied node-local model request ceiling, unreleased development nodes
+add optional registration field `model_request_admission`. Its schema-one
 limit, occupied/free exchange counts and explicit false queue/provider-execution
 flags use the same bounded observation as owner policy inspection. The node's
 model metadata, capabilities, permissions and registration receipt stay unchanged.
@@ -84,15 +86,18 @@ once, so the executing node's atomic admission still decides whether a new
 exchange may start. Admitted source leases and historical result access remain
 independent. General resource placement and measured allocation remain open.
 
-Hosted verification is pending. New command checks hold Ollama and owned llama.cpp
-requests, require route withdrawal while the workload remains active, inspect
-controls/results and check restoration without reconnect. A private interpreter
-exchange test also requires its active continuation to remain authorized and
-complete while its capacity advertisement excludes new placement. Completion, stop,
-restart, lost replies and owned-process exit retain their original uncertainty
+Exact source `214b6aa` passes all four hosted jobs in
+[run 44235567267](https://github.com/eepyfishy/eef/actions/runs/44235567267),
+with 1,856 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and retained extra gates. Scoped source/raw-log review accepts held Ollama
+and owned llama.cpp route withdrawal while admitted work stays active, controls
+and results remain usable, and completed capacity is restored without reconnect.
+An interpreter exchange remains authorized and completes while its full gate
+excludes new placement. Gateway refreshes do not replay connection automation.
+Completion, stop, restart, lost replies and owned-process exit retain uncertainty
 and no-replay checks. Synthetic fixtures do not establish physical acceptance.
 
-A subsequent read-only command increment is also pending hosted verification:
+The same accepted unreleased source includes the read-only command observation:
 `eef models route` reports `placement_observation`, distinguishing no matching
 model from matching connected models excluded by full gates. Counts use the
 same model/role/backend filters and one registry snapshot; several models on
