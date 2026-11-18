@@ -12,7 +12,7 @@ eefn --json model-lifecycle-policy show
 eef --json node model-lifecycle-policy --node NODE_ID show
 ```
 
-### Node-local model request ceiling (under verification)
+### Node-local model request ceiling (unreleased)
 
 ```text
 eefn --json model-lifecycle-policy --runtime RUNTIME_UUID request-limit --expected-digest SAVED_DIGEST --max-in-flight 1
@@ -26,7 +26,11 @@ and both backends in that node runtime. Values are 1-1024; `--default` removes
 this additional ceiling. Old configurations omit it and preserve their prior
 policy serialization/digests. The new field is `max_in_flight_requests` in
 saved/applied policy. Older nodes refuse the new command; no fallback save is
-attempted. This development extension awaits hosted compilation/runtime checks.
+attempted. Source `9b6dfa5` passes all four hosted jobs in
+[run 44157667334](https://github.com/eepyfishy/eef/actions/runs/44157667334),
+including 1,852 Windows/headless Rust tests, all 37 native suites and retained
+extra gates. Scoped source review accepts this managed-exchange admission and
+its owner-command/restart composition, with the limits below unchanged.
 
 Saving uses the same exact digest, current runtime and node-owner management
 approval as other policy changes. It does not resize an active runtime's gate.
@@ -48,7 +52,7 @@ resource admission, busy-node placement and adaptive reclamation remain open.
 
 The new regressions hold an actual loopback model request while refusing text,
 vision and preload calls across both selected backends without another provider
-contact or llama.cpp pin. Both completion and cancellation must release capacity
+contact or llama.cpp pin. Completion, HTTP failure and cancellation release capacity
 for a fresh explicit call; rejected calls must never run later. Separate policy
 tests cover bounds, remote refusal, digest/revision substitution, reset,
 saved/applied separation and failed replacement retaining the existing runtime.

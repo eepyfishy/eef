@@ -505,8 +505,9 @@ The development `request-limit --expected-digest SAVED_DIGEST --max-in-flight N`
 command saves a node-local ceiling on simultaneous eef text/vision/preload
 exchanges (1-1024); `--default` removes it. The same exact runtime and owner
 approval are required, with explicit restart to apply. A full gate refuses
-without queuing or retrying. This awaits hosted verification and is not a
-physical inference, RAM/VRAM or shared-provider quota; see the policy document.
+without queuing or retrying. Scoped hosted acceptance passes at `9b6dfa5` in
+[run 44157667334](https://github.com/eepyfishy/eef/actions/runs/44157667334).
+This is not a physical inference, RAM/VRAM or shared-provider quota; see the policy document.
 
 Shared Ollama inference has a separate applied request preference:
 `set --ollama-keep-alive-seconds SECONDS` (-1 indefinite, 0 after response,

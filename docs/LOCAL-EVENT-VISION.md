@@ -432,7 +432,11 @@ commands. Owner-selected synthetic GGUF/projector files configure a test-only
 server process; the fixture checks its model alias, multimodal request, active
 request pin and refusal to unload during analysis. Completion must release the
 pin and retain bounded text without another model POST or camera opening on
-receipt reuse. Hosted verification is pending. This tests owned lifecycle and
+receipt reuse. Source `fbd45b8` passes all four hosted jobs in
+[run 44154062919](https://github.com/eepyfishy/eef/actions/runs/44154062919),
+including 1,849 Windows/headless Rust tests, all 37 native suites and retained
+extra gates. Scoped review accepts this synthetic owned command workflow.
+This tests owned lifecycle and
 command composition, not actual inference, node-wide resource allocation or
 physical camera support; the synthetic server is never packaged.
 
@@ -441,6 +445,16 @@ request and after an explicit fixture release, before returning text. It uses a
 fresh reviewed job and a fresh owner-selected artifact followed by restart.
 The node must observe the process exit, release the active pin, remain on the
 same connected runtime and expose pending retained evidence without retrying
-inference or reopening the camera. This command composition is also pending
-hosted verification; process termination does not prove physical effects stopped
+inference or reopening the camera. Source `f9dc49a` passes all four hosted jobs
+in [run 44155669902](https://github.com/eepyfishy/eef/actions/runs/44155669902)
+with the same counts; scoped review accepts this synthetic process-exit case,
+including unchanged node connection count. Process termination does not prove physical effects stopped
 or authorize automatic recovery of an uncertain job.
+
+The separate optional [model request ceiling](MODEL-LIFECYCLE-POLICY.md#node-local-model-request-ceiling-unreleased)
+also passes exact-source acceptance at `9b6dfa5` in
+[run 44157667334](https://github.com/eepyfishy/eef/actions/runs/44157667334).
+It shares node-local exchange admission across ordinary inference and vision;
+busy refusal starts no provider call/load/pin. It neither reserves physical
+model resources for a whole camera workload nor proves that a canceled provider
+stopped processing an earlier request. Measured placement/resource limits remain open.

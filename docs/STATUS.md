@@ -5,15 +5,17 @@ verification boundaries at their own checkpoint, not claims about later code.
 
 ## In development: owned private camera vision transport
 
-A node-local model request ceiling is in development. Owner policy commands
-save an optional 1-1024 shared exchange limit, applied on explicit restart.
-Ordinary inference, local vision and empty Ollama preload share it; full
-capacity refuses before a new provider call/load/pin, without queuing or retry.
-New tests cover shared backends/capabilities, completion/cancellation release,
-owner/runtime/revision fences and saved/applied separation. Hosted verification
-is pending. This is managed-exchange admission, not measured resource allocation
-or proof that canceled provider-side work stopped. See
-[the policy contract](MODEL-LIFECYCLE-POLICY.md#node-local-model-request-ceiling-under-verification).
+Source `9b6dfa5` passes all four hosted jobs in
+[run 44157667334](https://github.com/eepyfishy/eef/actions/runs/44157667334):
+1,852 Windows/headless Rust tests, one ignored across 17 groups, all 37 native
+suites and retained extra gates. Scoped source review accepts the optional
+owner-configured node-local ceiling shared by text/vision/preload exchanges,
+immediate refusal without a provider call/load/pin while full, and capacity
+release after completion, HTTP failure or cancellation. Owner commands retain
+runtime/approval/revision fences and saved/applied separation; explicit restart
+applies the ceiling. This is managed-exchange admission, not measured resource
+allocation or proof that canceled provider-side work stopped. See
+[the policy contract](MODEL-LIFECYCLE-POLICY.md#node-local-model-request-ceiling-unreleased).
 
 Source `7f31139` passes all four hosted jobs in
 [run 44148059639](https://github.com/eepyfishy/eef/actions/runs/44148059639):
@@ -25,15 +27,18 @@ with one retained intent and no analysis text. Result/receipt reads repeat
 neither inference nor capture, and node controls remain available. This does
 not establish recovery from termination of a separate model process.
 
-An owned llama.cpp vision command fixture is now pending hosted verification.
-It selects a synthetic GGUF/projector through owner commands, starts an owned
-test-only model process, checks the local image request and active model pin,
-then requires durable text and exact-receipt reads without replay. It uses no
-real weights or camera and adds no production fixture hook or resource quota.
-Its follow-up also terminates the synthetic owned model during a fresh analysis.
-It requires observed model error without an active pin, unchanged connected node
-runtime, pending retained evidence and no implicit model/camera replay. That
-process-exit extension is separately pending hosted verification.
+Owned llama.cpp command source `fbd45b8` passes all four jobs in
+[run 44154062919](https://github.com/eepyfishy/eef/actions/runs/44154062919):
+1,849 Windows/headless Rust tests, all 37 native suites and retained extra gates.
+Scoped review accepts owner-selected synthetic GGUF/projector files, an owned
+test-only process, exact alias/local image request, active pin/unload refusal,
+durable text and receipt reuse without replay. Source `f9dc49a` also passes all
+four jobs in [run 44155669902](https://github.com/eepyfishy/eef/actions/runs/44155669902)
+with the same counts, accepting process exit during analysis: pending retained
+intent, no fabricated result, released pin, observed model error and the original
+connected node runtime without reconnect or implicit model/camera replay.
+These are synthetic process/command checks, not real model/camera quality,
+resource allocation, general physical stop or stable release acceptance.
 
 Source `fe3a642` passes all four hosted jobs in
 [run 44141704685](https://github.com/eepyfishy/eef/actions/runs/44141704685):
