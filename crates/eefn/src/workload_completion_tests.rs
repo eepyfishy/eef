@@ -39,34 +39,38 @@ async fn fixture(
     let observed = d.clone();
     let (_sender, renewals) = crate::workload_leases::renewal_channel();
     let (consumed, finished) = consumed
-        .drive(renewals, async move {
-            let mut filter = crate::workload_events::Filter::new(&observed)?;
-            let start = Instant::now();
-            for sequence in 1..=2 {
-                let event = filter
-                    .observe(
-                        StreamObservation {
-                            sequence,
-                            source_frames: sequence * 80,
-                            active: Some(sequence == 2),
-                            level: Some(if sequence == 2 { 1200 } else { 200 }),
-                            discontinuity: false,
-                        },
-                        start + Duration::from_millis((sequence - 1) * 100),
-                    )?
-                    .unwrap();
-                if sequence != 2 || !omit_last {
-                    writer
-                        .append(event, Arc::new(reporting.checkpoint(&source_contract)?))
-                        .await?;
+        .drive(
+            renewals,
+            async move {
+                let mut filter = crate::workload_events::Filter::new(&observed)?;
+                let start = Instant::now();
+                for sequence in 1..=2 {
+                    let event = filter
+                        .observe(
+                            StreamObservation {
+                                sequence,
+                                source_frames: sequence * 80,
+                                active: Some(sequence == 2),
+                                level: Some(if sequence == 2 { 1200 } else { 200 }),
+                                discontinuity: false,
+                            },
+                            start + Duration::from_millis((sequence - 1) * 100),
+                        )?
+                        .unwrap();
+                    if sequence != 2 || !omit_last {
+                        writer
+                            .append(event, Arc::new(reporting.checkpoint(&source_contract)?))
+                            .await?;
+                    }
                 }
-            }
-            filter.seal(&StreamSummary {
-                stream_id: observed.grant_id,
-                observations: 2,
-                source_frames: 160,
-            })
-        })
+                filter.seal(&StreamSummary {
+                    stream_id: observed.grant_id,
+                    observations: 2,
+                    source_frames: 160,
+                })
+            },
+            None,
+        )
         .await
         .unwrap();
     let crate::workload_leases::definition::Source::MicrophoneEnergy { adapter_sha256, .. } =
