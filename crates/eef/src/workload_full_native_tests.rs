@@ -309,7 +309,8 @@ async fn full_source_wait_plan(
 }
 
 fn full_source_checkpoint(plan: &Plan) -> serde_json::Value {
-    let workload = plan.execution.as_ref().and_then(|e| e.workload.as_ref());
+    let execution = plan.execution.as_ref();
+    let workload = execution.and_then(|e| e.workload.as_ref());
     json!({
         "revision": plan.revision,
         "status": plan.status,
@@ -317,6 +318,8 @@ fn full_source_checkpoint(plan: &Plan) -> serde_json::Value {
         "acknowledged": workload.is_some_and(|w| w.acknowledgement.is_some()),
         "event_count": workload.map(|w| w.observations.len()),
         "completed": workload.is_some_and(|w| w.completion.is_some()),
+        "stop_intent": execution.is_some_and(|e| e.stop_requested_at_ms.is_some()),
+        "stop_send_reserved": workload.is_some_and(|w| w.stop.is_some()),
         "stop_report": workload.is_some_and(|w| w.stop.as_ref().is_some_and(|s| s.report.is_some())),
     })
 }
@@ -422,17 +425,17 @@ async fn real_camera_commands_origin_tls_completion_stop_and_reconnect_share_dur
     full_source_cases(FullSourceKind::Camera).await;
 }
 
-fn trace_workload_authoring() -> tracing::subscriber::DefaultGuard {
+fn trace_workload_controls() -> tracing::subscriber::DefaultGuard {
     tracing::subscriber::set_default(
         tracing_subscriber::fmt()
-            .with_env_filter("off,eef::workload_authoring=warn")
+            .with_env_filter("off,eef::workload_authoring=warn,eef::workload_stop=warn")
             .with_test_writer()
             .finish(),
     )
 }
 
 async fn full_source_cases(kind: FullSourceKind) {
-    let _trace = trace_workload_authoring();
+    let _trace = trace_workload_controls();
     let fixture = tempfile::tempdir().unwrap();
     let python = full_source_venv(fixture.path()).await;
     let http = reqwest::Client::builder()

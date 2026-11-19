@@ -88,6 +88,15 @@ pub(crate) fn preserve(old: &Snapshot, plan: &Plan) -> Result<()> {
     }
     Ok(())
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorkloadStopFailure {
+    Reservation,
+    DeliveryDeadline,
+    RemoteStop,
+    ReceiptCheckpoint,
+}
+
 impl Driver {
     /// One durable send reservation for the exact original definition. A lost
     /// observer never retries, changes session or claims that effects stopped.
@@ -95,7 +104,7 @@ impl Driver {
         &self,
         definition: &eefn::workload_leases::definition::Definition,
         deadline: tokio::time::Instant,
-    ) -> Result<()> {
+    ) -> Result<(), WorkloadStopFailure> {
         use crate::jobs::WorkloadStopCheckpoint;
         let send = self
             .engine
@@ -105,22 +114,30 @@ impl Driver {
                 WorkloadStopCheckpoint::Begin,
                 deadline,
             )
-            .await?;
+            .await
+            .map_err(|_| WorkloadStopFailure::Reservation)?;
         if !send {
             return Ok(());
         }
-        if let Ok(Ok(report)) =
-            tokio::time::timeout_at(deadline, self.server.stop_workload(definition)).await
-        {
-            self.engine
-                .store
-                .checkpoint_workload_stop_before(
-                    definition.clone(),
-                    WorkloadStopCheckpoint::Receipt(report),
-                    deadline,
-                )
-                .await?;
+        if tokio::time::Instant::now() >= deadline {
+            return Err(WorkloadStopFailure::DeliveryDeadline);
         }
+        let report = tokio::time::timeout_at(deadline, self.server.stop_workload(definition))
+            .await
+            .map_err(|_| WorkloadStopFailure::DeliveryDeadline)?
+            .map_err(|_| WorkloadStopFailure::RemoteStop)?;
+        if tokio::time::Instant::now() >= deadline {
+            return Err(WorkloadStopFailure::DeliveryDeadline);
+        }
+        self.engine
+            .store
+            .checkpoint_workload_stop_before(
+                definition.clone(),
+                WorkloadStopCheckpoint::Receipt(report),
+                deadline,
+            )
+            .await
+            .map_err(|_| WorkloadStopFailure::ReceiptCheckpoint)?;
         Ok(())
     }
     pub(crate) async fn stop_issued(&self, id: &str, grants: &[ExecutionGrant]) -> Result<()> {

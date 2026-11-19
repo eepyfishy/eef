@@ -116,12 +116,12 @@ impl Driver {
         if *stop.borrow() && !*shutdown.borrow() {
             // Revoked control precedes the exact metadata/one-send stop path.
             // A failed stop-intent save never authorizes this network request.
-            if self
+            if let Err(phase) = self
                 .stop_workload(&definition, Instant::now() + Duration::from_secs(5))
                 .await
-                .is_err()
             {
-                tracing::warn!(job_id=%definition.job_id,"Workload stop delivery unconfirmed; no retry");
+                tracing::warn!(target: "eef::workload_stop", job_id=%definition.job_id, ?phase,
+                    "Workload stop delivery unconfirmed; no retry");
             }
         }
         outcome

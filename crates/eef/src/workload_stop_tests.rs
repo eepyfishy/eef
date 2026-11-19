@@ -318,7 +318,10 @@ async fn offline_workload_stop_is_reserved_once_without_retry_or_retargeting() {
     let server = eefn::NodeServer::new("private-workload-stop-fixture", "127.0.0.1", 0).unwrap();
     let driver =
         crate::request_execution::Driver::peer_fixture(engine.clone(), server, Default::default());
-    driver.stop_workload(&d, stop_deadline()).await.unwrap();
+    assert_eq!(
+        driver.stop_workload(&d, stop_deadline()).await,
+        Err(crate::execution_stop::WorkloadStopFailure::RemoteStop)
+    );
     let saved = engine.store.get(&plan.plan_id).unwrap();
     let stop = saved
         .execution
@@ -338,6 +341,62 @@ async fn offline_workload_stop_is_reserved_once_without_retry_or_retargeting() {
     );
     drop(issued);
     engine.store.wait_workload_finalizations().unwrap();
+}
+
+#[tokio::test]
+async fn admitted_workload_stop_receipt_is_saved_after_its_observer_expires() {
+    use crate::jobs::WorkloadStopCheckpoint;
+    let (engine, plan, issued) = owned_stop_fixture().await;
+    let d = issued.definition().clone();
+    engine.cancel(&plan.plan_id).unwrap();
+    assert!(begin_workload_stop(&engine.store, &d).await.unwrap());
+    drop(issued);
+    engine.store.wait_workload_finalizations().unwrap();
+    let before = engine.store.get(&plan.plan_id).unwrap();
+    assert_eq!(before.status, PlanStatus::Interrupted);
+
+    let (ready, blocked) = tokio::sync::oneshot::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let capacity = engine.store.workload_ack_available();
+    engine
+        .store
+        .queue_workload_event_test_barrier(ready, resume)
+        .unwrap();
+    blocked.await.unwrap();
+    let report = workload_stop_report(&d);
+    let result = engine
+        .store
+        .checkpoint_workload_stop_before(
+            d.clone(),
+            WorkloadStopCheckpoint::Receipt(report.clone()),
+            tokio::time::Instant::now() + Duration::from_millis(500),
+        )
+        .await;
+    assert!(result.unwrap_err().to_string().contains("deadline elapsed"));
+    assert_eq!(engine.store.workload_ack_available(), capacity - 1);
+    assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), json!(before));
+    release.send(()).unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let saved = tokio::time::timeout_at(deadline, async {
+        let mut changes = engine.store.source_changes();
+        loop {
+            let saved = engine.store.get_before(&plan.plan_id, deadline).await.unwrap();
+            if saved.revision > before.revision {
+                break saved;
+            }
+            changes.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let workload = saved.execution.as_ref().unwrap().workload.as_ref().unwrap();
+    assert_eq!(saved.status, PlanStatus::Interrupted);
+    assert_eq!(workload.state, AttemptState::Unknown);
+    assert_eq!(workload.stop.as_ref().unwrap().report.as_ref(), Some(&report));
+    assert!(!workload.stop.as_ref().unwrap().outcome_unknown);
+    assert!(!begin_workload_stop(&engine.store, &d).await.unwrap());
+    assert_eq!(json!(engine.store.get(&plan.plan_id).unwrap()), json!(saved));
 }
 
 #[tokio::test]

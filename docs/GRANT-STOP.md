@@ -74,6 +74,23 @@ physical two-PC stop or universal termination.
 Broader strong-stop, continuous media, physical and stable release requirements
 remain open.
 
+### Retaining continuous workload stop receipts (development)
+
+The coordinator still gives the original send reservation and single network
+attempt one five-second observation window. A stop receipt verified before
+that window expires can enter the bounded workload journal writer. The writer
+keeps that exact receipt and its capacity until the write ends, even if the
+waiting task times out or is dropped. Later job inspection can show the saved receipt
+once it commits. The receipt confirms stop intent for the original issuance.
+The interrupted job stays uncertain about execution and external effects.
+
+Warnings under `eef::workload_stop` distinguish reservation failure, delivery
+expiry, an unconfirmed network reply, and an unconfirmed receipt checkpoint.
+They include the job ID and phase. An absent receipt or failed checkpoint leaves
+delivery uncertain and offers no authority to resend. The workload lease and
+the intent-only receipt schema keep their existing limits. Hosted verification
+is pending.
+
 ## Public stop intent persistence (development)
 
 Both the owner HTTP command and the authenticated origin node command use a

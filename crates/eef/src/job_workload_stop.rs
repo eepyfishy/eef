@@ -45,11 +45,16 @@ impl JobStore {
         let (reply, receiver) = oneshot::channel();
         let store = self.clone();
         let end = deadline.into_std();
+        // A send reservation requires a live observer. An admitted receipt is
+        // historical evidence from the original send and owns no retry authority.
+        let historical = matches!(&checkpoint, StopCheckpoint::Receipt(_));
         self.workload_writes.submit(Box::new(move || {
             let result =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<bool> {
+                    let current =
+                        || historical || (!reply.is_closed() && std::time::Instant::now() < end);
                     ensure!(
-                        !reply.is_closed() && std::time::Instant::now() < end,
+                        current(),
                         "Workload stop checkpoint abandoned before storage"
                     );
                     store.require_workload_reporting()?;
@@ -64,7 +69,7 @@ impl JobStore {
                         "Exact workload stop metadata; no execution or retry authority",
                         |plan| {
                             ensure!(
-                                !reply.is_closed() && std::time::Instant::now() < end,
+                                current(),
                                 "Workload stop checkpoint abandoned while waiting for storage"
                             );
                             store.require_workload_reporting()?;
