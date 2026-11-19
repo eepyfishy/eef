@@ -279,9 +279,13 @@ async fn cancelling_whole_consumed_task_drops_source_before_persisting_uncertain
 async fn retained_exit_requires_exact_stop_intent_and_an_intact_record() {
     for stopped in [false, true] {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("receipts.db");
-        let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
+        let config = dir.path().join("node.json");
+        let path = super::super::journal_path(&config);
         let d = definition();
+        let observe = || crate::workload_stop_exit::inspect_local(&config, "owner", &d.grant_id);
+        assert!(observe().is_err());
+        assert!(!path.exists());
+        let ledger = GrantLedger::open(&path, Default::default(), "owner").unwrap();
         let consumed = consume(&ledger, d.clone()).await.unwrap();
         let observed_at_ms = if stopped {
             ledger
@@ -316,6 +320,15 @@ async fn retained_exit_requires_exact_stop_intent_and_an_intact_record() {
             stopped
         );
         drop(reopened);
+        let bytes = std::fs::read(&path).unwrap();
+        let local = observe().unwrap();
+        assert_eq!(local["scope"], json!(d.scope().unwrap()));
+        assert_eq!(local["observation"].is_object(), stopped);
+        let plain = crate::workload_stop_exit::render(&local, &d.grant_id).unwrap();
+        assert_eq!(plain.contains("process tree exit observed"), stopped);
+        assert!(plain.contains("external effects remain unconfirmed"));
+        assert!(crate::workload_stop_exit::inspect_local(&config, "other", &d.grant_id).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
         if stopped {
             let db = Connection::open(&path).unwrap();
             db.execute(
@@ -325,6 +338,7 @@ async fn retained_exit_requires_exact_stop_intent_and_an_intact_record() {
             .unwrap();
             drop(db);
             let before = std::fs::read(&path).unwrap();
+            assert!(observe().is_err());
             assert!(GrantLedger::open(&path, Default::default(), "owner").is_err());
             assert_eq!(std::fs::read(&path).unwrap(), before);
         }

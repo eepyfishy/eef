@@ -434,6 +434,41 @@ fn trace_workload_controls() -> tracing::subscriber::DefaultGuard {
     )
 }
 
+async fn full_source_reconnect(
+    runtime: &crate::Runtime,
+    service: &eefn::NodeService,
+    node: &Arc<eefn::NodeClient>,
+    previous: &Value,
+) -> tokio::task::JoinHandle<anyhow::Result<()>> {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while runtime.node_server.grant_session("origin").await.is_ok() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("The original authenticated route should retire");
+    let running = node.clone();
+    let connection = tokio::spawn(async move { running.connect_once().await });
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if let Ok(current) = runtime.node_server.grant_session("origin").await
+                && &current != previous
+                && service.submissions.state() == eefn::submission::InputChannelState::Ready
+                && runtime.node_server.node_state("origin").await.is_some_and(|s| {
+                    s.registration["workload_execution"]["available"] == true
+                })
+            {
+                break;
+            }
+            assert!(!connection.is_finished());
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    connection
+}
+
 async fn full_source_cases(kind: FullSourceKind) {
     let _trace = trace_workload_controls();
     let fixture = tempfile::tempdir().unwrap();
@@ -653,31 +688,7 @@ async fn full_source_cases(kind: FullSourceKind) {
                 assert_eq!(observed["result"]["revision"], stopped.revision);
             }
             if mode == "reconnect" {
-                let running = node.clone();
-                connection = tokio::spawn(async move { running.connect_once().await });
-                tokio::time::timeout(Duration::from_secs(15), async {
-                    loop {
-                        if let Ok(current) = runtime.node_server.grant_session("origin").await {
-                            if current != session
-                                && service.submissions.state()
-                                    == eefn::submission::InputChannelState::Ready
-                                && runtime
-                                    .node_server
-                                    .node_state("origin")
-                                    .await
-                                    .is_some_and(|s| {
-                                        s.registration["workload_execution"]["available"] == true
-                                    })
-                            {
-                                break;
-                            }
-                        }
-                        assert!(!connection.is_finished());
-                        tokio::time::sleep(Duration::from_millis(10)).await;
-                    }
-                })
-                .await
-                .unwrap();
+                connection = full_source_reconnect(&runtime, &service, &node, &session).await;
             }
             tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
@@ -695,8 +706,8 @@ async fn full_source_cases(kind: FullSourceKind) {
             .await
             .unwrap();
             if mode == "stop" {
-                let status = service
-                    .job_command(eefn::job_commands::JobRequest {
+                let read_status = || {
+                    service.job_command(eefn::job_commands::JobRequest {
                         schema_version: 1,
                         expected_node_id: "origin".into(),
                         operation_id: None,
@@ -704,8 +715,8 @@ async fn full_source_cases(kind: FullSourceKind) {
                             id: stopped.plan_id.clone(),
                         },
                     })
-                    .await
-                    .unwrap();
+                };
+                let status = read_status().await.unwrap();
                 let data = &status["data"];
                 assert_eq!(status["success"], true);
                 assert_eq!(data["revision"], stopped.revision);
@@ -720,6 +731,24 @@ async fn full_source_cases(kind: FullSourceKind) {
                 );
                 assert_eq!(data["stop_signal_sent"], false);
                 assert_eq!(data["reconciled"], false);
+                connection.abort();
+                let _ = (&mut connection).await;
+                let offline = runtime
+                    .process_stop_status_command(eefn::process_stop_status::Request {
+                        schema_version: 1,
+                        expected_runtime_id: runtime.runtime_id().into(),
+                        command: eefn::process_stop_status::Command {
+                            id: stopped.plan_id.clone(),
+                        },
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(offline["grants"][0]["availability"], "unavailable");
+                assert!(offline["grants"][0]["observation"].is_null());
+                connection = full_source_reconnect(&runtime, &service, &node, &session).await;
+                let readback = read_status().await.unwrap();
+                assert_eq!(readback["success"], true);
+                assert_eq!(&readback["data"], data);
             }
             // Existing owned-capture cleanup observes for at most three seconds.
             // Wait independently before a NEW explicit job proves source reuse.

@@ -69,6 +69,33 @@ impl Report {
     }
 }
 
+pub fn render(value: &serde_json::Value, id: &str) -> Result<String> {
+    let report: Report = serde_json::from_value(value.clone())?;
+    report.validate(&report.scope)?;
+    ensure!(
+        report.scope.grant_id == id,
+        "Continuous stop report refers to a different grant"
+    );
+    let status = if report.observation.is_some() {
+        "Owned capture process tree exit observed."
+    } else if report.stop_recorded_at_ms.is_some() {
+        "Stop intent is retained. Owned capture process exit is unconfirmed."
+    } else {
+        "No retained stop intent was found. Owned capture process exit is unconfirmed."
+    };
+    Ok(format!(
+        "Continuous stop status on node {} / grant {}\n{status}\nDevice buffers and external effects remain unconfirmed. This inspection sends no stop or retry.\n",
+        report.scope.executor_node, report.scope.grant_id
+    ))
+}
+
+/// Read the node owner's existing journal without initializing node services.
+pub fn inspect_local(config: &std::path::Path, node: &str, id: &str) -> Result<serde_json::Value> {
+    Ok(serde_json::json!(
+        crate::grants::workload::inspect_local_stop_exit(config, node, id)?
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

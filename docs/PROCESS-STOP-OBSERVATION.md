@@ -17,14 +17,21 @@ actions are not undone. The separate v1 stop receipt and advertisement still mea
 eefn jobs stop JOB_ID
 eefn jobs stop-status JOB_ID
 eef requests stop-status JOB_ID
+eefn grants stop-status --id GRANT_UUID
 ```
 
 The first command remains the existing exact stop request, not a completion ACK.
-The status commands need only the original job ID. The node command uses its
+The two job-status commands need only the original job ID. The node command uses its
 running authenticated connection and is restricted to that origin's job. The
 coordinator command is local-owner-only. Neither starts a runtime, enables a
 permission, submits work, sends/retries a stop, renews a lease or reconciles job
 tracking. No UI polling/controller or model is involved.
+
+Run `eefn grants stop-status --id GRANT_UUID` on the executor to inspect a
+continuous workload while either service is offline. The command opens only
+the node's existing journal in read-only mode and checks its owner and exact
+grant scope. Add `--json` for the stored observation and original stop time.
+Missing, corrupt or inaccessible evidence cannot confirm process exit.
 
 Owner clients POST a strict versioned request with the expected current runtime
 to `/api/commands/jobs/stop-status`. The backend captures the original revision

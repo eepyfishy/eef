@@ -70,9 +70,15 @@ For the [local vision case](LOCAL-EVENT-VISION.md), separately approve the exact
 local VLM and limits. Record model call counts and bytes sent to the coordinator.
 On separate admitted work, exercise stop and local listening revocation. Verify
 that capture ceases, the capture reservation becomes reusable after observed
-exit, and normal commands remain responsive. A durable stop receipt records
-intent. Use independent observations for process or device exit and retain any
-uncertainty in the result.
+exit, and normal commands remain responsive. From PC A, record the intent with
+`eefn requests stop-receipt JOB_ID --grant-id GRANT_UUID --json` and the process
+observation with `eefn jobs stop-status JOB_ID --json`. Record availability and
+scope separately from the job's interrupted state. On PC B, read the same grant
+with `eefn grants stop-status --id GRANT_UUID --json`, including with the node
+service offline. After reconnecting PC B, repeat the read from PC A and compare
+the original scope and job revision. Check that inspection sends no new stop
+and does not replay the source. Use independent observations for device buffers
+or external effects and record their uncertainty separately.
 
 ## Record the outcome
 

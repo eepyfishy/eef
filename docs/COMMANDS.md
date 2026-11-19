@@ -420,6 +420,10 @@ inspection also works offline. No new stop, execution, reconciliation, repair or
 retry is requested. Missing evidence is not proof no stop/work was accepted;
 retained intent is not physical termination. See [contract](STOP-INSPECTION.md).
 
+Use [stop-status](PROCESS-STOP-OBSERVATION.md) for retained owned-process exit
+evidence. `eefn grants stop-status --id GRANT_UUID` reads a continuous workload's
+observation on the executor, including offline.
+
 ## Python bridge budgets (unreleased after alpha.6)
 
     eefn python show

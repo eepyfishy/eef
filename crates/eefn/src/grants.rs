@@ -94,6 +94,11 @@ pub enum GrantAction {
         #[arg(long)]
         id: String,
     },
+    /// Read owned process exit evidence for a stopped continuous workload locally.
+    StopStatus {
+        #[arg(long)]
+        id: String,
+    },
     /// Inspect a consumed receipt locally; no connection or replay.
     Receipt {
         #[arg(long)]

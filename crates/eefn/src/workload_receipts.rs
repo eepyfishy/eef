@@ -428,6 +428,52 @@ impl Drop for Consumption {
         }
     }
 }
+fn read_stop_exit(
+    db: &Connection,
+    node: &str,
+    grant_id: &str,
+    expected: Option<&stop::Scope>,
+) -> Result<crate::workload_stop_exit::Report> {
+    let tx = db.unchecked_transaction()?;
+    let issuer = expected.map(|scope| scope.issuer_id.as_str());
+    let receipt = read_core(&tx, node, issuer, grant_id)?;
+    let scope = receipt.definition.scope()?;
+    ensure!(
+        expected.is_none_or(|original| original == &scope),
+        "Retained workload differs from stop exit query"
+    );
+    let intent = stop::read(&tx, grant_id)?;
+    ensure!(
+        intent.as_ref().is_none_or(|r| r.confirms_scope(&scope)),
+        "Retained stop intent differs from the exact issuance"
+    );
+    let report = crate::workload_stop_exit::Report {
+        schema_version: 1,
+        report_type: crate::workload_stop_exit::KIND.into(),
+        stop_recorded_at_ms: intent.map(|r| r.recorded_at_ms),
+        observation: stop_observation::read(&tx, &receipt)?,
+        scope,
+        read_only: true,
+    };
+    report.validate(&report.scope)?;
+    tx.commit()?;
+    Ok(report)
+}
+
+pub(crate) fn inspect_local_stop_exit(
+    config: &Path,
+    node: &str,
+    id: &str,
+) -> Result<crate::workload_stop_exit::Report> {
+    crate::automation_occurrence::uuid(id)?;
+    let db = Connection::open_with_flags(
+        super::journal_path(config),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    db.busy_timeout(Duration::from_millis(200))?;
+    read_stop_exit(&db, node, id, None)
+}
+
 impl GrantLedger {
     pub(crate) fn inspect_workload_stop_exit(
         &self,
@@ -438,28 +484,7 @@ impl GrantLedger {
             .connection
             .lock()
             .map_err(|_| anyhow::anyhow!("Grant journal unavailable"))?;
-        let tx = db.unchecked_transaction()?;
-        let receipt = read_core(&tx, &self.node_id, Some(&scope.issuer_id), &scope.grant_id)?;
-        ensure!(
-            receipt.definition.scope()? == *scope,
-            "Retained workload differs from stop exit query"
-        );
-        let intent = stop::read(&tx, &scope.grant_id)?;
-        ensure!(
-            intent.as_ref().is_none_or(|r| r.confirms_scope(scope)),
-            "Retained stop intent differs from the exact issuance"
-        );
-        let report = crate::workload_stop_exit::Report {
-            schema_version: 1,
-            report_type: crate::workload_stop_exit::KIND.into(),
-            scope: scope.clone(),
-            stop_recorded_at_ms: intent.map(|r| r.recorded_at_ms),
-            observation: stop_observation::read(&tx, &receipt)?,
-            read_only: true,
-        };
-        report.validate(scope)?;
-        tx.commit()?;
-        Ok(report)
+        read_stop_exit(&db, &self.node_id, &scope.grant_id, Some(scope))
     }
 
     #[cfg(test)]
