@@ -476,12 +476,14 @@ mod advertisement_tests {
         let server = resident_server();
         let idle = Duration::from_secs(1);
         server.test_age_idle(Duration::from_secs(2));
-        let candidates = server.idle_candidates(idle).unwrap();
+        let idle_timeout = |_: &str| Some(idle);
+        assert!(server.idle_candidates(|_| None).unwrap().is_empty());
+        let candidates = server.idle_candidates(idle_timeout).unwrap();
         assert_eq!(candidates.len(), 1);
-        let (model, generation) = &candidates[0];
+        let (model, generation, _) = &candidates[0];
         let operation = uuid::Uuid::new_v4().to_string();
         let pin = server.pin(Some(model)).unwrap();
-        assert!(server.idle_candidates(idle).unwrap().is_empty());
+        assert!(server.idle_candidates(idle_timeout).unwrap().is_empty());
         assert!(
             server
                 .reserve_idle(model, *generation, idle, &operation)
@@ -499,13 +501,13 @@ mod advertisement_tests {
             .reserve_idle(model, *generation, idle, &operation)
             .unwrap();
         assert!(server.pin(Some(model)).is_err());
-        assert!(server.idle_candidates(idle).unwrap().is_empty());
+        assert!(server.idle_candidates(idle_timeout).unwrap().is_empty());
         server
             .unload_reserved_with_timeout(model, &operation, Duration::from_secs(2), || Ok(()))
             .await
             .unwrap();
         assert!(server.snapshot().unwrap()[0]["owned_pid"].is_null());
-        assert!(server.idle_candidates(idle).unwrap().is_empty());
+        assert!(server.idle_candidates(idle_timeout).unwrap().is_empty());
         server.close();
     }
     #[tokio::test]
@@ -1632,14 +1634,19 @@ impl ModelServer {
         drop(gate);
         self.changed();
     }
-    pub(crate) fn idle_candidates(&self, idle: Duration) -> Result<Vec<(String, u64)>> {
+    pub(crate) fn idle_candidates(
+        &self,
+        timeout: impl Fn(&str) -> Option<Duration>,
+    ) -> Result<Vec<(String, u64, Duration)>> {
         self.initialize_residency()?;
         let gate = self.residency.lock().unwrap();
         let mut rows = gate
             .slots
             .iter()
-            .filter(|(_, s)| Self::idle_eligible(s, idle))
-            .map(|(id, s)| (id.clone(), s.generation))
+            .filter_map(|(id, slot)| {
+                let idle = timeout(id)?;
+                Self::idle_eligible(slot, idle).then(|| (id.clone(), slot.generation, idle))
+            })
             .collect::<Vec<_>>();
         rows.sort();
         Ok(rows)

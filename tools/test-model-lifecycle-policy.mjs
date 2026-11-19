@@ -25,6 +25,7 @@ const show=async(operation)=>(await local(['model-lifecycle','show',...(operatio
 const policy=async(remote=false)=>(await (remote?owner(['node','model-lifecycle-policy','--node',id,'show']):local(['model-lifecycle-policy','show']))).result;
 const slot=r=>r.models.find(m=>m.model_id==='selected');
 const setPolicy=(digest,args,remote=false,ok=true)=>remote?owner(['node','model-lifecycle-policy','--node',id,'--runtime',runtime,'set','--expected-digest',digest,...args],ok):local(['model-lifecycle-policy','--runtime',runtime,'set','--expected-digest',digest,...args],ok);
+const modelIdle=(digest,args,ok=true)=>owner(['node','model-lifecycle-policy','--node',id,'--runtime',runtime,'model-idle','--expected-digest',digest,'--model','selected',...args],ok);
 async function load(){const current=slot(await show()),operation=randomUUID();await owner(['node','model-lifecycle','--node',id,'--runtime',runtime,'load','--model','selected','--generation',String(current.generation),'--operation-id',operation]);await until(async()=>(await show(operation)).receipt.phase==='completed','explicit selected load');return operation;}
 try {
  const [api,gateway,eefPort,modelPort]=await Promise.all(Array.from({length:4},()=>port()));node=`http://127.0.0.1:${api}`;eef=`http://127.0.0.1:${eefPort}`;
@@ -47,6 +48,7 @@ try {
  await until(async()=>(await json(node+'/api/status')).execution_grants.available,'independent node credential');runtime=(await policy()).runtime_id;
  let current=await policy(true);assert.equal(current.applied_policy.startup,'manual');
  await setPolicy(current.saved_digest,['--idle-unload-seconds','2','--receipt-capacity','16','--load-timeout-seconds','6','--thinking-mode','disabled','--interpreter-temperature','1','--interpreter-seed','42','--ollama-context-tokens','4096'],true,false);
+ await modelIdle(current.saved_digest,['--seconds','1'],false);
  assert.equal((await policy()).saved_digest,current.saved_digest,'denied owner approval cannot change policy');
  const saved=(await json(node+'/api/config')).config;saved.management.allow_remote=true;await json(node+'/api/config',{config:saved},'PUT');
  const changed=(await setPolicy(current.saved_digest,['--idle-unload-seconds','2','--receipt-capacity','16','--load-timeout-seconds','6','--thinking-mode','disabled','--interpreter-temperature','1','--interpreter-seed','42','--ollama-context-tokens','4096'],true)).result;
@@ -88,8 +90,17 @@ try {
  await until(async()=>slot(await show()).state==='ready','configured eager startup');assert.equal((await policy()).applied_policy.idle_unload_seconds,null);
  await new Promise(r=>setTimeout(r,2500));assert.equal(slot(await show()).state,'ready');assert.equal((await show()).idle_events.length,0);
  // Opt-in cold routing: compilation/approval/status never load a model.
- current=await policy();await setPolicy(current.saved_digest,['--startup','on-demand','--idle-unload-seconds','1']);
+ current=await policy();
+ const demandConfig=(await setPolicy(current.saved_digest,['--startup','on-demand','--idle-unload-seconds','0'])).result;
+ await modelIdle(current.saved_digest,['--seconds','1'],false);
+ const override=(await modelIdle(demandConfig.saved_digest,['--seconds','1'])).result;
+ assert.deepEqual(override.saved_policy.owned_idle_seconds,{selected:1});
+ assert.equal(override.applied_policy.owned_idle_seconds,undefined);
+ assert.equal(override.restart_required,true);assert.equal(override.restart_requested,false);
  const demandOldRuntime=runtime;await local(['restart']);await until(async()=>(await policy()).runtime_id!==demandOldRuntime,'explicit on-demand policy application');runtime=(await policy()).runtime_id;
+ const appliedDemand=(await policy()).applied_policy;
+ assert.equal(appliedDemand.idle_unload_seconds,null);
+ assert.deepEqual(appliedDemand.owned_idle_seconds,{selected:1});
  assert.equal(slot(await show()).state,'unloaded');assert.equal(slot(await show()).owned_pid,null);
  await until(async()=>{const rows=(await json(eef+'/api/commands/models')).nodes.find(n=>n.node_id===id)?.models;return rows?.some(m=>m.instance.model_id==='selected'&&m.lifecycle==='unloaded'&&m.availability==='available');},'truthful cold availability');
  const coldPlan=await review.save({template:'generate_text',params:{model_id:'selected',prompt:'demand greeting'},constraints:{backend:'llamacpp',node_id:id}});
@@ -107,6 +118,12 @@ try {
  await until(async()=>slot(await show()).state==='error'&&slot(await show()).owned_pid===null,'expired demand cleans partial startup');
  const afterExpiry=await show();await new Promise(r=>setTimeout(r,1500));assert.equal(slot(await show()).generation,slot(afterExpiry).generation);assert.equal(slot(await show()).owned_pid,null);
  current=await policy();
+ const inherited=(await modelIdle(current.saved_digest,['--inherit'])).result;
+ assert.equal(inherited.saved_policy.owned_idle_seconds,undefined);
+ assert.deepEqual(inherited.applied_policy.owned_idle_seconds,{selected:1});
+ assert.equal(inherited.restart_required,true);
+ console.log('Per-model idle policy validation passed: explicit override reclaimed the owned model with node-wide idle unload disabled.');
+ current=await policy();
  const reset=(await setPolicy(current.saved_digest,['--thinking-mode','inherit','--interpreter-sampling-default','--ollama-context-default'],true)).result;
  assert.equal(reset.saved_policy.ollama_context_tokens,undefined);assert.equal(reset.applied_policy.ollama_context_tokens,4096);
  assert.equal(reset.saved_policy.interpreter_sampling,undefined);assert.equal(reset.applied_policy.interpreter_sampling.temperature_milli,1000);
@@ -118,7 +135,8 @@ try {
   ollama_context_saved_applied_separate:true,ollama_context_explicit_restart:true,
   locked_offline_policy_setup:true,default_compatibility:true,manual_startup_without_model_process:true,remote_owner_approval:true,cas_policy_fence:true,saved_applied_separation:true,explicit_restart_only:true,
   active_pin_blocks_idle_unload:true,last_pin_release_resets_monotonic_idle_deadline:true,automatic_owned_idle_unload:true,historical_load_no_replay:true,reserved_policy_status:true,saved_policy_change_pauses_automatic_unload:true,eager_startup_after_explicit_restart:true,disabled_idle_keeps_residency:true,rollback_cannot_revive_old_cas_or_idle_policy:true,
-  on_demand_cold_availability_truthful:true,authoring_approval_status_no_model_load:true,authorized_request_loads_once:true,next_request_reloads_after_idle:true,expired_demand_retains_unknown_and_cleans_partial_startup:true,demand_failure_not_automatically_retried:true},null,2));
+  on_demand_cold_availability_truthful:true,authoring_approval_status_no_model_load:true,authorized_request_loads_once:true,next_request_reloads_after_idle:true,expired_demand_retains_unknown_and_cleans_partial_startup:true,demand_failure_not_automatically_retried:true,
+  owned_model_idle_override_with_node_timer_disabled:true,owned_model_idle_override_exact_owner_policy:true,owned_model_idle_inherit_saved_only:true},null,2));
  console.log('Model lifecycle policy validation passed: '+scratch);
 }catch(error){await writeFile(join(scratch,'PRIVATE-failure.json'),JSON.stringify({message:String(error)},null,2));await writeFile(join(scratch,'PRIVATE-logs.json'),JSON.stringify(children.map(c=>({exe:c.spawnfile,code:c.exitCode,...c.logs()})),null,2));throw error;
 }finally{for(const c of children)if(c.exitCode===null)c.kill();await Promise.allSettled(children.map(c=>c.result));}

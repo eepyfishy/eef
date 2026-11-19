@@ -508,6 +508,12 @@ consumes the original request deadline and transfers readiness directly to an
 active-use pin; failure/cancellation never silently retries or switches provider.
 See [choices, bounds and idle timing](MODEL-LIFECYCLE-POLICY.md).
 
+In development, `model-idle --expected-digest DIGEST --model MODEL_ID --seconds N`
+saves an idle-unload timeout for one owned GGUF selection. Use `--seconds 0` to
+keep an already loaded model resident when idle, or `--inherit` to use the node
+default again. Apply the saved change on an explicit restart.
+[Per-model policy and scope](MODEL-LIFECYCLE-POLICY.md#per-model-idle-unloading-development)
+
 The development `request-limit --expected-digest SAVED_DIGEST --max-in-flight N`
 command saves a node-local ceiling on simultaneous eef text/vision/preload
 exchanges (1-1024); `--default` removes it. The same exact runtime and owner

@@ -529,10 +529,11 @@ impl ModelRuntime {
             .context("Model lifecycle worker already owned")?;
         let mut idle_tick = tokio::time::interval(Duration::from_secs(1));
         idle_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let idle_enabled = self.server.is_some() && self.policy.has_idle_timer();
         loop {
             let id = tokio::select! {biased;
                 next=receiver.recv()=>{let Some(id)=next else {break};id},
-                _=idle_tick.tick(),if self.policy.idle_unload_seconds.is_some()=>{
+                _=idle_tick.tick(),if idle_enabled=>{
                     if self.closed.load(Ordering::SeqCst) {break;}
                     self.unload_idle().await;
                     continue;
@@ -626,18 +627,14 @@ impl ModelRuntime {
         Ok(())
     }
     async fn unload_idle(&self) {
-        let Some(seconds) = self.policy.idle_unload_seconds else {
-            return;
-        };
         let Some(server) = &self.server else { return };
         let Some(service) = self.service.upgrade() else {
             return;
         };
-        let idle = Duration::from_secs(seconds);
-        let Ok(candidates) = server.idle_candidates(idle) else {
+        let Ok(candidates) = server.idle_candidates(|model| self.policy.idle_timeout(model)) else {
             return;
         };
-        for (model, generation) in candidates {
+        for (model, generation, idle) in candidates {
             let id = uuid::Uuid::new_v4().to_string();
             let reserved = service.inspect_grant_configuration(|config| {
                 self.authorized(config, false)?;

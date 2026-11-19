@@ -1,10 +1,15 @@
 //! Saved/applied model policy. No browser, inference or restart controller.
+use std::collections::BTreeMap;
+use std::time::Duration;
+
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub(crate) const MAX_LOAD_TIMEOUT_SECONDS: u64 = 3600;
+const MAX_IDLE_SECONDS: u64 = 86_400;
+const MAX_MODEL_IDLE_OVERRIDES: usize = 64;
 
 /// One local gate observation. It provides no reservation or backend stop proof.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -89,6 +94,9 @@ pub struct ModelLifecyclePolicy {
     /// Node-local eef request exchanges, not provider execution or memory usage.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_in_flight_requests: Option<u32>,
+    /// Exact owned GGUF model ID: zero disables idle unload, absent inherits.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub owned_idle_seconds: BTreeMap<String, u64>,
 }
 impl Default for ModelLifecyclePolicy {
     fn default() -> Self {
@@ -104,6 +112,7 @@ impl Default for ModelLifecyclePolicy {
             thinking_mode: ThinkingMode::Inherit,
             interpreter_sampling: Default::default(),
             max_in_flight_requests: None,
+            owned_idle_seconds: BTreeMap::new(),
         }
     }
 }
@@ -120,7 +129,7 @@ impl ModelLifecyclePolicy {
             || !(1..=30).contains(&self.termination_wait_seconds)
             || self
                 .idle_unload_seconds
-                .is_some_and(|n| !(1..=86400).contains(&n))
+                .is_some_and(|n| !(1..=MAX_IDLE_SECONDS).contains(&n))
             || self
                 .ollama_keep_alive_seconds
                 .is_some_and(|n| !(-1..=86400).contains(&n))
@@ -130,7 +139,30 @@ impl ModelLifecyclePolicy {
         {
             bail!("Invalid model lifecycle policy bounds")
         }
+        if self.owned_idle_seconds.len() > MAX_MODEL_IDLE_OVERRIDES {
+            bail!("Too many owned model idle overrides")
+        }
+        for (id, seconds) in &self.owned_idle_seconds {
+            crate::model_selection::validate_id(id)?;
+            if *seconds > MAX_IDLE_SECONDS {
+                bail!("Owned model idle timeout must be 0-86400 seconds")
+            }
+        }
         Ok(())
+    }
+
+    pub(crate) fn has_idle_timer(&self) -> bool {
+        self.idle_unload_seconds.is_some()
+            || self.owned_idle_seconds.values().any(|&seconds| seconds > 0)
+    }
+
+    pub(crate) fn idle_timeout(&self, model: &str) -> Option<Duration> {
+        self.owned_idle_seconds
+            .get(model)
+            .copied()
+            .or(self.idle_unload_seconds)
+            .filter(|&seconds| seconds > 0)
+            .map(Duration::from_secs)
     }
     pub(crate) fn from_config(config: &Value) -> Result<Self> {
         Self::revision_from_config(config)?;
@@ -171,6 +203,20 @@ impl ModelLifecyclePolicy {
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PolicyCommand {
     Show {},
+    /// Save an idle-unload override for an existing owned GGUF model.
+    ModelIdle {
+        #[arg(long)]
+        expected_digest: String,
+        #[arg(long)]
+        model: String,
+        /// Zero keeps this model resident when idle. Otherwise use 1-86400 seconds.
+        #[arg(long, required_unless_present = "inherit", conflicts_with = "inherit")]
+        seconds: Option<u64>,
+        /// Remove this model's override and use the node's idle timeout.
+        #[arg(long)]
+        #[serde(default)]
+        inherit: bool,
+    },
     /// Save a node-local ceiling on active eef model exchanges; no request queue.
     RequestLimit {
         #[arg(long)]
@@ -257,16 +303,28 @@ impl PolicyRequest {
         if let Some(id) = &self.expected_runtime_id {
             crate::automation_occurrence::uuid(id)?;
         }
+        if let PolicyCommand::ModelIdle {
+            expected_digest,
+            model,
+            seconds,
+            inherit,
+        } = &self.command
+        {
+            crate::model_selection::validate_id(model)?;
+            if !valid_digest(expected_digest)
+                || (*inherit == seconds.is_some())
+                || seconds.is_some_and(|n| n > MAX_IDLE_SECONDS)
+            {
+                bail!("Choose an exact policy digest and idle timeout (0-86400 seconds) or inherit")
+            }
+        }
         if let PolicyCommand::RequestLimit {
             expected_digest,
             max_in_flight,
             default,
         } = &self.command
         {
-            if expected_digest.len() != 64
-                || !expected_digest
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            if !valid_digest(expected_digest)
                 || (*default == max_in_flight.is_some())
                 || max_in_flight.is_some_and(|n| !(1..=1024).contains(&n))
             {
@@ -289,11 +347,7 @@ impl PolicyRequest {
             interpreter_sampling,
         } = &self.command
         {
-            if expected_digest.len() != 64
-                || !expected_digest
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            {
+            if !valid_digest(expected_digest) {
                 bail!("Exact lowercase policy digest required")
             }
             if startup.is_none()
@@ -313,7 +367,7 @@ impl PolicyRequest {
             }
             // Validate scalar choices before consulting/mutating configuration.
             interpreter_sampling.validate()?;
-            if idle_unload_seconds.is_some_and(|n| n > 86400)
+            if idle_unload_seconds.is_some_and(|n| n > MAX_IDLE_SECONDS)
                 || queue_capacity.is_some_and(|n| !(1..=64).contains(&n))
                 || receipt_capacity.is_some_and(|n| !(1..=4096).contains(&n))
                 || load_timeout_seconds
@@ -330,9 +384,32 @@ impl PolicyRequest {
         Ok(())
     }
 }
+fn valid_digest(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 impl PolicyCommand {
     fn apply(&self, current: &ModelLifecyclePolicy, revision: u64) -> Result<ModelLifecyclePolicy> {
         let mut next = current.clone();
+        if let Self::ModelIdle {
+            expected_digest,
+            model,
+            seconds,
+            ..
+        } = self
+        {
+            if *expected_digest != current.versioned_digest(revision)? {
+                bail!("Saved model policy changed; inspect before a new owner decision")
+            }
+            if let Some(seconds) = seconds {
+                next.owned_idle_seconds.insert(model.clone(), *seconds);
+            } else {
+                next.owned_idle_seconds.remove(model);
+            }
+        }
         if let Self::RequestLimit {
             expected_digest,
             max_in_flight,
@@ -448,6 +525,13 @@ impl crate::NodeService {
             }
             let before = ModelLifecyclePolicy::from_config(config)?;
             let before_revision=ModelLifecyclePolicy::revision_from_config(config)?;
+            if let PolicyCommand::ModelIdle { model, seconds: Some(_), .. } = &request.command {
+                let matches = config.pointer("/models/llamacpp/slots").and_then(Value::as_array)
+                    .map_or(0, |slots| slots.iter().filter(|slot| slot["model_id"] == model.as_str()).count());
+                if matches != 1 {
+                    bail!("Idle override requires one exact existing owned GGUF selection");
+                }
+            }
             let saved = request.command.apply(&before,before_revision)?;
             let changed = saved != before;
             let saved_revision=if changed {before_revision.checked_add(1).ok_or_else(||anyhow::anyhow!("Model policy revision exhausted; no wrap or reset"))?}else{before_revision};
@@ -543,6 +627,11 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
     if matches!(request.command, PolicyCommand::Show {}) && r.changed {
         return false;
     }
+    if let PolicyCommand::ModelIdle { model, seconds, .. } = &request.command {
+        if r.saved_policy.owned_idle_seconds.get(model).copied() != *seconds {
+            return false;
+        }
+    }
     if let PolicyCommand::RequestLimit { max_in_flight, .. } = &request.command {
         if r.saved_policy.max_in_flight_requests != *max_in_flight {
             return false;
@@ -591,6 +680,61 @@ pub fn confirmed(value: &Value, request: &PolicyRequest) -> bool {
 mod tests {
     use super::*;
     use futures_util::FutureExt;
+
+    #[test]
+    fn owned_idle_overrides_use_exact_selection_and_keep_independent_timeouts() {
+        let (_directory, service) = fixture();
+        let show = || {
+            service
+                .model_lifecycle_policy_command(request(PolicyCommand::Show {}, None), false, true)
+                .unwrap()
+        };
+        let save = |digest: &str, model: &str, seconds: Option<u64>| {
+            let request = request(
+                PolicyCommand::ModelIdle {
+                    expected_digest: digest.into(),
+                    model: model.into(),
+                    seconds,
+                    inherit: seconds.is_none(),
+                },
+                None,
+            );
+            service
+                .model_lifecycle_policy_command(request.clone(), false, true)
+                .inspect(|reply| assert!(confirmed(reply, &request)))
+        };
+        let mut config = service.read_config().unwrap();
+        config["models"]["llamacpp"] = json!({"slots":[
+            {"model_id":"cold","model_path":"cold.gguf","port":8001},
+            {"model_id":"hot","model_path":"hot.gguf","port":8002}
+        ]});
+        config["models"]["ollama"] = json!({"selected":[{"model_id":"shared"}]});
+        config["model_lifecycle"] = json!({"idle_unload_seconds":45});
+        service.save_config(config).unwrap();
+        let original = show();
+        assert!(original["saved_policy"].get("owned_idle_seconds").is_none());
+        let original_digest = original["saved_digest"].as_str().unwrap();
+        assert!(save(original_digest, "shared", Some(5)).is_err());
+        assert!(save(original_digest, "cold", Some(MAX_IDLE_SECONDS + 1)).is_err());
+        assert_eq!(show()["saved_digest"], original["saved_digest"]);
+        let cold = save(original_digest, "cold", Some(5)).unwrap();
+        assert!(save(original_digest, "hot", Some(0)).is_err());
+        let hot = save(cold["saved_digest"].as_str().unwrap(), "hot", Some(0)).unwrap();
+        let policy: ModelLifecyclePolicy =
+            serde_json::from_value(hot["saved_policy"].clone()).unwrap();
+        assert_eq!(policy.idle_timeout("cold"), Some(Duration::from_secs(5)));
+        assert_eq!(policy.idle_timeout("hot"), None);
+        assert_eq!(policy.idle_timeout("other"), Some(Duration::from_secs(45)));
+        let restored = save(hot["saved_digest"].as_str().unwrap(), "hot", None).unwrap();
+        assert_eq!(
+            restored["saved_policy"]["owned_idle_seconds"],
+            json!({"cold":5})
+        );
+        let cleared = save(restored["saved_digest"].as_str().unwrap(), "cold", None).unwrap();
+        assert_eq!(cleared["saved_policy"], original["saved_policy"]);
+        assert_ne!(cleared["saved_digest"], original["saved_digest"]);
+    }
+
     #[test]
     fn request_ceiling_requires_exact_runtime_and_explicit_replacement() {
         let (directory, service) = fixture();

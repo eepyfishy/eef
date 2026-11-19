@@ -134,6 +134,7 @@ The optional `model_lifecycle` node configuration uses these validated fields:
 | --- | --- | --- |
 | `startup` | `eager` | `eager` starts configured GGUF selections; `manual` leaves them unloaded until an explicit load; `on_demand` leaves them cold until an authorized inference/owned preview needs them. CLI spelling: `on-demand`. |
 | `idle_unload_seconds` | null (disabled) | 1-86400 seconds; command value zero saves null/disabled. |
+| `owned_idle_seconds` | omitted (inherit) | Up to 64 overrides by exact owned GGUF model ID. 1–86,400 sets the timeout, zero disables automatic idle unloading for that model, and an absent entry inherits the node value. |
 | `queue_capacity` | 8 | 1-64 queued manual model operations. |
 | `receipt_capacity` | 256 | 1-4096 retained manual receipts, at least queue capacity. No replay-protection eviction. |
 | `load_timeout_seconds` | 300 | 1-3600 seconds for configured group startup, explicit and demand load health readiness. Existing request deadlines can end demand loading earlier. |
@@ -175,6 +176,30 @@ completed bootstrap or measured startup-cost/resource optimization.
 Startup/idle/native-control settings govern owned GGUF processes, not the user's
 shared Ollama service. The separate Ollama request preference below does not
 implement exclusive/shared ownership, observed residency or autonomous unload.
+
+### Per-model idle unloading (development)
+
+```text
+eefn model-lifecycle-policy --runtime RUNTIME_ID model-idle --expected-digest DIGEST --model MODEL_ID --seconds 30
+eef node model-lifecycle-policy --node NODE_ID --runtime RUNTIME_ID model-idle --expected-digest DIGEST --model MODEL_ID --seconds 0
+eefn model-lifecycle-policy --runtime RUNTIME_ID model-idle --expected-digest DIGEST --model MODEL_ID --inherit
+```
+
+Read the current runtime and saved digest with `model-lifecycle-policy show`.
+Setting an override requires one exact configured GGUF selection. Inheritance
+removes an entry, including entries for selections that have been removed.
+Overrides belong to node-local model IDs, so review them if reusing an ID for a
+different model. A positive override can reclaim one idle model even with the
+node-wide timer disabled. A zero override keeps that model out of the automatic
+idle-unload path. Explicit unload and runtime shutdown still apply.
+
+The saved change requires an explicit restart to take effect. While saved and
+applied settings differ, the existing revision fence pauses new automatic
+unloads. The timer rechecks the selected model's generation, idle interval and
+active inference pins when reserving it, then uses existing owned-process
+termination. The operation applies only to owned GGUF models. Empty overrides
+are omitted to preserve older configurations and their policy digests.
+Hosted verification is pending.
 
 ### Interpreter sampling preferences (unreleased)
 
