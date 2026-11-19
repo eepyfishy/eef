@@ -1,11 +1,100 @@
-# Two-PC diagnostic test (v0.4.0a3)
+# Two-PC acceptance for v0.4.0
+
+Use a matching v0.4.0 development candidate on two physical Windows PCs.
+Record the source revision, executable versions and package SHA-256 values.
+These steps use commands added after the published alphas. For the older
+package, see the [alpha diagnostic](#older-alpha-diagnostic-v040a3).
+
+## Pair the nodes and verify the connection
+
+1. Use two owner-approved PCs on a private LAN or overlay. Back up their
+   configuration and journals before an upgrade. Run eef and the input node
+   on PC A, and the executor node on PC B, as ordinary users. Exercise the
+   command path with both roles running without the browser UI.
+2. On PC A, use `eefn setup --local` to inspect same-PC enrollment. If needed,
+   use `eefn setup --enroll-local --restart-coordinator` with owner approval for
+   the restart. On PC B, follow the [private pairing flow](NODE-CREDENTIALS.md)
+   using its existing stable node ID. Transfer the invitation privately and
+   verify that the coordinator has applied its trust settings.
+3. Run `eefn setup` and `eefn network diagnose --json` on both PCs. From the
+   coordinator run `eef diagnostics --node NODE_B --samples 5 --json`.
+   Record both node IDs, versions, the pinned connection and application probe
+   results. Successful OS ping alone checks only network reachability.
+4. Confirm PC A cannot see PC B's remote capabilities before disclosure. On
+   the coordinator run `eef discovery grant --requester NODE_A --target NODE_B`
+   and restart to apply it. Verify discovery works in that direction and is
+   still denied in the reverse direction.
+
+## Run a reviewed request across both PCs
+
+Use an already installed, owner-selected text interpreter on PC B. Record the
+exact backend, model and runtime version. Keep PC A free of an applied
+interpreter for this case. Configure PC B's interpreter sharing, approve the
+coordinator's origin/provider policy and apply PC A's opt-in preference.
+Follow the [interpreter policy commands](INTERPRETER-POLICIES.md) and
+[network interpretation setup](NETWORK-INPUT-WORKFLOW.md#choose-where-interpretation-happens).
+
+1. On PC A, run `eefn requests input --text "Inspect system information on NODE_B"`
+   using PC B's actual node selector. Follow any clarification request. Use
+   `eefn requests plan JOB_ID --json` to verify PC A is still the origin and the
+   plan binds the intended operation on PC B. Record incorrect plans, unavailable
+   interpretation and unresolved clarification as incomplete cases.
+2. On PC A, check the exact plan using `eef requests inspect JOB_ID --json`.
+   Use the [owner approval command](COMMANDS.md#bounded-owner-request-approval-unreleased-after-alpha6)
+   with its retained revision and digest. Confirm approval issued no grant.
+   From the input node, use the new approval revision and digest with the
+   [explicit execution command](COMMANDS.md#explicit-approved-request-execution-unreleased-after-alpha6).
+3. On PC A, use `eefn jobs get JOB_ID --json` and
+   `eefn requests result JOB_ID --grant-id GRANT_UUID --json`. Record the exact
+   grant, origin, executor and final state. Compare the retained output with
+   the approved operation on PC B. From PC B, inspect the same result through
+   its node client and confirm that the origin check denies it.
+4. With separately approved test work, exercise an executor disconnect or
+   restart and a coordinator restart. Record the last acknowledged attempt,
+   stable node IDs after reconnection and retained status. Verify the old grant
+   is never replayed and unknown outcomes stay unconfirmed without matching
+   retained evidence.
+
+## Run a bounded continuous source across both PCs
+
+Use an owner-approved physical camera and scene on PC B. Select a resource with
+`eefn workloads camera-sources` and confirm its applied workload permission and
+local camera listening consent. Follow the [camera workflow](CAMERA-MOTION.md).
+From PC A, submit `eefn requests submit-camera --source-node NODE_B --camera RESOURCE_ID --frames 30`.
+Verify the reviewed source and limits, then use separate session approval and
+execution. Record the consumed grant acknowledgement, source and event counts,
+event bytes and completion state. Verify repeated camera payloads stay on PC B
+while the coordinator receives bounded useful events.
+
+For the [local vision case](LOCAL-EVENT-VISION.md), separately approve the exact
+local VLM and limits. Record model call counts and bytes sent to the coordinator.
+On separate admitted work, exercise stop and local listening revocation. Verify
+that capture ceases, the capture reservation becomes reusable after observed
+exit, and normal commands remain responsive. A durable stop receipt records
+intent. Use independent observations for process or device exit and retain any
+uncertainty in the result.
+
+## Record the outcome
+
+Record pass, fail or unverified for each case with the candidate revision,
+physical node roles, network path, runtime/model versions, permissions and
+evidence. Redact secrets, private model input, media, paths and addresses from
+shared reports. Keep loopback, fake-source and mocked-inference results separate.
+
+Use this record alongside the [remaining v0.4.0 gates](ROADMAP-CORE.md#acceptance-and-remaining-scope),
+including negative cases and real model quality. Track
+[MSI rollback](MSI-ROLLBACK-VALIDATION.md), [signing](SIGNING.md) and
+[Defender](ANTIVIRUS.md) evidence separately. See [STATUS.md](STATUS.md) for the
+currently verified source checkpoints.
+
+## Older alpha diagnostic (v0.4.0a3)
 
 Use the same alpha version on both PCs. These steps do not require a model, shell
 permission, filesystem grants or remote access to Windows. Keep both machines on
 the same reachable private LAN/overlay. Addresses are runtime configuration, not
 built-in Radmin protocol modes.
 
-## Install and pair
+### Install and pair
 
 1. Close older eef/eefn processes and back up their config/database. Install eef
    and eefn on the first PC, and eefn on the second. Launch from Start > eef.
@@ -32,7 +121,7 @@ bypass. If the private network is unavailable, the node remains controllable
 locally and reports reconnecting/waiting. A successful OS ping alone does not
 prove the authenticated eef protocol works.
 
-## Collect explicit diagnostics
+### Collect explicit diagnostics
 
 From the node directory on either PC:
 `eefn.exe network diagnose --json`.
@@ -53,9 +142,11 @@ local commands against the connected second node through eef. No backdoor or
 public remote-control endpoint is added. Other remote configuration still
 requires the node owner's approval.
 
-## Acceptance checklist
+### Acceptance checklist
 
-- Both roles report `0.4.0-alpha.2`; second-node probe succeeds with matching version.
+- Both roles report `0.4.0-alpha.3` as listed in the
+  [alpha release notes](RELEASE-0.4.0a3.md). The second-node probe succeeds with
+  the matching version.
 - Rename or change advertisement, restart, and confirm the stable node ID remains.
 - Stop/restart the second node; eef records disconnect/reconnect and probes recover.
 - Stop/restart eef; nodes reconnect without duplicate registrations or auto-replayed jobs.
@@ -66,7 +157,7 @@ requires the node owner's approval.
 Do not turn on powerful feature permissions merely to pass a connectivity test.
 Models, media, files, processes and automations need separate explicit acceptance.
 
-## Optional coordinator on the second PC
+### Optional coordinator on the second PC
 
 eef may also be installed there, without making a second machine type. Test one
 coordinator at a time with separate state; deliberately switch node endpoints/

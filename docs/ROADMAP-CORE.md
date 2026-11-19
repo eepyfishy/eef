@@ -1801,7 +1801,9 @@ validation/plan/grant -> Node B load/local execution -> status/result -> Node A.
 Record actual node IDs and remote execution evidence, network path, model/runtime
 versions, permission decisions and measured payload/event counts. Also verify a
 continuous pipeline keeps repeated payloads local while eef receives bounded
-useful events. One-PC fixtures and mocked inference remain separately labelled.
+useful events. Use the [two-PC acceptance checklist](TWO_PC_TEST.md) to record
+the candidate and each outcome. One-PC fixtures and mocked inference remain
+separately labelled.
 
 Negative gates: wrong/expired/replayed grants, unauthorized peer lookup/session,
 permission revocation, malformed/hallucinated interpretation, LM/backend crash,
