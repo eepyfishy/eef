@@ -3,6 +3,23 @@
 Newest checkpoints appear first. Earlier entries retain the implementation and
 verification boundaries at their own checkpoint, not claims about later code.
 
+## In development: final reports and owned-model startup observations
+
+Source `ae3d324` passes all four jobs in
+[run 44474685923](https://github.com/eepyfishy/eef/actions/runs/44474685923).
+Windows/headless passed 1,889 Rust tests with one ignored across 18 groups and
+all 37 native suites. The scoped changes move one-shot final persistence to a
+bounded native worker and omit heartbeat collection time from placement scores.
+The public camera and microphone stop cases still pass. See the
+[final report contract](EXECUTION-GRANTS.md) and [heartbeat scope](HEARTBEAT-TELEMETRY.md).
+
+Source `fe1565c` passes all four jobs in
+[run 44475879319](https://github.com/eepyfishy/eef/actions/runs/44475879319).
+Windows/headless passed 1,890 Rust tests with one ignored across 18 groups and
+all 37 native suites. A public model inventory fixture confirms a bounded eager
+startup sample and per-slot Windows job commit under a synthetic provider.
+See the [startup observation contract](MODEL-METADATA.md#observed-owned-model-startup-development).
+
 ## In development: owned private camera vision transport
 
 Source `1528fcf` passes all four hosted jobs in

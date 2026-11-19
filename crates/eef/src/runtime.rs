@@ -250,6 +250,7 @@ impl Runtime {
             &request,
             |node_id| connected.contains_key(node_id),
             query.limit,
+            query.output_token_budget,
         );
         report["schema_version"] = json!(1);
         report["success"] = json!(true);
@@ -259,7 +260,7 @@ impl Runtime {
         report["role"] = json!(query.role);
         report["execution_authorized"] = json!(false);
         report["note"] = json!(
-            "Current connected registry candidates in placement order. Cold-model memory hints compare an estimate with the latest host observation and reserve no resources. Managed-exchange gate counts describe node admission snapshots. Missing observations remain unknown. This read starts no work."
+            "Current connected registry candidates in placement order. Cold-model memory and owned duration hints are advisory. Duration covers only startup and estimated decoding for the requested budget. Managed-exchange gate counts describe node admission snapshots. Missing observations remain unknown. This read starts no work and reserves no resources."
         );
         Ok(report)
     }

@@ -43,7 +43,7 @@ async function verifyScenario(f,mode) {
  const estimatedRamMiB=Math.ceil(totalmem()/(1024*1024))*4;
  await f.sourceCli(['models','select-gguf','--model',model,'--file',artifact,'--projector',projector,
   '--context','1024','--gpu-layers','0','--cpu-threads','2','--estimated-ram-mib',String(estimatedRamMiB)]);
- const route=()=>f.owner(['models','route','--capability','vlm.analyze','--node',f.sourceId,'--backend','llamacpp','--model',model]);
+ const route=(extra=[])=>f.owner(['models','route','--capability','vlm.analyze','--node',f.sourceId,'--backend','llamacpp','--model',model,...extra]);
  const exists=path=>readFile(path).then(()=>true,()=>false);
  if(mode==='complete'){
   const pending=(await f.sourceCli(['model-lifecycle-policy','show'])).result;
@@ -144,6 +144,17 @@ async function verifyScenario(f,mode) {
   await f.until(decode,'completed owned reply publishes decode timing');
   assert.deepEqual(await decode(),{schema_version:1,vision:{generation:original.generation,generated_tokens:4,decode_time_us:2500}});
   console.log('Owned model decode inventory observation passed: bounded vision timing stayed separate from the retained analysis text.');
+  assert.equal((await route()).candidates[0].owned_duration_hint,undefined);
+  const preview=()=>route(['--output-token-budget','32']);
+  await f.until(async()=>(await preview()).candidates[0]?.owned_duration_hint,'registered decode timing reaches placement');
+  const estimate=await preview();
+  assert.deepEqual(estimate.candidates[0].owned_duration_hint,{
+   output_token_budget:32,startup_us:0,decode_us:20000,total_us:20000
+  });
+  assert.equal(estimate.execution_authorized,false);
+  assert.equal(estimate.placement_observation.capacity_reserved,false);
+  assert.equal((await current()).active_requests,0);
+  console.log('Owned model duration placement observation passed: the public preview estimated decoding without issuing work.');
  } else {
   assert.equal(saved.workload.state,'unknown');
   assert.equal(result.result.report_type,'coordinator_workload_uncertain_result');

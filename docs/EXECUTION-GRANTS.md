@@ -110,9 +110,11 @@ Native persistence frees its slot before notifying an observer.
 
 Held-journal tests exercise a late exact checkpoint, immediate admission denial
 while its slot remains occupied, and nonblocking cancellation and runtime
-shutdown with one retained uncertainty report. Hosted verification is pending.
+shutdown with one retained uncertainty report. Corrected source `ae3d324` passed
+all four [hosted jobs](https://github.com/eepyfishy/eef/actions/runs/44474685923)
+and retained the public process and capture stop cases.
 
-The first hosted candidate, `3238516`, failed both Linux jobs in
+The first hosted candidate, `3238516`, failed the workspace tests in all four jobs in
 [run 44473414210](https://github.com/eepyfishy/eef/actions/runs/44473414210).
 Two peer fixtures read the journal before queued uncertainty was written. A
 coordinator stop fixture also contended for the active-job lock while waiting

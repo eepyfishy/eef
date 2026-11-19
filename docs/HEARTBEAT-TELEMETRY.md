@@ -42,9 +42,10 @@ telemetry. Capability and model placement now omit it from ranking. A longer
 hardware inventory therefore cannot outweigh a lower reported node load.
 The heartbeat field and diagnostic observations keep the same wire shape.
 The existing scope, freshness, load, capability and model readiness checks still
-apply. Measured link latency and model startup-cost scheduling remain open.
+apply. Measured link latency remains open.
 The regressions use equal candidates with conflicting load and collection time.
-Hosted verification is pending.
+Source `ae3d324` passed all four jobs in
+[hosted run 44474685923](https://github.com/eepyfishy/eef/actions/runs/44474685923).
 
 ## Available host RAM and placement (development)
 
@@ -66,9 +67,10 @@ comparison as `cold_memory_hint` without loading the model.
 
 Missing estimates, missing or stale observations and resident models keep
 ordinary placement. The comparison uses host RAM and does not reserve memory,
-infer VRAM, waive local limits or transfer execution authority. Full scheduling
-by startup cost and measured throughput remains open. Hosted verification is
-pending.
+infer VRAM, waive local limits or transfer execution authority. The separate
+[owned-model duration hint](MODEL-METADATA.md#owned-model-duration-hints-development)
+has a narrower scope than end-to-end scheduling by measured workload cost.
+Hosted verification of the RAM comparison is pending.
 
 ## Verification scope
 

@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use eefn::NodeServer;
+use eefn::model_metadata::{ModelLifecycle, OwnedModelDecode, OwnedModelLoad, OwnedModelLoadKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::warn;
@@ -48,6 +49,10 @@ pub struct ModelSpec {
     pub size_bytes: u64,
     #[serde(default)]
     pub model_metadata: Option<eefn::model_metadata::ModelMetadata>,
+    #[serde(skip)]
+    pub(crate) owned_load: Option<OwnedModelLoad>,
+    #[serde(skip)]
+    pub(crate) owned_decode: Option<OwnedModelDecode>,
 }
 
 fn unknown() -> String {
@@ -73,12 +78,16 @@ pub struct RouteQuery {
     pub node_id: Option<String>,
     pub backend: Option<String>,
     pub model_id: Option<String>,
+    pub output_token_budget: Option<u64>,
     #[serde(default = "route_limit")]
     pub limit: usize,
 }
+pub(crate) const MAX_MODEL_OUTPUT_TOKENS: u64 = 32_768;
+
 fn route_limit() -> usize {
     8
 }
+
 fn role_identifier(role: &str) -> Result<()> {
     if role.is_empty()
         || role.len() > 64
@@ -105,6 +114,12 @@ impl RouteQuery {
         };
         if !(1..=32).contains(&self.limit) {
             bail!("route preview limit must be 1-32")
+        }
+        if self
+            .output_token_budget
+            .is_some_and(|budget| !(1..=MAX_MODEL_OUTPUT_TOKENS).contains(&budget))
+        {
+            bail!("output token budget must be 1-32768")
         }
         if let Some(role) = &self.role {
             role_identifier(role)?;
@@ -226,6 +241,8 @@ impl ModelRegistry {
                 },
                 size_bytes: 0,
                 model_metadata: Some(metadata),
+                owned_load: advertised.last_successful_owned_load,
+                owned_decode: advertised.last_successful_owned_decode,
             });
         }
         let mut state = self.state.write().expect("model lock");
@@ -318,11 +335,29 @@ impl ModelRegistry {
         request: &ModelRequest,
         tiers: &BTreeMap<String, Vec<String>>,
     ) -> Vec<ModelSpec> {
+        self.route_for_budget(request, tiers, None, |_| true)
+    }
+
+    pub(crate) fn route_for_budget(
+        &self,
+        request: &ModelRequest,
+        tiers: &BTreeMap<String, Vec<String>>,
+        output_token_budget: Option<u64>,
+        permitted: impl Fn(&str) -> bool,
+    ) -> Vec<ModelSpec> {
         let state = self.state.read().expect("model lock");
-        Self::matching_routes(&state, request, tiers, Instant::now())
-            .into_iter()
-            .filter(|spec| !Self::gate_full(&state, &spec.node_id))
-            .collect()
+        let eligible = |node_id: &str| permitted(node_id) && !Self::gate_full(&state, node_id);
+        Self::matching_routes(
+            &state,
+            request,
+            tiers,
+            Instant::now(),
+            output_token_budget,
+            &eligible,
+        )
+        .into_iter()
+        .filter(|spec| eligible(&spec.node_id))
+        .collect()
     }
 
     fn gate_full(state: &RegistryState, node_id: &str) -> bool {
@@ -339,6 +374,7 @@ impl ModelRegistry {
         request: &ModelRequest,
         connected: impl Fn(&str) -> bool,
         limit: usize,
+        output_token_budget: Option<u64>,
     ) -> Value {
         let state = self.state.read().expect("model lock");
         let mut models = Vec::new();
@@ -346,7 +382,15 @@ impl ModelRegistry {
         let mut full_models = 0;
         let mut full_nodes = std::collections::BTreeSet::new();
         let now = Instant::now();
-        for spec in Self::matching_routes(&state, request, &Default::default(), now) {
+        let eligible = |node_id: &str| connected(node_id) && !Self::gate_full(&state, node_id);
+        for spec in Self::matching_routes(
+            &state,
+            request,
+            &Default::default(),
+            now,
+            output_token_budget,
+            eligible,
+        ) {
             if !connected(&spec.node_id) {
                 continue;
             }
@@ -368,6 +412,11 @@ impl ModelRegistry {
                         "available_bytes": hint.available_bytes,
                     });
                 }
+                if let Some(estimate) = output_token_budget
+                    .and_then(|budget| duration_estimate(&spec, request.modality, budget))
+                {
+                    candidate["owned_duration_hint"] = json!(estimate);
+                }
                 models.push(candidate);
             }
         }
@@ -382,6 +431,8 @@ impl ModelRegistry {
         request: &ModelRequest,
         tiers: &BTreeMap<String, Vec<String>>,
         now: Instant,
+        output_token_budget: Option<u64>,
+        eligible: impl Fn(&str) -> bool,
     ) -> Vec<ModelSpec> {
         let mut chain = Vec::new();
         let exceeds = |spec: &ModelSpec| {
@@ -389,10 +440,34 @@ impl ModelRegistry {
                 .as_ref()
                 .is_some_and(ColdMemoryHint::exceeds_available)
         };
-        let compare = |left: &ModelSpec, right: &ModelSpec| {
-            exceeds(left)
-                .cmp(&exceeds(right))
-                .then_with(|| model_score(right, state).total_cmp(&model_score(left, state)))
+        let sort = |providers: &mut [ModelSpec]| {
+            let estimate = |spec: &ModelSpec| {
+                output_token_budget
+                    .and_then(|budget| duration_estimate(spec, request.modality, budget))
+            };
+            // A candidate without evidence keeps the old ordering for its group.
+            // Apply one ordering to the whole group, including ties.
+            let mut competing = providers.iter().filter(|spec| eligible(&spec.node_id));
+            let compare_duration = output_token_budget.is_some()
+                && competing.next().is_some_and(|first| {
+                    estimate(first).is_some()
+                        && competing
+                            .all(|spec| spec.model_id == first.model_id && estimate(spec).is_some())
+                });
+            let duration_rank = |spec: &ModelSpec| {
+                if compare_duration {
+                    estimate(spec).map_or(u64::MAX, |hint| hint.total_us)
+                } else {
+                    0
+                }
+            };
+            providers.sort_by(|left, right| {
+                exceeds(left)
+                    .cmp(&exceeds(right))
+                    .then_with(|| duration_rank(left).cmp(&duration_rank(right)))
+                    .then_with(|| model_score(right, state).total_cmp(&model_score(left, state)))
+                    .then_with(|| left.model_id.cmp(&right.model_id))
+            });
         };
         let ids = if let Some(id) = &request.model_id {
             vec![id.clone()]
@@ -407,7 +482,7 @@ impl ModelRegistry {
         for id in &ids {
             let mut providers = state.models.get(id).cloned().unwrap_or_default();
             providers.retain(|spec| available(spec, request));
-            providers.sort_by(&compare);
+            sort(&mut providers);
             chain.extend(providers);
         }
         if request.model_id.is_none() {
@@ -418,9 +493,7 @@ impl ModelRegistry {
                 .filter(|spec| !ids.contains(&spec.model_id) && available(spec, request))
                 .cloned()
                 .collect::<Vec<_>>();
-            extra.sort_by(|left, right| {
-                compare(left, right).then_with(|| left.model_id.cmp(&right.model_id))
-            });
+            sort(&mut extra);
             chain.extend(extra);
         }
         chain
@@ -442,6 +515,53 @@ impl ModelRegistry {
             spec.status = status;
         }
     }
+}
+
+#[derive(Serialize)]
+struct OwnedDurationHint {
+    output_token_budget: u64,
+    startup_us: u64,
+    decode_us: u64,
+    total_us: u64,
+}
+
+fn duration_estimate(
+    spec: &ModelSpec,
+    modality: Modality,
+    budget: u64,
+) -> Option<OwnedDurationHint> {
+    let startup = spec.owned_load?;
+    let decode = spec.owned_decode?;
+    let sample = match modality {
+        Modality::Text => decode.text,
+        Modality::Vlm => decode.vision,
+        Modality::Other => None,
+    }?;
+    if sample.generation != startup.generation || sample.generated_tokens == 0 {
+        return None;
+    }
+    let startup_us = match (spec.status, spec.model_metadata.as_ref()?.lifecycle?) {
+        (
+            ModelStatus::Warm,
+            ModelLifecycle::Ready | ModelLifecycle::Active | ModelLifecycle::WarmIdle,
+        ) => 0,
+        (ModelStatus::Unloaded, ModelLifecycle::Unloaded)
+            if startup.kind == OwnedModelLoadKind::SingleSlot =>
+        {
+            startup.elapsed_ms.checked_mul(1000)?
+        }
+        _ => return None,
+    };
+    let decode_us = sample
+        .decode_time_us
+        .checked_mul(budget)?
+        .div_ceil(u64::from(sample.generated_tokens));
+    Some(OwnedDurationHint {
+        output_token_budget: budget,
+        startup_us,
+        decode_us,
+        total_us: startup_us.checked_add(decode_us)?,
+    })
 }
 
 fn available(spec: &ModelSpec, request: &ModelRequest) -> bool {
@@ -764,7 +884,7 @@ mod tests {
         let request = text_request();
         let connected = |id: &str| id != "offline";
         let original = json!(registry.list());
-        let report = registry.preview(&request, connected, 1);
+        let report = registry.preview(&request, connected, 1, None);
         assert_eq!(report["matched_count"], 1);
         assert_eq!(report["candidates"][0]["instance"]["node_id"], "b");
         assert_eq!(
@@ -779,7 +899,7 @@ mod tests {
             ..request.clone()
         };
         assert_eq!(
-            registry.preview(&exact, connected, 1)["placement_observation"]["full_gate_model_count"],
+            registry.preview(&exact, connected, 1, None)["placement_observation"]["full_gate_model_count"],
             1
         );
         for constraints in [
@@ -791,7 +911,7 @@ mod tests {
                 constraints,
                 ..request.clone()
             };
-            let report = registry.preview(&filtered, connected, 1);
+            let report = registry.preview(&filtered, connected, 1, None);
             assert_eq!(report["matched_count"], 0);
             assert_eq!(
                 report["placement_observation"]["status"],
@@ -799,7 +919,7 @@ mod tests {
             );
             assert_eq!(report["placement_observation"]["full_gate_node_count"], 0);
         }
-        let disconnected = registry.preview(&request, |_| false, 1);
+        let disconnected = registry.preview(&request, |_| false, 1, None);
         assert_eq!(
             disconnected["placement_observation"]["status"],
             "no_matching_model"
@@ -818,7 +938,7 @@ mod tests {
         registry
             .register_snapshot("b", &[model("chosen")], Some(&full))
             .unwrap();
-        let busy = registry.preview(&request, connected, 1);
+        let busy = registry.preview(&request, connected, 1, None);
         assert_eq!(busy["matched_count"], 0);
         assert_eq!(busy["candidates"], json!([]));
         assert_eq!(
@@ -838,7 +958,7 @@ mod tests {
         registry
             .register_remote("b", &[model("chosen"), model("spare")])
             .unwrap();
-        let legacy = registry.preview(&request, connected, 1);
+        let legacy = registry.preview(&request, connected, 1, None);
         assert_eq!(legacy["matched_count"], 2);
         assert_eq!(legacy["candidates"].as_array().unwrap().len(), 1);
         assert_eq!(legacy["truncated"], true);
@@ -1018,6 +1138,8 @@ mod tests {
                 status,
                 size_bytes: 0,
                 model_metadata: None,
+                owned_load: None,
+                owned_decode: None,
             });
         }
         // No sockets/models are started. Offline first provider must leave the
@@ -1291,6 +1413,8 @@ mod tests {
                 status: ModelStatus::Unloaded,
                 size_bytes: 0,
                 model_metadata: None,
+                owned_load: None,
+                owned_decode: None,
             });
         }
         registry.update_metrics("busy", 0.9, 1.0);
@@ -1351,7 +1475,7 @@ mod tests {
         request.model_id = Some("shared".into());
         let route = |request: &ModelRequest| registry.route(request, &Default::default());
         assert_eq!(route(&request)[0].node_id, "busy");
-        let preview = registry.preview(&request, |_| true, 8);
+        let preview = registry.preview(&request, |_| true, 8, None);
         assert_eq!(
             preview["candidates"][0]["cold_memory_hint"]["status"],
             "estimate_fits"
@@ -1369,7 +1493,7 @@ mod tests {
         registry.update_heartbeat("quiet", 0.1, Some((0, now)));
         assert_eq!(route(&request)[0].node_id, "quiet");
         assert!(
-            registry.preview(&request, |_| true, 8)["candidates"][0]
+            registry.preview(&request, |_| true, 8, None)["candidates"][0]
                 .get("cold_memory_hint")
                 .is_none()
         );
@@ -1384,9 +1508,113 @@ mod tests {
         registry.update_heartbeat("quiet", 0.1, Some((0, now + Duration::from_secs(60))));
         assert_eq!(route(&request)[0].node_id, "quiet");
         assert!(
-            registry.preview(&request, |_| true, 8)["candidates"][0]
+            registry.preview(&request, |_| true, 8, None)["candidates"][0]
                 .get("cold_memory_hint")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn estimated_duration_ranks_comparable_models_within_existing_scope() {
+        let registry = ModelRegistry::default();
+        let advertised = |lifecycle, kind, generation, decode_time_us| {
+            let mut metadata = eefn::model_metadata::ModelMetadata::from_legacy(Some("vlm"));
+            metadata.lifecycle = Some(lifecycle);
+            metadata.resource_estimates.ram_mb = Some(2);
+            json!({
+                "model_id":"shared","backend":"llamacpp","model_metadata":metadata,
+                "last_successful_owned_load":{
+                    "schema_version":1,"kind":kind,"generation":9,"elapsed_ms":50,
+                },
+                "last_successful_owned_decode":{
+                    "schema_version":1,"text":{"generation":generation,"generated_tokens":10,"decode_time_us":decode_time_us},
+                },
+            })
+        };
+        let warm = advertised(ModelLifecycle::Ready, "eager_group", 9, 40_000);
+        let cold = advertised(ModelLifecycle::Unloaded, "single_slot", 9, 10_000);
+        registry.register_remote("warm", &[warm]).unwrap();
+        registry
+            .register_remote("cold", std::slice::from_ref(&cold))
+            .unwrap();
+
+        let mut request = text_request();
+        request.model_id = Some("shared".into());
+        let route =
+            |budget| registry.route_for_budget(&request, &Default::default(), budget, |_| true);
+        assert_eq!(route(None)[0].node_id, "warm");
+        assert_eq!(route(Some(10))[0].node_id, "warm");
+        assert_eq!(route(Some(100))[0].node_id, "cold");
+        assert_eq!(
+            registry.preview(&request, |_| true, 3, Some(100))["candidates"][0]["owned_duration_hint"],
+            json!({"output_token_budget":100,"startup_us":50000,"decode_us":100000,"total_us":150000})
+        );
+        let vision = ModelRequest {
+            modality: Modality::Vlm,
+            ..request.clone()
+        };
+        let vision_route = registry.preview(&vision, |_| true, 3, Some(100));
+        assert_eq!(vision_route["candidates"][0]["instance"]["node_id"], "warm");
+        assert!(
+            vision_route["candidates"][0]
+                .get("owned_duration_hint")
+                .is_none()
+        );
+
+        let mut other_id = cold.clone();
+        other_id["model_id"] = json!("not-shared");
+        registry.register_remote("other", &[other_id]).unwrap();
+        let unconstrained = ModelRequest {
+            model_id: None,
+            ..request.clone()
+        };
+        assert_eq!(
+            registry.route_for_budget(&unconstrained, &Default::default(), Some(100), |_| true)[0]
+                .node_id,
+            "warm"
+        );
+
+        // An unmeasured eligible contender falls back to the old ranking.
+        let mut legacy = cold.clone();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("last_successful_owned_decode");
+        registry
+            .register_remote("legacy", std::slice::from_ref(&legacy))
+            .unwrap();
+        assert_eq!(route(Some(100))[0].node_id, "warm");
+        assert_eq!(
+            registry.route_for_budget(&request, &Default::default(), Some(100), |id| id
+                != "legacy")[0]
+                .node_id,
+            "cold"
+        );
+        let full = json!({"schema_version":1,"limit":1,"in_flight":1,"available":0,
+            "queueing":false,"provider_execution_observed":false});
+        registry
+            .register_snapshot("legacy", &[legacy], Some(&full))
+            .unwrap();
+        assert_eq!(route(Some(100))[0].node_id, "cold");
+
+        registry.update_heartbeat(
+            "cold",
+            0.0,
+            Some((0, Instant::now() + Duration::from_secs(60))),
+        );
+        assert_eq!(route(Some(100))[0].node_id, "warm");
+        registry.clear_memory("cold");
+        for invalid in [
+            advertised(ModelLifecycle::Unloaded, "single_slot", 8, 10_000),
+            advertised(ModelLifecycle::Unloaded, "eager_group", 9, 10_000),
+        ] {
+            registry.register_remote("cold", &[invalid]).unwrap();
+            assert_eq!(route(Some(100))[0].node_id, "warm");
+            assert!(
+                registry.preview(&request, |_| true, 3, Some(100))["candidates"][1]
+                    .get("owned_duration_hint")
+                    .is_none()
+            );
+        }
     }
 }

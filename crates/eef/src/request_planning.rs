@@ -1051,23 +1051,21 @@ async fn bind_tasks(
                 bail!("Model planning currently supports exact node/backend/role constraints only")
             }
             validate_model_input(&task.params, task.capability == "vlm.analyze")?;
-            let candidates = models
-                .route(
-                    &ModelRequest {
-                        modality: if task.capability == "vlm.analyze" {
-                            Modality::Vlm
-                        } else {
-                            Modality::Text
-                        },
-                        tier: task.params["tier"].as_str().map(str::to_owned),
-                        model_id: task.params["model_id"].as_str().map(str::to_owned),
-                        constraints: constraints.clone(),
+            let candidates = models.route_for_budget(
+                &ModelRequest {
+                    modality: if task.capability == "vlm.analyze" {
+                        Modality::Vlm
+                    } else {
+                        Modality::Text
                     },
-                    tiers,
-                )
-                .into_iter()
-                .filter(|spec| permitted.is_none_or(|nodes| nodes.contains(&spec.node_id)))
-                .collect::<Vec<_>>();
+                    tier: task.params["tier"].as_str().map(str::to_owned),
+                    model_id: task.params["model_id"].as_str().map(str::to_owned),
+                    constraints: constraints.clone(),
+                },
+                tiers,
+                task.params.get("max_tokens").and_then(Value::as_u64),
+                |id| permitted.is_none_or(|nodes| nodes.contains(id)),
+            );
             if candidates.len() > 256 {
                 bail!("Too many planning candidates; constrain the model route")
             }
@@ -1196,10 +1194,10 @@ fn validate_model_input(params: &Value, vision: bool) -> Result<()> {
     {
         bail!("Invalid temperature")
     }
-    if params
-        .get("max_tokens")
-        .is_some_and(|v| v.as_u64().is_none_or(|n| n == 0 || n > 32768))
-    {
+    if params.get("max_tokens").is_some_and(|v| {
+        v.as_u64()
+            .is_none_or(|n| !(1..=crate::model::MAX_MODEL_OUTPUT_TOKENS).contains(&n))
+    }) {
         bail!("Invalid token limit")
     }
     if let Some(model) = params.get("model_id") {
@@ -1655,6 +1653,8 @@ pub(crate) mod tests {
             status: crate::model::ModelStatus::Unloaded,
             size_bytes: 0,
             model_metadata: None,
+            owned_load: None,
+            owned_decode: None,
         };
         assert!(current_model_matches(&peer, &spec));
         peer.backend = Some("llamacpp".into());

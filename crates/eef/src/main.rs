@@ -281,6 +281,9 @@ enum ModelsCommand {
         backend: Option<String>,
         #[arg(long)]
         model: Option<String>,
+        /// Estimate owned-model startup and decode time at this output budget.
+        #[arg(long)]
+        output_token_budget: Option<u64>,
         #[arg(long, default_value_t = 8)]
         limit: usize,
     },
@@ -3002,6 +3005,7 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                     node,
                     backend,
                     model,
+                    output_token_budget,
                     limit,
                 },
         } => {
@@ -3009,6 +3013,9 @@ async fn run_command(args: &Args, command: &Command) -> Result<serde_json::Value
                 ("capability", capability.clone()),
                 ("limit", limit.to_string()),
             ];
+            if let Some(budget) = output_token_budget {
+                query.push(("output_token_budget", budget.to_string()));
+            }
             for (key, value) in [
                 ("role", role),
                 ("node_id", node),

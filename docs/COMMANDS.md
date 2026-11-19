@@ -1981,6 +1981,11 @@ retries it. The executing node still makes the final admission decision. Existin
 `candidates`, `matched_count`, `truncated` and authorization fields keep their
 meaning; this is an additive observation, not a new execution protocol.
 
+In development, add `--output-token-budget 128` to preview estimated startup
+and decoding for that many output tokens. The allowed budget is 1–32,768.
+See [owned-model duration hints](MODEL-METADATA.md#owned-model-duration-hints-development)
+for the ranking rules, units and evidence required.
+
 Durable jobs may use `generate_text` or `analyze_image` with
 `constraints.model_role` and the existing node/model constraints. Routing does
 not escape the requested role/backend when falling back across tiers. Image

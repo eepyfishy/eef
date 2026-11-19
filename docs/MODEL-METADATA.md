@@ -65,9 +65,13 @@ This optional sibling leaves `model_metadata` schema 1 intact. Reports omit
 absent, invalid, unsupported-version or shared-backend samples. The allowed
 fields carry neither paths nor process IDs. Inventory reads use existing
 registration evidence and issue no load or inference. The sample is node-reported
-history for inspection. Model rank and admission do not depend on it. Compared
-startup, inference throughput and resource headroom still need verification
-before measured placement can use them. Hosted verification is pending.
+history for inspection and can contribute to the duration hint below. It
+provides no evidence of free resources or authorization.
+Source `fe1565c` passed all four jobs in
+[hosted run 44475879319](https://github.com/eepyfishy/eef/actions/runs/44475879319).
+The Windows command fixture confirms eager startup and per-slot job accounting
+with a synthetic provider. A focused test covers historical single-slot timing
+through unload and excludes failed readiness.
 
 ### Observed owned-model decoding (development)
 
@@ -85,8 +89,30 @@ time excludes startup, prompt processing and transport. The inventory retains
 the last sample per operation within
 the current runtime, including across unloads. A shared Ollama backend has no
 owned slot or generation, so this field does not describe its performance.
-Inventory inspection starts no work. Hosted verification and use in duration
-estimates remain open.
+Inventory inspection starts no work. Hosted verification is pending.
+
+### Owned-model duration hints (development)
+
+`eef models route --capability llm.infer --model MODEL --output-token-budget 128 --json`
+can show `owned_duration_hint` for the requested budget. The hint gives startup,
+scaled decoding and their sum in microseconds. A resident owned llama.cpp
+instance uses zero startup cost. An unloaded instance needs a past
+`single_slot` startup. Both cases need a text or vision decode sample matching
+the observed load generation and the requested operation.
+
+One-shot model planning uses the same comparison when the task supplies
+`max_tokens`. It compares duration within the existing preference groups when
+every eligible contender in a group reports the same model ID and compatible
+timing. A reported cold RAM shortfall still takes precedence over duration.
+Groups with missing timing or differing model IDs retain their existing order.
+Warm state and reported load still break ties. A preview can show an individual
+estimate even when the group lacks comparable evidence.
+
+These historical samples exclude prompt processing, network transport and
+queueing. Model IDs are owner-selected labels. Use the estimate as a placement
+hint within the existing model and permission scope. It reserves no capacity,
+sets no deadline, and cannot change execution admission. Hosted verification
+of duration placement is pending.
 
 <a id="busy-placement-hints-under-verification"></a>
 
